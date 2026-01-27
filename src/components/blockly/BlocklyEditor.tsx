@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import * as Blockly from 'blockly';
 import { useProjectStore } from '../../store/projectStore';
 import { useEditorStore } from '../../store/editorStore';
@@ -8,21 +8,21 @@ export function BlocklyEditor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
 
-  const { project, updateObject } = useProjectStore();
+  // Use refs to track current selection for the event listener closure
+  const currentSceneIdRef = useRef<string | null>(null);
+  const currentObjectIdRef = useRef<string | null>(null);
+  const isLoadingRef = useRef(false);
+
+  const { project } = useProjectStore();
   const { selectedSceneId, selectedObjectId } = useEditorStore();
+
+  // Keep refs in sync with state
+  currentSceneIdRef.current = selectedSceneId;
+  currentObjectIdRef.current = selectedObjectId;
 
   // Get the currently selected object
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const selectedObject = selectedScene?.objects.find(o => o.id === selectedObjectId);
-
-  // Save workspace to object
-  const saveWorkspace = useCallback(() => {
-    if (!workspaceRef.current || !selectedSceneId || !selectedObjectId) return;
-
-    const xml = Blockly.Xml.workspaceToDom(workspaceRef.current);
-    const xmlText = Blockly.Xml.domToText(xml);
-    updateObject(selectedSceneId, selectedObjectId, { blocklyXml: xmlText });
-  }, [selectedSceneId, selectedObjectId, updateObject]);
 
   // Initialize Blockly workspace
   useEffect(() => {
@@ -68,13 +68,23 @@ export function BlocklyEditor() {
       }),
     });
 
-    // Listen for changes
+    // Listen for changes - use refs to get current IDs
     workspaceRef.current.addChangeListener((event) => {
+      // Skip save during loading to prevent overwriting with empty workspace
+      if (isLoadingRef.current) return;
+
       if (event.type === Blockly.Events.BLOCK_CHANGE ||
           event.type === Blockly.Events.BLOCK_CREATE ||
           event.type === Blockly.Events.BLOCK_DELETE ||
           event.type === Blockly.Events.BLOCK_MOVE) {
-        saveWorkspace();
+        const sceneId = currentSceneIdRef.current;
+        const objectId = currentObjectIdRef.current;
+
+        if (!workspaceRef.current || !sceneId || !objectId) return;
+
+        const xml = Blockly.Xml.workspaceToDom(workspaceRef.current);
+        const xmlText = Blockly.Xml.domToText(xml);
+        useProjectStore.getState().updateObject(sceneId, objectId, { blocklyXml: xmlText });
       }
     });
 
@@ -99,6 +109,9 @@ export function BlocklyEditor() {
   useEffect(() => {
     if (!workspaceRef.current) return;
 
+    // Set loading flag to prevent the change listener from saving during clear/load
+    isLoadingRef.current = true;
+
     workspaceRef.current.clear();
 
     if (selectedObject?.blocklyXml) {
@@ -109,6 +122,11 @@ export function BlocklyEditor() {
         console.error('Failed to load Blockly XML:', e);
       }
     }
+
+    // Reset loading flag after a small delay to let Blockly settle
+    setTimeout(() => {
+      isLoadingRef.current = false;
+    }, 50);
   }, [selectedObjectId, selectedObject?.blocklyXml]);
 
   return (
