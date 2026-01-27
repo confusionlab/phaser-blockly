@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import { useProjectStore } from '../../store/projectStore';
 import { useEditorStore } from '../../store/editorStore';
+import { AssetLibrary } from '../dialogs/AssetLibrary';
 
 export function Toolbar() {
   const { project, isDirty, saveCurrentProject } = useProjectStore();
   const { isPlaying, startPlaying, stopPlaying, setShowProjectDialog } = useEditorStore();
+  const [showAssetLibrary, setShowAssetLibrary] = useState(false);
 
   const handleSave = async () => {
     await saveCurrentProject();
@@ -67,6 +70,15 @@ export function Toolbar() {
 
       {/* Right section - Actions */}
       <div className="flex items-center gap-2">
+        {project && (
+          <button
+            onClick={() => setShowAssetLibrary(true)}
+            className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            Assets
+          </button>
+        )}
+
         <button
           onClick={() => setShowProjectDialog(true)}
           className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
@@ -88,6 +100,11 @@ export function Toolbar() {
           </button>
         )}
       </div>
+
+      {/* Asset Library Dialog */}
+      {showAssetLibrary && (
+        <AssetLibrary onClose={() => setShowAssetLibrary(false)} />
+      )}
     </div>
   );
 }

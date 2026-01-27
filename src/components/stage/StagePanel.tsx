@@ -1,6 +1,7 @@
 import { PhaserCanvas } from './PhaserCanvas';
 import { SpriteShelf } from './SpriteShelf';
 import { SceneTabs } from './SceneTabs';
+import { ObjectInspector } from './ObjectInspector';
 import { useEditorStore } from '../../store/editorStore';
 
 interface StagePanelProps {
@@ -40,6 +41,9 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
           <PhaserCanvas isPlaying={false} />
         </div>
       </div>
+
+      {/* Object inspector */}
+      <ObjectInspector />
 
       {/* Sprite shelf */}
       <SpriteShelf />

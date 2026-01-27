@@ -449,53 +449,53 @@ src/
 - [x] GameObject creation and positioning
 - [x] Sprite shelf component
 - [x] Drag objects onto stage
-- [x] Object selection (basic inspector pending)
-- [ ] Object Inspector panel (properties editor)
+- [x] Object selection
+- [x] Object Inspector panel (properties editor)
 - [ ] Background settings per scene (UI pending)
 
-### Phase 3: Blockly Blocks - Basics 🟡 PARTIAL
-- [x] Events blocks (game start, key press, click, forever)
-- [x] Motion blocks (move, go to, change x/y, set x/y, point direction)
-- [x] Looks blocks (show, hide, set size, change size)
-- [x] Control blocks (wait, repeat, if, stop)
+### Phase 3: Blockly Blocks - Basics ✅ COMPLETE
+- [x] Events blocks (game start, key press, click, forever, when receive, when clone start)
+- [x] Motion blocks (move, go to, change x/y, set x/y, point direction, point towards)
+- [x] Looks blocks (show, hide, set size, change size, opacity, layers)
+- [x] Control blocks (wait, repeat, if, stop, clone, broadcast, switch scene)
 - [x] Operators blocks (math, logic, comparison) - using Blockly built-ins
 - [x] Variables blocks - using Blockly built-in VARIABLE category
-- [ ] Sensing blocks (only key pressed, mouse down/x/y done)
+- [x] Sensing blocks (key pressed, mouse down/x/y, touching, distance)
 
-### Phase 4: Code Execution
-- [ ] Code generator (Blockly → JavaScript)
-- [ ] Runtime engine in Phaser
-- [x] Play mode (fullscreen shell - execution pending)
-- [x] Stop/reset functionality (UI done)
-- [ ] Per-object code execution context
+### Phase 4: Code Execution ✅ COMPLETE
+- [x] Code generator (Blockly → JavaScript)
+- [x] Runtime engine in Phaser (RuntimeEngine, RuntimeSprite)
+- [x] Play mode (fullscreen with execution)
+- [x] Stop/reset functionality
+- [x] Per-object code execution context
 
-### Phase 5: Physics & Camera
-- [ ] Physics blocks (enable, velocity, gravity)
-- [ ] Per-object physics toggle
-- [ ] Collision detection blocks
-- [ ] Camera blocks (follow, move, zoom)
-- [ ] Unbounded scene support
-- [ ] Camera bounds configuration
+### Phase 5: Physics & Camera ✅ COMPLETE
+- [x] Physics blocks (enable, velocity, gravity, bounce, collide bounds, immovable)
+- [x] Per-object physics toggle (via Object Inspector)
+- [x] Collision detection blocks
+- [x] Camera blocks (follow, stop follow, go to, shake, zoom, fade)
+- [ ] Unbounded scene support (future)
+- [ ] Camera bounds configuration (future)
 
-### Phase 6: Advanced Features
-- [ ] Sensing blocks (touching, distance)
-- [ ] Sound blocks and audio manager
-- [ ] Scene switching (go to scene X)
-- [ ] Clone system (clone myself, delete clone)
-- [ ] Messaging system (broadcast, receive)
+### Phase 6: Advanced Features ✅ COMPLETE
+- [x] Sensing blocks (touching, distance)
+- [x] Sound blocks and audio manager
+- [x] Scene switching (switch to scene block)
+- [x] Clone system (clone myself, delete clone, when start as clone)
+- [x] Messaging system (broadcast, broadcast and wait, when I receive)
 
-### Phase 7: Reusable Objects
-- [x] "Make it Reusable" context menu (UI placeholder)
-- [ ] Reusable objects library UI
-- [ ] Save reusable with thumbnail
-- [ ] Insert reusable into scene
-- [ ] Library management (rename, delete)
+### Phase 7: Reusable Objects ✅ COMPLETE
+- [x] "Make it Reusable" context menu
+- [x] Reusable objects library UI
+- [x] Save reusable with thumbnail
+- [x] Insert reusable into scene
+- [x] Library management (delete)
 
-### Phase 8: Polish & UX
+### Phase 8: Polish & UX 🟡 PARTIAL
 - [ ] Undo/redo system
 - [ ] Keyboard shortcuts
-- [ ] Asset import (images, sounds)
-- [ ] Built-in sprite library
+- [x] Asset import (images, sounds)
+- [x] Built-in sprite library (shapes)
 - [ ] Tooltips and help text
 - [ ] Loading states and error handling
 - [ ] Mobile-friendly adjustments

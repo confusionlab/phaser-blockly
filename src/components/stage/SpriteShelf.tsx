@@ -1,7 +1,9 @@
 import { useState, useRef } from 'react';
 import { useProjectStore } from '../../store/projectStore';
 import { useEditorStore } from '../../store/editorStore';
-import type { GameObject } from '../../types';
+import { saveReusable } from '../../db/database';
+import { ReusableLibrary } from '../dialogs/ReusableLibrary';
+import type { GameObject, ReusableObject } from '../../types';
 
 export function SpriteShelf() {
   const { project, addObject, removeObject, duplicateObject, updateObject } = useProjectStore();
@@ -9,6 +11,7 @@ export function SpriteShelf() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; object: GameObject } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [showLibrary, setShowLibrary] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
@@ -65,9 +68,29 @@ export function SpriteShelf() {
     setEditName('');
   };
 
-  const handleMakeReusable = () => {
-    // TODO: Implement reusable objects
-    console.log('Make reusable:', contextMenu?.object);
+  const handleMakeReusable = async () => {
+    if (!contextMenu) return;
+
+    const object = contextMenu.object;
+    const reusable: ReusableObject = {
+      id: crypto.randomUUID(),
+      name: object.name,
+      thumbnail: getObjectColor(object.id),
+      spriteAssetId: object.spriteAssetId,
+      defaultPhysics: object.physics,
+      blocklyXml: object.blocklyXml,
+      createdAt: new Date(),
+      tags: [],
+    };
+
+    try {
+      await saveReusable(reusable);
+      alert(`"${object.name}" saved to library!`);
+    } catch (e) {
+      console.error('Failed to save reusable:', e);
+      alert('Failed to save object to library');
+    }
+
     handleCloseContextMenu();
   };
 
@@ -133,6 +156,15 @@ export function SpriteShelf() {
           <span className="text-2xl text-gray-400">+</span>
           <span className="text-xs text-gray-400">Add Object</span>
         </button>
+
+        {/* Library button */}
+        <button
+          onClick={() => setShowLibrary(true)}
+          className="flex flex-col items-center justify-center gap-1 w-20 h-full border-2 border-dashed border-purple-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors shrink-0"
+        >
+          <span className="text-2xl text-purple-400">⭐</span>
+          <span className="text-xs text-purple-400">Library</span>
+        </button>
       </div>
 
       {/* Context Menu */}
@@ -174,6 +206,11 @@ export function SpriteShelf() {
             </button>
           </div>
         </>
+      )}
+
+      {/* Reusable Library Dialog */}
+      {showLibrary && (
+        <ReusableLibrary onClose={() => setShowLibrary(false)} />
       )}
     </div>
   );
