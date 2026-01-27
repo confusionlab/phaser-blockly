@@ -50,7 +50,7 @@ export const db = new GameMakerDatabase();
 // Project Repository
 
 export async function saveProject(project: Project): Promise<void> {
-  const { id, name, createdAt, updatedAt, ...rest } = project;
+  const { id, name, createdAt, updatedAt: _updatedAt, ...rest } = project;
   await db.projects.put({
     id,
     name,

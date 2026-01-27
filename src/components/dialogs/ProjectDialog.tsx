@@ -34,6 +34,11 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
   const handleCreateProject = () => {
     if (!newProjectName.trim()) return;
     newProject(newProjectName.trim());
+    // Get the newly created project and select its first scene
+    const createdProject = useProjectStore.getState().project;
+    if (createdProject && createdProject.scenes.length > 0) {
+      selectScene(createdProject.scenes[0].id);
+    }
     onClose();
   };
 

@@ -1,227 +1,437 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import * as Blockly from 'blockly';
-
-// Category definitions with blocks
-export const BLOCK_CATEGORIES = [
-  {
-    id: 'events',
-    name: 'Events',
-    colour: '#FFAB19',
-    icon: '🏁',
-    blocks: [
-      'event_game_start',
-      'event_key_pressed',
-      'event_clicked',
-      'event_forever',
-      'event_when_receive',
-      'event_when_touching',
-      'event_when_clone_start',
-    ],
-  },
-  {
-    id: 'motion',
-    name: 'Motion',
-    colour: '#4C97FF',
-    icon: '➡️',
-    blocks: [
-      'motion_move_steps',
-      'motion_go_to',
-      'motion_change_x',
-      'motion_change_y',
-      'motion_set_x',
-      'motion_set_y',
-      'motion_point_direction',
-      'motion_point_towards',
-    ],
-  },
-  {
-    id: 'looks',
-    name: 'Looks',
-    colour: '#9966FF',
-    icon: '👁️',
-    blocks: [
-      'looks_show',
-      'looks_hide',
-      'looks_set_size',
-      'looks_change_size',
-      'looks_set_opacity',
-      'looks_go_to_front',
-      'looks_go_to_back',
-    ],
-  },
-  {
-    id: 'physics',
-    name: 'Physics',
-    colour: '#40BF4A',
-    icon: '⚡',
-    blocks: [
-      'physics_enable',
-      'physics_set_velocity',
-      'physics_set_velocity_x',
-      'physics_set_velocity_y',
-      'physics_set_gravity',
-      'physics_set_bounce',
-      'physics_collide_bounds',
-      'physics_immovable',
-    ],
-  },
-  {
-    id: 'control',
-    name: 'Control',
-    colour: '#FFBF00',
-    icon: '🔄',
-    blocks: [
-      'control_wait',
-      'control_repeat',
-      'controls_if',
-      'control_stop',
-      'control_switch_scene',
-      'control_clone',
-      'control_delete_clone',
-      'control_broadcast',
-      'control_broadcast_wait',
-    ],
-  },
-  {
-    id: 'sensing',
-    name: 'Sensing',
-    colour: '#5CB1D6',
-    icon: '👆',
-    blocks: [
-      'sensing_key_pressed',
-      'sensing_mouse_down',
-      'sensing_mouse_x',
-      'sensing_mouse_y',
-      'sensing_touching',
-      'sensing_distance_to',
-    ],
-  },
-  {
-    id: 'camera',
-    name: 'Camera',
-    colour: '#0fBDA8',
-    icon: '📷',
-    blocks: [
-      'camera_follow_me',
-      'camera_follow_object',
-      'camera_stop_follow',
-      'camera_go_to',
-      'camera_shake',
-      'camera_zoom',
-      'camera_fade',
-    ],
-  },
-  {
-    id: 'sound',
-    name: 'Sound',
-    colour: '#CF63CF',
-    icon: '🔊',
-    blocks: [
-      'sound_play',
-      'sound_play_until_done',
-      'sound_stop_all',
-      'sound_set_volume',
-      'sound_change_volume',
-    ],
-  },
-  {
-    id: 'operators',
-    name: 'Operators',
-    colour: '#59C059',
-    icon: '➕',
-    blocks: [
-      'math_number',
-      'math_arithmetic',
-      'math_random_int',
-      'logic_compare',
-      'logic_operation',
-      'logic_negate',
-    ],
-  },
-  {
-    id: 'variables',
-    name: 'Variables',
-    colour: '#FF8C1A',
-    icon: '📦',
-    blocks: [], // Variables are handled specially
-    isVariables: true,
-  },
-];
+import { BLOCK_CATEGORIES } from './blockCategories';
+import './toolbox'; // Ensure custom blocks are registered before creating palette blocks
 
 interface BlockPaletteProps {
   workspace: Blockly.WorkspaceSvg | null;
   disabled?: boolean;
 }
 
-export function BlockPalette({ workspace, disabled }: BlockPaletteProps) {
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+export function BlockPalette({ workspace: mainWorkspace, disabled }: BlockPaletteProps) {
+  const paletteRef = useRef<HTMLDivElement>(null);
+  const flyoutWorkspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
+  const categoryYRef = useRef<Map<string, number>>(new Map());
+  const blockTypesRef = useRef<Map<string, string>>(new Map()); // blockId -> blockType
   const [activeCategory, setActiveCategory] = useState(BLOCK_CATEGORIES[0].id);
+  const [paletteReady, setPaletteReady] = useState(false);
+  const isScrollingRef = useRef(false);
 
-  // Track scroll position to highlight active category
+  // Drag state stored in ref to be accessible across event handlers
+  const dragStateRef = useRef<{
+    blockType: string | null;
+    startX: number;
+    startY: number;
+    isDragging: boolean;
+    dragImage: HTMLElement | null;
+  }>({
+    blockType: null,
+    startX: 0,
+    startY: 0,
+    isDragging: false,
+    dragImage: null,
+  });
+
+  // Update active category based on scroll position
+  const updateActiveCategory = useCallback(() => {
+    const flyoutWs = flyoutWorkspaceRef.current;
+    if (!flyoutWs) return;
+
+    const metrics = flyoutWs.getMetrics();
+    const scrollY = metrics.viewTop;
+
+    // Find which category we're in based on scroll position
+    let currentCategory = BLOCK_CATEGORIES[0].id;
+    for (const category of BLOCK_CATEGORIES) {
+      const catY = categoryYRef.current.get(category.id) || 0;
+      // Account for the workspace scale
+      const scaledCatY = catY * 0.7; // startScale is 0.7
+      if (-scrollY >= scaledCatY - 50) {
+        currentCategory = category.id;
+      }
+    }
+    setActiveCategory(currentCategory);
+  }, []);
+
+  // Initialize the flyout workspace with actual block visuals
   useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
+    if (!paletteRef.current) return;
 
-    const handleScroll = () => {
-      const containerTop = container.scrollTop;
+    // Clean up existing workspace
+    if (flyoutWorkspaceRef.current) {
+      flyoutWorkspaceRef.current.dispose();
+      flyoutWorkspaceRef.current = null;
+    }
 
-      for (const category of BLOCK_CATEGORIES) {
-        const section = sectionRefs.current.get(category.id);
-        if (section) {
-          const sectionTop = section.offsetTop - container.offsetTop;
-          const sectionBottom = sectionTop + section.offsetHeight;
+    // Clear block types map
+    blockTypesRef.current.clear();
 
-          if (containerTop >= sectionTop - 50 && containerTop < sectionBottom - 50) {
-            setActiveCategory(category.id);
-            break;
+    try {
+      // Create a workspace for showing block previews
+      const flyoutWorkspace = Blockly.inject(paletteRef.current, {
+        scrollbars: { horizontal: false, vertical: true },
+        zoom: { controls: false, wheel: false, startScale: 0.7 },
+        trashcan: false,
+        move: {
+          scrollbars: { horizontal: false, vertical: true },
+          drag: false,
+          wheel: true
+        },
+        sounds: false,
+        readOnly: false,
+        horizontalLayout: false,
+      });
+
+      flyoutWorkspaceRef.current = flyoutWorkspace;
+
+      // Get the SVG to add category labels
+      const svg = flyoutWorkspace.getParentSvg();
+      const blockCanvas = svg.querySelector('.blocklyBlockCanvas');
+
+      // Populate blocks for each category
+      let y = 20;
+      BLOCK_CATEGORIES.forEach((category) => {
+        categoryYRef.current.set(category.id, y);
+
+        // Add category label as SVG text
+        if (blockCanvas) {
+          const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          label.setAttribute('x', '15');
+          label.setAttribute('y', String(y + 12));
+          label.setAttribute('fill', category.colour);
+          label.setAttribute('font-size', '11');
+          label.setAttribute('font-weight', '600');
+          label.setAttribute('font-family', 'Nunito, sans-serif');
+          label.textContent = `${category.icon} ${category.name}`;
+          blockCanvas.appendChild(label);
+        }
+
+        y += 25; // Space after label
+
+        category.blocks.forEach((blockType) => {
+          try {
+            const block = flyoutWorkspace.newBlock(blockType);
+            block.initSvg();
+            block.render();
+            block.moveBy(15, y);
+
+            // Store the mapping of block ID to block type
+            blockTypesRef.current.set(block.id, blockType);
+
+            // Make blocks non-movable and non-deletable in palette
+            block.setMovable(false);
+            block.setDeletable(false);
+
+            const height = block.getHeightWidth().height;
+            y += height + 10;
+          } catch (e) {
+            console.warn('Could not create palette block:', blockType, e);
+          }
+        });
+
+        y += 30; // Extra space between categories
+      });
+
+      // Track scroll position for category highlighting
+      flyoutWorkspace.addChangeListener((event) => {
+        if (event.type === Blockly.Events.VIEWPORT_CHANGE && !isScrollingRef.current) {
+          updateActiveCategory();
+        }
+      });
+
+      // Mark palette as ready (defer to avoid cascading renders)
+      requestAnimationFrame(() => setPaletteReady(true));
+
+    } catch (e) {
+      console.error('Failed to create palette workspace:', e);
+      requestAnimationFrame(() => setPaletteReady(false));
+    }
+
+    return () => {
+      setPaletteReady(false);
+      if (flyoutWorkspaceRef.current) {
+        flyoutWorkspaceRef.current.dispose();
+        flyoutWorkspaceRef.current = null;
+      }
+    };
+  }, [updateActiveCategory]);
+
+  // Create block in main workspace
+  const createBlockInMainWorkspace = useCallback((blockType: string, clientX?: number, clientY?: number) => {
+    if (!mainWorkspace) return;
+
+    const newBlock = mainWorkspace.newBlock(blockType);
+    newBlock.initSvg();
+    newBlock.render();
+
+    const mainWsEl = mainWorkspace.getInjectionDiv();
+    const rect = mainWsEl.getBoundingClientRect();
+
+    // Check if we have valid coordinates over the workspace
+    const hasValidCoords = clientX !== undefined && clientY !== undefined &&
+      clientX >= rect.left && clientX <= rect.right &&
+      clientY >= rect.top && clientY <= rect.bottom;
+
+    if (hasValidCoords && clientX !== undefined && clientY !== undefined) {
+      // Convert screen coordinates to workspace coordinates
+      const metrics = mainWorkspace.getMetrics();
+      const scale = mainWorkspace.getScale();
+      const relX = clientX - rect.left;
+      const relY = clientY - rect.top;
+      const wsX = metrics.viewLeft + relX / scale;
+      const wsY = metrics.viewTop + relY / scale;
+      newBlock.moveTo(new Blockly.utils.Coordinate(wsX, wsY));
+    } else {
+      // Position in center of visible area
+      const metrics = mainWorkspace.getMetrics();
+      const centerX = metrics.viewLeft + metrics.viewWidth / 3;
+      const centerY = metrics.viewTop + metrics.viewHeight / 3;
+      newBlock.moveTo(new Blockly.utils.Coordinate(centerX, centerY));
+    }
+
+    Blockly.common.setSelected(newBlock as Blockly.BlockSvg);
+  }, [mainWorkspace]);
+
+  // Handle mouse events for drag detection
+  useEffect(() => {
+    if (disabled) return;
+
+    // Track last mouse position globally
+    const trackMousePosition = (e: MouseEvent) => {
+      (window as unknown as { _lastMouseEvent?: MouseEvent })._lastMouseEvent = e;
+    };
+    document.addEventListener('mousemove', trackMousePosition);
+    document.addEventListener('mousedown', trackMousePosition);
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState.blockType) return;
+
+      const dx = e.clientX - dragState.startX;
+      const dy = e.clientY - dragState.startY;
+
+      // Start dragging if moved more than threshold
+      if (!dragState.isDragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+        dragState.isDragging = true;
+
+        // Remove any existing drag image first
+        const existingDragImage = document.getElementById('block-drag-image');
+        if (existingDragImage) {
+          existingDragImage.remove();
+        }
+
+        // Create drag image
+        const flyoutWs = flyoutWorkspaceRef.current;
+        const dragImage = document.createElement('div');
+        dragImage.id = 'block-drag-image';
+        dragImage.style.cssText = `
+          position: fixed;
+          left: ${e.clientX - 30}px;
+          top: ${e.clientY - 15}px;
+          pointer-events: none;
+          z-index: 100000;
+          opacity: 0.9;
+          filter: drop-shadow(2px 4px 6px rgba(0,0,0,0.3));
+        `;
+
+        let createdSvg = false;
+
+        if (flyoutWs) {
+          const blocks = flyoutWs.getAllBlocks(false);
+          const selectedBlock = blocks.find(b => blockTypesRef.current.get(b.id) === dragState.blockType);
+          if (selectedBlock) {
+            const blockSvg = selectedBlock.getSvgRoot();
+            if (blockSvg) {
+              // Get the parent SVG element to copy defs (gradients, filters)
+              const parentSvg = flyoutWs.getParentSvg();
+              const defs = parentSvg.querySelector('defs');
+
+              // Create SVG container
+              const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              svg.setAttribute('width', '300');
+              svg.setAttribute('height', '150');
+              svg.style.cssText = 'overflow: visible;';
+              svg.setAttribute('class', 'blocklySvg');
+
+              // Copy defs for gradients and filters
+              if (defs) {
+                svg.appendChild(defs.cloneNode(true));
+              }
+
+              // Clone the block group with all children
+              const svgClone = blockSvg.cloneNode(true) as SVGGElement;
+              // Reset any existing transform and position it in view
+              svgClone.setAttribute('transform', 'translate(15, 15) scale(0.85)');
+              svg.appendChild(svgClone);
+
+              dragImage.appendChild(svg);
+              createdSvg = true;
+            }
           }
         }
+
+        // Fallback: create a simple visual indicator if SVG clone failed
+        if (!createdSvg) {
+          const fallback = document.createElement('div');
+          fallback.style.cssText = `
+            width: 100px;
+            height: 40px;
+            background: linear-gradient(135deg, #4C97FF 0%, #3373CC 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: sans-serif;
+          `;
+          fallback.textContent = dragState.blockType?.split('_').pop() || 'Block';
+          dragImage.appendChild(fallback);
+        }
+
+        document.body.appendChild(dragImage);
+        dragState.dragImage = dragImage;
+      }
+
+      // Update drag image position
+      if (dragState.isDragging && dragState.dragImage) {
+        dragState.dragImage.style.left = `${e.clientX - 30}px`;
+        dragState.dragImage.style.top = `${e.clientY - 15}px`;
       }
     };
 
-    container.addEventListener('scroll', handleScroll);
-    return () => container.removeEventListener('scroll', handleScroll);
+    const handleMouseUp = (e: MouseEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState.blockType) return;
+
+      const blockType = dragState.blockType;
+      const isDragging = dragState.isDragging;
+
+      // Clean up drag image
+      if (dragState.dragImage) {
+        dragState.dragImage.remove();
+      }
+
+      // Reset drag state
+      dragStateRef.current = {
+        blockType: null,
+        startX: 0,
+        startY: 0,
+        isDragging: false,
+        dragImage: null,
+      };
+
+      // Create block at appropriate position
+      if (isDragging) {
+        createBlockInMainWorkspace(blockType, e.clientX, e.clientY);
+      } else {
+        createBlockInMainWorkspace(blockType);
+      }
+
+      // Deselect in palette
+      setTimeout(() => {
+        if (flyoutWorkspaceRef.current) {
+          const selectedBlock = Blockly.common.getSelected();
+          if (selectedBlock && 'unselect' in selectedBlock) {
+            (selectedBlock as Blockly.BlockSvg).unselect();
+          }
+        }
+      }, 50);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', trackMousePosition);
+      document.removeEventListener('mousedown', trackMousePosition);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [disabled, createBlockInMainWorkspace]);
+
+  // Listen for block selection in palette workspace
+  useEffect(() => {
+    if (!paletteReady || !mainWorkspace || disabled) return;
+    const flyoutWs = flyoutWorkspaceRef.current;
+    if (!flyoutWs) return;
+
+    const handleBlockSelected = (event: Blockly.Events.Abstract) => {
+      if (event.type !== Blockly.Events.SELECTED) return;
+
+      const selectEvent = event as Blockly.Events.Selected;
+      if (!selectEvent.newElementId) return;
+
+      const blockType = blockTypesRef.current.get(selectEvent.newElementId);
+      if (!blockType) return;
+
+      // Get current mouse position from the last known position
+      const lastMouseEvent = (window as unknown as { _lastMouseEvent?: MouseEvent })._lastMouseEvent;
+      const startX = lastMouseEvent?.clientX ?? 0;
+      const startY = lastMouseEvent?.clientY ?? 0;
+
+      // Start tracking for potential drag
+      dragStateRef.current = {
+        blockType,
+        startX,
+        startY,
+        isDragging: false,
+        dragImage: null,
+      };
+    };
+
+    flyoutWs.addChangeListener(handleBlockSelected);
+
+    return () => {
+      flyoutWs.removeChangeListener(handleBlockSelected);
+    };
+  }, [mainWorkspace, disabled, paletteReady]);
+
+  const scrollToCategory = useCallback((categoryId: string) => {
+    const flyoutWs = flyoutWorkspaceRef.current;
+    if (!flyoutWs) return;
+
+    const y = categoryYRef.current.get(categoryId);
+    if (y === undefined) return;
+
+    // Mark that we're programmatically scrolling
+    isScrollingRef.current = true;
+    setActiveCategory(categoryId);
+
+    // Get current scroll position
+    const metrics = flyoutWs.getMetrics();
+    const currentScrollY = metrics.viewTop;
+    const targetScrollY = -(y * 0.7 - 20); // Account for scale and padding
+
+    // Animate the scroll
+    const startTime = performance.now();
+    const duration = 300; // ms
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Ease out cubic
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+
+      const newScrollY = currentScrollY + (targetScrollY - currentScrollY) * easeProgress;
+      flyoutWs.scroll(0, newScrollY);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        isScrollingRef.current = false;
+      }
+    };
+
+    requestAnimationFrame(animate);
   }, []);
 
-  const scrollToCategory = (categoryId: string) => {
-    const section = sectionRefs.current.get(categoryId);
-    const container = scrollContainerRef.current;
-    if (section && container) {
-      container.scrollTo({
-        top: section.offsetTop - container.offsetTop,
-        behavior: 'smooth',
-      });
-    }
-  };
-
-  const handleBlockClick = (blockType: string) => {
-    if (!workspace || disabled) return;
-
-    // Create a new block in the workspace
-    const block = workspace.newBlock(blockType);
-    block.initSvg();
-    block.render();
-
-    // Position it in the visible area of the workspace
-    const metrics = workspace.getMetrics();
-    const viewCenterX = metrics.viewLeft + metrics.viewWidth / 4;
-    const viewCenterY = metrics.viewTop + metrics.viewHeight / 3;
-
-    block.moveTo(new Blockly.utils.Coordinate(viewCenterX, viewCenterY));
-
-    // Select the block
-    const blockSvg = block as Blockly.BlockSvg;
-    blockSvg.select();
-
-    // Scroll to make sure block is visible
-    workspace.centerOnBlock(block.id);
-  };
-
-  const handleCreateVariable = () => {
-    if (!workspace) return;
-    Blockly.Variables.createVariableButtonHandler(workspace, undefined, '');
-  };
+  const handleCreateVariable = useCallback(() => {
+    if (!mainWorkspace) return;
+    Blockly.Variables.createVariableButtonHandler(mainWorkspace, undefined, '');
+  }, [mainWorkspace]);
 
   return (
     <div className={`flex h-full ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -231,9 +441,9 @@ export function BlockPalette({ workspace, disabled }: BlockPaletteProps) {
           <button
             key={category.id}
             onClick={() => scrollToCategory(category.id)}
-            className={`w-10 h-10 mx-auto rounded-lg flex items-center justify-center text-lg transition-all ${
+            className={`w-10 h-10 mx-auto rounded-lg flex items-center justify-center text-lg transition-all duration-200 ${
               activeCategory === category.id
-                ? 'ring-2 ring-offset-1 ring-current'
+                ? 'ring-2 ring-offset-1 ring-current shadow-sm'
                 : 'hover:bg-gray-200'
             }`}
             style={{
@@ -245,177 +455,48 @@ export function BlockPalette({ workspace, disabled }: BlockPaletteProps) {
             {category.icon}
           </button>
         ))}
-      </div>
 
-      {/* Blocks list - scrollable */}
-      <div
-        ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto bg-gray-50"
-      >
-        {BLOCK_CATEGORIES.map((category) => (
-          <div
-            key={category.id}
-            ref={(el) => {
-              if (el) sectionRefs.current.set(category.id, el);
-            }}
-            className="p-3"
+        {/* Create Variable button at bottom */}
+        <div className="mt-auto">
+          <button
+            onClick={handleCreateVariable}
+            className="w-10 h-10 mx-auto rounded-lg flex items-center justify-center text-lg transition-all hover:bg-orange-100"
+            style={{ color: '#FF8C1A' }}
+            title="Create Variable"
           >
-            {/* Category header */}
-            <div
-              className="flex items-center gap-2 mb-2 pb-2 border-b-2 sticky top-0 bg-gray-50 z-10"
-              style={{ borderColor: category.colour }}
-            >
-              <span className="text-lg">{category.icon}</span>
-              <span className="font-semibold text-sm" style={{ color: category.colour }}>
-                {category.name}
-              </span>
-            </div>
-
-            {/* Blocks */}
-            <div className="flex flex-col gap-2">
-              {category.isVariables ? (
-                <>
-                  <button
-                    onClick={handleCreateVariable}
-                    className="px-3 py-2 bg-orange-100 hover:bg-orange-200 rounded-lg text-sm font-medium text-orange-700 transition-colors"
-                  >
-                    + Create Variable
-                  </button>
-                  <BlockItem
-                    blockType="variables_get"
-                    colour={category.colour}
-                    onClick={handleBlockClick}
-                    label="variable"
-                  />
-                  <BlockItem
-                    blockType="variables_set"
-                    colour={category.colour}
-                    onClick={handleBlockClick}
-                    label="set variable to"
-                  />
-                  <BlockItem
-                    blockType="math_change"
-                    colour={category.colour}
-                    onClick={handleBlockClick}
-                    label="change variable by"
-                  />
-                </>
-              ) : (
-                category.blocks.map((blockType) => (
-                  <BlockItem
-                    key={blockType}
-                    blockType={blockType}
-                    colour={category.colour}
-                    onClick={handleBlockClick}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-        ))}
+            +
+          </button>
+        </div>
       </div>
-    </div>
-  );
-}
 
-interface BlockItemProps {
-  blockType: string;
-  colour: string;
-  onClick: (blockType: string) => void;
-  label?: string;
-}
+      {/* Flyout workspace showing actual blocks */}
+      <div
+        ref={paletteRef}
+        className="flex-1 bg-gray-50 palette-workspace"
+        style={{
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          overflowX: 'hidden',
+        }}
+      />
 
-function BlockItem({ blockType, colour, onClick, label }: BlockItemProps) {
-  // Get block label from the block definition
-  const getBlockLabel = () => {
-    if (label) return label;
-
-    // Map block types to friendly names
-    const labels: Record<string, string> = {
-      // Events
-      'event_game_start': '🏁 when game starts',
-      'event_key_pressed': '🔑 when key pressed',
-      'event_clicked': '🖱️ when this clicked',
-      'event_forever': '🔄 forever',
-      'event_when_receive': '📨 when I receive',
-      'event_when_touching': '💥 when touching',
-      'event_when_clone_start': '👥 when I start as clone',
-      // Motion
-      'motion_move_steps': 'move __ steps',
-      'motion_go_to': 'go to x: __ y: __',
-      'motion_change_x': 'change x by __',
-      'motion_change_y': 'change y by __',
-      'motion_set_x': 'set x to __',
-      'motion_set_y': 'set y to __',
-      'motion_point_direction': 'point in direction __',
-      'motion_point_towards': 'point towards __',
-      // Looks
-      'looks_show': 'show',
-      'looks_hide': 'hide',
-      'looks_set_size': 'set size to __%',
-      'looks_change_size': 'change size by __',
-      'looks_set_opacity': 'set opacity to __%',
-      'looks_go_to_front': 'go to front layer',
-      'looks_go_to_back': 'go to back layer',
-      // Physics
-      'physics_enable': '⚡ enable physics',
-      'physics_set_velocity': 'set velocity x: __ y: __',
-      'physics_set_velocity_x': 'set velocity x to __',
-      'physics_set_velocity_y': 'set velocity y to __',
-      'physics_set_gravity': 'set gravity to __',
-      'physics_set_bounce': 'set bounce to __',
-      'physics_collide_bounds': 'collide with bounds',
-      'physics_immovable': '❄️ make immovable',
-      // Control
-      'control_wait': 'wait __ seconds',
-      'control_repeat': 'repeat __ times',
-      'controls_if': 'if __ then',
-      'control_stop': 'stop',
-      'control_switch_scene': 'switch to scene __',
-      'control_clone': 'clone myself',
-      'control_delete_clone': 'delete this clone',
-      'control_broadcast': 'broadcast __',
-      'control_broadcast_wait': 'broadcast __ and wait',
-      // Sensing
-      'sensing_key_pressed': 'key __ pressed?',
-      'sensing_mouse_down': 'mouse down?',
-      'sensing_mouse_x': 'mouse x',
-      'sensing_mouse_y': 'mouse y',
-      'sensing_touching': 'touching __?',
-      'sensing_distance_to': 'distance to __',
-      // Camera
-      'camera_follow_me': '📷 camera follow me',
-      'camera_follow_object': 'camera follow __',
-      'camera_stop_follow': 'camera stop following',
-      'camera_go_to': 'camera go to x: __ y: __',
-      'camera_shake': 'camera shake __ secs',
-      'camera_zoom': 'set zoom to __%',
-      'camera_fade': 'camera fade __',
-      // Sound
-      'sound_play': '🔊 play sound __',
-      'sound_play_until_done': 'play sound __ until done',
-      'sound_stop_all': 'stop all sounds',
-      'sound_set_volume': 'set volume to __%',
-      'sound_change_volume': 'change volume by __',
-      // Operators
-      'math_number': '0',
-      'math_arithmetic': '__ + __',
-      'math_random_int': 'random __ to __',
-      'logic_compare': '__ = __',
-      'logic_operation': '__ and __',
-      'logic_negate': 'not __',
-    };
-
-    return labels[blockType] || blockType;
-  };
-
-  return (
-    <div
-      onClick={() => onClick(blockType)}
-      className="px-3 py-2 rounded-lg cursor-pointer text-sm font-medium text-white shadow-sm hover:shadow-md hover:scale-[1.02] transition-all select-none active:scale-95"
-      style={{ backgroundColor: colour }}
-    >
-      {getBlockLabel()}
+      {/* CSS to hide horizontal scrollbar and prevent horizontal scroll */}
+      <style>{`
+        .palette-workspace .blocklyScrollbarHorizontal {
+          display: none !important;
+        }
+        .palette-workspace > svg {
+          overflow-x: hidden !important;
+        }
+        .palette-workspace .blocklyMainBackground {
+          cursor: pointer;
+        }
+        .palette-workspace .blocklyDraggable {
+          cursor: pointer !important;
+        }
+        .palette-workspace .blocklyDraggable:hover {
+          filter: brightness(1.05);
+        }
+      `}</style>
     </div>
   );
 }

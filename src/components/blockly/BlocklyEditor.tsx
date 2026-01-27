@@ -18,9 +18,11 @@ export function BlocklyEditor() {
   const { project } = useProjectStore();
   const { selectedSceneId, selectedObjectId } = useEditorStore();
 
-  // Keep refs in sync with state
-  currentSceneIdRef.current = selectedSceneId;
-  currentObjectIdRef.current = selectedObjectId;
+  // Keep refs in sync with state (in effect to avoid render-time updates)
+  useEffect(() => {
+    currentSceneIdRef.current = selectedSceneId;
+    currentObjectIdRef.current = selectedObjectId;
+  }, [selectedSceneId, selectedObjectId]);
 
   // Get the currently selected object
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);

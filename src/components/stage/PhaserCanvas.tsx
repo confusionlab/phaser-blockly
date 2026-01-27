@@ -74,7 +74,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           },
           create: function(this: Phaser.Scene) {
             if (isPlaying) {
-              createPlayScene(this, selectedScene, project.scenes, runtimeRef, selectScene);
+              createPlayScene(this, selectedScene, project.scenes, runtimeRef);
             } else {
               createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd);
             }
@@ -237,8 +237,7 @@ function createPlayScene(
   scene: Phaser.Scene,
   sceneData: SceneData | undefined,
   _allScenes: SceneData[],
-  runtimeRef: React.MutableRefObject<RuntimeEngine | null>,
-  _selectScene: (id: string) => void
+  runtimeRef: React.MutableRefObject<RuntimeEngine | null>
 ) {
   if (!sceneData) return;
 

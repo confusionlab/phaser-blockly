@@ -11,11 +11,12 @@ export function EditorLayout() {
   const { isPlaying, showProjectDialog, setShowProjectDialog, selectScene } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(40); // percentage
 
-  // Auto-select first scene when project loads
+  // Auto-select first scene when project loads (only when project ID changes)
   useEffect(() => {
     if (project && project.scenes.length > 0) {
       selectScene(project.scenes[0].id);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
   // Show project dialog on first load if no project
@@ -23,6 +24,7 @@ export function EditorLayout() {
     if (!project) {
       setShowProjectDialog(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleDividerDrag = (e: React.MouseEvent) => {
