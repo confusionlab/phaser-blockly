@@ -1,0 +1,180 @@
+// Project Types
+
+export interface Project {
+  id: string;
+  name: string;
+  createdAt: Date;
+  updatedAt: Date;
+  scenes: Scene[];
+  globalVariables: Variable[];
+  settings: ProjectSettings;
+}
+
+export interface ProjectSettings {
+  canvasWidth: number;
+  canvasHeight: number;
+  backgroundColor: string;
+}
+
+// Scene Types
+
+export interface Scene {
+  id: string;
+  name: string;
+  order: number;
+  background: BackgroundConfig | null;
+  objects: GameObject[];
+  cameraConfig: CameraConfig;
+}
+
+export interface CameraConfig {
+  followTarget: string | null;
+  bounds: { x: number; y: number; width: number; height: number } | null;
+  zoom: number;
+}
+
+export interface BackgroundConfig {
+  type: 'color' | 'image' | 'tiled';
+  value: string;
+  scrollFactor?: { x: number; y: number };
+}
+
+// GameObject Types
+
+export interface GameObject {
+  id: string;
+  name: string;
+  spriteAssetId: string | null;
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
+  rotation: number;
+  visible: boolean;
+  layer: number;
+  physics: PhysicsConfig | null;
+  blocklyXml: string;
+}
+
+export interface PhysicsConfig {
+  enabled: boolean;
+  bodyType: 'dynamic' | 'static';
+  gravityY: number;
+  velocityX: number;
+  velocityY: number;
+  bounceX: number;
+  bounceY: number;
+  collideWorldBounds: boolean;
+  immovable: boolean;
+}
+
+// Asset Types
+
+export interface Asset {
+  id: string;
+  name: string;
+  type: 'sprite' | 'background' | 'sound';
+  data: Blob;
+  thumbnail?: string;
+  frameWidth?: number;
+  frameHeight?: number;
+}
+
+// Reusable Object Types
+
+export interface ReusableObject {
+  id: string;
+  name: string;
+  thumbnail: string;
+  spriteAssetId: string | null;
+  defaultPhysics: PhysicsConfig | null;
+  blocklyXml: string;
+  createdAt: Date;
+  tags: string[];
+}
+
+// Variable Types
+
+export interface Variable {
+  id: string;
+  name: string;
+  type: 'number' | 'string' | 'boolean';
+  defaultValue: number | string | boolean;
+  scope: 'global' | 'local';
+}
+
+// Editor State Types
+
+export interface EditorState {
+  selectedObjectId: string | null;
+  selectedSceneId: string | null;
+  isPlaying: boolean;
+  zoom: number;
+  panX: number;
+  panY: number;
+}
+
+// Helper function to create default objects
+
+export function createDefaultProject(name: string): Project {
+  const sceneId = crypto.randomUUID();
+  return {
+    id: crypto.randomUUID(),
+    name,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
+    globalVariables: [],
+    settings: {
+      canvasWidth: 800,
+      canvasHeight: 600,
+      backgroundColor: '#87CEEB',
+    },
+  };
+}
+
+export function createDefaultScene(id: string, name: string, order: number): Scene {
+  return {
+    id,
+    name,
+    order,
+    background: { type: 'color', value: '#87CEEB' },
+    objects: [],
+    cameraConfig: {
+      followTarget: null,
+      bounds: null,
+      zoom: 1,
+    },
+  };
+}
+
+export function createDefaultGameObject(name: string): GameObject {
+  return {
+    id: crypto.randomUUID(),
+    name,
+    spriteAssetId: null,
+    x: 400,
+    y: 300,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    visible: true,
+    layer: 0,
+    physics: null,
+    blocklyXml: '',
+  };
+}
+
+export function createDefaultPhysicsConfig(): PhysicsConfig {
+  return {
+    enabled: true,
+    bodyType: 'dynamic',
+    gravityY: 300,
+    velocityX: 0,
+    velocityY: 0,
+    bounceX: 0,
+    bounceY: 0.2,
+    collideWorldBounds: true,
+    immovable: false,
+  };
+}

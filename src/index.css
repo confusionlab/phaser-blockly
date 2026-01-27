@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Nunito", system-ui, sans-serif;
+
+  --color-primary: #4A90D9;
+  --color-primary-dark: #3A7BC8;
+  --color-secondary: #7C4DFF;
+  --color-success: #4CAF50;
+  --color-warning: #FF9800;
+  --color-danger: #F44336;
+
+  --color-bg-main: #F5F5F5;
+  --color-bg-panel: #FFFFFF;
+  --color-bg-dark: #2D2D2D;
+
+  --color-border: #E0E0E0;
+  --color-border-dark: #424242;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-main);
+  color: #333;
+}
+
+/* Blockly workspace styling */
+.blocklySvg {
+  background-color: #f9f9f9 !important;
+}
+
+.blocklyToolboxDiv {
+  background-color: #fff !important;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
