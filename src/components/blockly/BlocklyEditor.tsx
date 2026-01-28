@@ -15,7 +15,6 @@ export function BlocklyEditor() {
   const currentObjectIdRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
 
-  const { project } = useProjectStore();
   const { selectedSceneId, selectedObjectId } = useEditorStore();
 
   // Keep refs in sync
@@ -24,8 +23,6 @@ export function BlocklyEditor() {
     currentObjectIdRef.current = selectedObjectId;
   }, [selectedSceneId, selectedObjectId]);
 
-  const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
-  const selectedObject = selectedScene?.objects.find(o => o.id === selectedObjectId);
 
   // Initialize Blockly workspace
   useEffect(() => {
@@ -124,28 +121,6 @@ export function BlocklyEditor() {
   }, [selectedObjectId, selectedSceneId]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center px-4 py-2 bg-gray-50 border-b border-[var(--color-border)]">
-        <span className="text-sm font-medium text-gray-600">Code for:</span>
-        {selectedObject ? (
-          <span className="ml-2 px-2 py-1 bg-[var(--color-primary)] text-white text-sm rounded">
-            {selectedObject.name}
-          </span>
-        ) : (
-          <span className="ml-2 text-sm text-gray-400 italic">Select an object</span>
-        )}
-      </div>
-
-      <div ref={containerRef} className="flex-1">
-        {!selectedObject && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-            <div className="bg-white/90 px-6 py-4 rounded-lg shadow-sm text-center">
-              <p className="text-gray-600">Select an object from the stage</p>
-              <p className="text-gray-400 text-sm mt-1">to start coding its behavior</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+    <div ref={containerRef} className="h-full w-full" />
   );
 }

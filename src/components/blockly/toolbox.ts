@@ -43,6 +43,9 @@ export function getToolboxConfig(): Blockly.utils.toolbox.ToolboxDefinition {
         contents: [
           { kind: 'block', type: 'looks_show' },
           { kind: 'block', type: 'looks_hide' },
+          { kind: 'block', type: 'looks_next_costume' },
+          { kind: 'block', type: 'looks_switch_costume' },
+          { kind: 'block', type: 'looks_costume_number' },
           { kind: 'block', type: 'looks_set_size' },
           { kind: 'block', type: 'looks_change_size' },
           { kind: 'block', type: 'looks_set_opacity' },
@@ -350,6 +353,40 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
       this.setTooltip('Change size by amount');
+    }
+  };
+
+  Blockly.Blocks['looks_next_costume'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('next costume');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Switch to the next costume');
+    }
+  };
+
+  Blockly.Blocks['looks_switch_costume'] = {
+    init: function() {
+      this.appendValueInput('COSTUME')
+        .setCheck(['Number', 'String'])
+        .appendField('switch costume to');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Switch to costume by name or number');
+    }
+  };
+
+  Blockly.Blocks['looks_costume_number'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('costume #');
+      this.setOutput(true, 'Number');
+      this.setColour('#9966FF');
+      this.setTooltip('Current costume number');
     }
   };
 

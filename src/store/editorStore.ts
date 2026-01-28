@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
+
 interface EditorStore {
   // Selection state
   selectedSceneId: string | null;
@@ -17,10 +19,12 @@ interface EditorStore {
   showProjectDialog: boolean;
   showAssetLibrary: boolean;
   showReusableLibrary: boolean;
+  activeObjectTab: ObjectEditorTab;
 
   // Actions
   selectScene: (sceneId: string | null) => void;
   selectObject: (objectId: string | null) => void;
+  setActiveObjectTab: (tab: ObjectEditorTab) => void;
 
   startPlaying: () => void;
   stopPlaying: () => void;
@@ -51,6 +55,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   showProjectDialog: false,
   showAssetLibrary: false,
   showReusableLibrary: false,
+  activeObjectTab: 'code' as ObjectEditorTab,
 
   // Actions
   selectScene: (sceneId) => {
@@ -91,5 +96,9 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   setShowReusableLibrary: (show) => {
     set({ showReusableLibrary: show });
+  },
+
+  setActiveObjectTab: (tab) => {
+    set({ activeObjectTab: tab });
   },
 }));

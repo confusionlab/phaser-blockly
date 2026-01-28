@@ -54,6 +54,21 @@ export interface GameObject {
   layer: number;
   physics: PhysicsConfig | null;
   blocklyXml: string;
+  costumes: Costume[];
+  currentCostumeIndex: number;
+  sounds: Sound[];
+}
+
+export interface Costume {
+  id: string;
+  name: string;
+  assetId: string; // Reference to Asset
+}
+
+export interface Sound {
+  id: string;
+  name: string;
+  assetId: string; // Reference to Asset
 }
 
 export interface PhysicsConfig {
@@ -148,7 +163,28 @@ export function createDefaultScene(id: string, name: string, order: number): Sce
   };
 }
 
+// Generate a simple colored circle SVG as a data URL
+function generateCircleCostume(color: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+    <circle cx="32" cy="32" r="28" fill="${color}" stroke="#333" stroke-width="2"/>
+  </svg>`;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+}
+
+// Generate a random pastel color
+function randomPastelColor(): string {
+  const hue = Math.floor(Math.random() * 360);
+  return `hsl(${hue}, 70%, 70%)`;
+}
+
 export function createDefaultGameObject(name: string): GameObject {
+  const color = randomPastelColor();
+  const defaultCostume: Costume = {
+    id: crypto.randomUUID(),
+    name: 'costume1',
+    assetId: generateCircleCostume(color),
+  };
+
   return {
     id: crypto.randomUUID(),
     name,
@@ -162,6 +198,9 @@ export function createDefaultGameObject(name: string): GameObject {
     layer: 0,
     physics: null,
     blocklyXml: '',
+    costumes: [defaultCostume],
+    currentCostumeIndex: 0,
+    sounds: [],
   };
 }
 

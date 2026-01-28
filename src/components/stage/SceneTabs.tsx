@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useProjectStore } from '../../store/projectStore';
 import { useEditorStore } from '../../store/editorStore';
 
@@ -7,6 +7,20 @@ export function SceneTabs() {
   const { selectedSceneId, selectScene } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const colorInputRef = useRef<HTMLInputElement>(null);
+
+  const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
+  const currentBgColor = selectedScene?.background?.type === 'color'
+    ? selectedScene.background.value
+    : '#87CEEB';
+
+  const handleBgColorChange = (color: string) => {
+    if (selectedSceneId) {
+      updateScene(selectedSceneId, {
+        background: { type: 'color', value: color }
+      });
+    }
+  };
 
   if (!project) return null;
 
@@ -90,6 +104,27 @@ export function SceneTabs() {
       >
         <span className="text-lg">+</span>
       </button>
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Background color picker */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-500">BG:</span>
+        <button
+          onClick={() => colorInputRef.current?.click()}
+          className="w-7 h-7 rounded border-2 border-gray-300 hover:border-gray-400 transition-colors cursor-pointer"
+          style={{ backgroundColor: currentBgColor }}
+          title="Change background color"
+        />
+        <input
+          ref={colorInputRef}
+          type="color"
+          value={currentBgColor}
+          onChange={(e) => handleBgColorChange(e.target.value)}
+          className="sr-only"
+        />
+      </div>
     </div>
   );
 }

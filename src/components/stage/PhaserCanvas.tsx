@@ -77,15 +77,20 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       if (!container) return;
       console.log(`[PhaserCanvas] Creating game #${thisCreationId}`);
 
+      // Editor mode uses container size for infinite canvas, play mode uses game dimensions
+      const editorBgColor = selectedScene?.background?.type === 'color' ? selectedScene.background.value : backgroundColor;
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         parent: container,
-        width: canvasWidth,
-        height: canvasHeight,
-        backgroundColor: backgroundColor,
-        scale: {
+        width: isPlaying ? canvasWidth : container.clientWidth,
+        height: isPlaying ? canvasHeight : container.clientHeight,
+        backgroundColor: isPlaying ? backgroundColor : editorBgColor,
+        scale: isPlaying ? {
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
+        } : {
+          mode: Phaser.Scale.RESIZE,
+          autoCenter: Phaser.Scale.NO_CENTER,
         },
         physics: {
           default: 'arcade',
@@ -103,7 +108,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             if (isPlaying) {
               createPlayScene(this, selectedScene, project.scenes, runtimeRef);
             } else {
-              createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd);
+              createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd, canvasWidth, canvasHeight);
             }
           },
           update: function(this: Phaser.Scene) {
@@ -165,29 +170,105 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (!gameRef.current || isPlaying) return;
 
-    const scene = gameRef.current.scene.getScene('GameScene');
-    if (!scene || !selectedScene) return;
+    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    if (!phaserScene || !selectedScene) return;
 
-    // Update all objects
+    // Get current object IDs in scene data
+    const sceneObjectIds = new Set(selectedScene.objects.map(o => o.id));
+
+    // Remove objects that no longer exist in scene data
+    const toRemove: Phaser.GameObjects.Container[] = [];
+    phaserScene.children.each((child: Phaser.GameObjects.GameObject) => {
+      if (child instanceof Phaser.GameObjects.Container && child.getData('objectData')) {
+        if (!sceneObjectIds.has(child.name)) {
+          toRemove.push(child);
+        }
+      }
+    });
+    toRemove.forEach(c => c.destroy());
+
+    // Update or create objects
     selectedScene.objects.forEach(obj => {
-      const container = scene.children.getByName(obj.id) as Phaser.GameObjects.Container | undefined;
-      if (container) {
+      let container = phaserScene.children.getByName(obj.id) as Phaser.GameObjects.Container | undefined;
+
+      if (!container) {
+        // Create new object
+        container = createObjectVisual(phaserScene, obj);
+        container.setData('selected', obj.id === selectedObjectId);
+
+        // Make interactive in editor mode
+        container.setInteractive({ draggable: true });
+
+        container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          if (pointer.leftButtonDown()) {
+            selectObject(obj.id);
+          }
+        });
+
+        container.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+          container!.x = dragX;
+          container!.y = dragY;
+        });
+
+        container.on('dragend', () => {
+          handleObjectDragEnd(obj.id, container!.x, container!.y);
+        });
+
+        // Selection indicator
+        const selectionRect = phaserScene.add.rectangle(0, 0, 72, 72);
+        selectionRect.setStrokeStyle(2, 0x4A90D9);
+        selectionRect.setFillStyle(0x4A90D9, 0.1);
+        selectionRect.setVisible(obj.id === selectedObjectId);
+        selectionRect.setName('selection');
+        container.add(selectionRect);
+        container.sendToBack(selectionRect);
+      } else {
+        // Update existing object
         container.setPosition(obj.x, obj.y);
         container.setScale(obj.scaleX, obj.scaleY);
         container.setRotation(Phaser.Math.DegToRad(obj.rotation));
         container.setVisible(obj.visible);
+      }
 
-        // Update selection visual
-        const isSelected = obj.id === selectedObjectId;
-        container.setData('selected', isSelected);
+      // Update selection visual
+      const isSelected = obj.id === selectedObjectId;
+      container.setData('selected', isSelected);
 
-        const selectionRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
-        if (selectionRect) {
-          selectionRect.setVisible(isSelected);
-        }
+      const selectionRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
+      if (selectionRect) {
+        selectionRect.setVisible(isSelected);
       }
     });
-  }, [selectedScene?.objects, selectedObjectId, isPlaying]);
+  }, [selectedScene?.objects, selectedObjectId, isPlaying, selectObject, handleObjectDragEnd]);
+
+  // Update background color when it changes (in editor mode only)
+  useEffect(() => {
+    if (!gameRef.current || isPlaying) return;
+
+    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    if (!phaserScene || !selectedScene) return;
+
+    const bgColorValue = selectedScene.background?.type === 'color'
+      ? selectedScene.background.value
+      : '#87CEEB';
+
+    phaserScene.cameras.main.setBackgroundColor(bgColorValue);
+
+    // Update bounds graphics color to contrast with new background
+    const boundsGraphics = phaserScene.data.get('boundsGraphics') as Phaser.GameObjects.Graphics | undefined;
+    if (boundsGraphics) {
+      const canvasWidth = phaserScene.data.get('canvasWidth') as number;
+      const canvasHeight = phaserScene.data.get('canvasHeight') as number;
+
+      const bgColor = Phaser.Display.Color.HexStringToColor(bgColorValue);
+      const luminance = (0.299 * bgColor.red + 0.587 * bgColor.green + 0.114 * bgColor.blue) / 255;
+      const borderColor = luminance < 0.5 ? 0xffffff : 0x333333;
+
+      boundsGraphics.clear();
+      boundsGraphics.lineStyle(1, borderColor, 0.5);
+      boundsGraphics.strokeRect(0, 0, canvasWidth, canvasHeight);
+    }
+  }, [selectedScene?.background, isPlaying]);
 
   return (
     <div
@@ -205,14 +286,81 @@ function createEditorScene(
   sceneData: SceneData | undefined,
   selectObject: (id: string | null) => void,
   selectedObjectId: string | null,
-  onDragEnd: (objId: string, x: number, y: number) => void
+  onDragEnd: (objId: string, x: number, y: number) => void,
+  canvasWidth: number,
+  canvasHeight: number
 ) {
   if (!sceneData) return;
 
-  // Set background
-  if (sceneData.background?.type === 'color') {
-    scene.cameras.main.setBackgroundColor(sceneData.background.value);
-  }
+  const camera = scene.cameras.main;
+
+  // Set background color (same everywhere)
+  const bgColorValue = sceneData.background?.type === 'color' ? sceneData.background.value : '#2d2d44';
+  camera.setBackgroundColor(bgColorValue);
+
+  // Calculate if background is dark to choose contrasting border color
+  const bgColor = Phaser.Display.Color.HexStringToColor(bgColorValue);
+  const luminance = (0.299 * bgColor.red + 0.587 * bgColor.green + 0.114 * bgColor.blue) / 255;
+  const borderColor = luminance < 0.5 ? 0xffffff : 0x333333;
+
+  // Draw game bounds rectangle with contrasting color
+  const boundsGraphics = scene.add.graphics();
+  boundsGraphics.lineStyle(1, borderColor, 0.5);
+  boundsGraphics.strokeRect(0, 0, canvasWidth, canvasHeight);
+
+  // Store references for dynamic updates
+  scene.data.set('boundsGraphics', boundsGraphics);
+  scene.data.set('canvasWidth', canvasWidth);
+  scene.data.set('canvasHeight', canvasHeight);
+
+  // Enable camera panning with middle mouse or right mouse drag
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let cameraStartX = 0;
+  let cameraStartY = 0;
+
+  scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    // Middle mouse (button 1) or right mouse (button 2) starts panning
+    if (pointer.middleButtonDown() || pointer.rightButtonDown()) {
+      isPanning = true;
+      panStartX = pointer.x;
+      panStartY = pointer.y;
+      cameraStartX = camera.scrollX;
+      cameraStartY = camera.scrollY;
+    }
+  });
+
+  scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+    if (isPanning) {
+      // Divide by zoom to make panning match mouse movement 1:1
+      const dx = (pointer.x - panStartX) / camera.zoom;
+      const dy = (pointer.y - panStartY) / camera.zoom;
+      camera.scrollX = cameraStartX - dx;
+      camera.scrollY = cameraStartY - dy;
+    }
+  });
+
+  scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+    if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
+      isPanning = false;
+    }
+  });
+
+  // Prevent context menu on right click
+  scene.game.canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+  });
+
+  // Mouse wheel zoom (proportional to current zoom for consistent feel)
+  scene.input.on('wheel', (_pointer: Phaser.Input.Pointer, _gameObjects: unknown[], _deltaX: number, deltaY: number) => {
+    const zoomFactor = deltaY > 0 ? 0.9 : 1.1; // 10% zoom per scroll step
+    const newZoom = Phaser.Math.Clamp(camera.zoom * zoomFactor, 0.25, 3);
+    camera.setZoom(newZoom);
+  });
+
+  // Center camera on game area initially
+  camera.centerOn(canvasWidth / 2, canvasHeight / 2);
 
   // Create objects
   sceneData.objects.forEach((obj: GameObject) => {
@@ -222,8 +370,11 @@ function createEditorScene(
     // Make interactive in editor mode
     container.setInteractive({ draggable: true });
 
-    container.on('pointerdown', () => {
-      selectObject(obj.id);
+    container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      // Only select on left click
+      if (pointer.leftButtonDown()) {
+        selectObject(obj.id);
+      }
     });
 
     container.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
@@ -282,13 +433,19 @@ function createPlayScene(
 
   // Create objects and register them with runtime
   sceneData.objects.forEach((obj: GameObject) => {
-    const container = createObjectVisual(scene, obj, true);
+    const container = createObjectVisual(scene, obj);
 
     // Enable physics by default in play mode for collision detection
     scene.physics.add.existing(container);
 
     // Register with runtime
     const runtimeSprite = runtime.registerSprite(obj.id, obj.name, container);
+
+    // Set costumes if available
+    const costumes = obj.costumes || [];
+    if (costumes.length > 0) {
+      runtimeSprite.setCostumes(costumes, obj.currentCostumeIndex || 0);
+    }
 
     // Generate and execute code for this object
     console.log(`[CodeExec] Object "${obj.name}" has blocklyXml:`, !!obj.blocklyXml);
@@ -333,8 +490,7 @@ function createPlayScene(
  */
 function createObjectVisual(
   scene: Phaser.Scene,
-  obj: GameObject,
-  isPlayMode: boolean = false
+  obj: GameObject
 ): Phaser.GameObjects.Container {
   // Create colored rectangle as placeholder for sprite
   const graphics = scene.add.graphics();
@@ -353,18 +509,6 @@ function createObjectVisual(
   container.setRotation(Phaser.Math.DegToRad(obj.rotation));
   container.setVisible(obj.visible);
   container.setData('objectData', obj);
-
-  // Add name label only in editor mode
-  if (!isPlayMode) {
-    const label = scene.add.text(0, 40, obj.name, {
-      fontSize: '12px',
-      color: '#333',
-      backgroundColor: '#fff',
-      padding: { x: 4, y: 2 },
-    });
-    label.setOrigin(0.5, 0);
-    container.add(label);
-  }
 
   return container;
 }

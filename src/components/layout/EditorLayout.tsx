@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Toolbar } from './Toolbar';
-import { BlocklyEditor } from '../blockly/BlocklyEditor';
+import { ObjectEditor } from '../editors/ObjectEditor';
 import { StagePanel } from '../stage/StagePanel';
 import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { useProjectStore } from '../../store/projectStore';
@@ -8,7 +8,7 @@ import { useEditorStore } from '../../store/editorStore';
 
 export function EditorLayout() {
   const { project } = useProjectStore();
-  const { isPlaying, showProjectDialog, setShowProjectDialog, selectScene } = useEditorStore();
+  const { isPlaying, showProjectDialog, setShowProjectDialog, selectScene, startPlaying, stopPlaying } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(40); // percentage
 
   // Auto-select first scene when project loads (only when project ID changes)
@@ -26,6 +26,34 @@ export function EditorLayout() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keyboard shortcuts
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    // Check if user is typing in an input field
+    const target = e.target as HTMLElement;
+    const isTyping = target.tagName === 'INPUT' ||
+                     target.tagName === 'TEXTAREA' ||
+                     target.isContentEditable;
+
+    // Escape always stops the game
+    if (e.key === 'Escape' && isPlaying) {
+      e.preventDefault();
+      stopPlaying();
+      return;
+    }
+
+    // Enter starts the game (but not while typing)
+    if (e.key === 'Enter' && !isTyping && !isPlaying && project) {
+      e.preventDefault();
+      startPlaying();
+      return;
+    }
+  }, [isPlaying, project, startPlaying, stopPlaying]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   const handleDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -60,12 +88,12 @@ export function EditorLayout() {
       <div className="flex flex-1 overflow-hidden">
         {project ? (
           <>
-            {/* Blockly Editor - Left Panel */}
+            {/* Object Editor - Left Panel */}
             <div
               className="h-full border-r border-[var(--color-border)]"
               style={{ width: `${dividerPosition}%` }}
             >
-              <BlocklyEditor />
+              <ObjectEditor />
             </div>
 
             {/* Resizable Divider */}

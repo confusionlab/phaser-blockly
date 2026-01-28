@@ -115,6 +115,19 @@ export function registerCodeGenerators(): void {
     return 'sprite.goToBack();\n';
   };
 
+  javascriptGenerator.forBlock['looks_next_costume'] = function() {
+    return 'sprite.nextCostume();\n';
+  };
+
+  javascriptGenerator.forBlock['looks_switch_costume'] = function(block) {
+    const costume = javascriptGenerator.valueToCode(block, 'COSTUME', Order.ATOMIC) || '1';
+    return `sprite.switchCostume(${costume});\n`;
+  };
+
+  javascriptGenerator.forBlock['looks_costume_number'] = function() {
+    return ['sprite.getCostumeNumber()', Order.FUNCTION_CALL];
+  };
+
   // --- Control ---
 
   javascriptGenerator.forBlock['control_wait'] = function(block) {

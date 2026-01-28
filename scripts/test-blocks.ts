@@ -239,6 +239,28 @@ const testCases: TestCase[] = [
     `,
     expectCodeContains: ['runtime.cameraShake(0.5)'],
   },
+  // Costume blocks
+  {
+    name: 'looks_next_costume',
+    xml: `<xml><block type="looks_next_costume"></block></xml>`,
+    expectCodeContains: ['sprite.nextCostume()'],
+  },
+  {
+    name: 'looks_switch_costume',
+    xml: `
+      <xml>
+        <block type="looks_switch_costume">
+          <value name="COSTUME"><block type="math_number"><field name="NUM">2</field></block></value>
+        </block>
+      </xml>
+    `,
+    expectCodeContains: ['sprite.switchCostume(2)'],
+  },
+  {
+    name: 'looks_costume_number',
+    xml: `<xml><block type="looks_costume_number"></block></xml>`,
+    expectCodeContains: ['sprite.getCostumeNumber()'],
+  },
   // Combined test: full program
   {
     name: 'Full program: game start with multiple actions',
