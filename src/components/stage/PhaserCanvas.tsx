@@ -34,13 +34,16 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     if (!containerRef.current || !project) return;
 
     // Clean up existing game
-    if (gameRef.current) {
-      gameRef.current.destroy(true);
-      gameRef.current = null;
-    }
     if (runtimeRef.current) {
+      console.log('[PhaserCanvas] Cleaning up existing runtime');
+      runtimeRef.current.cleanup();
       setCurrentRuntime(null);
       runtimeRef.current = null;
+    }
+    if (gameRef.current) {
+      console.log('[PhaserCanvas] Destroying existing game');
+      gameRef.current.destroy(true);
+      gameRef.current = null;
     }
 
     const { canvasWidth, canvasHeight, backgroundColor } = project.settings;
@@ -120,8 +123,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     }
 
     return () => {
+      console.log('[PhaserCanvas] Cleanup triggered');
       if (runtimeRef.current) {
-        runtimeRef.current.stopAll();
+        runtimeRef.current.cleanup();
         setCurrentRuntime(null);
         runtimeRef.current = null;
       }

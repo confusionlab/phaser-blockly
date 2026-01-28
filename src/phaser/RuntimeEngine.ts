@@ -390,6 +390,33 @@ export class RuntimeEngine {
     }
   }
 
+  /**
+   * Clean up all resources - call this before destroying the runtime
+   */
+  cleanup(): void {
+    debugLog('info', 'RuntimeEngine cleanup');
+    this.stopAll();
+
+    // Remove keyboard listeners
+    const keyboard = this.scene.input.keyboard;
+    if (keyboard) {
+      keyboard.removeAllListeners();
+      // Remove all registered keys
+      for (const key of this.phaserKeys.values()) {
+        keyboard.removeKey(key);
+      }
+      this.phaserKeys.clear();
+    }
+
+    // Clear all handlers
+    this.handlers.clear();
+    this.sprites.clear();
+    this.globalVariables.clear();
+    this.localVariables.clear();
+
+    debugLog('info', 'RuntimeEngine cleanup complete');
+  }
+
   stopSprite(spriteId: string): void {
     const sprite = this.sprites.get(spriteId);
     if (sprite) sprite.stop();
