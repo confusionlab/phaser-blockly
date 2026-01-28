@@ -27,7 +27,7 @@ export class RuntimeEngine {
   private handlers: Map<string, ObjectHandlers> = new Map();
   private activeForeverLoops: Map<string, boolean> = new Map();
   private _isRunning: boolean = false;
-  private keyStates: Map<string, boolean> = new Map();
+  private phaserKeys: Map<string, Phaser.Input.Keyboard.Key> = new Map();
   private cloneCounter: number = 0;
   private messageQueue: string[] = [];
 
@@ -37,16 +37,28 @@ export class RuntimeEngine {
   }
 
   private setupInputListeners(): void {
-    // Track key states
-    this.scene.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
-      const key = this.normalizeKey(event.code);
-      this.keyStates.set(key, true);
-      this.triggerKeyPressed(key);
-    });
+    // Create Phaser key objects for reliable key detection
+    const keyboard = this.scene.input.keyboard;
+    if (!keyboard) {
+      console.warn('Keyboard input not available');
+      return;
+    }
 
-    this.scene.input.keyboard?.on('keyup', (event: KeyboardEvent) => {
+    // Register keys we care about
+    this.phaserKeys.set('SPACE', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE));
+    this.phaserKeys.set('UP', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP));
+    this.phaserKeys.set('DOWN', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN));
+    this.phaserKeys.set('LEFT', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT));
+    this.phaserKeys.set('RIGHT', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT));
+    this.phaserKeys.set('W', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W));
+    this.phaserKeys.set('A', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A));
+    this.phaserKeys.set('S', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S));
+    this.phaserKeys.set('D', keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D));
+
+    // Listen for key down events for event_key_pressed blocks
+    keyboard.on('keydown', (event: KeyboardEvent) => {
       const key = this.normalizeKey(event.code);
-      this.keyStates.set(key, false);
+      this.triggerKeyPressed(key);
     });
   }
 
@@ -284,7 +296,11 @@ export class RuntimeEngine {
   // --- Input Queries ---
 
   isKeyPressed(key: string): boolean {
-    return this.keyStates.get(key) || false;
+    const phaserKey = this.phaserKeys.get(key);
+    if (phaserKey) {
+      return phaserKey.isDown;
+    }
+    return false;
   }
 
   isMouseDown(): boolean {

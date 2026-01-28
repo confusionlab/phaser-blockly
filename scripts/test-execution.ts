@@ -125,7 +125,17 @@ class MockRuntime {
   switchToScene(sceneName: string) { this.log('switchToScene', sceneName); }
 
   // Sensing
-  isKeyPressed(key: string) { this.log('isKeyPressed', key); return false; }
+  private keyStates: Map<string, boolean> = new Map();
+
+  mockKeyState(key: string, pressed: boolean) {
+    this.keyStates.set(key, pressed);
+  }
+
+  isKeyPressed(key: string) {
+    const pressed = this.keyStates.get(key) || false;
+    // Don't log every frame to reduce noise
+    return pressed;
+  }
   isMouseDown() { return false; }
   getMouseX() { return 0; }
   getMouseY() { return 0; }
@@ -187,6 +197,51 @@ interface ExecutionTest {
 }
 
 const executionTests: ExecutionTest[] = [
+  {
+    name: 'forever with if key pressed -> change y',
+    xml: `
+      <xml>
+        <block type="event_forever">
+          <statement name="DO">
+            <block type="controls_if">
+              <value name="IF0">
+                <block type="sensing_key_pressed">
+                  <field name="KEY">SPACE</field>
+                </block>
+              </value>
+              <statement name="DO0">
+                <block type="motion_change_y">
+                  <value name="VALUE">
+                    <block type="math_number"><field name="NUM">4</field></block>
+                  </value>
+                </block>
+              </statement>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `,
+    simulate: async (runtime, sprite) => {
+      // Frame 1: no key pressed
+      runtime.simulateForeverFrame();
+      console.log(`    After frame 1 (no key): y=${sprite.y}`);
+
+      // Press space
+      (runtime as any).mockKeyState('SPACE', true);
+
+      // Frame 2: space pressed
+      runtime.simulateForeverFrame();
+      console.log(`    After frame 2 (space pressed): y=${sprite.y}`);
+
+      // Frame 3: space still pressed
+      runtime.simulateForeverFrame();
+      console.log(`    After frame 3 (space pressed): y=${sprite.y}`);
+    },
+    verify: (runtime, sprite) => {
+      // Should have changed Y by 4 twice (frames 2 and 3)
+      return sprite.y === 8;
+    },
+  },
   {
     name: 'when game starts -> change x by 10',
     xml: `
