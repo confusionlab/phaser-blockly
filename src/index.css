@@ -45,11 +45,10 @@ body {
   background-color: #fff !important;
 }
 
-/* Hide flyout scrollbar - scrolling still works with mouse wheel */
+/* Hide flyout scrollbar */
 .blocklyFlyoutScrollbar {
-  display: none !important;
+  visibility: hidden !important;
 }
-
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {

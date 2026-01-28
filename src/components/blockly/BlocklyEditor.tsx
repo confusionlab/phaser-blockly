@@ -81,15 +81,20 @@ export function BlocklyEditor() {
     };
   }, []);
 
-  // Load workspace when object changes
+  // Load workspace when object ID changes (not when XML changes - we're the ones changing it)
   useEffect(() => {
     if (!workspaceRef.current) return;
     isLoadingRef.current = true;
     workspaceRef.current.clear();
 
-    if (selectedObject?.blocklyXml) {
+    // Get fresh object data from store
+    const state = useProjectStore.getState();
+    const scene = state.project?.scenes.find(s => s.id === selectedSceneId);
+    const obj = scene?.objects.find(o => o.id === selectedObjectId);
+
+    if (obj?.blocklyXml) {
       try {
-        const xml = Blockly.utils.xml.textToDom(selectedObject.blocklyXml);
+        const xml = Blockly.utils.xml.textToDom(obj.blocklyXml);
         Blockly.Xml.domToWorkspace(xml, workspaceRef.current);
       } catch (e) {
         console.error('Failed to load Blockly XML:', e);
@@ -99,7 +104,7 @@ export function BlocklyEditor() {
     setTimeout(() => {
       isLoadingRef.current = false;
     }, 50);
-  }, [selectedObjectId, selectedObject?.blocklyXml]);
+  }, [selectedObjectId, selectedSceneId]);
 
   return (
     <div className="flex flex-col h-full">
