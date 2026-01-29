@@ -1,18 +1,156 @@
 import { useState, useRef } from 'react';
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
-import { saveReusable } from '../../db/database';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { saveReusable } from '@/db/database';
 import { ReusableLibrary } from '../dialogs/ReusableLibrary';
-import type { GameObject, ReusableObject } from '../../types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Plus, Star, Pencil, Copy, Trash2, ChevronRight } from 'lucide-react';
+import type { GameObject, ReusableObject } from '@/types';
+
+interface SortableObjectItemProps {
+  object: GameObject;
+  isSelected: boolean;
+  isEditing: boolean;
+  editName: string;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onSelect: () => void;
+  onStartEdit: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  onEditNameChange: (value: string) => void;
+  onSaveRename: () => void;
+}
+
+function SortableObjectItem({
+  object,
+  isSelected,
+  isEditing,
+  editName,
+  inputRef,
+  onSelect,
+  onStartEdit,
+  onContextMenu,
+  onEditNameChange,
+  onSaveRename,
+}: SortableObjectItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: object.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const handleClick = () => {
+    if (isSelected && !isEditing) {
+      // Already selected, start editing on second click
+      onStartEdit();
+    } else {
+      onSelect();
+    }
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={handleClick}
+      onContextMenu={onContextMenu}
+      className={`flex items-center gap-2 px-2 py-1.5 cursor-grab active:cursor-grabbing border-b transition-colors ${
+        isSelected
+          ? 'bg-primary/10 border-l-2 border-l-primary'
+          : 'hover:bg-accent border-l-2 border-l-transparent'
+      }`}
+    >
+      {/* Thumbnail */}
+      <div className="w-8 h-8 rounded flex items-center justify-center overflow-hidden shrink-0 bg-muted">
+        {object.costumes && object.costumes.length > 0 ? (
+          <img
+            src={object.costumes[object.currentCostumeIndex ?? 0]?.assetId}
+            alt={object.name}
+            className="w-full h-full object-contain"
+          />
+        ) : (
+          <span className="text-sm">📦</span>
+        )}
+      </div>
+
+      {/* Name */}
+      {isEditing ? (
+        <Input
+          ref={inputRef}
+          value={editName}
+          onChange={e => onEditNameChange(e.target.value)}
+          onBlur={onSaveRename}
+          onKeyDown={e => {
+            if (e.key === 'Enter') onSaveRename();
+            if (e.key === 'Escape') onSaveRename();
+          }}
+          className="flex-1 h-6 px-1 text-xs"
+          onClick={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
+        />
+      ) : (
+        <span className="flex-1 text-xs truncate">{object.name}</span>
+      )}
+    </div>
+  );
+}
 
 export function SpriteShelf() {
-  const { project, addObject, removeObject, duplicateObject, updateObject } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectObject } = useEditorStore();
+  const { project, addObject, removeObject, duplicateObject, updateObject, updateScene, reorderObject, addScene } = useProjectStore();
+  const { selectedSceneId, selectedObjectId, selectObject, selectScene } = useEditorStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; object: GameObject } | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
+  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const sceneInputRef = useRef<HTMLInputElement>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
 
@@ -23,6 +161,29 @@ export function SpriteShelf() {
     const newName = `Object ${selectedScene.objects.length + 1}`;
     const newObject = addObject(selectedSceneId, newName);
     selectObject(newObject.id);
+  };
+
+  const handleAddScene = () => {
+    if (!project) return;
+    const newName = `Scene ${project.scenes.length + 1}`;
+    addScene(newName);
+    // Select the newly added scene (it's the last one)
+    setTimeout(() => {
+      const newScene = useProjectStore.getState().project?.scenes.at(-1);
+      if (newScene) {
+        selectScene(newScene.id);
+      }
+    }, 0);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id && selectedSceneId) {
+      const oldIndex = selectedScene.objects.findIndex(obj => obj.id === active.id);
+      const newIndex = selectedScene.objects.findIndex(obj => obj.id === over.id);
+      reorderObject(selectedSceneId, oldIndex, newIndex);
+    }
   };
 
   const handleContextMenu = (e: React.MouseEvent, object: GameObject) => {
@@ -52,19 +213,34 @@ export function SpriteShelf() {
     handleCloseContextMenu();
   };
 
-  const handleRename = () => {
-    if (!contextMenu) return;
-    setEditingId(contextMenu.object.id);
-    setEditName(contextMenu.object.name);
-    handleCloseContextMenu();
+  // Object name editing
+  const handleStartObjectEdit = (objectId: string, currentName: string) => {
+    setEditingObjectId(objectId);
+    setEditName(currentName);
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  const handleSaveRename = () => {
-    if (editingId && editName.trim() && selectedSceneId) {
-      updateObject(selectedSceneId, editingId, { name: editName.trim() });
+  const handleSaveObjectRename = () => {
+    if (editingObjectId && editName.trim() && selectedSceneId) {
+      updateObject(selectedSceneId, editingObjectId, { name: editName.trim() });
     }
-    setEditingId(null);
+    setEditingObjectId(null);
+    setEditName('');
+  };
+
+  // Scene name editing
+  const handleStartSceneEdit = (sceneId: string, currentName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingSceneId(sceneId);
+    setEditName(currentName);
+    setTimeout(() => sceneInputRef.current?.focus(), 0);
+  };
+
+  const handleSaveSceneRename = () => {
+    if (editingSceneId && editName.trim()) {
+      updateScene(editingSceneId, { name: editName.trim() });
+    }
+    setEditingSceneId(null);
     setEditName('');
   };
 
@@ -94,7 +270,6 @@ export function SpriteShelf() {
     handleCloseContextMenu();
   };
 
-  // Get color for object thumbnail
   const getObjectColor = (id: string): string => {
     let hash = 0;
     for (let i = 0; i < id.length; i++) {
@@ -106,73 +281,110 @@ export function SpriteShelf() {
   };
 
   return (
-    <div className="h-32 bg-white border-t border-[var(--color-border)] p-3">
-      <div className="flex items-center gap-2 h-full overflow-x-auto">
-        {/* Existing objects */}
-        {selectedScene.objects.map(object => (
-          <div
-            key={object.id}
-            onClick={() => selectObject(object.id)}
-            onContextMenu={(e) => handleContextMenu(e, object)}
-            className={`flex flex-col items-center gap-1 p-2 rounded-lg cursor-pointer transition-all shrink-0 ${
-              selectedObjectId === object.id
-                ? 'bg-[var(--color-primary)]/10 ring-2 ring-[var(--color-primary)]'
-                : 'hover:bg-gray-100'
-            }`}
-          >
-            {/* Thumbnail */}
-            <div
-              className="w-16 h-16 rounded-lg flex items-center justify-center overflow-hidden"
-              style={{ backgroundColor: getObjectColor(object.id) }}
-            >
-              {object.costumes && object.costumes.length > 0 ? (
-                <img
-                  src={object.costumes[object.currentCostumeIndex ?? 0]?.assetId}
-                  alt={object.name}
-                  className="w-full h-full object-contain"
-                />
+    <div className="h-full flex flex-col bg-card border-r">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="flex items-center gap-1 text-xs font-medium hover:text-primary transition-colors">
+              {selectedScene.name}
+              <ChevronRight className="size-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-48">
+            {project?.scenes.map((scene) => (
+              editingSceneId === scene.id ? (
+                <div
+                  key={scene.id}
+                  className="flex items-center px-2 py-1.5"
+                  onMouseDown={e => e.stopPropagation()}
+                >
+                  <Input
+                    ref={sceneInputRef}
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    onBlur={handleSaveSceneRename}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleSaveSceneRename();
+                      if (e.key === 'Escape') handleSaveSceneRename();
+                    }}
+                    onClick={e => e.stopPropagation()}
+                    className="h-6 text-xs flex-1"
+                    autoFocus
+                  />
+                </div>
               ) : (
-                <span className="text-2xl">📦</span>
-              )}
-            </div>
+                <DropdownMenuItem
+                  key={scene.id}
+                  onClick={() => selectScene(scene.id)}
+                  className={`group flex items-center justify-between ${scene.id === selectedSceneId ? 'bg-accent' : ''}`}
+                >
+                  <span className="flex-1">{scene.name}</span>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={(e) => handleStartSceneEdit(scene.id, scene.name, e)}
+                    className="h-6 w-6 opacity-0 group-hover:opacity-100 hover:opacity-100"
+                  >
+                    <Pencil className="size-3" />
+                  </Button>
+                </DropdownMenuItem>
+              )
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleAddScene}>
+              <Plus className="size-4 mr-2" />
+              New Scene
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <div className="flex gap-1">
+          <Button size="icon-sm" variant="ghost" onClick={handleAddObject} title="Add Object">
+            <Plus className="size-4" />
+          </Button>
+          <Button size="icon-sm" variant="ghost" onClick={() => setShowLibrary(true)} title="Library">
+            <Star className="size-4" />
+          </Button>
+        </div>
+      </div>
 
-            {/* Name */}
-            {editingId === object.id ? (
-              <input
-                ref={inputRef}
-                type="text"
-                value={editName}
-                onChange={e => setEditName(e.target.value)}
-                onBlur={handleSaveRename}
-                onKeyDown={e => e.key === 'Enter' && handleSaveRename()}
-                className="w-16 px-1 text-xs text-center bg-white border border-[var(--color-primary)] rounded outline-none"
-                onClick={e => e.stopPropagation()}
-              />
-            ) : (
-              <span className="text-xs text-gray-600 truncate max-w-16 text-center">
-                {object.name}
-              </span>
-            )}
+      {/* Object List */}
+      <div className="flex-1 overflow-y-auto">
+        {selectedScene.objects.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+            <span className="text-2xl mb-2">📦</span>
+            <span className="text-xs text-center">No objects yet</span>
           </div>
-        ))}
-
-        {/* Add button */}
-        <button
-          onClick={handleAddObject}
-          className="flex flex-col items-center justify-center gap-1 w-20 h-full border-2 border-dashed border-gray-300 rounded-lg hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-colors shrink-0"
-        >
-          <span className="text-2xl text-gray-400">+</span>
-          <span className="text-xs text-gray-400">Add Object</span>
-        </button>
-
-        {/* Library button */}
-        <button
-          onClick={() => setShowLibrary(true)}
-          className="flex flex-col items-center justify-center gap-1 w-20 h-full border-2 border-dashed border-purple-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors shrink-0"
-        >
-          <span className="text-2xl text-purple-400">⭐</span>
-          <span className="text-xs text-purple-400">Library</span>
-        </button>
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={selectedScene.objects.map(obj => obj.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="flex flex-col">
+                {selectedScene.objects.map((object) => (
+                  <SortableObjectItem
+                    key={object.id}
+                    object={object}
+                    isSelected={selectedObjectId === object.id}
+                    isEditing={editingObjectId === object.id}
+                    editName={editName}
+                    inputRef={inputRef}
+                    onSelect={() => selectObject(object.id)}
+                    onStartEdit={() => handleStartObjectEdit(object.id, object.name)}
+                    onContextMenu={(e) => handleContextMenu(e, object)}
+                    onEditNameChange={setEditName}
+                    onSaveRename={handleSaveObjectRename}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        )}
       </div>
 
       {/* Context Menu */}
@@ -182,37 +394,38 @@ export function SpriteShelf() {
             className="fixed inset-0 z-40"
             onClick={handleCloseContextMenu}
           />
-          <div
-            className="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-40"
+          <Card
+            className="fixed z-50 py-1 min-w-36 gap-0"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <button
-              onClick={handleRename}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
-            >
-              ✏️ Rename
-            </button>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleDuplicate}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              className="w-full justify-start rounded-none h-8"
             >
-              📋 Duplicate
-            </button>
-            <div className="border-t border-gray-200 my-1" />
-            <button
+              <Copy className="size-4" />
+              Duplicate
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleMakeReusable}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2"
+              className="w-full justify-start rounded-none h-8"
             >
-              ⭐ Make Reusable
-            </button>
-            <div className="border-t border-gray-200 my-1" />
-            <button
+              <Star className="size-4" />
+              Make Reusable
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleDelete}
-              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+              className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
             >
-              🗑️ Delete
-            </button>
-          </div>
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          </Card>
         </>
       )}
 

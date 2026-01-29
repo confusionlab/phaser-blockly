@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import * as Blockly from 'blockly';
 import { registerContinuousToolbox } from '@blockly/continuous-toolbox';
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
 import { getToolboxConfig } from './toolbox';
 
 // Register continuous toolbox plugin once at module load
@@ -41,11 +41,11 @@ export function BlocklyEditor() {
         flyoutsVerticalToolbox: 'ContinuousFlyout',
         metricsManager: 'ContinuousMetrics',
       },
-      trashcan: true,
+      trashcan: false,
       zoom: {
-        controls: true,
+        controls: false,
         wheel: true,
-        startScale: 1,
+        startScale: 0.7,
       },
       move: {
         scrollbars: true,
@@ -54,8 +54,32 @@ export function BlocklyEditor() {
       },
     });
 
-    // Save on changes
+    // Function to update toolbox scale based on zoom
+    const updateToolboxScale = () => {
+      if (!workspaceRef.current || !containerRef.current) return;
+      const scale = workspaceRef.current.getScale();
+      const toolbox = containerRef.current.querySelector('.blocklyToolboxDiv') as HTMLElement;
+      const flyout = containerRef.current.querySelector('.blocklyFlyout') as SVGElement;
+      if (toolbox) {
+        toolbox.style.transform = `scale(${scale})`;
+        toolbox.style.transformOrigin = 'top left';
+      }
+      if (flyout) {
+        flyout.style.transform = `scale(${scale})`;
+        flyout.style.transformOrigin = 'top left';
+      }
+    };
+
+    // Initial toolbox scale
+    updateToolboxScale();
+
+    // Save on changes and handle zoom
     workspaceRef.current.addChangeListener((event) => {
+      // Handle zoom changes
+      if (event.type === Blockly.Events.VIEWPORT_CHANGE) {
+        updateToolboxScale();
+      }
+
       if (isLoadingRef.current) return;
       if (event.type === Blockly.Events.BLOCK_CHANGE ||
           event.type === Blockly.Events.BLOCK_CREATE ||

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
-import { generateCodeForObject } from '../../phaser/CodeGenerator';
-import { runtimeDebugLog, clearDebugLog } from '../../phaser/RuntimeEngine';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { generateCodeForObject } from '@/phaser/CodeGenerator';
+import { runtimeDebugLog, clearDebugLog } from '@/phaser/RuntimeEngine';
+import { Button } from '@/components/ui/button';
 
 export function DebugPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -36,12 +37,14 @@ export function DebugPanel() {
 
   if (!isOpen) {
     return (
-      <button
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-4 right-4 px-3 py-2 bg-gray-800 text-white text-sm rounded-lg shadow-lg hover:bg-gray-700 z-50"
+        className="fixed bottom-4 right-4 z-50 bg-gray-800 text-white hover:bg-gray-700"
       >
         Debug
-      </button>
+      </Button>
     );
   }
 

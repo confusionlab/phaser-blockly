@@ -1,17 +1,68 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Toolbar } from './Toolbar';
 import { ObjectEditor } from '../editors/ObjectEditor';
 import { StagePanel } from '../stage/StagePanel';
+import { PhaserCanvas } from '../stage/PhaserCanvas';
 import { ProjectDialog } from '../dialogs/ProjectDialog';
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { loadProject } from '@/db/database';
+import { Button } from '@/components/ui/button';
+import { X } from 'lucide-react';
+
+type HoveredPanel = 'code' | 'stage' | null;
+type FullscreenPanel = 'code' | 'stage' | null;
 
 export function EditorLayout() {
-  const { project, saveCurrentProject } = useProjectStore();
+  const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
+  const { project, openProject, saveCurrentProject } = useProjectStore();
   const { isPlaying, showProjectDialog, setShowProjectDialog, selectScene, startPlaying, stopPlaying } = useEditorStore();
-  const [dividerPosition, setDividerPosition] = useState(40); // percentage
+  const [dividerPosition, setDividerPosition] = useState(60);
+  const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
+  const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const hoveredPanelRef = useRef<HoveredPanel>(null);
 
-  // Auto-select first scene when project loads (only when project ID changes)
+  // Keep ref in sync for use in event handler
+  useEffect(() => {
+    hoveredPanelRef.current = hoveredPanel;
+  }, [hoveredPanel]);
+
+  // Load project from URL
+  useEffect(() => {
+    const loadFromUrl = async () => {
+      if (projectId && (!project || project.id !== projectId)) {
+        setIsLoading(true);
+        try {
+          const loadedProject = await loadProject(projectId);
+          if (loadedProject) {
+            openProject(loadedProject);
+          } else {
+            // Project not found, redirect to home
+            navigate('/', { replace: true });
+          }
+        } catch (e) {
+          console.error('Failed to load project:', e);
+          navigate('/', { replace: true });
+        } finally {
+          setIsLoading(false);
+        }
+      } else if (!projectId && project) {
+        // URL is home but we have a project open - navigate to project URL
+        navigate(`/project/${project.id}`, { replace: true });
+      } else if (!projectId && !project) {
+        // No project in URL and no project open - show dialog
+        setShowProjectDialog(true);
+      }
+    };
+
+    loadFromUrl();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  // Select first scene when project changes
   useEffect(() => {
     if (project && project.scenes.length > 0) {
       selectScene(project.scenes[0].id);
@@ -19,23 +70,44 @@ export function EditorLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
-  // Show project dialog on first load if no project
-  useEffect(() => {
-    if (!project) {
-      setShowProjectDialog(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Navigate to project URL when project is opened
+  const handleProjectOpen = useCallback((openedProject: { id: string }) => {
+    navigate(`/project/${openedProject.id}`);
+    setShowProjectDialog(false);
+  }, [navigate, setShowProjectDialog]);
 
-  // Keyboard shortcuts
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    // Check if user is typing in an input field
     const target = e.target as HTMLElement;
     const isTyping = target.tagName === 'INPUT' ||
                      target.tagName === 'TEXTAREA' ||
                      target.isContentEditable;
 
-    // Cmd+S / Ctrl+S to save
+    // Backtick for fullscreen toggle
+    if (e.key === '`' && !isTyping) {
+      e.preventDefault();
+      if (fullscreenPanel) {
+        // Exit fullscreen
+        setFullscreenPanel(null);
+      } else if (hoveredPanelRef.current) {
+        // Enter fullscreen for hovered panel
+        setFullscreenPanel(hoveredPanelRef.current);
+      }
+      return;
+    }
+
+    // Escape to exit fullscreen or stop playing
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (fullscreenPanel) {
+        setFullscreenPanel(null);
+        return;
+      }
+      if (isPlaying) {
+        stopPlaying();
+        return;
+      }
+    }
+
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
       if (project) {
@@ -44,20 +116,12 @@ export function EditorLayout() {
       return;
     }
 
-    // Escape always stops the game
-    if (e.key === 'Escape' && isPlaying) {
-      e.preventDefault();
-      stopPlaying();
-      return;
-    }
-
-    // Enter starts the game (but not while typing)
-    if (e.key === 'Enter' && !isTyping && !isPlaying && project) {
+    if (e.key === 'Enter' && !isTyping && !isPlaying && project && !fullscreenPanel) {
       e.preventDefault();
       startPlaying();
       return;
     }
-  }, [isPlaying, project, saveCurrentProject, startPlaying, stopPlaying]);
+  }, [isPlaying, project, saveCurrentProject, startPlaying, stopPlaying, fullscreenPanel]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -73,7 +137,7 @@ export function EditorLayout() {
       const deltaX = e.clientX - startX;
       const containerWidth = window.innerWidth;
       const newPos = startPos + (deltaX / containerWidth) * 100;
-      setDividerPosition(Math.max(20, Math.min(60, newPos)));
+      setDividerPosition(Math.max(20, Math.min(70, newPos)));
     };
 
     const handleMouseUp = () => {
@@ -85,13 +149,59 @@ export function EditorLayout() {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Fullscreen play mode
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading project...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (isPlaying) {
     return <StagePanel fullscreen />;
   }
 
+  // Fullscreen code editor
+  if (fullscreenPanel === 'code') {
+    return (
+      <div className="fixed inset-0 z-50 bg-background flex flex-col">
+        <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
+          <span className="text-sm font-medium">Code Editor (Press ` or Esc to exit)</span>
+          <Button variant="ghost" size="icon-sm" onClick={() => setFullscreenPanel(null)}>
+            <X className="size-4" />
+          </Button>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          <ObjectEditor />
+        </div>
+      </div>
+    );
+  }
+
+  // Fullscreen stage (canvas only, no properties)
+  if (fullscreenPanel === 'stage') {
+    return (
+      <div className="fixed inset-0 z-50 bg-background flex flex-col">
+        <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
+          <span className="text-sm font-medium">Stage (Press ` or Esc to exit)</span>
+          <Button variant="ghost" size="icon-sm" onClick={() => setFullscreenPanel(null)}>
+            <X className="size-4" />
+          </Button>
+        </div>
+        <div className="flex-1 overflow-hidden p-1">
+          <div className="relative w-full h-full bg-card rounded-lg overflow-hidden">
+            <PhaserCanvas isPlaying={false} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen bg-background">
       <Toolbar />
 
       <div className="flex flex-1 overflow-hidden">
@@ -99,15 +209,17 @@ export function EditorLayout() {
           <>
             {/* Object Editor - Left Panel */}
             <div
-              className="h-full border-r border-[var(--color-border)]"
+              className="h-full border-r"
               style={{ width: `${dividerPosition}%` }}
+              onMouseEnter={() => setHoveredPanel('code')}
+              onMouseLeave={() => setHoveredPanel(null)}
             >
               <ObjectEditor />
             </div>
 
             {/* Resizable Divider */}
             <div
-              className="w-1 bg-[var(--color-border)] hover:bg-[var(--color-primary)] cursor-col-resize transition-colors"
+              className="w-1 bg-border hover:bg-primary cursor-col-resize transition-colors"
               onMouseDown={handleDividerDrag}
             />
 
@@ -115,32 +227,36 @@ export function EditorLayout() {
             <div
               className="h-full overflow-hidden"
               style={{ width: `${100 - dividerPosition}%` }}
+              onMouseEnter={() => setHoveredPanel('stage')}
+              onMouseLeave={() => setHoveredPanel(null)}
             >
               <StagePanel />
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center bg-[var(--color-bg-main)]">
+          <div className="flex-1 flex items-center justify-center bg-background">
             <div className="text-center">
-              <div className="w-24 h-24 bg-[var(--color-primary)] rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <span className="text-white font-bold text-3xl">PC</span>
+              <div className="w-24 h-24 bg-primary rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <span className="text-primary-foreground font-bold text-3xl">PC</span>
               </div>
-              <h1 className="text-2xl font-bold text-gray-800 mb-2">Welcome to PochaCoding</h1>
-              <p className="text-gray-600 mb-6">Create amazing games with visual programming!</p>
-              <button
+              <h1 className="text-2xl font-bold mb-2">Welcome to PochaCoding</h1>
+              <p className="text-muted-foreground mb-6">Create amazing games with visual programming!</p>
+              <Button
                 onClick={() => setShowProjectDialog(true)}
-                className="px-6 py-3 bg-[var(--color-primary)] text-white rounded-lg font-medium hover:bg-[var(--color-primary-dark)] transition-colors"
+                size="lg"
               >
                 Get Started
-              </button>
+              </Button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Project Dialog */}
       {showProjectDialog && (
-        <ProjectDialog onClose={() => setShowProjectDialog(false)} />
+        <ProjectDialog
+          onClose={() => setShowProjectDialog(false)}
+          onProjectOpen={handleProjectOpen}
+        />
       )}
     </div>
   );

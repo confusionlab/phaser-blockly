@@ -1,9 +1,9 @@
 import { useEffect, useRef, useCallback } from 'react';
 import Phaser from 'phaser';
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
-import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject } from '../../phaser';
-import type { Scene as SceneData, GameObject } from '../../types';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject } from '@/phaser';
+import type { Scene as SceneData, GameObject } from '@/types';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -187,8 +187,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     });
     toRemove.forEach(c => c.destroy());
 
-    // Update or create objects
-    selectedScene.objects.forEach(obj => {
+    // Update or create objects (reverse depth so top of list = top render)
+    const objectCount = selectedScene.objects.length;
+    selectedScene.objects.forEach((obj, index) => {
       let container = phaserScene.children.getByName(obj.id) as Phaser.GameObjects.Container | undefined;
 
       if (!container) {
@@ -277,6 +278,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           container.setData('costumeId', currentCostume.id);
         }
       }
+
+      // Update z-depth based on array index (top of list = highest depth = renders on top)
+      container.setDepth(objectCount - index);
 
       // Update selection visual
       const isSelected = obj.id === selectedObjectId;
@@ -445,9 +449,11 @@ function createEditorScene(
   // Center camera on game area initially
   camera.centerOn(canvasWidth / 2, canvasHeight / 2);
 
-  // Create objects
-  sceneData.objects.forEach((obj: GameObject) => {
+  // Create objects (reverse depth so top of list = top render)
+  const objectCount = sceneData.objects.length;
+  sceneData.objects.forEach((obj: GameObject, index: number) => {
     const container = createObjectVisual(scene, obj, true); // true = editor mode
+    container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
     const isSelected = obj.id === selectedObjectId;
     container.setData('selected', isSelected);
 
@@ -518,9 +524,11 @@ function createPlayScene(
     );
   }
 
-  // Create objects and register them with runtime
-  sceneData.objects.forEach((obj: GameObject) => {
+  // Create objects and register them with runtime (reverse depth so top of list = top render)
+  const objectCount = sceneData.objects.length;
+  sceneData.objects.forEach((obj: GameObject, index: number) => {
     const container = createObjectVisual(scene, obj);
+    container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
 
     // Enable physics by default in play mode for collision detection
     scene.physics.add.existing(container);

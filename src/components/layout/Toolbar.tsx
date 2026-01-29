@@ -1,6 +1,8 @@
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
-import { downloadProject } from '../../db/database';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { downloadProject } from '@/db/database';
+import { Button } from '@/components/ui/button';
+import { Play, Square, Download, FolderOpen, Save } from 'lucide-react';
 
 export function Toolbar() {
   const { project, isDirty, saveCurrentProject } = useProjectStore();
@@ -19,21 +21,21 @@ export function Toolbar() {
   };
 
   return (
-    <div className="flex items-center justify-between h-12 px-4 bg-white border-b border-[var(--color-border)]">
+    <div className="flex items-center justify-between h-12 px-4 bg-card border-b">
       {/* Left section - Logo and project name */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-[var(--color-primary)] rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">PC</span>
+          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+            <span className="text-primary-foreground font-bold text-sm">PC</span>
           </div>
-          <span className="font-semibold text-[var(--color-primary)]">PochaCoding</span>
+          <span className="font-semibold text-primary">PochaCoding</span>
         </div>
 
         {project && (
           <div className="flex items-center gap-2">
-            <span className="text-gray-400">|</span>
+            <span className="text-muted-foreground">|</span>
             <span className="font-medium">{project.name}</span>
-            {isDirty && <span className="text-gray-400">*</span>}
+            {isDirty && <span className="text-muted-foreground">*</span>}
           </div>
         )}
       </div>
@@ -41,80 +43,61 @@ export function Toolbar() {
       {/* Center section - Play controls */}
       <div className="flex items-center gap-2">
         {project && (
-          <>
-            <button
-              onClick={handlePlay}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                isPlaying
-                  ? 'bg-[var(--color-danger)] text-white hover:bg-red-600'
-                  : 'bg-[var(--color-success)] text-white hover:bg-green-600'
-              }`}
-            >
-              {isPlaying ? (
-                <>
-                  <StopIcon />
-                  Stop
-                </>
-              ) : (
-                <>
-                  <PlayIcon />
-                  Play
-                </>
-              )}
-            </button>
-          </>
+          <Button
+            onClick={handlePlay}
+            variant={isPlaying ? 'destructive' : 'default'}
+            className={!isPlaying ? 'bg-green-600 hover:bg-green-700' : ''}
+          >
+            {isPlaying ? (
+              <>
+                <Square className="size-4" />
+                Stop
+              </>
+            ) : (
+              <>
+                <Play className="size-4" />
+                Play
+              </>
+            )}
+          </Button>
         )}
       </div>
 
       {/* Right section - Actions */}
       <div className="flex items-center gap-2">
         {project && (
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => downloadProject(project)}
-            className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
             title="Export project as JSON file"
           >
+            <Download className="size-4" />
             Export
-          </button>
+          </Button>
         )}
 
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setShowProjectDialog(true)}
-          className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
         >
+          <FolderOpen className="size-4" />
           Projects
-        </button>
+        </Button>
 
         {project && (
-          <button
+          <Button
+            variant={isDirty ? 'default' : 'secondary'}
+            size="sm"
             onClick={handleSave}
             disabled={!isDirty}
-            className={`px-3 py-2 text-sm rounded-lg transition-colors ${
-              isDirty
-                ? 'bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)]'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            }`}
           >
+            <Save className="size-4" />
             Save
-          </button>
+          </Button>
         )}
       </div>
     </div>
-  );
-}
-
-function PlayIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M8 5v14l11-7z" />
-    </svg>
-  );
-}
-
-function StopIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="6" y="6" width="12" height="12" />
-    </svg>
   );
 }

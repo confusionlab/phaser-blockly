@@ -26,6 +26,7 @@ interface ProjectStore {
   removeObject: (sceneId: string, objectId: string) => void;
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
   duplicateObject: (sceneId: string, objectId: string) => GameObject | null;
+  reorderObject: (sceneId: string, fromIndex: number, toIndex: number) => void;
 
   // Variable actions
   addVariable: (variable: Variable) => void;
@@ -258,6 +259,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
 
     return duplicate;
+  },
+
+  reorderObject: (sceneId: string, fromIndex: number, toIndex: number) => {
+    set(state => {
+      if (!state.project) return state;
+
+      return {
+        project: {
+          ...state.project,
+          scenes: state.project.scenes.map(s => {
+            if (s.id !== sceneId) return s;
+
+            const objects = [...s.objects];
+            const [removed] = objects.splice(fromIndex, 1);
+            objects.splice(toIndex, 0, removed);
+
+            return { ...s, objects };
+          }),
+          updatedAt: new Date(),
+        },
+        isDirty: true,
+      };
+    });
   },
 
   // Variable actions

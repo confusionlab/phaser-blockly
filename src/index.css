@@ -48,9 +48,72 @@ body {
   background-color: #fff !important;
 }
 
+/* Make Blockly toolbox category buttons smaller */
+.blocklyToolboxDiv {
+  width: fit-content !important;
+  min-width: unset !important;
+}
+
+.blocklyToolboxCategory {
+  padding: 8px 2px !important;
+}
+
+.blocklyToolboxCategoryLabel {
+  font-size: 10px !important;
+}
+
+.categoryBubble {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  margin: 0 auto 4px auto !important;
+}
+
+.blocklyTreeRowContentContainer {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.blocklyToolboxCategoryLabel {
+  font-size: 10px !important;
+  text-align: center !important;
+}
+
+/* Cap flyout/toolbox content width */
+.blocklyFlyout {
+  max-width: 250px !important;
+}
+
+.blocklyFlyoutBackground {
+  max-width: 250px !important;
+}
+
 /* Hide flyout scrollbar */
 .blocklyFlyoutScrollbar {
   visibility: hidden !important;
+}
+
+/* Make main workspace scrollbars smaller and closer to edge */
+.blocklyMainWorkspaceScrollbar {
+  transform: scale(0.5) !important;
+}
+
+.blocklyScrollbarHorizontal {
+  height: 6px !important;
+  bottom: 2px !important;
+}
+
+.blocklyScrollbarVertical {
+  width: 6px !important;
+  right: 2px !important;
+}
+
+.blocklyScrollbarHandle {
+  rx: 3px !important;
+  ry: 3px !important;
 }
 
 /* Custom scrollbar */

@@ -1,6 +1,9 @@
 import { useState, useRef } from 'react';
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Plus, X } from 'lucide-react';
 
 export function SceneTabs() {
   const { project, addScene, removeScene, updateScene } = useProjectStore();
@@ -54,7 +57,7 @@ export function SceneTabs() {
   };
 
   return (
-    <div className="flex items-center gap-1 px-4 py-2 bg-white border-b border-[var(--color-border)] overflow-x-auto">
+    <div className="flex items-center gap-1 px-4 py-2 bg-card border-b overflow-x-auto">
       {project.scenes.map(scene => (
         <div
           key={scene.id}
@@ -62,18 +65,17 @@ export function SceneTabs() {
           onDoubleClick={() => handleDoubleClick(scene)}
           className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
             selectedSceneId === scene.id
-              ? 'bg-[var(--color-primary)] text-white'
-              : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-secondary hover:bg-secondary/80 text-secondary-foreground'
           }`}
         >
           {editingId === scene.id ? (
-            <input
-              type="text"
+            <Input
               value={editName}
               onChange={e => setEditName(e.target.value)}
               onBlur={handleSaveEdit}
               onKeyDown={e => e.key === 'Enter' && handleSaveEdit()}
-              className="w-24 px-1 py-0.5 text-sm bg-white text-gray-900 rounded outline-none"
+              className="w-24 h-6 px-1 py-0.5 text-sm"
               autoFocus
               onClick={e => e.stopPropagation()}
             />
@@ -85,11 +87,11 @@ export function SceneTabs() {
                   onClick={(e) => handleDeleteScene(scene.id, e)}
                   className={`opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center ${
                     selectedSceneId === scene.id
-                      ? 'hover:bg-white/20'
-                      : 'hover:bg-gray-300'
+                      ? 'hover:bg-primary-foreground/20'
+                      : 'hover:bg-secondary-foreground/20'
                   }`}
                 >
-                  <span className="text-xs">×</span>
+                  <X className="size-3" />
                 </button>
               )}
             </>
@@ -97,23 +99,24 @@ export function SceneTabs() {
         </div>
       ))}
 
-      <button
+      <Button
+        variant="secondary"
+        size="icon-sm"
         onClick={handleAddScene}
-        className="flex items-center justify-center w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition-colors"
         title="Add Scene"
       >
-        <span className="text-lg">+</span>
-      </button>
+        <Plus className="size-4" />
+      </Button>
 
       {/* Spacer */}
       <div className="flex-1" />
 
       {/* Background color picker */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-500">BG:</span>
+        <span className="text-xs text-muted-foreground">BG:</span>
         <button
           onClick={() => colorInputRef.current?.click()}
-          className="w-7 h-7 rounded border-2 border-gray-300 hover:border-gray-400 transition-colors cursor-pointer"
+          className="w-7 h-7 rounded border-2 border-border hover:border-primary transition-colors cursor-pointer"
           style={{ backgroundColor: currentBgColor }}
           title="Change background color"
         />

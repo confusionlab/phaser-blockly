@@ -1,10 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
-import { useProjectStore } from '../../store/projectStore';
-import { useEditorStore } from '../../store/editorStore';
-import { listProjects, loadProject, deleteProject, downloadProject, importProjectFromFile } from '../../db/database';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import { listProjects, loadProject, deleteProject, downloadProject, importProjectFromFile } from '@/db/database';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card } from '@/components/ui/card';
+import { Download, Trash2, Upload, Plus, FolderOpen } from 'lucide-react';
+import type { Project } from '@/types';
 
 interface ProjectDialogProps {
   onClose: () => void;
+  onProjectOpen?: (project: Project) => void;
 }
 
 interface ProjectListItem {
@@ -13,17 +26,16 @@ interface ProjectListItem {
   updatedAt: Date;
 }
 
-export function ProjectDialog({ onClose }: ProjectDialogProps) {
+export function ProjectDialog({ onClose, onProjectOpen }: ProjectDialogProps) {
   const { project: currentProject, newProject, openProject } = useProjectStore();
   const { selectScene } = useEditorStore();
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [newProjectName, setNewProjectName] = useState('');
-  const [tab, setTab] = useState<'new' | 'open' | 'import'>(currentProject ? 'open' : 'new');
+  const [tab, setTab] = useState<string>(currentProject ? 'open' : 'new');
   const [loading, setLoading] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load projects list
   useEffect(() => {
     loadProjectsList();
   }, []);
@@ -36,12 +48,17 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
   const handleCreateProject = () => {
     if (!newProjectName.trim()) return;
     newProject(newProjectName.trim());
-    // Get the newly created project and select its first scene
     const createdProject = useProjectStore.getState().project;
-    if (createdProject && createdProject.scenes.length > 0) {
-      selectScene(createdProject.scenes[0].id);
+    if (createdProject) {
+      if (createdProject.scenes.length > 0) {
+        selectScene(createdProject.scenes[0].id);
+      }
+      if (onProjectOpen) {
+        onProjectOpen(createdProject);
+      } else {
+        onClose();
+      }
     }
-    onClose();
   };
 
   const handleOpenProject = async (projectId: string) => {
@@ -53,7 +70,11 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
         if (project.scenes.length > 0) {
           selectScene(project.scenes[0].id);
         }
-        onClose();
+        if (onProjectOpen) {
+          onProjectOpen(project);
+        } else {
+          onClose();
+        }
       }
     } finally {
       setLoading(false);
@@ -86,7 +107,11 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
         selectScene(project.scenes[0].id);
       }
       loadProjectsList();
-      onClose();
+      if (onProjectOpen) {
+        onProjectOpen(project);
+      } else {
+        onClose();
+      }
     } catch (error) {
       setImportError(error instanceof Error ? error.message : 'Failed to import project');
     } finally {
@@ -126,160 +151,131 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold">Projects</h2>
-          {currentProject && (
-            <button
-              onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              ×
-            </button>
-          )}
-        </div>
+    <Dialog open onOpenChange={(open) => !open && currentProject && onClose()}>
+      <DialogContent className="sm:max-w-lg" showCloseButton={!!currentProject}>
+        <DialogHeader>
+          <DialogTitle>Projects</DialogTitle>
+        </DialogHeader>
 
-        {/* Tabs */}
-        <div className="flex border-b border-gray-200">
-          <button
-            onClick={() => setTab('new')}
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-              tab === 'new'
-                ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)]'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            New Project
-          </button>
-          <button
-            onClick={() => setTab('open')}
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-              tab === 'open'
-                ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)]'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Open Project
-          </button>
-          <button
-            onClick={() => setTab('import')}
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-              tab === 'import'
-                ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)]'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Import
-          </button>
-        </div>
+        <Tabs value={tab} onValueChange={setTab} className="w-full">
+          <TabsList className="w-full">
+            <TabsTrigger value="new" className="flex-1">
+              <Plus className="size-4" />
+              New
+            </TabsTrigger>
+            <TabsTrigger value="open" className="flex-1">
+              <FolderOpen className="size-4" />
+              Open
+            </TabsTrigger>
+            <TabsTrigger value="import" className="flex-1">
+              <Upload className="size-4" />
+              Import
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Content */}
-        <div className="p-6">
-          {tab === 'new' ? (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Project Name
-                </label>
-                <input
-                  type="text"
-                  value={newProjectName}
-                  onChange={e => setNewProjectName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleCreateProject()}
-                  placeholder="My Awesome Game"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent"
-                  autoFocus
-                />
-              </div>
-              <button
-                onClick={handleCreateProject}
-                disabled={!newProjectName.trim()}
-                className="w-full py-3 bg-[var(--color-primary)] text-white rounded-lg font-medium hover:bg-[var(--color-primary-dark)] transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-              >
-                Create Project
-              </button>
+          <TabsContent value="new" className="mt-4 space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Project Name</label>
+              <Input
+                value={newProjectName}
+                onChange={e => setNewProjectName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleCreateProject()}
+                placeholder="My Awesome Game"
+                autoFocus
+              />
             </div>
-          ) : tab === 'open' ? (
+            <Button
+              onClick={handleCreateProject}
+              disabled={!newProjectName.trim()}
+              className="w-full"
+            >
+              <Plus className="size-4" />
+              Create Project
+            </Button>
+          </TabsContent>
+
+          <TabsContent value="open" className="mt-4">
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {projects.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
+                <div className="text-center py-8 text-muted-foreground">
                   <p>No projects yet</p>
                   <p className="text-sm mt-1">Create your first project to get started!</p>
                 </div>
               ) : (
                 projects.map(proj => (
-                  <div
+                  <Card
                     key={proj.id}
                     onClick={() => handleOpenProject(proj.id)}
-                    className={`group flex items-center justify-between p-4 rounded-lg cursor-pointer transition-colors ${
+                    className={`group flex items-center justify-between p-4 cursor-pointer transition-colors hover:bg-accent ${
                       currentProject?.id === proj.id
-                        ? 'bg-[var(--color-primary)]/10 border border-[var(--color-primary)]'
-                        : 'bg-gray-50 hover:bg-gray-100 border border-transparent'
+                        ? 'border-primary bg-primary/5'
+                        : ''
                     }`}
                   >
                     <div>
-                      <h3 className="font-medium text-gray-900">{proj.name}</h3>
-                      <p className="text-sm text-gray-500">
+                      <h3 className="font-medium">{proj.name}</h3>
+                      <p className="text-sm text-muted-foreground">
                         Updated {formatDate(proj.updatedAt)}
                       </p>
                     </div>
-                    <div className="flex gap-1">
-                      <button
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={(e) => handleExportProject(proj.id, e)}
-                        className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-blue-500 transition-all"
                         title="Export project"
                       >
-                        📤
-                      </button>
-                      <button
+                        <Download className="size-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={(e) => handleDeleteProject(proj.id, e)}
-                        className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 transition-all"
                         title="Delete project"
+                        className="hover:text-destructive"
                       >
-                        🗑️
-                      </button>
+                        <Trash2 className="size-4" />
+                      </Button>
                     </div>
-                  </div>
+                  </Card>
                 ))
               )}
             </div>
-          ) : (
-            <div className="space-y-4">
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileInputChange}
-                accept=".json"
-                className="hidden"
-              />
-              <div
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-[var(--color-primary)] hover:bg-gray-50 transition-colors"
-              >
-                <div className="text-4xl mb-3">📁</div>
-                <p className="text-gray-700 font-medium">Drop a project file here</p>
-                <p className="text-sm text-gray-500 mt-1">or click to browse</p>
-                <p className="text-xs text-gray-400 mt-3">.pochacoding.json files</p>
+          </TabsContent>
+
+          <TabsContent value="import" className="mt-4 space-y-4">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileInputChange}
+              accept=".json"
+              className="hidden"
+            />
+            <Card
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed p-8 text-center cursor-pointer hover:border-primary hover:bg-accent transition-colors"
+            >
+              <Upload className="size-10 mx-auto mb-3 text-muted-foreground" />
+              <p className="font-medium">Drop a project file here</p>
+              <p className="text-sm text-muted-foreground mt-1">or click to browse</p>
+              <p className="text-xs text-muted-foreground mt-3">.pochacoding.json files</p>
+            </Card>
+            {importError && (
+              <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+                {importError}
               </div>
-              {importError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                  {importError}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+            )}
+          </TabsContent>
+        </Tabs>
 
         {loading && (
-          <div className="absolute inset-0 bg-white/80 flex items-center justify-center">
-            <div className="text-gray-600">Loading...</div>
+          <div className="absolute inset-0 bg-background/80 flex items-center justify-center rounded-lg">
+            <div className="text-muted-foreground">Loading...</div>
           </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
