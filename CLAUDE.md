@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PhaserBlockly is a visual game maker for children (ages 8-12) that combines Blockly's block-based programming with Phaser 3's game engine. Similar to Scratch, but outputs real Phaser games.
+PochaCoding is a visual game maker for children (ages 8-12) that combines Blockly's block-based programming with Phaser 3's game engine. Similar to Scratch, but outputs real Phaser games.
 
 ## Tech Stack
 

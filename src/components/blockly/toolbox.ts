@@ -260,6 +260,21 @@ export function getToolboxConfig(): Blockly.utils.toolbox.ToolboxDefinition {
               DURATION: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
+          {
+            kind: 'block',
+            type: 'camera_set_follow_range',
+            inputs: {
+              WIDTH: { shadow: { type: 'math_number', fields: { NUM: '100' } } },
+              HEIGHT: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'camera_set_follow_smoothness',
+            inputs: {
+              SMOOTHNESS: { shadow: { type: 'math_number', fields: { NUM: '50' } } }
+            }
+          },
         ],
       },
       {
@@ -974,6 +989,37 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#0fBDA8');
       this.setTooltip('Fade camera in or out');
+    }
+  };
+
+  Blockly.Blocks['camera_set_follow_range'] = {
+    init: function() {
+      this.appendValueInput('WIDTH')
+        .setCheck('Number')
+        .appendField('set camera follow range width:');
+      this.appendValueInput('HEIGHT')
+        .setCheck('Number')
+        .appendField('height:');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#0fBDA8');
+      this.setTooltip('Set how far the target can move from center before camera follows (deadzone)');
+    }
+  };
+
+  Blockly.Blocks['camera_set_follow_smoothness'] = {
+    init: function() {
+      this.appendValueInput('SMOOTHNESS')
+        .setCheck('Number')
+        .appendField('set camera follow smoothness');
+      this.appendDummyInput()
+        .appendField('%');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#0fBDA8');
+      this.setTooltip('Set camera smoothness: 0% = instant, 100% = very smooth');
     }
   };
 

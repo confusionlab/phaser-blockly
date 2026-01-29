@@ -339,6 +339,12 @@ export class RuntimeEngine {
     // Clear touching pairs from previous frame
     this._touchingPairs.clear();
 
+    // Clear ground touching flags at end of frame
+    // They will be set again by collision callbacks next physics step
+    for (const sprite of this.sprites.values()) {
+      sprite.setTouchingGround(false);
+    }
+
     // Process message queue
     this.processMessages();
   }
@@ -366,11 +372,22 @@ export class RuntimeEngine {
     // Set up ground collisions if ground is enabled
     if (this._groundEnabled && this._groundZone) {
       for (const sprite of sprites) {
-        this.scene.physics.add.collider(sprite.container, this._groundZone);
+        this.scene.physics.add.collider(
+          sprite.container,
+          this._groundZone,
+          () => this.handleGroundCollision(sprite.id)
+        );
       }
     }
 
     debugLog('info', `Physics colliders set up for ${sprites.length} sprites`);
+  }
+
+  private handleGroundCollision(spriteId: string): void {
+    const sprite = this.sprites.get(spriteId);
+    if (sprite) {
+      sprite.setTouchingGround(true);
+    }
   }
 
   private handleSpriteOverlap(spriteIdA: string, spriteIdB: string): void {
@@ -648,6 +665,29 @@ export class RuntimeEngine {
     this.scene.cameras.main.fadeOut(duration * 1000);
   }
 
+  /**
+   * Set camera follow deadzone (range from center before camera starts moving)
+   * @param width - Horizontal deadzone in pixels (0 = no deadzone)
+   * @param height - Vertical deadzone in pixels (0 = no deadzone)
+   */
+  cameraSetFollowRange(width: number, height: number): void {
+    this.scene.cameras.main.setDeadzone(width, height);
+    debugLog('action', `Camera deadzone set to ${width}x${height}`);
+  }
+
+  /**
+   * Set camera follow smoothness (lerp factor)
+   * @param smoothness - 0-100 where 0 = instant snap, 100 = very slow/smooth
+   */
+  cameraSetFollowSmoothness(smoothness: number): void {
+    // Convert 0-100 to lerp value (1 = instant, 0.01 = very smooth)
+    // We invert so higher smoothness = smoother (lower lerp)
+    const clampedSmoothness = Math.max(0, Math.min(100, smoothness));
+    const lerp = 1 - (clampedSmoothness / 100) * 0.99; // Range: 1 to 0.01
+    this.scene.cameras.main.setLerp(lerp, lerp);
+    debugLog('action', `Camera smoothness set to ${smoothness}% (lerp=${lerp.toFixed(3)})`);
+  }
+
   // --- Sound ---
 
   private volume: number = 100;
@@ -717,7 +757,11 @@ export class RuntimeEngine {
     // If enabling, add colliders for all existing sprites
     if (enabled && this._groundZone) {
       for (const sprite of this.sprites.values()) {
-        this.scene.physics.add.collider(sprite.container, this._groundZone);
+        this.scene.physics.add.collider(
+          sprite.container,
+          this._groundZone,
+          () => this.handleGroundCollision(sprite.id)
+        );
       }
     }
   }
@@ -730,7 +774,11 @@ export class RuntimeEngine {
     // Re-add colliders if ground is enabled
     if (this._groundEnabled && this._groundZone) {
       for (const sprite of this.sprites.values()) {
-        this.scene.physics.add.collider(sprite.container, this._groundZone);
+        this.scene.physics.add.collider(
+          sprite.container,
+          this._groundZone,
+          () => this.handleGroundCollision(sprite.id)
+        );
       }
     }
   }
@@ -810,7 +858,11 @@ export class RuntimeEngine {
    */
   addSpriteToGroundCollision(sprite: RuntimeSprite): void {
     if (this._groundEnabled && this._groundZone) {
-      this.scene.physics.add.collider(sprite.container, this._groundZone);
+      this.scene.physics.add.collider(
+        sprite.container,
+        this._groundZone,
+        () => this.handleGroundCollision(sprite.id)
+      );
     }
   }
 

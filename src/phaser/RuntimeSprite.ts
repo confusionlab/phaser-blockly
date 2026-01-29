@@ -32,6 +32,9 @@ export class RuntimeSprite {
   // Click handler for pixel-perfect detection
   private _clickHandler: (() => void) | null = null;
 
+  // Ground collision tracking (set by RuntimeEngine)
+  private _isTouchingGround: boolean = false;
+
   constructor(
     scene: Phaser.Scene,
     container: Phaser.GameObjects.Container,
@@ -362,16 +365,23 @@ export class RuntimeSprite {
   // --- Physics Body Size ---
 
   /**
-   * Update physics body size to match the current costume/visual
-   */
-  /**
-   * Check if the sprite is touching the ground (blocked from below)
+   * Check if the sprite is touching the ground
+   * This flag is set explicitly by RuntimeEngine during ground collision
    */
   isTouchingGround(): boolean {
-    const body = this.getBody();
-    if (!body) return false;
-    return body.blocked.down || body.touching.down;
+    return this._isTouchingGround;
   }
+
+  /**
+   * Set the ground touching state (called by RuntimeEngine)
+   */
+  setTouchingGround(touching: boolean): void {
+    this._isTouchingGround = touching;
+  }
+
+  /**
+   * Update physics body size to match the current costume/visual
+   */
 
   updatePhysicsBodySize(): void {
     const body = this.getBody();

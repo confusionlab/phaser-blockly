@@ -1,12 +1,10 @@
-import { useState } from 'react';
 import { useProjectStore } from '../../store/projectStore';
 import { useEditorStore } from '../../store/editorStore';
-import { AssetLibrary } from '../dialogs/AssetLibrary';
+import { downloadProject } from '../../db/database';
 
 export function Toolbar() {
   const { project, isDirty, saveCurrentProject } = useProjectStore();
   const { isPlaying, startPlaying, stopPlaying, setShowProjectDialog } = useEditorStore();
-  const [showAssetLibrary, setShowAssetLibrary] = useState(false);
 
   const handleSave = async () => {
     await saveCurrentProject();
@@ -26,9 +24,9 @@ export function Toolbar() {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-[var(--color-primary)] rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold text-sm">PB</span>
+            <span className="text-white font-bold text-sm">PC</span>
           </div>
-          <span className="font-semibold text-[var(--color-primary)]">PhaserBlockly</span>
+          <span className="font-semibold text-[var(--color-primary)]">PochaCoding</span>
         </div>
 
         {project && (
@@ -72,10 +70,11 @@ export function Toolbar() {
       <div className="flex items-center gap-2">
         {project && (
           <button
-            onClick={() => setShowAssetLibrary(true)}
+            onClick={() => downloadProject(project)}
             className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Export project as JSON file"
           >
-            Assets
+            Export
           </button>
         )}
 
@@ -100,11 +99,6 @@ export function Toolbar() {
           </button>
         )}
       </div>
-
-      {/* Asset Library Dialog */}
-      {showAssetLibrary && (
-        <AssetLibrary onClose={() => setShowAssetLibrary(false)} />
-      )}
     </div>
   );
 }

@@ -269,6 +269,17 @@ export function registerCodeGenerators(): void {
     }
   };
 
+  javascriptGenerator.forBlock['camera_set_follow_range'] = function(block) {
+    const width = javascriptGenerator.valueToCode(block, 'WIDTH', Order.ATOMIC) || '100';
+    const height = javascriptGenerator.valueToCode(block, 'HEIGHT', Order.ATOMIC) || '100';
+    return `runtime.cameraSetFollowRange(${width}, ${height});\n`;
+  };
+
+  javascriptGenerator.forBlock['camera_set_follow_smoothness'] = function(block) {
+    const smoothness = javascriptGenerator.valueToCode(block, 'SMOOTHNESS', Order.ATOMIC) || '50';
+    return `runtime.cameraSetFollowSmoothness(${smoothness});\n`;
+  };
+
   // --- Advanced Sensing ---
 
   javascriptGenerator.forBlock['sensing_touching'] = function(block) {

@@ -1,4 +1,4 @@
-# PhaserBlockly Game Maker - Project Plan
+# PochaCoding Game Maker - Project Plan
 
 A visual game maker for children (ages 8-12) combining Blockly's block-based coding with Phaser's game engine.
 

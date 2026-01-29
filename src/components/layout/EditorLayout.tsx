@@ -123,9 +123,9 @@ export function EditorLayout() {
           <div className="flex-1 flex items-center justify-center bg-[var(--color-bg-main)]">
             <div className="text-center">
               <div className="w-24 h-24 bg-[var(--color-primary)] rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <span className="text-white font-bold text-3xl">PB</span>
+                <span className="text-white font-bold text-3xl">PC</span>
               </div>
-              <h1 className="text-2xl font-bold text-gray-800 mb-2">Welcome to PhaserBlockly</h1>
+              <h1 className="text-2xl font-bold text-gray-800 mb-2">Welcome to PochaCoding</h1>
               <p className="text-gray-600 mb-6">Create amazing games with visual programming!</p>
               <button
                 onClick={() => setShowProjectDialog(true)}

@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useProjectStore } from '../../store/projectStore';
 import { useEditorStore } from '../../store/editorStore';
-import { listProjects, loadProject, deleteProject } from '../../db/database';
+import { listProjects, loadProject, deleteProject, downloadProject, importProjectFromFile } from '../../db/database';
 
 interface ProjectDialogProps {
   onClose: () => void;
@@ -18,8 +18,10 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
   const { selectScene } = useEditorStore();
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [newProjectName, setNewProjectName] = useState('');
-  const [tab, setTab] = useState<'new' | 'open'>(currentProject ? 'open' : 'new');
+  const [tab, setTab] = useState<'new' | 'open' | 'import'>(currentProject ? 'open' : 'new');
   const [loading, setLoading] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load projects list
   useEffect(() => {
@@ -64,6 +66,53 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
       await deleteProject(projectId);
       loadProjectsList();
     }
+  };
+
+  const handleExportProject = async (projectId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const project = await loadProject(projectId);
+    if (project) {
+      downloadProject(project);
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    setLoading(true);
+    setImportError(null);
+    try {
+      const project = await importProjectFromFile(file);
+      openProject(project);
+      if (project.scenes.length > 0) {
+        selectScene(project.scenes[0].id);
+      }
+      loadProjectsList();
+      onClose();
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : 'Failed to import project');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleImportFile(file);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith('.json')) {
+      handleImportFile(file);
+    } else {
+      setImportError('Please drop a .json file');
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
   };
 
   const formatDate = (date: Date) => {
@@ -114,6 +163,16 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
           >
             Open Project
           </button>
+          <button
+            onClick={() => setTab('import')}
+            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+              tab === 'import'
+                ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)]'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Import
+          </button>
         </div>
 
         {/* Content */}
@@ -142,7 +201,7 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
                 Create Project
               </button>
             </div>
-          ) : (
+          ) : tab === 'open' ? (
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {projects.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -166,15 +225,50 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
                         Updated {formatDate(proj.updatedAt)}
                       </p>
                     </div>
-                    <button
-                      onClick={(e) => handleDeleteProject(proj.id, e)}
-                      className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 transition-all"
-                      title="Delete project"
-                    >
-                      🗑️
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={(e) => handleExportProject(proj.id, e)}
+                        className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-blue-500 transition-all"
+                        title="Export project"
+                      >
+                        📤
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteProject(proj.id, e)}
+                        className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 transition-all"
+                        title="Delete project"
+                      >
+                        🗑️
+                      </button>
+                    </div>
                   </div>
                 ))
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileInputChange}
+                accept=".json"
+                className="hidden"
+              />
+              <div
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-[var(--color-primary)] hover:bg-gray-50 transition-colors"
+              >
+                <div className="text-4xl mb-3">📁</div>
+                <p className="text-gray-700 font-medium">Drop a project file here</p>
+                <p className="text-sm text-gray-500 mt-1">or click to browse</p>
+                <p className="text-xs text-gray-400 mt-3">.pochacoding.json files</p>
+              </div>
+              {importError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {importError}
+                </div>
               )}
             </div>
           )}

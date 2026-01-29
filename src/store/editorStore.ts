@@ -17,7 +17,6 @@ interface EditorStore {
 
   // UI state
   showProjectDialog: boolean;
-  showAssetLibrary: boolean;
   showReusableLibrary: boolean;
   activeObjectTab: ObjectEditorTab;
 
@@ -34,7 +33,6 @@ interface EditorStore {
   resetView: () => void;
 
   setShowProjectDialog: (show: boolean) => void;
-  setShowAssetLibrary: (show: boolean) => void;
   setShowReusableLibrary: (show: boolean) => void;
 }
 
@@ -53,7 +51,6 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   // UI state
   showProjectDialog: false,
-  showAssetLibrary: false,
   showReusableLibrary: false,
   activeObjectTab: 'code' as ObjectEditorTab,
 
@@ -88,10 +85,6 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   setShowProjectDialog: (show) => {
     set({ showProjectDialog: show });
-  },
-
-  setShowAssetLibrary: (show) => {
-    set({ showAssetLibrary: show });
   },
 
   setShowReusableLibrary: (show) => {
