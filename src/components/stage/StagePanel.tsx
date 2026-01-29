@@ -13,7 +13,7 @@ interface StagePanelProps {
 export function StagePanel({ fullscreen = false }: StagePanelProps) {
   const { stopPlaying } = useEditorStore();
   const [bottomHeightPercent, setBottomHeightPercent] = useState(70); // percentage
-  const [objectsWidth, setObjectsWidth] = useState(33); // percentage
+  const [objectsWidth, setObjectsWidth] = useState(40); // percentage
 
   const handleVerticalDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();
