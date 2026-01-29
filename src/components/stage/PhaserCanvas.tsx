@@ -318,6 +318,28 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     }
   }, [selectedScene?.background, isPlaying]);
 
+  // Update ground when it changes (in editor mode only)
+  useEffect(() => {
+    if (!gameRef.current || isPlaying) return;
+
+    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    if (!phaserScene || !selectedScene) return;
+
+    const groundGraphics = phaserScene.data.get('groundGraphics') as Phaser.GameObjects.Graphics | undefined;
+    if (groundGraphics) {
+      groundGraphics.clear();
+
+      if (selectedScene.ground?.enabled) {
+        const groundColor = Phaser.Display.Color.HexStringToColor(selectedScene.ground.color || '#8B4513');
+        const groundY = selectedScene.ground.y || 500;
+        const groundHeight = 2000;
+        const groundWidth = 10000;
+        groundGraphics.fillStyle(groundColor.color, 1);
+        groundGraphics.fillRect(-groundWidth / 2, groundY, groundWidth, groundHeight);
+      }
+    }
+  }, [selectedScene?.ground, isPlaying]);
+
   return (
     <div
       ref={containerRef}
@@ -356,8 +378,21 @@ function createEditorScene(
   boundsGraphics.lineStyle(1, borderColor, 0.5);
   boundsGraphics.strokeRect(0, 0, canvasWidth, canvasHeight);
 
+  // Draw ground if enabled
+  const groundGraphics = scene.add.graphics();
+  groundGraphics.setDepth(-1000); // Behind everything
+  if (sceneData.ground?.enabled) {
+    const groundColor = Phaser.Display.Color.HexStringToColor(sceneData.ground.color || '#8B4513');
+    const groundY = sceneData.ground.y || 500;
+    const groundHeight = 2000;
+    const groundWidth = 10000;
+    groundGraphics.fillStyle(groundColor.color, 1);
+    groundGraphics.fillRect(-groundWidth / 2, groundY, groundWidth, groundHeight);
+  }
+
   // Store references for dynamic updates
   scene.data.set('boundsGraphics', boundsGraphics);
+  scene.data.set('groundGraphics', groundGraphics);
   scene.data.set('canvasWidth', canvasWidth);
   scene.data.set('canvasHeight', canvasHeight);
 
