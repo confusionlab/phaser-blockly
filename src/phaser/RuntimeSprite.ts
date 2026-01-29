@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { runtimeDebugLog } from './RuntimeEngine';
 import type { Costume } from '../types';
+import type { RuntimeEngine } from './RuntimeEngine';
 
 function debugLog(type: 'info' | 'event' | 'action' | 'error', message: string) {
   const entry = { time: Date.now(), type, message };
@@ -17,6 +18,7 @@ export class RuntimeSprite {
   public scene: Phaser.Scene;
   public id: string;
   public name: string;
+  private runtime: RuntimeEngine | null = null;
 
   private _direction: number = 90; // 0 = up, 90 = right, 180 = down, 270 = left
   private _size: number = 100; // percentage
@@ -47,29 +49,50 @@ export class RuntimeSprite {
     this.name = name;
   }
 
+  setRuntime(runtime: RuntimeEngine): void {
+    this.runtime = runtime;
+  }
+
   // --- Motion ---
+  // User coordinates: (0,0) at center, +Y is up
+  // Phaser coordinates: (0,0) at top-left, +Y is down
 
   moveSteps(steps: number): void {
     if (this._stopped) return;
     // Direction: 0 = up, 90 = right, 180 = down, 270 = left
+    // In user space, 0 = up means -Y in Phaser, 90 = right means +X in Phaser
     const radians = Phaser.Math.DegToRad(this._direction - 90);
     this.container.x += Math.cos(radians) * steps;
-    this.container.y += Math.sin(radians) * steps;
+    // Y is inverted: moving "up" in user space = negative Y in Phaser
+    this.container.y -= Math.sin(radians) * steps;
   }
 
-  goTo(x: number, y: number): void {
+  goTo(userX: number, userY: number): void {
     if (this._stopped) return;
-    this.container.setPosition(x, y);
+    if (this.runtime) {
+      const phaser = this.runtime.userToPhaser(userX, userY);
+      this.container.setPosition(phaser.x, phaser.y);
+    } else {
+      this.container.setPosition(userX, userY);
+    }
   }
 
-  setX(x: number): void {
+  setX(userX: number): void {
     if (this._stopped) return;
-    this.container.x = x;
+    if (this.runtime) {
+      this.container.x = userX + this.runtime.canvasWidth / 2;
+    } else {
+      this.container.x = userX;
+    }
   }
 
-  setY(y: number): void {
+  setY(userY: number): void {
     if (this._stopped) return;
-    this.container.y = y;
+    if (this.runtime) {
+      this.container.y = this.runtime.canvasHeight / 2 - userY;
+    } else {
+      this.container.y = userY;
+    }
   }
 
   changeX(dx: number): void {
@@ -82,15 +105,22 @@ export class RuntimeSprite {
   changeY(dy: number): void {
     if (this._stopped) return;
     const oldY = this.container.y;
-    this.container.y += dy;
+    // In user space, +Y is up, so changeY(10) means move up = decrease Phaser Y
+    this.container.y -= dy;
     debugLog('action', `${this.name}.changeY(${dy}): ${oldY} -> ${this.container.y}`);
   }
 
   getX(): number {
+    if (this.runtime) {
+      return this.container.x - this.runtime.canvasWidth / 2;
+    }
     return this.container.x;
   }
 
   getY(): number {
+    if (this.runtime) {
+      return this.runtime.canvasHeight / 2 - this.container.y;
+    }
     return this.container.y;
   }
 

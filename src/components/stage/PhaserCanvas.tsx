@@ -8,6 +8,24 @@ import type { Scene as SceneData, GameObject } from '@/types';
 // Register code generators once at module load
 registerCodeGenerators();
 
+// Coordinate transformation utilities
+// User space: (0,0) at center, +Y is up
+// Phaser space: (0,0) at top-left, +Y is down
+
+function userToPhaser(userX: number, userY: number, canvasWidth: number, canvasHeight: number) {
+  return {
+    x: userX + canvasWidth / 2,
+    y: canvasHeight / 2 - userY
+  };
+}
+
+function phaserToUser(phaserX: number, phaserY: number, canvasWidth: number, canvasHeight: number) {
+  return {
+    x: phaserX - canvasWidth / 2,
+    y: canvasHeight / 2 - phaserY
+  };
+}
+
 interface PhaserCanvasProps {
   isPlaying: boolean;
 }
@@ -25,19 +43,25 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const selectedSceneIdRef = useRef(selectedSceneId);
   const selectedObjectIdRef = useRef(selectedObjectId);
   const isPlayingRef = useRef(isPlaying);
+  const canvasDimensionsRef = useRef({ width: 800, height: 600 });
 
   // Keep refs in sync
   selectedSceneIdRef.current = selectedSceneId;
   selectedObjectIdRef.current = selectedObjectId;
   isPlayingRef.current = isPlaying;
+  if (project) {
+    canvasDimensionsRef.current = { width: project.settings.canvasWidth, height: project.settings.canvasHeight };
+  }
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
 
-  // Callback to update object position after drag - use ref for sceneId
-  const handleObjectDragEnd = useCallback((objId: string, x: number, y: number) => {
+  // Callback to update object position after drag - convert from Phaser to user coordinates
+  const handleObjectDragEnd = useCallback((objId: string, phaserX: number, phaserY: number) => {
     const sceneId = selectedSceneIdRef.current;
     if (sceneId) {
-      updateObject(sceneId, objId, { x, y });
+      const { width, height } = canvasDimensionsRef.current;
+      const userCoords = phaserToUser(phaserX, phaserY, width, height);
+      updateObject(sceneId, objId, { x: userCoords.x, y: userCoords.y });
     }
   }, [updateObject]);
 
@@ -106,7 +130,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           },
           create: function(this: Phaser.Scene) {
             if (isPlaying) {
-              createPlayScene(this, selectedScene, project.scenes, runtimeRef);
+              createPlayScene(this, selectedScene, project.scenes, runtimeRef, canvasWidth, canvasHeight);
             } else {
               createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd, canvasWidth, canvasHeight);
             }
@@ -194,7 +218,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
       if (!container) {
         // Create new object
-        container = createObjectVisual(phaserScene, obj, true); // true = editor mode
+        const cw = phaserScene.data.get('canvasWidth') as number || 800;
+        const ch = phaserScene.data.get('canvasHeight') as number || 600;
+        container = createObjectVisual(phaserScene, obj, true, cw, ch); // true = editor mode
         const isSelected = obj.id === selectedObjectId;
         container.setData('selected', isSelected);
 
@@ -219,8 +245,11 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           handleObjectDragEnd(obj.id, container!.x, container!.y);
         });
       } else {
-        // Update existing object
-        container.setPosition(obj.x, obj.y);
+        // Update existing object - convert user coords to Phaser coords
+        const cw = phaserScene.data.get('canvasWidth') as number || 800;
+        const ch = phaserScene.data.get('canvasHeight') as number || 600;
+        const phaserPos = userToPhaser(obj.x, obj.y, cw, ch);
+        container.setPosition(phaserPos.x, phaserPos.y);
         container.setScale(obj.scaleX, obj.scaleY);
         container.setRotation(Phaser.Math.DegToRad(obj.rotation));
         container.setVisible(obj.visible);
@@ -324,7 +353,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
   // Update ground when it changes (in editor mode only)
   useEffect(() => {
-    if (!gameRef.current || isPlaying) return;
+    if (!gameRef.current || isPlaying || !project) return;
 
     const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
     if (!phaserScene || !selectedScene) return;
@@ -335,14 +364,16 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
       if (selectedScene.ground?.enabled) {
         const groundColor = Phaser.Display.Color.HexStringToColor(selectedScene.ground.color || '#8B4513');
-        const groundY = selectedScene.ground.y || 500;
+        const userGroundY = selectedScene.ground.y ?? -200;
+        // Convert user Y to Phaser Y (user Y is up-positive, Phaser Y is down-positive)
+        const phaserGroundY = project.settings.canvasHeight / 2 - userGroundY;
         const groundHeight = 2000;
         const groundWidth = 10000;
         groundGraphics.fillStyle(groundColor.color, 1);
-        groundGraphics.fillRect(-groundWidth / 2, groundY, groundWidth, groundHeight);
+        groundGraphics.fillRect(-groundWidth / 2, phaserGroundY, groundWidth, groundHeight);
       }
     }
-  }, [selectedScene?.ground, isPlaying]);
+  }, [selectedScene?.ground, isPlaying, project]);
 
   return (
     <div
@@ -387,11 +418,13 @@ function createEditorScene(
   groundGraphics.setDepth(-1000); // Behind everything
   if (sceneData.ground?.enabled) {
     const groundColor = Phaser.Display.Color.HexStringToColor(sceneData.ground.color || '#8B4513');
-    const groundY = sceneData.ground.y || 500;
+    const userGroundY = sceneData.ground.y ?? -200;
+    // Convert user Y to Phaser Y (user Y is up-positive, Phaser Y is down-positive)
+    const phaserGroundY = canvasHeight / 2 - userGroundY;
     const groundHeight = 2000;
     const groundWidth = 10000;
     groundGraphics.fillStyle(groundColor.color, 1);
-    groundGraphics.fillRect(-groundWidth / 2, groundY, groundWidth, groundHeight);
+    groundGraphics.fillRect(-groundWidth / 2, phaserGroundY, groundWidth, groundHeight);
   }
 
   // Store references for dynamic updates
@@ -452,7 +485,7 @@ function createEditorScene(
   // Create objects (reverse depth so top of list = top render)
   const objectCount = sceneData.objects.length;
   sceneData.objects.forEach((obj: GameObject, index: number) => {
-    const container = createObjectVisual(scene, obj, true); // true = editor mode
+    const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight); // true = editor mode
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
     const isSelected = obj.id === selectedObjectId;
     container.setData('selected', isSelected);
@@ -501,7 +534,9 @@ function createPlayScene(
   scene: Phaser.Scene,
   sceneData: SceneData | undefined,
   _allScenes: SceneData[],
-  runtimeRef: React.MutableRefObject<RuntimeEngine | null>
+  runtimeRef: React.MutableRefObject<RuntimeEngine | null>,
+  canvasWidth: number,
+  canvasHeight: number
 ) {
   if (!sceneData) return;
 
@@ -510,8 +545,8 @@ function createPlayScene(
     scene.cameras.main.setBackgroundColor(sceneData.background.value);
   }
 
-  // Create runtime engine
-  const runtime = new RuntimeEngine(scene);
+  // Create runtime engine with canvas dimensions for coordinate conversion
+  const runtime = new RuntimeEngine(scene, canvasWidth, canvasHeight);
   runtimeRef.current = runtime;
   setCurrentRuntime(runtime);
 
@@ -527,10 +562,10 @@ function createPlayScene(
   // Create objects and register them with runtime (reverse depth so top of list = top render)
   const objectCount = sceneData.objects.length;
   sceneData.objects.forEach((obj: GameObject, index: number) => {
-    const container = createObjectVisual(scene, obj);
+    const container = createObjectVisual(scene, obj, false, canvasWidth, canvasHeight);
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
 
-    // Enable physics by default in play mode for collision detection
+    // Enable physics for collision detection (needed for all sprites to detect collisions)
     scene.physics.add.existing(container);
 
     // Register with runtime
@@ -544,6 +579,30 @@ function createPlayScene(
 
     // Update physics body size to match costume
     runtimeSprite.updatePhysicsBodySize();
+
+    // Apply physics configuration from the object
+    const body = container.body as Phaser.Physics.Arcade.Body;
+    if (body) {
+      if (obj.physics?.enabled) {
+        // Apply physics settings
+        body.setGravityY(obj.physics.gravityY ?? 0);
+        body.setBounce(obj.physics.bounceX ?? 0, obj.physics.bounceY ?? 0);
+        body.setCollideWorldBounds(obj.physics.collideWorldBounds ?? false);
+        body.setImmovable(obj.physics.immovable ?? false);
+        body.setVelocity(obj.physics.velocityX ?? 0, obj.physics.velocityY ?? 0);
+
+        // Set body type (static bodies don't move)
+        if (obj.physics.bodyType === 'static') {
+          body.setImmovable(true);
+          body.setGravityY(0);
+        }
+      } else {
+        // No physics enabled - disable gravity and make it not respond to physics
+        body.setGravityY(0);
+        body.setImmovable(true);
+        body.setAllowGravity(false);
+      }
+    }
 
     // Generate and execute code for this object
     console.log(`[CodeExec] Object "${obj.name}" has blocklyXml:`, !!obj.blocklyXml);
@@ -592,10 +651,15 @@ function createPlayScene(
 function createObjectVisual(
   scene: Phaser.Scene,
   obj: GameObject,
-  isEditorMode: boolean = false
+  isEditorMode: boolean = false,
+  canvasWidth: number = 800,
+  canvasHeight: number = 600
 ): Phaser.GameObjects.Container {
+  // Convert user coordinates to Phaser coordinates
+  const phaserPos = userToPhaser(obj.x, obj.y, canvasWidth, canvasHeight);
+
   // Create container for the object
-  const container = scene.add.container(obj.x, obj.y);
+  const container = scene.add.container(phaserPos.x, phaserPos.y);
   container.setName(obj.id);
   container.setScale(obj.scaleX, obj.scaleY);
   container.setRotation(Phaser.Math.DegToRad(obj.rotation));

@@ -1,11 +1,211 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  ColorPicker,
+  ColorPickerSelection,
+  ColorPickerHue,
+} from '@/components/ui/color-picker';
+import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink } from 'lucide-react';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
+
+// Color swatch with popup picker
+interface ColorSwatchProps {
+  value: string;
+  onChange: (color: string) => void;
+}
+
+function ColorSwatch({ value, onChange }: ColorSwatchProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close on click outside
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    // Delay to avoid immediate close on the same click
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside);
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const handleColorChange = useCallback((rgba: [number, number, number, number]) => {
+    const hex = Color.rgb(rgba[0], rgba[1], rgba[2]).hex();
+    onChange(hex);
+  }, [onChange]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-8 h-8 rounded-md border border-border cursor-pointer shadow-sm hover:scale-105 transition-transform"
+        style={{ backgroundColor: value }}
+        title={value}
+      />
+      {isOpen && (
+        <div className="absolute top-10 right-0 z-50 bg-popover border rounded-lg shadow-lg p-3 w-52">
+          <ColorPicker value={value} onChange={handleColorChange} className="h-auto gap-3">
+            <ColorPickerSelection className="h-32 rounded-md" />
+            <ColorPickerHue />
+          </ColorPicker>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Scrubbing input component with alt+drag support
+interface ScrubInputProps {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  step?: number;
+  precision?: number;
+  min?: number;
+  max?: number;
+  suffix?: string;
+}
+
+function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max, suffix = '' }: ScrubInputProps) {
+  const [localValue, setLocalValue] = useState(value.toFixed(precision));
+  const [isDragging, setIsDragging] = useState(false);
+  const [isAltHover, setIsAltHover] = useState(false);
+  const startXRef = useRef(0);
+  const startValueRef = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isHoveringRef = useRef(false);
+
+  useEffect(() => {
+    if (!isDragging) {
+      setLocalValue(value.toFixed(precision));
+    }
+  }, [value, precision, isDragging]);
+
+  // Listen for alt key while hovering
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt' && isHoveringRef.current) {
+        setIsAltHover(true);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        setIsAltHover(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  const handleMouseEnter = () => {
+    isHoveringRef.current = true;
+  };
+
+  const handleMouseLeave = () => {
+    isHoveringRef.current = false;
+    setIsAltHover(false);
+  };
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.altKey) {
+      e.preventDefault();
+      setIsDragging(true);
+      startXRef.current = e.clientX;
+      startValueRef.current = value;
+      document.body.style.cursor = 'ew-resize';
+    }
+  }, [value]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = e.clientX - startXRef.current;
+      const sensitivity = e.shiftKey ? 0.1 : 1;
+      let newValue = startValueRef.current + (deltaX * step * sensitivity);
+
+      if (min !== undefined) newValue = Math.max(min, newValue);
+      if (max !== undefined) newValue = Math.min(max, newValue);
+
+      onChange(Number(newValue.toFixed(precision)));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      document.body.style.cursor = '';
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, step, precision, min, max, onChange]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalValue(e.target.value);
+  };
+
+  const handleBlur = () => {
+    let newValue = parseFloat(localValue) || 0;
+    if (min !== undefined) newValue = Math.max(min, newValue);
+    if (max !== undefined) newValue = Math.min(max, newValue);
+    onChange(Number(newValue.toFixed(precision)));
+    setLocalValue(newValue.toFixed(precision));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      inputRef.current?.blur();
+    }
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className={`flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1 min-w-0 ${isDragging ? 'ring-1 ring-primary' : ''}`}
+      style={{ cursor: isAltHover || isDragging ? 'ew-resize' : 'default' }}
+      onMouseDown={handleMouseDown}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <span className="text-xs text-muted-foreground shrink-0 select-none">{label}</span>
+      <input
+        ref={inputRef}
+        type="text"
+        value={localValue + suffix}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        className="flex-1 min-w-0 bg-transparent text-sm outline-none text-foreground"
+        style={{ cursor: isAltHover || isDragging ? 'ew-resize' : 'text' }}
+      />
+    </div>
+  );
+}
 
 export function ObjectInspector() {
   const { project, updateObject, updateScene } = useProjectStore();
@@ -55,6 +255,8 @@ interface ObjectPropertiesProps {
 }
 
 function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesProps) {
+  const [linkScale, setLinkScale] = useState(true);
+
   if (!object || !sceneId) {
     return (
       <div className="text-center text-muted-foreground text-sm py-4">
@@ -63,14 +265,141 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
     );
   }
 
+  const handleUpdate = (updates: Partial<GameObject>) => {
+    updateObject(sceneId, object.id, updates);
+  };
+
+  const handleScaleXChange = (newScaleX: number) => {
+    if (linkScale) {
+      handleUpdate({ scaleX: newScaleX, scaleY: newScaleX });
+    } else {
+      handleUpdate({ scaleX: newScaleX });
+    }
+  };
+
+  const handleScaleYChange = (newScaleY: number) => {
+    if (linkScale) {
+      handleUpdate({ scaleX: newScaleY, scaleY: newScaleY });
+    } else {
+      handleUpdate({ scaleY: newScaleY });
+    }
+  };
+
+  const handleFlipH = () => {
+    handleUpdate({ scaleX: -object.scaleX });
+  };
+
+  const handleFlipV = () => {
+    handleUpdate({ scaleY: -object.scaleY });
+  };
+
+  const handleRotate90 = () => {
+    handleUpdate({ rotation: (object.rotation + 90) % 360 });
+  };
+
   return (
-    <div className="space-y-3">
-      {/* Compact property row: X, Y, Scale, Rotation, Visible */}
-      <div className="flex items-center gap-3 text-sm flex-wrap">
-        <CompactPositionField object={object} sceneId={sceneId} updateObject={updateObject} />
-        <CompactScaleField object={object} sceneId={sceneId} updateObject={updateObject} />
-        <CompactRotationField object={object} sceneId={sceneId} updateObject={updateObject} />
-        <CompactVisibilityField object={object} sceneId={sceneId} updateObject={updateObject} />
+    <div className="space-y-4">
+      {/* Visibility */}
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="visible-toggle"
+          checked={object.visible}
+          onCheckedChange={(checked) => handleUpdate({ visible: !!checked })}
+        />
+        <Label htmlFor="visible-toggle" className="text-xs text-muted-foreground cursor-pointer">
+          Visible
+        </Label>
+      </div>
+
+      {/* Position */}
+      <div>
+        <div className="text-xs text-muted-foreground mb-2">Position</div>
+        <div className="flex gap-2">
+          <ScrubInput
+            label="X"
+            value={object.x}
+            onChange={(x) => handleUpdate({ x })}
+            precision={2}
+          />
+          <ScrubInput
+            label="Y"
+            value={object.y}
+            onChange={(y) => handleUpdate({ y })}
+            precision={2}
+          />
+        </div>
+      </div>
+
+      {/* Scale (Dimensions) */}
+      <div>
+        <div className="text-xs text-muted-foreground mb-2">Scale</div>
+        <div className="flex gap-2 items-center">
+          <ScrubInput
+            label="W"
+            value={Math.abs(object.scaleX)}
+            onChange={handleScaleXChange}
+            step={0.01}
+            precision={2}
+            min={0.01}
+          />
+          <ScrubInput
+            label="H"
+            value={Math.abs(object.scaleY)}
+            onChange={handleScaleYChange}
+            step={0.01}
+            precision={2}
+            min={0.01}
+          />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setLinkScale(!linkScale)}
+            className={linkScale ? 'text-primary' : 'text-muted-foreground'}
+            title={linkScale ? 'Unlink scale' : 'Link scale'}
+          >
+            {linkScale ? <Link className="size-4" /> : <Unlink className="size-4" />}
+          </Button>
+        </div>
+      </div>
+
+      {/* Rotation */}
+      <div>
+        <div className="text-xs text-muted-foreground mb-2">Rotation</div>
+        <div className="flex gap-2 items-center">
+          <ScrubInput
+            label="↻"
+            value={object.rotation}
+            onChange={(rotation) => handleUpdate({ rotation })}
+            precision={0}
+            suffix="°"
+          />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleRotate90}
+            title="Rotate 90°"
+          >
+            <RotateCw className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleFlipH}
+            title="Flip horizontal"
+            className={object.scaleX < 0 ? 'text-primary' : ''}
+          >
+            <FlipHorizontal className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleFlipV}
+            title="Flip vertical"
+            className={object.scaleY < 0 ? 'text-primary' : ''}
+          >
+            <FlipVertical className="size-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Physics Toggle */}
@@ -98,7 +427,7 @@ function SceneProperties({ scene, updateScene }: ScenePropertiesProps) {
     );
   }
 
-  const ground = scene.ground || { enabled: false, y: 500, color: '#8B4513' };
+  const ground = scene.ground || { enabled: false, y: -200, color: '#8B4513' };
 
   const updateGround = (updates: Partial<GroundConfig>) => {
     updateScene(scene.id, {
@@ -107,74 +436,49 @@ function SceneProperties({ scene, updateScene }: ScenePropertiesProps) {
   };
 
   return (
-    <>
+    <div className="space-y-4">
       {/* Background Color */}
-      <div className="mb-4">
-        <Label className="text-sm text-muted-foreground mb-1">Background Color</Label>
-        <div className="flex items-center gap-2">
-          <input
-            type="color"
-            value={scene.background?.value || '#87CEEB'}
-            onChange={(e) => updateScene(scene.id, {
-              background: { type: 'color', value: e.target.value }
-            })}
-            className="w-10 h-8 rounded border border-border cursor-pointer"
-          />
-          <Input
-            value={scene.background?.value || '#87CEEB'}
-            onChange={(e) => updateScene(scene.id, {
-              background: { type: 'color', value: e.target.value }
-            })}
-            className="flex-1 h-8"
-          />
-        </div>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">Background</span>
+        <ColorSwatch
+          value={scene.background?.value || '#87CEEB'}
+          onChange={(color) => updateScene(scene.id, {
+            background: { type: 'color', value: color }
+          })}
+        />
       </div>
 
       {/* Ground Settings */}
       <div className="border-t pt-3">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm font-medium">Ground</span>
-          <Button
-            variant={ground.enabled ? 'default' : 'secondary'}
-            size="sm"
-            onClick={() => updateGround({ enabled: !ground.enabled })}
-          >
-            {ground.enabled ? 'Enabled' : 'Disabled'}
-          </Button>
+        <div className="flex items-center gap-2 mb-3">
+          <Checkbox
+            id="ground-toggle"
+            checked={ground.enabled}
+            onCheckedChange={(checked) => updateGround({ enabled: !!checked })}
+          />
+          <Label htmlFor="ground-toggle" className="text-xs text-muted-foreground cursor-pointer">
+            Ground
+          </Label>
         </div>
 
         {ground.enabled && (
           <div className="space-y-3">
-            {/* Ground Y Position */}
-            <div className="flex items-center gap-2">
-              <Label className="text-sm text-muted-foreground w-20">Y Position:</Label>
-              <Input
-                type="number"
-                value={Math.round(ground.y)}
-                onChange={(e) => updateGround({ y: Math.round(parseFloat(e.target.value) || 500) })}
-                className="flex-1 h-8"
+            <div className="flex gap-2 items-center">
+              <ScrubInput
+                label="Y"
+                value={ground.y}
+                onChange={(y) => updateGround({ y })}
+                precision={0}
               />
-            </div>
-
-            {/* Ground Color */}
-            <div className="flex items-center gap-2">
-              <Label className="text-sm text-muted-foreground w-20">Color:</Label>
-              <input
-                type="color"
+              <ColorSwatch
                 value={ground.color}
-                onChange={(e) => updateGround({ color: e.target.value })}
-                className="w-10 h-8 rounded border border-border cursor-pointer"
-              />
-              <Input
-                value={ground.color}
-                onChange={(e) => updateGround({ color: e.target.value })}
-                className="flex-1 h-8"
+                onChange={(color) => updateGround({ color })}
               />
             </div>
           </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -186,123 +490,11 @@ interface FieldProps {
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
 }
 
-function CompactPositionField({ object, sceneId, updateObject }: FieldProps) {
-  const [x, setX] = useState(Math.round(object.x).toString());
-  const [y, setY] = useState(Math.round(object.y).toString());
-
-  useEffect(() => {
-    setX(Math.round(object.x).toString());
-    setY(Math.round(object.y).toString());
-  }, [object.x, object.y]);
-
-  const handleBlur = () => {
-    const newX = Math.round(parseFloat(x) || 0);
-    const newY = Math.round(parseFloat(y) || 0);
-    updateObject(sceneId, object.id, { x: newX, y: newY });
-  };
-
-  return (
-    <>
-      <div className="flex items-center gap-1">
-        <Label className="text-muted-foreground text-xs">X:</Label>
-        <Input
-          type="number"
-          value={x}
-          onChange={(e) => setX(e.target.value)}
-          onBlur={handleBlur}
-          className="w-16 h-7 text-xs"
-        />
-      </div>
-      <div className="flex items-center gap-1">
-        <Label className="text-muted-foreground text-xs">Y:</Label>
-        <Input
-          type="number"
-          value={y}
-          onChange={(e) => setY(e.target.value)}
-          onBlur={handleBlur}
-          className="w-16 h-7 text-xs"
-        />
-      </div>
-    </>
-  );
-}
-
-function CompactScaleField({ object, sceneId, updateObject }: FieldProps) {
-  // Use uniform scale (average of scaleX and scaleY, or just scaleX if they're equal)
-  const [scale, setScale] = useState(Math.round(object.scaleX * 100).toString());
-
-  useEffect(() => {
-    setScale(Math.round(object.scaleX * 100).toString());
-  }, [object.scaleX]);
-
-  const handleBlur = () => {
-    const newScale = (Math.round(parseFloat(scale) || 100)) / 100;
-    updateObject(sceneId, object.id, { scaleX: newScale, scaleY: newScale });
-  };
-
-  return (
-    <div className="flex items-center gap-1">
-      <Label className="text-muted-foreground text-xs">Scale:</Label>
-      <Input
-        type="number"
-        value={scale}
-        onChange={(e) => setScale(e.target.value)}
-        onBlur={handleBlur}
-        className="w-14 h-7 text-xs"
-      />
-      <span className="text-muted-foreground text-xs">%</span>
-    </div>
-  );
-}
-
-function CompactRotationField({ object, sceneId, updateObject }: FieldProps) {
-  const [rotation, setRotation] = useState(Math.round(object.rotation).toString());
-
-  useEffect(() => {
-    setRotation(Math.round(object.rotation).toString());
-  }, [object.rotation]);
-
-  const handleBlur = () => {
-    const newRotation = Math.round(parseFloat(rotation) || 0);
-    updateObject(sceneId, object.id, { rotation: newRotation });
-  };
-
-  return (
-    <div className="flex items-center gap-1">
-      <Label className="text-muted-foreground text-xs">Rot:</Label>
-      <Input
-        type="number"
-        value={rotation}
-        onChange={(e) => setRotation(e.target.value)}
-        onBlur={handleBlur}
-        className="w-14 h-7 text-xs"
-        min="0"
-        max="360"
-      />
-      <span className="text-muted-foreground text-xs">°</span>
-    </div>
-  );
-}
-
-function CompactVisibilityField({ object, sceneId, updateObject }: FieldProps) {
-  return (
-    <div className="flex items-center gap-1">
-      <Label className="text-muted-foreground text-xs">Visible:</Label>
-      <input
-        type="checkbox"
-        checked={object.visible}
-        onChange={(e) => updateObject(sceneId, object.id, { visible: e.target.checked })}
-        className="w-4 h-4 rounded border-border"
-      />
-    </div>
-  );
-}
-
 function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
   const hasPhysics = object.physics?.enabled ?? false;
 
-  const togglePhysics = () => {
-    if (hasPhysics) {
+  const togglePhysics = (checked: boolean) => {
+    if (!checked) {
       updateObject(sceneId, object.id, { physics: null });
     } else {
       updateObject(sceneId, object.id, {
@@ -323,15 +515,14 @@ function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
 
   return (
     <div className="flex items-center gap-2 pt-2 border-t">
-      <Label className="text-muted-foreground text-xs">Physics:</Label>
-      <Button
-        variant={hasPhysics ? 'default' : 'secondary'}
-        size="sm"
-        onClick={togglePhysics}
-        className="h-7 text-xs"
-      >
-        {hasPhysics ? 'Enabled' : 'Disabled'}
-      </Button>
+      <Checkbox
+        id="physics-toggle"
+        checked={hasPhysics}
+        onCheckedChange={togglePhysics}
+      />
+      <Label htmlFor="physics-toggle" className="text-xs text-muted-foreground cursor-pointer">
+        Physics
+      </Label>
     </div>
   );
 }
@@ -346,98 +537,83 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
   };
 
   return (
-    <div className="border-t pt-3 space-y-3">
-      <div className="text-sm font-medium text-muted-foreground">Physics Properties</div>
-
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        {/* Body Type */}
-        <div className="flex items-center gap-2 col-span-2">
-          <Label className="text-muted-foreground w-20">Body Type:</Label>
-          <select
-            value={physics.bodyType}
-            onChange={(e) => updatePhysics({ bodyType: e.target.value as 'dynamic' | 'static' })}
-            className="flex-1 h-8 px-2 rounded border border-border bg-background text-sm"
-          >
-            <option value="dynamic">Dynamic</option>
-            <option value="static">Static</option>
-          </select>
+    <div className="space-y-4 mt-3">
+      {/* Body Type */}
+      <div>
+        <div className="text-xs text-muted-foreground mb-2">Body Type</div>
+        <div className="flex gap-2">
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1">
+            <select
+              value={physics.bodyType}
+              onChange={(e) => updatePhysics({ bodyType: e.target.value as 'dynamic' | 'static' })}
+              className="flex-1 bg-transparent text-sm outline-none text-foreground cursor-pointer"
+            >
+              <option value="dynamic">Dynamic</option>
+              <option value="static">Static</option>
+            </select>
+          </div>
         </div>
+      </div>
 
-        {/* Gravity */}
-        <div className="flex items-center gap-2 col-span-2">
-          <Label className="text-muted-foreground w-20">Gravity Y:</Label>
-          <Input
-            type="number"
-            value={Math.round(physics.gravityY)}
-            onChange={(e) => updatePhysics({ gravityY: Math.round(parseFloat(e.target.value) || 0) })}
-            className="flex-1 h-8"
+      {/* Gravity */}
+      <div>
+        <div className="text-xs text-muted-foreground mb-2">Gravity</div>
+        <div className="flex gap-2">
+          <ScrubInput
+            label="Y"
+            value={physics.gravityY}
+            onChange={(gravityY) => updatePhysics({ gravityY })}
+            precision={0}
           />
         </div>
+      </div>
 
-        {/* Velocity */}
-        <div className="flex items-center gap-2">
-          <Label className="text-muted-foreground w-16">Vel X:</Label>
-          <Input
-            type="number"
-            value={Math.round(physics.velocityX)}
-            onChange={(e) => updatePhysics({ velocityX: Math.round(parseFloat(e.target.value) || 0) })}
-            className="w-full h-8"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="text-muted-foreground w-16">Vel Y:</Label>
-          <Input
-            type="number"
-            value={Math.round(physics.velocityY)}
-            onChange={(e) => updatePhysics({ velocityY: Math.round(parseFloat(e.target.value) || 0) })}
-            className="w-full h-8"
-          />
-        </div>
-
-        {/* Bounce */}
-        <div className="flex items-center gap-2">
-          <Label className="text-muted-foreground w-16">Bounce X:</Label>
-          <Input
-            type="number"
-            step="0.1"
-            min="0"
-            max="1"
+      {/* Bounce */}
+      <div>
+        <div className="text-xs text-muted-foreground mb-2">Bounce</div>
+        <div className="flex gap-2">
+          <ScrubInput
+            label="X"
             value={physics.bounceX}
-            onChange={(e) => updatePhysics({ bounceX: Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)) })}
-            className="w-full h-8"
+            onChange={(bounceX) => updatePhysics({ bounceX })}
+            step={0.1}
+            precision={2}
+            min={0}
+            max={1}
           />
-        </div>
-        <div className="flex items-center gap-2">
-          <Label className="text-muted-foreground w-16">Bounce Y:</Label>
-          <Input
-            type="number"
-            step="0.1"
-            min="0"
-            max="1"
+          <ScrubInput
+            label="Y"
             value={physics.bounceY}
-            onChange={(e) => updatePhysics({ bounceY: Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)) })}
-            className="w-full h-8"
+            onChange={(bounceY) => updatePhysics({ bounceY })}
+            step={0.1}
+            precision={2}
+            min={0}
+            max={1}
           />
         </div>
+      </div>
 
-        {/* Checkboxes */}
+      {/* Checkboxes */}
+      <div className="flex gap-4">
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Checkbox
+            id="collide-bounds"
             checked={physics.collideWorldBounds}
-            onChange={(e) => updatePhysics({ collideWorldBounds: e.target.checked })}
-            className="w-4 h-4 rounded border-border"
+            onCheckedChange={(checked) => updatePhysics({ collideWorldBounds: !!checked })}
           />
-          <Label className="text-muted-foreground text-xs">Collide Bounds</Label>
+          <Label htmlFor="collide-bounds" className="text-xs text-muted-foreground cursor-pointer">
+            Collide Bounds
+          </Label>
         </div>
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Checkbox
+            id="immovable"
             checked={physics.immovable}
-            onChange={(e) => updatePhysics({ immovable: e.target.checked })}
-            className="w-4 h-4 rounded border-border"
+            onCheckedChange={(checked) => updatePhysics({ immovable: !!checked })}
           />
-          <Label className="text-muted-foreground text-xs">Immovable</Label>
+          <Label htmlFor="immovable" className="text-xs text-muted-foreground cursor-pointer">
+            Immovable
+          </Label>
         </div>
       </div>
     </div>

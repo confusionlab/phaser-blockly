@@ -19,7 +19,7 @@ export function EditorLayout() {
   const navigate = useNavigate();
   const { project, openProject, saveCurrentProject } = useProjectStore();
   const { isPlaying, showProjectDialog, setShowProjectDialog, selectScene, startPlaying, stopPlaying } = useEditorStore();
-  const [dividerPosition, setDividerPosition] = useState(60);
+  const [dividerPosition, setDividerPosition] = useState(70);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isLoading, setIsLoading] = useState(false);

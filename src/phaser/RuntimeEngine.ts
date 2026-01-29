@@ -58,20 +58,45 @@ export class RuntimeEngine {
 
   // Ground configuration
   private _groundEnabled: boolean = false;
-  private _groundY: number = 500;
+  private _groundY: number = -200; // User space (Y-up)
   private _groundColor: string = '#8B4513';
   private _groundGraphics: Phaser.GameObjects.Graphics | null = null;
   private _groundZone: Phaser.GameObjects.Zone | null = null;
 
+  // Canvas dimensions for coordinate conversion
+  private _canvasWidth: number = 800;
+  private _canvasHeight: number = 600;
+
   // Collision tracking to prevent duplicate events per frame
   private _touchingPairs: Set<string> = new Set();
 
-  constructor(scene: Phaser.Scene) {
+  constructor(scene: Phaser.Scene, canvasWidth: number = 800, canvasHeight: number = 600) {
     this.scene = scene;
+    this._canvasWidth = canvasWidth;
+    this._canvasHeight = canvasHeight;
     clearDebugLog();
     debugLog('info', 'RuntimeEngine created');
     this.setupInputListeners();
   }
+
+  // Coordinate conversion: User space (center origin, Y-up) to Phaser space (top-left origin, Y-down)
+  userToPhaser(userX: number, userY: number): { x: number; y: number } {
+    return {
+      x: userX + this._canvasWidth / 2,
+      y: this._canvasHeight / 2 - userY
+    };
+  }
+
+  // Coordinate conversion: Phaser space to User space
+  phaserToUser(phaserX: number, phaserY: number): { x: number; y: number } {
+    return {
+      x: phaserX - this._canvasWidth / 2,
+      y: this._canvasHeight / 2 - phaserY
+    };
+  }
+
+  get canvasWidth(): number { return this._canvasWidth; }
+  get canvasHeight(): number { return this._canvasHeight; }
 
   private setupInputListeners(): void {
     // Create Phaser key objects for reliable key detection
@@ -138,6 +163,7 @@ export class RuntimeEngine {
     container: Phaser.GameObjects.Container
   ): RuntimeSprite {
     const sprite = new RuntimeSprite(this.scene, container, id, name);
+    sprite.setRuntime(this);
     this.sprites.set(id, sprite);
     this.handlers.set(id, {
       onStart: [],
@@ -510,11 +536,13 @@ export class RuntimeEngine {
   }
 
   getMouseX(): number {
-    return this.scene.input.activePointer.worldX;
+    // Convert Phaser mouse X to user space
+    return this.scene.input.activePointer.worldX - this._canvasWidth / 2;
   }
 
   getMouseY(): number {
-    return this.scene.input.activePointer.worldY;
+    // Convert Phaser mouse Y to user space (+Y is up)
+    return this._canvasHeight / 2 - this.scene.input.activePointer.worldY;
   }
 
   // --- Variables ---
@@ -645,8 +673,10 @@ export class RuntimeEngine {
     this.scene.cameras.main.stopFollow();
   }
 
-  cameraGoTo(x: number, y: number): void {
-    this.scene.cameras.main.centerOn(x, y);
+  cameraGoTo(userX: number, userY: number): void {
+    // Convert user coordinates to Phaser coordinates
+    const phaser = this.userToPhaser(userX, userY);
+    this.scene.cameras.main.centerOn(phaser.x, phaser.y);
   }
 
   cameraShake(duration: number, intensity: number = 0.01): void {
@@ -820,6 +850,9 @@ export class RuntimeEngine {
     this._groundGraphics.clear();
 
     if (this._groundEnabled) {
+      // Convert user Y to Phaser Y
+      const phaserGroundY = this._canvasHeight / 2 - this._groundY;
+
       // Parse color and draw ground
       const color = Phaser.Display.Color.HexStringToColor(this._groundColor);
       const groundHeight = 2000; // Large enough to cover below ground
@@ -828,7 +861,7 @@ export class RuntimeEngine {
       this._groundGraphics.fillStyle(color.color, 1);
       this._groundGraphics.fillRect(
         -groundWidth / 2,
-        this._groundY,
+        phaserGroundY,
         groundWidth,
         groundHeight
       );
@@ -843,13 +876,16 @@ export class RuntimeEngine {
     }
 
     if (this._groundEnabled) {
+      // Convert user Y to Phaser Y
+      const phaserGroundY = this._canvasHeight / 2 - this._groundY;
+
       // Create a zone for ground collision
       const groundWidth = 10000;
       const groundHeight = 100;
-      this._groundZone = this.scene.add.zone(0, this._groundY + groundHeight / 2, groundWidth, groundHeight);
+      this._groundZone = this.scene.add.zone(0, phaserGroundY + groundHeight / 2, groundWidth, groundHeight);
       this.scene.physics.add.existing(this._groundZone, true); // true = static body
 
-      debugLog('info', `Ground body created at y=${this._groundY}`);
+      debugLog('info', `Ground body created at user y=${this._groundY}, phaser y=${phaserGroundY}`);
     }
   }
 

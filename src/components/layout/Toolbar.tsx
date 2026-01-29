@@ -1,12 +1,19 @@
+import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
 import { Button } from '@/components/ui/button';
-import { Play, Square, Download, FolderOpen, Save } from 'lucide-react';
+import { Play, Square, Upload, Save } from 'lucide-react';
 
 export function Toolbar() {
-  const { project, isDirty, saveCurrentProject } = useProjectStore();
-  const { isPlaying, startPlaying, stopPlaying, setShowProjectDialog } = useEditorStore();
+  const navigate = useNavigate();
+  const { project, isDirty, saveCurrentProject, closeProject } = useProjectStore();
+  const { isPlaying, startPlaying, stopPlaying } = useEditorStore();
+
+  const handleGoHome = () => {
+    closeProject();
+    navigate('/');
+  };
 
   const handleSave = async () => {
     await saveCurrentProject();
@@ -24,12 +31,15 @@ export function Toolbar() {
     <div className="flex items-center justify-between h-12 px-4 bg-card border-b">
       {/* Left section - Logo and project name */}
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
+        <button
+          onClick={handleGoHome}
+          className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+        >
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
             <span className="text-primary-foreground font-bold text-sm">PC</span>
           </div>
           <span className="font-semibold text-primary">PochaCoding</span>
-        </div>
+        </button>
 
         {project && (
           <div className="flex items-center gap-2">
@@ -72,19 +82,10 @@ export function Toolbar() {
             onClick={() => downloadProject(project)}
             title="Export project as JSON file"
           >
-            <Download className="size-4" />
+            <Upload className="size-4" />
             Export
           </Button>
         )}
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowProjectDialog(true)}
-        >
-          <FolderOpen className="size-4" />
-          Projects
-        </Button>
 
         {project && (
           <Button
