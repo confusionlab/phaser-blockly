@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { Project, Scene, GameObject, Variable } from '../types';
-import { createDefaultProject, createDefaultScene, createDefaultGameObject } from '../types';
+import type { Project, Scene, GameObject, Variable, ComponentDefinition } from '../types';
+import { createDefaultProject, createDefaultScene, createDefaultGameObject, COMPONENT_COLOR } from '../types';
 import { saveProject } from '../db/database';
 
 interface ProjectStore {
@@ -33,9 +33,17 @@ interface ProjectStore {
   removeVariable: (variableId: string) => void;
   updateVariable: (variableId: string, updates: Partial<Variable>) => void;
 
+  // Component actions
+  makeComponent: (sceneId: string, objectId: string) => ComponentDefinition | null;
+  updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
+  deleteComponent: (componentId: string) => void;
+  addComponentInstance: (sceneId: string, componentId: string) => GameObject | null;
+  detachFromComponent: (sceneId: string, objectId: string) => void;
+
   // Helpers
   getScene: (sceneId: string) => Scene | undefined;
   getObject: (sceneId: string, objectId: string) => GameObject | undefined;
+  getComponent: (componentId: string) => ComponentDefinition | undefined;
 }
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
@@ -326,6 +334,211 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }));
   },
 
+  // Component actions
+  makeComponent: (sceneId: string, objectId: string) => {
+    const state = get();
+    if (!state.project) return null;
+
+    const scene = state.project.scenes.find(s => s.id === sceneId);
+    const obj = scene?.objects.find(o => o.id === objectId);
+    if (!obj) return null;
+
+    // Don't convert if already a component instance
+    if (obj.componentId) return null;
+
+    // Create component definition from the object
+    const componentId = crypto.randomUUID();
+    const component: ComponentDefinition = {
+      id: componentId,
+      name: obj.name,
+      blocklyXml: obj.blocklyXml,
+      costumes: obj.costumes,
+      currentCostumeIndex: obj.currentCostumeIndex,
+      physics: obj.physics,
+      sounds: obj.sounds,
+    };
+
+    // Generate pastel purple costume for component
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <circle cx="32" cy="32" r="28" fill="${COMPONENT_COLOR}" stroke="#7c3aed" stroke-width="2"/>
+    </svg>`;
+    const componentCostume = {
+      id: crypto.randomUUID(),
+      name: 'component',
+      assetId: `data:image/svg+xml;base64,${btoa(svg)}`,
+    };
+
+    // Update component costumes if it only has default costume
+    if (component.costumes.length === 1 && component.costumes[0].name === 'costume1') {
+      component.costumes = [componentCostume];
+    }
+
+    set(state => ({
+      project: state.project
+        ? {
+            ...state.project,
+            components: [...(state.project.components || []), component],
+            scenes: state.project.scenes.map(s =>
+              s.id === sceneId
+                ? {
+                    ...s,
+                    objects: s.objects.map(o =>
+                      o.id === objectId
+                        ? { ...o, componentId }
+                        : o
+                    ),
+                  }
+                : s
+            ),
+            updatedAt: new Date(),
+          }
+        : null,
+      isDirty: true,
+    }));
+
+    return component;
+  },
+
+  updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => {
+    set(state => ({
+      project: state.project
+        ? {
+            ...state.project,
+            components: (state.project.components || []).map(c =>
+              c.id === componentId ? { ...c, ...updates } : c
+            ),
+            updatedAt: new Date(),
+          }
+        : null,
+      isDirty: true,
+    }));
+  },
+
+  deleteComponent: (componentId: string) => {
+    set(state => {
+      if (!state.project) return state;
+
+      // Detach all instances first
+      const updatedScenes = state.project.scenes.map(scene => ({
+        ...scene,
+        objects: scene.objects.map(obj => {
+          if (obj.componentId === componentId) {
+            const component = (state.project!.components || []).find(c => c.id === componentId);
+            if (component) {
+              // Copy component data back to the object
+              return {
+                ...obj,
+                componentId: undefined,
+                blocklyXml: component.blocklyXml,
+                costumes: component.costumes,
+                currentCostumeIndex: component.currentCostumeIndex,
+                physics: component.physics,
+                sounds: component.sounds,
+              };
+            }
+          }
+          return obj;
+        }),
+      }));
+
+      return {
+        project: {
+          ...state.project,
+          components: (state.project.components || []).filter(c => c.id !== componentId),
+          scenes: updatedScenes,
+          updatedAt: new Date(),
+        },
+        isDirty: true,
+      };
+    });
+  },
+
+  addComponentInstance: (sceneId: string, componentId: string) => {
+    const state = get();
+    if (!state.project) return null;
+
+    const component = (state.project.components || []).find(c => c.id === componentId);
+    if (!component) return null;
+
+    const newObject: GameObject = {
+      id: crypto.randomUUID(),
+      name: component.name,
+      spriteAssetId: null,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      visible: true,
+      layer: 0,
+      componentId,
+      // These are ignored when componentId is set, but we need them for the type
+      physics: null,
+      blocklyXml: '',
+      costumes: [],
+      currentCostumeIndex: 0,
+      sounds: [],
+    };
+
+    set(state => ({
+      project: state.project
+        ? {
+            ...state.project,
+            scenes: state.project.scenes.map(s =>
+              s.id === sceneId
+                ? { ...s, objects: [...s.objects, newObject] }
+                : s
+            ),
+            updatedAt: new Date(),
+          }
+        : null,
+      isDirty: true,
+    }));
+
+    return newObject;
+  },
+
+  detachFromComponent: (sceneId: string, objectId: string) => {
+    set(state => {
+      if (!state.project) return state;
+
+      const scene = state.project.scenes.find(s => s.id === sceneId);
+      const obj = scene?.objects.find(o => o.id === objectId);
+      if (!obj?.componentId) return state;
+
+      const component = (state.project.components || []).find(c => c.id === obj.componentId);
+      if (!component) return state;
+
+      return {
+        project: {
+          ...state.project,
+          scenes: state.project.scenes.map(s =>
+            s.id === sceneId
+              ? {
+                  ...s,
+                  objects: s.objects.map(o =>
+                    o.id === objectId
+                      ? {
+                          ...o,
+                          componentId: undefined,
+                          blocklyXml: component.blocklyXml,
+                          costumes: component.costumes,
+                          currentCostumeIndex: component.currentCostumeIndex,
+                          physics: component.physics,
+                          sounds: component.sounds,
+                        }
+                      : o
+                  ),
+                }
+              : s
+          ),
+          updatedAt: new Date(),
+        },
+        isDirty: true,
+      };
+    });
+  },
+
   // Helpers
   getScene: (sceneId: string) => {
     const { project } = get();
@@ -335,5 +548,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   getObject: (sceneId: string, objectId: string) => {
     const scene = get().getScene(sceneId);
     return scene?.objects.find(o => o.id === objectId);
+  },
+
+  getComponent: (componentId: string) => {
+    const { project } = get();
+    return (project?.components || []).find(c => c.id === componentId);
   },
 }));

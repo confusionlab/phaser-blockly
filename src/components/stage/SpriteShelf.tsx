@@ -29,13 +29,17 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Star, Pencil, Copy, Trash2, ChevronRight } from 'lucide-react';
+import { Plus, Star, Pencil, Copy, Trash2, ChevronRight, Component, Unlink } from 'lucide-react';
 import type { GameObject, ReusableObject } from '@/types';
+import { COMPONENT_COLOR, getEffectiveObjectProps } from '@/types';
 
 interface SortableObjectItemProps {
   object: GameObject;
   isSelected: boolean;
   isEditing: boolean;
+  isComponentInstance: boolean;
+  effectiveCostumes: { assetId: string }[];
+  effectiveCostumeIndex: number;
   editName: string;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onSelect: () => void;
@@ -49,6 +53,9 @@ function SortableObjectItem({
   object,
   isSelected,
   isEditing,
+  isComponentInstance,
+  effectiveCostumes,
+  effectiveCostumeIndex,
   editName,
   inputRef,
   onSelect,
@@ -96,15 +103,21 @@ function SortableObjectItem({
       }`}
     >
       {/* Thumbnail */}
-      <div className="w-8 h-8 rounded flex items-center justify-center overflow-hidden shrink-0 bg-muted">
-        {object.costumes && object.costumes.length > 0 ? (
+      <div
+        className="w-8 h-8 rounded flex items-center justify-center overflow-hidden shrink-0"
+        style={{
+          backgroundColor: isComponentInstance ? COMPONENT_COLOR : undefined,
+          border: isComponentInstance ? '2px solid #7c3aed' : undefined,
+        }}
+      >
+        {effectiveCostumes && effectiveCostumes.length > 0 ? (
           <img
-            src={object.costumes[object.currentCostumeIndex ?? 0]?.assetId}
+            src={effectiveCostumes[effectiveCostumeIndex]?.assetId}
             alt={object.name}
             className="w-full h-full object-contain"
           />
         ) : (
-          <span className="text-sm">📦</span>
+          <span className="text-sm">{isComponentInstance ? '⬡' : '📦'}</span>
         )}
       </div>
 
@@ -124,14 +137,17 @@ function SortableObjectItem({
           onPointerDown={e => e.stopPropagation()}
         />
       ) : (
-        <span className="flex-1 text-xs truncate">{object.name}</span>
+        <span className={`flex-1 text-xs truncate ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : ''}`}>
+          {object.name}
+          {isComponentInstance && <Component className="inline-block size-3 ml-1 opacity-60" />}
+        </span>
       )}
     </div>
   );
 }
 
 export function SpriteShelf() {
-  const { project, addObject, removeObject, duplicateObject, updateObject, updateScene, reorderObject, addScene } = useProjectStore();
+  const { project, addObject, removeObject, duplicateObject, updateObject, updateScene, reorderObject, addScene, makeComponent, detachFromComponent, addComponentInstance } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectObject, selectScene } = useEditorStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; object: GameObject } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
@@ -270,6 +286,21 @@ export function SpriteShelf() {
     handleCloseContextMenu();
   };
 
+  const handleMakeComponent = () => {
+    if (!contextMenu || !selectedSceneId) return;
+    const component = makeComponent(selectedSceneId, contextMenu.object.id);
+    if (component) {
+      // Component created successfully
+    }
+    handleCloseContextMenu();
+  };
+
+  const handleDetachFromComponent = () => {
+    if (!contextMenu || !selectedSceneId) return;
+    detachFromComponent(selectedSceneId, contextMenu.object.id);
+    handleCloseContextMenu();
+  };
+
   const getObjectColor = (id: string): string => {
     let hash = 0;
     for (let i = 0; i < id.length; i++) {
@@ -366,21 +397,28 @@ export function SpriteShelf() {
               strategy={verticalListSortingStrategy}
             >
               <div className="flex flex-col">
-                {selectedScene.objects.map((object) => (
-                  <SortableObjectItem
-                    key={object.id}
-                    object={object}
-                    isSelected={selectedObjectId === object.id}
-                    isEditing={editingObjectId === object.id}
-                    editName={editName}
-                    inputRef={inputRef}
-                    onSelect={() => selectObject(object.id)}
-                    onStartEdit={() => handleStartObjectEdit(object.id, object.name)}
-                    onContextMenu={(e) => handleContextMenu(e, object)}
-                    onEditNameChange={setEditName}
-                    onSaveRename={handleSaveObjectRename}
-                  />
-                ))}
+                {selectedScene.objects.map((object) => {
+                  const isComponentInstance = !!object.componentId;
+                  const effectiveProps = getEffectiveObjectProps(object, project?.components || []);
+                  return (
+                    <SortableObjectItem
+                      key={object.id}
+                      object={object}
+                      isSelected={selectedObjectId === object.id}
+                      isEditing={editingObjectId === object.id}
+                      isComponentInstance={isComponentInstance}
+                      effectiveCostumes={effectiveProps.costumes}
+                      effectiveCostumeIndex={effectiveProps.currentCostumeIndex}
+                      editName={editName}
+                      inputRef={inputRef}
+                      onSelect={() => selectObject(object.id)}
+                      onStartEdit={() => handleStartObjectEdit(object.id, object.name)}
+                      onContextMenu={(e) => handleContextMenu(e, object)}
+                      onEditNameChange={setEditName}
+                      onSaveRename={handleSaveObjectRename}
+                    />
+                  );
+                })}
               </div>
             </SortableContext>
           </DndContext>
@@ -407,6 +445,27 @@ export function SpriteShelf() {
               <Copy className="size-4" />
               Duplicate
             </Button>
+            {!contextMenu.object.componentId ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleMakeComponent}
+                className="w-full justify-start rounded-none h-8 text-purple-600"
+              >
+                <Component className="size-4" />
+                Make Component
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleDetachFromComponent}
+                className="w-full justify-start rounded-none h-8"
+              >
+                <Unlink className="size-4" />
+                Detach from Component
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -414,7 +473,7 @@ export function SpriteShelf() {
               className="w-full justify-start rounded-none h-8"
             >
               <Star className="size-4" />
-              Make Reusable
+              Save to Library
             </Button>
             <Button
               variant="ghost"

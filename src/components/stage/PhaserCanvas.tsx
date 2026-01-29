@@ -3,7 +3,8 @@ import Phaser from 'phaser';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject } from '@/phaser';
-import type { Scene as SceneData, GameObject } from '@/types';
+import type { Scene as SceneData, GameObject, ComponentDefinition } from '@/types';
+import { getEffectiveObjectProps } from '@/types';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -130,9 +131,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           },
           create: function(this: Phaser.Scene) {
             if (isPlaying) {
-              createPlayScene(this, selectedScene, project.scenes, runtimeRef, canvasWidth, canvasHeight);
+              createPlayScene(this, selectedScene, project.scenes, project.components || [], runtimeRef, canvasWidth, canvasHeight);
             } else {
-              createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd, canvasWidth, canvasHeight);
+              createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd, canvasWidth, canvasHeight, project.components || []);
             }
           },
           update: function(this: Phaser.Scene) {
@@ -393,7 +394,8 @@ function createEditorScene(
   selectedObjectId: string | null,
   onDragEnd: (objId: string, x: number, y: number) => void,
   canvasWidth: number,
-  canvasHeight: number
+  canvasHeight: number,
+  components: ComponentDefinition[] = []
 ) {
   if (!sceneData) return;
 
@@ -485,7 +487,7 @@ function createEditorScene(
   // Create objects (reverse depth so top of list = top render)
   const objectCount = sceneData.objects.length;
   sceneData.objects.forEach((obj: GameObject, index: number) => {
-    const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight); // true = editor mode
+    const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight, components); // true = editor mode
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
     const isSelected = obj.id === selectedObjectId;
     container.setData('selected', isSelected);
@@ -534,6 +536,7 @@ function createPlayScene(
   scene: Phaser.Scene,
   sceneData: SceneData | undefined,
   _allScenes: SceneData[],
+  components: ComponentDefinition[],
   runtimeRef: React.MutableRefObject<RuntimeEngine | null>,
   canvasWidth: number,
   canvasHeight: number
@@ -562,7 +565,10 @@ function createPlayScene(
   // Create objects and register them with runtime (reverse depth so top of list = top render)
   const objectCount = sceneData.objects.length;
   sceneData.objects.forEach((obj: GameObject, index: number) => {
-    const container = createObjectVisual(scene, obj, false, canvasWidth, canvasHeight);
+    // Get effective properties (resolves component references)
+    const effectiveProps = getEffectiveObjectProps(obj, components);
+
+    const container = createObjectVisual(scene, obj, false, canvasWidth, canvasHeight, components);
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
 
     // Enable physics for collision detection (needed for all sprites to detect collisions)
@@ -571,28 +577,29 @@ function createPlayScene(
     // Register with runtime
     const runtimeSprite = runtime.registerSprite(obj.id, obj.name, container);
 
-    // Set costumes if available
-    const costumes = obj.costumes || [];
+    // Set costumes if available (use effective costumes for component instances)
+    const costumes = effectiveProps.costumes || [];
     if (costumes.length > 0) {
-      runtimeSprite.setCostumes(costumes, obj.currentCostumeIndex || 0);
+      runtimeSprite.setCostumes(costumes, effectiveProps.currentCostumeIndex || 0);
     }
 
     // Update physics body size to match costume
     runtimeSprite.updatePhysicsBodySize();
 
-    // Apply physics configuration from the object
+    // Apply physics configuration (use effective physics for component instances)
+    const physics = effectiveProps.physics;
     const body = container.body as Phaser.Physics.Arcade.Body;
     if (body) {
-      if (obj.physics?.enabled) {
+      if (physics?.enabled) {
         // Apply physics settings
-        body.setGravityY(obj.physics.gravityY ?? 0);
-        body.setBounce(obj.physics.bounceX ?? 0, obj.physics.bounceY ?? 0);
-        body.setCollideWorldBounds(obj.physics.collideWorldBounds ?? false);
-        body.setImmovable(obj.physics.immovable ?? false);
-        body.setVelocity(obj.physics.velocityX ?? 0, obj.physics.velocityY ?? 0);
+        body.setGravityY(physics.gravityY ?? 0);
+        body.setBounce(physics.bounceX ?? 0, physics.bounceY ?? 0);
+        body.setCollideWorldBounds(physics.collideWorldBounds ?? false);
+        body.setImmovable(physics.immovable ?? false);
+        body.setVelocity(physics.velocityX ?? 0, physics.velocityY ?? 0);
 
         // Set body type (static bodies don't move)
-        if (obj.physics.bodyType === 'static') {
+        if (physics.bodyType === 'static') {
           body.setImmovable(true);
           body.setGravityY(0);
         }
@@ -604,13 +611,14 @@ function createPlayScene(
       }
     }
 
-    // Generate and execute code for this object
-    console.log(`[CodeExec] Object "${obj.name}" has blocklyXml:`, !!obj.blocklyXml);
-    if (obj.blocklyXml) {
-      console.log(`[CodeExec] blocklyXml length: ${obj.blocklyXml.length}`);
-      console.log(`[CodeExec] blocklyXml preview: ${obj.blocklyXml.substring(0, 200)}...`);
+    // Generate and execute code for this object (use effective blocklyXml)
+    const blocklyXml = effectiveProps.blocklyXml;
+    console.log(`[CodeExec] Object "${obj.name}" has blocklyXml:`, !!blocklyXml);
+    if (blocklyXml) {
+      console.log(`[CodeExec] blocklyXml length: ${blocklyXml.length}`);
+      console.log(`[CodeExec] blocklyXml preview: ${blocklyXml.substring(0, 200)}...`);
       try {
-        const code = generateCodeForObject(obj.blocklyXml, obj.id);
+        const code = generateCodeForObject(blocklyXml, obj.id);
         console.log(`[CodeExec] Generated code for "${obj.name}":\n${code}`);
         if (code) {
           // Execute the generated code
@@ -653,7 +661,8 @@ function createObjectVisual(
   obj: GameObject,
   isEditorMode: boolean = false,
   canvasWidth: number = 800,
-  canvasHeight: number = 600
+  canvasHeight: number = 600,
+  components: ComponentDefinition[] = []
 ): Phaser.GameObjects.Container {
   // Convert user coordinates to Phaser coordinates
   const phaserPos = userToPhaser(obj.x, obj.y, canvasWidth, canvasHeight);
@@ -742,9 +751,10 @@ function createObjectVisual(
     }
   };
 
-  // Get current costume
-  const costumes = obj.costumes || [];
-  const currentCostumeIndex = obj.currentCostumeIndex ?? 0;
+  // Get current costume (use effective props for component instances)
+  const effectiveProps = getEffectiveObjectProps(obj, components);
+  const costumes = effectiveProps.costumes || [];
+  const currentCostumeIndex = effectiveProps.currentCostumeIndex ?? 0;
   const currentCostume = costumes[currentCostumeIndex];
 
   if (currentCostume && currentCostume.assetId) {

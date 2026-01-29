@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/color-picker';
 import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink } from 'lucide-react';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
+import { COMPONENT_COLOR } from '@/types';
 
 // Color swatch with popup picker
 interface ColorSwatchProps {
@@ -208,7 +209,7 @@ function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max,
 }
 
 export function ObjectInspector() {
-  const { project, updateObject, updateScene } = useProjectStore();
+  const { project, updateObject, updateScene, updateComponent } = useProjectStore();
   const { selectedSceneId, selectedObjectId } = useEditorStore();
   const [activeTab, setActiveTab] = useState<string>('object');
 
@@ -299,6 +300,14 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
 
   return (
     <div className="space-y-4">
+      {/* Component indicator */}
+      {object.componentId && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: COMPONENT_COLOR, border: '1px solid #7c3aed' }}>
+          <span className="text-xs font-medium text-purple-900">Component Instance</span>
+          <span className="text-xs text-purple-700">Code syncs across all instances</span>
+        </div>
+      )}
+
       {/* Visibility */}
       <div className="flex items-center gap-2">
         <Checkbox

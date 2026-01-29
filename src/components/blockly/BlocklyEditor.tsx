@@ -65,15 +65,22 @@ export function BlocklyEditor() {
         const objectId = currentObjectIdRef.current;
         if (!workspaceRef.current || !sceneId || !objectId) return;
 
+        const state = useProjectStore.getState();
+        const scene = state.project?.scenes.find(s => s.id === sceneId);
+        const obj = scene?.objects.find(o => o.id === objectId);
+        if (!obj) return;
+
         // Check if workspace has any blocks
         const topBlocks = workspaceRef.current.getTopBlocks(false);
-        if (topBlocks.length === 0) {
-          // No blocks - clear the XML
-          useProjectStore.getState().updateObject(sceneId, objectId, { blocklyXml: '' });
+        const xmlText = topBlocks.length === 0
+          ? ''
+          : Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(workspaceRef.current));
+
+        // If this is a component instance, update the component definition
+        if (obj.componentId) {
+          state.updateComponent(obj.componentId, { blocklyXml: xmlText });
         } else {
-          const xml = Blockly.Xml.workspaceToDom(workspaceRef.current);
-          const xmlText = Blockly.Xml.domToText(xml);
-          useProjectStore.getState().updateObject(sceneId, objectId, { blocklyXml: xmlText });
+          state.updateObject(sceneId, objectId, { blocklyXml: xmlText });
         }
       }
     });
@@ -106,9 +113,18 @@ export function BlocklyEditor() {
     const scene = state.project?.scenes.find(s => s.id === selectedSceneId);
     const obj = scene?.objects.find(o => o.id === selectedObjectId);
 
-    if (obj?.blocklyXml) {
+    // Get effective blocklyXml (from component if it's an instance)
+    let blocklyXml = obj?.blocklyXml || '';
+    if (obj?.componentId) {
+      const component = (state.project?.components || []).find(c => c.id === obj.componentId);
+      if (component) {
+        blocklyXml = component.blocklyXml;
+      }
+    }
+
+    if (blocklyXml) {
       try {
-        const xml = Blockly.utils.xml.textToDom(obj.blocklyXml);
+        const xml = Blockly.utils.xml.textToDom(blocklyXml);
         Blockly.Xml.domToWorkspace(xml, workspaceRef.current);
       } catch (e) {
         console.error('Failed to load Blockly XML:', e);

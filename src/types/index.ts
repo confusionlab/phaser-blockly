@@ -8,6 +8,18 @@ export interface Project {
   scenes: Scene[];
   globalVariables: Variable[];
   settings: ProjectSettings;
+  components: ComponentDefinition[];
+}
+
+// Component Definition - the "master" that instances reference
+export interface ComponentDefinition {
+  id: string;
+  name: string;
+  blocklyXml: string;
+  costumes: Costume[];
+  currentCostumeIndex: number;
+  physics: PhysicsConfig | null;
+  sounds: Sound[];
 }
 
 export interface ProjectSettings {
@@ -59,6 +71,9 @@ export interface GameObject {
   rotation: number;
   visible: boolean;
   layer: number;
+  // If componentId is set, physics/blocklyXml/costumes/sounds come from the component
+  componentId?: string;
+  // Instance-level overrides (only used if componentId is not set)
   physics: PhysicsConfig | null;
   blocklyXml: string;
   costumes: Costume[];
@@ -147,6 +162,7 @@ export function createDefaultProject(name: string): Project {
     updatedAt: new Date(),
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     globalVariables: [],
+    components: [],
     settings: {
       canvasWidth: 800,
       canvasHeight: 600,
@@ -224,3 +240,38 @@ export function createDefaultPhysicsConfig(): PhysicsConfig {
     immovable: false,
   };
 }
+
+// Helper to get effective properties of a GameObject (resolving component reference)
+export function getEffectiveObjectProps(
+  obj: GameObject,
+  components: ComponentDefinition[]
+): {
+  blocklyXml: string;
+  costumes: Costume[];
+  currentCostumeIndex: number;
+  physics: PhysicsConfig | null;
+  sounds: Sound[];
+} {
+  if (obj.componentId) {
+    const component = components.find(c => c.id === obj.componentId);
+    if (component) {
+      return {
+        blocklyXml: component.blocklyXml,
+        costumes: component.costumes,
+        currentCostumeIndex: component.currentCostumeIndex,
+        physics: component.physics,
+        sounds: component.sounds,
+      };
+    }
+  }
+  return {
+    blocklyXml: obj.blocklyXml,
+    costumes: obj.costumes,
+    currentCostumeIndex: obj.currentCostumeIndex,
+    physics: obj.physics,
+    sounds: obj.sounds,
+  };
+}
+
+// Pastel purple color for components
+export const COMPONENT_COLOR = 'hsl(270, 70%, 75%)';
