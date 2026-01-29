@@ -7,7 +7,7 @@ import { useProjectStore } from '../../store/projectStore';
 import { useEditorStore } from '../../store/editorStore';
 
 export function EditorLayout() {
-  const { project } = useProjectStore();
+  const { project, saveCurrentProject } = useProjectStore();
   const { isPlaying, showProjectDialog, setShowProjectDialog, selectScene, startPlaying, stopPlaying } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(40); // percentage
 
@@ -35,6 +35,15 @@ export function EditorLayout() {
                      target.tagName === 'TEXTAREA' ||
                      target.isContentEditable;
 
+    // Cmd+S / Ctrl+S to save
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      if (project) {
+        saveCurrentProject();
+      }
+      return;
+    }
+
     // Escape always stops the game
     if (e.key === 'Escape' && isPlaying) {
       e.preventDefault();
@@ -48,7 +57,7 @@ export function EditorLayout() {
       startPlaying();
       return;
     }
-  }, [isPlaying, project, startPlaying, stopPlaying]);
+  }, [isPlaying, project, saveCurrentProject, startPlaying, stopPlaying]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
