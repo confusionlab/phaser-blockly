@@ -122,10 +122,18 @@ export function SpriteShelf() {
           >
             {/* Thumbnail */}
             <div
-              className="w-16 h-16 rounded-lg flex items-center justify-center text-2xl"
+              className="w-16 h-16 rounded-lg flex items-center justify-center overflow-hidden"
               style={{ backgroundColor: getObjectColor(object.id) }}
             >
-              {object.spriteAssetId ? '🖼️' : '📦'}
+              {object.costumes && object.costumes.length > 0 ? (
+                <img
+                  src={object.costumes[object.currentCostumeIndex ?? 0]?.assetId}
+                  alt={object.name}
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <span className="text-2xl">📦</span>
+              )}
             </div>
 
             {/* Name */}
