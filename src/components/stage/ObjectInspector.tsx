@@ -590,7 +590,7 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
         <div className="flex gap-2">
           <ScrubInput
             label=""
-            value={physics.bounce}
+            value={physics.bounce ?? 0.2}
             onChange={(bounce) => updatePhysics({ bounce })}
             step={0.1}
             precision={2}
@@ -604,7 +604,7 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
       <div className="flex items-center gap-2">
         <Checkbox
           id="allow-rotation"
-          checked={physics.allowRotation}
+          checked={physics.allowRotation ?? false}
           onCheckedChange={(checked) => updatePhysics({ allowRotation: !!checked })}
         />
         <Label htmlFor="allow-rotation" className="text-xs text-muted-foreground cursor-pointer">
