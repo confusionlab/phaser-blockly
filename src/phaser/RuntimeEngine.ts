@@ -387,37 +387,65 @@ export class RuntimeEngine {
     // Matter.js handles collisions automatically between all bodies
     // We just need to listen for collision events for "when touching" handlers
 
-    // Listen for Matter.js collision events
+    // Helper to find sprite IDs from collision bodies
+    const findSpriteIds = (bodyA: MatterJS.BodyType, bodyB: MatterJS.BodyType) => {
+      let spriteIdA: string | null = null;
+      let spriteIdB: string | null = null;
+
+      for (const sprite of this.sprites.values()) {
+        const spriteBody = (sprite.container as unknown as { body?: MatterJS.BodyType }).body;
+        if (spriteBody === bodyA || spriteBody?.parent === bodyA) {
+          spriteIdA = sprite.id;
+        }
+        if (spriteBody === bodyB || spriteBody?.parent === bodyB) {
+          spriteIdB = sprite.id;
+        }
+      }
+      return { spriteIdA, spriteIdB };
+    };
+
+    // Listen for collision START events (for "when touching" event handlers)
     this.scene.matter.world.on('collisionstart', (event: Phaser.Physics.Matter.Events.CollisionStartEvent) => {
       for (const pair of event.pairs) {
         const bodyA = pair.bodyA;
         const bodyB = pair.bodyB;
+        const { spriteIdA, spriteIdB } = findSpriteIds(bodyA, bodyB);
 
-        // Find sprites by their body
-        let spriteIdA: string | null = null;
-        let spriteIdB: string | null = null;
-
-        for (const sprite of this.sprites.values()) {
-          const spriteBody = (sprite.container as unknown as { body?: MatterJS.BodyType }).body;
-          if (spriteBody === bodyA || spriteBody?.parent === bodyA) {
-            spriteIdA = sprite.id;
-          }
-          if (spriteBody === bodyB || spriteBody?.parent === bodyB) {
-            spriteIdB = sprite.id;
-          }
+        // Handle sprite-to-sprite collision events
+        if (spriteIdA && spriteIdB) {
+          this.handleSpriteOverlap(spriteIdA, spriteIdB);
         }
 
-        // Check for ground collision
-        if (bodyA === this._groundBody || bodyB === this._groundBody) {
-          const spriteId = bodyA === this._groundBody ? spriteIdB : spriteIdA;
+        // Also handle ground collision on start (first frame of contact)
+        const isGroundA = bodyA === this._groundBody || bodyA.label === 'ground';
+        const isGroundB = bodyB === this._groundBody || bodyB.label === 'ground';
+        if (isGroundA || isGroundB) {
+          const spriteId = isGroundA ? spriteIdB : spriteIdA;
           if (spriteId) {
             this.handleGroundCollision(spriteId);
           }
         }
+      }
+    });
 
-        // Handle sprite-to-sprite collision
-        if (spriteIdA && spriteIdB) {
-          this.handleSpriteOverlap(spriteIdA, spriteIdB);
+    // Listen for collision ACTIVE events (fires every frame while touching)
+    // This is critical for ground detection - we need to know EVERY frame if touching ground
+    this.scene.matter.world.on('collisionactive', (event: Phaser.Physics.Matter.Events.CollisionActiveEvent) => {
+      for (const pair of event.pairs) {
+        const bodyA = pair.bodyA;
+        const bodyB = pair.bodyB;
+
+        // Check for ground collision - set flag every frame while touching
+        // Also check by label since body reference comparison can fail
+        const isGroundA = bodyA === this._groundBody || bodyA.label === 'ground';
+        const isGroundB = bodyB === this._groundBody || bodyB.label === 'ground';
+
+        if (isGroundA || isGroundB) {
+          const { spriteIdA, spriteIdB } = findSpriteIds(bodyA, bodyB);
+          const spriteId = isGroundA ? spriteIdB : spriteIdA;
+          if (spriteId) {
+            this.handleGroundCollision(spriteId);
+          }
         }
       }
     });
@@ -430,10 +458,15 @@ export class RuntimeEngine {
     debugLog('info', `Physics colliders set up for ${sprites.length} sprites (Matter.js)`);
   }
 
+  private groundLogThrottle = 0;
   private handleGroundCollision(spriteId: string): void {
     const sprite = this.sprites.get(spriteId);
     if (sprite) {
       sprite.setTouchingGround(true);
+      // Log occasionally to avoid spam
+      if (this.groundLogThrottle++ % 60 === 0) {
+        debugLog('event', `${sprite.name} touching ground`);
+      }
     }
   }
 
