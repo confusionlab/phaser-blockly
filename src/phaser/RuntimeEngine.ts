@@ -383,12 +383,19 @@ export class RuntimeEngine {
   setupPhysicsColliders(): void {
     const sprites = Array.from(this.sprites.values());
 
-    // Set up overlap detection between all sprite pairs for "when touching" events
+    // Set up collision and overlap detection between all sprite pairs
     for (let i = 0; i < sprites.length; i++) {
       for (let j = i + 1; j < sprites.length; j++) {
         const spriteA = sprites[i];
         const spriteB = sprites[j];
 
+        // Physical collision (makes sprites bounce off each other)
+        this.scene.physics.add.collider(
+          spriteA.container,
+          spriteB.container
+        );
+
+        // Overlap detection for "when touching" events
         this.scene.physics.add.overlap(
           spriteA.container,
           spriteB.container,
