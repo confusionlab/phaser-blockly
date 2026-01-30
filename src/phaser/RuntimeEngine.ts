@@ -697,50 +697,14 @@ export class RuntimeEngine {
       }
     }
 
-    // Copy all event handlers from original to clone
+    // NOTE: We do NOT copy event handlers to clones. This is intentional and matches Scratch behavior.
+    // Clones only run code from "when I start as a clone" blocks.
+    // If we copied handlers, the closures would still reference the original spriteId,
+    // which would cause incorrect behavior and potential infinite loops.
+
+    // Execute onCloneStart handlers for this new clone
     const originalHandlers = this.handlers.get(spriteId);
-    const cloneHandlers = this.handlers.get(cloneId);
-    if (originalHandlers && cloneHandlers) {
-      // Copy onKeyPressed handlers
-      for (const [key, handlers] of originalHandlers.onKeyPressed) {
-        cloneHandlers.onKeyPressed.set(key, [...handlers]);
-      }
-
-      // Copy onClick handlers and set up click listener
-      if (originalHandlers.onClick.length > 0) {
-        cloneHandlers.onClick = [...originalHandlers.onClick];
-        // Set up click handler on clone
-        clone.setupClickHandler(() => {
-          if (this._isRunning) {
-            debugLog('event', `Click triggered on clone ${cloneId}`);
-            for (const handler of cloneHandlers.onClick) {
-              handler();
-            }
-          }
-        });
-      }
-
-      // Copy onTouching handlers
-      for (const [targetId, handlers] of originalHandlers.onTouching) {
-        cloneHandlers.onTouching.set(targetId, [...handlers]);
-      }
-
-      // Copy onMessage handlers
-      for (const [message, handlers] of originalHandlers.onMessage) {
-        cloneHandlers.onMessage.set(message, [...handlers]);
-      }
-
-      // Copy forever handlers
-      if (originalHandlers.forever.length > 0) {
-        cloneHandlers.forever = [...originalHandlers.forever];
-        // Activate forever loop for clone
-        this.activeForeverLoops.set(cloneId, true);
-      }
-
-      // Copy onCloneStart handlers (for nested cloning)
-      cloneHandlers.onCloneStart = [...originalHandlers.onCloneStart];
-
-      // Execute onCloneStart handlers for this new clone
+    if (originalHandlers) {
       for (const handler of originalHandlers.onCloneStart) {
         try {
           handler();
