@@ -24,6 +24,16 @@ export function ObjectEditor() {
     }
   }, [objects, selectedObjectId, selectObject]);
 
+  // Show placeholder when no object is selected
+  if (!selectedObjectId) {
+    return (
+      <div className="flex flex-col h-full bg-card items-center justify-center text-muted-foreground">
+        <Code className="size-12 mb-4 opacity-20" />
+        <p className="text-sm">Select an object to edit its code</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-card">
       <Tabs
