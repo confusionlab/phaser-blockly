@@ -1,14 +1,17 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
 import { Button } from '@/components/ui/button';
-import { Play, Square, Upload, Save } from 'lucide-react';
+import { Play, Square, Upload, Save, Library } from 'lucide-react';
+import { MediaLibrary } from '@/components/library/MediaLibrary';
 
 export function Toolbar() {
   const navigate = useNavigate();
   const { project, isDirty, saveCurrentProject, closeProject } = useProjectStore();
   const { isPlaying, startPlaying, stopPlaying } = useEditorStore();
+  const [showLibrary, setShowLibrary] = useState(false);
 
   const handleGoHome = () => {
     closeProject();
@@ -75,6 +78,15 @@ export function Toolbar() {
 
       {/* Right section - Actions */}
       <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowLibrary(true)}
+        >
+          <Library className="size-4" />
+          Library
+        </Button>
+
         {project && (
           <Button
             variant="ghost"
@@ -99,6 +111,14 @@ export function Toolbar() {
           </Button>
         )}
       </div>
+
+      <MediaLibrary
+        open={showLibrary}
+        onOpenChange={setShowLibrary}
+        onSelect={(url, type) => {
+          console.log('Selected:', type, url);
+        }}
+      />
     </div>
   );
 }
