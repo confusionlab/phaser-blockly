@@ -660,7 +660,10 @@ function createPlayScene(
         body.setGravityY(physics.gravityY ?? 0);
         body.setBounce(physics.bounce ?? 0, physics.bounce ?? 0);
         body.setVelocity(physics.velocityX ?? 0, physics.velocityY ?? 0);
-        body.setAllowRotation(physics.allowRotation ?? false);
+        body.setCollideWorldBounds(true); // Keep objects in bounds
+
+        // Store allowRotation flag for runtime updates
+        container.setData('allowRotation', physics.allowRotation ?? false);
 
         // Set body type (static bodies don't move)
         if (physics.bodyType === 'static') {

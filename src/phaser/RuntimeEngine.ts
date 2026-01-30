@@ -367,9 +367,25 @@ export class RuntimeEngine {
     // Clear touching pairs from previous frame
     this._touchingPairs.clear();
 
-    // Clear ground touching flags at end of frame
-    // They will be set again by collision callbacks next physics step
+    // Update rotation based on velocity for sprites with allowRotation enabled
     for (const sprite of this.sprites.values()) {
+      const body = sprite.container.body as Phaser.Physics.Arcade.Body;
+      const allowRotation = sprite.container.getData('allowRotation');
+
+      if (body && allowRotation) {
+        // Rotate to face velocity direction
+        const vx = body.velocity.x;
+        const vy = body.velocity.y;
+        const speed = Math.sqrt(vx * vx + vy * vy);
+
+        if (speed > 10) { // Only rotate if moving fast enough
+          const angle = Math.atan2(vy, vx);
+          sprite.container.setRotation(angle);
+        }
+      }
+
+      // Clear ground touching flags at end of frame
+      // They will be set again by collision callbacks next physics step
       sprite.setTouchingGround(false);
     }
 
