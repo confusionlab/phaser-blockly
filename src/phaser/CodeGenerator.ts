@@ -201,6 +201,11 @@ export function registerCodeGenerators(): void {
     return `sprite.setBounce(${bounce});\n`;
   };
 
+  javascriptGenerator.forBlock['physics_set_friction'] = function(block) {
+    const friction = javascriptGenerator.valueToCode(block, 'FRICTION', Order.ATOMIC) || '0.1';
+    return `sprite.setFriction(${friction});\n`;
+  };
+
   javascriptGenerator.forBlock['physics_collide_bounds'] = function(block) {
     const enabled = block.getFieldValue('ENABLED') === 'TRUE';
     return `sprite.setCollideWorldBounds(${enabled});\n`;

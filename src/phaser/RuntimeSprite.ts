@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { runtimeDebugLog } from './RuntimeEngine';
-import type { Costume } from '../types';
+import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
 import type { RuntimeEngine } from './RuntimeEngine';
 
 function debugLog(type: 'info' | 'event' | 'action' | 'error', message: string) {
@@ -38,6 +38,10 @@ export class RuntimeSprite {
   // Ground collision tracking (set by RuntimeEngine)
   private _isTouchingGround: boolean = false;
 
+  // Physics and collider config (set from object properties)
+  private _colliderConfig: ColliderConfig | null = null;
+  private _physicsConfig: PhysicsConfig | null = null;
+
   constructor(
     scene: Phaser.Scene,
     container: Phaser.GameObjects.Container,
@@ -52,6 +56,22 @@ export class RuntimeSprite {
 
   setRuntime(runtime: RuntimeEngine): void {
     this.runtime = runtime;
+  }
+
+  setColliderConfig(config: ColliderConfig | null): void {
+    this._colliderConfig = config;
+  }
+
+  setPhysicsConfig(config: PhysicsConfig | null): void {
+    this._physicsConfig = config;
+  }
+
+  getColliderConfig(): ColliderConfig | null {
+    return this._colliderConfig;
+  }
+
+  getPhysicsConfig(): PhysicsConfig | null {
+    return this._physicsConfig;
   }
 
   // --- Motion ---
@@ -216,6 +236,37 @@ export class RuntimeSprite {
     this._updateCostumeDisplay();
   }
 
+  getCostumes(): Costume[] {
+    return this._costumes;
+  }
+
+  getCurrentCostumeIndex(): number {
+    return this._currentCostumeIndex;
+  }
+
+  // For cloning - copy internal state
+  copyStateFrom(other: RuntimeSprite): void {
+    // Copy costumes
+    if (other._costumes.length > 0) {
+      this.setCostumes([...other._costumes], other._currentCostumeIndex);
+    }
+
+    // Copy direction and size
+    this._direction = other._direction;
+    this._size = other._size;
+
+    // Copy visibility
+    this.container.setVisible(other.container.visible);
+    this.container.setAlpha(other.container.alpha);
+
+    // Copy collider and physics config
+    this._colliderConfig = other._colliderConfig;
+    this._physicsConfig = other._physicsConfig;
+
+    // Copy component ID
+    this.componentId = other.componentId;
+  }
+
   private _updateCostumeDisplay(): void {
     if (this._costumes.length === 0) return;
 
@@ -371,33 +422,69 @@ export class RuntimeSprite {
     }
 
     if (!this.getMatterBody()) {
-      // Get size from costume bounds or default
-      let width = 64, height = 64;
+      // Get collider config if available
+      const collider = this._colliderConfig;
+      const physics = this._physicsConfig;
+
+      // Get default size from costume bounds
+      let defaultWidth = 64, defaultHeight = 64;
       const costume = this._costumes[this._currentCostumeIndex];
       if (costume?.bounds && costume.bounds.width > 0 && costume.bounds.height > 0) {
-        width = costume.bounds.width;
-        height = costume.bounds.height;
+        defaultWidth = costume.bounds.width;
+        defaultHeight = costume.bounds.height;
       }
 
-      debugLog('action', `${this.name}.enablePhysics() creating body ${width}x${height} at (${this.container.x}, ${this.container.y})`);
+      // Apply container scale to dimensions
+      const scaleX = this.container.scaleX;
+      const scaleY = this.container.scaleY;
+
+      // Body options
+      const bodyOptions: Phaser.Types.Physics.Matter.MatterBodyConfig = {
+        restitution: physics?.bounce ?? 0,
+        frictionAir: 0.01,
+        friction: physics?.friction ?? 0.1,
+      };
+
+      // Calculate collider offset
+      const colliderOffsetX = (collider?.offsetX ?? 0) * scaleX;
+      const colliderOffsetY = (collider?.offsetY ?? 0) * scaleY;
+      const bodyX = this.container.x + colliderOffsetX;
+      const bodyY = this.container.y + colliderOffsetY;
+
+      // Determine collider type - default to circle if no collider specified
+      const colliderType = collider?.type ?? 'circle';
+
+      let body: MatterJS.BodyType;
 
       try {
-        // Create body the same way PhaserCanvas does - create separately then attach
-        // This is necessary because scene.matter.add.gameObject() doesn't work well with Containers
-        const body = this.scene.matter.add.rectangle(
-          this.container.x,
-          this.container.y,
-          width,
-          height,
-          {
-            restitution: 0,
-            frictionAir: 0.01,
-            friction: 0.1,
+        switch (colliderType) {
+          case 'circle': {
+            const radius = (collider?.radius ?? Math.max(defaultWidth, defaultHeight) / 2) * Math.max(Math.abs(scaleX), Math.abs(scaleY));
+            debugLog('action', `${this.name}.enablePhysics() creating circle body radius=${radius}`);
+            body = this.scene.matter.add.circle(bodyX, bodyY, radius, bodyOptions);
+            break;
           }
-        );
+          case 'capsule': {
+            const capsuleWidth = (collider?.width ?? defaultWidth) * Math.abs(scaleX);
+            const capsuleHeight = (collider?.height ?? defaultHeight) * Math.abs(scaleY);
+            debugLog('action', `${this.name}.enablePhysics() creating capsule body ${capsuleWidth}x${capsuleHeight}`);
+            body = this.scene.matter.add.rectangle(bodyX, bodyY, capsuleWidth, capsuleHeight, {
+              ...bodyOptions,
+              chamfer: { radius: Math.min(capsuleWidth, capsuleHeight) / 2 }
+            });
+            break;
+          }
+          case 'box':
+          default: {
+            const boxWidth = (collider?.width ?? defaultWidth) * Math.abs(scaleX);
+            const boxHeight = (collider?.height ?? defaultHeight) * Math.abs(scaleY);
+            debugLog('action', `${this.name}.enablePhysics() creating box body ${boxWidth}x${boxHeight}`);
+            body = this.scene.matter.add.rectangle(bodyX, bodyY, boxWidth, boxHeight, bodyOptions);
+            break;
+          }
+        }
 
         // Add a destroy method to the body so Phaser can clean it up properly
-        // Raw Matter.js bodies don't have destroy(), which causes errors when container is destroyed
         (body as MatterJS.BodyType & { destroy?: () => void }).destroy = () => {
           if (this.scene?.matter?.world) {
             this.scene.matter.world.remove(body);
@@ -407,17 +494,28 @@ export class RuntimeSprite {
         // Attach body to container manually
         (this.container as unknown as { body: MatterJS.BodyType }).body = body;
 
+        // Store collider offset for position sync
+        this.container.setData('colliderOffsetX', colliderOffsetX);
+        this.container.setData('colliderOffsetY', colliderOffsetY);
+
         // Store reference for cleanup
         const container = this.container;
 
-        // Set up position syncing from body to container
+        // Set up position syncing from body to container (subtract offset)
         this.scene.matter.world.on('afterupdate', () => {
           if (body && container.active) {
-            container.setPosition(body.position.x, body.position.y);
+            const offsetX = container.getData('colliderOffsetX') ?? 0;
+            const offsetY = container.getData('colliderOffsetY') ?? 0;
+            container.setPosition(body.position.x - offsetX, body.position.y - offsetY);
           }
         });
 
-        debugLog('info', `${this.name}.enablePhysics() body created successfully`);
+        // Apply gravity scale if configured
+        if (physics?.gravityY !== undefined) {
+          body.gravityScale = { x: 0, y: physics.gravityY };
+        }
+
+        debugLog('info', `${this.name}.enablePhysics() ${colliderType} body created successfully`);
       } catch (e) {
         debugLog('error', `${this.name}.enablePhysics() failed: ${e}`);
       }
@@ -487,6 +585,17 @@ export class RuntimeSprite {
       debugLog('action', `${this.name}.setBounce(${bounce})`);
     } else {
       debugLog('error', `${this.name}.setBounce: No physics body found.`);
+    }
+  }
+
+  setFriction(friction: number): void {
+    if (this._stopped) return;
+    const body = this.getMatterBody();
+    if (body) {
+      body.friction = friction;
+      debugLog('action', `${this.name}.setFriction(${friction})`);
+    } else {
+      debugLog('error', `${this.name}.setFriction: No physics body found.`);
     }
   }
 

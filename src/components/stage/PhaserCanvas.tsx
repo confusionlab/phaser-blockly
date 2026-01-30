@@ -56,13 +56,17 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
 
-  // Callback to update object position after drag - convert from Phaser to user coordinates
-  const handleObjectDragEnd = useCallback((objId: string, phaserX: number, phaserY: number) => {
+  // Callback to update object position/scale/rotation after drag - convert from Phaser to user coordinates
+  const handleObjectDragEnd = useCallback((objId: string, phaserX: number, phaserY: number, scaleX?: number, scaleY?: number, rotation?: number) => {
     const sceneId = selectedSceneIdRef.current;
     if (sceneId) {
       const { width, height } = canvasDimensionsRef.current;
       const userCoords = phaserToUser(phaserX, phaserY, width, height);
-      updateObject(sceneId, objId, { x: userCoords.x, y: userCoords.y });
+      const updates: Partial<GameObject> = { x: userCoords.x, y: userCoords.y };
+      if (scaleX !== undefined) updates.scaleX = scaleX;
+      if (scaleY !== undefined) updates.scaleY = scaleY;
+      if (rotation !== undefined) updates.rotation = rotation;
+      updateObject(sceneId, objId, updates);
     }
   }, [updateObject]);
 
@@ -496,7 +500,7 @@ function createEditorScene(
   sceneData: SceneData | undefined,
   selectObject: (id: string | null) => void,
   selectedObjectId: string | null,
-  onDragEnd: (objId: string, x: number, y: number) => void,
+  onDragEnd: (objId: string, x: number, y: number, scaleX?: number, scaleY?: number, rotation?: number) => void,
   canvasWidth: number,
   canvasHeight: number,
   components: ComponentDefinition[] = []
@@ -596,11 +600,28 @@ function createEditorScene(
     const isSelected = obj.id === selectedObjectId;
     container.setData('selected', isSelected);
 
-    // Set initial selection visibility
-    const selectionRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
-    if (selectionRect) {
-      selectionRect.setVisible(isSelected);
-    }
+    // Set initial selection and gizmo visibility
+    const setSelectionVisible = (visible: boolean) => {
+      const selRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
+      if (selRect) selRect.setVisible(visible);
+
+      // Toggle gizmo handles
+      const handleNames = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se',
+                          'handle_n', 'handle_s', 'handle_e', 'handle_w',
+                          'handle_rotate', 'rotate_line'];
+      for (const name of handleNames) {
+        const handle = container.getByName(name);
+        if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(visible);
+      }
+
+      // Update gizmo positions when showing
+      if (visible) {
+        const updateGizmo = container.getData('updateGizmoPositions') as (() => void) | undefined;
+        if (updateGizmo) updateGizmo();
+      }
+    };
+    setSelectionVisible(isSelected);
+    container.setData('setSelectionVisible', setSelectionVisible);
 
     container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       // Only select on left click
@@ -617,6 +638,12 @@ function createEditorScene(
     container.on('dragend', () => {
       onDragEnd(obj.id, container.x, container.y);
     });
+
+    // Handle transform end from gizmo (includes scale and rotation)
+    container.on('transformend', () => {
+      const rotationDeg = Phaser.Math.RadToDeg(container.rotation);
+      onDragEnd(obj.id, container.x, container.y, container.scaleX, container.scaleY, rotationDeg);
+    });
   });
 
   // Update selection visuals on scene update
@@ -624,9 +651,15 @@ function createEditorScene(
     scene.children.each((child: Phaser.GameObjects.GameObject) => {
       if (child instanceof Phaser.GameObjects.Container && child.getData('objectData')) {
         const isSelected = child.getData('selected');
-        const selectionRect = child.getByName('selection') as Phaser.GameObjects.Rectangle;
-        if (selectionRect) {
-          selectionRect.setVisible(isSelected);
+        const setSelectionVisible = child.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
+        if (setSelectionVisible) {
+          setSelectionVisible(isSelected);
+        } else {
+          // Fallback for containers without the helper
+          const selectionRect = child.getByName('selection') as Phaser.GameObjects.Rectangle;
+          if (selectionRect) {
+            selectionRect.setVisible(isSelected);
+          }
         }
       }
     });
@@ -684,9 +717,11 @@ function createPlayScene(
       runtimeSprite.setCostumes(costumes, effectiveProps.currentCostumeIndex || 0);
     }
 
-    // Apply physics configuration (use effective physics for component instances)
+    // Store collider and physics config on sprite for later use (e.g., when enabling physics via code)
     const physics = effectiveProps.physics;
     const collider = effectiveProps.collider;
+    runtimeSprite.setColliderConfig(collider || null);
+    runtimeSprite.setPhysicsConfig(physics || null);
     console.log(`[Physics] Object "${obj.name}" physics config:`, physics);
     console.log(`[Physics] Object "${obj.name}" collider:`, collider);
     if (physics?.enabled) {
@@ -708,7 +743,7 @@ function createPlayScene(
       const bodyOptions: Phaser.Types.Physics.Matter.MatterBodyConfig = {
         restitution: physics.bounce ?? 0,
         frictionAir: 0.01,
-        friction: 0.1,
+        friction: physics.friction ?? 0.1,
       };
 
       // Create Matter body based on collider config
@@ -899,6 +934,8 @@ function createObjectVisual(
   let selectionRect: Phaser.GameObjects.Rectangle | null = null;
   // Create invisible hit area rectangle for reliable click detection
   let hitRect: Phaser.GameObjects.Rectangle | null = null;
+  // Gizmo handles for transform
+  let gizmoHandles: Phaser.GameObjects.GameObject[] = [];
 
   if (isEditorMode) {
     // Selection visual
@@ -908,6 +945,57 @@ function createObjectVisual(
     selectionRect.setVisible(false);
     selectionRect.setName('selection');
     container.add(selectionRect);
+
+    // Create gizmo handles
+    const handleSize = 8;
+    const handleColor = 0x4A90D9;
+    const rotateHandleDistance = 24;
+
+    // Corner handles (for proportional scaling)
+    const cornerNames = ['nw', 'ne', 'sw', 'se'];
+    const cornerCursors = ['nwse-resize', 'nesw-resize', 'nesw-resize', 'nwse-resize'];
+    for (let i = 0; i < 4; i++) {
+      const handle = scene.add.rectangle(0, 0, handleSize, handleSize, handleColor);
+      handle.setName(`handle_${cornerNames[i]}`);
+      handle.setVisible(false);
+      handle.setInteractive({ useHandCursor: false, cursor: cornerCursors[i] });
+      scene.input.setDraggable(handle);
+      container.add(handle);
+      gizmoHandles.push(handle);
+    }
+
+    // Edge handles (for axis scaling)
+    const edgeNames = ['n', 's', 'e', 'w'];
+    const edgeCursors = ['ns-resize', 'ns-resize', 'ew-resize', 'ew-resize'];
+    for (let i = 0; i < 4; i++) {
+      const isVertical = i < 2;
+      const handle = scene.add.rectangle(0, 0, isVertical ? handleSize * 2 : handleSize, isVertical ? handleSize : handleSize * 2, handleColor);
+      handle.setName(`handle_${edgeNames[i]}`);
+      handle.setVisible(false);
+      handle.setInteractive({ useHandCursor: false, cursor: edgeCursors[i] });
+      scene.input.setDraggable(handle);
+      container.add(handle);
+      gizmoHandles.push(handle);
+    }
+
+    // Rotation handle (circle above object)
+    const rotateHandle = scene.add.circle(0, 0, handleSize / 2 + 2, handleColor);
+    rotateHandle.setName('handle_rotate');
+    rotateHandle.setVisible(false);
+    rotateHandle.setInteractive({ useHandCursor: false, cursor: 'grab' });
+    scene.input.setDraggable(rotateHandle);
+    container.add(rotateHandle);
+    gizmoHandles.push(rotateHandle);
+
+    // Rotation line connecting to top edge
+    const rotateLine = scene.add.graphics();
+    rotateLine.setName('rotate_line');
+    rotateLine.setVisible(false);
+    container.add(rotateLine);
+
+    // Store gizmo data on container
+    container.setData('gizmoHandles', gizmoHandles);
+    container.setData('rotateHandleDistance', rotateHandleDistance);
 
     // Invisible hit area - this is what actually receives clicks
     hitRect = scene.add.rectangle(0, 0, defaultSize, defaultSize, 0x000000, 0);
@@ -943,7 +1031,138 @@ function createObjectVisual(
       hitRect.on('dragend', (pointer: Phaser.Input.Pointer) => {
         container.emit('dragend', pointer);
       });
+
+      // Set up gizmo handle drag logic
+      let startScaleX = 1, startScaleY = 1;
+      let startWidth = 0, startHeight = 0;
+      let startPointerX = 0, startPointerY = 0;
+      let startRotation = 0;
+      let startCenterX = 0, startCenterY = 0;
+
+      for (const handle of gizmoHandles) {
+        const handleName = handle.name;
+
+        (handle as Phaser.GameObjects.Shape).on('dragstart', (pointer: Phaser.Input.Pointer) => {
+          startScaleX = container.scaleX;
+          startScaleY = container.scaleY;
+          startWidth = container.width * container.scaleX;
+          startHeight = container.height * container.scaleY;
+          startPointerX = pointer.worldX;
+          startPointerY = pointer.worldY;
+          startRotation = container.rotation;
+          startCenterX = container.x;
+          startCenterY = container.y;
+        });
+
+        (handle as Phaser.GameObjects.Shape).on('drag', (pointer: Phaser.Input.Pointer) => {
+          const dx = pointer.worldX - startPointerX;
+          const dy = pointer.worldY - startPointerY;
+
+          if (handleName === 'handle_rotate') {
+            // Rotation handle
+            const angleToStart = Math.atan2(startPointerY - startCenterY, startPointerX - startCenterX);
+            const angleToCurrent = Math.atan2(pointer.worldY - startCenterY, pointer.worldX - startCenterX);
+            container.rotation = startRotation + (angleToCurrent - angleToStart);
+          } else if (handleName.startsWith('handle_n') || handleName.startsWith('handle_s') ||
+                     handleName === 'handle_e' || handleName === 'handle_w') {
+            // Scale handles
+            let newScaleX = startScaleX;
+            let newScaleY = startScaleY;
+
+            // Corner handles (proportional)
+            if (handleName === 'handle_nw') {
+              const avgDelta = (-dx - dy) / 2;
+              const scale = (startWidth + avgDelta) / startWidth;
+              newScaleX = startScaleX * scale;
+              newScaleY = startScaleY * scale;
+            } else if (handleName === 'handle_ne') {
+              const avgDelta = (dx - dy) / 2;
+              const scale = (startWidth + avgDelta) / startWidth;
+              newScaleX = startScaleX * scale;
+              newScaleY = startScaleY * scale;
+            } else if (handleName === 'handle_sw') {
+              const avgDelta = (-dx + dy) / 2;
+              const scale = (startWidth + avgDelta) / startWidth;
+              newScaleX = startScaleX * scale;
+              newScaleY = startScaleY * scale;
+            } else if (handleName === 'handle_se') {
+              const avgDelta = (dx + dy) / 2;
+              const scale = (startWidth + avgDelta) / startWidth;
+              newScaleX = startScaleX * scale;
+              newScaleY = startScaleY * scale;
+            }
+            // Edge handles (axis scale)
+            else if (handleName === 'handle_n') {
+              newScaleY = startScaleY * (startHeight - dy) / startHeight;
+            } else if (handleName === 'handle_s') {
+              newScaleY = startScaleY * (startHeight + dy) / startHeight;
+            } else if (handleName === 'handle_e') {
+              newScaleX = startScaleX * (startWidth + dx) / startWidth;
+            } else if (handleName === 'handle_w') {
+              newScaleX = startScaleX * (startWidth - dx) / startWidth;
+            }
+
+            // Apply scale with minimum
+            container.setScale(Math.max(0.1, newScaleX), Math.max(0.1, newScaleY));
+          }
+
+          // Update gizmo handle positions
+          updateGizmoPositions();
+        });
+
+        (handle as Phaser.GameObjects.Shape).on('dragend', () => {
+          // Emit transform end event for editor scene to handle
+          container.emit('transformend');
+        });
+      }
     });
+
+    // Function to update gizmo handle positions based on current bounds
+    const updateGizmoPositions = () => {
+      const selRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
+      if (!selRect) return;
+
+      const halfW = selRect.width / 2;
+      const halfH = selRect.height / 2;
+      const offsetX = selRect.x;
+      const offsetY = selRect.y;
+      const rotateDistance = container.getData('rotateHandleDistance') || 24;
+
+      // Corner handles
+      const nw = container.getByName('handle_nw') as Phaser.GameObjects.Rectangle;
+      const ne = container.getByName('handle_ne') as Phaser.GameObjects.Rectangle;
+      const sw = container.getByName('handle_sw') as Phaser.GameObjects.Rectangle;
+      const se = container.getByName('handle_se') as Phaser.GameObjects.Rectangle;
+      if (nw) nw.setPosition(offsetX - halfW, offsetY - halfH);
+      if (ne) ne.setPosition(offsetX + halfW, offsetY - halfH);
+      if (sw) sw.setPosition(offsetX - halfW, offsetY + halfH);
+      if (se) se.setPosition(offsetX + halfW, offsetY + halfH);
+
+      // Edge handles
+      const n = container.getByName('handle_n') as Phaser.GameObjects.Rectangle;
+      const s = container.getByName('handle_s') as Phaser.GameObjects.Rectangle;
+      const e = container.getByName('handle_e') as Phaser.GameObjects.Rectangle;
+      const w = container.getByName('handle_w') as Phaser.GameObjects.Rectangle;
+      if (n) n.setPosition(offsetX, offsetY - halfH);
+      if (s) s.setPosition(offsetX, offsetY + halfH);
+      if (e) e.setPosition(offsetX + halfW, offsetY);
+      if (w) w.setPosition(offsetX - halfW, offsetY);
+
+      // Rotation handle and line
+      const rotateHandle = container.getByName('handle_rotate') as Phaser.GameObjects.Arc;
+      const rotateLine = container.getByName('rotate_line') as Phaser.GameObjects.Graphics;
+      if (rotateHandle) {
+        rotateHandle.setPosition(offsetX, offsetY - halfH - rotateDistance);
+      }
+      if (rotateLine) {
+        rotateLine.clear();
+        rotateLine.lineStyle(2, 0x4A90D9, 1);
+        rotateLine.lineBetween(offsetX, offsetY - halfH, offsetX, offsetY - halfH - rotateDistance + 4);
+      }
+    };
+
+    // Store updateGizmoPositions on container for external access
+    container.setData('updateGizmoPositions', updateGizmoPositions);
   }
 
   // Helper to update container size, hit area, and selection rect based on bounds
@@ -985,6 +1204,10 @@ function createObjectVisual(
         selectionRect.setSize(w + 8, h + 8);
         selectionRect.setPosition(offsetX, offsetY);
       }
+
+      // Update gizmo handle positions
+      const updateGizmo = container.getData('updateGizmoPositions') as (() => void) | undefined;
+      if (updateGizmo) updateGizmo();
     } else {
       // No bounds - use full image size (fallback)
       const w = Math.max(imgWidth, 32);
@@ -1004,6 +1227,10 @@ function createObjectVisual(
         selectionRect.setSize(w + 8, h + 8);
         selectionRect.setPosition(0, 0);
       }
+
+      // Update gizmo handle positions
+      const updateGizmo = container.getData('updateGizmoPositions') as (() => void) | undefined;
+      if (updateGizmo) updateGizmo();
     }
   };
 

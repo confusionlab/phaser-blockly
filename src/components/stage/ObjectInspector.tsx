@@ -518,6 +518,7 @@ function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
           velocityX: 0,
           velocityY: 0,
           bounce: 0.2,
+          friction: 0.1,
           allowRotation: false,
         },
       };
@@ -595,6 +596,22 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
             value={physics.bounce ?? 0.2}
             onChange={(bounce) => updatePhysics({ bounce })}
             step={0.1}
+            precision={2}
+            min={0}
+            max={1}
+          />
+        </div>
+      </div>
+
+      {/* Friction */}
+      <div>
+        <div className="text-xs text-muted-foreground mb-2">Friction</div>
+        <div className="flex gap-2">
+          <ScrubInput
+            label=""
+            value={physics.friction ?? 0.1}
+            onChange={(friction) => updatePhysics({ friction })}
+            step={0.05}
             precision={2}
             min={0}
             max={1}

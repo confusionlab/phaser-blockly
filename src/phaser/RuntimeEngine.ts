@@ -655,12 +655,13 @@ export class RuntimeEngine {
     this.cloneCounter++;
     const cloneId = `${spriteId}_clone_${this.cloneCounter}`;
 
-    // Create a visual clone
+    // Create a placeholder graphics (will be replaced by costume if available)
     const graphics = this.scene.add.graphics();
     const color = this.getObjectColor(cloneId);
     graphics.fillStyle(color, 1);
     graphics.fillRoundedRect(-32, -32, 64, 64, 8);
 
+    // Create container at original's position with original's transform
     const container = this.scene.add.container(
       original.container.x,
       original.container.y,
@@ -670,21 +671,86 @@ export class RuntimeEngine {
     container.setSize(64, 64);
     container.setScale(original.container.scaleX, original.container.scaleY);
     container.setRotation(original.container.rotation);
+    container.setDepth(original.container.depth);
 
     // Register the clone
-    const clone = this.registerSprite(cloneId, `${original.name} (clone)`, container);
+    const clone = this.registerSprite(cloneId, `${original.name} (clone)`, container, original.componentId);
     clone.isClone = true;
     clone.cloneParentId = spriteId;
 
-    // Copy the original's handlers for clone start
-    const originalHandlers = this.handlers.get(spriteId);
-    if (originalHandlers) {
-      // Execute onCloneStart handlers
-      for (const handler of originalHandlers.onCloneStart) {
-        handler();
+    // Copy all state from original (costumes, direction, size, configs, etc.)
+    clone.copyStateFrom(original);
+
+    // Copy physics body if original has one
+    const originalBody = (original.container as unknown as { body?: MatterJS.BodyType }).body;
+    if (originalBody && this.scene.matter?.add) {
+      // Create physics body for clone with same settings
+      clone.enablePhysics();
+
+      // Match velocity from original
+      const cloneBody = (clone.container as unknown as { body?: MatterJS.BodyType }).body;
+      if (cloneBody && originalBody.velocity) {
+        this.scene.matter.body.setVelocity(cloneBody, {
+          x: originalBody.velocity.x,
+          y: originalBody.velocity.y
+        });
       }
     }
 
+    // Copy all event handlers from original to clone
+    const originalHandlers = this.handlers.get(spriteId);
+    const cloneHandlers = this.handlers.get(cloneId);
+    if (originalHandlers && cloneHandlers) {
+      // Copy onKeyPressed handlers
+      for (const [key, handlers] of originalHandlers.onKeyPressed) {
+        cloneHandlers.onKeyPressed.set(key, [...handlers]);
+      }
+
+      // Copy onClick handlers and set up click listener
+      if (originalHandlers.onClick.length > 0) {
+        cloneHandlers.onClick = [...originalHandlers.onClick];
+        // Set up click handler on clone
+        clone.setupClickHandler(() => {
+          if (this._isRunning) {
+            debugLog('event', `Click triggered on clone ${cloneId}`);
+            for (const handler of cloneHandlers.onClick) {
+              handler();
+            }
+          }
+        });
+      }
+
+      // Copy onTouching handlers
+      for (const [targetId, handlers] of originalHandlers.onTouching) {
+        cloneHandlers.onTouching.set(targetId, [...handlers]);
+      }
+
+      // Copy onMessage handlers
+      for (const [message, handlers] of originalHandlers.onMessage) {
+        cloneHandlers.onMessage.set(message, [...handlers]);
+      }
+
+      // Copy forever handlers
+      if (originalHandlers.forever.length > 0) {
+        cloneHandlers.forever = [...originalHandlers.forever];
+        // Activate forever loop for clone
+        this.activeForeverLoops.set(cloneId, true);
+      }
+
+      // Copy onCloneStart handlers (for nested cloning)
+      cloneHandlers.onCloneStart = [...originalHandlers.onCloneStart];
+
+      // Execute onCloneStart handlers for this new clone
+      for (const handler of originalHandlers.onCloneStart) {
+        try {
+          handler();
+        } catch (e) {
+          debugLog('error', `Error in onCloneStart for clone ${cloneId}: ${e}`);
+        }
+      }
+    }
+
+    debugLog('info', `Cloned sprite "${original.name}" -> "${clone.name}" with ID ${cloneId}`);
     return clone;
   }
 

@@ -126,6 +126,7 @@ export interface PhysicsConfig {
   velocityX: number;
   velocityY: number;
   bounce: number;
+  friction: number;
   allowRotation: boolean;
 }
 
@@ -271,6 +272,7 @@ export function createDefaultPhysicsConfig(): PhysicsConfig {
     velocityX: 0,
     velocityY: 0,
     bounce: 0.2,
+    friction: 0.1, // Surface friction: 0 = frictionless, 1 = very grippy
     allowRotation: false,
   };
 }

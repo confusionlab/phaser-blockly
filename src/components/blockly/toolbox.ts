@@ -297,21 +297,21 @@ export function getToolboxConfig(): Blockly.utils.toolbox.ToolboxDefinition {
             kind: 'block',
             type: 'physics_set_velocity_x',
             inputs: {
-              VX: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
+              VX: { shadow: { type: 'math_number', fields: { NUM: '5' } } }
             }
           },
           {
             kind: 'block',
             type: 'physics_set_velocity_y',
             inputs: {
-              VY: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
+              VY: { shadow: { type: 'math_number', fields: { NUM: '8' } } }
             }
           },
           {
             kind: 'block',
             type: 'physics_set_gravity',
             inputs: {
-              GRAVITY: { shadow: { type: 'math_number', fields: { NUM: '300' } } }
+              GRAVITY: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
           {
@@ -319,6 +319,13 @@ export function getToolboxConfig(): Blockly.utils.toolbox.ToolboxDefinition {
             type: 'physics_set_bounce',
             inputs: {
               BOUNCE: { shadow: { type: 'math_number', fields: { NUM: '0.5' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'physics_set_friction',
+            inputs: {
+              FRICTION: { shadow: { type: 'math_number', fields: { NUM: '0.1' } } }
             }
           },
           { kind: 'block', type: 'physics_collide_bounds' },
@@ -970,6 +977,19 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
       this.setTooltip('Set bounce (0-1)');
+    }
+  };
+
+  Blockly.Blocks['physics_set_friction'] = {
+    init: function() {
+      this.appendValueInput('FRICTION')
+        .setCheck('Number')
+        .appendField('set friction to');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#40BF4A');
+      this.setTooltip('Set surface friction (0 = slippery, 1 = grippy)');
     }
   };
 
