@@ -28,7 +28,7 @@ export function EditorLayout() {
   const hoveredPanelRef = useRef<HoveredPanel>(null);
 
   // Cloud sync - sync current project when leaving
-  const { syncProjectToCloud, syncAllToCloud } = useCloudSync({
+  useCloudSync({
     currentProjectId: project?.id ?? null,
   });
 
