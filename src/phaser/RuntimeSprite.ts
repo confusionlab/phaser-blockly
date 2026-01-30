@@ -58,6 +58,23 @@ export class RuntimeSprite {
   // User coordinates: (0,0) at center, +Y is up
   // Phaser coordinates: (0,0) at top-left, +Y is down
 
+  /**
+   * Sync physics body position to match container position.
+   * This allows motion blocks and physics to coexist.
+   */
+  private syncBodyToContainer(): void {
+    const body = this.getMatterBody();
+    if (body && this.scene?.matter?.body) {
+      // Get collider offset if stored on container
+      const offsetX = this.container.getData('colliderOffsetX') ?? 0;
+      const offsetY = this.container.getData('colliderOffsetY') ?? 0;
+      this.scene.matter.body.setPosition(body, {
+        x: this.container.x + offsetX,
+        y: this.container.y + offsetY
+      });
+    }
+  }
+
   moveSteps(steps: number): void {
     if (this._stopped) return;
     // Direction: 0 = up, 90 = right, 180 = down, 270 = left
@@ -66,6 +83,7 @@ export class RuntimeSprite {
     this.container.x += Math.cos(radians) * steps;
     // Y is inverted: moving "up" in user space = negative Y in Phaser
     this.container.y -= Math.sin(radians) * steps;
+    this.syncBodyToContainer();
   }
 
   goTo(userX: number, userY: number): void {
@@ -76,6 +94,7 @@ export class RuntimeSprite {
     } else {
       this.container.setPosition(userX, userY);
     }
+    this.syncBodyToContainer();
   }
 
   setX(userX: number): void {
@@ -85,6 +104,7 @@ export class RuntimeSprite {
     } else {
       this.container.x = userX;
     }
+    this.syncBodyToContainer();
   }
 
   setY(userY: number): void {
@@ -94,21 +114,20 @@ export class RuntimeSprite {
     } else {
       this.container.y = userY;
     }
+    this.syncBodyToContainer();
   }
 
   changeX(dx: number): void {
     if (this._stopped) return;
-    const oldX = this.container.x;
     this.container.x += dx;
-    debugLog('action', `${this.name}.changeX(${dx}): ${oldX} -> ${this.container.x}`);
+    this.syncBodyToContainer();
   }
 
   changeY(dy: number): void {
     if (this._stopped) return;
-    const oldY = this.container.y;
     // In user space, +Y is up, so changeY(10) means move up = decrease Phaser Y
     this.container.y -= dy;
-    debugLog('action', `${this.name}.changeY(${dy}): ${oldY} -> ${this.container.y}`);
+    this.syncBodyToContainer();
   }
 
   getX(): number {
