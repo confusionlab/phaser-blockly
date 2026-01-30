@@ -101,6 +101,11 @@ export interface Sound {
   id: string;
   name: string;
   assetId: string; // Reference to Asset
+  // Trimming: times in seconds (optional, defaults to full audio)
+  trimStart?: number;
+  trimEnd?: number;
+  // Duration of the original audio in seconds (cached for performance)
+  duration?: number;
 }
 
 export interface ColliderConfig {
