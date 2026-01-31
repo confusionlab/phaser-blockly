@@ -412,6 +412,25 @@ export class RuntimeSprite {
     return matterContainer.body || null;
   }
 
+  isPhysicsEnabled(): boolean {
+    return this.getMatterBody() !== null;
+  }
+
+  disablePhysics(): void {
+    if (this._stopped) return;
+
+    const body = this.getMatterBody();
+    if (body && this.scene?.matter?.world) {
+      // Remove body from physics world
+      this.scene.matter.world.remove(body);
+      // Clear the body reference
+      (this.container as unknown as { body?: MatterJS.BodyType }).body = undefined;
+      debugLog('action', `${this.name}.disablePhysics() body removed`);
+    } else {
+      debugLog('info', `${this.name}.disablePhysics() no body to remove`);
+    }
+  }
+
   enablePhysics(): void {
     if (this._stopped) return;
 

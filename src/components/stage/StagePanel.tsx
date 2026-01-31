@@ -4,14 +4,14 @@ import { SpriteShelf } from './SpriteShelf';
 import { ObjectInspector } from './ObjectInspector';
 import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
-import { Square } from 'lucide-react';
+import { Square, Camera } from 'lucide-react';
 
 interface StagePanelProps {
   fullscreen?: boolean;
 }
 
 export function StagePanel({ fullscreen = false }: StagePanelProps) {
-  const { stopPlaying } = useEditorStore();
+  const { stopPlaying, viewMode, cycleViewMode } = useEditorStore();
   const [bottomHeightPercent, setBottomHeightPercent] = useState(70); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
 
@@ -81,12 +81,29 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     );
   }
 
+  const isCameraView = viewMode !== 'editor';
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Phaser canvas */}
-      <div className="min-h-0 p-1" style={{ height: `${100 - bottomHeightPercent}%` }}>
-        <div className="relative w-full h-full bg-card rounded-lg shadow-sm overflow-hidden">
-          <PhaserCanvas isPlaying={false} />
+      <div className="min-h-0 flex flex-col" style={{ height: `${100 - bottomHeightPercent}%` }}>
+        {/* Toolbar above stage */}
+        <div className="flex items-center gap-1 px-2 py-1 border-b border-border">
+          <Button
+            variant={isCameraView ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-7 w-7 p-0"
+            onClick={cycleViewMode}
+            title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
+          >
+            <Camera className="size-4" />
+          </Button>
+        </div>
+        {/* Canvas container */}
+        <div className="flex-1 min-h-0 p-1">
+          <div className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">
+            <PhaserCanvas isPlaying={false} />
+          </div>
         </div>
       </div>
 

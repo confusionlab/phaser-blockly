@@ -38,7 +38,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const creationIdRef = useRef(0); // Track which creation attempt is current
 
   const { project, updateObject } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectObject, selectScene, showColliderOutlines } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, selectObject, selectScene, showColliderOutlines, viewMode } = useEditorStore();
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
   const selectedSceneIdRef = useRef(selectedSceneId);
@@ -149,7 +149,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
               const allObjects = project.scenes.flatMap(s => s.objects);
               createPlayScene(this, selectedScene, project.scenes, project.components || [], runtimeRef, canvasWidth, canvasHeight, project.globalVariables, allObjects);
             } else {
-              createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd, canvasWidth, canvasHeight, project.components || []);
+              // Get current viewMode and cycleViewMode from store
+              const { viewMode: currentViewMode, cycleViewMode: cycleFn } = useEditorStore.getState();
+              createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd, canvasWidth, canvasHeight, project.components || [], currentViewMode, cycleFn);
             }
           },
           update: function(this: Phaser.Scene) {
@@ -229,6 +231,44 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       world.drawDebug = false;
     }
   }, [isPlaying, showColliderOutlines]);
+
+  // Update view mode at runtime (without recreating game)
+  useEffect(() => {
+    if (!gameRef.current || isPlaying) return;
+
+    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    if (!phaserScene) return;
+
+    const camera = phaserScene.cameras.main;
+    const canvasW = phaserScene.data.get('canvasWidth') as number || 800;
+    const canvasH = phaserScene.data.get('canvasHeight') as number || 600;
+
+    phaserScene.data.set('viewMode', viewMode);
+
+    const containerWidth = phaserScene.scale.width;
+    const containerHeight = phaserScene.scale.height;
+
+    if (viewMode === 'camera-viewport') {
+      // Camera mode: use viewport to letterbox
+      const scaleX = containerWidth / canvasW;
+      const scaleY = containerHeight / canvasH;
+      const scale = Math.min(scaleX, scaleY);
+
+      const viewportWidth = Math.floor(canvasW * scale);
+      const viewportHeight = Math.floor(canvasH * scale);
+      const viewportX = Math.floor((containerWidth - viewportWidth) / 2);
+      const viewportY = Math.floor((containerHeight - viewportHeight) / 2);
+
+      camera.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
+      camera.setZoom(scale);
+      camera.centerOn(canvasW / 2, canvasH / 2);
+    } else {
+      // Editor mode - full viewport
+      camera.setViewport(0, 0, containerWidth, containerHeight);
+      camera.setZoom(1);
+      camera.centerOn(canvasW / 2, canvasH / 2);
+    }
+  }, [viewMode, isPlaying]);
 
   // Update objects when they change (in editor mode only)
   useEffect(() => {
@@ -505,7 +545,9 @@ function createEditorScene(
   onDragEnd: (objId: string, x: number, y: number, scaleX?: number, scaleY?: number, rotation?: number) => void,
   canvasWidth: number,
   canvasHeight: number,
-  components: ComponentDefinition[] = []
+  components: ComponentDefinition[] = [],
+  viewMode: 'camera-masked' | 'camera-viewport' | 'editor' = 'editor',
+  cycleViewMode: () => void = () => {}
 ) {
   if (!sceneData) return;
 
@@ -545,6 +587,47 @@ function createEditorScene(
   scene.data.set('canvasWidth', canvasWidth);
   scene.data.set('canvasHeight', canvasHeight);
 
+  // Function to update the view based on current mode
+  const updateViewMode = (mode: 'camera-masked' | 'camera-viewport' | 'editor') => {
+    scene.data.set('viewMode', mode);
+
+    const containerWidth = scene.scale.width;
+    const containerHeight = scene.scale.height;
+
+    if (mode === 'camera-viewport') {
+      // Camera mode: use viewport to letterbox and maintain aspect ratio
+      const scaleX = containerWidth / canvasWidth;
+      const scaleY = containerHeight / canvasHeight;
+      const scale = Math.min(scaleX, scaleY);
+
+      const viewportWidth = Math.floor(canvasWidth * scale);
+      const viewportHeight = Math.floor(canvasHeight * scale);
+      const viewportX = Math.floor((containerWidth - viewportWidth) / 2);
+      const viewportY = Math.floor((containerHeight - viewportHeight) / 2);
+
+      camera.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
+      camera.setZoom(scale);
+      camera.centerOn(canvasWidth / 2, canvasHeight / 2);
+    } else {
+      // Editor mode - full viewport, free pan
+      camera.setViewport(0, 0, containerWidth, containerHeight);
+      camera.setZoom(1);
+      camera.centerOn(canvasWidth / 2, canvasHeight / 2);
+    }
+  };
+
+  // Initialize view mode
+  scene.data.set('viewMode', viewMode);
+  updateViewMode(viewMode);
+
+  // Handle 'C' key to cycle view modes
+  scene.input.keyboard?.on('keydown-C', () => {
+    cycleViewMode();
+    // Get the new mode from store and apply it
+    const newMode = useEditorStore.getState().viewMode;
+    updateViewMode(newMode);
+  });
+
   // Enable camera panning with middle mouse or right mouse drag
   let isPanning = false;
   let panStartX = 0;
@@ -553,8 +636,9 @@ function createEditorScene(
   let cameraStartY = 0;
 
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-    // Middle mouse (button 1) or right mouse (button 2) starts panning
-    if (pointer.middleButtonDown() || pointer.rightButtonDown()) {
+    // Middle mouse (button 1) or right mouse (button 2) starts panning (only in editor mode)
+    const currentMode = scene.data.get('viewMode');
+    if (currentMode === 'editor' && (pointer.middleButtonDown() || pointer.rightButtonDown())) {
       isPanning = true;
       panStartX = pointer.x;
       panStartY = pointer.y;
@@ -584,15 +668,50 @@ function createEditorScene(
     e.preventDefault();
   });
 
-  // Mouse wheel zoom (proportional to current zoom for consistent feel)
-  scene.input.on('wheel', (_pointer: Phaser.Input.Pointer, _gameObjects: unknown[], _deltaX: number, deltaY: number) => {
-    const zoomFactor = deltaY > 0 ? 0.9 : 1.1; // 10% zoom per scroll step
-    const newZoom = Phaser.Math.Clamp(camera.zoom * zoomFactor, 0.25, 3);
-    camera.setZoom(newZoom);
-  });
+  // Natural trackpad/mouse wheel controls (like Figma) - only in editor mode
+  // - Two-finger pan (no modifier) = pan
+  // - Pinch to zoom (ctrl/meta key on trackpad) = zoom with cursor as pivot
+  scene.game.canvas.addEventListener('wheel', (e: WheelEvent) => {
+    const currentMode = scene.data.get('viewMode');
 
-  // Center camera on game area initially
-  camera.centerOn(canvasWidth / 2, canvasHeight / 2);
+    // Only allow pan/zoom in editor mode
+    if (currentMode !== 'editor') {
+      return;
+    }
+
+    e.preventDefault();
+
+    // Check if this is a pinch-to-zoom gesture (trackpad sends ctrlKey=true for pinch)
+    if (e.ctrlKey || e.metaKey) {
+      // Pinch to zoom with cursor as pivot point
+      const rect = scene.game.canvas.getBoundingClientRect();
+      const pointerX = e.clientX - rect.left;
+      const pointerY = e.clientY - rect.top;
+
+      // Get world position before zoom
+      const worldXBefore = camera.scrollX + pointerX / camera.zoom;
+      const worldYBefore = camera.scrollY + pointerY / camera.zoom;
+
+      // Calculate new zoom (deltaY is inverted for natural feel)
+      const zoomDelta = -e.deltaY * 0.01;
+      const zoomFactor = 1 + zoomDelta;
+      const newZoom = Phaser.Math.Clamp(camera.zoom * zoomFactor, 0.1, 10);
+      camera.setZoom(newZoom);
+
+      // Get world position after zoom
+      const worldXAfter = camera.scrollX + pointerX / camera.zoom;
+      const worldYAfter = camera.scrollY + pointerY / camera.zoom;
+
+      // Adjust scroll to keep cursor at same world position (pivot)
+      camera.scrollX += worldXBefore - worldXAfter;
+      camera.scrollY += worldYBefore - worldYAfter;
+    } else {
+      // Two-finger pan (natural trackpad scrolling)
+      // Divide by zoom to make pan speed consistent at any zoom level
+      camera.scrollX += e.deltaX / camera.zoom;
+      camera.scrollY += e.deltaY / camera.zoom;
+    }
+  }, { passive: false });
 
   // Create objects (reverse depth so top of list = top render)
   const objectCount = sceneData.objects.length;

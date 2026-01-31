@@ -8,32 +8,32 @@ import { javascriptGenerator, Order } from 'blockly/javascript';
 export function registerCodeGenerators(): void {
   // --- Events ---
 
+  // Event handlers receive sprite as parameter so they work correctly for clones
   javascriptGenerator.forBlock['event_game_start'] = function(block) {
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    // This becomes a registration call
-    return `runtime.onGameStart(spriteId, async function() {\n${nextCode}});\n`;
+    return `runtime.onGameStart(spriteId, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_key_pressed'] = function(block) {
     const key = block.getFieldValue('KEY');
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onKeyPressed(spriteId, '${key}', async function() {\n${nextCode}});\n`;
+    return `runtime.onKeyPressed(spriteId, '${key}', async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_clicked'] = function(block) {
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onClicked(spriteId, async function() {\n${nextCode}});\n`;
+    return `runtime.onClicked(spriteId, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_forever'] = function(block) {
     const statements = javascriptGenerator.statementToCode(block, 'DO');
-    return `runtime.forever(spriteId, function() {\n${statements}});\n`;
+    return `runtime.forever(spriteId, function(sprite) {\n${statements}});\n`;
   };
 
   javascriptGenerator.forBlock['event_when_touching'] = function(block) {
     const target = block.getFieldValue('TARGET');
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onTouching(spriteId, '${target}', async function() {\n${nextCode}});\n`;
+    return `runtime.onTouching(spriteId, '${target}', async function(sprite) {\n${nextCode}});\n`;
   };
 
   // --- Motion ---
@@ -80,6 +80,14 @@ export function registerCodeGenerators(): void {
       return 'sprite.pointTowards(runtime.getMouseX(), runtime.getMouseY());\n';
     }
     return `sprite.pointTowards(runtime.getSprite('${target}')?.container.x ?? 0, runtime.getSprite('${target}')?.container.y ?? 0);\n`;
+  };
+
+  javascriptGenerator.forBlock['motion_my_x'] = function() {
+    return ['sprite.getX()', Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['motion_my_y'] = function() {
+    return ['sprite.getY()', Order.FUNCTION_CALL];
   };
 
   // --- Looks ---
@@ -141,12 +149,23 @@ export function registerCodeGenerators(): void {
     return `for (let i = 0; i < ${times}; i++) {\n${statements}}\n`;
   };
 
+  javascriptGenerator.forBlock['control_repeat_until'] = function(block) {
+    const condition = javascriptGenerator.valueToCode(block, 'CONDITION', Order.ATOMIC) || 'false';
+    const statements = javascriptGenerator.statementToCode(block, 'DO');
+    return `while (!(${condition})) {\n${statements}  await runtime.wait(0);\n}\n`;
+  };
+
+  javascriptGenerator.forBlock['control_wait_until'] = function(block) {
+    const condition = javascriptGenerator.valueToCode(block, 'CONDITION', Order.ATOMIC) || 'false';
+    return `while (!(${condition})) { await runtime.wait(0); }\n`;
+  };
+
   javascriptGenerator.forBlock['control_stop'] = function(block) {
     const option = block.getFieldValue('STOP_OPTION');
     if (option === 'ALL') {
       return 'runtime.stopAll();\nreturn;\n';
     } else {
-      return 'runtime.stopSprite(spriteId);\nreturn;\n';
+      return 'runtime.stopSprite(sprite.id);\nreturn;\n';
     }
   };
 
@@ -173,6 +192,14 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['physics_enable'] = function() {
     return 'sprite.enablePhysics();\n';
+  };
+
+  javascriptGenerator.forBlock['physics_disable'] = function() {
+    return 'sprite.disablePhysics();\n';
+  };
+
+  javascriptGenerator.forBlock['physics_enabled'] = function() {
+    return ['sprite.isPhysicsEnabled()', Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['physics_set_velocity'] = function(block) {
@@ -236,7 +263,7 @@ export function registerCodeGenerators(): void {
   // --- Camera ---
 
   javascriptGenerator.forBlock['camera_follow_me'] = function() {
-    return 'runtime.cameraFollowSprite(spriteId);\n';
+    return 'runtime.cameraFollowSprite(sprite.id);\n';
   };
 
   javascriptGenerator.forBlock['camera_follow_object'] = function(block) {
@@ -289,7 +316,7 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['sensing_touching'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
-    return [`runtime.isTouching(spriteId, '${targetId}')`, Order.FUNCTION_CALL];
+    return [`runtime.isTouching(sprite.id, '${targetId}')`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_touching_ground'] = function() {
@@ -298,7 +325,7 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['sensing_distance_to'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
-    return [`runtime.distanceTo(spriteId, '${targetId}')`, Order.FUNCTION_CALL];
+    return [`runtime.distanceTo(sprite.id, '${targetId}')`, Order.FUNCTION_CALL];
   };
 
   // --- Messages ---
@@ -306,7 +333,7 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['event_when_receive'] = function(block) {
     const message = block.getFieldValue('MESSAGE') || 'message1';
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onMessage(spriteId, '${message}', async function() {\n${nextCode}});\n`;
+    return `runtime.onMessage(spriteId, '${message}', async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['control_broadcast'] = function(block) {
@@ -322,25 +349,22 @@ export function registerCodeGenerators(): void {
   // --- Clone ---
 
   javascriptGenerator.forBlock['control_clone'] = function() {
-    return 'runtime.cloneSprite(spriteId);\n';
+    return 'runtime.cloneSprite(sprite.id);\n';
   };
 
   javascriptGenerator.forBlock['control_clone_object'] = function(block) {
-    const targetId = block.getFieldValue('TARGET');
+    const targetId = block.getFieldValue('TARGET') || '';
+    // If targetId is empty, skip cloning
+    if (!targetId) {
+      return '/* clone target not set */\n';
+    }
     return `runtime.cloneSprite('${targetId}');\n`;
   };
 
   javascriptGenerator.forBlock['control_delete_clone'] = function() {
-    return 'runtime.deleteClone(spriteId);\n';
+    return 'runtime.deleteClone(sprite.id);\n';
   };
 
-  javascriptGenerator.forBlock['event_when_clone_start'] = function(block) {
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    // The handler receives the clone sprite as a parameter, and we shadow both 'sprite' and
-    // 'spriteId' so all blocks inside operate on the clone, not the original.
-    // This ensures blocks like isTouching, distanceTo, deleteClone, variables, etc. work correctly.
-    return `runtime.onCloneStart(spriteId, async function(cloneSprite) {\n  const sprite = cloneSprite;\n  const spriteId = cloneSprite.id;\n${nextCode}});\n`;
-  };
 
   // --- Scene Switching ---
 
@@ -380,20 +404,20 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['variables_get'] = function(block) {
     const varName = javascriptGenerator.getVariableName(block.getFieldValue('VAR'));
-    return [`runtime.getVariable('${varName}', spriteId)`, Order.ATOMIC];
+    return [`runtime.getVariable('${varName}', sprite.id)`, Order.ATOMIC];
   };
 
   javascriptGenerator.forBlock['variables_set'] = function(block) {
     const varName = javascriptGenerator.getVariableName(block.getFieldValue('VAR'));
     const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ASSIGNMENT) || '0';
-    return `runtime.setVariable('${varName}', ${value}, spriteId);\n`;
+    return `runtime.setVariable('${varName}', ${value}, sprite.id);\n`;
   };
 
   // Change variable by
   javascriptGenerator.forBlock['math_change'] = function(block) {
     const varName = javascriptGenerator.getVariableName(block.getFieldValue('VAR'));
     const delta = javascriptGenerator.valueToCode(block, 'DELTA', Order.ASSIGNMENT) || '1';
-    return `runtime.changeVariable('${varName}', ${delta}, spriteId);\n`;
+    return `runtime.changeVariable('${varName}', ${delta}, sprite.id);\n`;
   };
 
   // --- Typed Variable generators ---
@@ -401,19 +425,19 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['typed_variable_get'] = function(block) {
     const varId = block.getFieldValue('VAR');
     // Use variable ID to get value - runtime will resolve name from store
-    return [`runtime.getTypedVariable('${varId}', spriteId)`, Order.ATOMIC];
+    return [`runtime.getTypedVariable('${varId}', sprite.id)`, Order.ATOMIC];
   };
 
   javascriptGenerator.forBlock['typed_variable_set'] = function(block) {
     const varId = block.getFieldValue('VAR');
     const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ASSIGNMENT) || '0';
-    return `runtime.setTypedVariable('${varId}', ${value}, spriteId);\n`;
+    return `runtime.setTypedVariable('${varId}', ${value}, sprite.id);\n`;
   };
 
   javascriptGenerator.forBlock['typed_variable_change'] = function(block) {
     const varId = block.getFieldValue('VAR');
     const delta = javascriptGenerator.valueToCode(block, 'DELTA', Order.ASSIGNMENT) || '1';
-    return `runtime.changeTypedVariable('${varId}', ${delta}, spriteId);\n`;
+    return `runtime.changeTypedVariable('${varId}', ${delta}, sprite.id);\n`;
   };
 
   // Boolean literal
@@ -431,7 +455,6 @@ const HAT_BLOCKS = [
   'event_forever',
   'event_when_receive',
   'event_when_touching',
-  'event_when_clone_start',
 ];
 
 /**

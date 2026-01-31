@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import { RuntimeSprite } from './RuntimeSprite';
 
-type EventHandler = () => void | Promise<void>;
-type CloneStartHandler = (clone: RuntimeSprite) => void | Promise<void>;
-type ForeverHandler = () => void;
+// Handlers receive sprite as parameter so they work correctly for clones
+type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
+type ForeverHandler = (sprite: RuntimeSprite) => void;
 
 // Debug log that can be viewed in the debug panel
 export interface DebugLogEntry {
@@ -37,7 +37,6 @@ interface ObjectHandlers {
   onTouching: Map<string, EventHandler[]>;
   onMessage: Map<string, EventHandler[]>;
   forever: ForeverHandler[];
-  onCloneStart: CloneStartHandler[];
 }
 
 /**
@@ -175,7 +174,6 @@ export class RuntimeEngine {
       onTouching: new Map(),
       onMessage: new Map(),
       forever: [],
-      onCloneStart: [],
     });
     this.localVariables.set(id, new Map());
     return sprite;
@@ -210,6 +208,7 @@ export class RuntimeEngine {
     if (h) {
       if (!h.onKeyPressed.has(key)) h.onKeyPressed.set(key, []);
       h.onKeyPressed.get(key)!.push(handler);
+      debugLog('info', `Key handler registered for ${spriteId}, key=${key}`);
     } else {
       debugLog('error', `No handlers found for sprite ${spriteId}`);
     }
@@ -226,7 +225,8 @@ export class RuntimeEngine {
       sprite.setupClickHandler(() => {
         if (this._isRunning) {
           debugLog('event', `Click triggered on sprite ${spriteId}`);
-          handler();
+          const currentSprite = this.sprites.get(spriteId);
+          if (currentSprite) handler(currentSprite);
         }
       });
     }
@@ -256,16 +256,16 @@ export class RuntimeEngine {
     if (h) {
       h.forever.push(handler);
       debugLog('info', `Forever loop count for ${spriteId}: ${h.forever.length}`);
+      // If game is already running (e.g., clone registering forever loop), activate immediately
+      if (this._isRunning) {
+        this.activeForeverLoops.set(spriteId, true);
+        debugLog('info', `Activated forever loop for ${spriteId} (runtime already running)`);
+      }
     } else {
       debugLog('error', `No handlers found for sprite ${spriteId}`);
     }
   }
 
-  onCloneStart(spriteId: string, handler: CloneStartHandler): void {
-    debugLog('info', `Registering onCloneStart for sprite ${spriteId}`);
-    const h = this.handlers.get(spriteId);
-    if (h) h.onCloneStart.push(handler);
-  }
 
   // --- Event Triggering ---
 
@@ -277,14 +277,14 @@ export class RuntimeEngine {
     }
     for (const [spriteId, h] of this.handlers) {
       const sprite = this.sprites.get(spriteId);
-      if (sprite?.isStopped()) continue;
+      if (!sprite || sprite.isStopped()) continue;
       const keyHandlers = h.onKeyPressed.get(key);
       debugLog('info', `Checking handlers for sprite ${spriteId}: has ${key} handlers = ${!!keyHandlers}, count = ${keyHandlers?.length || 0}`);
       if (keyHandlers) {
         debugLog('event', `Executing ${keyHandlers.length} handler(s) for key ${key}`);
         keyHandlers.forEach(handler => {
           try {
-            handler();
+            handler(sprite);
           } catch (e) {
             debugLog('error', `Error in key handler: ${e}`);
           }
@@ -305,11 +305,11 @@ export class RuntimeEngine {
     // Execute all onStart handlers
     for (const [spriteId, h] of this.handlers) {
       const sprite = this.sprites.get(spriteId);
-      if (sprite?.isStopped()) continue;
+      if (!sprite || sprite.isStopped()) continue;
       for (const handler of h.onStart) {
         try {
           debugLog('event', `Executing onStart handler for ${spriteId}`);
-          await handler();
+          await handler(sprite);
         } catch (e) {
           debugLog('error', `Error in onStart for ${spriteId}: ${e}`);
           console.error(`Error in onStart for ${spriteId}:`, e);
@@ -352,12 +352,12 @@ export class RuntimeEngine {
     // Run forever loops
     for (const [spriteId, h] of this.handlers) {
       const sprite = this.sprites.get(spriteId);
-      if (sprite?.isStopped()) continue;
+      if (!sprite || sprite.isStopped()) continue;
       if (!this.activeForeverLoops.get(spriteId)) continue;
 
       for (const handler of h.forever) {
         try {
-          handler();
+          handler(sprite);
         } catch (e) {
           debugLog('error', `Error in forever loop for ${spriteId}: ${e}`);
           console.error(`Error in forever loop for ${spriteId}:`, e);
@@ -484,34 +484,34 @@ export class RuntimeEngine {
 
     // Check if A has handlers for touching B (direct or component-any)
     const handlersA = this.handlers.get(spriteIdA);
-    if (handlersA) {
+    if (handlersA && spriteA) {
       // Direct handler for B
       const touchHandlersA = handlersA.onTouching.get(spriteIdB);
       if (touchHandlersA) {
-        touchHandlersA.forEach(handler => handler());
+        touchHandlersA.forEach(handler => handler(spriteA));
       }
       // Component-any handler for B's component
       if (spriteB?.componentId) {
         const componentAnyHandlers = handlersA.onTouching.get(`COMPONENT_ANY:${spriteB.componentId}`);
         if (componentAnyHandlers) {
-          componentAnyHandlers.forEach(handler => handler());
+          componentAnyHandlers.forEach(handler => handler(spriteA));
         }
       }
     }
 
     // Check if B has handlers for touching A (direct or component-any)
     const handlersB = this.handlers.get(spriteIdB);
-    if (handlersB) {
+    if (handlersB && spriteB) {
       // Direct handler for A
       const touchHandlersB = handlersB.onTouching.get(spriteIdA);
       if (touchHandlersB) {
-        touchHandlersB.forEach(handler => handler());
+        touchHandlersB.forEach(handler => handler(spriteB));
       }
       // Component-any handler for A's component
       if (spriteA?.componentId) {
         const componentAnyHandlers = handlersB.onTouching.get(`COMPONENT_ANY:${spriteA.componentId}`);
         if (componentAnyHandlers) {
-          componentAnyHandlers.forEach(handler => handler());
+          componentAnyHandlers.forEach(handler => handler(spriteB));
         }
       }
     }
@@ -522,10 +522,10 @@ export class RuntimeEngine {
       const message = this.messageQueue.shift()!;
       for (const [spriteId, h] of this.handlers) {
         const sprite = this.sprites.get(spriteId);
-        if (sprite?.isStopped()) continue;
+        if (!sprite || sprite.isStopped()) continue;
         const msgHandlers = h.onMessage.get(message);
         if (msgHandlers) {
-          msgHandlers.forEach(handler => handler());
+          msgHandlers.forEach(handler => handler(sprite));
         }
       }
     }
@@ -723,7 +723,16 @@ export class RuntimeEngine {
 
   // --- Clone System ---
 
+  private static MAX_CLONES = 300; // Prevent infinite clone crashes
+
   cloneSprite(spriteId: string): RuntimeSprite | null {
+    // Safeguard: limit total clone count
+    const cloneCount = Array.from(this.sprites.values()).filter(s => s.isClone).length;
+    if (cloneCount >= RuntimeEngine.MAX_CLONES) {
+      debugLog('error', `Clone limit (${RuntimeEngine.MAX_CLONES}) reached, ignoring clone request`);
+      return null;
+    }
+
     let sourceSprite = this.sprites.get(spriteId);
     if (!sourceSprite) return null;
 
@@ -792,25 +801,70 @@ export class RuntimeEngine {
       }
     }
 
-    // NOTE: We do NOT copy event handlers to clones. This is intentional and matches Scratch behavior.
-    // Clones only run code from "when I start as a clone" blocks.
-    // If we copied handlers, the closures would still reference the original spriteId,
-    // which would cause incorrect behavior and potential infinite loops.
-
-    // Execute onCloneStart handlers from the original object
-    // Pass the clone sprite so the handler operates on the clone, not the original
+    // Copy event handlers from original to clone
+    // Since handlers now receive sprite as a parameter, they'll work correctly for clones
     const originalHandlers = this.handlers.get(originalId);
-    if (originalHandlers) {
-      for (const handler of originalHandlers.onCloneStart) {
+    const cloneHandlers = this.handlers.get(cloneId);
+    if (originalHandlers && cloneHandlers) {
+      // Copy key pressed handlers
+      for (const [key, handlers] of originalHandlers.onKeyPressed) {
+        cloneHandlers.onKeyPressed.set(key, [...handlers]);
+      }
+
+      // Copy onClick handlers and set up click listener for clone
+      cloneHandlers.onClick = [...originalHandlers.onClick];
+      if (cloneHandlers.onClick.length > 0) {
+        clone.setupClickHandler(() => {
+          if (this._isRunning) {
+            const currentClone = this.sprites.get(cloneId);
+            if (currentClone) {
+              cloneHandlers.onClick.forEach(handler => handler(currentClone));
+            }
+          }
+        });
+      }
+
+      // Copy onTouching handlers
+      for (const [targetId, handlers] of originalHandlers.onTouching) {
+        cloneHandlers.onTouching.set(targetId, [...handlers]);
+      }
+
+      // Copy onMessage handlers
+      for (const [message, handlers] of originalHandlers.onMessage) {
+        cloneHandlers.onMessage.set(message, [...handlers]);
+      }
+
+      // Copy onStart handlers and execute them for the clone
+      cloneHandlers.onStart = [...originalHandlers.onStart];
+
+      // Copy forever handlers and activate them
+      cloneHandlers.forever = [...originalHandlers.forever];
+      if (cloneHandlers.forever.length > 0) {
+        this.activeForeverLoops.set(cloneId, true);
+      }
+    }
+
+    // Execute onStart handlers for the clone ("When I start" runs for clones too)
+    if (cloneHandlers) {
+      for (const handler of cloneHandlers.onStart) {
         try {
+          debugLog('event', `Executing onStart handler for clone ${cloneId}`);
           handler(clone);
         } catch (e) {
-          debugLog('error', `Error in onCloneStart for clone ${cloneId}: ${e}`);
+          debugLog('error', `Error in onStart for clone ${cloneId}: ${e}`);
         }
       }
     }
 
     debugLog('info', `Cloned sprite "${original.name}" -> "${clone.name}" with ID ${cloneId}`);
+    return clone;
+  }
+
+  cloneSpriteAt(spriteId: string, userX: number, userY: number): RuntimeSprite | null {
+    const clone = this.cloneSprite(spriteId);
+    if (clone) {
+      clone.goTo(userX, userY);
+    }
     return clone;
   }
 

@@ -8,6 +8,47 @@ const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
 // Prefix for "any component instance" option
 const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
 
+// Custom FieldDropdown that preserves unknown values (for object IDs that may not be loaded yet)
+class PreservingFieldDropdown extends Blockly.FieldDropdown {
+  // Override doClassValidation_ to accept any value, not just those in the dropdown
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  protected override doClassValidation_(newValue?: any): string | null {
+    // Always accept the value - we'll handle unknown values in getText
+    if (newValue === null || newValue === undefined) {
+      return null;
+    }
+    return String(newValue);
+  }
+
+  // Override getText to show a friendly name for unknown values
+  override getText(): string {
+    const value = this.getValue();
+    if (!value) return '';
+
+    // Check if value is in current options
+    const options = this.getOptions(false);
+    for (const option of options) {
+      if (option[1] === value && typeof option[0] === 'string') {
+        return option[0];
+      }
+    }
+
+    // Value not in options - try to find the object name from the project
+    const project = useProjectStore.getState().project;
+    if (project) {
+      for (const scene of project.scenes) {
+        const obj = scene.objects.find(o => o.id === value);
+        if (obj) {
+          return obj.name;
+        }
+      }
+    }
+
+    // Still not found - show placeholder
+    return '(select object)';
+  }
+}
+
 // Store reference to the field being picked for (so callback can update it)
 let pendingPickerField: Blockly.FieldDropdown | null = null;
 
@@ -174,7 +215,6 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'event_when_receive' },
           { kind: 'block', type: 'event_when_touching' },
-          { kind: 'block', type: 'event_when_clone_start' },
         ],
       },
       {
@@ -238,6 +278,8 @@ export function getToolboxConfig(): any {
             }
           },
           { kind: 'block', type: 'motion_point_towards' },
+          { kind: 'block', type: 'motion_my_x' },
+          { kind: 'block', type: 'motion_my_y' },
         ],
       },
       {
@@ -287,6 +329,8 @@ export function getToolboxConfig(): any {
         colour: '#40BF4A',
         contents: [
           { kind: 'block', type: 'physics_enable' },
+          { kind: 'block', type: 'physics_disable' },
+          { kind: 'block', type: 'physics_enabled' },
           {
             kind: 'block',
             type: 'physics_set_velocity',
@@ -363,6 +407,9 @@ export function getToolboxConfig(): any {
               TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
             }
           },
+          { kind: 'block', type: 'control_repeat_until' },
+          { kind: 'block', type: 'control_wait_until' },
+          { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'controls_if' },
           { kind: 'block', type: 'control_stop' },
           { kind: 'block', type: 'control_switch_scene' },
@@ -535,11 +582,11 @@ function registerCustomBlocks() {
   Blockly.Blocks['event_game_start'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('🏁 when game starts');
+        .appendField('🏁 When I start');
       this.appendStatementInput('NEXT')
         .setCheck(null);
       this.setColour('#FFAB19');
-      this.setTooltip('Runs when the game starts');
+      this.setTooltip('Runs when this object starts (including clones)');
     }
   };
 
@@ -583,6 +630,8 @@ function registerCustomBlocks() {
         .appendField('🔄 forever');
       this.appendStatementInput('DO')
         .setCheck(null);
+      this.setPreviousStatement(true, null);
+      // No next statement - forever loops don't end
       this.setColour('#FFAB19');
       this.setTooltip('Runs continuously');
     }
@@ -682,6 +731,26 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#4C97FF');
       this.setTooltip('Point in a direction (0-360)');
+    }
+  };
+
+  Blockly.Blocks['motion_my_x'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('my x');
+      this.setOutput(true, 'Number');
+      this.setColour('#4C97FF');
+      this.setTooltip('Current x position');
+    }
+  };
+
+  Blockly.Blocks['motion_my_y'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('my y');
+      this.setOutput(true, 'Number');
+      this.setColour('#4C97FF');
+      this.setTooltip('Current y position');
     }
   };
 
@@ -803,6 +872,34 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['control_repeat_until'] = {
+    init: function() {
+      this.appendValueInput('CONDITION')
+        .setCheck('Boolean')
+        .appendField('repeat until');
+      this.appendStatementInput('DO')
+        .setCheck(null);
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Repeat until condition is true');
+    }
+  };
+
+  Blockly.Blocks['control_wait_until'] = {
+    init: function() {
+      this.appendValueInput('CONDITION')
+        .setCheck('Boolean')
+        .appendField('wait until');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Wait until condition is true');
+    }
+  };
+
   Blockly.Blocks['control_stop'] = {
     init: function() {
       this.appendDummyInput()
@@ -874,7 +971,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('touching')
-        .appendField(new Blockly.FieldDropdown(getTargetDropdownOptions(true, false)), 'TARGET')
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false)), 'TARGET')
         .appendField('?');
       this.setOutput(true, 'Boolean');
       this.setColour('#5CB1D6');
@@ -899,7 +996,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('distance to')
-        .appendField(new Blockly.FieldDropdown(getTargetDropdownOptions(false, true)), 'TARGET');
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(false, true)), 'TARGET');
       this.setOutput(true, 'Number');
       this.setColour('#5CB1D6');
       this.setTooltip('Distance to target');
@@ -918,6 +1015,27 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
       this.setTooltip('Enable physics for this object');
+    }
+  };
+
+  Blockly.Blocks['physics_disable'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('disable physics');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#40BF4A');
+      this.setTooltip('Disable physics for this object');
+    }
+  };
+
+  Blockly.Blocks['physics_enabled'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('physics enabled?');
+      this.setOutput(true, 'Boolean');
+      this.setColour('#40BF4A');
+      this.setTooltip('Returns true if physics is enabled for this object');
     }
   };
 
@@ -1088,7 +1206,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('camera follow')
-        .appendField(new Blockly.FieldDropdown(getAllObjectsDropdownOptions), 'TARGET');
+        .appendField(new PreservingFieldDropdown(getAllObjectsDropdownOptions), 'TARGET');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#0fBDA8');
@@ -1299,7 +1417,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('when touching')
-        .appendField(new Blockly.FieldDropdown(getTargetDropdownOptions(true, false)), 'TARGET');
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false)), 'TARGET');
       this.appendStatementInput('NEXT')
         .setCheck(null);
       this.setColour('#FFAB19');
@@ -1310,16 +1428,6 @@ function registerCustomBlocks() {
     }
   };
 
-  Blockly.Blocks['event_when_clone_start'] = {
-    init: function() {
-      this.appendDummyInput()
-        .appendField('when I start as a clone');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
-      this.setTooltip('Runs when this clone is created');
-    }
-  };
 
   // Advanced control
   Blockly.Blocks['control_switch_scene'] = {
@@ -1348,7 +1456,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('clone')
-        .appendField(new Blockly.FieldDropdown(getObjectDropdownOptions), 'TARGET');
+        .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
@@ -1399,7 +1507,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('point towards')
-        .appendField(new Blockly.FieldDropdown(getTargetDropdownOptions(false, true)), 'TARGET');
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(false, true)), 'TARGET');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#4C97FF');

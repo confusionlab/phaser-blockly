@@ -2,6 +2,12 @@ import { create } from 'zustand';
 
 export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
 
+// View mode for the stage canvas
+// 'camera-masked': Shows game area with black bars outside camera bounds
+// 'camera-viewport': Shows only the camera viewport (fits to container)
+// 'editor': Free panning editor mode (infinite canvas)
+export type StageViewMode = 'camera-masked' | 'camera-viewport' | 'editor';
+
 // Callback type for object picker
 export type ObjectPickerCallback = (objectId: string) => void;
 
@@ -26,6 +32,7 @@ interface EditorStore {
   zoom: number;
   panX: number;
   panY: number;
+  viewMode: StageViewMode;
 
   // UI state
   showProjectDialog: boolean;
@@ -52,6 +59,8 @@ interface EditorStore {
   setZoom: (zoom: number) => void;
   setPan: (x: number, y: number) => void;
   resetView: () => void;
+  setViewMode: (mode: StageViewMode) => void;
+  cycleViewMode: () => void;
 
   setShowProjectDialog: (show: boolean) => void;
   setShowReusableLibrary: (show: boolean) => void;
@@ -87,6 +96,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   zoom: 1,
   panX: 0,
   panY: 0,
+  viewMode: 'editor' as StageViewMode,
 
   // UI state
   showProjectDialog: false,
@@ -129,6 +139,16 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   resetView: () => {
     set({ zoom: 1, panX: 0, panY: 0 });
+  },
+
+  setViewMode: (mode) => {
+    set({ viewMode: mode });
+  },
+
+  cycleViewMode: () => {
+    const currentMode = useEditorStore.getState().viewMode;
+    // Toggle between camera view and editor (world) view
+    set({ viewMode: currentMode === 'editor' ? 'camera-viewport' : 'editor' });
   },
 
   setShowProjectDialog: (show) => {
