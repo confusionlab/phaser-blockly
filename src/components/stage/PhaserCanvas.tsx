@@ -89,6 +89,16 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     }
     if (gameRef.current) {
       console.log('[PhaserCanvas] Destroying existing game');
+      // Stop all sounds before destroying to prevent AudioContext errors
+      try {
+        const scene = gameRef.current.scene.getScene('GameScene');
+        if (scene?.sound) {
+          scene.sound.stopAll();
+          scene.sound.removeAll();
+        }
+      } catch (e) {
+        // Ignore - scene might not exist
+      }
       gameRef.current.destroy(true);
       gameRef.current = null;
     }
@@ -203,6 +213,16 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         runtimeRef.current = null;
       }
       if (gameRef.current) {
+        // Stop all sounds before destroying to prevent AudioContext errors
+        try {
+          const scene = gameRef.current.scene.getScene('GameScene');
+          if (scene?.sound) {
+            scene.sound.stopAll();
+            scene.sound.removeAll();
+          }
+        } catch (e) {
+          // Ignore - scene might not exist
+        }
         gameRef.current.destroy(true);
         gameRef.current = null;
       }

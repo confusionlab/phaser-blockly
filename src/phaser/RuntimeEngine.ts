@@ -680,6 +680,18 @@ export class RuntimeEngine {
     debugLog('info', 'RuntimeEngine cleanup');
     this.stopAll();
 
+    // Stop all sounds before destroying
+    try {
+      this.stopAllSounds();
+      // Also stop sound manager to prevent AudioContext errors
+      if (this.scene?.sound) {
+        this.scene.sound.stopAll();
+        this.scene.sound.removeAll();
+      }
+    } catch (e) {
+      // Ignore errors if audio system already destroyed
+    }
+
     // Remove keyboard listeners
     const keyboard = this.scene.input.keyboard;
     if (keyboard) {
