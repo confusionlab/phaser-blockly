@@ -329,6 +329,15 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
+            type: 'motion_glide_to',
+            inputs: {
+              X: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
+              Y: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
+              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          {
+            kind: 'block',
             type: 'motion_change_x',
             inputs: {
               VALUE: {
@@ -793,6 +802,30 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#4C97FF');
       this.setTooltip('Go to position');
+    }
+  };
+
+  Blockly.Blocks['motion_glide_to'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('glide to x:');
+      this.appendValueInput('X')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('y:');
+      this.appendValueInput('Y')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('in');
+      this.appendValueInput('SECONDS')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('seconds');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Glide smoothly to position over time');
     }
   };
 

@@ -1654,6 +1654,41 @@ export class RuntimeEngine {
   // --- Animation ---
 
   /**
+   * Glide sprite to position over duration
+   */
+  glideTo(spriteId: string, userX: number, userY: number, durationSeconds: number): Promise<void> {
+    return new Promise(resolve => {
+      const sprite = this.sprites.get(spriteId);
+      if (!sprite) {
+        debugLog('error', `glideTo: sprite not found (${spriteId})`);
+        resolve();
+        return;
+      }
+
+      const container = sprite.container;
+      if (!container) {
+        resolve();
+        return;
+      }
+
+      // Convert user coordinates to Phaser coordinates
+      const phaserX = userX + this._canvasWidth / 2;
+      const phaserY = this._canvasHeight / 2 - userY;
+
+      this.scene.tweens.add({
+        targets: container,
+        x: phaserX,
+        y: phaserY,
+        duration: durationSeconds * 1000,
+        ease: 'Linear',
+        onComplete: () => resolve(),
+      });
+
+      debugLog('action', `Gliding "${sprite.name}" to (${userX}, ${userY}) over ${durationSeconds}s`);
+    });
+  }
+
+  /**
    * Rotate sprite by degrees over duration
    */
   rotateTo(spriteId: string, degrees: number, durationSeconds: number): Promise<void> {

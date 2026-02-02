@@ -49,6 +49,13 @@ export function registerCodeGenerators(): void {
     return `sprite.goTo(${x}, ${y});\n`;
   };
 
+  javascriptGenerator.forBlock['motion_glide_to'] = function(block) {
+    const x = javascriptGenerator.valueToCode(block, 'X', Order.ATOMIC) || '0';
+    const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '0';
+    const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '1';
+    return `await runtime.glideTo(spriteId, ${x}, ${y}, ${seconds});\n`;
+  };
+
   javascriptGenerator.forBlock['motion_change_x'] = function(block) {
     const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ATOMIC) || '10';
     return `sprite.changeX(${value});\n`;
