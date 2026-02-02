@@ -525,7 +525,6 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'control_for_each' },
           { kind: 'block', type: 'control_current_item' },
           { kind: 'block', type: 'control_wait_until' },
-          { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'controls_if' },
           {
             kind: 'block',
