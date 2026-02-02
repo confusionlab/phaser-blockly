@@ -369,19 +369,20 @@ export class RuntimeEngine {
       debugLog('info', `Sprite ${spriteId}: onStart=${h.onStart.length}, forever=${h.forever.length}, onKeyPressed=${h.onKeyPressed.size}`);
     }
 
-    // Execute all onStart handlers
-    // This is where forever loops get registered (inside onStart handlers)
+    // Execute all onStart handlers concurrently (fire-and-forget)
+    // This ensures that a wait() in one object doesn't block other objects from starting
+    // Forever loops are registered synchronously at the start of each handler, so they'll
+    // be captured before updateTemplateHandlers runs
     for (const [spriteId, h] of this.handlers) {
       const sprite = this.sprites.get(spriteId);
       if (!sprite || sprite.isStopped()) continue;
       for (const handler of h.onStart) {
-        try {
-          debugLog('event', `Executing onStart handler for ${spriteId}`);
-          await handler(sprite);
-        } catch (e) {
+        debugLog('event', `Executing onStart handler for ${spriteId}`);
+        // Fire and forget - don't await, just catch errors
+        Promise.resolve(handler(sprite)).catch(e => {
           debugLog('error', `Error in onStart for ${spriteId}: ${e}`);
           console.error(`Error in onStart for ${spriteId}:`, e);
-        }
+        });
       }
     }
 
