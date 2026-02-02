@@ -1561,6 +1561,18 @@ export class RuntimeEngine {
     localAngle: number;
     localScaleX: number;
     localScaleY: number;
+    // Track what we set last frame to detect user changes
+    lastSetX: number;
+    lastSetY: number;
+    lastSetAngle: number;
+    lastSetScaleX: number;
+    lastSetScaleY: number;
+    // Track parent's last transform to compute deltas
+    lastParentX: number;
+    lastParentY: number;
+    lastParentAngle: number;
+    lastParentScaleX: number;
+    lastParentScaleY: number;
   }> = new Map();
 
   /**
@@ -1626,6 +1638,17 @@ export class RuntimeEngine {
       localAngle,
       localScaleX,
       localScaleY,
+      // Initialize tracking values
+      lastSetX: childWorldX,
+      lastSetY: childWorldY,
+      lastSetAngle: childWorldAngle,
+      lastSetScaleX: childWorldScaleX,
+      lastSetScaleY: childWorldScaleY,
+      lastParentX: parentWorldX,
+      lastParentY: parentWorldY,
+      lastParentAngle: parentContainer.angle,
+      lastParentScaleX: parentScaleX,
+      lastParentScaleY: parentScaleY,
     });
 
     debugLog('action', `Attached "${child.name}" to "${parent.name}" at local (${localX.toFixed(1)}, ${localY.toFixed(1)}) angle=${localAngle.toFixed(1)} scale=(${localScaleX.toFixed(2)}, ${localScaleY.toFixed(2)})`);
@@ -1671,10 +1694,52 @@ export class RuntimeEngine {
 
       if (!childContainer || !parentContainer) continue;
 
+      // Detect if user code changed the child's transform since last frame
+      const currentX = childContainer.x;
+      const currentY = childContainer.y;
+      const currentAngle = childContainer.angle;
+      const currentScaleX = childContainer.scaleX;
+      const currentScaleY = childContainer.scaleY;
+
+      // Check for user-initiated changes (not from our last update)
+      const userMovedX = Math.abs(currentX - attachment.lastSetX) > 0.001;
+      const userMovedY = Math.abs(currentY - attachment.lastSetY) > 0.001;
+      const userRotated = Math.abs(currentAngle - attachment.lastSetAngle) > 0.001;
+      const userScaledX = Math.abs(currentScaleX - attachment.lastSetScaleX) > 0.001;
+      const userScaledY = Math.abs(currentScaleY - attachment.lastSetScaleY) > 0.001;
+
+      // If user changed position, update local offset
+      if (userMovedX || userMovedY) {
+        // Convert user's world position change to local offset change
+        const lastParentAngleRad = attachment.lastParentAngle * (Math.PI / 180);
+        const cosAngle = Math.cos(-lastParentAngleRad);
+        const sinAngle = Math.sin(-lastParentAngleRad);
+
+        // Calculate new local position from current world position relative to last parent position
+        const offsetX = currentX - attachment.lastParentX;
+        const offsetY = currentY - attachment.lastParentY;
+        attachment.localX = (offsetX * cosAngle - offsetY * sinAngle) / attachment.lastParentScaleX;
+        attachment.localY = (offsetX * sinAngle + offsetY * cosAngle) / attachment.lastParentScaleY;
+      }
+
+      // If user changed rotation, update local angle
+      if (userRotated) {
+        attachment.localAngle = currentAngle - attachment.lastParentAngle;
+      }
+
+      // If user changed scale, update local scale
+      if (userScaledX) {
+        attachment.localScaleX = currentScaleX / attachment.lastParentScaleX;
+      }
+      if (userScaledY) {
+        attachment.localScaleY = currentScaleY / attachment.lastParentScaleY;
+      }
+
       // Get parent's current world transform
       const parentX = parentContainer.x;
       const parentY = parentContainer.y;
-      const parentAngleRad = parentContainer.angle * (Math.PI / 180);
+      const parentAngle = parentContainer.angle;
+      const parentAngleRad = parentAngle * (Math.PI / 180);
       const parentScaleX = parentContainer.scaleX;
       const parentScaleY = parentContainer.scaleY;
 
@@ -1689,7 +1754,7 @@ export class RuntimeEngine {
       const worldY = parentY + (scaledLocalX * sinAngle + scaledLocalY * cosAngle);
 
       // Calculate world rotation and scale
-      const worldAngle = parentContainer.angle + attachment.localAngle;
+      const worldAngle = parentAngle + attachment.localAngle;
       const worldScaleX = parentScaleX * attachment.localScaleX;
       const worldScaleY = parentScaleY * attachment.localScaleY;
 
@@ -1697,6 +1762,18 @@ export class RuntimeEngine {
       childContainer.setPosition(worldX, worldY);
       childContainer.setAngle(worldAngle);
       childContainer.setScale(worldScaleX, worldScaleY);
+
+      // Update tracking values for next frame
+      attachment.lastSetX = worldX;
+      attachment.lastSetY = worldY;
+      attachment.lastSetAngle = worldAngle;
+      attachment.lastSetScaleX = worldScaleX;
+      attachment.lastSetScaleY = worldScaleY;
+      attachment.lastParentX = parentX;
+      attachment.lastParentY = parentY;
+      attachment.lastParentAngle = parentAngle;
+      attachment.lastParentScaleX = parentScaleX;
+      attachment.lastParentScaleY = parentScaleY;
     }
   }
 
