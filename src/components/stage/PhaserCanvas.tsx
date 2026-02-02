@@ -9,6 +9,9 @@ import { getEffectiveObjectProps } from '@/types';
 // Register code generators once at module load
 registerCodeGenerators();
 
+// Track runtimes for each scene (for pause/resume across scene switches)
+const sceneRuntimes: Map<string, RuntimeEngine> = new Map();
+
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
 // Phaser space: (0,0) at top-left, +Y is down
@@ -157,7 +160,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             if (isPlaying) {
               // Collect all objects from all scenes for variable lookup
               const allObjects = project.scenes.flatMap(s => s.objects);
-              createPlayScene(this, selectedScene, project.scenes, project.components || [], runtimeRef, canvasWidth, canvasHeight, project.globalVariables, allObjects);
+              createPlayScene(this, selectedScene, project.scenes, project.components || [], runtimeRef, canvasWidth, canvasHeight, project.globalVariables, allObjects, selectedSceneId || undefined);
             } else {
               // Get current viewMode and cycleViewMode from store
               const { viewMode: currentViewMode, cycleViewMode: cycleFn } = useEditorStore.getState();
@@ -171,10 +174,58 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
               // Check for scene switch
               const pendingSwitch = runtimeRef.current.pendingSceneSwitch;
               if (pendingSwitch) {
-                const targetScene = project.scenes.find(s => s.name === pendingSwitch);
-                if (targetScene) {
+                const targetSceneData = project.scenes.find(s => s.name === pendingSwitch.sceneName);
+                if (targetSceneData) {
                   runtimeRef.current.clearPendingSceneSwitch();
-                  selectScene(targetScene.id);
+                  const currentSceneKey = `PlayScene_${selectedSceneId}`;
+                  const targetSceneKey = `PlayScene_${targetSceneData.id}`;
+
+                  // Pause current runtime and sleep current scene
+                  runtimeRef.current.pause();
+
+                  // Check if target scene already exists (was visited before)
+                  const existingRuntime = sceneRuntimes.get(targetSceneData.id);
+
+                  if (existingRuntime && !pendingSwitch.restart) {
+                    // Resume existing scene
+                    this.scene.sleep(currentSceneKey);
+                    this.scene.wake(targetSceneKey);
+                    runtimeRef.current = existingRuntime;
+                    existingRuntime.resume();
+                    setCurrentRuntime(existingRuntime);
+                  } else {
+                    // Start new scene (or restart)
+                    if (existingRuntime) {
+                      // Clean up old runtime if restarting
+                      existingRuntime.cleanup();
+                      sceneRuntimes.delete(targetSceneData.id);
+                      this.scene.stop(targetSceneKey);
+                    }
+
+                    // Sleep current scene
+                    this.scene.sleep(currentSceneKey);
+
+                    // Launch target scene if not already added, or start if restarting
+                    if (!this.scene.get(targetSceneKey)) {
+                      // Add new scene dynamically
+                      this.scene.add(targetSceneKey, createPlaySceneConfig(
+                        targetSceneData,
+                        project.scenes,
+                        project.components || [],
+                        runtimeRef,
+                        canvasWidth,
+                        canvasHeight,
+                        project.globalVariables,
+                        project.scenes.flatMap(s => s.objects),
+                        targetSceneData.id
+                      ), true);
+                    } else {
+                      this.scene.start(targetSceneKey);
+                    }
+                  }
+
+                  // Update editor's selected scene to sync UI
+                  selectScene(targetSceneData.id);
                 }
               }
             }
@@ -207,6 +258,17 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
     return () => {
       console.log('[PhaserCanvas] Cleanup triggered');
+
+      // Clean up all scene runtimes (for multi-scene play mode)
+      for (const [sceneId, runtime] of sceneRuntimes) {
+        try {
+          runtime.cleanup();
+        } catch (e) {
+          console.warn(`[PhaserCanvas] Error cleaning up runtime for scene ${sceneId}:`, e);
+        }
+      }
+      sceneRuntimes.clear();
+
       if (runtimeRef.current) {
         runtimeRef.current.cleanup();
         setCurrentRuntime(null);
@@ -808,21 +870,109 @@ function createEditorScene(
 }
 
 /**
- * Create the play scene (running game mode)
+ * Create a Phaser scene config for dynamic scene addition
  */
-function createPlayScene(
+function createPlaySceneConfig(
+  sceneData: SceneData,
+  allScenes: SceneData[],
+  components: ComponentDefinition[],
+  runtimeRef: React.MutableRefObject<RuntimeEngine | null>,
+  canvasWidth: number,
+  canvasHeight: number,
+  globalVariables: Variable[],
+  allObjects: GameObject[],
+  sceneId: string
+): Phaser.Types.Scenes.CreateSceneFromObjectConfig {
+  return {
+    create: function(this: Phaser.Scene) {
+      createPlaySceneContent(
+        this,
+        sceneData,
+        allScenes,
+        components,
+        runtimeRef,
+        canvasWidth,
+        canvasHeight,
+        globalVariables,
+        allObjects,
+        sceneId
+      );
+    },
+    update: function(this: Phaser.Scene) {
+      const runtime = sceneRuntimes.get(sceneId);
+      if (runtime && !runtime.isPaused()) {
+        runtime.update();
+
+        // Check for scene switch from this scene's runtime
+        const pendingSwitch = runtime.pendingSceneSwitch;
+        if (pendingSwitch) {
+          const targetSceneData = allScenes.find(s => s.name === pendingSwitch.sceneName);
+          if (targetSceneData) {
+            runtime.clearPendingSceneSwitch();
+            const currentSceneKey = `PlayScene_${sceneId}`;
+            const targetSceneKey = `PlayScene_${targetSceneData.id}`;
+
+            // Pause current runtime
+            runtime.pause();
+
+            // Check if target scene already exists
+            const existingRuntime = sceneRuntimes.get(targetSceneData.id);
+
+            if (existingRuntime && !pendingSwitch.restart) {
+              // Resume existing scene
+              this.scene.sleep(currentSceneKey);
+              this.scene.wake(targetSceneKey);
+              runtimeRef.current = existingRuntime;
+              existingRuntime.resume();
+              setCurrentRuntime(existingRuntime);
+            } else {
+              // Clean up and restart if needed
+              if (existingRuntime) {
+                existingRuntime.cleanup();
+                sceneRuntimes.delete(targetSceneData.id);
+                this.scene.stop(targetSceneKey);
+              }
+
+              this.scene.sleep(currentSceneKey);
+
+              if (!this.scene.get(targetSceneKey)) {
+                this.scene.add(targetSceneKey, createPlaySceneConfig(
+                  targetSceneData,
+                  allScenes,
+                  components,
+                  runtimeRef,
+                  canvasWidth,
+                  canvasHeight,
+                  globalVariables,
+                  allObjects,
+                  targetSceneData.id
+                ), true);
+              } else {
+                this.scene.start(targetSceneKey);
+              }
+            }
+          }
+        }
+      }
+    },
+  };
+}
+
+/**
+ * Create the play scene content (running game mode)
+ */
+function createPlaySceneContent(
   scene: Phaser.Scene,
-  sceneData: SceneData | undefined,
+  sceneData: SceneData,
   _allScenes: SceneData[],
   components: ComponentDefinition[],
   runtimeRef: React.MutableRefObject<RuntimeEngine | null>,
   canvasWidth: number,
   canvasHeight: number,
   globalVariables: Variable[],
-  allObjects: GameObject[]
+  allObjects: GameObject[],
+  sceneId: string
 ) {
-  if (!sceneData) return;
-
   // Set background
   if (sceneData.background?.type === 'color') {
     scene.cameras.main.setBackgroundColor(sceneData.background.value);
@@ -832,6 +982,9 @@ function createPlayScene(
   const runtime = new RuntimeEngine(scene, canvasWidth, canvasHeight);
   runtimeRef.current = runtime;
   setCurrentRuntime(runtime);
+
+  // Store runtime for this scene (for pause/resume)
+  sceneRuntimes.set(sceneId, runtime);
 
   // Set up variable lookup for typed variables
   runtime.setVariableLookup((varId: string) => {
@@ -876,31 +1029,29 @@ function createPlayScene(
     const effectiveProps = getEffectiveObjectProps(obj, components);
 
     const container = createObjectVisual(scene, obj, false, canvasWidth, canvasHeight, components);
-    container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
+    container.setDepth(objectCount - index);
 
-    // Register with runtime (include componentId for component instances)
+    // Register with runtime
     const runtimeSprite = runtime.registerSprite(obj.id, obj.name, container, obj.componentId);
 
-    // Set costumes if available (use effective costumes for component instances)
+    // Set costumes if available
     const costumes = effectiveProps.costumes || [];
     if (costumes.length > 0) {
       runtimeSprite.setCostumes(costumes, effectiveProps.currentCostumeIndex || 0);
     }
 
-    // Register sounds with runtime (use effective sounds for component instances)
+    // Register sounds with runtime
     const sounds = effectiveProps.sounds || [];
-    console.log(`[Sound] Object "${obj.name}" has ${sounds.length} sounds:`, sounds.map(s => ({ id: s.id, name: s.name, hasData: !!s.assetId })));
     if (sounds.length > 0) {
       runtime.registerSounds(sounds);
     }
 
-    // Store collider and physics config on sprite for later use (e.g., when enabling physics via code)
+    // Store collider and physics config
     const physics = effectiveProps.physics;
     const collider = effectiveProps.collider;
     runtimeSprite.setColliderConfig(collider || null);
     runtimeSprite.setPhysicsConfig(physics || null);
-    console.log(`[Physics] Object "${obj.name}" physics config:`, physics);
-    console.log(`[Physics] Object "${obj.name}" collider:`, collider);
+
     if (physics?.enabled) {
       // Get default size from costume bounds
       const costume = costumes[effectiveProps.currentCostumeIndex || 0];
@@ -910,58 +1061,46 @@ function createPlayScene(
         defaultHeight = costume.bounds.height;
       }
 
-      // Apply object scale to collider dimensions
       const scaleX = obj.scaleX ?? 1;
       const scaleY = obj.scaleY ?? 1;
       const scaledDefaultWidth = defaultWidth * Math.abs(scaleX);
       const scaledDefaultHeight = defaultHeight * Math.abs(scaleY);
 
-      // Body config options
       const bodyOptions: Phaser.Types.Physics.Matter.MatterBodyConfig = {
         restitution: physics.bounce ?? 0,
         frictionAir: 0.01,
         friction: physics.friction ?? 0.1,
       };
 
-      // Create Matter body based on collider config
       let body: MatterJS.BodyType;
       const posX = container.x;
       const posY = container.y;
 
-      // Apply collider offset (scaled) - both editor and Phaser use Y-down
       const colliderOffsetX = (collider?.offsetX ?? 0) * scaleX;
       const colliderOffsetY = (collider?.offsetY ?? 0) * scaleY;
       const bodyX = posX + colliderOffsetX;
       const bodyY = posY + colliderOffsetY;
 
-      // Determine collider type - default to circle if no collider specified
       const colliderType = collider?.type ?? 'circle';
-      console.log(`[Physics] Creating ${colliderType} collider for "${obj.name}" with scale (${scaleX}, ${scaleY}), offset (${colliderOffsetX}, ${colliderOffsetY})`);
 
       switch (colliderType) {
         case 'none': {
-          // No physics body - skip
-          console.log(`[Physics] Collider type 'none', skipping physics body`);
           body = scene.matter.add.rectangle(bodyX, bodyY, scaledDefaultWidth, scaledDefaultHeight, { ...bodyOptions, isSensor: true });
           break;
         }
         case 'circle': {
-          // For circle, use the average scale or max scale to determine radius
           const avgScale = Math.max(Math.abs(scaleX), Math.abs(scaleY));
           const baseRadius = collider?.radius || Math.max(defaultWidth, defaultHeight) / 2;
           const radius = baseRadius * avgScale;
-          console.log(`[Physics] Circle radius: ${radius} (base: ${baseRadius}, scale: ${avgScale})`);
           body = scene.matter.add.circle(bodyX, bodyY, radius, bodyOptions);
           break;
         }
         case 'capsule': {
-          // Matter.js doesn't have native capsule - use chamfered rectangle (pill shape)
           const baseWidth = collider?.width || defaultWidth;
           const baseHeight = collider?.height || defaultHeight;
           const width = baseWidth * Math.abs(scaleX);
           const height = baseHeight * Math.abs(scaleY);
           const chamferRadius = Math.min(width, height) / 2;
-          console.log(`[Physics] Capsule: ${width}x${height}, chamfer: ${chamferRadius}`);
           body = scene.matter.add.rectangle(bodyX, bodyY, width, height, {
             ...bodyOptions,
             chamfer: { radius: chamferRadius },
@@ -974,20 +1113,16 @@ function createPlayScene(
           const baseHeight = collider?.height || defaultHeight;
           const width = baseWidth * Math.abs(scaleX);
           const height = baseHeight * Math.abs(scaleY);
-          console.log(`[Physics] Box: ${width}x${height} (base: ${baseWidth}x${baseHeight}, scale: ${scaleX}x${scaleY})`);
           body = scene.matter.add.rectangle(bodyX, bodyY, width, height, bodyOptions);
           break;
         }
       }
 
-      // Attach body to container
       const existingBody = (container as unknown as { body?: MatterJS.BodyType }).body;
       if (existingBody) {
         scene.matter.world.remove(existingBody);
       }
 
-      // Add a destroy method to the body so Phaser can clean it up properly
-      // Raw Matter.js bodies don't have destroy(), which causes errors when container is destroyed
       (body as MatterJS.BodyType & { destroy?: () => void }).destroy = () => {
         if (scene.matter?.world) {
           scene.matter.world.remove(body);
@@ -996,13 +1131,9 @@ function createPlayScene(
 
       (container as unknown as { body: MatterJS.BodyType }).body = body;
 
-      // Store collider offset for position sync
       container.setData('colliderOffsetX', colliderOffsetX);
       container.setData('colliderOffsetY', colliderOffsetY);
 
-      // Set up Matter.js to sync container position with body
-      // Subtract the collider offset to get the container position
-      // Skip for static bodies - they shouldn't move due to physics
       scene.matter.world.on('afterupdate', () => {
         if (body && container.active && !body.isStatic) {
           const offsetX = container.getData('colliderOffsetX') ?? 0;
@@ -1014,79 +1145,88 @@ function createPlayScene(
         }
       });
 
-      // Store allowRotation flag for runtime updates
       container.setData('allowRotation', physics.allowRotation ?? false);
 
-      // Set initial velocity (invert Y for user space)
       scene.matter.body.setVelocity(body, {
         x: physics.velocityX ?? 0,
-        y: -(physics.velocityY ?? 0) // Invert Y for user space
+        y: -(physics.velocityY ?? 0)
       });
 
-      // Set body type (static bodies don't move)
       if (physics.bodyType === 'static') {
-        // Zero out all velocity and angular velocity
         scene.matter.body.setVelocity(body, { x: 0, y: 0 });
         scene.matter.body.setAngularVelocity(body, 0);
-        // Make the body static - it will no longer respond to forces or collisions
         scene.matter.body.setStatic(body, true);
       }
 
-      // Configure rotation
       if (!physics.allowRotation) {
-        scene.matter.body.setInertia(body, Infinity); // Prevent rotation
+        scene.matter.body.setInertia(body, Infinity);
       }
 
-      // Gravity scale - uses Matter.js built-in gravityScale property
-      // Default of 1 means normal gravity, 0 means no gravity, 2 means double, etc.
       const gravityValue = physics.gravityY ?? 1;
       body.gravityScale = { x: 0, y: gravityValue };
-      console.log(`[Physics] Object "${obj.name}" gravity scale set to: ${gravityValue}`);
     }
 
-    // Save template for cloning (captures initial design-time state)
+    // Save template for cloning
     runtime.saveTemplate(obj.id);
 
-    // Generate and execute code for this object (use effective blocklyXml)
+    // Generate and execute code for this object
     const blocklyXml = effectiveProps.blocklyXml;
-    console.log(`[CodeExec] Object "${obj.name}" has blocklyXml:`, !!blocklyXml);
     if (blocklyXml) {
-      console.log(`[CodeExec] blocklyXml length: ${blocklyXml.length}`);
-      console.log(`[CodeExec] blocklyXml preview: ${blocklyXml.substring(0, 200)}...`);
       try {
         const code = generateCodeForObject(blocklyXml, obj.id);
-        console.log(`[CodeExec] Generated code for "${obj.name}":\n${code}`);
         if (code) {
-          // Execute the generated code
           const functionBody = `return ${code};`;
-          console.log(`[CodeExec] Function body:\n${functionBody}`);
           const execFunction = new Function('runtime', 'spriteId', 'sprite', functionBody);
-          console.log(`[CodeExec] execFunction created, calling it...`);
           const registerFunc = execFunction(runtime, obj.id, runtimeSprite);
-          console.log(`[CodeExec] registerFunc type: ${typeof registerFunc}`);
           if (typeof registerFunc === 'function') {
-            console.log(`[CodeExec] Calling registerFunc...`);
             registerFunc(runtime, obj.id, runtimeSprite);
-            console.log(`[CodeExec] registerFunc called successfully`);
-          } else {
-            console.error(`[CodeExec] registerFunc is not a function! Got: ${registerFunc}`);
           }
-        } else {
-          console.log(`[CodeExec] No code generated for "${obj.name}"`);
         }
       } catch (e) {
         console.error('Error executing code for object', obj.name, e);
       }
-    } else {
-      console.log(`[CodeExec] No blocklyXml for "${obj.name}"`);
     }
   });
 
-  // Set up physics colliders between all sprites
+  // Set up physics colliders
   runtime.setupPhysicsColliders();
 
-  // Start the runtime (execute all onStart handlers)
+  // Start the runtime
   runtime.start();
+}
+
+/**
+ * Create the play scene (running game mode) - wrapper for initial scene
+ */
+function createPlayScene(
+  scene: Phaser.Scene,
+  sceneData: SceneData | undefined,
+  allScenes: SceneData[],
+  components: ComponentDefinition[],
+  runtimeRef: React.MutableRefObject<RuntimeEngine | null>,
+  canvasWidth: number,
+  canvasHeight: number,
+  globalVariables: Variable[],
+  allObjects: GameObject[],
+  sceneId?: string
+) {
+  if (!sceneData) return;
+
+  // Use provided sceneId or fallback to sceneData.id
+  const effectiveSceneId = sceneId || sceneData.id;
+
+  createPlaySceneContent(
+    scene,
+    sceneData,
+    allScenes,
+    components,
+    runtimeRef,
+    canvasWidth,
+    canvasHeight,
+    globalVariables,
+    allObjects,
+    effectiveSceneId
+  );
 }
 
 /**

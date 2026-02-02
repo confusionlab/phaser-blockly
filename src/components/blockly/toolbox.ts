@@ -1698,11 +1698,15 @@ function registerCustomBlocks() {
   Blockly.Blocks['control_switch_scene'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('switch to scene')
+        .appendField(new Blockly.FieldDropdown([
+          ['go to', 'RESUME'],
+          ['restart', 'RESTART'],
+        ]), 'MODE')
+        .appendField('scene')
         .appendField(new Blockly.FieldTextInput('Scene 1'), 'SCENE');
       this.setPreviousStatement(true, null);
       this.setColour('#FFBF00');
-      this.setTooltip('Switch to another scene');
+      this.setTooltip('Switch to another scene (go to = resume where you left off, restart = start fresh)');
     }
   };
 

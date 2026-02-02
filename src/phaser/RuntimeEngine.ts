@@ -1517,18 +1517,34 @@ export class RuntimeEngine {
   }
 
   // --- Scene switching ---
-  private _pendingSceneSwitch: string | null = null;
+  private _pendingSceneSwitch: { sceneName: string; restart: boolean } | null = null;
 
-  switchToScene(sceneName: string): void {
-    this._pendingSceneSwitch = sceneName;
+  switchToScene(sceneName: string, restart: boolean = false): void {
+    this._pendingSceneSwitch = { sceneName, restart };
   }
 
-  get pendingSceneSwitch(): string | null {
+  get pendingSceneSwitch(): { sceneName: string; restart: boolean } | null {
     return this._pendingSceneSwitch;
   }
 
   clearPendingSceneSwitch(): void {
     this._pendingSceneSwitch = null;
+  }
+
+  // --- Pause/Resume for scene switching ---
+  pause(): void {
+    this._isRunning = false;
+    // Don't clear forever loops - just stop running them
+    debugLog('info', 'RuntimeEngine paused');
+  }
+
+  resume(): void {
+    this._isRunning = true;
+    debugLog('info', 'RuntimeEngine resumed');
+  }
+
+  isPaused(): boolean {
+    return !this._isRunning;
   }
 
   // --- Attachment (Parent-Child relationships) ---
