@@ -990,6 +990,13 @@ export class RuntimeEngine {
       if (!template.visible) clone.hide();
     }
 
+    // Enable physics for clone if the original has physics enabled
+    // This is needed for collision detection to work
+    const shouldEnablePhysics = liveOriginal?.isPhysicsEnabled() || template.physicsConfig;
+    if (shouldEnablePhysics) {
+      clone.enablePhysics();
+    }
+
     // Copy event handlers from template
     const templateHandlers = template.handlers;
     const cloneHandlers = this.handlers.get(cloneId);
