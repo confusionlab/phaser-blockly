@@ -13,6 +13,71 @@ import type { Variable } from '@/types';
 // Register continuous toolbox plugin once at module load
 registerContinuousToolbox();
 
+// Global clipboard for cross-object block copying
+let globalBlockClipboard: string | null = null;
+
+// Register custom context menu items for cross-object copy/paste
+function registerCrossObjectCopyPaste() {
+  // Copy block(s) to global clipboard
+  Blockly.ContextMenuRegistry.registry.register({
+    displayText: 'Copy Block',
+    preconditionFn: (scope) => {
+      if (scope.block && !scope.block.isInFlyout) {
+        return 'enabled';
+      }
+      return 'hidden';
+    },
+    callback: (scope) => {
+      if (scope.block) {
+        const xml = Blockly.Xml.blockToDom(scope.block, true);
+        globalBlockClipboard = Blockly.Xml.domToText(xml);
+        console.log('[Blockly] Block copied to clipboard');
+      }
+    },
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+    id: 'crossObjectCopy',
+    weight: 0,
+  });
+
+  // Paste from global clipboard
+  Blockly.ContextMenuRegistry.registry.register({
+    displayText: () => globalBlockClipboard ? 'Paste Block' : 'Paste Block (empty)',
+    preconditionFn: () => {
+      return globalBlockClipboard ? 'enabled' : 'disabled';
+    },
+    callback: (_scope, e) => {
+      if (globalBlockClipboard && e.currentTarget) {
+        const workspace = Blockly.getMainWorkspace() as Blockly.WorkspaceSvg;
+        if (workspace) {
+          try {
+            const xml = Blockly.utils.xml.textToDom(`<xml>${globalBlockClipboard}</xml>`);
+            const blockDom = xml.firstElementChild;
+            if (blockDom) {
+              // Get mouse position in workspace coordinates
+              const metrics = workspace.getMetrics();
+              const viewLeft = metrics.viewLeft || 0;
+              const viewTop = metrics.viewTop || 0;
+
+              // Place block near center of visible area
+              const block = Blockly.Xml.domToBlock(blockDom, workspace);
+              block.moveBy(viewLeft + 100, viewTop + 100);
+              console.log('[Blockly] Block pasted from clipboard');
+            }
+          } catch (err) {
+            console.error('[Blockly] Failed to paste block:', err);
+          }
+        }
+      }
+    },
+    scopeType: Blockly.ContextMenuRegistry.ScopeType.WORKSPACE,
+    id: 'crossObjectPaste',
+    weight: 0,
+  });
+}
+
+// Register once at module load
+registerCrossObjectCopyPaste();
+
 export function BlocklyEditor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
@@ -42,13 +107,44 @@ export function BlocklyEditor() {
     currentObjectIdRef.current = selectedObjectId;
   }, [selectedSceneId, selectedObjectId]);
 
-  // Cmd+K to open block search
+  // Cmd+K to open block search, Cmd+C/V for cross-object copy/paste
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Block search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         if (selectedObjectId) {
           setShowBlockSearch(true);
+        }
+        return;
+      }
+
+      // Cross-object copy (Cmd+C)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c' && workspaceRef.current) {
+        const selected = Blockly.getSelected();
+        if (selected && selected instanceof Blockly.BlockSvg && !selected.isInFlyout) {
+          const xml = Blockly.Xml.blockToDom(selected, true);
+          globalBlockClipboard = Blockly.Xml.domToText(xml);
+          console.log('[Blockly] Block copied via Cmd+C');
+        }
+      }
+
+      // Cross-object paste (Cmd+V)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && workspaceRef.current && globalBlockClipboard) {
+        e.preventDefault();
+        try {
+          const xml = Blockly.utils.xml.textToDom(`<xml>${globalBlockClipboard}</xml>`);
+          const blockDom = xml.firstElementChild;
+          if (blockDom) {
+            const metrics = workspaceRef.current.getMetrics();
+            const viewLeft = metrics.viewLeft || 0;
+            const viewTop = metrics.viewTop || 0;
+            const block = Blockly.Xml.domToBlock(blockDom, workspaceRef.current);
+            block.moveBy(viewLeft + 100, viewTop + 100);
+            console.log('[Blockly] Block pasted via Cmd+V');
+          }
+        } catch (err) {
+          console.error('[Blockly] Failed to paste block:', err);
         }
       }
     };
