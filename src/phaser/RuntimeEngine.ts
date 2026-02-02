@@ -563,61 +563,81 @@ export class RuntimeEngine {
     if (this._touchingPairs.has(pairKey)) return;
     this._touchingPairs.add(pairKey);
 
-    const spriteA = this.sprites.get(spriteIdA);
-    const spriteB = this.sprites.get(spriteIdB);
-
     // Helper to check if two sprites are clones of the same original
-    const areRelatedClones = (sprite1: RuntimeSprite | undefined, sprite2: RuntimeSprite | undefined): boolean => {
+    const areRelatedClones = (id1: string, id2: string): boolean => {
+      const sprite1 = this.sprites.get(id1);
+      const sprite2 = this.sprites.get(id2);
       if (!sprite1 || !sprite2) return false;
       const original1 = sprite1.cloneParentId || sprite1.id;
       const original2 = sprite2.cloneParentId || sprite2.id;
       return original1 === original2;
     };
 
+    // Helper to safely call a handler only if sprite is still active
+    const safeCallHandler = (handler: (sprite: RuntimeSprite) => void, spriteId: string) => {
+      const sprite = this.sprites.get(spriteId);
+      if (sprite && !sprite.isStopped()) {
+        handler(sprite);
+      }
+    };
+
     // Check if A has handlers for touching B (direct, component-any, or MY_CLONES)
     const handlersA = this.handlers.get(spriteIdA);
-    if (handlersA && spriteA) {
+    const spriteAExists = () => {
+      const s = this.sprites.get(spriteIdA);
+      return s && !s.isStopped();
+    };
+
+    if (handlersA && spriteAExists()) {
       // Direct handler for B
       const touchHandlersA = handlersA.onTouching.get(spriteIdB);
       if (touchHandlersA) {
-        touchHandlersA.forEach(handler => handler(spriteA));
+        touchHandlersA.forEach(handler => safeCallHandler(handler, spriteIdA));
       }
       // Component-any handler for B's component
-      if (spriteB?.componentId) {
-        const componentAnyHandlers = handlersA.onTouching.get(`COMPONENT_ANY:${spriteB.componentId}`);
+      const spriteBForComponent = this.sprites.get(spriteIdB);
+      if (spriteBForComponent?.componentId && spriteAExists()) {
+        const componentAnyHandlers = handlersA.onTouching.get(`COMPONENT_ANY:${spriteBForComponent.componentId}`);
         if (componentAnyHandlers) {
-          componentAnyHandlers.forEach(handler => handler(spriteA));
+          componentAnyHandlers.forEach(handler => safeCallHandler(handler, spriteIdA));
         }
       }
       // MY_CLONES handler - check if A and B are clones of the same original
-      if (areRelatedClones(spriteA, spriteB)) {
+      if (spriteAExists() && areRelatedClones(spriteIdA, spriteIdB)) {
         const myClonesHandlers = handlersA.onTouching.get('MY_CLONES');
         if (myClonesHandlers) {
-          myClonesHandlers.forEach(handler => handler(spriteA));
+          myClonesHandlers.forEach(handler => safeCallHandler(handler, spriteIdA));
         }
       }
     }
 
     // Check if B has handlers for touching A (direct, component-any, or MY_CLONES)
+    // Re-check if B still exists (A's handlers might have deleted it)
     const handlersB = this.handlers.get(spriteIdB);
-    if (handlersB && spriteB) {
+    const spriteBExists = () => {
+      const s = this.sprites.get(spriteIdB);
+      return s && !s.isStopped();
+    };
+
+    if (handlersB && spriteBExists()) {
       // Direct handler for A
       const touchHandlersB = handlersB.onTouching.get(spriteIdA);
       if (touchHandlersB) {
-        touchHandlersB.forEach(handler => handler(spriteB));
+        touchHandlersB.forEach(handler => safeCallHandler(handler, spriteIdB));
       }
       // Component-any handler for A's component
-      if (spriteA?.componentId) {
-        const componentAnyHandlers = handlersB.onTouching.get(`COMPONENT_ANY:${spriteA.componentId}`);
+      const spriteAForComponent = this.sprites.get(spriteIdA);
+      if (spriteAForComponent?.componentId && spriteBExists()) {
+        const componentAnyHandlers = handlersB.onTouching.get(`COMPONENT_ANY:${spriteAForComponent.componentId}`);
         if (componentAnyHandlers) {
-          componentAnyHandlers.forEach(handler => handler(spriteB));
+          componentAnyHandlers.forEach(handler => safeCallHandler(handler, spriteIdB));
         }
       }
       // MY_CLONES handler - check if A and B are clones of the same original
-      if (areRelatedClones(spriteA, spriteB)) {
+      if (spriteBExists() && areRelatedClones(spriteIdA, spriteIdB)) {
         const myClonesHandlers = handlersB.onTouching.get('MY_CLONES');
         if (myClonesHandlers) {
-          myClonesHandlers.forEach(handler => handler(spriteB));
+          myClonesHandlers.forEach(handler => safeCallHandler(handler, spriteIdB));
         }
       }
     }
@@ -1011,17 +1031,19 @@ export class RuntimeEngine {
       if (cloneHandlers.forever.length > 0) {
         this.activeForeverLoops.set(cloneId, true);
       }
+
+      debugLog('info', `Clone ${cloneId} handlers: onTouching=${cloneHandlers.onTouching.size}, forever=${cloneHandlers.forever.length}`);
+    } else if (!templateHandlers) {
+      debugLog('error', `Template for ${originalId} has no handlers! Clone ${cloneId} won't have event handlers.`);
     }
 
-    // Execute onStart handlers for the clone
+    // Execute onStart handlers for the clone (fire-and-forget like originals)
     if (cloneHandlers) {
       for (const handler of cloneHandlers.onStart) {
-        try {
-          debugLog('event', `Executing onStart handler for clone ${cloneId}`);
-          await handler(clone);
-        } catch (e) {
+        debugLog('event', `Executing onStart handler for clone ${cloneId}`);
+        Promise.resolve(handler(clone)).catch(e => {
           debugLog('error', `Error in onStart for clone ${cloneId}: ${e}`);
-        }
+        });
       }
     }
 
