@@ -371,8 +371,6 @@ export class RuntimeEngine {
 
     // Execute all onStart handlers concurrently (fire-and-forget)
     // This ensures that a wait() in one object doesn't block other objects from starting
-    // Forever loops are registered synchronously at the start of each handler, so they'll
-    // be captured before updateTemplateHandlers runs
     for (const [spriteId, h] of this.handlers) {
       const sprite = this.sprites.get(spriteId);
       if (!sprite || sprite.isStopped()) continue;
@@ -386,8 +384,13 @@ export class RuntimeEngine {
       }
     }
 
-    // Update templates with handlers AFTER onStart handlers have run
-    // This ensures forever loops registered inside onStart are captured
+    // Flush the microtask queue to allow handlers' synchronous code to execute
+    // This ensures forever loops and other handlers registered at the start of
+    // onStart handlers are captured before we update templates
+    await Promise.resolve();
+
+    // Update templates with handlers AFTER onStart handlers' sync code has run
+    // This captures forever loops and event handlers registered in onStart
     for (const [spriteId, sprite] of this.sprites) {
       if (!sprite.isClone) {
         this.updateTemplateHandlers(spriteId);
@@ -563,7 +566,15 @@ export class RuntimeEngine {
     const spriteA = this.sprites.get(spriteIdA);
     const spriteB = this.sprites.get(spriteIdB);
 
-    // Check if A has handlers for touching B (direct or component-any)
+    // Helper to check if two sprites are clones of the same original
+    const areRelatedClones = (sprite1: RuntimeSprite | undefined, sprite2: RuntimeSprite | undefined): boolean => {
+      if (!sprite1 || !sprite2) return false;
+      const original1 = sprite1.cloneParentId || sprite1.id;
+      const original2 = sprite2.cloneParentId || sprite2.id;
+      return original1 === original2;
+    };
+
+    // Check if A has handlers for touching B (direct, component-any, or MY_CLONES)
     const handlersA = this.handlers.get(spriteIdA);
     if (handlersA && spriteA) {
       // Direct handler for B
@@ -578,9 +589,16 @@ export class RuntimeEngine {
           componentAnyHandlers.forEach(handler => handler(spriteA));
         }
       }
+      // MY_CLONES handler - check if A and B are clones of the same original
+      if (areRelatedClones(spriteA, spriteB)) {
+        const myClonesHandlers = handlersA.onTouching.get('MY_CLONES');
+        if (myClonesHandlers) {
+          myClonesHandlers.forEach(handler => handler(spriteA));
+        }
+      }
     }
 
-    // Check if B has handlers for touching A (direct or component-any)
+    // Check if B has handlers for touching A (direct, component-any, or MY_CLONES)
     const handlersB = this.handlers.get(spriteIdB);
     if (handlersB && spriteB) {
       // Direct handler for A
@@ -593,6 +611,13 @@ export class RuntimeEngine {
         const componentAnyHandlers = handlersB.onTouching.get(`COMPONENT_ANY:${spriteA.componentId}`);
         if (componentAnyHandlers) {
           componentAnyHandlers.forEach(handler => handler(spriteB));
+        }
+      }
+      // MY_CLONES handler - check if A and B are clones of the same original
+      if (areRelatedClones(spriteA, spriteB)) {
+        const myClonesHandlers = handlersB.onTouching.get('MY_CLONES');
+        if (myClonesHandlers) {
+          myClonesHandlers.forEach(handler => handler(spriteB));
         }
       }
     }
