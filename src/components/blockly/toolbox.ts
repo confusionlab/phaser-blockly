@@ -370,6 +370,21 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'motion_point_towards' },
           { kind: 'block', type: 'motion_my_x' },
           { kind: 'block', type: 'motion_my_y' },
+          { kind: 'sep', gap: '16' },
+          {
+            kind: 'block',
+            type: 'motion_rotate_tween',
+            inputs: {
+              DEGREES: { shadow: { type: 'math_number', fields: { NUM: '90' } } },
+              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          { kind: 'sep', gap: '16' },
+          { kind: 'block', type: 'motion_attach_to_dropdown' },
+          { kind: 'block', type: 'motion_attach_to_block' },
+          { kind: 'block', type: 'motion_attach_block_to_me' },
+          { kind: 'block', type: 'motion_attach_dropdown_to_me' },
+          { kind: 'block', type: 'motion_detach' },
         ],
       },
       {
@@ -1737,6 +1752,95 @@ function registerCustomBlocks() {
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  // Rotate animation block
+  Blockly.Blocks['motion_rotate_tween'] = {
+    init: function() {
+      this.appendValueInput('DEGREES')
+        .setCheck('Number')
+        .appendField('rotate');
+      this.appendDummyInput()
+        .appendField('degrees in');
+      this.appendValueInput('SECONDS')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('seconds');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Rotate by degrees over time');
+    }
+  };
+
+  // Attachment blocks - parent/child relationships
+  Blockly.Blocks['motion_attach_to_dropdown'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('attach myself to')
+        .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Attach this object to another (becomes child)');
+      const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
+      if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['motion_attach_to_block'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('attach myself to');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Attach this object to another (becomes child)');
+    }
+  };
+
+  Blockly.Blocks['motion_attach_dropdown_to_me'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('attach')
+        .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET')
+        .appendField('to myself');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Attach another object to this one (becomes parent)');
+      const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
+      if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['motion_attach_block_to_me'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('attach');
+      this.appendDummyInput()
+        .appendField('to myself');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Attach another object to this one (becomes parent)');
+    }
+  };
+
+  Blockly.Blocks['motion_detach'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('detach from parent');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Detach this object from its parent');
     }
   };
 

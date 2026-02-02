@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { X, Upload, Loader2, Library, Save, Volume2, Play, Square } from 'lucide-react';
 import { uploadDataUrlToStorage } from '@/utils/convexHelpers';
 import { SoundLibraryBrowser } from '@/components/dialogs/SoundLibraryBrowser';
+import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import type { Sound } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -21,15 +22,6 @@ interface SoundListProps {
   onRenameSound: (index: number, name: string) => void;
   onPlaySound: (sound: Sound) => void;
   onStopSound: () => void;
-}
-
-async function getAudioDuration(dataUrl: string): Promise<number | undefined> {
-  return new Promise((resolve) => {
-    const audio = document.createElement('audio');
-    audio.onloadedmetadata = () => resolve(audio.duration);
-    audio.onerror = () => resolve(undefined);
-    audio.src = dataUrl;
-  });
 }
 
 export const SoundList = memo(({
@@ -66,19 +58,25 @@ export const SoundList = memo(({
         if (!file.type.startsWith('audio/')) continue;
 
         try {
-          const dataUrl = await new Promise<string>((resolve, reject) => {
+          // Read file as data URL
+          const originalDataUrl = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as string);
             reader.onerror = reject;
             reader.readAsDataURL(file);
           });
 
-          const duration = await getAudioDuration(dataUrl);
+          // Compress the audio for efficient storage
+          console.log(`[Audio] Compressing ${file.name}...`);
+          const compressedDataUrl = await compressAudio(originalDataUrl);
+          console.log(`[Audio] Compressed: ${(originalDataUrl.length / 1024).toFixed(1)}KB -> ${(compressedDataUrl.length / 1024).toFixed(1)}KB`);
+
+          const duration = await getAudioDuration(compressedDataUrl);
 
           const newSound: Sound = {
             id: crypto.randomUUID(),
             name: file.name.replace(/\.[^/.]+$/, ''),
-            assetId: dataUrl,
+            assetId: compressedDataUrl,
             duration,
           };
           onAddSound(newSound);

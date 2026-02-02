@@ -90,6 +90,38 @@ export function registerCodeGenerators(): void {
     return ['sprite.getY()', Order.FUNCTION_CALL];
   };
 
+  // Rotate animation
+  javascriptGenerator.forBlock['motion_rotate_tween'] = function(block) {
+    const degrees = javascriptGenerator.valueToCode(block, 'DEGREES', Order.ATOMIC) || '90';
+    const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '1';
+    return `await runtime.rotateTo(spriteId, ${degrees}, ${seconds});\n`;
+  };
+
+  // Attachment blocks
+  javascriptGenerator.forBlock['motion_attach_to_dropdown'] = function(block) {
+    const target = block.getFieldValue('TARGET');
+    return `runtime.attachTo(spriteId, '${target}');\n`;
+  };
+
+  javascriptGenerator.forBlock['motion_attach_to_block'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    return `if (${target}) runtime.attachTo(spriteId, ${target}.id);\n`;
+  };
+
+  javascriptGenerator.forBlock['motion_attach_dropdown_to_me'] = function(block) {
+    const target = block.getFieldValue('TARGET');
+    return `runtime.attachTo('${target}', spriteId);\n`;
+  };
+
+  javascriptGenerator.forBlock['motion_attach_block_to_me'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    return `if (${target}) runtime.attachTo(${target}.id, spriteId);\n`;
+  };
+
+  javascriptGenerator.forBlock['motion_detach'] = function() {
+    return 'runtime.detach(spriteId);\n';
+  };
+
   // --- Looks ---
 
   javascriptGenerator.forBlock['looks_show'] = function() {

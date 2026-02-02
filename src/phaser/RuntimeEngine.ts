@@ -1530,6 +1530,112 @@ export class RuntimeEngine {
   clearPendingSceneSwitch(): void {
     this._pendingSceneSwitch = null;
   }
+
+  // --- Attachment (Parent-Child relationships) ---
+
+  /**
+   * Attach a sprite to another sprite as a child
+   * The child will follow the parent's transformations
+   */
+  attachTo(childId: string, parentId: string): void {
+    const child = this.sprites.get(childId);
+    const parent = this.sprites.get(parentId);
+
+    if (!child || !parent) {
+      debugLog('error', `attachTo: sprite not found (child=${childId}, parent=${parentId})`);
+      return;
+    }
+
+    // Get the containers
+    const childContainer = child.container;
+    const parentContainer = parent.container;
+
+    if (!childContainer || !parentContainer) {
+      debugLog('error', 'attachTo: container not found');
+      return;
+    }
+
+    // Store child's world position before reparenting
+    const worldX = childContainer.x;
+    const worldY = childContainer.y;
+
+    // Remove child from scene and add to parent container
+    childContainer.setParentContainer(parentContainer);
+
+    // Convert world position to local position relative to parent
+    const localX = worldX - parentContainer.x;
+    const localY = worldY - parentContainer.y;
+    childContainer.setPosition(localX, localY);
+
+    debugLog('action', `Attached "${child.name}" to "${parent.name}"`);
+  }
+
+  /**
+   * Detach a sprite from its parent, making it independent again
+   */
+  detach(spriteId: string): void {
+    const sprite = this.sprites.get(spriteId);
+    if (!sprite) {
+      debugLog('error', `detach: sprite not found (${spriteId})`);
+      return;
+    }
+
+    const container = sprite.container;
+    if (!container) return;
+
+    const parentContainer = container.parentContainer;
+    if (!parentContainer) {
+      debugLog('info', `detach: "${sprite.name}" has no parent`);
+      return;
+    }
+
+    // Calculate world position
+    const worldPos = container.getWorldTransformMatrix();
+    const worldX = worldPos.tx;
+    const worldY = worldPos.ty;
+
+    // Remove from parent and add back to scene
+    container.setParentContainer(null as unknown as Phaser.GameObjects.Container);
+    this.scene.add.existing(container);
+    container.setPosition(worldX, worldY);
+
+    debugLog('action', `Detached "${sprite.name}" from parent`);
+  }
+
+  // --- Animation ---
+
+  /**
+   * Rotate sprite by degrees over duration
+   */
+  rotateTo(spriteId: string, degrees: number, durationSeconds: number): Promise<void> {
+    return new Promise(resolve => {
+      const sprite = this.sprites.get(spriteId);
+      if (!sprite) {
+        debugLog('error', `rotateTo: sprite not found (${spriteId})`);
+        resolve();
+        return;
+      }
+
+      const container = sprite.container;
+      if (!container) {
+        resolve();
+        return;
+      }
+
+      // Convert degrees to radians for Phaser
+      const targetAngle = container.angle + degrees;
+
+      this.scene.tweens.add({
+        targets: container,
+        angle: targetAngle,
+        duration: durationSeconds * 1000,
+        ease: 'Linear',
+        onComplete: () => resolve(),
+      });
+
+      debugLog('action', `Rotating "${sprite.name}" by ${degrees}° over ${durationSeconds}s`);
+    });
+  }
 }
 
 // Global runtime instance for the current game session
