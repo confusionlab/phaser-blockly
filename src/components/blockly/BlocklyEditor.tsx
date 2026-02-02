@@ -13,8 +13,42 @@ import type { Variable } from '@/types';
 // Register continuous toolbox plugin once at module load
 registerContinuousToolbox();
 
-// Global clipboard for cross-object block copying (using JSON serialization)
-let globalBlockClipboard: object | null = null;
+// Global clipboard for cross-object block copying
+// Store the copy data from Blockly's ICopyable interface
+let globalBlockClipboard: Blockly.ICopyData | null = null;
+
+// Helper to deep clone and copy a block properly
+function copyBlockToClipboard(block: Blockly.BlockSvg): void {
+  // Use Blockly's built-in copy mechanism which handles shadow blocks correctly
+  const copyData = block.toCopyData();
+  if (copyData) {
+    globalBlockClipboard = copyData;
+    console.log('[Blockly] Block copied to clipboard');
+  }
+}
+
+// Helper to paste from clipboard
+function pasteBlockFromClipboard(workspace: Blockly.WorkspaceSvg): void {
+  if (!globalBlockClipboard) return;
+
+  try {
+    // Get visible area for positioning
+    const metrics = workspace.getMetrics();
+    const viewLeft = metrics.viewLeft || 0;
+    const viewTop = metrics.viewTop || 0;
+
+    // Paste using Blockly's clipboard paste mechanism
+    const pasted = Blockly.clipboard.paste(globalBlockClipboard, workspace);
+
+    // Move pasted block to visible area
+    if (pasted && pasted instanceof Blockly.BlockSvg) {
+      pasted.moveTo(new Blockly.utils.Coordinate(viewLeft + 100, viewTop + 100));
+    }
+    console.log('[Blockly] Block pasted from clipboard');
+  } catch (err) {
+    console.error('[Blockly] Failed to paste block:', err);
+  }
+}
 
 // Register custom context menu items for cross-object copy/paste
 function registerCrossObjectCopyPaste() {
@@ -29,13 +63,7 @@ function registerCrossObjectCopyPaste() {
     },
     callback: (scope) => {
       if (scope.block) {
-        // Use JSON serialization (modern Blockly API)
-        globalBlockClipboard = Blockly.serialization.blocks.save(scope.block, {
-          addCoordinates: false,
-          addInputBlocks: true,
-          addNextBlocks: true,
-        });
-        console.log('[Blockly] Block copied to clipboard');
+        copyBlockToClipboard(scope.block as Blockly.BlockSvg);
       }
     },
     scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
@@ -50,29 +78,9 @@ function registerCrossObjectCopyPaste() {
       return globalBlockClipboard ? 'enabled' : 'disabled';
     },
     callback: () => {
-      if (globalBlockClipboard) {
-        const workspace = Blockly.getMainWorkspace() as Blockly.WorkspaceSvg;
-        if (workspace) {
-          try {
-            // Get visible area for positioning
-            const metrics = workspace.getMetrics();
-            const viewLeft = metrics.viewLeft || 0;
-            const viewTop = metrics.viewTop || 0;
-
-            // Create block state with position
-            const blockState = {
-              ...globalBlockClipboard,
-              x: viewLeft + 100,
-              y: viewTop + 100,
-            };
-
-            // Use JSON deserialization (modern Blockly API)
-            Blockly.serialization.blocks.append(blockState, workspace);
-            console.log('[Blockly] Block pasted from clipboard');
-          } catch (err) {
-            console.error('[Blockly] Failed to paste block:', err);
-          }
-        }
+      const workspace = Blockly.getMainWorkspace() as Blockly.WorkspaceSvg;
+      if (workspace && globalBlockClipboard) {
+        pasteBlockFromClipboard(workspace);
       }
     },
     scopeType: Blockly.ContextMenuRegistry.ScopeType.WORKSPACE,
@@ -226,37 +234,14 @@ export function BlocklyEditor() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'c' && workspaceRef.current) {
         const selected = Blockly.getSelected();
         if (selected && selected instanceof Blockly.BlockSvg && !selected.isInFlyout) {
-          // Use JSON serialization (modern Blockly API)
-          globalBlockClipboard = Blockly.serialization.blocks.save(selected, {
-            addCoordinates: false,
-            addInputBlocks: true,
-            addNextBlocks: true,
-          });
-          console.log('[Blockly] Block copied via Cmd+C');
+          copyBlockToClipboard(selected);
         }
       }
 
       // Cross-object paste (Cmd+V)
       if ((e.metaKey || e.ctrlKey) && e.key === 'v' && workspaceRef.current && globalBlockClipboard) {
         e.preventDefault();
-        try {
-          const metrics = workspaceRef.current.getMetrics();
-          const viewLeft = metrics.viewLeft || 0;
-          const viewTop = metrics.viewTop || 0;
-
-          // Create block state with position
-          const blockState = {
-            ...globalBlockClipboard,
-            x: viewLeft + 100,
-            y: viewTop + 100,
-          };
-
-          // Use JSON deserialization (modern Blockly API)
-          Blockly.serialization.blocks.append(blockState, workspaceRef.current);
-          console.log('[Blockly] Block pasted via Cmd+V');
-        } catch (err) {
-          console.error('[Blockly] Failed to paste block:', err);
-        }
+        pasteBlockFromClipboard(workspaceRef.current);
       }
     };
 
@@ -314,9 +299,8 @@ export function BlocklyEditor() {
 
         const state = useProjectStore.getState();
         const scene = state.project?.scenes.find(s => s.id === sceneId);
-        if (!scene) return;
-        const obj = scene.objects.find(o => o.id === objectId);
-        if (!obj) return;
+        const obj = scene?.objects.find(o => o.id === objectId);
+        if (!scene || !obj) return;
 
         // Check if workspace has any blocks
         const topBlocks = workspaceRef.current.getTopBlocks(false);
