@@ -151,7 +151,32 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
   const [isDragging, setIsDragging] = useState(false)
   const [positionX, setPositionX] = useState(0)
   const [positionY, setPositionY] = useState(0)
-  const { hue, setSaturation, setLightness } = useColorPicker()
+  const { hue, saturation, lightness, setSaturation, setLightness } = useColorPicker()
+  const initializedRef = useRef(false)
+
+  // Sync cursor position from HSL values (convert HSL to HSV for visual position)
+  useEffect(() => {
+    // Only sync on mount or when not dragging
+    if (isDragging) return
+
+    const s_hsl = saturation / 100
+    const l = lightness / 100
+
+    // HSL to HSV conversion
+    const v = l + s_hsl * Math.min(l, 1 - l)
+    const s_hsv = v === 0 ? 0 : 2 * (1 - l / v)
+
+    // x = saturation in HSV, y = 1 - value
+    const newX = Math.max(0, Math.min(1, s_hsv))
+    const newY = Math.max(0, Math.min(1, 1 - v))
+
+    // Only update if not yet initialized (on mount)
+    if (!initializedRef.current) {
+      setPositionX(newX)
+      setPositionY(newY)
+      initializedRef.current = true
+    }
+  }, [saturation, lightness, isDragging])
 
   const backgroundGradient = useMemo(() => {
     return `linear-gradient(0deg, rgba(0,0,0,1), rgba(0,0,0,0)),
@@ -169,11 +194,22 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
       const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height))
       setPositionX(x)
       setPositionY(y)
-      setSaturation(x * 100)
-      const topLightness = x < 0.01 ? 100 : 50 + 50 * (1 - x)
-      const lightness = topLightness * (1 - y)
 
-      setLightness(lightness)
+      // The visual picker uses HSV color model:
+      // x = saturation (0 = grey/white, 1 = fully saturated)
+      // y = inverse value (0 = bright, 1 = dark)
+      const s_hsv = x
+      const v = 1 - y
+
+      // Convert HSV to HSL
+      const l = v * (1 - s_hsv / 2)
+      let s_hsl = 0
+      if (l > 0 && l < 1) {
+        s_hsl = (v - l) / Math.min(l, 1 - l)
+      }
+
+      setSaturation(s_hsl * 100)
+      setLightness(l * 100)
     },
     [isDragging, setSaturation, setLightness],
   )
