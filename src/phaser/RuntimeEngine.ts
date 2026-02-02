@@ -1538,6 +1538,7 @@ export class RuntimeEngine {
   /**
    * Attach a sprite to another sprite as a child
    * The child will follow the parent's transformations
+   * The child maintains its visual appearance but transforms are converted to local space
    */
   attachTo(childId: string, parentId: string): void {
     const child = this.sprites.get(childId);
@@ -1562,30 +1563,37 @@ export class RuntimeEngine {
       this.detach(childId);
     }
 
-    // Get child's current world position
-    const childWorldMatrix = childContainer.getWorldTransformMatrix();
-    const childWorldX = childWorldMatrix.tx;
-    const childWorldY = childWorldMatrix.ty;
+    // Store child's current world transform
+    const childWorldX = childContainer.x;
+    const childWorldY = childContainer.y;
+    const childWorldAngle = childContainer.angle;
+    const childWorldScaleX = childContainer.scaleX;
+    const childWorldScaleY = childContainer.scaleY;
 
-    // Get parent's world position
-    const parentWorldMatrix = parentContainer.getWorldTransformMatrix();
-    const parentWorldX = parentWorldMatrix.tx;
-    const parentWorldY = parentWorldMatrix.ty;
-
-    // Calculate local position relative to parent (accounting for parent's rotation and scale)
-    const parentAngle = parentContainer.angle * (Math.PI / 180);
+    // Get parent's world transform
+    const parentWorldX = parentContainer.x;
+    const parentWorldY = parentContainer.y;
+    const parentAngleRad = parentContainer.angle * (Math.PI / 180);
     const parentScaleX = parentContainer.scaleX;
     const parentScaleY = parentContainer.scaleY;
 
+    // Calculate local position relative to parent
     // Offset from parent in world space
     const offsetX = childWorldX - parentWorldX;
     const offsetY = childWorldY - parentWorldY;
 
     // Rotate offset back by parent's angle to get local coordinates
-    const cosAngle = Math.cos(-parentAngle);
-    const sinAngle = Math.sin(-parentAngle);
+    const cosAngle = Math.cos(-parentAngleRad);
+    const sinAngle = Math.sin(-parentAngleRad);
     const localX = (offsetX * cosAngle - offsetY * sinAngle) / parentScaleX;
     const localY = (offsetX * sinAngle + offsetY * cosAngle) / parentScaleY;
+
+    // Calculate local rotation (subtract parent's rotation)
+    const localAngle = childWorldAngle - parentContainer.angle;
+
+    // Calculate local scale (divide by parent's scale)
+    const localScaleX = childWorldScaleX / parentScaleX;
+    const localScaleY = childWorldScaleY / parentScaleY;
 
     // Remove from scene's display list (but don't destroy)
     this.scene.children.remove(childContainer);
@@ -1593,13 +1601,15 @@ export class RuntimeEngine {
     // Add to parent container - this makes transformations inherit
     parentContainer.add(childContainer);
 
-    // Set local position within parent
+    // Set local transform within parent (visually same as before)
     childContainer.setPosition(localX, localY);
+    childContainer.setAngle(localAngle);
+    childContainer.setScale(localScaleX, localScaleY);
 
     // Track the relationship
     this.attachments.set(childId, parentId);
 
-    debugLog('action', `Attached "${child.name}" to "${parent.name}" at local (${localX.toFixed(1)}, ${localY.toFixed(1)})`);
+    debugLog('action', `Attached "${child.name}" to "${parent.name}" at local (${localX.toFixed(1)}, ${localY.toFixed(1)}) angle=${localAngle.toFixed(1)} scale=(${localScaleX.toFixed(2)}, ${localScaleY.toFixed(2)})`);
   }
 
   /**
