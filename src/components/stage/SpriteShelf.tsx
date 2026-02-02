@@ -31,8 +31,19 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, Library, Pencil, Copy, Trash2, ChevronRight, Component, Unlink, Loader2 } from 'lucide-react';
+import { Plus, Library, Pencil, Copy, Clipboard, Trash2, ChevronRight, Component, Unlink, Loader2 } from 'lucide-react';
 import type { GameObject, Costume, Sound, PhysicsConfig, ColliderConfig } from '@/types';
+
+// Global clipboard for cross-scene object copying
+let objectClipboard: {
+  name: string;
+  costumes: Costume[];
+  sounds: Sound[];
+  blocklyXml: string;
+  physics: PhysicsConfig | null;
+  collider: ColliderConfig | null;
+  localVariables: GameObject['localVariables'];
+} | null = null;
 import { getEffectiveObjectProps } from '@/types';
 import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
 
@@ -244,6 +255,58 @@ export function SpriteShelf() {
     if (duplicated) {
       selectObject(duplicated.id);
     }
+    handleCloseContextMenu();
+  };
+
+  const handleCopy = () => {
+    if (!contextMenu || !project) return;
+    const object = contextMenu.object;
+    const effectiveProps = getEffectiveObjectProps(object, project.components || []);
+
+    // Copy effective properties to clipboard (deep clone)
+    objectClipboard = {
+      name: object.name,
+      costumes: JSON.parse(JSON.stringify(effectiveProps.costumes)),
+      sounds: JSON.parse(JSON.stringify(effectiveProps.sounds)),
+      blocklyXml: effectiveProps.blocklyXml,
+      physics: effectiveProps.physics ? JSON.parse(JSON.stringify(effectiveProps.physics)) : null,
+      collider: effectiveProps.collider ? JSON.parse(JSON.stringify(effectiveProps.collider)) : null,
+      localVariables: object.localVariables ? JSON.parse(JSON.stringify(object.localVariables)) : [],
+    };
+    handleCloseContextMenu();
+  };
+
+  const handlePaste = () => {
+    if (!objectClipboard || !selectedSceneId) return;
+
+    // Create new object with copied data
+    const newObject = addObject(selectedSceneId, `${objectClipboard.name} (copy)`);
+
+    // Generate new IDs for costumes and sounds
+    const newCostumes = objectClipboard.costumes.map(c => ({
+      ...c,
+      id: crypto.randomUUID(),
+    }));
+    const newSounds = objectClipboard.sounds.map(s => ({
+      ...s,
+      id: crypto.randomUUID(),
+    }));
+    const newLocalVariables = (objectClipboard.localVariables || []).map(v => ({
+      ...v,
+      id: crypto.randomUUID(),
+    }));
+
+    updateObject(selectedSceneId, newObject.id, {
+      costumes: newCostumes,
+      sounds: newSounds,
+      blocklyXml: objectClipboard.blocklyXml,
+      physics: objectClipboard.physics,
+      collider: objectClipboard.collider,
+      localVariables: newLocalVariables,
+      currentCostumeIndex: 0,
+    });
+
+    selectObject(newObject.id);
     handleCloseContextMenu();
   };
 
@@ -528,6 +591,25 @@ export function SpriteShelf() {
             className="fixed z-50 py-1 min-w-36 gap-0"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopy}
+              className="w-full justify-start rounded-none h-8"
+            >
+              <Copy className="size-4" />
+              Copy
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handlePaste}
+              disabled={!objectClipboard}
+              className="w-full justify-start rounded-none h-8"
+            >
+              <Clipboard className="size-4" />
+              Paste
+            </Button>
             <Button
               variant="ghost"
               size="sm"
