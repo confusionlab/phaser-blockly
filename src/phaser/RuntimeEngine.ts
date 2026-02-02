@@ -410,6 +410,9 @@ export class RuntimeEngine {
 
     this.frameCount++;
 
+    // Update attached children to follow their parents
+    this.updateAttachments();
+
     // Log every 60 frames (about once per second)
     if (this.frameCount % 60 === 0) {
       debugLog('info', `Update frame ${this.frameCount}, active forever loops: ${this.activeForeverLoops.size}`);
@@ -1549,13 +1552,20 @@ export class RuntimeEngine {
   }
 
   // --- Attachment (Parent-Child relationships) ---
-  // Track parent-child relationships
-  private attachments: Map<string, string> = new Map(); // childId -> parentId
+  // Track parent-child relationships with local transform data
+  // We don't actually nest containers (which breaks depth), but manually update positions
+  private attachments: Map<string, {
+    parentId: string;
+    localX: number;
+    localY: number;
+    localAngle: number;
+    localScaleX: number;
+    localScaleY: number;
+  }> = new Map();
 
   /**
    * Attach a sprite to another sprite as a child
-   * The child will follow the parent's transformations
-   * The child maintains its visual appearance but transforms are converted to local space
+   * The child will follow the parent's transformations while preserving its own depth
    */
   attachTo(childId: string, parentId: string): void {
     const child = this.sprites.get(childId);
@@ -1566,7 +1576,6 @@ export class RuntimeEngine {
       return;
     }
 
-    // Get the containers
     const childContainer = child.container;
     const parentContainer = parent.container;
 
@@ -1595,7 +1604,6 @@ export class RuntimeEngine {
     const parentScaleY = parentContainer.scaleY;
 
     // Calculate local position relative to parent
-    // Offset from parent in world space
     const offsetX = childWorldX - parentWorldX;
     const offsetY = childWorldY - parentWorldY;
 
@@ -1605,26 +1613,20 @@ export class RuntimeEngine {
     const localX = (offsetX * cosAngle - offsetY * sinAngle) / parentScaleX;
     const localY = (offsetX * sinAngle + offsetY * cosAngle) / parentScaleY;
 
-    // Calculate local rotation (subtract parent's rotation)
+    // Calculate local rotation and scale
     const localAngle = childWorldAngle - parentContainer.angle;
-
-    // Calculate local scale (divide by parent's scale)
     const localScaleX = childWorldScaleX / parentScaleX;
     const localScaleY = childWorldScaleY / parentScaleY;
 
-    // Remove from scene's display list (but don't destroy)
-    this.scene.children.remove(childContainer);
-
-    // Add to parent container - this makes transformations inherit
-    parentContainer.add(childContainer);
-
-    // Set local transform within parent (visually same as before)
-    childContainer.setPosition(localX, localY);
-    childContainer.setAngle(localAngle);
-    childContainer.setScale(localScaleX, localScaleY);
-
-    // Track the relationship
-    this.attachments.set(childId, parentId);
+    // Store the attachment data (don't actually nest - preserves depth)
+    this.attachments.set(childId, {
+      parentId,
+      localX,
+      localY,
+      localAngle,
+      localScaleX,
+      localScaleY,
+    });
 
     debugLog('action', `Attached "${child.name}" to "${parent.name}" at local (${localX.toFixed(1)}, ${localY.toFixed(1)}) angle=${localAngle.toFixed(1)} scale=(${localScaleX.toFixed(2)}, ${localScaleY.toFixed(2)})`);
   }
@@ -1639,43 +1641,63 @@ export class RuntimeEngine {
       return;
     }
 
-    const container = sprite.container;
-    if (!container) return;
-
-    const parentId = this.attachments.get(spriteId);
-    if (!parentId) {
+    if (!this.attachments.has(spriteId)) {
       debugLog('info', `detach: "${sprite.name}" has no parent`);
       return;
     }
 
-    const parent = this.sprites.get(parentId);
-    const parentContainer = parent?.container;
-
-    // Calculate world position before detaching
-    const worldMatrix = container.getWorldTransformMatrix();
-    const worldX = worldMatrix.tx;
-    const worldY = worldMatrix.ty;
-    const worldRotation = container.angle + (parentContainer?.angle || 0);
-    const worldScaleX = container.scaleX * (parentContainer?.scaleX || 1);
-    const worldScaleY = container.scaleY * (parentContainer?.scaleY || 1);
-
-    // Remove from parent container
-    if (parentContainer) {
-      parentContainer.remove(container);
-    }
-
-    // Add back to scene
-    this.scene.add.existing(container);
-
-    // Restore world transform
-    container.setPosition(worldX, worldY);
-    container.setAngle(worldRotation);
-    container.setScale(worldScaleX, worldScaleY);
-
-    // Remove tracking
+    // Just remove from tracking - the sprite keeps its current world position
     this.attachments.delete(spriteId);
-
     debugLog('action', `Detached "${sprite.name}" from parent`);
+  }
+
+  /**
+   * Update all attached children to follow their parents
+   * Called every frame from update()
+   */
+  private updateAttachments(): void {
+    for (const [childId, attachment] of this.attachments) {
+      const child = this.sprites.get(childId);
+      const parent = this.sprites.get(attachment.parentId);
+
+      if (!child || !parent) {
+        // Parent or child was deleted, clean up
+        this.attachments.delete(childId);
+        continue;
+      }
+
+      const childContainer = child.container;
+      const parentContainer = parent.container;
+
+      if (!childContainer || !parentContainer) continue;
+
+      // Get parent's current world transform
+      const parentX = parentContainer.x;
+      const parentY = parentContainer.y;
+      const parentAngleRad = parentContainer.angle * (Math.PI / 180);
+      const parentScaleX = parentContainer.scaleX;
+      const parentScaleY = parentContainer.scaleY;
+
+      // Calculate child's world position from local offset
+      const scaledLocalX = attachment.localX * parentScaleX;
+      const scaledLocalY = attachment.localY * parentScaleY;
+
+      const cosAngle = Math.cos(parentAngleRad);
+      const sinAngle = Math.sin(parentAngleRad);
+
+      const worldX = parentX + (scaledLocalX * cosAngle - scaledLocalY * sinAngle);
+      const worldY = parentY + (scaledLocalX * sinAngle + scaledLocalY * cosAngle);
+
+      // Calculate world rotation and scale
+      const worldAngle = parentContainer.angle + attachment.localAngle;
+      const worldScaleX = parentScaleX * attachment.localScaleX;
+      const worldScaleY = parentScaleY * attachment.localScaleY;
+
+      // Update child's transform
+      childContainer.setPosition(worldX, worldY);
+      childContainer.setAngle(worldAngle);
+      childContainer.setScale(worldScaleX, worldScaleY);
+    }
   }
 
   // --- Animation ---
