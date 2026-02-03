@@ -27,7 +27,9 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['event_forever'] = function(block) {
     const statements = javascriptGenerator.statementToCode(block, 'DO');
-    return `runtime.forever(spriteId, function(sprite) {\n${statements}});\n`;
+    // Use sprite.id instead of spriteId so that when this runs inside a clone's
+    // onStart handler, it registers the forever loop for the clone, not the original
+    return `runtime.forever(sprite.id, function(sprite) {\n${statements}});\n`;
   };
 
   javascriptGenerator.forBlock['event_when_touching'] = function(block) {
