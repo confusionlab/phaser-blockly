@@ -300,7 +300,8 @@ export function BlocklyEditor() {
 
         const state = useProjectStore.getState();
         const scene = state.project?.scenes.find(s => s.id === sceneId);
-        const obj = scene?.objects.find(o => o.id === objectId);
+        if (!scene) return;
+        const obj = scene.objects.find(o => o.id === objectId);
         if (!obj) return;
 
         // Check if workspace has any blocks
