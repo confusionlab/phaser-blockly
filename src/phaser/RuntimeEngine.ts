@@ -369,25 +369,27 @@ export class RuntimeEngine {
       debugLog('info', `Sprite ${spriteId}: onStart=${h.onStart.length}, forever=${h.forever.length}, onKeyPressed=${h.onKeyPressed.size}`);
     }
 
-    // Execute all onStart handlers concurrently (fire-and-forget)
-    // This ensures that a wait() in one object doesn't block other objects from starting
+    // Execute all onStart handlers concurrently using Promise.all
+    // This ensures that a wait() in one object doesn't block others from starting,
+    // but we still wait for all handlers to complete before proceeding
+    const onStartPromises: Promise<void>[] = [];
     for (const [spriteId, h] of this.handlers) {
       const sprite = this.sprites.get(spriteId);
       if (!sprite || sprite.isStopped()) continue;
       for (const handler of h.onStart) {
         debugLog('event', `Executing onStart handler for ${spriteId}`);
-        // Fire and forget - don't await, just catch errors
-        Promise.resolve(handler(sprite)).catch(e => {
-          debugLog('error', `Error in onStart for ${spriteId}: ${e}`);
-          console.error(`Error in onStart for ${spriteId}:`, e);
-        });
+        onStartPromises.push(
+          Promise.resolve(handler(sprite)).catch(e => {
+            debugLog('error', `Error in onStart for ${spriteId}: ${e}`);
+            console.error(`Error in onStart for ${spriteId}:`, e);
+          })
+        );
       }
     }
 
-    // Flush the microtask queue to allow handlers' synchronous code to execute
-    // This ensures forever loops and other handlers registered at the start of
-    // onStart handlers are captured before we update templates
-    await Promise.resolve();
+    // Wait for all onStart handlers to complete
+    // This ensures forever loops and other handlers are fully registered
+    await Promise.all(onStartPromises);
 
     // Update templates with handlers AFTER onStart handlers' sync code has run
     // This captures forever loops and event handlers registered in onStart
@@ -997,18 +999,21 @@ export class RuntimeEngine {
       clone.enablePhysics();
     }
 
-    // Copy event handlers from template
+    // Copy event handlers from template, or fall back to live handlers if template not yet updated
+    // (This happens when cloning during onStart, before updateTemplateHandlers is called)
     const templateHandlers = template.handlers;
+    const liveHandlers = this.handlers.get(originalId);
+    const sourceHandlers = templateHandlers || liveHandlers;
     const cloneHandlers = this.handlers.get(cloneId);
 
-    if (templateHandlers && cloneHandlers) {
+    if (sourceHandlers && cloneHandlers) {
       // Copy key pressed handlers
-      for (const [key, handlers] of templateHandlers.onKeyPressed) {
+      for (const [key, handlers] of sourceHandlers.onKeyPressed) {
         cloneHandlers.onKeyPressed.set(key, [...handlers]);
       }
 
       // Copy onClick handlers and set up click listener for clone
-      cloneHandlers.onClick = [...templateHandlers.onClick];
+      cloneHandlers.onClick = [...sourceHandlers.onClick];
       if (cloneHandlers.onClick.length > 0) {
         clone.setupClickHandler(() => {
           if (this._isRunning) {
@@ -1021,37 +1026,42 @@ export class RuntimeEngine {
       }
 
       // Copy onTouching handlers
-      for (const [targetId, handlers] of templateHandlers.onTouching) {
+      for (const [targetId, handlers] of sourceHandlers.onTouching) {
         cloneHandlers.onTouching.set(targetId, [...handlers]);
       }
 
       // Copy onMessage handlers
-      for (const [message, handlers] of templateHandlers.onMessage) {
+      for (const [message, handlers] of sourceHandlers.onMessage) {
         cloneHandlers.onMessage.set(message, [...handlers]);
       }
 
       // Copy onStart handlers
-      cloneHandlers.onStart = [...templateHandlers.onStart];
+      cloneHandlers.onStart = [...sourceHandlers.onStart];
 
       // Copy forever handlers and activate them
-      cloneHandlers.forever = [...templateHandlers.forever];
+      cloneHandlers.forever = [...sourceHandlers.forever];
       if (cloneHandlers.forever.length > 0) {
         this.activeForeverLoops.set(cloneId, true);
       }
 
-      debugLog('info', `Clone ${cloneId} handlers: onTouching=${cloneHandlers.onTouching.size}, forever=${cloneHandlers.forever.length}`);
-    } else if (!templateHandlers) {
-      debugLog('error', `Template for ${originalId} has no handlers! Clone ${cloneId} won't have event handlers.`);
+      debugLog('info', `Clone ${cloneId} handlers: onKeyPressed=${cloneHandlers.onKeyPressed.size}, onTouching=${cloneHandlers.onTouching.size}, forever=${cloneHandlers.forever.length} (from ${templateHandlers ? 'template' : 'live'})`);
+    } else if (!sourceHandlers) {
+      debugLog('error', `No handlers found for ${originalId}! Clone ${cloneId} won't have event handlers.`);
     }
 
-    // Execute onStart handlers for the clone (fire-and-forget like originals)
+    // Execute onStart handlers for the clone and wait for completion
+    // This ensures any forever loops or event handlers registered in onStart are set up
     if (cloneHandlers) {
+      const onStartPromises: Promise<void>[] = [];
       for (const handler of cloneHandlers.onStart) {
         debugLog('event', `Executing onStart handler for clone ${cloneId}`);
-        Promise.resolve(handler(clone)).catch(e => {
-          debugLog('error', `Error in onStart for clone ${cloneId}: ${e}`);
-        });
+        onStartPromises.push(
+          Promise.resolve(handler(clone)).catch(e => {
+            debugLog('error', `Error in onStart for clone ${cloneId}: ${e}`);
+          })
+        );
       }
+      await Promise.all(onStartPromises);
     }
 
     debugLog('info', `Cloned from template "${template.name}" -> "${clone.name}" with ID ${cloneId}`);
