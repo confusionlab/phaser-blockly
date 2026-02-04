@@ -1268,22 +1268,31 @@ export class RuntimeEngine {
                boundsA.min.y > boundsB.max.y);
     }
 
-    // Fallback to simple AABB using sprite dimensions
-    // Get the actual sprite inside container to get proper dimensions
-    const spriteA = sprite.container.list[0] as Phaser.GameObjects.Sprite | undefined;
-    const spriteB = target.container.list[0] as Phaser.GameObjects.Sprite | undefined;
-
-    if (!spriteA || !spriteB) return false;
-
+    // If one has a body and one doesn't, use the body's bounds for that one
+    // and container bounds for the other
     const ax = sprite.container.x;
     const ay = sprite.container.y;
-    const aw = spriteA.displayWidth * Math.abs(sprite.container.scaleX);
-    const ah = spriteA.displayHeight * Math.abs(sprite.container.scaleY);
-
     const bx = target.container.x;
     const by = target.container.y;
-    const bw = spriteB.displayWidth * Math.abs(target.container.scaleX);
-    const bh = spriteB.displayHeight * Math.abs(target.container.scaleY);
+
+    // Get dimensions - prefer body bounds, then container size, then default
+    let aw: number, ah: number;
+    if (bodyA) {
+      aw = bodyA.bounds.max.x - bodyA.bounds.min.x;
+      ah = bodyA.bounds.max.y - bodyA.bounds.min.y;
+    } else {
+      aw = sprite.container.width * Math.abs(sprite.container.scaleX) || 64;
+      ah = sprite.container.height * Math.abs(sprite.container.scaleY) || 64;
+    }
+
+    let bw: number, bh: number;
+    if (bodyB) {
+      bw = bodyB.bounds.max.x - bodyB.bounds.min.x;
+      bh = bodyB.bounds.max.y - bodyB.bounds.min.y;
+    } else {
+      bw = target.container.width * Math.abs(target.container.scaleX) || 64;
+      bh = target.container.height * Math.abs(target.container.scaleY) || 64;
+    }
 
     // AABB collision (assuming origin at center)
     const halfAW = aw / 2;
