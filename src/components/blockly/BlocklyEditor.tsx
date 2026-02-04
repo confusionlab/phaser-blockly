@@ -3,7 +3,13 @@ import * as Blockly from 'blockly';
 import { registerContinuousToolbox } from '@blockly/continuous-toolbox';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { getToolboxConfig, registerTypedVariablesCategory, setAddVariableCallback } from './toolbox';
+import {
+  getToolboxConfig,
+  registerTypedVariablesCategory,
+  setAddVariableCallback,
+  setTypedVariableLoading,
+  updateVariableBlockAppearance,
+} from './toolbox';
 import { AddVariableDialog } from '@/components/dialogs/AddVariableDialog';
 import { VariableManagerDialog } from '@/components/dialogs/VariableManagerDialog';
 import { BlockSearchModal } from './BlockSearchModal';
@@ -288,6 +294,30 @@ export function BlocklyEditor() {
 
     // Save on changes and validate references
     workspaceRef.current.addChangeListener((event) => {
+      // Debug: log typed variable getter disconnects
+      if (event.type === Blockly.Events.BLOCK_MOVE && workspaceRef.current) {
+        const moveEvent = event as Blockly.Events.BlockMove;
+        const block = workspaceRef.current.getBlockById(moveEvent.blockId || '');
+        if (block?.type === 'typed_variable_get') {
+          const output = block.outputConnection;
+          const target = output?.targetConnection;
+          const movedFromParent = moveEvent.oldParentId && !moveEvent.newParentId;
+          if (movedFromParent) {
+            console.log('[Blockly][TypedVar][Disconnected]', {
+              blockId: block.id,
+              varId: block.getFieldValue('VAR'),
+              oldParentId: moveEvent.oldParentId,
+              oldInputName: moveEvent.oldInputName,
+              newParentId: moveEvent.newParentId,
+              newInputName: moveEvent.newInputName,
+              outputCheck: output?.getCheck(),
+              targetCheck: target?.getCheck(),
+              parentType: block.getParent()?.type,
+              isLoading: isLoadingRef.current,
+            });
+          }
+        }
+      }
       if (isLoadingRef.current) return;
       if (event.type === Blockly.Events.BLOCK_CHANGE ||
           event.type === Blockly.Events.BLOCK_CREATE ||
@@ -360,6 +390,7 @@ export function BlocklyEditor() {
   useEffect(() => {
     if (!workspaceRef.current) return;
     isLoadingRef.current = true;
+    setTypedVariableLoading(true);
     workspaceRef.current.clear();
 
     // Get fresh object data from store
@@ -378,13 +409,66 @@ export function BlocklyEditor() {
       }
     }
 
+    const expectedConnections = new Map<string, { parentId: string; inputName: string }>();
+
     if (blocklyXml) {
       try {
         const xml = Blockly.utils.xml.textToDom(blocklyXml);
+
+        // Debug: track expected typed_variable_get connections from XML
+        const blocks = Array.from(xml.getElementsByTagName('block'));
+        for (const blockEl of blocks) {
+          if (blockEl.getAttribute('type') !== 'typed_variable_get') continue;
+          const parentValue = blockEl.parentElement;
+          if (!parentValue) continue;
+          const parentBlockEl = parentValue.parentElement;
+          if (!parentBlockEl || parentBlockEl.tagName !== 'block') continue;
+          const childId = blockEl.getAttribute('id');
+          const parentId = parentBlockEl.getAttribute('id');
+          const inputName = parentValue.getAttribute('name') || '';
+          if (childId && parentId && inputName) {
+            expectedConnections.set(childId, { parentId, inputName });
+          }
+        }
+
         Blockly.Xml.domToWorkspace(xml, workspaceRef.current);
       } catch (e) {
         console.error('Failed to load Blockly XML:', e);
       }
+    }
+
+    // Debug: log any typed_variable_get blocks that failed to reconnect
+    if (workspaceRef.current && expectedConnections.size > 0) {
+      for (const [childId, expected] of expectedConnections.entries()) {
+        const childBlock = workspaceRef.current.getBlockById(childId);
+        if (!childBlock) continue;
+        const parent = childBlock.getParent();
+        if (!parent || parent.id !== expected.parentId) {
+          console.log('[Blockly][LoadMismatch]', {
+            childId,
+            childType: childBlock.type,
+            expectedParentId: expected.parentId,
+            expectedInputName: expected.inputName,
+            actualParentId: parent?.id ?? null,
+            actualParentType: parent?.type ?? null,
+            outputCheck: childBlock.outputConnection?.getCheck(),
+            targetCheck: childBlock.outputConnection?.targetConnection?.getCheck(),
+          });
+        }
+      }
+    }
+
+    // Ensure typed variable getters have correct output types after load
+    if (workspaceRef.current) {
+      setTypedVariableLoading(false);
+      const allBlocks = workspaceRef.current.getAllBlocks(false);
+      for (const block of allBlocks) {
+        if (block.type === 'typed_variable_get') {
+          updateVariableBlockAppearance(block, true);
+        }
+      }
+    } else {
+      setTypedVariableLoading(false);
     }
 
     // Validate blocks for broken references

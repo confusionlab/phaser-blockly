@@ -1967,7 +1967,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField(new VariableFieldDropdown(() => getVariableDropdownOptions()), 'VAR');
-      this.setOutput(true, 'Number'); // Default to number, will be updated by onchange
+      this.setOutput(true, null); // Allow any type until we resolve variable type
       this.setColour('#FF8C1A');
       this.setTooltip('Get the value of a variable');
     },
@@ -2119,21 +2119,79 @@ function getVariableById(varId: string): Variable | undefined {
   return getAllVariables().find(v => v.id === varId);
 }
 
+let typedVariableLoading = false;
+
+function getZelosShapes(block: Blockly.Block): { HEXAGONAL: number; ROUND: number } | null {
+  // Prefer the workspace renderer to avoid assuming renderer name
+  const workspace = block.workspace as Blockly.WorkspaceSvg | undefined;
+  const renderer = workspace?.getRenderer?.() ?? Blockly.blockRendering?.getRenderer?.('zelos');
+  const constants = renderer?.getConstants?.();
+  const shapes = constants?.SHAPES;
+  if (!shapes) return null;
+  return {
+    HEXAGONAL: shapes.HEXAGONAL,
+    ROUND: shapes.ROUND,
+  };
+}
+
+function setVariableOutputShape(block: Blockly.Block, variable?: Variable) {
+  const shapes = getZelosShapes(block);
+  if (!shapes) return;
+  if (variable?.type === 'boolean') {
+    block.setOutputShape(shapes.HEXAGONAL);
+  } else if (variable) {
+    block.setOutputShape(shapes.ROUND);
+  } else {
+    block.setOutputShape(null);
+  }
+}
+
+export function setTypedVariableLoading(isLoading: boolean) {
+  typedVariableLoading = isLoading;
+}
+
 // Update variable getter block appearance based on type
 // Zelos renderer automatically determines shape from output type:
 // - Boolean = hexagonal (diamond)
 // - Number/String = round
-function updateVariableBlockAppearance(block: Blockly.Block) {
+export function updateVariableBlockAppearance(block: Blockly.Block, force: boolean = false) {
+  if (typedVariableLoading && !force) {
+    return;
+  }
   const varId = block.getFieldValue('VAR');
   const variable = getVariableById(varId);
 
-  if (variable?.type === 'boolean') {
-    block.setOutput(true, 'Boolean'); // Zelos renders as diamond
-  } else if (variable?.type === 'string') {
-    block.setOutput(true, 'String');
-  } else {
-    block.setOutput(true, 'Number'); // integer and float
+  const output = block.outputConnection;
+  if (!output) return;
+
+  let desiredCheck: string | null = null;
+  if (variable) {
+    if (variable.type === 'boolean') desiredCheck = 'Boolean';
+    else if (variable.type === 'string') desiredCheck = 'String';
+    else desiredCheck = 'Number';
   }
+
+  if (!output.isConnected()) {
+    output.setCheck(desiredCheck);
+  } else {
+    const targetCheck = output.targetConnection?.getCheck();
+    const compatible = !desiredCheck || !targetCheck || targetCheck.includes(desiredCheck);
+    if (compatible) {
+      output.setCheck(desiredCheck);
+    }
+    console.log('[Blockly][TypedVar][Connected]', {
+      blockId: block.id,
+      varId,
+      varType: variable?.type,
+      outputCheck: output.getCheck(),
+      targetCheck,
+      desiredCheck,
+      compatible,
+    });
+  }
+
+  // Update shape without affecting connections
+  setVariableOutputShape(block, variable);
 }
 
 // Validate type for variable set block
