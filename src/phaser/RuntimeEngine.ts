@@ -1969,6 +1969,10 @@ let currentRuntime: RuntimeEngine | null = null;
 
 export function setCurrentRuntime(runtime: RuntimeEngine | null): void {
   currentRuntime = runtime;
+  // Expose runtime globally for testing/debugging
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __RUNTIME__: RuntimeEngine | null }).__RUNTIME__ = runtime;
+  }
 }
 
 export function getCurrentRuntime(): RuntimeEngine | null {
