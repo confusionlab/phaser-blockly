@@ -2,21 +2,21 @@ import { useState, useEffect } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
-import { runtimeDebugLog, clearDebugLog } from '@/phaser/RuntimeEngine';
+import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 
 export function DebugPanel() {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'code' | 'xml' | 'state' | 'runtime' | 'console'>('code');
+  const [activeTab, setActiveTab] = useState<'code' | 'xml' | 'state' | 'variables' | 'runtime' | 'console'>('code');
   const [, setLogRefresh] = useState(0);
 
   const { project } = useProjectStore();
   const { selectedSceneId, selectedObjectId, isPlaying, showColliderOutlines, setShowColliderOutlines } = useEditorStore();
 
-  // Auto-refresh logs when playing
+  // Auto-refresh logs and variables when playing
   useEffect(() => {
-    if (!isPlaying || (activeTab !== 'runtime' && activeTab !== 'console')) return;
+    if (!isPlaying || (activeTab !== 'runtime' && activeTab !== 'console' && activeTab !== 'variables')) return;
     const interval = setInterval(() => {
       setLogRefresh(r => r + 1);
     }, 500);
@@ -85,6 +85,9 @@ export function DebugPanel() {
           </TabButton>
           <TabButton active={activeTab === 'state'} onClick={() => setActiveTab('state')}>
             State
+          </TabButton>
+          <TabButton active={activeTab === 'variables'} onClick={() => setActiveTab('variables')}>
+            Vars {isPlaying && <span className="ml-1 w-2 h-2 bg-orange-500 rounded-full inline-block animate-pulse" />}
           </TabButton>
           <TabButton active={activeTab === 'runtime'} onClick={() => setActiveTab('runtime')}>
             Runtime {isPlaying && <span className="ml-1 w-2 h-2 bg-green-500 rounded-full inline-block animate-pulse" />}
@@ -163,6 +166,9 @@ export function DebugPanel() {
               )}
             </Section>
           </div>
+        )}
+        {activeTab === 'variables' && (
+          <VariablesTab project={project} />
         )}
         {activeTab === 'runtime' && (
           <div className="space-y-2">
@@ -248,6 +254,105 @@ function getLogColor(type: string): string {
     case 'user': return 'text-purple-300 font-bold';
     default: return 'text-gray-300';
   }
+}
+
+function VariablesTab({ project }: { project: { globalVariables?: Array<{ id: string; name: string; type: string; defaultValue: unknown }> } | null }) {
+  const runtime = getCurrentRuntime();
+
+  if (!runtime) {
+    return (
+      <div className="text-gray-500">
+        Press Play to see variable values during runtime.
+        <div className="mt-4 text-xs">
+          <div className="text-orange-400 font-bold mb-2">Defined Variables:</div>
+          {project?.globalVariables && project.globalVariables.length > 0 ? (
+            <div className="space-y-1">
+              {project.globalVariables.map(v => (
+                <div key={v.id} className="flex items-center gap-2">
+                  <span className="text-blue-400">[global]</span>
+                  <span className="text-gray-300">{v.name}</span>
+                  <span className="text-gray-500">({v.type})</span>
+                  <span className="text-gray-400">= {String(v.defaultValue)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-gray-600">No global variables defined</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const globalVars = Array.from(runtime.globalVariables.entries());
+  const localVarsMap = runtime.localVariables;
+
+  // Get sprite names for display
+  const spriteNames = new Map<string, string>();
+  for (const [id, sprite] of runtime.sprites) {
+    spriteNames.set(id, sprite.name);
+  }
+
+  return (
+    <div className="space-y-4">
+      <Section title="Global Variables">
+        {globalVars.length === 0 ? (
+          <div className="text-gray-500">No global variables</div>
+        ) : (
+          <div className="space-y-1">
+            {globalVars.map(([name, value]) => (
+              <div key={name} className="flex items-center gap-2">
+                <span className="text-orange-300 font-medium">{name}</span>
+                <span className="text-gray-500">=</span>
+                <span className={getValueColor(value)}>{formatValue(value)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Local Variables (per sprite)">
+        {localVarsMap.size === 0 ? (
+          <div className="text-gray-500">No local variables</div>
+        ) : (
+          <div className="space-y-3">
+            {Array.from(localVarsMap.entries()).map(([spriteId, vars]) => {
+              const varsArray = Array.from(vars.entries());
+              if (varsArray.length === 0) return null;
+              const spriteName = spriteNames.get(spriteId) || spriteId.slice(0, 8);
+              return (
+                <div key={spriteId} className="pl-2 border-l-2 border-gray-700">
+                  <div className="text-cyan-400 text-xs mb-1">{spriteName}</div>
+                  <div className="space-y-1 pl-2">
+                    {varsArray.map(([name, value]) => (
+                      <div key={name} className="flex items-center gap-2">
+                        <span className="text-orange-300 font-medium">{name}</span>
+                        <span className="text-gray-500">=</span>
+                        <span className={getValueColor(value)}>{formatValue(value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function getValueColor(value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'text-green-400' : 'text-red-400';
+  if (typeof value === 'number') return 'text-blue-300';
+  if (typeof value === 'string') return 'text-yellow-300';
+  return 'text-gray-300';
+}
+
+function formatValue(value: unknown): string {
+  if (typeof value === 'string') return `"${value}"`;
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  return String(value);
 }
 
 function formatXml(xml: string): string {
