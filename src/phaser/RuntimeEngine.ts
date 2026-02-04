@@ -1268,42 +1268,45 @@ export class RuntimeEngine {
                boundsA.min.y > boundsB.max.y);
     }
 
-    // If one has a body and one doesn't, use the body's bounds for that one
-    // and container bounds for the other
-    const ax = sprite.container.x;
-    const ay = sprite.container.y;
-    const bx = target.container.x;
-    const by = target.container.y;
+    // Mixed collision: one has body, one doesn't
+    // Use actual bounds (min/max) to handle body offset correctly
+    let aMinX: number, aMaxX: number, aMinY: number, aMaxY: number;
+    let bMinX: number, bMaxX: number, bMinY: number, bMaxY: number;
 
-    // Get dimensions - prefer body bounds, then container size, then default
-    let aw: number, ah: number;
     if (bodyA) {
-      aw = bodyA.bounds.max.x - bodyA.bounds.min.x;
-      ah = bodyA.bounds.max.y - bodyA.bounds.min.y;
+      // Use body bounds directly (already in world coordinates)
+      aMinX = bodyA.bounds.min.x;
+      aMaxX = bodyA.bounds.max.x;
+      aMinY = bodyA.bounds.min.y;
+      aMaxY = bodyA.bounds.max.y;
     } else {
-      aw = sprite.container.width * Math.abs(sprite.container.scaleX) || 64;
-      ah = sprite.container.height * Math.abs(sprite.container.scaleY) || 64;
+      // Use container position + size
+      const w = (sprite.container.width * Math.abs(sprite.container.scaleX)) || 64;
+      const h = (sprite.container.height * Math.abs(sprite.container.scaleY)) || 64;
+      aMinX = sprite.container.x - w / 2;
+      aMaxX = sprite.container.x + w / 2;
+      aMinY = sprite.container.y - h / 2;
+      aMaxY = sprite.container.y + h / 2;
     }
 
-    let bw: number, bh: number;
     if (bodyB) {
-      bw = bodyB.bounds.max.x - bodyB.bounds.min.x;
-      bh = bodyB.bounds.max.y - bodyB.bounds.min.y;
+      // Use body bounds directly (already in world coordinates)
+      bMinX = bodyB.bounds.min.x;
+      bMaxX = bodyB.bounds.max.x;
+      bMinY = bodyB.bounds.min.y;
+      bMaxY = bodyB.bounds.max.y;
     } else {
-      bw = target.container.width * Math.abs(target.container.scaleX) || 64;
-      bh = target.container.height * Math.abs(target.container.scaleY) || 64;
+      // Use container position + size
+      const w = (target.container.width * Math.abs(target.container.scaleX)) || 64;
+      const h = (target.container.height * Math.abs(target.container.scaleY)) || 64;
+      bMinX = target.container.x - w / 2;
+      bMaxX = target.container.x + w / 2;
+      bMinY = target.container.y - h / 2;
+      bMaxY = target.container.y + h / 2;
     }
 
-    // AABB collision (assuming origin at center)
-    const halfAW = aw / 2;
-    const halfAH = ah / 2;
-    const halfBW = bw / 2;
-    const halfBH = bh / 2;
-
-    return !(ax + halfAW < bx - halfBW ||
-             ax - halfAW > bx + halfBW ||
-             ay + halfAH < by - halfBH ||
-             ay - halfAH > by + halfBH);
+    // AABB overlap check
+    return !(aMaxX < bMinX || aMinX > bMaxX || aMaxY < bMinY || aMinY > bMaxY);
   }
 
   distanceTo(spriteId: string, targetId: string): number {

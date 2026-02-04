@@ -335,6 +335,17 @@ export class RuntimeSprite {
 
     this.container.addAt(this._costumeImage, 0);
 
+    // Update container size to match costume (used for fallback collision detection)
+    const costume = this._costumes[this._currentCostumeIndex];
+    if (costume?.bounds && costume.bounds.width > 0 && costume.bounds.height > 0) {
+      this.container.setSize(costume.bounds.width, costume.bounds.height);
+    } else {
+      // Fallback to image dimensions
+      const w = this._costumeImage.displayWidth || this._costumeImage.width || 64;
+      const h = this._costumeImage.displayHeight || this._costumeImage.height || 64;
+      this.container.setSize(w, h);
+    }
+
     // Re-setup click handler with pixel-perfect detection if one was registered
     if (this._clickHandler) {
       this._setupPixelPerfectClick();
