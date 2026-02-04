@@ -16,6 +16,18 @@ export const runtimeDebugLog: DebugLogEntry[] = [];
 const DEBUG_ENABLED = true;
 const MAX_LOG_ENTRIES = 200;
 
+// Shared global variables that persist across scene switches
+// This is module-level so all RuntimeEngine instances share the same data
+const sharedGlobalVariables: Map<string, number | string | boolean> = new Map();
+
+/**
+ * Clear shared global variables - call this when the play session ends, not on scene switch
+ */
+export function clearSharedGlobalVariables(): void {
+  sharedGlobalVariables.clear();
+  debugLog('info', 'Shared global variables cleared');
+}
+
 function debugLog(type: DebugLogEntry['type'], message: string) {
   if (!DEBUG_ENABLED) return;
   const entry = { time: Date.now(), type, message };
@@ -66,7 +78,8 @@ interface ObjectTemplate {
 export class RuntimeEngine {
   public scene: Phaser.Scene;
   public sprites: Map<string, RuntimeSprite> = new Map();
-  public globalVariables: Map<string, number | string | boolean> = new Map();
+  // Global variables use the shared module-level map so they persist across scene switches
+  public globalVariables: Map<string, number | string | boolean> = sharedGlobalVariables;
   public localVariables: Map<string, Map<string, number | string | boolean>> = new Map();
 
   private handlers: Map<string, ObjectHandlers> = new Map();
@@ -784,7 +797,8 @@ export class RuntimeEngine {
     // Clear all handlers
     this.handlers.clear();
     this.sprites.clear();
-    this.globalVariables.clear();
+    // Note: Don't clear globalVariables here - they persist across scene switches
+    // Use clearSharedGlobalVariables() when the entire play session ends
     this.localVariables.clear();
 
     debugLog('info', 'RuntimeEngine cleanup complete');

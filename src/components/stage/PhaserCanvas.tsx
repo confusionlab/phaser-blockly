@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import Phaser from 'phaser';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject } from '@/phaser';
+import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import type { Scene as SceneData, GameObject, ComponentDefinition, Variable } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 
@@ -302,6 +302,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
       // Clear play mode tracking
       playModeInitialSceneRef.current = null;
+
+      // Clear shared global variables when play session ends
+      clearSharedGlobalVariables();
 
       // Clean up all scene runtimes (for multi-scene play mode)
       for (const [sceneId, runtime] of sceneRuntimes) {
