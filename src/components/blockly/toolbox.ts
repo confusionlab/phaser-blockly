@@ -2122,9 +2122,9 @@ function getVariableById(varId: string): Variable | undefined {
 let typedVariableLoading = false;
 
 function getZelosShapes(block: Blockly.Block): { HEXAGONAL: number; ROUND: number } | null {
-  // Prefer the workspace renderer to avoid assuming renderer name
+  // Get shapes from the workspace renderer
   const workspace = block.workspace as Blockly.WorkspaceSvg | undefined;
-  const renderer = workspace?.getRenderer?.() ?? Blockly.blockRendering?.getRenderer?.('zelos');
+  const renderer = workspace?.getRenderer?.();
   const constants = renderer?.getConstants?.();
   const shapes = constants?.SHAPES;
   if (!shapes) return null;

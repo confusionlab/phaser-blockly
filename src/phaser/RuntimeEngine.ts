@@ -374,7 +374,12 @@ export class RuntimeEngine {
   async start(): Promise<void> {
     debugLog('info', '=== Runtime starting ===');
     this._isRunning = true;
-    if (!this.inputListenersAttached || this.phaserKeys.size === 0) {
+
+    // Re-setup input listeners if keys are missing (can happen after game restart)
+    if (this.phaserKeys.size === 0) {
+      this.inputListenersAttached = false; // Reset flag so setupInputListeners doesn't skip
+      this.setupInputListeners();
+    } else if (!this.inputListenersAttached) {
       this.setupInputListeners();
     }
 
