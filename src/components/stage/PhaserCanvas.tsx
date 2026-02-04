@@ -39,6 +39,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
   const creationIdRef = useRef(0); // Track which creation attempt is current
+  // Track the initial scene when play mode starts - don't recreate game when scene changes during play
+  const playModeInitialSceneRef = useRef<string | null>(null);
 
   const { project, updateObject } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectObject, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -77,11 +79,38 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (!containerRef.current || !project) return;
 
+    // In play mode, only recreate game when play mode starts (not when selectedSceneId changes)
+    // Check if this is just a scene change during an active play session
+    const isSceneChangeInPlayMode = isPlaying &&
+      playModeInitialSceneRef.current !== null &&
+      gameRef.current;
+
+    if (isSceneChangeInPlayMode) {
+      console.log('[PhaserCanvas] Skipping game recreation - play mode already active, scene change handled internally');
+      // Return a no-op cleanup since we're not creating anything new
+      return () => {};
+    }
+
+    // Track whether this effect instance actually created a game (for cleanup decision)
+    const wasPlayingOnCreation = isPlaying;
+
+    if (isPlaying) {
+      // Store the initial scene for this play session
+      playModeInitialSceneRef.current = selectedSceneId;
+    } else {
+      // Exiting play mode or in editor mode - clear the ref
+      playModeInitialSceneRef.current = null;
+    }
+
+    // Use the initial scene for play mode, current scene for editor mode
+    const effectiveSceneId = isPlaying ? (playModeInitialSceneRef.current || selectedSceneId) : selectedSceneId;
+    const effectiveScene = project.scenes.find(s => s.id === effectiveSceneId);
+
     // Increment creation ID - any previous async creation attempts will be ignored
     creationIdRef.current++;
     const thisCreationId = creationIdRef.current;
 
-    console.log(`[PhaserCanvas] Starting init #${thisCreationId}, isPlaying=${isPlaying}`);
+    console.log(`[PhaserCanvas] Starting init #${thisCreationId}, isPlaying=${isPlaying}, effectiveSceneId=${effectiveSceneId}`);
 
     // Clean up existing game
     if (runtimeRef.current) {
@@ -94,11 +123,14 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       console.log('[PhaserCanvas] Destroying existing game');
       // Stop all sounds before destroying to prevent AudioContext errors
       try {
-        const scene = gameRef.current.scene.getScene('GameScene');
-        if (scene?.sound) {
-          scene.sound.stopAll();
-          scene.sound.removeAll();
-        }
+        // Try to stop sounds on all active scenes
+        const sceneManager = gameRef.current.scene;
+        sceneManager.getScenes(true).forEach(scene => {
+          if (scene?.sound) {
+            scene.sound.stopAll();
+            scene.sound.removeAll();
+          }
+        });
       } catch (e) {
         // Ignore - scene might not exist
       }
@@ -152,7 +184,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           },
         },
         scene: {
-          key: 'GameScene',
+          // Use consistent scene key format: PlayScene_${sceneId} for all scenes
+          key: isPlaying ? `PlayScene_${effectiveSceneId}` : 'EditorScene',
           preload: function(this: Phaser.Scene) {
             // Preload assets if needed
           },
@@ -160,7 +193,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             if (isPlaying) {
               // Collect all objects from all scenes for variable lookup
               const allObjects = project.scenes.flatMap(s => s.objects);
-              createPlayScene(this, selectedScene, project.scenes, project.components || [], runtimeRef, canvasWidth, canvasHeight, project.globalVariables, allObjects, selectedSceneId || undefined);
+              createPlayScene(this, effectiveScene, project.scenes, project.components || [], runtimeRef, canvasWidth, canvasHeight, project.globalVariables, allObjects, effectiveSceneId || undefined);
             } else {
               // Get current viewMode and cycleViewMode from store
               const { viewMode: currentViewMode, cycleViewMode: cycleFn } = useEditorStore.getState();
@@ -177,7 +210,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                 const targetSceneData = project.scenes.find(s => s.name === pendingSwitch.sceneName);
                 if (targetSceneData) {
                   runtimeRef.current.clearPendingSceneSwitch();
-                  const currentSceneKey = `PlayScene_${selectedSceneId}`;
+                  // Use consistent scene key format for all scenes
+                  const currentSceneKey = `PlayScene_${effectiveSceneId}`;
                   const targetSceneKey = `PlayScene_${targetSceneData.id}`;
 
                   // Pause current runtime and sleep current scene
@@ -257,7 +291,17 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     }
 
     return () => {
-      console.log('[PhaserCanvas] Cleanup triggered');
+      console.log(`[PhaserCanvas] Cleanup triggered (wasPlayingOnCreation=${wasPlayingOnCreation}, isPlayingRef=${isPlayingRef.current})`);
+
+      // Skip cleanup if we're still in play mode - scene switches during play don't need full cleanup
+      // This happens when selectedSceneId changes but isPlaying stays true
+      if (wasPlayingOnCreation && isPlayingRef.current && playModeInitialSceneRef.current !== null) {
+        console.log('[PhaserCanvas] Skipping cleanup - still in active play session');
+        return;
+      }
+
+      // Clear play mode tracking
+      playModeInitialSceneRef.current = null;
 
       // Clean up all scene runtimes (for multi-scene play mode)
       for (const [sceneId, runtime] of sceneRuntimes) {
@@ -277,11 +321,13 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       if (gameRef.current) {
         // Stop all sounds before destroying to prevent AudioContext errors
         try {
-          const scene = gameRef.current.scene.getScene('GameScene');
-          if (scene?.sound) {
-            scene.sound.stopAll();
-            scene.sound.removeAll();
-          }
+          const sceneManager = gameRef.current.scene;
+          sceneManager.getScenes(true).forEach(scene => {
+            if (scene?.sound) {
+              scene.sound.stopAll();
+              scene.sound.removeAll();
+            }
+          });
         } catch (e) {
           // Ignore - scene might not exist
         }
@@ -295,7 +341,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (!gameRef.current) return;
 
-    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    // Get the active scene - could be EditorScene or PlayScene_${sceneId}
+    const sceneKey = isPlaying ? `PlayScene_${selectedSceneId}` : 'EditorScene';
+    const phaserScene = gameRef.current.scene.getScene(sceneKey) as Phaser.Scene;
     if (!phaserScene?.matter?.world) return;
 
     const world = phaserScene.matter.world;
@@ -312,13 +360,13 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       world.debugGraphic.setVisible(false);
       world.drawDebug = false;
     }
-  }, [isPlaying, showColliderOutlines]);
+  }, [isPlaying, showColliderOutlines, selectedSceneId]);
 
   // Update view mode at runtime (without recreating game)
   useEffect(() => {
     if (!gameRef.current || isPlaying) return;
 
-    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene) return;
 
     const camera = phaserScene.cameras.main;
@@ -356,7 +404,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (!gameRef.current || isPlaying) return;
 
-    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene || !selectedScene) return;
 
     // Get current object IDs in scene data
@@ -559,7 +607,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (!gameRef.current || isPlaying) return;
 
-    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene || !selectedScene) return;
 
     const bgColorValue = selectedScene.background?.type === 'color'
@@ -588,7 +636,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (!gameRef.current || isPlaying || !project) return;
 
-    const phaserScene = gameRef.current.scene.getScene('GameScene') as Phaser.Scene;
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene || !selectedScene) return;
 
     const groundGraphics = phaserScene.data.get('groundGraphics') as Phaser.GameObjects.Graphics | undefined;

@@ -92,6 +92,9 @@ export class RuntimeSprite {
         x: this.container.x + offsetX,
         y: this.container.y + offsetY
       });
+
+      // Mark that body was positioned by code this frame (prevents afterupdate from overwriting)
+      this.container.setData('_bodyMovedByCode', true);
     }
   }
 
@@ -417,7 +420,12 @@ export class RuntimeSprite {
 
   private getMatterBody(): MatterJS.BodyType | null {
     const matterContainer = this.container as unknown as { body?: MatterJS.BodyType };
-    return matterContainer.body || null;
+    const body = matterContainer.body || null;
+    // Uncomment for deep debugging if body mismatch suspected
+    // if (this._isClone && body) {
+    //   console.log(`[${this.name}] getMatterBody: container=${this.container.name}, body.id=${body.id}, body.label=${body.label}`);
+    // }
+    return body;
   }
 
   isPhysicsEnabled(): boolean {
@@ -533,6 +541,14 @@ export class RuntimeSprite {
         // already set container position directly before syncing to body
         this.scene.matter.world.on('afterupdate', () => {
           if (body && container.active && !body.isStatic) {
+            // If body was positioned by code this frame, don't overwrite with physics position
+            // The code has already synced container -> body, so they're in sync
+            const movedByCode = container.getData('_bodyMovedByCode');
+            if (movedByCode) {
+              container.setData('_bodyMovedByCode', false); // Reset for next frame
+              return;
+            }
+
             const offsetX = container.getData('colliderOffsetX') ?? 0;
             const offsetY = container.getData('colliderOffsetY') ?? 0;
             container.setPosition(body.position.x - offsetX, body.position.y - offsetY);

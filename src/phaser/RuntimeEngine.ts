@@ -992,12 +992,11 @@ export class RuntimeEngine {
       if (!template.visible) clone.hide();
     }
 
-    // Enable physics for clone if the original has physics enabled
-    // This is needed for collision detection to work
-    const shouldEnablePhysics = liveOriginal?.isPhysicsEnabled() || template.physicsConfig;
-    if (shouldEnablePhysics) {
-      clone.enablePhysics();
-    }
+    // DON'T enable physics here - let the clone's onStart handler do it
+    // If we enable physics here and onStart calls disablePhysics() then enablePhysics(),
+    // the afterupdate listener from our enablePhysics call will have a stale body reference
+    // and will reset the container position incorrectly.
+    // The clone's onStart handlers (which are copied from the original) will handle physics setup.
 
     // Copy event handlers from template, or fall back to live handlers if template not yet updated
     // (This happens when cloning during onStart, before updateTemplateHandlers is called)
