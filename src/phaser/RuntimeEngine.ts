@@ -74,6 +74,9 @@ export class RuntimeEngine {
   private activeForeverLoops: Map<string, boolean> = new Map();
   private _isRunning: boolean = false;
   private phaserKeys: Map<string, Phaser.Input.Keyboard.Key> = new Map();
+  private inputListenersAttached: boolean = false;
+  private keydownListener: ((event: KeyboardEvent) => void) | null = null;
+  private keyupListener: ((event: KeyboardEvent) => void) | null = null;
   private cloneCounter: number = 0;
   private messageQueue: string[] = [];
 
@@ -127,6 +130,10 @@ export class RuntimeEngine {
       return;
     }
 
+    if (this.inputListenersAttached) {
+      return;
+    }
+
     debugLog('info', 'Setting up keyboard input...');
 
     // Register keys we care about
@@ -148,16 +155,20 @@ export class RuntimeEngine {
     debugLog('info', `Registered ${keysToRegister.length} keys: ${keysToRegister.map(k => k[0]).join(', ')}`);
 
     // Listen for key down events for event_key_pressed blocks
-    keyboard.on('keydown', (event: KeyboardEvent) => {
+    this.keydownListener = (event: KeyboardEvent) => {
       const key = this.normalizeKey(event.code);
       debugLog('event', `Key down: ${event.code} -> ${key}`);
       this.triggerKeyPressed(key);
-    });
+    };
 
-    keyboard.on('keyup', (event: KeyboardEvent) => {
+    this.keyupListener = (event: KeyboardEvent) => {
       const key = this.normalizeKey(event.code);
       debugLog('event', `Key up: ${event.code} -> ${key}`);
-    });
+    };
+
+    keyboard.on('keydown', this.keydownListener);
+    keyboard.on('keyup', this.keyupListener);
+    this.inputListenersAttached = true;
   }
 
   private normalizeKey(code: string): string {
@@ -363,6 +374,9 @@ export class RuntimeEngine {
   async start(): Promise<void> {
     debugLog('info', '=== Runtime starting ===');
     this._isRunning = true;
+    if (!this.inputListenersAttached || this.phaserKeys.size === 0) {
+      this.setupInputListeners();
+    }
 
     // Log registered handlers summary (before onStart)
     for (const [spriteId, h] of this.handlers) {
@@ -746,7 +760,15 @@ export class RuntimeEngine {
     // Remove keyboard listeners
     const keyboard = this.scene.input.keyboard;
     if (keyboard) {
-      keyboard.removeAllListeners();
+      if (this.keydownListener) {
+        keyboard.off('keydown', this.keydownListener);
+      }
+      if (this.keyupListener) {
+        keyboard.off('keyup', this.keyupListener);
+      }
+      this.keydownListener = null;
+      this.keyupListener = null;
+      this.inputListenersAttached = false;
       // Remove all registered keys
       for (const key of this.phaserKeys.values()) {
         keyboard.removeKey(key);
