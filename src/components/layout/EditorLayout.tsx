@@ -6,12 +6,14 @@ import { StagePanel } from '../stage/StagePanel';
 import { PhaserCanvas } from '../stage/PhaserCanvas';
 import { ObjectPicker } from '../stage/ObjectPicker';
 import { ProjectDialog } from '../dialogs/ProjectDialog';
+import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { loadProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
+import { tryStartPlaying } from '@/lib/playStartGuard';
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | 'stage' | null;
@@ -20,7 +22,19 @@ export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const { project, openProject, saveCurrentProject } = useProjectStore();
-  const { isPlaying, showProjectDialog, setShowProjectDialog, selectScene, startPlaying, stopPlaying, undo, redo } = useEditorStore();
+  const {
+    isPlaying,
+    showProjectDialog,
+    setShowProjectDialog,
+    selectScene,
+    stopPlaying,
+    undo,
+    redo,
+    showPlayValidationDialog,
+    playValidationIssues,
+    setShowPlayValidationDialog,
+    focusPlayValidationIssue,
+  } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(70);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
@@ -139,10 +153,10 @@ export function EditorLayout() {
 
     if (e.key === 'Enter' && !isTyping && !isPlaying && project && !fullscreenPanel) {
       e.preventDefault();
-      startPlaying();
+      tryStartPlaying();
       return;
     }
-  }, [isPlaying, project, saveCurrentProject, startPlaying, stopPlaying, fullscreenPanel, undo, redo]);
+  }, [isPlaying, project, saveCurrentProject, stopPlaying, fullscreenPanel, undo, redo]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -279,6 +293,13 @@ export function EditorLayout() {
           onProjectOpen={handleProjectOpen}
         />
       )}
+
+      <PlayValidationDialog
+        open={showPlayValidationDialog}
+        issues={playValidationIssues}
+        onOpenChange={setShowPlayValidationDialog}
+        onIssueClick={focusPlayValidationIssue}
+      />
 
       {/* Object picker overlay */}
       <ObjectPicker />

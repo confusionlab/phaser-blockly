@@ -6,11 +6,12 @@ import { downloadProject } from '@/db/database';
 import { Button } from '@/components/ui/button';
 import { Play, Square, Upload, Save, Library, Sun, Moon } from 'lucide-react';
 import { MediaLibrary } from '@/components/library/MediaLibrary';
+import { tryStartPlaying } from '@/lib/playStartGuard';
 
 export function Toolbar() {
   const navigate = useNavigate();
   const { project, isDirty, saveCurrentProject, closeProject } = useProjectStore();
-  const { isPlaying, startPlaying, stopPlaying, isDarkMode, toggleDarkMode } = useEditorStore();
+  const { isPlaying, stopPlaying, isDarkMode, toggleDarkMode } = useEditorStore();
   const [showLibrary, setShowLibrary] = useState(false);
 
   const handleGoHome = () => {
@@ -26,7 +27,7 @@ export function Toolbar() {
     if (isPlaying) {
       stopPlaying();
     } else {
-      startPlaying();
+      tryStartPlaying();
     }
   };
 

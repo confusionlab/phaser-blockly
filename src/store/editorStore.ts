@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { PlayValidationIssue } from '@/lib/playValidation';
 
 export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
 
@@ -40,6 +41,8 @@ interface EditorStore {
   // UI state
   showProjectDialog: boolean;
   showReusableLibrary: boolean;
+  showPlayValidationDialog: boolean;
+  playValidationIssues: PlayValidationIssue[];
   activeObjectTab: ObjectEditorTab;
 
   // Object picker state
@@ -67,6 +70,9 @@ interface EditorStore {
 
   setShowProjectDialog: (show: boolean) => void;
   setShowReusableLibrary: (show: boolean) => void;
+  setShowPlayValidationDialog: (show: boolean) => void;
+  setPlayValidationIssues: (issues: PlayValidationIssue[]) => void;
+  focusPlayValidationIssue: (issue: PlayValidationIssue) => void;
 
   // Object picker actions
   openObjectPicker: (callback: ObjectPickerCallback, excludeId?: string | null) => void;
@@ -120,6 +126,8 @@ export const useEditorStore = create<EditorStore>((set) => ({
   // UI state
   showProjectDialog: false,
   showReusableLibrary: false,
+  showPlayValidationDialog: false,
+  playValidationIssues: [],
   activeObjectTab: 'code' as ObjectEditorTab,
 
   // Object picker state
@@ -176,6 +184,23 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   setShowReusableLibrary: (show) => {
     set({ showReusableLibrary: show });
+  },
+
+  setShowPlayValidationDialog: (show) => {
+    set({ showPlayValidationDialog: show });
+  },
+
+  setPlayValidationIssues: (issues) => {
+    set({ playValidationIssues: issues });
+  },
+
+  focusPlayValidationIssue: (issue) => {
+    set({
+      selectedSceneId: issue.sceneId,
+      selectedObjectId: issue.objectId,
+      activeObjectTab: 'code',
+      showPlayValidationDialog: false,
+    });
   },
 
   setActiveObjectTab: (tab) => {

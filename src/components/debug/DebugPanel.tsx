@@ -5,6 +5,7 @@ import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import type { Project } from '@/types';
 
 export function DebugPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -256,8 +257,20 @@ function getLogColor(type: string): string {
   }
 }
 
-function VariablesTab({ project }: { project: { globalVariables?: Array<{ id: string; name: string; type: string; defaultValue: unknown }> } | null }) {
+function VariablesTab({ project }: { project: Project | null }) {
   const runtime = getCurrentRuntime();
+  const variableNamesById = new Map<string, string>();
+
+  for (const variable of project?.globalVariables ?? []) {
+    variableNamesById.set(variable.id, variable.name);
+  }
+  for (const scene of project?.scenes ?? []) {
+    for (const object of scene.objects) {
+      for (const variable of object.localVariables ?? []) {
+        variableNamesById.set(variable.id, variable.name);
+      }
+    }
+  }
 
   if (!runtime) {
     return (
@@ -300,9 +313,9 @@ function VariablesTab({ project }: { project: { globalVariables?: Array<{ id: st
           <div className="text-gray-500">No global variables</div>
         ) : (
           <div className="space-y-1">
-            {globalVars.map(([name, value]) => (
-              <div key={name} className="flex items-center gap-2">
-                <span className="text-orange-300 font-medium">{name}</span>
+            {globalVars.map(([varId, value]) => (
+              <div key={varId} className="flex items-center gap-2">
+                <span className="text-orange-300 font-medium">{formatVariableLabel(varId, variableNamesById)}</span>
                 <span className="text-gray-500">=</span>
                 <span className={getValueColor(value)}>{formatValue(value)}</span>
               </div>
@@ -324,9 +337,9 @@ function VariablesTab({ project }: { project: { globalVariables?: Array<{ id: st
                 <div key={spriteId} className="pl-2 border-l-2 border-gray-700">
                   <div className="text-cyan-400 text-xs mb-1">{spriteName}</div>
                   <div className="space-y-1 pl-2">
-                    {varsArray.map(([name, value]) => (
-                      <div key={name} className="flex items-center gap-2">
-                        <span className="text-orange-300 font-medium">{name}</span>
+                    {varsArray.map(([varId, value]) => (
+                      <div key={varId} className="flex items-center gap-2">
+                        <span className="text-orange-300 font-medium">{formatVariableLabel(varId, variableNamesById)}</span>
                         <span className="text-gray-500">=</span>
                         <span className={getValueColor(value)}>{formatValue(value)}</span>
                       </div>
@@ -347,6 +360,11 @@ function getValueColor(value: unknown): string {
   if (typeof value === 'number') return 'text-blue-300';
   if (typeof value === 'string') return 'text-yellow-300';
   return 'text-gray-300';
+}
+
+function formatVariableLabel(varId: string, variableNamesById: Map<string, string>): string {
+  const variableName = variableNamesById.get(varId);
+  return variableName ? `${variableName} (${varId})` : varId;
 }
 
 function formatValue(value: unknown): string {
