@@ -37,8 +37,15 @@ export interface Scene {
   order: number;
   background: BackgroundConfig | null;
   objects: GameObject[];
+  objectFolders: SceneFolder[];
   cameraConfig: CameraConfig;
   ground?: GroundConfig;
+}
+
+export interface SceneFolder {
+  id: string;
+  name: string;
+  collapsed?: boolean;
 }
 
 export interface GroundConfig {
@@ -72,6 +79,7 @@ export interface GameObject {
   rotation: number;
   visible: boolean;
   layer: number;
+  folderId?: string | null;
   // If componentId is set, physics/blocklyXml/costumes/sounds/collider come from the component
   componentId?: string;
   // Instance-level overrides (only used if componentId is not set)
@@ -209,6 +217,7 @@ export function createDefaultScene(id: string, name: string, order: number): Sce
     order,
     background: { type: 'color', value: '#87CEEB' },
     objects: [],
+    objectFolders: [],
     cameraConfig: {
       followTarget: null,
       bounds: null,
@@ -250,6 +259,7 @@ export function createDefaultGameObject(name: string): GameObject {
     rotation: 0,
     visible: true,
     layer: 0,
+    folderId: null,
     physics: null,
     collider: null,
     blocklyXml: '',

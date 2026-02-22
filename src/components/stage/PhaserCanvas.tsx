@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
+import { setBodyGravityY } from '@/phaser/gravity';
 import type { Scene as SceneData, GameObject, ComponentDefinition, Variable } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 
@@ -1214,7 +1215,7 @@ function createPlaySceneContent(
       }
 
       const gravityValue = physics.gravityY ?? 1;
-      body.gravityScale = { x: 0, y: gravityValue };
+      setBodyGravityY(body, gravityValue);
     }
 
     // Save template for cloning

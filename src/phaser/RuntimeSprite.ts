@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { runtimeDebugLog } from './RuntimeEngine';
+import { setBodyGravityY } from './gravity';
 import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
 import type { RuntimeEngine } from './RuntimeEngine';
 
@@ -568,7 +569,7 @@ export class RuntimeSprite {
 
         // Apply gravity scale if configured
         if (physics?.gravityY !== undefined) {
-          body.gravityScale = { x: 0, y: physics.gravityY };
+          setBodyGravityY(body, physics.gravityY);
         }
 
         debugLog('info', `${this.name}.enablePhysics() ${colliderType} body created successfully`);
@@ -625,8 +626,7 @@ export class RuntimeSprite {
     if (this._stopped) return;
     const body = this.getMatterBody();
     if (body) {
-      // Use Matter.js gravityScale - 1 is normal gravity, 0 is none, etc.
-      body.gravityScale = { x: 0, y: gravity };
+      setBodyGravityY(body, gravity);
       debugLog('action', `${this.name}.setGravity(${gravity})`);
     } else {
       debugLog('error', `${this.name}.setGravity: No physics body found.`);

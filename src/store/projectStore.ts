@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, Scene, GameObject, Variable, ComponentDefinition, ColliderConfig } from '../types';
+import type { Project, Scene, GameObject, Variable, ComponentDefinition, ColliderConfig, SceneFolder } from '../types';
 import { createDefaultProject, createDefaultScene, createDefaultGameObject } from '../types';
 import { saveProject } from '../db/database';
 
@@ -56,6 +56,24 @@ interface ProjectStore {
   getComponent: (componentId: string) => ComponentDefinition | undefined;
 }
 
+function normalizeProject(project: Project): Project {
+  return {
+    ...project,
+    scenes: project.scenes.map((scene) => {
+      const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
+      const validFolderIds = new Set(objectFolders.map(folder => folder.id));
+      return {
+        ...scene,
+        objectFolders,
+        objects: scene.objects.map((obj) => ({
+          ...obj,
+          folderId: obj.folderId && validFolderIds.has(obj.folderId) ? obj.folderId : null,
+        })),
+      };
+    }),
+  };
+}
+
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: null,
   isDirty: false,
@@ -66,7 +84,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   openProject: (project: Project) => {
-    set({ project, isDirty: false });
+    set({ project: normalizeProject(project), isDirty: false });
   },
 
   saveCurrentProject: async () => {
@@ -338,6 +356,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const scene = state.project.scenes.find(s => s.id === sceneId);
     const original = scene?.objects.find(o => o.id === objectId);
     if (!original) return null;
+    const originalIndex = scene?.objects.findIndex(o => o.id === objectId) ?? -1;
 
     const duplicate: GameObject = {
       ...original,
@@ -354,7 +373,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ...state.project,
             scenes: state.project.scenes.map(s =>
               s.id === sceneId
-                ? { ...s, objects: [...s.objects, duplicate] }
+                ? {
+                    ...s,
+                    objects: (() => {
+                      const next = [...s.objects];
+                      const insertIndex = originalIndex >= 0 ? originalIndex + 1 : next.length;
+                      next.splice(insertIndex, 0, duplicate);
+                      return next;
+                    })(),
+                  }
                 : s
             ),
             updatedAt: new Date(),

@@ -22,6 +22,7 @@ interface EditorStore {
   // Selection state
   selectedSceneId: string | null;
   selectedObjectId: string | null;
+  selectedObjectIds: string[];
 
   // Play state
   isPlaying: boolean;
@@ -57,6 +58,7 @@ interface EditorStore {
   // Actions
   selectScene: (sceneId: string | null) => void;
   selectObject: (objectId: string | null) => void;
+  selectObjects: (objectIds: string[], primaryObjectId?: string | null) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
 
   startPlaying: () => void;
@@ -97,6 +99,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   // Selection state
   selectedSceneId: null,
   selectedObjectId: null,
+  selectedObjectIds: [],
 
   // Play state
   isPlaying: false,
@@ -141,11 +144,25 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   // Actions
   selectScene: (sceneId) => {
-    set({ selectedSceneId: sceneId, selectedObjectId: null });
+    set({ selectedSceneId: sceneId, selectedObjectId: null, selectedObjectIds: [] });
   },
 
   selectObject: (objectId) => {
-    set({ selectedObjectId: objectId });
+    set({
+      selectedObjectId: objectId,
+      selectedObjectIds: objectId ? [objectId] : [],
+    });
+  },
+
+  selectObjects: (objectIds, primaryObjectId = null) => {
+    const uniqueIds = Array.from(new Set(objectIds));
+    const primary = primaryObjectId && uniqueIds.includes(primaryObjectId)
+      ? primaryObjectId
+      : uniqueIds[0] ?? null;
+    set({
+      selectedObjectId: primary,
+      selectedObjectIds: uniqueIds,
+    });
   },
 
   startPlaying: () => {
@@ -198,6 +215,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
     set({
       selectedSceneId: issue.sceneId,
       selectedObjectId: issue.objectId,
+      selectedObjectIds: issue.objectId ? [issue.objectId] : [],
       activeObjectTab: 'code',
       showPlayValidationDialog: false,
     });

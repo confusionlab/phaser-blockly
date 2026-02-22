@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { RuntimeSprite } from './RuntimeSprite';
+import { applyCustomGravityForce } from './gravity';
 
 // Handlers receive sprite as parameter so they work correctly for clones
 type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
@@ -119,6 +120,19 @@ export class RuntimeEngine {
   private _cameraFollowOffsetX: number = 0;
   private _cameraFollowOffsetY: number = 0;
 
+  private applyCustomGravity = (): void => {
+    const gravity = this.scene.matter?.world?.engine?.gravity;
+    if (!gravity) {
+      return;
+    }
+
+    for (const sprite of this.sprites.values()) {
+      const body = (sprite.container as unknown as { body?: MatterJS.BodyType }).body;
+      if (!body) continue;
+      applyCustomGravityForce(body, gravity);
+    }
+  };
+
   // Collision tracking to prevent duplicate events per frame
   private _touchingPairs: Set<string> = new Set();
 
@@ -129,6 +143,7 @@ export class RuntimeEngine {
     clearDebugLog();
     debugLog('info', 'RuntimeEngine created');
     this.setupInputListeners();
+    this.scene.matter?.world?.on('beforeupdate', this.applyCustomGravity);
   }
 
   // Coordinate conversion: User space (center origin, Y-up) to Phaser space (top-left origin, Y-down)
@@ -506,7 +521,7 @@ export class RuntimeEngine {
     this._touchingPairs.clear();
 
     // Clear ground touching flags at end of frame for all sprites
-    // Gravity is handled by Matter.js via body.gravityScale property
+    // Ground flags are set by collision callbacks during physics step.
     for (const sprite of this.sprites.values()) {
       // Clear ground touching flags - they will be set again by collision callbacks next physics step
       sprite.setTouchingGround(false);
@@ -812,6 +827,9 @@ export class RuntimeEngine {
       }
       this.phaserKeys.clear();
     }
+
+    // Remove physics listeners
+    this.scene.matter?.world?.off('beforeupdate', this.applyCustomGravity);
 
     // Clear all handlers
     this.handlers.clear();
