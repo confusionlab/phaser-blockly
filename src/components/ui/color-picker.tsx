@@ -69,11 +69,16 @@ export const ColorPicker = ({
   const getInitialHSL = () => {
     try {
       const color = Color(value || defaultValue)
+      const hue = color.hue()
+      const saturation = color.saturationl()
+      const lightness = color.lightness()
+      const alpha = color.alpha()
+
       return {
-        h: color.hue() || 0,
-        s: color.saturationl() || 100,
-        l: color.lightness() || 50,
-        a: (color.alpha() || 1) * 100,
+        h: Number.isFinite(hue) ? hue : 0,
+        s: Number.isFinite(saturation) ? saturation : 100,
+        l: Number.isFinite(lightness) ? lightness : 50,
+        a: Number.isFinite(alpha) ? alpha * 100 : 100,
       }
     } catch {
       return { h: 0, s: 100, l: 50, a: 100 }
