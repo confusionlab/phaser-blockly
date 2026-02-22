@@ -13,3 +13,14 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
   - `pnpm lint` fails due to many pre-existing repo-wide lint errors (not introduced by this change).
 - TODO: if strict lint gating is required, address existing lint baseline across unrelated files.
 - Re-checked Playwright skill-client (`web_game_playwright_client.js`) after camera change: still blocked with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.
+- Investigated gravity property panel issue: per-body gravity path existed, but runtime read `scene.matter.world.engine.gravity`, which is undefined in this Phaser Matter engine shape.
+- Fixed gravity source in `RuntimeEngine.applyCustomGravity` to `scene.matter.world.engine.world.gravity`, so custom gravity from object physics settings is applied again.
+- Validation:
+  - `pnpm build` passes after the fix.
+- Playwright skill-client remains blocked in this environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.
+- Updated component instance sync behavior in `updateObject`:
+  - Instance-only keys are now: `x`, `y`, `scaleX`, `scaleY`, `visible`, `rotation`.
+  - Shared component keys synced across all instances now include `physics` (plus name/code/costumes/current costume/collider/sounds).
+- This fixes physics properties edited on one component instance not propagating to other instances.
+- Validation:
+  - `pnpm build` passes.

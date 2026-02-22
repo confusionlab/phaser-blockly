@@ -121,7 +121,7 @@ export class RuntimeEngine {
   private _cameraFollowOffsetY: number = 0;
 
   private applyCustomGravity = (): void => {
-    const gravity = this.scene.matter?.world?.engine?.gravity;
+    const gravity = this.scene.matter?.world?.engine?.world?.gravity;
     if (!gravity) {
       return;
     }

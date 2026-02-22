@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Project, Scene, GameObject, Variable, ComponentDefinition, ColliderConfig, SceneFolder } from '../types';
+import type { Project, Scene, GameObject, Variable, ComponentDefinition, SceneFolder } from '../types';
 import { createDefaultProject, createDefaultScene, createDefaultGameObject } from '../types';
 import { saveProject } from '../db/database';
 
@@ -252,17 +252,39 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (obj?.componentId) {
         const componentId = obj.componentId;
 
-        // Properties that sync to component definition (shared)
-        const syncedKeys: (keyof GameObject)[] = ['name', 'costumes', 'currentCostumeIndex', 'sounds', 'blocklyXml', 'collider'];
+        // Instance-specific properties (do NOT sync across component instances)
+        const instanceOnlyKeys = new Set<keyof GameObject>([
+          'x',
+          'y',
+          'scaleX',
+          'scaleY',
+          'visible',
+          'rotation',
+        ]);
+
+        // Shared component properties (sync across all instances of the same component)
+        const componentSyncKeys: (keyof ComponentDefinition & keyof GameObject)[] = [
+          'name',
+          'blocklyXml',
+          'costumes',
+          'currentCostumeIndex',
+          'physics',
+          'collider',
+          'sounds',
+        ];
+
         const syncedUpdates: Partial<ComponentDefinition> = {};
         const instanceUpdates: Partial<GameObject> = {};
 
         for (const key of Object.keys(updates) as (keyof GameObject)[]) {
-          if (syncedKeys.includes(key)) {
-            // These sync to component
+          if (instanceOnlyKeys.has(key)) {
+            // These are always instance-specific
+            (instanceUpdates as Record<string, unknown>)[key] = updates[key];
+          } else if ((componentSyncKeys as (keyof GameObject)[]).includes(key)) {
+            // These sync to component definition + all instances
             (syncedUpdates as Record<string, unknown>)[key] = updates[key];
           } else {
-            // These are instance-specific
+            // Non-component fields remain instance-specific
             (instanceUpdates as Record<string, unknown>)[key] = updates[key];
           }
         }
@@ -283,11 +305,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                   if (o.componentId === componentId) {
                     // All instances get synced updates
                     const syncedObjUpdates: Partial<GameObject> = {};
-                    if (syncedUpdates.name !== undefined) syncedObjUpdates.name = syncedUpdates.name;
-                    if (syncedUpdates.costumes !== undefined) syncedObjUpdates.costumes = syncedUpdates.costumes;
-                    if (syncedUpdates.currentCostumeIndex !== undefined) syncedObjUpdates.currentCostumeIndex = syncedUpdates.currentCostumeIndex;
-                    if (syncedUpdates.sounds !== undefined) syncedObjUpdates.sounds = syncedUpdates.sounds;
-                    if (syncedUpdates.collider !== undefined) syncedObjUpdates.collider = syncedUpdates.collider as ColliderConfig | null;
+                    for (const syncKey of componentSyncKeys) {
+                      const value = syncedUpdates[syncKey];
+                      if (value !== undefined) {
+                        (syncedObjUpdates as Record<string, unknown>)[syncKey] = value;
+                      }
+                    }
 
                     // This specific instance also gets instance-specific updates
                     if (o.id === objectId) {
