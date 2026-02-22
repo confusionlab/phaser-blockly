@@ -15,6 +15,7 @@ const physicsValidator = v.object({
   velocityX: v.number(),
   velocityY: v.number(),
   bounce: v.number(),
+  friction: v.number(),
   allowRotation: v.boolean(),
 });
 

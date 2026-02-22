@@ -21,7 +21,7 @@ type FullscreenPanel = 'code' | 'stage' | null;
 export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { project, openProject, saveCurrentProject, duplicateObject } = useProjectStore();
+  const { project, isDirty, openProject, saveCurrentProject, duplicateObject } = useProjectStore();
   const {
     isPlaying,
     selectedSceneId,
@@ -45,9 +45,23 @@ export function EditorLayout() {
   const hoveredPanelRef = useRef<HoveredPanel>(null);
 
   // Cloud sync - sync current project when leaving
-  useCloudSync({
+  const { syncProjectToCloud } = useCloudSync({
     currentProjectId: project?.id ?? null,
   });
+
+
+  useEffect(() => {
+    if (!project || !isDirty) return;
+
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        await saveCurrentProject();
+        await syncProjectToCloud(project.id);
+      })();
+    }, 800);
+
+    return () => window.clearTimeout(timeout);
+  }, [project, isDirty, saveCurrentProject, syncProjectToCloud]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {

@@ -47,16 +47,90 @@ class GameMakerDatabase extends Dexie {
 
 export const db = new GameMakerDatabase();
 
+export const CURRENT_SCHEMA_VERSION = 2;
+export const MIN_SUPPORTED_SCHEMA_VERSION = 1;
+
+type StoredProjectPayload = Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'> & {
+  schemaVersion?: number;
+};
+
+function ensurePhysicsDefaults<T extends { physics?: Project['components'][number]['physics'] | null }>(entity: T): T {
+  if (!entity.physics) return entity;
+  return {
+    ...entity,
+    physics: {
+      ...entity.physics,
+      friction: entity.physics.friction ?? 0,
+    },
+  };
+}
+
+function migrateProjectToCurrent(project: Project, fromVersion: number): Project {
+  let migrated = { ...project };
+
+  for (let version = fromVersion + 1; version <= CURRENT_SCHEMA_VERSION; version += 1) {
+    if (version === 2) {
+      migrated = {
+        ...migrated,
+        schemaVersion: 2,
+        scenes: migrated.scenes.map((scene) => ({
+          ...scene,
+          objects: scene.objects.map((obj) => ensurePhysicsDefaults(obj)),
+        })),
+        components: migrated.components.map((component) => ensurePhysicsDefaults(component)),
+      };
+    }
+  }
+
+  return migrated;
+}
+
+
+function toProjectPayload(project: Project): Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'> {
+  return {
+    schemaVersion: project.schemaVersion,
+    scenes: project.scenes,
+    globalVariables: project.globalVariables,
+    settings: project.settings,
+    components: project.components,
+  };
+}
+
+function parseProjectRecord(record: ProjectRecord): Project {
+  const parsed = JSON.parse(record.data) as StoredProjectPayload;
+  const schemaVersion = parsed.schemaVersion ?? 1;
+
+  if (schemaVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(`Project schema v${schemaVersion} is newer than this app (v${CURRENT_SCHEMA_VERSION}).`);
+  }
+
+  if (schemaVersion < MIN_SUPPORTED_SCHEMA_VERSION) {
+    throw new Error(`Project schema v${schemaVersion} is too old and no longer supported.`);
+  }
+
+  const project: Project = {
+    id: record.id,
+    name: record.name,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...parsed,
+    schemaVersion,
+  };
+
+  return schemaVersion < CURRENT_SCHEMA_VERSION
+    ? migrateProjectToCurrent(project, schemaVersion)
+    : project;
+}
+
 // Project Repository
 
 export async function saveProject(project: Project): Promise<void> {
-  const { id, name, createdAt, updatedAt: _updatedAt, ...rest } = project;
   await db.projects.put({
-    id,
-    name,
-    createdAt,
+    id: project.id,
+    name: project.name,
+    createdAt: project.createdAt,
     updatedAt: new Date(),
-    data: JSON.stringify(rest),
+    data: JSON.stringify({ ...toProjectPayload(project), schemaVersion: CURRENT_SCHEMA_VERSION }),
   });
 }
 
@@ -64,14 +138,13 @@ export async function loadProject(id: string): Promise<Project | null> {
   const record = await db.projects.get(id);
   if (!record) return null;
 
-  const data = JSON.parse(record.data);
-  return {
-    id: record.id,
-    name: record.name,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    ...data,
-  };
+  const project = parseProjectRecord(record);
+
+  if (project.schemaVersion < CURRENT_SCHEMA_VERSION) {
+    await saveProject(project);
+  }
+
+  return project;
 }
 
 export async function listProjects(): Promise<Array<{ id: string; name: string; updatedAt: Date }>> {
@@ -137,9 +210,6 @@ export async function deleteReusable(id: string): Promise<void> {
 
 // Export / Import
 
-// Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 1;
-
 // App version - MUST match package.json version
 export const APP_VERSION = '0.1.0';
 
@@ -152,15 +222,21 @@ export async function getAllProjectsForSync(): Promise<Array<{
   data: string;
   createdAt: number;
   updatedAt: number;
+  schemaVersion: number;
 }>> {
   const records = await db.projects.toArray();
-  return records.map(r => ({
-    localId: r.id,
-    name: r.name,
-    data: r.data,
-    createdAt: r.createdAt.getTime(),
-    updatedAt: r.updatedAt.getTime(),
-  }));
+  return records.map(r => {
+    const parsed = parseProjectRecord(r);
+    const payload = toProjectPayload(parsed);
+    return {
+      localId: r.id,
+      name: r.name,
+      data: JSON.stringify(payload),
+      createdAt: r.createdAt.getTime(),
+      updatedAt: r.updatedAt.getTime(),
+      schemaVersion: parsed.schemaVersion,
+    };
+  });
 }
 
 // Sync a single project from cloud to local
@@ -170,9 +246,17 @@ export async function syncProjectFromCloud(cloudProject: {
   data: string;
   createdAt: number;
   updatedAt: number;
-  schemaVersion: string;
+  schemaVersion: number;
 }): Promise<{ action: 'created' | 'updated' | 'skipped' }> {
+  if (cloudProject.schemaVersion > CURRENT_SCHEMA_VERSION) {
+    return { action: 'skipped' };
+  }
+
   const existing = await db.projects.get(cloudProject.localId);
+  const normalizedData = JSON.stringify({
+    ...(JSON.parse(cloudProject.data) as Record<string, unknown>),
+    schemaVersion: cloudProject.schemaVersion,
+  });
 
   if (existing) {
     // Only update if cloud version is newer
@@ -180,7 +264,7 @@ export async function syncProjectFromCloud(cloudProject: {
       await db.projects.put({
         id: cloudProject.localId,
         name: cloudProject.name,
-        data: cloudProject.data,
+        data: normalizedData,
         createdAt: new Date(cloudProject.createdAt),
         updatedAt: new Date(cloudProject.updatedAt),
       });
@@ -192,7 +276,7 @@ export async function syncProjectFromCloud(cloudProject: {
     await db.projects.put({
       id: cloudProject.localId,
       name: cloudProject.name,
-      data: cloudProject.data,
+      data: normalizedData,
       createdAt: new Date(cloudProject.createdAt),
       updatedAt: new Date(cloudProject.updatedAt),
     });
@@ -207,16 +291,21 @@ export async function getProjectForSync(id: string): Promise<{
   data: string;
   createdAt: number;
   updatedAt: number;
+  schemaVersion: number;
 } | null> {
   const record = await db.projects.get(id);
   if (!record) return null;
 
+  const parsed = parseProjectRecord(record);
+  const payload = toProjectPayload(parsed);
+
   return {
     localId: record.id,
     name: record.name,
-    data: record.data,
+    data: JSON.stringify(payload),
     createdAt: record.createdAt.getTime(),
     updatedAt: record.updatedAt.getTime(),
+    schemaVersion: parsed.schemaVersion,
   };
 }
 
@@ -229,34 +318,6 @@ export interface ExportedProject {
   exportedAt: string;
   appVersion?: string;        // Optional: app version that created this file
   project: Project;
-}
-
-// Schema migration functions - add new migrations here as schema evolves
-type MigrationFn = (project: Project) => Project;
-
-const migrations: Record<number, MigrationFn> = {
-  // Example for future migrations:
-  // 2: (project) => {
-  //   // Migrate from v1 to v2
-  //   project.scenes.forEach(scene => {
-  //     scene.newField = scene.newField ?? 'default';
-  //   });
-  //   return project;
-  // },
-};
-
-function migrateProject(project: Project, fromVersion: number): Project {
-  let currentProject = { ...project };
-
-  for (let version = fromVersion + 1; version <= CURRENT_SCHEMA_VERSION; version++) {
-    const migrateFn = migrations[version];
-    if (migrateFn) {
-      console.log(`Migrating project from schema v${version - 1} to v${version}`);
-      currentProject = migrateFn(currentProject);
-    }
-  }
-
-  return currentProject;
 }
 
 export function exportProject(project: Project): string {
@@ -310,7 +371,7 @@ export async function importProject(jsonString: string): Promise<Project> {
   // Migrate project if needed
   let project = data.project as Project;
   if (schemaVersion < CURRENT_SCHEMA_VERSION) {
-    project = migrateProject(project, schemaVersion);
+    project = migrateProjectToCurrent({ ...project, schemaVersion }, schemaVersion);
   }
 
   // Generate new IDs to avoid conflicts with existing projects
@@ -359,6 +420,7 @@ export async function importProject(jsonString: string): Promise<Project> {
     name: `${project.name} (imported)`,
     createdAt: new Date(),
     updatedAt: new Date(),
+    schemaVersion: CURRENT_SCHEMA_VERSION,
   };
 
   // Save to database

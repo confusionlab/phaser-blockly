@@ -4,9 +4,7 @@ import { api } from '../../convex/_generated/api';
 import { getAllProjectsForSync, syncProjectFromCloud, getProjectForSync } from '@/db/database';
 
 interface CloudSyncOptions {
-  // Sync on mount (e.g., when entering project list)
   syncOnMount?: boolean;
-  // Current project ID to sync on unmount
   currentProjectId?: string | null;
 }
 
@@ -15,29 +13,21 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   const syncMutation = useMutation(api.projects.syncBatch);
   const syncSingleMutation = useMutation(api.projects.sync);
+  const removeProjectMutation = useMutation(api.projects.remove);
   const cloudProjects = useQuery(api.projects.listFull);
 
   const isSyncingRef = useRef(false);
   const currentProjectIdRef = useRef(currentProjectId);
-
-  // Keep ref updated
   currentProjectIdRef.current = currentProjectId;
 
-  // Sync all local projects to cloud
   const syncAllToCloud = useCallback(async () => {
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
-
     try {
       const localProjects = await getAllProjectsForSync();
-      if (localProjects.length === 0) {
-        isSyncingRef.current = false;
-        return;
+      if (localProjects.length > 0) {
+        await syncMutation({ projects: localProjects });
       }
-
-      console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
-      const results = await syncMutation({ projects: localProjects });
-      console.log('[CloudSync] Sync results:', results);
     } catch (error) {
       console.error('[CloudSync] Failed to sync to cloud:', error);
     } finally {
@@ -45,36 +35,31 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     }
   }, [syncMutation]);
 
-  // Sync a single project to cloud
   const syncProjectToCloud = useCallback(async (projectId: string) => {
     if (isSyncingRef.current) return;
-
     try {
       const project = await getProjectForSync(projectId);
-      if (!project) return;
-
-      console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
-      const result = await syncSingleMutation(project);
-      console.log('[CloudSync] Single sync result:', result);
+      if (project) {
+        await syncSingleMutation(project);
+      }
     } catch (error) {
       console.error('[CloudSync] Failed to sync project:', error);
     }
   }, [syncSingleMutation]);
 
-  // Sync all cloud projects to local
+  const deleteProjectFromCloud = useCallback(async (projectId: string) => {
+    try {
+      await removeProjectMutation({ localId: projectId });
+    } catch (error) {
+      console.error('[CloudSync] Failed to delete project from cloud:', error);
+    }
+  }, [removeProjectMutation]);
+
   const syncAllFromCloud = useCallback(async () => {
     if (!cloudProjects || isSyncingRef.current) return;
     isSyncingRef.current = true;
-
     try {
-      console.log(`[CloudSync] Syncing ${cloudProjects.length} projects from cloud...`);
-      const results = await Promise.all(
-        cloudProjects.map(async (cp) => {
-          const result = await syncProjectFromCloud(cp);
-          return { localId: cp.localId, ...result };
-        })
-      );
-      console.log('[CloudSync] Sync from cloud results:', results);
+      await Promise.all(cloudProjects.map(async (cp) => syncProjectFromCloud(cp)));
     } catch (error) {
       console.error('[CloudSync] Failed to sync from cloud:', error);
     } finally {
@@ -82,53 +67,43 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     }
   }, [cloudProjects]);
 
-  // Sync on mount if requested
   useEffect(() => {
     if (syncOnMount && cloudProjects) {
-      syncAllFromCloud();
+      void syncAllFromCloud();
     }
   }, [syncOnMount, cloudProjects, syncAllFromCloud]);
 
-  // Sync current project on unmount (leaving the project)
   useEffect(() => {
     return () => {
       const projectId = currentProjectIdRef.current;
       if (projectId) {
-        // Use sendBeacon for reliable sync on page unload
-        // For navigation within app, we'll use the regular mutation
-        syncProjectToCloud(projectId);
+        void syncProjectToCloud(projectId);
       }
     };
   }, [syncProjectToCloud]);
 
-  // Set up beforeunload handler for page close/refresh
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      // Sync all projects when leaving the page
-      // Note: This may not complete if the page closes too fast
-      // The main sync happens on navigation within the app
+    const handleVisibilityOrPageHide = () => {
       const projectId = currentProjectIdRef.current;
-      if (projectId) {
-        // Try to sync synchronously using sendBeacon
-        const projectPromise = getProjectForSync(projectId);
-        projectPromise.then((project) => {
-          if (project) {
-            // Use sendBeacon for more reliable delivery on unload
-            const url = import.meta.env.VITE_CONVEX_URL?.replace('.cloud', '.site') + '/sync-beacon';
-            navigator.sendBeacon?.(url, JSON.stringify(project));
-          }
-        });
+      if (projectId && document.visibilityState === 'hidden') {
+        void syncProjectToCloud(projectId);
       }
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+    window.addEventListener('pagehide', handleVisibilityOrPageHide);
+    document.addEventListener('visibilitychange', handleVisibilityOrPageHide);
+
+    return () => {
+      window.removeEventListener('pagehide', handleVisibilityOrPageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityOrPageHide);
+    };
+  }, [syncProjectToCloud]);
 
   return {
     syncAllToCloud,
     syncAllFromCloud,
     syncProjectToCloud,
+    deleteProjectFromCloud,
     cloudProjects,
     isSyncing: isSyncingRef.current,
   };
