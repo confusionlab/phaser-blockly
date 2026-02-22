@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -10,9 +10,12 @@ import { tryStartPlaying } from '@/lib/playStartGuard';
 
 export function Toolbar() {
   const navigate = useNavigate();
-  const { project, isDirty, saveCurrentProject, closeProject } = useProjectStore();
+  const { project, isDirty, saveCurrentProject, closeProject, updateProjectName } = useProjectStore();
   const { isPlaying, stopPlaying, isDarkMode, toggleDarkMode } = useEditorStore();
   const [showLibrary, setShowLibrary] = useState(false);
+  const [isEditingProjectName, setIsEditingProjectName] = useState(false);
+  const [projectNameDraft, setProjectNameDraft] = useState('');
+  const projectNameInputRef = useRef<HTMLInputElement>(null);
 
   const handleGoHome = () => {
     closeProject();
@@ -29,6 +32,34 @@ export function Toolbar() {
     } else {
       tryStartPlaying();
     }
+  };
+
+  useEffect(() => {
+    if (isEditingProjectName) {
+      projectNameInputRef.current?.focus();
+      projectNameInputRef.current?.select();
+    }
+  }, [isEditingProjectName]);
+
+  const handleStartProjectRename = () => {
+    if (!project) return;
+    setProjectNameDraft(project.name);
+    setIsEditingProjectName(true);
+  };
+
+  const handleSaveProjectRename = () => {
+    if (!project) return;
+
+    const nextName = projectNameDraft.trim();
+    if (nextName && nextName !== project.name) {
+      updateProjectName(nextName);
+    }
+    setIsEditingProjectName(false);
+  };
+
+  const handleCancelProjectRename = () => {
+    setProjectNameDraft(project?.name ?? '');
+    setIsEditingProjectName(false);
   };
 
   return (
@@ -48,7 +79,33 @@ export function Toolbar() {
         {project && (
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">|</span>
-            <span className="font-medium">{project.name}</span>
+            {isEditingProjectName ? (
+              <input
+                ref={projectNameInputRef}
+                value={projectNameDraft}
+                onChange={(e) => setProjectNameDraft(e.target.value)}
+                onBlur={handleSaveProjectRename}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSaveProjectRename();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    handleCancelProjectRename();
+                  }
+                }}
+                className="h-7 w-52 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Project name"
+              />
+            ) : (
+              <button
+                onClick={handleStartProjectRename}
+                className="font-medium rounded px-1 -mx-1 hover:bg-accent transition-colors"
+                title="Click to rename project"
+              >
+                {project.name}
+              </button>
+            )}
             {isDirty && <span className="text-muted-foreground">*</span>}
           </div>
         )}

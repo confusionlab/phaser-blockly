@@ -42,6 +42,19 @@ export function clearDebugLog() {
   runtimeDebugLog.length = 0;
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
+  );
+}
+
 interface ObjectHandlers {
   onStart: EventHandler[];
   onKeyPressed: Map<string, EventHandler[]>;
@@ -163,12 +176,16 @@ export class RuntimeEngine {
     ] as const;
 
     for (const [name, code] of keysToRegister) {
-      this.phaserKeys.set(name, keyboard.addKey(code));
+      // Do not capture these keys globally so users can still type in inputs.
+      this.phaserKeys.set(name, keyboard.addKey(code, false));
     }
     debugLog('info', `Registered ${keysToRegister.length} keys: ${keysToRegister.map(k => k[0]).join(', ')}`);
 
     // Listen for key down events for event_key_pressed blocks
     this.keydownListener = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
       const key = this.normalizeKey(event.code);
       debugLog('event', `Key down: ${event.code} -> ${key}`);
       this.triggerKeyPressed(key);

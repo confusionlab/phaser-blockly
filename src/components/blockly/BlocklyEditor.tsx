@@ -22,6 +22,60 @@ registerContinuousToolbox();
 // Global clipboard for cross-object block copying
 // Store the copy data from Blockly's ICopyable interface
 let globalBlockClipboard: Blockly.ICopyData | null = null;
+const BLOCK_CLIPBOARD_STORAGE_KEY = 'pochacoding:blocklyClipboard:v1';
+
+type PersistedBlockClipboard = {
+  version: 1;
+  copyData: Blockly.ICopyData;
+};
+
+function isValidCopyData(value: unknown): value is Blockly.ICopyData {
+  return typeof value === 'object' && value !== null && 'paster' in value;
+}
+
+function saveClipboardToStorage(copyData: Blockly.ICopyData): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: PersistedBlockClipboard = { version: 1, copyData };
+    window.localStorage.setItem(BLOCK_CLIPBOARD_STORAGE_KEY, JSON.stringify(payload));
+  } catch (err) {
+    console.warn('[Blockly] Failed to persist clipboard:', err);
+  }
+}
+
+function loadClipboardFromStorage(): Blockly.ICopyData | null {
+  if (typeof window === 'undefined') return null;
+
+  const raw = window.localStorage.getItem(BLOCK_CLIPBOARD_STORAGE_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as { version?: number; copyData?: unknown };
+    if (parsed.version === 1 && isValidCopyData(parsed.copyData)) {
+      return parsed.copyData;
+    }
+  } catch (err) {
+    console.warn('[Blockly] Failed to parse persisted clipboard:', err);
+  }
+
+  window.localStorage.removeItem(BLOCK_CLIPBOARD_STORAGE_KEY);
+  return null;
+}
+
+function getBlockClipboard(): Blockly.ICopyData | null {
+  const persistedClipboard = loadClipboardFromStorage();
+  if (persistedClipboard) {
+    globalBlockClipboard = persistedClipboard;
+    return globalBlockClipboard;
+  }
+
+  // Keep memory in sync with shared storage across tabs.
+  if (typeof window !== 'undefined' && !window.localStorage.getItem(BLOCK_CLIPBOARD_STORAGE_KEY)) {
+    globalBlockClipboard = null;
+  }
+
+  return globalBlockClipboard;
+}
 
 // Helper to deep clone and copy a block properly
 function copyBlockToClipboard(block: Blockly.BlockSvg): void {
@@ -29,13 +83,15 @@ function copyBlockToClipboard(block: Blockly.BlockSvg): void {
   const copyData = block.toCopyData();
   if (copyData) {
     globalBlockClipboard = copyData;
+    saveClipboardToStorage(copyData);
     console.log('[Blockly] Block copied to clipboard');
   }
 }
 
 // Helper to paste from clipboard
-function pasteBlockFromClipboard(workspace: Blockly.WorkspaceSvg): void {
-  if (!globalBlockClipboard) return;
+function pasteBlockFromClipboard(workspace: Blockly.WorkspaceSvg, copyData?: Blockly.ICopyData): void {
+  const clipboardData = copyData ?? getBlockClipboard();
+  if (!clipboardData) return;
 
   try {
     // Get visible area for positioning
@@ -44,7 +100,7 @@ function pasteBlockFromClipboard(workspace: Blockly.WorkspaceSvg): void {
     const viewTop = metrics.viewTop || 0;
 
     // Paste using Blockly's clipboard paste mechanism
-    const pasted = Blockly.clipboard.paste(globalBlockClipboard, workspace);
+    const pasted = Blockly.clipboard.paste(clipboardData, workspace);
 
     // Move pasted block to visible area
     if (pasted && pasted instanceof Blockly.BlockSvg) {
@@ -79,14 +135,15 @@ function registerCrossObjectCopyPaste() {
 
   // Paste from global clipboard
   Blockly.ContextMenuRegistry.registry.register({
-    displayText: () => globalBlockClipboard ? 'Paste Block' : 'Paste Block (empty)',
+    displayText: () => getBlockClipboard() ? 'Paste Block' : 'Paste Block (empty)',
     preconditionFn: () => {
-      return globalBlockClipboard ? 'enabled' : 'disabled';
+      return getBlockClipboard() ? 'enabled' : 'disabled';
     },
     callback: () => {
       const workspace = Blockly.getMainWorkspace() as Blockly.WorkspaceSvg;
-      if (workspace && globalBlockClipboard) {
-        pasteBlockFromClipboard(workspace);
+      const copyData = getBlockClipboard();
+      if (workspace && copyData) {
+        pasteBlockFromClipboard(workspace, copyData);
       }
     },
     scopeType: Blockly.ContextMenuRegistry.ScopeType.WORKSPACE,
@@ -245,9 +302,11 @@ export function BlocklyEditor() {
       }
 
       // Cross-object paste (Cmd+V)
-      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && workspaceRef.current && globalBlockClipboard) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && workspaceRef.current) {
+        const copyData = getBlockClipboard();
+        if (!copyData) return;
         e.preventDefault();
-        pasteBlockFromClipboard(workspaceRef.current);
+        pasteBlockFromClipboard(workspaceRef.current, copyData);
       }
     };
 
