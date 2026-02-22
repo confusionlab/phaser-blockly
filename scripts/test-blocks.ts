@@ -239,6 +239,18 @@ const testCases: TestCase[] = [
     `,
     expectCodeContains: ['runtime.cameraShake(0.5)'],
   },
+  {
+    name: 'camera_set_follow_offset',
+    xml: `
+      <xml>
+        <block type="camera_set_follow_offset">
+          <value name="X"><block type="math_number"><field name="NUM">32</field></block></value>
+          <value name="Y"><block type="math_number"><field name="NUM">-12</field></block></value>
+        </block>
+      </xml>
+    `,
+    expectCodeContains: ['runtime.cameraSetFollowOffset(32, -12)'],
+  },
   // Costume blocks
   {
     name: 'looks_next_costume',

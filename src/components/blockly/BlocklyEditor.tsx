@@ -569,7 +569,7 @@ export function BlocklyEditor() {
 
   return (
     <>
-      <div ref={containerRef} className="h-full w-full" />
+      <div ref={containerRef} className="h-full w-full" data-blockly-editor="true" />
       <AddVariableDialog
         open={showAddVariableDialog}
         onOpenChange={setShowAddVariableDialog}

@@ -608,6 +608,14 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
+            type: 'camera_set_follow_offset',
+            inputs: {
+              X: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
+              Y: { shadow: { type: 'math_number', fields: { NUM: '0' } } }
+            }
+          },
+          {
+            kind: 'block',
             type: 'camera_set_follow_smoothness',
             inputs: {
               SMOOTHNESS: { shadow: { type: 'math_number', fields: { NUM: '50' } } }
@@ -1597,6 +1605,22 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#0fBDA8');
       this.setTooltip('Set camera smoothness: 0% = instant, 100% = very smooth');
+    }
+  };
+
+  Blockly.Blocks['camera_set_follow_offset'] = {
+    init: function() {
+      this.appendValueInput('X')
+        .setCheck('Number')
+        .appendField('set camera offset x:');
+      this.appendValueInput('Y')
+        .setCheck('Number')
+        .appendField('y:');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#0fBDA8');
+      this.setTooltip('Set camera follow offset from the target center');
     }
   };
 

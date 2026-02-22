@@ -151,6 +151,7 @@ class MockRuntime {
   cameraZoom(zoom: number) { this.log('cameraZoom', zoom); }
   cameraFadeIn(duration: number) { this.log('cameraFadeIn', duration); }
   cameraFadeOut(duration: number) { this.log('cameraFadeOut', duration); }
+  cameraSetFollowOffset(x: number, y: number) { this.log('cameraSetFollowOffset', x, y); }
 
   // Sound
   playSound(sound: string) { this.log('playSound', sound); }

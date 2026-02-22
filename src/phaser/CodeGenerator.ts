@@ -360,6 +360,12 @@ export function registerCodeGenerators(): void {
     return `runtime.cameraSetFollowRange(${width}, ${height});\n`;
   };
 
+  javascriptGenerator.forBlock['camera_set_follow_offset'] = function(block) {
+    const x = javascriptGenerator.valueToCode(block, 'X', Order.ATOMIC) || '0';
+    const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '0';
+    return `runtime.cameraSetFollowOffset(${x}, ${y});\n`;
+  };
+
   javascriptGenerator.forBlock['camera_set_follow_smoothness'] = function(block) {
     const smoothness = javascriptGenerator.valueToCode(block, 'SMOOTHNESS', Order.ATOMIC) || '50';
     return `runtime.cameraSetFollowSmoothness(${smoothness});\n`;

@@ -116,6 +116,8 @@ export class RuntimeEngine {
   // Canvas dimensions for coordinate conversion
   private _canvasWidth: number = 800;
   private _canvasHeight: number = 600;
+  private _cameraFollowOffsetX: number = 0;
+  private _cameraFollowOffsetY: number = 0;
 
   // Collision tracking to prevent duplicate events per frame
   private _touchingPairs: Set<string> = new Set();
@@ -1358,7 +1360,15 @@ export class RuntimeEngine {
   cameraFollowSprite(spriteId: string): void {
     const sprite = this.sprites.get(spriteId);
     if (sprite) {
-      this.scene.cameras.main.startFollow(sprite.container);
+      const camera = this.scene.cameras.main;
+      camera.startFollow(
+        sprite.container,
+        false,
+        camera.lerp.x,
+        camera.lerp.y,
+        this._cameraFollowOffsetX,
+        this._cameraFollowOffsetY
+      );
     }
   }
 
@@ -1396,6 +1406,13 @@ export class RuntimeEngine {
   cameraSetFollowRange(width: number, height: number): void {
     this.scene.cameras.main.setDeadzone(width, height);
     debugLog('action', `Camera deadzone set to ${width}x${height}`);
+  }
+
+  cameraSetFollowOffset(x: number, y: number): void {
+    this._cameraFollowOffsetX = x;
+    this._cameraFollowOffsetY = y;
+    this.scene.cameras.main.setFollowOffset(x, y);
+    debugLog('action', `Camera follow offset set to x:${x}, y:${y}`);
   }
 
   /**

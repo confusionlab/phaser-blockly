@@ -21,12 +21,15 @@ type FullscreenPanel = 'code' | 'stage' | null;
 export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { project, openProject, saveCurrentProject } = useProjectStore();
+  const { project, openProject, saveCurrentProject, duplicateObject } = useProjectStore();
   const {
     isPlaying,
+    selectedSceneId,
+    selectedObjectId,
     showProjectDialog,
     setShowProjectDialog,
     selectScene,
+    selectObject,
     stopPlaying,
     undo,
     redo,
@@ -102,6 +105,7 @@ export function EditorLayout() {
     const isTyping = target.tagName === 'INPUT' ||
                      target.tagName === 'TEXTAREA' ||
                      target.isContentEditable;
+    const isInBlocklyArea = !!target.closest('[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv');
 
     // Backtick for fullscreen toggle
     if (e.key === '`' && !isTyping) {
@@ -151,12 +155,38 @@ export function EditorLayout() {
       return;
     }
 
+    // Duplicate selected object: Cmd/Ctrl + D (disabled in Blockly area)
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+      if (isInBlocklyArea || !selectedSceneId || !selectedObjectId) {
+        return;
+      }
+
+      const duplicated = duplicateObject(selectedSceneId, selectedObjectId);
+      if (duplicated) {
+        e.preventDefault();
+        selectObject(duplicated.id);
+      }
+      return;
+    }
+
     if (e.key === 'Enter' && !isTyping && !isPlaying && project && !fullscreenPanel) {
       e.preventDefault();
       tryStartPlaying();
       return;
     }
-  }, [isPlaying, project, saveCurrentProject, stopPlaying, fullscreenPanel, undo, redo]);
+  }, [
+    isPlaying,
+    project,
+    saveCurrentProject,
+    stopPlaying,
+    fullscreenPanel,
+    undo,
+    redo,
+    selectedSceneId,
+    selectedObjectId,
+    duplicateObject,
+    selectObject,
+  ]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -271,9 +301,7 @@ export function EditorLayout() {
         ) : (
           <div className="flex-1 flex items-center justify-center bg-background">
             <div className="text-center">
-              <div className="w-24 h-24 bg-primary rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <span className="text-primary-foreground font-bold text-3xl">PC</span>
-              </div>
+              <img src="/logo.png" alt="PochaCoding logo" className="w-24 h-24 object-contain mx-auto mb-4" />
               <h1 className="text-2xl font-bold mb-2">Welcome to PochaCoding</h1>
               <p className="text-muted-foreground mb-6">Create amazing games with visual programming!</p>
               <Button

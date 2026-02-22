@@ -5,3 +5,11 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
 - TODO: run Playwright web-game client loop and inspect generated screenshot/state artifacts.
 - Playwright skill-client run is blocked in this repo environment: missing `playwright` package (client imports it directly).
 - No additional dependency changes were made for this task.
+- Added new camera block `camera_set_follow_offset` (x/y) in Blockly toolbox + search modal.
+- Wired code generation: `camera_set_follow_offset` now emits `runtime.cameraSetFollowOffset(x, y)`.
+- Runtime camera follow now preserves configured lerp and applies stored follow offset when `camera follow` starts, so offset applies with follow + follow range behavior.
+- Validation:
+  - `pnpm build` passes.
+  - `pnpm lint` fails due to many pre-existing repo-wide lint errors (not introduced by this change).
+- TODO: if strict lint gating is required, address existing lint baseline across unrelated files.
+- Re-checked Playwright skill-client (`web_game_playwright_client.js`) after camera change: still blocked with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.

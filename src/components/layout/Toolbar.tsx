@@ -70,9 +70,7 @@ export function Toolbar() {
           onClick={handleGoHome}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity"
         >
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-sm">PC</span>
-          </div>
+          <img src="/logo.png" alt="PochaCoding logo" className="w-8 h-8 object-contain" />
           <span className="font-semibold text-primary">PochaCoding</span>
         </button>
 

@@ -97,6 +97,7 @@ const ALL_ITEMS: SearchItem[] = [
   { id: 'camera_follow_me', type: 'block', blockType: 'camera_follow_me', label: 'camera follow me', category: 'Camera', categoryColor: '#0fBDA8' },
   { id: 'camera_follow_object', type: 'block', blockType: 'camera_follow_object', label: 'camera follow object', category: 'Camera', categoryColor: '#0fBDA8' },
   { id: 'camera_stop_follow', type: 'block', blockType: 'camera_stop_follow', label: 'camera stop following', category: 'Camera', categoryColor: '#0fBDA8' },
+  { id: 'camera_set_follow_offset', type: 'block', blockType: 'camera_set_follow_offset', label: 'set camera offset x y', category: 'Camera', categoryColor: '#0fBDA8' },
 
   // Operators
   { id: 'math_arithmetic', type: 'block', blockType: 'math_arithmetic', label: 'math + - * /', category: 'Operators', categoryColor: '#59C059' },
