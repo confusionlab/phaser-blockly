@@ -233,12 +233,30 @@ function getSoundDropdownOptions(): Array<[string, string]> {
   return sounds.map(sound => [sound.name, sound.id]);
 }
 
+function getTouchDirectionOptions(): Array<[string, string]> {
+  return [
+    ['top', 'TOP'],
+    ['bottom', 'BOTTOM'],
+    ['left', 'LEFT'],
+    ['right', 'RIGHT'],
+    ['side', 'SIDE'],
+  ];
+}
+
 // Dropdown with special options + objects
-function getTargetDropdownOptions(includeEdge: boolean = false, includeMouse: boolean = false, includeMyClones: boolean = false): () => Array<[string, string]> {
+function getTargetDropdownOptions(
+  includeEdge: boolean = false,
+  includeMouse: boolean = false,
+  includeMyClones: boolean = false,
+  includeGround: boolean = false
+): () => Array<[string, string]> {
   return function() {
     const specialOptions: Array<[string, string]> = [];
     if (includeEdge) {
       specialOptions.push(['edge', 'EDGE']);
+    }
+    if (includeGround) {
+      specialOptions.push(['ground', 'GROUND']);
     }
     if (includeMouse) {
       specialOptions.push(['mouse', 'MOUSE']);
@@ -305,6 +323,7 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'event_when_receive' },
           { kind: 'block', type: 'event_when_touching' },
+          { kind: 'block', type: 'event_when_touching_direction' },
         ],
       },
       {
@@ -551,7 +570,7 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'sensing_mouse_x' },
           { kind: 'block', type: 'sensing_mouse_y' },
           { kind: 'block', type: 'sensing_touching' },
-          { kind: 'block', type: 'sensing_touching_ground' },
+          { kind: 'block', type: 'sensing_touching_direction' },
           { kind: 'block', type: 'sensing_touching_object' },
           { kind: 'block', type: 'sensing_all_touching_objects' },
           { kind: 'block', type: 'sensing_is_clone_of' },
@@ -1171,7 +1190,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('touching')
-        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true)), 'TARGET')
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET')
         .appendField('?');
       this.setOutput(true, 'Boolean');
       this.setColour('#5CB1D6');
@@ -1182,6 +1201,23 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['sensing_touching_direction'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('touching')
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET')
+        .appendField('from')
+        .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION')
+        .appendField('?');
+      this.setOutput(true, 'Boolean');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Is this touching target from a specific direction?');
+      const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
+      if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  // Legacy compatibility block - kept so old projects still load.
   Blockly.Blocks['sensing_touching_ground'] = {
     init: function() {
       this.appendDummyInput()
@@ -1706,12 +1742,28 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('when touching')
-        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true)), 'TARGET');
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET');
       this.appendStatementInput('NEXT')
         .setCheck(null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when touching target');
       // Add validator for pick from stage
+      const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
+      if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['event_when_touching_direction'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('when touching')
+        .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET')
+        .appendField('from')
+        .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs when touching target from a specific direction');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
     }
@@ -2280,6 +2332,7 @@ function checkTypeCompatibility(expectedType: VariableType, valueBlock: Blockly.
              blockType === 'sensing_key_pressed' ||
              blockType === 'sensing_mouse_down' ||
              blockType === 'sensing_touching' ||
+             blockType === 'sensing_touching_direction' ||
              blockType === 'sensing_touching_ground' ||
              (blockType === 'typed_variable_get' && getVariableById(valueBlock.getFieldValue('VAR'))?.type === 'boolean');
   }

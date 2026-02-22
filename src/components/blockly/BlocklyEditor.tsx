@@ -158,12 +158,14 @@ registerCrossObjectCopyPaste();
 // Block types that have object reference dropdowns
 const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
   'sensing_touching': 'TARGET',
+  'sensing_touching_direction': 'TARGET',
   'sensing_distance_to': 'TARGET',
   'sensing_touching_object': 'TARGET',
   'motion_point_towards': 'TARGET',
   'camera_follow_object': 'TARGET',
   'control_clone_object': 'TARGET',
   'event_when_touching': 'TARGET',
+  'event_when_touching_direction': 'TARGET',
   'motion_attach_to_dropdown': 'TARGET',
   'motion_attach_dropdown_to_me': 'TARGET',
 };
@@ -182,7 +184,7 @@ const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
 };
 
 // Special values that are always valid (not object IDs)
-const VALID_SPECIAL_VALUES = new Set(['EDGE', 'MOUSE', 'MY_CLONES', '']);
+const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
 
 // Validate all blocks in workspace for broken references
 function validateBlockReferences(

@@ -5,6 +5,16 @@ import { applyCustomGravityForce } from './gravity';
 // Handlers receive sprite as parameter so they work correctly for clones
 type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
 type ForeverHandler = (sprite: RuntimeSprite) => void;
+type TouchDirection = 'TOP' | 'BOTTOM' | 'LEFT' | 'RIGHT' | 'SIDE';
+
+interface BoundsSnapshot {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  centerX: number;
+  centerY: number;
+}
 
 // Debug log that can be viewed in the debug panel
 export interface DebugLogEntry {
@@ -61,6 +71,7 @@ interface ObjectHandlers {
   onKeyPressed: Map<string, EventHandler[]>;
   onClick: EventHandler[];
   onTouching: Map<string, EventHandler[]>;
+  onTouchingDirection: Map<string, EventHandler[]>;
   onMessage: Map<string, EventHandler[]>;
   forever: ForeverHandler[];
 }
@@ -251,6 +262,7 @@ export class RuntimeEngine {
       onKeyPressed: new Map(),
       onClick: [],
       onTouching: new Map(),
+      onTouchingDirection: new Map(),
       onMessage: new Map(),
       forever: [],
     });
@@ -298,6 +310,7 @@ export class RuntimeEngine {
         onKeyPressed: new Map(handlers.onKeyPressed),
         onClick: [...handlers.onClick],
         onTouching: new Map(handlers.onTouching),
+        onTouchingDirection: new Map(handlers.onTouchingDirection),
         onMessage: new Map(handlers.onMessage),
         forever: [...handlers.forever],
       };
@@ -363,6 +376,46 @@ export class RuntimeEngine {
     if (h) {
       if (!h.onTouching.has(targetId)) h.onTouching.set(targetId, []);
       h.onTouching.get(targetId)!.push(handler);
+    }
+  }
+
+  private normalizeTouchDirection(direction: string): TouchDirection {
+    switch (direction) {
+      case 'TOP':
+      case 'BOTTOM':
+      case 'LEFT':
+      case 'RIGHT':
+      case 'SIDE':
+        return direction;
+      default:
+        return 'SIDE';
+    }
+  }
+
+  private makeTouchDirectionKey(direction: TouchDirection, targetId: string): string {
+    return `${direction}:${targetId}`;
+  }
+
+  private directionMatches(actual: TouchDirection, wanted: TouchDirection): boolean {
+    if (wanted === 'SIDE') {
+      return actual === 'LEFT' || actual === 'RIGHT';
+    }
+    return actual === wanted;
+  }
+
+  onTouchingDirection(
+    spriteId: string,
+    targetId: string,
+    direction: string,
+    handler: EventHandler
+  ): void {
+    const normalizedDirection = this.normalizeTouchDirection(direction);
+    debugLog('info', `Registering onTouchingDirection(${targetId}, ${normalizedDirection}) for sprite ${spriteId}`);
+    const h = this.handlers.get(spriteId);
+    if (h) {
+      const key = this.makeTouchDirectionKey(normalizedDirection, targetId);
+      if (!h.onTouchingDirection.has(key)) h.onTouchingDirection.set(key, []);
+      h.onTouchingDirection.get(key)!.push(handler);
     }
   }
 
@@ -575,7 +628,7 @@ export class RuntimeEngine {
         if (isGroundA || isGroundB) {
           const spriteId = isGroundA ? spriteIdB : spriteIdA;
           if (spriteId) {
-            this.handleGroundCollision(spriteId);
+            this.handleGroundCollision(spriteId, true);
           }
         }
       }
@@ -597,7 +650,7 @@ export class RuntimeEngine {
           const { spriteIdA, spriteIdB } = findSpriteIds(bodyA, bodyB);
           const spriteId = isGroundA ? spriteIdB : spriteIdA;
           if (spriteId) {
-            this.handleGroundCollision(spriteId);
+            this.handleGroundCollision(spriteId, false);
           }
         }
       }
@@ -612,15 +665,154 @@ export class RuntimeEngine {
   }
 
   private groundLogThrottle = 0;
-  private handleGroundCollision(spriteId: string): void {
+  private handleGroundCollision(spriteId: string, triggerHandlers: boolean): void {
     const sprite = this.sprites.get(spriteId);
     if (sprite) {
       sprite.setTouchingGround(true);
+      if (triggerHandlers) {
+        const pairKey = `GROUND|${spriteId}`;
+        if (!this._touchingPairs.has(pairKey)) {
+          this._touchingPairs.add(pairKey);
+          this.triggerGroundTouchHandlers(spriteId);
+        }
+      }
       // Log occasionally to avoid spam
       if (this.groundLogThrottle++ % 60 === 0) {
         debugLog('event', `${sprite.name} touching ground`);
       }
     }
+  }
+
+  private areRelatedClones(id1: string, id2: string): boolean {
+    const sprite1 = this.sprites.get(id1);
+    const sprite2 = this.sprites.get(id2);
+    if (!sprite1 || !sprite2) return false;
+    const original1 = sprite1.cloneParentId || sprite1.id;
+    const original2 = sprite2.cloneParentId || sprite2.id;
+    return original1 === original2;
+  }
+
+  private getSpriteBoundsSnapshot(sprite: RuntimeSprite): BoundsSnapshot {
+    const body = (sprite.container as unknown as { body?: MatterJS.BodyType }).body;
+    if (body) {
+      return this.getBodyBoundsSnapshot(body);
+    }
+
+    const width = (sprite.container.width * Math.abs(sprite.container.scaleX)) || 64;
+    const height = (sprite.container.height * Math.abs(sprite.container.scaleY)) || 64;
+    const minX = sprite.container.x - width / 2;
+    const maxX = sprite.container.x + width / 2;
+    const minY = sprite.container.y - height / 2;
+    const maxY = sprite.container.y + height / 2;
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+    };
+  }
+
+  private getBodyBoundsSnapshot(body: MatterJS.BodyType): BoundsSnapshot {
+    const minX = body.bounds.min.x;
+    const maxX = body.bounds.max.x;
+    const minY = body.bounds.min.y;
+    const maxY = body.bounds.max.y;
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+    };
+  }
+
+  private getTouchDirection(
+    sourceBounds: BoundsSnapshot,
+    targetBounds: BoundsSnapshot
+  ): TouchDirection | null {
+    const overlapX = Math.min(sourceBounds.maxX, targetBounds.maxX) - Math.max(sourceBounds.minX, targetBounds.minX);
+    const overlapY = Math.min(sourceBounds.maxY, targetBounds.maxY) - Math.max(sourceBounds.minY, targetBounds.minY);
+
+    if (overlapX <= 0 || overlapY <= 0) {
+      return null;
+    }
+
+    const centerDeltaX = sourceBounds.centerX - targetBounds.centerX;
+    const centerDeltaY = sourceBounds.centerY - targetBounds.centerY;
+
+    if (overlapX < overlapY) {
+      return centerDeltaX < 0 ? 'LEFT' : 'RIGHT';
+    }
+
+    if (overlapY < overlapX) {
+      return centerDeltaY < 0 ? 'TOP' : 'BOTTOM';
+    }
+
+    if (Math.abs(centerDeltaX) >= Math.abs(centerDeltaY)) {
+      return centerDeltaX < 0 ? 'LEFT' : 'RIGHT';
+    }
+    return centerDeltaY < 0 ? 'TOP' : 'BOTTOM';
+  }
+
+  private triggerTouchHandlersForTarget(
+    sourceId: string,
+    targetId: string,
+    direction: TouchDirection | null,
+    sourceHandlers: ObjectHandlers
+  ): void {
+    const safeCallHandler = (handler: EventHandler) => {
+      const source = this.sprites.get(sourceId);
+      if (source && !source.isStopped()) {
+        handler(source);
+      }
+    };
+
+    const directHandlers = sourceHandlers.onTouching.get(targetId);
+    if (directHandlers) {
+      directHandlers.forEach(handler => safeCallHandler(handler));
+    }
+
+    if (!direction) {
+      return;
+    }
+
+    const directionHandlers = sourceHandlers.onTouchingDirection.get(
+      this.makeTouchDirectionKey(direction, targetId)
+    );
+    if (directionHandlers) {
+      directionHandlers.forEach(handler => safeCallHandler(handler));
+    }
+
+    if (direction === 'LEFT' || direction === 'RIGHT') {
+      const sideHandlers = sourceHandlers.onTouchingDirection.get(
+        this.makeTouchDirectionKey('SIDE', targetId)
+      );
+      if (sideHandlers) {
+        sideHandlers.forEach(handler => safeCallHandler(handler));
+      }
+    }
+  }
+
+  private triggerGroundTouchHandlers(spriteId: string): void {
+    const sprite = this.sprites.get(spriteId);
+    if (!sprite || sprite.isStopped() || !this._groundBody) {
+      return;
+    }
+
+    const handlers = this.handlers.get(spriteId);
+    if (!handlers) {
+      return;
+    }
+
+    const direction = this.getTouchDirection(
+      this.getSpriteBoundsSnapshot(sprite),
+      this.getBodyBoundsSnapshot(this._groundBody)
+    );
+
+    this.triggerTouchHandlersForTarget(spriteId, 'GROUND', direction, handlers);
   }
 
   private handleSpriteOverlap(spriteIdA: string, spriteIdB: string): void {
@@ -631,84 +823,42 @@ export class RuntimeEngine {
     if (this._touchingPairs.has(pairKey)) return;
     this._touchingPairs.add(pairKey);
 
-    // Helper to check if two sprites are clones of the same original
-    const areRelatedClones = (id1: string, id2: string): boolean => {
-      const sprite1 = this.sprites.get(id1);
-      const sprite2 = this.sprites.get(id2);
-      if (!sprite1 || !sprite2) return false;
-      const original1 = sprite1.cloneParentId || sprite1.id;
-      const original2 = sprite2.cloneParentId || sprite2.id;
-      return original1 === original2;
+    const triggerForSource = (sourceId: string, targetId: string) => {
+      const sourceHandlers = this.handlers.get(sourceId);
+      const sourceSprite = this.sprites.get(sourceId);
+      const targetSprite = this.sprites.get(targetId);
+      if (!sourceHandlers || !sourceSprite || !targetSprite) return;
+      if (sourceSprite.isStopped() || targetSprite.isStopped()) return;
+
+      const direction = this.getTouchDirection(
+        this.getSpriteBoundsSnapshot(sourceSprite),
+        this.getSpriteBoundsSnapshot(targetSprite)
+      );
+
+      this.triggerTouchHandlersForTarget(sourceId, targetId, direction, sourceHandlers);
+
+      const sourceStillAlive = () => {
+        const source = this.sprites.get(sourceId);
+        return !!source && !source.isStopped();
+      };
+
+      const targetForComponent = this.sprites.get(targetId);
+      if (targetForComponent?.componentId && sourceStillAlive()) {
+        this.triggerTouchHandlersForTarget(
+          sourceId,
+          `COMPONENT_ANY:${targetForComponent.componentId}`,
+          direction,
+          sourceHandlers
+        );
+      }
+
+      if (sourceStillAlive() && this.areRelatedClones(sourceId, targetId)) {
+        this.triggerTouchHandlersForTarget(sourceId, 'MY_CLONES', direction, sourceHandlers);
+      }
     };
 
-    // Helper to safely call a handler only if sprite is still active
-    const safeCallHandler = (handler: (sprite: RuntimeSprite) => void, spriteId: string) => {
-      const sprite = this.sprites.get(spriteId);
-      if (sprite && !sprite.isStopped()) {
-        handler(sprite);
-      }
-    };
-
-    // Check if A has handlers for touching B (direct, component-any, or MY_CLONES)
-    const handlersA = this.handlers.get(spriteIdA);
-    const spriteAExists = () => {
-      const s = this.sprites.get(spriteIdA);
-      return s && !s.isStopped();
-    };
-
-    if (handlersA && spriteAExists()) {
-      // Direct handler for B
-      const touchHandlersA = handlersA.onTouching.get(spriteIdB);
-      if (touchHandlersA) {
-        touchHandlersA.forEach(handler => safeCallHandler(handler, spriteIdA));
-      }
-      // Component-any handler for B's component
-      const spriteBForComponent = this.sprites.get(spriteIdB);
-      if (spriteBForComponent?.componentId && spriteAExists()) {
-        const componentAnyHandlers = handlersA.onTouching.get(`COMPONENT_ANY:${spriteBForComponent.componentId}`);
-        if (componentAnyHandlers) {
-          componentAnyHandlers.forEach(handler => safeCallHandler(handler, spriteIdA));
-        }
-      }
-      // MY_CLONES handler - check if A and B are clones of the same original
-      if (spriteAExists() && areRelatedClones(spriteIdA, spriteIdB)) {
-        const myClonesHandlers = handlersA.onTouching.get('MY_CLONES');
-        if (myClonesHandlers) {
-          myClonesHandlers.forEach(handler => safeCallHandler(handler, spriteIdA));
-        }
-      }
-    }
-
-    // Check if B has handlers for touching A (direct, component-any, or MY_CLONES)
-    // Re-check if B still exists (A's handlers might have deleted it)
-    const handlersB = this.handlers.get(spriteIdB);
-    const spriteBExists = () => {
-      const s = this.sprites.get(spriteIdB);
-      return s && !s.isStopped();
-    };
-
-    if (handlersB && spriteBExists()) {
-      // Direct handler for A
-      const touchHandlersB = handlersB.onTouching.get(spriteIdA);
-      if (touchHandlersB) {
-        touchHandlersB.forEach(handler => safeCallHandler(handler, spriteIdB));
-      }
-      // Component-any handler for A's component
-      const spriteAForComponent = this.sprites.get(spriteIdA);
-      if (spriteAForComponent?.componentId && spriteBExists()) {
-        const componentAnyHandlers = handlersB.onTouching.get(`COMPONENT_ANY:${spriteAForComponent.componentId}`);
-        if (componentAnyHandlers) {
-          componentAnyHandlers.forEach(handler => safeCallHandler(handler, spriteIdB));
-        }
-      }
-      // MY_CLONES handler - check if A and B are clones of the same original
-      if (spriteBExists() && areRelatedClones(spriteIdA, spriteIdB)) {
-        const myClonesHandlers = handlersB.onTouching.get('MY_CLONES');
-        if (myClonesHandlers) {
-          myClonesHandlers.forEach(handler => safeCallHandler(handler, spriteIdB));
-        }
-      }
-    }
+    triggerForSource(spriteIdA, spriteIdB);
+    triggerForSource(spriteIdB, spriteIdA);
   }
 
   private processMessages(): void {
@@ -1106,6 +1256,9 @@ export class RuntimeEngine {
       for (const [targetId, handlers] of sourceHandlers.onTouching) {
         cloneHandlers.onTouching.set(targetId, [...handlers]);
       }
+      for (const [targetId, handlers] of sourceHandlers.onTouchingDirection) {
+        cloneHandlers.onTouchingDirection.set(targetId, [...handlers]);
+      }
 
       // Copy onMessage handlers
       for (const [message, handlers] of sourceHandlers.onMessage) {
@@ -1121,7 +1274,7 @@ export class RuntimeEngine {
         this.activeForeverLoops.set(cloneId, true);
       }
 
-      debugLog('info', `Clone ${cloneId} handlers: onKeyPressed=${cloneHandlers.onKeyPressed.size}, onTouching=${cloneHandlers.onTouching.size}, forever=${cloneHandlers.forever.length} (from ${templateHandlers ? 'template' : 'live'})`);
+      debugLog('info', `Clone ${cloneId} handlers: onKeyPressed=${cloneHandlers.onKeyPressed.size}, onTouching=${cloneHandlers.onTouching.size}, onTouchingDirection=${cloneHandlers.onTouchingDirection.size}, forever=${cloneHandlers.forever.length} (from ${templateHandlers ? 'template' : 'live'})`);
     } else if (!sourceHandlers) {
       debugLog('error', `No handlers found for ${originalId}! Clone ${cloneId} won't have event handlers.`);
     }
@@ -1194,6 +1347,10 @@ export class RuntimeEngine {
              bounds.top <= 0 || bounds.bottom >= this._canvasHeight;
     }
 
+    if (targetId === 'GROUND') {
+      return sprite.isTouchingGround();
+    }
+
     // Handle MY_CLONES - check if touching any clone of the same original object
     if (targetId === 'MY_CLONES') {
       // Get the original object ID (if this is a clone, use its cloneParentId; otherwise use its own id)
@@ -1229,6 +1386,63 @@ export class RuntimeEngine {
     if (!target) return false;
 
     return this.isTouchingSingle(sprite, target);
+  }
+
+  isTouchingDirection(spriteId: string, targetId: string, direction: string): boolean {
+    const sprite = this.sprites.get(spriteId);
+    if (!sprite) return false;
+
+    const wanted = this.normalizeTouchDirection(direction);
+
+    if (targetId === 'EDGE') {
+      const bounds = this.getSpriteBoundsSnapshot(sprite);
+      if (wanted === 'TOP') return bounds.minY <= 0;
+      if (wanted === 'BOTTOM') return bounds.maxY >= this._canvasHeight;
+      if (wanted === 'LEFT') return bounds.minX <= 0;
+      if (wanted === 'RIGHT') return bounds.maxX >= this._canvasWidth;
+      return bounds.minX <= 0 || bounds.maxX >= this._canvasWidth;
+    }
+
+    if (targetId === 'GROUND') {
+      if (!sprite.isTouchingGround() || !this._groundBody) return false;
+      const actual = this.getTouchDirection(
+        this.getSpriteBoundsSnapshot(sprite),
+        this.getBodyBoundsSnapshot(this._groundBody)
+      );
+      return actual ? this.directionMatches(actual, wanted) : false;
+    }
+
+    if (targetId === 'MY_CLONES') {
+      const originalId = sprite.cloneParentId || sprite.id;
+      for (const target of this.sprites.values()) {
+        if (target.id === spriteId) continue;
+        const targetOriginalId = target.cloneParentId || target.id;
+        if (targetOriginalId === originalId && target.id !== spriteId) {
+          if (this.isTouchingDirectionSingle(sprite, target, wanted)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    if (targetId.startsWith('COMPONENT_ANY:')) {
+      const componentId = targetId.substring('COMPONENT_ANY:'.length);
+      for (const target of this.sprites.values()) {
+        if (target.id === spriteId) continue;
+        if (target.componentId === componentId) {
+          if (this.isTouchingDirectionSingle(sprite, target, wanted)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    const target = this.sprites.get(targetId);
+    if (!target) return false;
+
+    return this.isTouchingDirectionSingle(sprite, target, wanted);
   }
 
   getTouchingObject(spriteId: string, filter?: string): RuntimeSprite | null {
@@ -1344,6 +1558,27 @@ export class RuntimeEngine {
 
     // AABB overlap check
     return !(aMaxX < bMinX || aMinX > bMaxX || aMaxY < bMinY || aMinY > bMaxY);
+  }
+
+  private isTouchingDirectionSingle(
+    sprite: RuntimeSprite,
+    target: RuntimeSprite,
+    direction: TouchDirection
+  ): boolean {
+    if (!this.isTouchingSingle(sprite, target)) {
+      return false;
+    }
+
+    const actualDirection = this.getTouchDirection(
+      this.getSpriteBoundsSnapshot(sprite),
+      this.getSpriteBoundsSnapshot(target)
+    );
+
+    if (!actualDirection) {
+      return false;
+    }
+
+    return this.directionMatches(actualDirection, direction);
   }
 
   distanceTo(spriteId: string, targetId: string): number {

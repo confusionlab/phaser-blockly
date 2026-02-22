@@ -28,6 +28,7 @@ const ALL_ITEMS: SearchItem[] = [
   { id: 'event_forever', type: 'block', blockType: 'event_forever', label: 'forever', category: 'Events', categoryColor: '#FFAB19' },
   { id: 'event_when_receive', type: 'block', blockType: 'event_when_receive', label: 'when I receive', category: 'Events', categoryColor: '#FFAB19' },
   { id: 'event_when_touching', type: 'block', blockType: 'event_when_touching', label: 'when touching', category: 'Events', categoryColor: '#FFAB19' },
+  { id: 'event_when_touching_direction', type: 'block', blockType: 'event_when_touching_direction', label: 'when touching from', category: 'Events', categoryColor: '#FFAB19' },
 
   // Motion
   { id: 'motion_move_steps', type: 'block', blockType: 'motion_move_steps', label: 'move steps', category: 'Motion', categoryColor: '#4C97FF' },
@@ -86,7 +87,7 @@ const ALL_ITEMS: SearchItem[] = [
   { id: 'sensing_mouse_x', type: 'block', blockType: 'sensing_mouse_x', label: 'mouse x', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'sensing_mouse_y', type: 'block', blockType: 'sensing_mouse_y', label: 'mouse y', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'sensing_touching', type: 'block', blockType: 'sensing_touching', label: 'touching?', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_touching_ground', type: 'block', blockType: 'sensing_touching_ground', label: 'touching ground?', category: 'Sensing', categoryColor: '#5CB1D6' },
+  { id: 'sensing_touching_direction', type: 'block', blockType: 'sensing_touching_direction', label: 'touching from?', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'sensing_touching_object', type: 'block', blockType: 'sensing_touching_object', label: "object I'm touching", category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'sensing_distance_to', type: 'block', blockType: 'sensing_distance_to', label: 'distance to', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'sensing_object_x', type: 'block', blockType: 'sensing_object_x', label: "object's x", category: 'Sensing', categoryColor: '#5CB1D6' },

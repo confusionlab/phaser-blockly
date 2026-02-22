@@ -38,6 +38,13 @@ export function registerCodeGenerators(): void {
     return `runtime.onTouching(spriteId, '${target}', async function(sprite) {\n${nextCode}});\n`;
   };
 
+  javascriptGenerator.forBlock['event_when_touching_direction'] = function(block) {
+    const target = block.getFieldValue('TARGET');
+    const direction = block.getFieldValue('DIRECTION') || 'SIDE';
+    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    return `runtime.onTouchingDirection(spriteId, '${target}', '${direction}', async function(sprite) {\n${nextCode}});\n`;
+  };
+
   // --- Motion ---
 
   javascriptGenerator.forBlock['motion_move_steps'] = function(block) {
@@ -378,8 +385,14 @@ export function registerCodeGenerators(): void {
     return [`runtime.isTouching(sprite.id, '${targetId}')`, Order.FUNCTION_CALL];
   };
 
+  javascriptGenerator.forBlock['sensing_touching_direction'] = function(block) {
+    const targetId = block.getFieldValue('TARGET');
+    const direction = block.getFieldValue('DIRECTION') || 'SIDE';
+    return [`runtime.isTouchingDirection(sprite.id, '${targetId}', '${direction}')`, Order.FUNCTION_CALL];
+  };
+
   javascriptGenerator.forBlock['sensing_touching_ground'] = function() {
-    return ['sprite.isTouchingGround()', Order.FUNCTION_CALL];
+    return [`runtime.isTouching(sprite.id, 'GROUND')`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_distance_to'] = function(block) {
@@ -577,6 +590,7 @@ const HAT_BLOCKS = [
   'event_forever',
   'event_when_receive',
   'event_when_touching',
+  'event_when_touching_direction',
 ];
 
 /**

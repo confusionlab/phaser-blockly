@@ -24,3 +24,16 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
 - This fixes physics properties edited on one component instance not propagating to other instances.
 - Validation:
   - `pnpm build` passes.
+- Implemented touching block overhaul:
+  - `ground` is now a target option in generic touching dropdowns (`sensing_touching`, `event_when_touching`).
+  - Removed standalone `sensing_touching_ground` from toolbox/search UI (kept block definition + generator for old-project compatibility).
+- Added new directional touching blocks with direction dropdown (`top`, `bottom`, `left`, `right`, `side`):
+  - Event hat: `event_when_touching_direction`
+  - Boolean sensing: `sensing_touching_direction`
+- Runtime updates for directional collision filtering:
+  - Added `runtime.onTouchingDirection(...)` and `runtime.isTouchingDirection(...)`.
+  - Added direction classification based on overlap axis + relative centers.
+  - Added directional support for direct targets, `COMPONENT_ANY:*`, `MY_CLONES`, `GROUND`, and `EDGE` (for boolean checks).
+- Validation:
+  - `pnpm build` passes.
+- Playwright skill-client remains blocked in this environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.
