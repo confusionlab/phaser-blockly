@@ -39,7 +39,7 @@ export function ProjectDialog({ onClose, onProjectOpen }: ProjectDialogProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Cloud sync hook
-  const { syncAllFromCloud, cloudProjects } = useCloudSync({ syncOnMount: false });
+  const { syncAllFromCloud, deleteProjectFromCloud, cloudProjects } = useCloudSync({ syncOnMount: false });
 
   const loadProjectsList = useCallback(async () => {
     const list = await listProjects();
@@ -105,6 +105,7 @@ export function ProjectDialog({ onClose, onProjectOpen }: ProjectDialogProps) {
     e.stopPropagation();
     if (confirm('Are you sure you want to delete this project?')) {
       await deleteProject(projectId);
+      await deleteProjectFromCloud(projectId);
       loadProjectsList();
     }
   };

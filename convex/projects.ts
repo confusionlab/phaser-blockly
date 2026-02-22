@@ -1,6 +1,5 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { SCHEMA_VERSION } from "./schema";
 
 // List all projects from cloud
 export const list = query({
@@ -60,6 +59,7 @@ export const sync = mutation({
     data: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
+    schemaVersion: v.number(),
   },
   handler: async (ctx, args) => {
     // Check if project already exists in cloud
@@ -75,7 +75,7 @@ export const sync = mutation({
           name: args.name,
           data: args.data,
           updatedAt: args.updatedAt,
-          schemaVersion: SCHEMA_VERSION,
+          schemaVersion: args.schemaVersion,
         });
         return { action: "updated", id: existing._id };
       }
@@ -88,7 +88,7 @@ export const sync = mutation({
         data: args.data,
         createdAt: args.createdAt,
         updatedAt: args.updatedAt,
-        schemaVersion: SCHEMA_VERSION,
+        schemaVersion: args.schemaVersion,
       });
       return { action: "created", id };
     }
@@ -105,6 +105,7 @@ export const syncBatch = mutation({
         data: v.string(),
         createdAt: v.number(),
         updatedAt: v.number(),
+        schemaVersion: v.number(),
       })
     ),
   },
@@ -123,7 +124,7 @@ export const syncBatch = mutation({
             name: project.name,
             data: project.data,
             updatedAt: project.updatedAt,
-            schemaVersion: SCHEMA_VERSION,
+            schemaVersion: project.schemaVersion,
           });
           results.push({ localId: project.localId, action: "updated" });
         } else {
@@ -136,7 +137,7 @@ export const syncBatch = mutation({
           data: project.data,
           createdAt: project.createdAt,
           updatedAt: project.updatedAt,
-          schemaVersion: SCHEMA_VERSION,
+          schemaVersion: project.schemaVersion,
         });
         results.push({ localId: project.localId, action: "created" });
       }

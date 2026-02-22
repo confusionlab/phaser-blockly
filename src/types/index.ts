@@ -5,6 +5,7 @@ export interface Project {
   name: string;
   createdAt: Date;
   updatedAt: Date;
+  schemaVersion: number;
   scenes: Scene[];
   globalVariables: Variable[];
   settings: ProjectSettings;
@@ -199,6 +200,7 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
+    schemaVersion: 2,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     globalVariables: [],
     components: [],

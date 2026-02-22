@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 // Schema version for compatibility tracking
-export const SCHEMA_VERSION = "1.0";
+export const SCHEMA_VERSION = 2;
 
 // Shared bounds validator
 const boundsValidator = v.object({
@@ -20,6 +20,7 @@ const physicsValidator = v.object({
   velocityX: v.number(),
   velocityY: v.number(),
   bounce: v.number(),
+  friction: v.number(),
   allowRotation: v.boolean(),
 });
 
@@ -107,6 +108,6 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     // Schema version for migrations
-    schemaVersion: v.string(),
+    schemaVersion: v.number(),
   }).index("by_localId", ["localId"]),
 });
