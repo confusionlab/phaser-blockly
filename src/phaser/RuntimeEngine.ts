@@ -7,6 +7,12 @@ type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
 type ForeverHandler = (sprite: RuntimeSprite) => void | Promise<void>;
 type TouchDirection = 'TOP' | 'BOTTOM' | 'LEFT' | 'RIGHT' | 'SIDE';
 
+// Direction sensing tuning:
+// - CONTACT_SLOP_PX: allows tiny separation/precision errors to still count as touching direction.
+// - SIDE_BIAS_PX: makes LEFT/RIGHT/SIDE detection less strict around corners.
+const TOUCH_DIRECTION_CONTACT_SLOP_PX = 4;
+const TOUCH_DIRECTION_SIDE_BIAS_PX = 10;
+
 interface BoundsSnapshot {
   minX: number;
   maxX: number;
@@ -786,18 +792,31 @@ export class RuntimeEngine {
     const overlapX = Math.min(sourceBounds.maxX, targetBounds.maxX) - Math.max(sourceBounds.minX, targetBounds.minX);
     const overlapY = Math.min(sourceBounds.maxY, targetBounds.maxY) - Math.max(sourceBounds.minY, targetBounds.minY);
 
-    if (overlapX <= 0 || overlapY <= 0) {
+    // If the bounds are clearly apart, no directional touch.
+    // Small negative overlaps are tolerated to reduce precision-related misses.
+    if (overlapX < -TOUCH_DIRECTION_CONTACT_SLOP_PX || overlapY < -TOUCH_DIRECTION_CONTACT_SLOP_PX) {
       return null;
     }
 
     const centerDeltaX = sourceBounds.centerX - targetBounds.centerX;
     const centerDeltaY = sourceBounds.centerY - targetBounds.centerY;
 
-    if (overlapX < overlapY) {
+    // Distances between opposing faces of source/target.
+    // Smaller distance indicates the most likely side of contact.
+    const leftDistance = Math.abs(sourceBounds.maxX - targetBounds.minX);
+    const rightDistance = Math.abs(targetBounds.maxX - sourceBounds.minX);
+    const topDistance = Math.abs(sourceBounds.maxY - targetBounds.minY);
+    const bottomDistance = Math.abs(targetBounds.maxY - sourceBounds.minY);
+    const horizontalDistance = Math.min(leftDistance, rightDistance);
+    const verticalDistance = Math.min(topDistance, bottomDistance);
+
+    // Bias toward horizontal contact so LEFT/RIGHT/SIDE is easier to trigger
+    // when collisions are near a corner.
+    if (horizontalDistance <= verticalDistance + TOUCH_DIRECTION_SIDE_BIAS_PX) {
       return centerDeltaX < 0 ? 'LEFT' : 'RIGHT';
     }
 
-    if (overlapY < overlapX) {
+    if (verticalDistance < horizontalDistance) {
       return centerDeltaY < 0 ? 'TOP' : 'BOTTOM';
     }
 
