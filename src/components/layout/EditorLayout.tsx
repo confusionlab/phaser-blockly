@@ -102,8 +102,8 @@ export function EditorLayout() {
         // URL is home but we have a project open - navigate to project URL
         navigate(`/project/${project.id}`, { replace: true });
       } else if (!projectId && !project) {
-        // No project in URL and no project open - show dialog
-        setShowProjectDialog(true);
+        // No project in URL and no project open - show project list page
+        setShowProjectDialog(false);
       }
     };
 
@@ -194,7 +194,13 @@ export function EditorLayout() {
       return;
     }
 
-    if (e.key === 'Enter' && !isTyping && !isPlaying && project && !fullscreenPanel) {
+    if (
+      e.key === 'Enter' &&
+      !isTyping &&
+      !isPlaying &&
+      project &&
+      (fullscreenPanel === null || fullscreenPanel === 'code')
+    ) {
       e.preventDefault();
       tryStartPlaying();
       return;
@@ -324,23 +330,11 @@ export function EditorLayout() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center bg-background">
-            <div className="text-center">
-              <img src="/logo.png" alt="PochaCoding logo" className="w-24 h-24 object-contain mx-auto mb-4" />
-              <h1 className="text-2xl font-bold mb-2">Welcome to PochaCoding</h1>
-              <p className="text-muted-foreground mb-6">Create amazing games with visual programming!</p>
-              <Button
-                onClick={() => setShowProjectDialog(true)}
-                size="lg"
-              >
-                Get Started
-              </Button>
-            </div>
-          </div>
+          <ProjectDialog onProjectOpen={handleProjectOpen} mode="page" />
         )}
       </div>
 
-      {showProjectDialog && (
+      {project && showProjectDialog && (
         <ProjectDialog
           onClose={() => setShowProjectDialog(false)}
           onProjectOpen={handleProjectOpen}
