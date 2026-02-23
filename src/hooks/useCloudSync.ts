@@ -161,21 +161,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     };
   }, [syncPayloadToCloud, syncProjectToCloud]);
 
-  // Opportunistic sync when tab is backgrounded.
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== 'hidden') return;
-
-      const payload = beaconPayloadRef.current;
-      if (payload) {
-        void syncPayloadToCloud(payload);
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [syncPayloadToCloud]);
-
   // Fire-and-forget beacon for hard unload (refresh/tab close)
   useEffect(() => {
     const handleBeforeUnload = () => {

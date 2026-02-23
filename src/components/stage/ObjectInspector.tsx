@@ -77,16 +77,31 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
 interface ScrubInputProps {
   label: string;
   value: number;
-  onChange: (value: number) => void;
+  onChange: (value: number, source?: 'input' | 'drag', delta?: number) => void;
   step?: number;
   precision?: number;
   min?: number;
   max?: number;
   suffix?: string;
+  mixed?: boolean;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
 }
 
-function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max, suffix = '' }: ScrubInputProps) {
-  const [localValue, setLocalValue] = useState(value.toFixed(precision));
+function ScrubInput({
+  label,
+  value,
+  onChange,
+  step = 1,
+  precision = 2,
+  min,
+  max,
+  suffix = '',
+  mixed = false,
+  onDragStart,
+  onDragEnd,
+}: ScrubInputProps) {
+  const [localValue, setLocalValue] = useState(mixed ? 'multiple' : value.toFixed(precision));
   const [isDragging, setIsDragging] = useState(false);
   const [isAltHover, setIsAltHover] = useState(false);
   const startXRef = useRef(0);
@@ -97,9 +112,9 @@ function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max,
 
   useEffect(() => {
     if (!isDragging) {
-      setLocalValue(value.toFixed(precision));
+      setLocalValue(mixed ? 'multiple' : value.toFixed(precision));
     }
-  }, [value, precision, isDragging]);
+  }, [value, precision, mixed, isDragging]);
 
   // Listen for alt key while hovering
   useEffect(() => {
@@ -136,9 +151,10 @@ function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max,
       setIsDragging(true);
       startXRef.current = e.clientX;
       startValueRef.current = value;
+      onDragStart?.();
       document.body.style.cursor = 'ew-resize';
     }
-  }, [value]);
+  }, [value, onDragStart]);
 
   useEffect(() => {
     if (!isDragging) return;
@@ -151,11 +167,14 @@ function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max,
       if (min !== undefined) newValue = Math.max(min, newValue);
       if (max !== undefined) newValue = Math.min(max, newValue);
 
-      onChange(Number(newValue.toFixed(precision)));
+      const roundedValue = Number(newValue.toFixed(precision));
+      const delta = Number((roundedValue - startValueRef.current).toFixed(precision));
+      onChange(roundedValue, 'drag', delta);
     };
 
     const handleMouseUp = () => {
       setIsDragging(false);
+      onDragEnd?.();
       document.body.style.cursor = '';
     };
 
@@ -166,18 +185,37 @@ function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max,
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, step, precision, min, max, onChange]);
+  }, [isDragging, step, precision, min, max, onChange, onDragEnd]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLocalValue(e.target.value);
+    const nextValue = suffix ? e.target.value.replace(suffix, '') : e.target.value;
+    setLocalValue(nextValue);
+  };
+
+  const handleFocus = () => {
+    if (mixed) {
+      setLocalValue('');
+    }
   };
 
   const handleBlur = () => {
-    let newValue = parseFloat(localValue) || 0;
+    const trimmed = localValue.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'multiple') {
+      setLocalValue(mixed ? 'multiple' : value.toFixed(precision));
+      return;
+    }
+
+    let newValue = Number.parseFloat(trimmed);
+    if (Number.isNaN(newValue)) {
+      setLocalValue(mixed ? 'multiple' : value.toFixed(precision));
+      return;
+    }
+
     if (min !== undefined) newValue = Math.max(min, newValue);
     if (max !== undefined) newValue = Math.min(max, newValue);
-    onChange(Number(newValue.toFixed(precision)));
-    setLocalValue(newValue.toFixed(precision));
+    const roundedValue = Number(newValue.toFixed(precision));
+    onChange(roundedValue, 'input');
+    setLocalValue(roundedValue.toFixed(precision));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -199,8 +237,9 @@ function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max,
       <input
         ref={inputRef}
         type="text"
-        value={localValue + suffix}
+        value={localValue === 'multiple' ? localValue : localValue + suffix}
         onChange={handleChange}
+        onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         className="flex-1 min-w-0 bg-transparent text-sm outline-none text-foreground"
@@ -212,18 +251,24 @@ function ScrubInput({ label, value, onChange, step = 1, precision = 2, min, max,
 
 export function ObjectInspector() {
   const { project, updateObject, updateScene } = useProjectStore();
-  const { selectedSceneId, selectedObjectId } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, selectedObjectIds } = useEditorStore();
   const [activeTab, setActiveTab] = useState<string>('object');
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
-  const object = scene?.objects.find(o => o.id === selectedObjectId);
+  const selectedObjects = scene
+    ? (selectedObjectIds.length > 0
+      ? selectedObjectIds
+          .map((id) => scene.objects.find(o => o.id === id))
+          .filter((obj): obj is GameObject => !!obj)
+      : (selectedObjectId ? scene.objects.filter(o => o.id === selectedObjectId) : []))
+    : [];
 
   // Switch to object tab when an object is selected
   useEffect(() => {
-    if (selectedObjectId) {
+    if (selectedObjectId || selectedObjectIds.length > 0) {
       setActiveTab('object');
     }
-  }, [selectedObjectId]);
+  }, [selectedObjectId, selectedObjectIds.length]);
 
   return (
     <div className="bg-card border-t">
@@ -235,7 +280,7 @@ export function ObjectInspector() {
 
         <TabsContent value="object" className="px-4 py-3 mt-0">
           <ObjectProperties
-            object={object}
+            objects={selectedObjects}
             sceneId={selectedSceneId}
             updateObject={updateObject}
           />
@@ -252,13 +297,16 @@ export function ObjectInspector() {
 }
 
 interface ObjectPropertiesProps {
-  object: GameObject | undefined;
+  objects: GameObject[];
   sceneId: string | null;
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
 }
 
-function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesProps) {
+function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesProps) {
   const [linkScale, setLinkScale] = useState(true);
+  const dragStartValuesRef = useRef<Partial<Record<'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation', Map<string, number>>>>({});
+  const object = objects[0];
+  const isMultiSelection = objects.length > 1;
 
   if (!object || !sceneId) {
     return (
@@ -268,42 +316,158 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
     );
   }
 
+  const areValuesEqual = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+
+  const getSharedNumber = (picker: (obj: GameObject) => number) => {
+    const first = picker(objects[0]);
+    const mixed = objects.some((selectedObj) => !areValuesEqual(picker(selectedObj), first));
+    return { value: first, mixed };
+  };
+
+  const xField = getSharedNumber((selectedObj) => selectedObj.x);
+  const yField = getSharedNumber((selectedObj) => selectedObj.y);
+  const scaleXField = getSharedNumber((selectedObj) => Math.abs(selectedObj.scaleX));
+  const scaleYField = getSharedNumber((selectedObj) => Math.abs(selectedObj.scaleY));
+  const rotationField = getSharedNumber((selectedObj) => selectedObj.rotation);
+
+  const applyToSelected = (buildUpdates: (obj: GameObject) => Partial<GameObject>) => {
+    for (const selectedObj of objects) {
+      updateObject(sceneId, selectedObj.id, buildUpdates(selectedObj));
+    }
+  };
+
+  const clamp = (value: number, minValue?: number, maxValue?: number) => {
+    let next = value;
+    if (minValue !== undefined) next = Math.max(minValue, next);
+    if (maxValue !== undefined) next = Math.min(maxValue, next);
+    return next;
+  };
+
+  const saveDragStart = (
+    field: 'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation',
+    picker: (obj: GameObject) => number,
+  ) => {
+    dragStartValuesRef.current[field] = new Map(objects.map((selectedObj) => [selectedObj.id, picker(selectedObj)]));
+  };
+
+  const clearDragStart = (field: 'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation') => {
+    delete dragStartValuesRef.current[field];
+  };
+
+  const handlePositionChange = (
+    axis: 'x' | 'y',
+    nextValue: number,
+    source?: 'input' | 'drag',
+    delta = 0,
+  ) => {
+    if (source === 'drag') {
+      const startValues = dragStartValuesRef.current[axis];
+      if (!startValues) return;
+      applyToSelected((selectedObj) => {
+        const startValue = startValues.get(selectedObj.id) ?? selectedObj[axis];
+        return { [axis]: startValue + delta };
+      });
+      return;
+    }
+    applyToSelected(() => ({ [axis]: nextValue }));
+  };
+
+  const handleScaleXChange = (nextAbsScaleX: number, source?: 'input' | 'drag', delta = 0) => {
+    if (source === 'drag') {
+      const startValues = dragStartValuesRef.current.scaleX;
+      if (!startValues) return;
+      applyToSelected((selectedObj) => {
+        const startAbsScaleX = startValues.get(selectedObj.id) ?? Math.abs(selectedObj.scaleX);
+        const newAbsScaleX = clamp(startAbsScaleX + delta, 0.01);
+        const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * newAbsScaleX;
+        if (linkScale) {
+          const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * newAbsScaleX;
+          return { scaleX, scaleY };
+        }
+        return { scaleX };
+      });
+      return;
+    }
+
+    const clampedAbsScaleX = clamp(nextAbsScaleX, 0.01);
+    applyToSelected((selectedObj) => {
+      const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * clampedAbsScaleX;
+      if (linkScale) {
+        const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * clampedAbsScaleX;
+        return { scaleX, scaleY };
+      }
+      return { scaleX };
+    });
+  };
+
+  const handleScaleYChange = (nextAbsScaleY: number, source?: 'input' | 'drag', delta = 0) => {
+    if (source === 'drag') {
+      const startValues = dragStartValuesRef.current.scaleY;
+      if (!startValues) return;
+      applyToSelected((selectedObj) => {
+        const startAbsScaleY = startValues.get(selectedObj.id) ?? Math.abs(selectedObj.scaleY);
+        const newAbsScaleY = clamp(startAbsScaleY + delta, 0.01);
+        const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * newAbsScaleY;
+        if (linkScale) {
+          const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * newAbsScaleY;
+          return { scaleX, scaleY };
+        }
+        return { scaleY };
+      });
+      return;
+    }
+
+    const clampedAbsScaleY = clamp(nextAbsScaleY, 0.01);
+    applyToSelected((selectedObj) => {
+      const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * clampedAbsScaleY;
+      if (linkScale) {
+        const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * clampedAbsScaleY;
+        return { scaleX, scaleY };
+      }
+      return { scaleY };
+    });
+  };
+
+  const handleRotationChange = (nextRotation: number, source?: 'input' | 'drag', delta = 0) => {
+    if (source === 'drag') {
+      const startValues = dragStartValuesRef.current.rotation;
+      if (!startValues) return;
+      applyToSelected((selectedObj) => {
+        const startRotation = startValues.get(selectedObj.id) ?? selectedObj.rotation;
+        return { rotation: startRotation + delta };
+      });
+      return;
+    }
+    applyToSelected(() => ({ rotation: nextRotation }));
+  };
+
   const handleUpdate = (updates: Partial<GameObject>) => {
-    updateObject(sceneId, object.id, updates);
-  };
-
-  const handleScaleXChange = (newScaleX: number) => {
-    if (linkScale) {
-      handleUpdate({ scaleX: newScaleX, scaleY: newScaleX });
-    } else {
-      handleUpdate({ scaleX: newScaleX });
-    }
-  };
-
-  const handleScaleYChange = (newScaleY: number) => {
-    if (linkScale) {
-      handleUpdate({ scaleX: newScaleY, scaleY: newScaleY });
-    } else {
-      handleUpdate({ scaleY: newScaleY });
-    }
+    applyToSelected(() => updates);
   };
 
   const handleFlipH = () => {
-    handleUpdate({ scaleX: -object.scaleX });
+    applyToSelected((selectedObj) => ({ scaleX: -selectedObj.scaleX }));
   };
 
   const handleFlipV = () => {
-    handleUpdate({ scaleY: -object.scaleY });
+    applyToSelected((selectedObj) => ({ scaleY: -selectedObj.scaleY }));
   };
 
   const handleRotate90 = () => {
-    handleUpdate({ rotation: (object.rotation + 90) % 360 });
+    applyToSelected((selectedObj) => ({ rotation: (selectedObj.rotation + 90) % 360 }));
   };
+
+  const anyComponentInstance = objects.some((selectedObj) => !!selectedObj.componentId);
+  const allVisible = objects.every((selectedObj) => selectedObj.visible);
+  const mixedVisible = objects.some((selectedObj) => selectedObj.visible !== allVisible);
+  const allFlippedH = objects.every((selectedObj) => selectedObj.scaleX < 0);
+  const allFlippedV = objects.every((selectedObj) => selectedObj.scaleY < 0);
+  const visibleToggleId = isMultiSelection ? 'visible-toggle-multi' : 'visible-toggle';
 
   return (
     <div className="space-y-4">
       {/* Component indicator */}
-      {object.componentId && (
+      {anyComponentInstance && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/50">
           <Component className="size-4 text-purple-600" />
           <span className="text-xs text-muted-foreground">Component - code syncs across all instances</span>
@@ -313,11 +477,11 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
       {/* Visibility */}
       <div className="flex items-center gap-2">
         <Checkbox
-          id="visible-toggle"
-          checked={object.visible}
-          onCheckedChange={(checked) => handleUpdate({ visible: !!checked })}
+          id={visibleToggleId}
+          checked={mixedVisible ? 'indeterminate' : allVisible}
+          onCheckedChange={(checked) => handleUpdate({ visible: checked === true })}
         />
-        <Label htmlFor="visible-toggle" className="text-xs text-muted-foreground cursor-pointer">
+        <Label htmlFor={visibleToggleId} className="text-xs text-muted-foreground cursor-pointer">
           Visible
         </Label>
       </div>
@@ -328,15 +492,21 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
         <div className="flex gap-2">
           <ScrubInput
             label="X"
-            value={object.x}
-            onChange={(x) => handleUpdate({ x })}
+            value={xField.value}
+            mixed={xField.mixed}
+            onChange={(x, source, delta) => handlePositionChange('x', x, source, delta)}
             precision={2}
+            onDragStart={() => saveDragStart('x', (selectedObj) => selectedObj.x)}
+            onDragEnd={() => clearDragStart('x')}
           />
           <ScrubInput
             label="Y"
-            value={object.y}
-            onChange={(y) => handleUpdate({ y })}
+            value={yField.value}
+            mixed={yField.mixed}
+            onChange={(y, source, delta) => handlePositionChange('y', y, source, delta)}
             precision={2}
+            onDragStart={() => saveDragStart('y', (selectedObj) => selectedObj.y)}
+            onDragEnd={() => clearDragStart('y')}
           />
         </div>
       </div>
@@ -347,19 +517,25 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
         <div className="flex gap-2 items-center">
           <ScrubInput
             label="W"
-            value={Math.abs(object.scaleX)}
+            value={scaleXField.value}
+            mixed={scaleXField.mixed}
             onChange={handleScaleXChange}
             step={0.01}
             precision={2}
             min={0.01}
+            onDragStart={() => saveDragStart('scaleX', (selectedObj) => Math.abs(selectedObj.scaleX))}
+            onDragEnd={() => clearDragStart('scaleX')}
           />
           <ScrubInput
             label="H"
-            value={Math.abs(object.scaleY)}
+            value={scaleYField.value}
+            mixed={scaleYField.mixed}
             onChange={handleScaleYChange}
             step={0.01}
             precision={2}
             min={0.01}
+            onDragStart={() => saveDragStart('scaleY', (selectedObj) => Math.abs(selectedObj.scaleY))}
+            onDragEnd={() => clearDragStart('scaleY')}
           />
           <Button
             variant="ghost"
@@ -379,10 +555,13 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
         <div className="flex gap-2 items-center">
           <ScrubInput
             label="↻"
-            value={object.rotation}
-            onChange={(rotation) => handleUpdate({ rotation })}
+            value={rotationField.value}
+            mixed={rotationField.mixed}
+            onChange={handleRotationChange}
             precision={0}
             suffix="°"
+            onDragStart={() => saveDragStart('rotation', (selectedObj) => selectedObj.rotation)}
+            onDragEnd={() => clearDragStart('rotation')}
           />
           <Button
             variant="ghost"
@@ -397,7 +576,7 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
             size="icon-sm"
             onClick={handleFlipH}
             title="Flip horizontal"
-            className={object.scaleX < 0 ? 'text-primary' : ''}
+            className={allFlippedH ? 'text-primary' : ''}
           >
             <FlipHorizontal className="size-4" />
           </Button>
@@ -406,19 +585,21 @@ function ObjectProperties({ object, sceneId, updateObject }: ObjectPropertiesPro
             size="icon-sm"
             onClick={handleFlipV}
             title="Flip vertical"
-            className={object.scaleY < 0 ? 'text-primary' : ''}
+            className={allFlippedV ? 'text-primary' : ''}
           >
             <FlipVertical className="size-4" />
           </Button>
         </div>
       </div>
 
-      {/* Physics Toggle */}
-      <PhysicsToggle object={object} sceneId={sceneId} updateObject={updateObject} />
-
-      {/* Physics Properties */}
-      {object.physics?.enabled && (
-        <PhysicsProperties object={object} sceneId={sceneId} updateObject={updateObject} />
+      {/* Physics is single-object only */}
+      {!isMultiSelection && (
+        <>
+          <PhysicsToggle object={object} sceneId={sceneId} updateObject={updateObject} />
+          {object.physics?.enabled && (
+            <PhysicsProperties object={object} sceneId={sceneId} updateObject={updateObject} />
+          )}
+        </>
       )}
     </div>
   );

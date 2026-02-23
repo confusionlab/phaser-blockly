@@ -44,8 +44,8 @@ export function EditorLayout() {
   const [isLoading, setIsLoading] = useState(false);
   const hoveredPanelRef = useRef<HoveredPanel>(null);
 
-  // Cloud sync - sync current project when leaving
-  const { syncProjectToCloud } = useCloudSync({
+  // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
+  useCloudSync({
     currentProjectId: project?.id ?? null,
     currentProject: project,
   });
@@ -55,14 +55,11 @@ export function EditorLayout() {
     if (!project || !isDirty) return;
 
     const timeout = window.setTimeout(() => {
-      void (async () => {
-        await saveCurrentProject();
-        await syncProjectToCloud(project.id);
-      })();
+      void saveCurrentProject();
     }, 800);
 
     return () => window.clearTimeout(timeout);
-  }, [project, isDirty, saveCurrentProject, syncProjectToCloud]);
+  }, [project, isDirty, saveCurrentProject]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {

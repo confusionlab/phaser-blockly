@@ -65,3 +65,16 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
 - Validation:
   - `pnpm build` passes.
   - Skill Playwright client still blocked in environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.
+- Implemented multi-selection transform editing in `/Users/kihaahn/code/0040-pochacoding/src/components/stage/ObjectInspector.tsx`:
+  - Inspector now reads `selectedObjectIds` and resolves all selected objects in scene order.
+  - Transform fields (`X`, `Y`, `W`, `H`, `Rotation`) now show `multiple` when selected objects have mixed values, otherwise show shared value.
+  - Alt+drag scrubbing now applies delta edits to every selected object (relative to each object's drag-start value).
+  - Typed/committed values now apply as absolute values to every selected object.
+  - Scale edits now preserve per-object flip sign while changing absolute scale magnitude.
+  - Visibility toggle now applies to all selected objects and shows indeterminate for mixed visibility.
+  - Physics panel remains single-object-only and is hidden when multiple objects are selected.
+- Validation:
+  - `pnpm build` passes.
+  - Required skill Playwright client run attempted but blocked in this environment: `ERR_MODULE_NOT_FOUND: Cannot find package \"playwright\"` from `$CODEX_HOME/skills/develop-web-game/scripts/web_game_playwright_client.js`.
+- Additional validation:
+  - `pnpm exec eslint src/components/stage/ObjectInspector.tsx` passes.
