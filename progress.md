@@ -108,3 +108,17 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
   - `pnpm build` passes.
   - `pnpm exec eslint src/components/stage/PhaserCanvas.tsx` runs with existing hook-dependency warnings only.
   - Required skill Playwright client run attempted; still blocked by missing `playwright` package (`ERR_MODULE_NOT_FOUND`).
+- Multi-selection interaction overhaul in `/Users/kihaahn/code/0040-pochacoding/src/components/stage/PhaserCanvas.tsx`:
+  - Plain click on an already-selected object in a multi-selection now preserves the multi-selection (does not collapse), enabling immediate group drag.
+  - Group drag translate implemented: dragging one selected object now translates all selected objects together and commits all moved positions on drag end.
+  - Group drag binding is applied in both initial editor-scene object creation and runtime-added object creation paths.
+- Multi-selection gizmo behavior:
+  - Added a single combined multi-selection bounding gizmo (one bounding box + handles + rotate handle/line) for multi-selected objects.
+  - Individual object gizmos are hidden while multi-selection is active.
+- Screen-space persistent gizmo UI:
+  - Single-object gizmo handle sizes, rotate-handle offset, and outline stroke now compensate for object scale and camera zoom to stay visually consistent on screen.
+  - Multi-selection gizmo handle sizes/strokes also scale by camera zoom for consistent screen-space UI.
+- Validation:
+  - `pnpm build` passes.
+  - `pnpm exec eslint src/components/stage/PhaserCanvas.tsx` runs with existing hook-dependency warnings only.
+  - Required skill Playwright client run attempted; still blocked by missing `playwright` package (`ERR_MODULE_NOT_FOUND`).
