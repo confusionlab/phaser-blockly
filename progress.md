@@ -47,3 +47,21 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
 - Validation:
   - `pnpm build` passes.
   - Skill Playwright client run is still blocked in this environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"` from `$CODEX_HOME/skills/develop-web-game/scripts/web_game_playwright_client.js`.
+- Completed runtime/codegen bug-audit fix pass for codegen/runtime mismatch issues.
+- Fixed codegen string literal safety by introducing `asJsString(...)` and using it for text/dropdown string fields (messages, scene names, target IDs, sounds, key/easing/color values) in `/Users/kihaahn/code/0040-pochacoding/src/phaser/CodeGenerator.ts`.
+- Fixed clone-context motion/attachment targeting:
+  - glide/rotate/attach/detach blocks now target `sprite.id` (current executing sprite), not original `spriteId`.
+- Fixed `point towards mouse` coordinate-space mismatch:
+  - generator now uses runtime world-coordinate mouse getters.
+  - added `getMouseWorldX/Y()` in runtime.
+- Hardened async event dispatch in runtime:
+  - added centralized `invokeEventHandler(...)` with sync+async error handling.
+  - key/click/touch/message/clone-click paths now use it to avoid unhandled promise rejections.
+- Fixed `broadcastAndWait` semantics:
+  - message queue now stores message envelopes.
+  - `broadcastAndWait` resolves after all async message handlers for that broadcast settle.
+- Fixed cleanup leak on delete paths:
+  - `deleteSelf`/`deleteObject` now clear forever-loop activity and pending async-forever tracking maps.
+- Validation:
+  - `pnpm build` passes.
+  - Skill Playwright client still blocked in environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.

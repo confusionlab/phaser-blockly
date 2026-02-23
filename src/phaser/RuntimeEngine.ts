@@ -76,6 +76,11 @@ interface ObjectHandlers {
   forever: ForeverHandler[];
 }
 
+interface QueuedMessage {
+  message: string;
+  resolveWhenDone?: () => void;
+}
+
 // Template for cloning - stores original object state
 interface ObjectTemplate {
   id: string;
@@ -117,7 +122,7 @@ export class RuntimeEngine {
   private keydownListener: ((event: KeyboardEvent) => void) | null = null;
   private keyupListener: ((event: KeyboardEvent) => void) | null = null;
   private cloneCounter: number = 0;
-  private messageQueue: string[] = [];
+  private messageQueue: QueuedMessage[] = [];
 
   // Ground configuration
   private _groundEnabled: boolean = false;
@@ -365,7 +370,9 @@ export class RuntimeEngine {
         if (this._isRunning) {
           debugLog('event', `Click triggered on sprite ${spriteId}`);
           const currentSprite = this.sprites.get(spriteId);
-          if (currentSprite) handler(currentSprite);
+          if (currentSprite) {
+            this.invokeEventHandler(spriteId, currentSprite, handler, 'click handler');
+          }
         }
       });
     }
@@ -448,6 +455,28 @@ export class RuntimeEngine {
 
   // --- Event Triggering ---
 
+  private invokeEventHandler(
+    spriteId: string,
+    sprite: RuntimeSprite,
+    handler: EventHandler,
+    context: string
+  ): Promise<void> | null {
+    try {
+      const result = handler(sprite);
+      if (result && typeof (result as Promise<void>).then === 'function') {
+        return Promise.resolve(result).catch(e => {
+          debugLog('error', `Error in ${context} for ${spriteId}: ${e}`);
+          console.error(`Error in ${context} for ${spriteId}:`, e);
+        });
+      }
+      return null;
+    } catch (e) {
+      debugLog('error', `Error in ${context} for ${spriteId}: ${e}`);
+      console.error(`Error in ${context} for ${spriteId}:`, e);
+      return null;
+    }
+  }
+
   private triggerKeyPressed(key: string): void {
     debugLog('event', `triggerKeyPressed(${key}) called, isRunning=${this._isRunning}`);
     if (!this._isRunning) {
@@ -462,11 +491,7 @@ export class RuntimeEngine {
       if (keyHandlers) {
         debugLog('event', `Executing ${keyHandlers.length} handler(s) for key ${key}`);
         keyHandlers.forEach(handler => {
-          try {
-            handler(sprite);
-          } catch (e) {
-            debugLog('error', `Error in key handler: ${e}`);
-          }
+          this.invokeEventHandler(spriteId, sprite, handler, 'key handler');
         });
       }
     }
@@ -791,7 +816,7 @@ export class RuntimeEngine {
     const safeCallHandler = (handler: EventHandler) => {
       const source = this.sprites.get(sourceId);
       if (source && !source.isStopped()) {
-        handler(source);
+        this.invokeEventHandler(sourceId, source, handler, 'touch handler');
       }
     };
 
@@ -888,14 +913,24 @@ export class RuntimeEngine {
 
   private processMessages(): void {
     while (this.messageQueue.length > 0) {
-      const message = this.messageQueue.shift()!;
+      const queuedMessage = this.messageQueue.shift()!;
+      const { message, resolveWhenDone } = queuedMessage;
+      const pendingHandlers: Promise<void>[] = [];
       for (const [spriteId, h] of this.handlers) {
         const sprite = this.sprites.get(spriteId);
         if (!sprite || sprite.isStopped()) continue;
         const msgHandlers = h.onMessage.get(message);
         if (msgHandlers) {
-          msgHandlers.forEach(handler => handler(sprite));
+          msgHandlers.forEach(handler => {
+            const pending = this.invokeEventHandler(spriteId, sprite, handler, `message "${message}" handler`);
+            if (pending) {
+              pendingHandlers.push(pending);
+            }
+          });
         }
+      }
+      if (resolveWhenDone) {
+        Promise.allSettled(pendingHandlers).finally(resolveWhenDone);
       }
     }
   }
@@ -903,14 +938,12 @@ export class RuntimeEngine {
   // --- Actions ---
 
   broadcast(message: string): void {
-    this.messageQueue.push(message);
+    this.messageQueue.push({ message });
   }
 
   broadcastAndWait(message: string): Promise<void> {
     return new Promise(resolve => {
-      this.broadcast(message);
-      // Simple implementation - just wait a tick
-      setTimeout(resolve, 16);
+      this.messageQueue.push({ message, resolveWhenDone: resolve });
     });
   }
 
@@ -1055,6 +1088,14 @@ export class RuntimeEngine {
   getMouseY(): number {
     // Convert Phaser mouse Y to user space (+Y is up)
     return this._canvasHeight / 2 - this.scene.input.activePointer.worldY;
+  }
+
+  getMouseWorldX(): number {
+    return this.scene.input.activePointer.worldX;
+  }
+
+  getMouseWorldY(): number {
+    return this.scene.input.activePointer.worldY;
   }
 
   // --- Variables ---
@@ -1273,7 +1314,9 @@ export class RuntimeEngine {
           if (this._isRunning) {
             const currentClone = this.sprites.get(cloneId);
             if (currentClone) {
-              cloneHandlers.onClick.forEach(handler => handler(currentClone));
+              cloneHandlers.onClick.forEach(handler => {
+                this.invokeEventHandler(cloneId, currentClone, handler, 'click handler');
+              });
             }
           }
         });
@@ -1340,6 +1383,8 @@ export class RuntimeEngine {
       this.sprites.delete(spriteId);
       this.handlers.delete(spriteId);
       this.localVariables.delete(spriteId);
+      this.activeForeverLoops.delete(spriteId);
+      this.pendingForeverHandlers.delete(spriteId);
     }
   }
 
@@ -1349,6 +1394,8 @@ export class RuntimeEngine {
     this.sprites.delete(obj.id);
     this.handlers.delete(obj.id);
     this.localVariables.delete(obj.id);
+    this.activeForeverLoops.delete(obj.id);
+    this.pendingForeverHandlers.delete(obj.id);
   }
 
   private getObjectColor(id: string): number {

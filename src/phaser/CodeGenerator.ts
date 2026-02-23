@@ -1,6 +1,10 @@
 import * as Blockly from 'blockly';
 import { javascriptGenerator, Order } from 'blockly/javascript';
 
+function asJsString(value: string | null | undefined): string {
+  return JSON.stringify(value ?? '');
+}
+
 /**
  * Register code generators for all custom blocks.
  * Generated code calls runtime.* methods.
@@ -17,7 +21,7 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['event_key_pressed'] = function(block) {
     const key = block.getFieldValue('KEY');
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onKeyPressed(spriteId, '${key}', async function(sprite) {\n${nextCode}});\n`;
+    return `runtime.onKeyPressed(spriteId, ${asJsString(key)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_clicked'] = function(block) {
@@ -35,14 +39,14 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['event_when_touching'] = function(block) {
     const target = block.getFieldValue('TARGET');
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onTouching(spriteId, '${target}', async function(sprite) {\n${nextCode}});\n`;
+    return `runtime.onTouching(spriteId, ${asJsString(target)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_when_touching_direction'] = function(block) {
     const target = block.getFieldValue('TARGET');
     const direction = block.getFieldValue('DIRECTION') || 'SIDE';
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onTouchingDirection(spriteId, '${target}', '${direction}', async function(sprite) {\n${nextCode}});\n`;
+    return `runtime.onTouchingDirection(spriteId, ${asJsString(target)}, ${asJsString(direction)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   // --- Motion ---
@@ -63,7 +67,7 @@ export function registerCodeGenerators(): void {
     const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '0';
     const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '1';
     const easing = block.getFieldValue('EASING') || 'Linear';
-    return `await runtime.glideTo(spriteId, ${x}, ${y}, ${seconds}, '${easing}');\n`;
+    return `await runtime.glideTo(sprite.id, ${x}, ${y}, ${seconds}, ${asJsString(easing)});\n`;
   };
 
   javascriptGenerator.forBlock['motion_change_x'] = function(block) {
@@ -94,9 +98,9 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['motion_point_towards'] = function(block) {
     const target = block.getFieldValue('TARGET');
     if (target === 'MOUSE') {
-      return 'sprite.pointTowards(runtime.getMouseX(), runtime.getMouseY());\n';
+      return 'sprite.pointTowards(runtime.getMouseWorldX(), runtime.getMouseWorldY());\n';
     }
-    return `sprite.pointTowards(runtime.getSprite('${target}')?.container.x ?? 0, runtime.getSprite('${target}')?.container.y ?? 0);\n`;
+    return `sprite.pointTowards(runtime.getSprite(${asJsString(target)})?.container.x ?? 0, runtime.getSprite(${asJsString(target)})?.container.y ?? 0);\n`;
   };
 
   javascriptGenerator.forBlock['motion_my_x'] = function() {
@@ -112,32 +116,32 @@ export function registerCodeGenerators(): void {
     const degrees = javascriptGenerator.valueToCode(block, 'DEGREES', Order.ATOMIC) || '90';
     const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '1';
     const easing = block.getFieldValue('EASING') || 'Linear';
-    return `await runtime.rotateTo(spriteId, ${degrees}, ${seconds}, '${easing}');\n`;
+    return `await runtime.rotateTo(sprite.id, ${degrees}, ${seconds}, ${asJsString(easing)});\n`;
   };
 
   // Attachment blocks
   javascriptGenerator.forBlock['motion_attach_to_dropdown'] = function(block) {
     const target = block.getFieldValue('TARGET');
-    return `runtime.attachTo(spriteId, '${target}');\n`;
+    return `runtime.attachTo(sprite.id, ${asJsString(target)});\n`;
   };
 
   javascriptGenerator.forBlock['motion_attach_to_block'] = function(block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
-    return `if (${target}) runtime.attachTo(spriteId, ${target}.id);\n`;
+    return `if (${target}) runtime.attachTo(sprite.id, ${target}.id);\n`;
   };
 
   javascriptGenerator.forBlock['motion_attach_dropdown_to_me'] = function(block) {
     const target = block.getFieldValue('TARGET');
-    return `runtime.attachTo('${target}', spriteId);\n`;
+    return `runtime.attachTo(${asJsString(target)}, sprite.id);\n`;
   };
 
   javascriptGenerator.forBlock['motion_attach_block_to_me'] = function(block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
-    return `if (${target}) runtime.attachTo(${target}.id, spriteId);\n`;
+    return `if (${target}) runtime.attachTo(${target}.id, sprite.id);\n`;
   };
 
   javascriptGenerator.forBlock['motion_detach'] = function() {
-    return 'runtime.detach(spriteId);\n';
+    return 'runtime.detach(sprite.id);\n';
   };
 
   // --- Looks ---
@@ -317,7 +321,7 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['physics_set_ground_color'] = function(block) {
     const color = block.getFieldValue('COLOR') || '#8B4513';
-    return `runtime.setGroundColor('${color}');\n`;
+    return `runtime.setGroundColor(${asJsString(color)});\n`;
   };
 
   // --- Camera ---
@@ -328,7 +332,7 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['camera_follow_object'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
-    return `runtime.cameraFollowSprite('${targetId}');\n`;
+    return `runtime.cameraFollowSprite(${asJsString(targetId)});\n`;
   };
 
   javascriptGenerator.forBlock['camera_stop_follow'] = function() {
@@ -382,13 +386,13 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['sensing_touching'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
-    return [`runtime.isTouching(sprite.id, '${targetId}')`, Order.FUNCTION_CALL];
+    return [`runtime.isTouching(sprite.id, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_touching_direction'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
     const direction = block.getFieldValue('DIRECTION') || 'SIDE';
-    return [`runtime.isTouchingDirection(sprite.id, '${targetId}', '${direction}')`, Order.FUNCTION_CALL];
+    return [`runtime.isTouchingDirection(sprite.id, ${asJsString(targetId)}, ${asJsString(direction)})`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_touching_ground'] = function() {
@@ -397,7 +401,7 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['sensing_distance_to'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
-    return [`runtime.distanceTo(sprite.id, '${targetId}')`, Order.FUNCTION_CALL];
+    return [`runtime.distanceTo(sprite.id, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_touching_object'] = function() {
@@ -411,7 +415,7 @@ export function registerCodeGenerators(): void {
       // Use original object ID (handles case when sprite is itself a clone)
       return [`runtime.isCloneOf(${obj}, sprite.cloneParentId || sprite.id)`, Order.FUNCTION_CALL];
     }
-    return [`runtime.isCloneOf(${obj}, '${targetId}')`, Order.FUNCTION_CALL];
+    return [`runtime.isCloneOf(${obj}, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_all_touching_objects'] = function() {
@@ -438,17 +442,17 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['event_when_receive'] = function(block) {
     const message = block.getFieldValue('MESSAGE') || 'message1';
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
-    return `runtime.onMessage(spriteId, '${message}', async function(sprite) {\n${nextCode}});\n`;
+    return `runtime.onMessage(spriteId, ${asJsString(message)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['control_broadcast'] = function(block) {
     const message = block.getFieldValue('MESSAGE') || 'message1';
-    return `runtime.broadcast('${message}');\n`;
+    return `runtime.broadcast(${asJsString(message)});\n`;
   };
 
   javascriptGenerator.forBlock['control_broadcast_wait'] = function(block) {
     const message = block.getFieldValue('MESSAGE') || 'message1';
-    return `await runtime.broadcastAndWait('${message}');\n`;
+    return `await runtime.broadcastAndWait(${asJsString(message)});\n`;
   };
 
   // --- Clone ---
@@ -463,7 +467,7 @@ export function registerCodeGenerators(): void {
     if (!targetId) {
       return '/* clone target not set */\n';
     }
-    return `await runtime.cloneSprite('${targetId}');\n`;
+    return `await runtime.cloneSprite(${asJsString(targetId)});\n`;
   };
 
   javascriptGenerator.forBlock['control_delete_clone'] = function() {
@@ -482,19 +486,19 @@ export function registerCodeGenerators(): void {
     const sceneName = block.getFieldValue('SCENE') || 'Scene 1';
     const mode = block.getFieldValue('MODE') || 'RESUME';
     const restart = mode === 'RESTART';
-    return `runtime.switchToScene('${sceneName}', ${restart});\n`;
+    return `runtime.switchToScene(${asJsString(sceneName)}, ${restart});\n`;
   };
 
   // --- Sound ---
 
   javascriptGenerator.forBlock['sound_play'] = function(block) {
     const sound = block.getFieldValue('SOUND') || 'pop';
-    return `runtime.playSound('${sound}');\n`;
+    return `runtime.playSound(${asJsString(sound)});\n`;
   };
 
   javascriptGenerator.forBlock['sound_play_until_done'] = function(block) {
     const sound = block.getFieldValue('SOUND') || 'pop';
-    return `await runtime.playSoundUntilDone('${sound}');\n`;
+    return `await runtime.playSoundUntilDone(${asJsString(sound)});\n`;
   };
 
   javascriptGenerator.forBlock['sound_stop_all'] = function() {
