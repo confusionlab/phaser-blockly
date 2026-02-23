@@ -126,7 +126,7 @@ function SortableObjectItem({
       {...listeners}
       onClick={handleClick}
       onContextMenu={onContextMenu}
-      className={`flex items-center gap-2 px-2 py-1.5 cursor-grab active:cursor-grabbing border-b transition-colors ${
+      className={`flex items-center gap-2 px-2 py-1.5 cursor-grab active:cursor-grabbing border-b transition-colors select-none ${
         isSelected
           ? 'bg-primary/10 border-l-2 border-l-primary'
           : 'hover:bg-accent border-l-2 border-l-transparent'
@@ -182,7 +182,7 @@ function SortableObjectItem({
             if (e.key === 'Enter') onSaveRename();
             if (e.key === 'Escape') onSaveRename();
           }}
-          className="flex-1 h-6 px-1 text-xs"
+          className="flex-1 h-6 px-1 text-xs select-text"
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
         />
@@ -501,10 +501,30 @@ export function SpriteShelf() {
 
   const handleDelete = () => {
     if (!contextMenu || !selectedSceneId) return;
-    removeObject(selectedSceneId, contextMenu.object.id);
-    if (selectedObjectIds.includes(contextMenu.object.id)) {
-      const remaining = selectedObjectIds.filter(id => id !== contextMenu.object.id);
-      selectObjects(remaining, remaining[0] ?? null);
+
+    const sceneObjectIds = new Set(selectedScene.objects.map(obj => obj.id));
+    const selectedIdsInScene = selectedObjectIds.filter(id => sceneObjectIds.has(id));
+    const deleteIds = selectedIdsInScene.length > 1 && selectedIdsInScene.includes(contextMenu.object.id)
+      ? selectedIdsInScene
+      : [contextMenu.object.id];
+
+    const deleteSet = new Set(deleteIds);
+    deleteIds.forEach((id) => removeObject(selectedSceneId, id));
+
+    const deletedSelectedIds = selectedIdsInScene.filter(id => deleteSet.has(id));
+    if (deletedSelectedIds.length > 0) {
+      const remainingSelectedIds = selectedIdsInScene.filter(id => !deleteSet.has(id));
+      if (remainingSelectedIds.length > 0) {
+        const nextPrimary = (selectedObjectId && remainingSelectedIds.includes(selectedObjectId))
+          ? selectedObjectId
+          : remainingSelectedIds[0];
+        selectObjects(remainingSelectedIds, nextPrimary);
+      } else {
+        const remainingSceneIds = selectedScene.objects
+          .map(obj => obj.id)
+          .filter(id => !deleteSet.has(id));
+        selectObject(remainingSceneIds[0] ?? null);
+      }
     }
     handleCloseContextMenu();
   };
@@ -711,6 +731,14 @@ export function SpriteShelf() {
   const collapsedFolderIds = new Set(
     folders.filter(folder => folder.collapsed).map(folder => folder.id)
   );
+  const sceneObjectIdSet = new Set(selectedScene.objects.map(obj => obj.id));
+  const selectedIdsInScene = selectedObjectIds.filter(id => sceneObjectIdSet.has(id));
+  const willDeleteSelection = !!contextMenu &&
+    selectedIdsInScene.length > 1 &&
+    selectedIdsInScene.includes(contextMenu.object.id);
+  const deleteLabel = willDeleteSelection
+    ? `Delete Selected (${selectedIdsInScene.length})`
+    : 'Delete';
   const visibleObjectIds = selectedScene.objects
     .filter(obj => !obj.folderId || !collapsedFolderIds.has(obj.folderId))
     .map(obj => obj.id);
@@ -746,6 +774,13 @@ export function SpriteShelf() {
         : [...selectedObjectIds, objectId];
       selectionAnchorRef.current = objectId;
       selectObjects(nextIds, alreadySelected ? (nextIds[0] ?? null) : objectId);
+      return;
+    }
+
+    // Plain click on an already-selected item in a multi-selection should not
+    // collapse the selection unexpectedly.
+    if (selectedObjectIds.length > 1 && selectedObjectIds.includes(objectId)) {
+      selectionAnchorRef.current = objectId;
       return;
     }
 
@@ -1026,7 +1061,7 @@ export function SpriteShelf() {
               className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
             >
               <Trash2 className="size-4" />
-              Delete
+              {deleteLabel}
             </Button>
           </Card>
         </>

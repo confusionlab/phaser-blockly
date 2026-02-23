@@ -1112,7 +1112,14 @@ function createEditorScene(
 
     if (!marqueeHasMoved) {
       if (marqueeMode === 'replace') {
-        selectObject(null);
+        const storeState = useEditorStore.getState();
+        const currentSelected = storeState.selectedObjectIds.length > 0
+          ? storeState.selectedObjectIds
+          : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+        // Avoid unexpectedly clearing an existing multi-selection on a plain background click.
+        if (currentSelected.length <= 1) {
+          selectObject(null);
+        }
       }
       isMarqueeSelecting = false;
       marqueePointerId = null;
@@ -1248,7 +1255,14 @@ function createEditorScene(
     if (currentMode !== 'editor') {
       const event = pointer.event as MouseEvent | PointerEvent | undefined;
       if (!(event?.metaKey || event?.ctrlKey || event?.shiftKey)) {
-        selectObject(null);
+        const storeState = useEditorStore.getState();
+        const currentSelected = storeState.selectedObjectIds.length > 0
+          ? storeState.selectedObjectIds
+          : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+        // Keep multi-selection stable unless user explicitly changes it.
+        if (currentSelected.length <= 1) {
+          selectObject(null);
+        }
       }
       return;
     }
