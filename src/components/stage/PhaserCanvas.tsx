@@ -993,6 +993,7 @@ function createEditorScene(
     if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
       isPanning = false;
     }
+    endTranslateDrag(pointer);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
     }
@@ -1060,6 +1061,14 @@ function createEditorScene(
   let marqueeHasMoved = false;
   let marqueePointerId: number | null = null;
   let marqueeMode: 'replace' | 'add' | 'toggle' = 'replace';
+  let activeTranslateDrag: {
+    pointerId: number;
+    objectIds: string[];
+    startWorldX: number;
+    startWorldY: number;
+    startPositions: Map<string, { x: number; y: number }>;
+    hasMoved: boolean;
+  } | null = null;
   const groupSelectionRect = scene.add.rectangle(0, 0, 10, 10);
   groupSelectionRect.setStrokeStyle(GIZMO_STROKE_PX, 0x4A90D9);
   groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
@@ -1168,6 +1177,52 @@ function createEditorScene(
     return false;
   };
 
+  const beginTranslateDrag = (pointer: Phaser.Input.Pointer, objectId: string) => {
+    const storeState = useEditorStore.getState();
+    const selectedIds = storeState.selectedObjectIds.length > 0
+      ? storeState.selectedObjectIds
+      : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+    const dragIds = (selectedIds.length > 1 && selectedIds.includes(objectId))
+      ? sceneData.objects.map((o) => o.id).filter((id) => selectedIds.includes(id))
+      : [objectId];
+    const startPositions = new Map<string, { x: number; y: number }>();
+    for (const id of dragIds) {
+      const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+      if (draggedContainer) {
+        startPositions.set(id, { x: draggedContainer.x, y: draggedContainer.y });
+      }
+    }
+
+    if (startPositions.size === 0) {
+      activeTranslateDrag = null;
+      return;
+    }
+
+    activeTranslateDrag = {
+      pointerId: pointer.id,
+      objectIds: dragIds,
+      startWorldX: pointer.worldX,
+      startWorldY: pointer.worldY,
+      startPositions,
+      hasMoved: false,
+    };
+  };
+
+  const endTranslateDrag = (pointer: Phaser.Input.Pointer) => {
+    if (!activeTranslateDrag || activeTranslateDrag.pointerId !== pointer.id) return;
+
+    if (activeTranslateDrag.hasMoved) {
+      for (const id of activeTranslateDrag.objectIds) {
+        const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+        if (draggedContainer) {
+          onDragEnd(id, draggedContainer.x, draggedContainer.y);
+        }
+      }
+    }
+
+    activeTranslateDrag = null;
+  };
+
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     if (!pointer.leftButtonDown()) return;
 
@@ -1181,6 +1236,11 @@ function createEditorScene(
     const pickedObjectId = pickTopObjectIdAtWorldPoint(scene, worldX, worldY);
     if (pickedObjectId) {
       onObjectPointerDown(pointer, pickedObjectId);
+      const event = pointer.event as MouseEvent | PointerEvent | undefined;
+      const hasSelectionModifier = !!(event?.metaKey || event?.ctrlKey || event?.shiftKey);
+      if (!hasSelectionModifier) {
+        beginTranslateDrag(pointer, pickedObjectId);
+      }
       return;
     }
 
@@ -1310,6 +1370,23 @@ function createEditorScene(
 
   // Update selection visuals on scene update
   scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+    if (activeTranslateDrag && activeTranslateDrag.pointerId === pointer.id) {
+      const dx = pointer.worldX - activeTranslateDrag.startWorldX;
+      const dy = pointer.worldY - activeTranslateDrag.startWorldY;
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        activeTranslateDrag.hasMoved = true;
+      }
+      for (const id of activeTranslateDrag.objectIds) {
+        const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+        const startPos = activeTranslateDrag.startPositions.get(id);
+        if (draggedContainer && startPos) {
+          draggedContainer.x = startPos.x + dx;
+          draggedContainer.y = startPos.y + dy;
+        }
+      }
+      return;
+    }
+
     if (!isMarqueeSelecting || marqueePointerId !== pointer.id) return;
     const dx = Math.abs(pointer.worldX - marqueeStartX);
     const dy = Math.abs(pointer.worldY - marqueeStartY);
@@ -1320,6 +1397,7 @@ function createEditorScene(
   });
 
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+    endTranslateDrag(pointer);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
     }

@@ -136,3 +136,10 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
   - `pnpm build` passes.
   - `pnpm exec eslint src/components/stage/PhaserCanvas.tsx` runs with existing hook-dependency warnings only.
   - Required skill Playwright client run attempted; still blocked by missing `playwright` package (`ERR_MODULE_NOT_FOUND`).
+- Fixed stage movement regression for editor translate drag in `/Users/kihaahn/code/0040-pochacoding/src/components/stage/PhaserCanvas.tsx`:
+  - Added scene-level pointer-driven translate drag state (`activeTranslateDrag`) so object movement no longer depends on Phaser hit-rect drag events.
+  - Starts translate drag when left-clicking an object with no selection modifiers.
+  - Supports both single-object drag and multi-selection group drag by translating all selected objects together.
+  - Commits moved positions on `pointerup` and `pointerupoutside` via existing `onDragEnd` persistence path.
+- Validation:
+  - `pnpm build` passes.
