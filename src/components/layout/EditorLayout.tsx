@@ -9,7 +9,7 @@ import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { loadProject } from '@/db/database';
+import { CURRENT_SCHEMA_VERSION, loadProject, migrateAllLocalProjects } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
@@ -47,6 +47,7 @@ export function EditorLayout() {
   // Cloud sync - sync current project when leaving
   const { syncProjectToCloud } = useCloudSync({
     currentProjectId: project?.id ?? null,
+    currentProject: project,
   });
 
 
@@ -67,6 +68,19 @@ export function EditorLayout() {
   useEffect(() => {
     hoveredPanelRef.current = hoveredPanel;
   }, [hoveredPanel]);
+
+  // Run local project migrations proactively so every project stays schema-compatible.
+  useEffect(() => {
+    void (async () => {
+      const result = await migrateAllLocalProjects();
+      if (result.migrated > 0) {
+        console.log(`[Migration] Migrated ${result.migrated} local projects to schema v${CURRENT_SCHEMA_VERSION}`);
+      }
+      if (result.failed > 0) {
+        console.error(`[Migration] Failed to migrate ${result.failed} local projects`);
+      }
+    })();
+  }, []);
 
   // Load project from URL
   useEffect(() => {

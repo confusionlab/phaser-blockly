@@ -132,7 +132,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             scene.sound.removeAll();
           }
         });
-      } catch (e) {
+      } catch {
         // Ignore - scene might not exist
       }
       gameRef.current.destroy(true);
@@ -332,7 +332,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
               scene.sound.removeAll();
             }
           });
-        } catch (e) {
+        } catch {
           // Ignore - scene might not exist
         }
         gameRef.current.destroy(true);
@@ -1312,7 +1312,7 @@ function createObjectVisual(
   // Create invisible hit area rectangle for reliable click detection
   let hitRect: Phaser.GameObjects.Rectangle | null = null;
   // Gizmo handles for transform
-  let gizmoHandles: Phaser.GameObjects.GameObject[] = [];
+  const gizmoHandles: Phaser.GameObjects.GameObject[] = [];
 
   if (isEditorMode) {
     // Selection visual

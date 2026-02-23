@@ -955,7 +955,7 @@ export class RuntimeEngine {
         this.scene.sound.stopAll();
         this.scene.sound.removeAll();
       }
-    } catch (e) {
+    } catch {
       // Ignore errors if audio system already destroyed
     }
 

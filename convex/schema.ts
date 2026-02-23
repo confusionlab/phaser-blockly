@@ -1,8 +1,8 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
-// Schema version for compatibility tracking
-export const SCHEMA_VERSION = 2;
+// Project data schema version. Keep aligned with src/db/database.ts.
+export const SCHEMA_VERSION = 1;
 
 // Shared bounds validator
 const boundsValidator = v.object({
@@ -20,7 +20,6 @@ const physicsValidator = v.object({
   velocityX: v.number(),
   velocityY: v.number(),
   bounce: v.number(),
-  friction: v.number(),
   allowRotation: v.boolean(),
 });
 
@@ -30,7 +29,7 @@ const colliderValidator = v.object({
     v.literal("none"),
     v.literal("box"),
     v.literal("circle"),
-    v.literal("capsule")
+    v.literal("capsule"),
   ),
   offsetX: v.number(),
   offsetY: v.number(),
@@ -81,14 +80,14 @@ export default defineSchema({
         name: v.string(),
         storageId: v.id("_storage"),
         bounds: v.optional(boundsValidator),
-      })
+      }),
     ),
     sounds: v.array(
       v.object({
         id: v.string(),
         name: v.string(),
         storageId: v.id("_storage"),
-      })
+      }),
     ),
     blocklyXml: v.string(),
     physics: v.optional(physicsValidator),
@@ -97,17 +96,14 @@ export default defineSchema({
   }),
 
   // Projects - cloud-synced project storage
-  // Projects are primarily stored locally (IndexedDB), synced to cloud on exit
   projects: defineTable({
-    // Project ID from local storage (used as sync key)
     localId: v.string(),
     name: v.string(),
-    // Full project data as JSON string (includes scenes, settings, globalVariables, components)
     data: v.string(),
-    // Timestamps for sync conflict resolution
     createdAt: v.number(),
     updatedAt: v.number(),
-    // Schema version for migrations
-    schemaVersion: v.number(),
+    // Union preserves backwards compatibility with previously written string values.
+    schemaVersion: v.union(v.number(), v.string()),
+    appVersion: v.optional(v.string()),
   }).index("by_localId", ["localId"]),
 });

@@ -1,15 +1,40 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
-import { getAllProjectsForSync, syncProjectFromCloud, getProjectForSync } from '@/db/database';
+import {
+  createProjectSyncPayload,
+  getAllProjectsForSync,
+  getProjectForSync,
+  syncProjectFromCloud,
+  type ProjectSyncPayload,
+} from '@/db/database';
+import type { Project } from '@/types';
 
 interface CloudSyncOptions {
+  // Sync cloud data down when mounted
   syncOnMount?: boolean;
+  // Current project id fallback (used when full project object is unavailable)
   currentProjectId?: string | null;
+  // Current in-memory project for reliable unload beacon payload
+  currentProject?: Project | null;
+}
+
+function getSyncBeaconUrl(): string | null {
+  const siteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
+  if (siteUrl) {
+    return `${siteUrl.replace(/\/$/, '')}/sync-beacon`;
+  }
+
+  const cloudUrl = import.meta.env.VITE_CONVEX_URL;
+  if (!cloudUrl) {
+    return null;
+  }
+
+  return `${cloudUrl.replace('.cloud', '.site')}/sync-beacon`;
 }
 
 export function useCloudSync(options: CloudSyncOptions = {}) {
-  const { syncOnMount = false, currentProjectId = null } = options;
+  const { syncOnMount = false, currentProjectId = null, currentProject = null } = options;
 
   const syncMutation = useMutation(api.projects.syncBatch);
   const syncSingleMutation = useMutation(api.projects.sync);
@@ -18,16 +43,41 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   const isSyncingRef = useRef(false);
   const currentProjectIdRef = useRef(currentProjectId);
+  const beaconPayloadRef = useRef<ProjectSyncPayload | null>(null);
+
   currentProjectIdRef.current = currentProjectId;
 
+  useEffect(() => {
+    beaconPayloadRef.current = currentProject ? createProjectSyncPayload(currentProject) : null;
+  }, [currentProject]);
+
+  const syncPayloadToCloud = useCallback(
+    async (payload: ProjectSyncPayload) => {
+      if (isSyncingRef.current) return;
+      try {
+        await syncSingleMutation(payload);
+      } catch (error) {
+        console.error('[CloudSync] Failed to sync payload:', error);
+      }
+    },
+    [syncSingleMutation],
+  );
+
+  // Sync all local projects to cloud
   const syncAllToCloud = useCallback(async () => {
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
+
     try {
       const localProjects = await getAllProjectsForSync();
-      if (localProjects.length > 0) {
-        await syncMutation({ projects: localProjects });
+      if (localProjects.length === 0) {
+        isSyncingRef.current = false;
+        return;
       }
+
+      console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
+      const results = await syncMutation({ projects: localProjects });
+      console.log('[CloudSync] Sync results:', results);
     } catch (error) {
       console.error('[CloudSync] Failed to sync to cloud:', error);
     } finally {
@@ -35,31 +85,52 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     }
   }, [syncMutation]);
 
-  const syncProjectToCloud = useCallback(async (projectId: string) => {
-    if (isSyncingRef.current) return;
-    try {
-      const project = await getProjectForSync(projectId);
-      if (project) {
-        await syncSingleMutation(project);
+  // Sync a single project to cloud by local project id
+  const syncProjectToCloud = useCallback(
+    async (projectId: string) => {
+      if (isSyncingRef.current) return;
+
+      try {
+        const project = await getProjectForSync(projectId);
+        if (!project) return;
+
+        console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
+        const result = await syncSingleMutation(project);
+        console.log('[CloudSync] Single sync result:', result);
+      } catch (error) {
+        console.error('[CloudSync] Failed to sync project:', error);
       }
-    } catch (error) {
-      console.error('[CloudSync] Failed to sync project:', error);
-    }
-  }, [syncSingleMutation]);
+    },
+    [syncSingleMutation],
+  );
 
-  const deleteProjectFromCloud = useCallback(async (projectId: string) => {
-    try {
-      await removeProjectMutation({ localId: projectId });
-    } catch (error) {
-      console.error('[CloudSync] Failed to delete project from cloud:', error);
-    }
-  }, [removeProjectMutation]);
+  const deleteProjectFromCloud = useCallback(
+    async (localId: string) => {
+      try {
+        const result = await removeProjectMutation({ localId });
+        return result.deleted;
+      } catch (error) {
+        console.error('[CloudSync] Failed to delete project from cloud:', error);
+        return false;
+      }
+    },
+    [removeProjectMutation],
+  );
 
+  // Sync all cloud projects to local
   const syncAllFromCloud = useCallback(async () => {
     if (!cloudProjects || isSyncingRef.current) return;
     isSyncingRef.current = true;
+
     try {
-      await Promise.all(cloudProjects.map(async (cp) => syncProjectFromCloud(cp)));
+      console.log(`[CloudSync] Syncing ${cloudProjects.length} projects from cloud...`);
+      const results = await Promise.all(
+        cloudProjects.map(async (cloudProject) => {
+          const result = await syncProjectFromCloud(cloudProject);
+          return { localId: cloudProject.localId, ...result };
+        }),
+      );
+      console.log('[CloudSync] Sync from cloud results:', results);
     } catch (error) {
       console.error('[CloudSync] Failed to sync from cloud:', error);
     } finally {
@@ -67,37 +138,60 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     }
   }, [cloudProjects]);
 
+  // Sync on mount if requested
   useEffect(() => {
     if (syncOnMount && cloudProjects) {
       void syncAllFromCloud();
     }
   }, [syncOnMount, cloudProjects, syncAllFromCloud]);
 
+  // Sync current project on unmount (in-app navigation)
   useEffect(() => {
     return () => {
+      const payload = beaconPayloadRef.current;
+      if (payload) {
+        void syncPayloadToCloud(payload);
+        return;
+      }
+
       const projectId = currentProjectIdRef.current;
       if (projectId) {
         void syncProjectToCloud(projectId);
       }
     };
-  }, [syncProjectToCloud]);
+  }, [syncPayloadToCloud, syncProjectToCloud]);
 
+  // Opportunistic sync when tab is backgrounded.
   useEffect(() => {
-    const handleVisibilityOrPageHide = () => {
-      const projectId = currentProjectIdRef.current;
-      if (projectId && document.visibilityState === 'hidden') {
-        void syncProjectToCloud(projectId);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'hidden') return;
+
+      const payload = beaconPayloadRef.current;
+      if (payload) {
+        void syncPayloadToCloud(payload);
       }
     };
 
-    window.addEventListener('pagehide', handleVisibilityOrPageHide);
-    document.addEventListener('visibilitychange', handleVisibilityOrPageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [syncPayloadToCloud]);
 
-    return () => {
-      window.removeEventListener('pagehide', handleVisibilityOrPageHide);
-      document.removeEventListener('visibilitychange', handleVisibilityOrPageHide);
+  // Fire-and-forget beacon for hard unload (refresh/tab close)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const payload = beaconPayloadRef.current;
+      const beaconUrl = getSyncBeaconUrl();
+
+      if (!payload || !beaconUrl || typeof navigator.sendBeacon !== 'function') {
+        return;
+      }
+
+      navigator.sendBeacon(beaconUrl, JSON.stringify(payload));
     };
-  }, [syncProjectToCloud]);
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   return {
     syncAllToCloud,

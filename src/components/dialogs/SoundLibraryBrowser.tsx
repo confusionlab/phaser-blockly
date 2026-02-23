@@ -187,7 +187,9 @@ export function SoundLibraryBrowser({
                     className="shrink-0"
                     onClick={(e) => {
                       e.stopPropagation();
-                      item.url && handlePlay(item.url, item._id);
+                      if (item.url) {
+                        handlePlay(item.url, item._id);
+                      }
                     }}
                   >
                     {playingId === item._id ? (

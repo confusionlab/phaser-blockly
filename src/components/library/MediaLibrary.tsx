@@ -183,7 +183,9 @@ export function MediaLibrary({ open, onOpenChange, onSelect }: MediaLibraryProps
                         size="icon-sm"
                         onClick={(e) => {
                           e.stopPropagation();
-                          item.url && handlePlay(item.url, item._id);
+                          if (item.url) {
+                            handlePlay(item.url, item._id);
+                          }
                         }}
                       >
                         {playingId === item._id ? <Pause className="size-4" /> : <Play className="size-4" />}

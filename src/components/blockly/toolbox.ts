@@ -11,7 +11,6 @@ const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
 // Custom FieldDropdown that preserves unknown values (for object IDs that may not be loaded yet)
 class PreservingFieldDropdown extends Blockly.FieldDropdown {
   // Override doClassValidation_ to accept any value, not just those in the dropdown
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   protected override doClassValidation_(newValue?: any): string | null {
     // Always accept the value - we'll handle unknown values in getText
     if (newValue === null || newValue === undefined) {
@@ -52,7 +51,6 @@ class PreservingFieldDropdown extends Blockly.FieldDropdown {
 // Custom FieldDropdown for variables that preserves unknown values
 class VariableFieldDropdown extends Blockly.FieldDropdown {
   // Override doClassValidation_ to accept any value
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   protected override doClassValidation_(newValue?: any): string | null {
     // Always accept the value - we'll handle unknown values in getText
     if (newValue === null || newValue === undefined) {
@@ -307,7 +305,6 @@ function createObjectPickerValidator(excludeCurrentObject: boolean = true) {
 // Register custom blocks
 registerCustomBlocks();
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getToolboxConfig(): any {
   return {
     kind: 'categoryToolbox',

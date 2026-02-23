@@ -702,7 +702,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           const dx = pos.x - dragStart.x;
           const dy = pos.y - dragStart.y;
 
-          let newCollider = { ...origColl };
+          const newCollider = { ...origColl };
 
           if (dragMode === 'move') {
             newCollider.offsetX = origColl.offsetX + dx;
