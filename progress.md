@@ -78,3 +78,23 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
   - Required skill Playwright client run attempted but blocked in this environment: `ERR_MODULE_NOT_FOUND: Cannot find package \"playwright\"` from `$CODEX_HOME/skills/develop-web-game/scripts/web_game_playwright_client.js`.
 - Additional validation:
   - `pnpm exec eslint src/components/stage/ObjectInspector.tsx` passes.
+- Improved stage selection reliability + added marquee box-select in `/Users/kihaahn/code/0040-pochacoding/src/components/stage/PhaserCanvas.tsx`:
+  - Stage object click selection now supports modifiers in-canvas:
+    - plain click: single select
+    - Shift+click: additive select
+    - Cmd/Ctrl+click: toggle select
+  - Selection visuals/gizmos are now synchronized from current editor store state every frame in editor scene, preventing stale hidden gizmos.
+  - Added empty-stage marquee selection (left-drag on background) in editor mode:
+    - plain drag: replace selection
+    - Shift+drag: add to selection
+    - Cmd/Ctrl+drag: toggle selection in dragged region
+    - plain click on empty stage clears selection
+  - Added immediate editor hit-area interactivity setup with one-frame fallback guard to reduce intermittent non-selectable objects.
+- Validation:
+  - `pnpm build` passes.
+  - Required skill Playwright client run attempted and still blocked in environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"` from `$CODEX_HOME/skills/develop-web-game/scripts/web_game_playwright_client.js`.
+- Follow-up reliability hardening in stage input:
+  - Added `pointerupoutside` handling to end panning and finalize marquee selection when mouse-up happens outside the canvas.
+- Validation:
+  - `pnpm build` passes after the follow-up fix.
+- Re-ran required skill Playwright client after pointerupoutside hardening; still blocked with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.

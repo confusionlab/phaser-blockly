@@ -44,17 +44,19 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const playModeInitialSceneRef = useRef<string | null>(null);
 
   const { project, updateObject } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectObject, selectScene, showColliderOutlines, viewMode } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObject, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
   const selectedSceneIdRef = useRef(selectedSceneId);
   const selectedObjectIdRef = useRef(selectedObjectId);
+  const selectedObjectIdsRef = useRef(selectedObjectIds);
   const isPlayingRef = useRef(isPlaying);
   const canvasDimensionsRef = useRef({ width: 800, height: 600 });
 
   // Keep refs in sync
   selectedSceneIdRef.current = selectedSceneId;
   selectedObjectIdRef.current = selectedObjectId;
+  selectedObjectIdsRef.current = selectedObjectIds;
   isPlayingRef.current = isPlaying;
   if (project) {
     canvasDimensionsRef.current = { width: project.settings.canvasWidth, height: project.settings.canvasHeight };
@@ -75,6 +77,37 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       updateObject(sceneId, objId, updates);
     }
   }, [updateObject]);
+
+  const handleStageObjectPointerDown = useCallback((pointer: Phaser.Input.Pointer, objectId: string) => {
+    if (!pointer.leftButtonDown()) return;
+
+    const state = useEditorStore.getState();
+    const event = pointer.event as MouseEvent | PointerEvent | undefined;
+    const isToggleSelection = !!event && (event.metaKey || event.ctrlKey);
+    const isAddSelection = !!event && event.shiftKey;
+    const currentSelection = state.selectedObjectIds.length > 0
+      ? state.selectedObjectIds
+      : (state.selectedObjectId ? [state.selectedObjectId] : []);
+
+    if (isToggleSelection) {
+      const alreadySelected = currentSelection.includes(objectId);
+      const nextIds = alreadySelected
+        ? currentSelection.filter(id => id !== objectId)
+        : [...currentSelection, objectId];
+      state.selectObjects(nextIds, nextIds.includes(objectId) ? objectId : (nextIds[0] ?? null));
+      return;
+    }
+
+    if (isAddSelection) {
+      const nextIds = currentSelection.includes(objectId)
+        ? currentSelection
+        : [...currentSelection, objectId];
+      state.selectObjects(nextIds, objectId);
+      return;
+    }
+
+    state.selectObject(objectId);
+  }, []);
 
   // Initialize Phaser
   useEffect(() => {
@@ -198,7 +231,21 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             } else {
               // Get current viewMode and cycleViewMode from store
               const { viewMode: currentViewMode, cycleViewMode: cycleFn } = useEditorStore.getState();
-              createEditorScene(this, selectedScene, selectObject, selectedObjectId, handleObjectDragEnd, canvasWidth, canvasHeight, project.components || [], currentViewMode, cycleFn);
+              createEditorScene(
+                this,
+                selectedScene,
+                selectObject,
+                selectObjects,
+                selectedObjectId,
+                selectedObjectIds,
+                handleStageObjectPointerDown,
+                handleObjectDragEnd,
+                canvasWidth,
+                canvasHeight,
+                project.components || [],
+                currentViewMode,
+                cycleFn,
+              );
             }
           },
           update: function(this: Phaser.Scene) {
@@ -410,6 +457,11 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
     const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene || !selectedScene) return;
+    const selectedIds = new Set(
+      selectedObjectIdsRef.current.length > 0
+        ? selectedObjectIdsRef.current
+        : (selectedObjectIdRef.current ? [selectedObjectIdRef.current] : []),
+    );
 
     // Get current object IDs in scene data
     const sceneObjectIds = new Set(selectedScene.objects.map(o => o.id));
@@ -438,29 +490,44 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         // Create new object
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
         const ch = phaserScene.data.get('canvasHeight') as number || 600;
-        container = createObjectVisual(phaserScene, obj, true, cw, ch, components); // true = editor mode
-        const isSelected = obj.id === selectedObjectId;
-        container.setData('selected', isSelected);
+        const newContainer = createObjectVisual(phaserScene, obj, true, cw, ch, components); // true = editor mode
+        container = newContainer;
+        const isSelected = selectedIds.has(obj.id);
+        newContainer.setData('selected', isSelected);
+
+        const setSelectionVisible = (visible: boolean) => {
+          const selRect = newContainer.getByName('selection') as Phaser.GameObjects.Rectangle;
+          if (selRect) selRect.setVisible(visible);
+
+          const handleNames = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se',
+                              'handle_n', 'handle_s', 'handle_e', 'handle_w',
+                              'handle_rotate', 'rotate_line'];
+          for (const name of handleNames) {
+            const handle = newContainer.getByName(name);
+            if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(visible);
+          }
+
+          if (visible) {
+            const updateGizmo = newContainer.getData('updateGizmoPositions') as (() => void) | undefined;
+            if (updateGizmo) updateGizmo();
+          }
+        };
+        newContainer.setData('setSelectionVisible', setSelectionVisible);
 
         // Set initial selection visibility
-        const selectionRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
-        if (selectionRect) {
-          selectionRect.setVisible(isSelected);
-        }
+        setSelectionVisible(isSelected);
 
-        container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-          if (pointer.leftButtonDown()) {
-            selectObject(obj.id);
-          }
+        newContainer.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+          handleStageObjectPointerDown(pointer, obj.id);
         });
 
-        container.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-          container!.x = dragX;
-          container!.y = dragY;
+        newContainer.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+          newContainer.x = dragX;
+          newContainer.y = dragY;
         });
 
-        container.on('dragend', () => {
-          handleObjectDragEnd(obj.id, container!.x, container!.y);
+        newContainer.on('dragend', () => {
+          handleObjectDragEnd(obj.id, newContainer.x, newContainer.y);
         });
       } else {
         // Update existing object - convert user coords to Phaser coords
@@ -597,15 +664,20 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       container.setDepth(objectCount - index);
 
       // Update selection visual
-      const isSelected = obj.id === selectedObjectId;
+      const isSelected = selectedIds.has(obj.id);
       container.setData('selected', isSelected);
 
-      const selectionRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
-      if (selectionRect) {
-        selectionRect.setVisible(isSelected);
+      const setSelectionVisible = container.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
+      if (setSelectionVisible) {
+        setSelectionVisible(isSelected);
+      } else {
+        const selectionRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
+        if (selectionRect) {
+          selectionRect.setVisible(isSelected);
+        }
       }
     });
-  }, [selectedScene?.objects, selectedObjectId, isPlaying, selectObject, handleObjectDragEnd, project?.components]);
+  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, handleStageObjectPointerDown, project?.components]);
 
   // Update background color when it changes (in editor mode only)
   useEffect(() => {
@@ -675,7 +747,10 @@ function createEditorScene(
   scene: Phaser.Scene,
   sceneData: SceneData | undefined,
   selectObject: (id: string | null) => void,
+  selectObjects: (ids: string[], primaryObjectId?: string | null) => void,
   selectedObjectId: string | null,
+  selectedObjectIds: string[],
+  onObjectPointerDown: (pointer: Phaser.Input.Pointer, objectId: string) => void,
   onDragEnd: (objId: string, x: number, y: number, scaleX?: number, scaleY?: number, rotation?: number) => void,
   canvasWidth: number,
   canvasHeight: number,
@@ -797,6 +872,15 @@ function createEditorScene(
     }
   });
 
+  scene.input.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => {
+    if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
+      isPanning = false;
+    }
+    if (isMarqueeSelecting && marqueePointerId === pointer.id) {
+      endMarqueeSelection(pointer);
+    }
+  });
+
   // Prevent context menu on right click
   scene.game.canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -847,12 +931,129 @@ function createEditorScene(
     }
   }, { passive: false });
 
+  scene.input.setTopOnly(true);
+
+  const marqueeGraphics = scene.add.graphics();
+  marqueeGraphics.setDepth(10_000);
+  marqueeGraphics.setVisible(false);
+
+  let isMarqueeSelecting = false;
+  let marqueeStartX = 0;
+  let marqueeStartY = 0;
+  let marqueeHasMoved = false;
+  let marqueePointerId: number | null = null;
+  let marqueeMode: 'replace' | 'add' | 'toggle' = 'replace';
+
+  const backgroundHitZone = scene.add.zone(canvasWidth / 2, canvasHeight / 2, 200_000, 200_000);
+  backgroundHitZone.setDepth(-10_000);
+  backgroundHitZone.setInteractive();
+
+  const drawMarquee = (pointer: Phaser.Input.Pointer) => {
+    const minX = Math.min(marqueeStartX, pointer.worldX);
+    const minY = Math.min(marqueeStartY, pointer.worldY);
+    const width = Math.abs(pointer.worldX - marqueeStartX);
+    const height = Math.abs(pointer.worldY - marqueeStartY);
+    marqueeGraphics.clear();
+    marqueeGraphics.fillStyle(0x4a90d9, 0.12);
+    marqueeGraphics.fillRect(minX, minY, width, height);
+    marqueeGraphics.lineStyle(1, 0x4a90d9, 1);
+    marqueeGraphics.strokeRect(minX, minY, width, height);
+    marqueeGraphics.setVisible(true);
+  };
+
+  const endMarqueeSelection = (pointer: Phaser.Input.Pointer) => {
+    marqueeGraphics.clear();
+    marqueeGraphics.setVisible(false);
+
+    const currentMode = scene.data.get('viewMode');
+    if (currentMode !== 'editor') {
+      isMarqueeSelecting = false;
+      marqueePointerId = null;
+      return;
+    }
+
+    const pointerWorldX = pointer.worldX;
+    const pointerWorldY = pointer.worldY;
+    const minX = Math.min(marqueeStartX, pointerWorldX);
+    const minY = Math.min(marqueeStartY, pointerWorldY);
+    const maxX = Math.max(marqueeStartX, pointerWorldX);
+    const maxY = Math.max(marqueeStartY, pointerWorldY);
+
+    if (!marqueeHasMoved) {
+      if (marqueeMode === 'replace') {
+        selectObject(null);
+      }
+      isMarqueeSelecting = false;
+      marqueePointerId = null;
+      return;
+    }
+
+    const hits = new Set<string>();
+    scene.children.each((child: Phaser.GameObjects.GameObject) => {
+      if (!(child instanceof Phaser.GameObjects.Container) || !child.getData('objectData')) return;
+      const objectHitRect = child.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+      const bounds = objectHitRect ? objectHitRect.getBounds() : child.getBounds();
+      const intersects = bounds.right >= minX && bounds.left <= maxX && bounds.bottom >= minY && bounds.top <= maxY;
+      if (intersects) {
+        hits.add(child.name);
+      }
+    });
+
+    const orderedHitIds = sceneData.objects
+      .map((obj) => obj.id)
+      .filter((id) => hits.has(id));
+
+    const storeState = useEditorStore.getState();
+    const currentSelected = storeState.selectedObjectIds.length > 0
+      ? storeState.selectedObjectIds
+      : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+    let nextSelection: string[] = orderedHitIds;
+
+    if (marqueeMode === 'add') {
+      nextSelection = Array.from(new Set([...currentSelected, ...orderedHitIds]));
+    } else if (marqueeMode === 'toggle') {
+      const toggled = new Set(currentSelected);
+      for (const id of orderedHitIds) {
+        if (toggled.has(id)) {
+          toggled.delete(id);
+        } else {
+          toggled.add(id);
+        }
+      }
+      nextSelection = sceneData.objects.map((obj) => obj.id).filter((id) => toggled.has(id));
+    }
+
+    selectObjects(nextSelection, nextSelection[0] ?? null);
+    isMarqueeSelecting = false;
+    marqueePointerId = null;
+  };
+
+  backgroundHitZone.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    const currentMode = scene.data.get('viewMode');
+    if (currentMode !== 'editor' || !pointer.leftButtonDown()) return;
+
+    const event = pointer.event as MouseEvent | PointerEvent | undefined;
+    marqueeMode = event && (event.metaKey || event.ctrlKey)
+      ? 'toggle'
+      : (event?.shiftKey ? 'add' : 'replace');
+    marqueeStartX = pointer.worldX;
+    marqueeStartY = pointer.worldY;
+    marqueeHasMoved = false;
+    marqueePointerId = pointer.id;
+    isMarqueeSelecting = true;
+  });
+
   // Create objects (reverse depth so top of list = top render)
   const objectCount = sceneData.objects.length;
+  const initialSelectedIds = new Set(
+    selectedObjectIds.length > 0
+      ? selectedObjectIds
+      : (selectedObjectId ? [selectedObjectId] : []),
+  );
   sceneData.objects.forEach((obj: GameObject, index: number) => {
     const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight, components); // true = editor mode
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
-    const isSelected = obj.id === selectedObjectId;
+    const isSelected = initialSelectedIds.has(obj.id);
     container.setData('selected', isSelected);
 
     // Set initial selection and gizmo visibility
@@ -879,10 +1080,7 @@ function createEditorScene(
     container.setData('setSelectionVisible', setSelectionVisible);
 
     container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      // Only select on left click
-      if (pointer.leftButtonDown()) {
-        selectObject(obj.id);
-      }
+      onObjectPointerDown(pointer, obj.id);
     });
 
     container.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
@@ -902,10 +1100,33 @@ function createEditorScene(
   });
 
   // Update selection visuals on scene update
+  scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+    if (!isMarqueeSelecting || marqueePointerId !== pointer.id) return;
+    const dx = Math.abs(pointer.worldX - marqueeStartX);
+    const dy = Math.abs(pointer.worldY - marqueeStartY);
+    if (dx > 2 || dy > 2) {
+      marqueeHasMoved = true;
+      drawMarquee(pointer);
+    }
+  });
+
+  scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+    if (isMarqueeSelecting && marqueePointerId === pointer.id) {
+      endMarqueeSelection(pointer);
+    }
+  });
+
   scene.events.on('update', () => {
+    const storeState = useEditorStore.getState();
+    const selectedSet = new Set(
+      storeState.selectedObjectIds.length > 0
+        ? storeState.selectedObjectIds
+        : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []),
+    );
     scene.children.each((child: Phaser.GameObjects.GameObject) => {
       if (child instanceof Phaser.GameObjects.Container && child.getData('objectData')) {
-        const isSelected = child.getData('selected');
+        const isSelected = selectedSet.has(child.name);
+        child.setData('selected', isSelected);
         const setSelectionVisible = child.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
         if (setSelectionVisible) {
           setSelectionVisible(isSelected);
@@ -1383,10 +1604,11 @@ function createObjectVisual(
     let dragOffsetX = 0;
     let dragOffsetY = 0;
 
-    // Set up interactive after adding to container, deferred to next frame
-    // to ensure input system is ready
-    scene.time.delayedCall(0, () => {
-      if (!hitRect || !hitRect.scene) return; // Guard against destroyed objects
+    // Set up editor interactivity immediately (with one-frame fallback for scene init edge cases).
+    const setupEditorInteractivity = () => {
+      if (!hitRect || !hitRect.scene) return;
+      if (container.getData('editorInteractivityBound')) return;
+
       hitRect.setInteractive({ useHandCursor: true });
       scene.input.setDraggable(hitRect);
 
@@ -1492,7 +1714,12 @@ function createObjectVisual(
           container.emit('transformend');
         });
       }
-    });
+
+      container.setData('editorInteractivityBound', true);
+    };
+
+    setupEditorInteractivity();
+    scene.time.delayedCall(0, setupEditorInteractivity);
 
     // Function to update gizmo handle positions based on current bounds
     const updateGizmoPositions = () => {
