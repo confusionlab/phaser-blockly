@@ -43,6 +43,7 @@ export function EditorLayout() {
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isLoading, setIsLoading] = useState(false);
   const hoveredPanelRef = useRef<HoveredPanel>(null);
+  const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
   useCloudSync({
@@ -65,6 +66,22 @@ export function EditorLayout() {
   useEffect(() => {
     hoveredPanelRef.current = hoveredPanel;
   }, [hoveredPanel]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      lastPointerPositionRef.current = { x: event.clientX, y: event.clientY };
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    return () => window.removeEventListener('pointermove', handlePointerMove);
+  }, []);
+
+  const getPanelFromElement = useCallback((element: Element | null): HoveredPanel => {
+    const panelElement = element?.closest('[data-editor-panel]');
+    if (!panelElement) return null;
+    const panel = panelElement.getAttribute('data-editor-panel');
+    return panel === 'code' || panel === 'stage' ? panel : null;
+  }, []);
 
   // Run local project migrations proactively so every project stays schema-compatible.
   useEffect(() => {
@@ -138,9 +155,18 @@ export function EditorLayout() {
       if (fullscreenPanel) {
         // Exit fullscreen
         setFullscreenPanel(null);
-      } else if (hoveredPanelRef.current) {
-        // Enter fullscreen for hovered panel
-        setFullscreenPanel(hoveredPanelRef.current);
+      } else {
+        const panelFromTarget = getPanelFromElement(target);
+        const pointerPosition = lastPointerPositionRef.current;
+        const elementUnderPointer = pointerPosition
+          ? document.elementFromPoint(pointerPosition.x, pointerPosition.y)
+          : null;
+        const panelFromPointer = getPanelFromElement(elementUnderPointer);
+        const panelToFullscreen = panelFromPointer ?? panelFromTarget ?? hoveredPanelRef.current;
+
+        if (panelToFullscreen) {
+          setFullscreenPanel(panelToFullscreen);
+        }
       }
       return;
     }
@@ -217,6 +243,7 @@ export function EditorLayout() {
     selectedObjectId,
     duplicateObject,
     selectObject,
+    getPanelFromElement,
   ]);
 
   useEffect(() => {
@@ -306,6 +333,7 @@ export function EditorLayout() {
             {/* Object Editor - Left Panel */}
             <div
               className="h-full border-r"
+              data-editor-panel="code"
               style={{ width: `${dividerPosition}%` }}
               onMouseEnter={() => setHoveredPanel('code')}
               onMouseLeave={() => setHoveredPanel(null)}
@@ -322,6 +350,7 @@ export function EditorLayout() {
             {/* Stage Panel - Right Panel */}
             <div
               className="h-full overflow-hidden"
+              data-editor-panel="stage"
               style={{ width: `${100 - dividerPosition}%` }}
               onMouseEnter={() => setHoveredPanel('stage')}
               onMouseLeave={() => setHoveredPanel(null)}

@@ -9,9 +9,12 @@ type TouchDirection = 'TOP' | 'BOTTOM' | 'LEFT' | 'RIGHT' | 'SIDE';
 
 // Direction sensing tuning:
 // - CONTACT_SLOP_PX: allows tiny separation/precision errors to still count as touching direction.
-// - SIDE_BIAS_PX: makes LEFT/RIGHT/SIDE detection less strict around corners.
+// - SIDE_BIAS_PX: slight preference for LEFT/RIGHT when the hit is truly side-dominant.
+// - SIDE_MIN_OVERLAP_*: requires meaningful vertical overlap before classifying as LEFT/RIGHT.
 const TOUCH_DIRECTION_CONTACT_SLOP_PX = 4;
-const TOUCH_DIRECTION_SIDE_BIAS_PX = 10;
+const TOUCH_DIRECTION_SIDE_BIAS_PX = 2;
+const TOUCH_DIRECTION_SIDE_MIN_OVERLAP_PX = 4;
+const TOUCH_DIRECTION_SIDE_MIN_OVERLAP_RATIO = 0.3;
 
 interface BoundsSnapshot {
   minX: number;
@@ -810,9 +813,18 @@ export class RuntimeEngine {
     const horizontalDistance = Math.min(leftDistance, rightDistance);
     const verticalDistance = Math.min(topDistance, bottomDistance);
 
-    // Bias toward horizontal contact so LEFT/RIGHT/SIDE is easier to trigger
-    // when collisions are near a corner.
-    if (horizontalDistance <= verticalDistance + TOUCH_DIRECTION_SIDE_BIAS_PX) {
+    const sourceHeight = sourceBounds.maxY - sourceBounds.minY;
+    const targetHeight = targetBounds.maxY - targetBounds.minY;
+    const minHeight = Math.max(1, Math.min(sourceHeight, targetHeight));
+    const requiredSideOverlapY = Math.max(
+      TOUCH_DIRECTION_SIDE_MIN_OVERLAP_PX,
+      minHeight * TOUCH_DIRECTION_SIDE_MIN_OVERLAP_RATIO
+    );
+    const hasClearSideOverlap = overlapY + TOUCH_DIRECTION_CONTACT_SLOP_PX >= requiredSideOverlapY;
+
+    // Only classify as LEFT/RIGHT when there is enough vertical overlap to make
+    // side contact obvious; this avoids over-triggering on tiny corner touches.
+    if (hasClearSideOverlap && horizontalDistance <= verticalDistance + TOUCH_DIRECTION_SIDE_BIAS_PX) {
       return centerDeltaX < 0 ? 'LEFT' : 'RIGHT';
     }
 

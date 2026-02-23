@@ -341,6 +341,29 @@ export function SpriteShelf() {
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const folders = selectedScene?.objectFolders ?? [];
 
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current || !contextMenuPosition) return;
+
+    const margin = 8;
+    const menuRect = contextMenuRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let nextLeft = contextMenuPosition.left;
+    let nextTop = contextMenuPosition.top;
+
+    if (nextLeft + menuRect.width + margin > viewportWidth) {
+      nextLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
+    }
+    if (nextTop + menuRect.height + margin > viewportHeight) {
+      nextTop = Math.max(margin, viewportHeight - menuRect.height - margin);
+    }
+
+    if (nextLeft !== contextMenuPosition.left || nextTop !== contextMenuPosition.top) {
+      setContextMenuPosition({ left: nextLeft, top: nextTop });
+    }
+  }, [contextMenu, contextMenuPosition, folders.length]);
+
   if (!selectedScene) return null;
 
   const handleAddObject = () => {
@@ -435,29 +458,6 @@ export function SpriteShelf() {
     setContextMenuPosition(null);
     setContextMenu(null);
   };
-
-  useLayoutEffect(() => {
-    if (!contextMenu || !contextMenuRef.current || !contextMenuPosition) return;
-
-    const margin = 8;
-    const menuRect = contextMenuRef.current.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    let nextLeft = contextMenuPosition.left;
-    let nextTop = contextMenuPosition.top;
-
-    if (nextLeft + menuRect.width + margin > viewportWidth) {
-      nextLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
-    }
-    if (nextTop + menuRect.height + margin > viewportHeight) {
-      nextTop = Math.max(margin, viewportHeight - menuRect.height - margin);
-    }
-
-    if (nextLeft !== contextMenuPosition.left || nextTop !== contextMenuPosition.top) {
-      setContextMenuPosition({ left: nextLeft, top: nextTop });
-    }
-  }, [contextMenu, contextMenuPosition, folders.length]);
 
   const handleMoveObjectToFolder = (folderId: string | null) => {
     if (!contextMenu || !selectedSceneId) return;

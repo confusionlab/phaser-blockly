@@ -19,6 +19,21 @@ interface CloudSyncOptions {
   currentProject?: Project | null;
 }
 
+type LegacySyncPayload = Pick<
+  ProjectSyncPayload,
+  'localId' | 'name' | 'data' | 'createdAt' | 'updatedAt'
+>;
+
+function toLegacySyncPayload(payload: ProjectSyncPayload): LegacySyncPayload {
+  return {
+    localId: payload.localId,
+    name: payload.name,
+    data: payload.data,
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt,
+  };
+}
+
 function getSyncBeaconUrl(): string | null {
   const siteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
   if (siteUrl) {
@@ -55,7 +70,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     async (payload: ProjectSyncPayload) => {
       if (isSyncingRef.current) return;
       try {
-        await syncSingleMutation(payload);
+        await syncSingleMutation(toLegacySyncPayload(payload));
       } catch (error) {
         console.error('[CloudSync] Failed to sync payload:', error);
       }
@@ -76,7 +91,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       }
 
       console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
-      const results = await syncMutation({ projects: localProjects });
+      const results = await syncMutation({ projects: localProjects.map(toLegacySyncPayload) });
       console.log('[CloudSync] Sync results:', results);
     } catch (error) {
       console.error('[CloudSync] Failed to sync to cloud:', error);
@@ -95,7 +110,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         if (!project) return;
 
         console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
-        const result = await syncSingleMutation(project);
+        const result = await syncSingleMutation(toLegacySyncPayload(project));
         console.log('[CloudSync] Single sync result:', result);
       } catch (error) {
         console.error('[CloudSync] Failed to sync project:', error);
@@ -171,7 +186,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return;
       }
 
-      navigator.sendBeacon(beaconUrl, JSON.stringify(payload));
+      navigator.sendBeacon(beaconUrl, JSON.stringify(toLegacySyncPayload(payload)));
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
