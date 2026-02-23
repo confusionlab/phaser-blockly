@@ -98,3 +98,13 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
 - Validation:
   - `pnpm build` passes after the follow-up fix.
 - Re-ran required skill Playwright client after pointerupoutside hardening; still blocked with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.
+- Implemented pixel-perfect stage single-click selection in `/Users/kihaahn/code/0040-pochacoding/src/components/stage/PhaserCanvas.tsx`:
+  - Added top-down object picking by render order/depth, selecting the first object whose sprite pixel alpha at the click point is opaque (`getPixelAlpha`-based).
+  - Transparent pixels now fall through to objects underneath (raycast-style hit behavior).
+  - Removed per-object pointerdown-based selection dependency and removed the large interactive background zone used for marquee-start (which could interfere with hit routing).
+  - Kept marquee multi-select, but it now starts from a global pointerdown only when no opaque object pixel was hit.
+  - Added gizmo-handle hit guard so transform handle interactions don't accidentally trigger underlying-object selection.
+- Validation:
+  - `pnpm build` passes.
+  - `pnpm exec eslint src/components/stage/PhaserCanvas.tsx` runs with existing hook-dependency warnings only.
+  - Required skill Playwright client run attempted; still blocked by missing `playwright` package (`ERR_MODULE_NOT_FOUND`).

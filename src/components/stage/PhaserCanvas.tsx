@@ -12,6 +12,8 @@ registerCodeGenerators();
 
 // Track runtimes for each scene (for pause/resume across scene switches)
 const sceneRuntimes: Map<string, RuntimeEngine> = new Map();
+const GIZMO_HANDLE_NAMES = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se', 'handle_n', 'handle_s', 'handle_e', 'handle_w', 'handle_rotate'];
+const PIXEL_HIT_ALPHA_TOLERANCE = 1;
 
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
@@ -29,6 +31,69 @@ function phaserToUser(phaserX: number, phaserY: number, canvasWidth: number, can
     x: phaserX - canvasWidth / 2,
     y: canvasHeight / 2 - phaserY
   };
+}
+
+function isPointOnOpaqueSpritePixel(scene: Phaser.Scene, sprite: Phaser.GameObjects.Image, worldX: number, worldY: number): boolean {
+  if (!sprite.visible || !sprite.active || sprite.alpha <= 0) return false;
+  if (!sprite.texture || !sprite.frame) return false;
+
+  const local = sprite.getWorldTransformMatrix().applyInverse(worldX, worldY, new Phaser.Math.Vector2());
+  const localX = local.x + sprite.displayOriginX;
+  const localY = local.y + sprite.displayOriginY;
+  const spriteWidth = sprite.width;
+  const spriteHeight = sprite.height;
+
+  if (spriteWidth <= 0 || spriteHeight <= 0) return false;
+  if (localX < 0 || localY < 0 || localX >= spriteWidth || localY >= spriteHeight) return false;
+
+  const frame = sprite.frame;
+  const normalizedX = Phaser.Math.Clamp(localX / spriteWidth, 0, 0.999999);
+  const normalizedY = Phaser.Math.Clamp(localY / spriteHeight, 0, 0.999999);
+  const textureX = Math.floor(frame.cutX + normalizedX * frame.cutWidth);
+  const textureY = Math.floor(frame.cutY + normalizedY * frame.cutHeight);
+  const alpha = scene.textures.getPixelAlpha(textureX, textureY, sprite.texture.key, frame.name);
+
+  if (alpha === null || alpha === undefined) {
+    // Fallback if texture pixel lookup is unavailable for this source.
+    return true;
+  }
+  return alpha >= PIXEL_HIT_ALPHA_TOLERANCE;
+}
+
+function pickTopObjectIdAtWorldPoint(scene: Phaser.Scene, worldX: number, worldY: number): string | null {
+  const containers: Phaser.GameObjects.Container[] = [];
+  scene.children.each((child: Phaser.GameObjects.GameObject) => {
+    if (child instanceof Phaser.GameObjects.Container && child.getData('objectData')) {
+      containers.push(child);
+    }
+  });
+
+  const displayList = scene.children;
+  containers.sort((a, b) => {
+    if (a.depth !== b.depth) return b.depth - a.depth;
+    return displayList.getIndex(b) - displayList.getIndex(a);
+  });
+
+  for (const container of containers) {
+    if (!container.visible || !container.active || container.alpha <= 0) continue;
+
+    const sprite = container.getByName('sprite') as Phaser.GameObjects.Image | null;
+    if (sprite) {
+      if (isPointOnOpaqueSpritePixel(scene, sprite, worldX, worldY)) {
+        return container.name;
+      }
+      continue;
+    }
+
+    // Placeholder objects without a sprite: fallback to geometric hit.
+    const hitRect = container.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+    const bounds = hitRect ? hitRect.getBounds() : container.getBounds();
+    if (bounds.contains(worldX, worldY)) {
+      return container.name;
+    }
+  }
+
+  return null;
 }
 
 interface PhaserCanvasProps {
@@ -499,10 +564,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           const selRect = newContainer.getByName('selection') as Phaser.GameObjects.Rectangle;
           if (selRect) selRect.setVisible(visible);
 
-          const handleNames = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se',
-                              'handle_n', 'handle_s', 'handle_e', 'handle_w',
-                              'handle_rotate', 'rotate_line'];
-          for (const name of handleNames) {
+          for (const name of [...GIZMO_HANDLE_NAMES, 'rotate_line']) {
             const handle = newContainer.getByName(name);
             if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(visible);
           }
@@ -516,10 +578,6 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
         // Set initial selection visibility
         setSelectionVisible(isSelected);
-
-        newContainer.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-          handleStageObjectPointerDown(pointer, obj.id);
-        });
 
         newContainer.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
           newContainer.x = dragX;
@@ -677,7 +735,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         }
       }
     });
-  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, handleStageObjectPointerDown, project?.components]);
+  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, project?.components]);
 
   // Update background color when it changes (in editor mode only)
   useEffect(() => {
@@ -944,10 +1002,6 @@ function createEditorScene(
   let marqueePointerId: number | null = null;
   let marqueeMode: 'replace' | 'add' | 'toggle' = 'replace';
 
-  const backgroundHitZone = scene.add.zone(canvasWidth / 2, canvasHeight / 2, 200_000, 200_000);
-  backgroundHitZone.setDepth(-10_000);
-  backgroundHitZone.setInteractive();
-
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
     const minX = Math.min(marqueeStartX, pointer.worldX);
     const minY = Math.min(marqueeStartY, pointer.worldY);
@@ -1028,16 +1082,55 @@ function createEditorScene(
     marqueePointerId = null;
   };
 
-  backgroundHitZone.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+  const isPointerOverVisibleGizmo = (worldX: number, worldY: number): boolean => {
+    const { selectedObjectId: activeId, selectedObjectIds: activeIds } = useEditorStore.getState();
+    const selectedIds = activeIds.length > 0
+      ? activeIds
+      : (activeId ? [activeId] : []);
+    for (const objectId of selectedIds) {
+      const container = scene.children.getByName(objectId) as Phaser.GameObjects.Container | null;
+      if (!container) continue;
+      for (const name of GIZMO_HANDLE_NAMES) {
+        const handle = container.getByName(name) as Phaser.GameObjects.Shape | Phaser.GameObjects.Arc | null;
+        if (handle && handle.visible && handle.getBounds().contains(worldX, worldY)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    if (!pointer.leftButtonDown()) return;
+
+    const worldX = pointer.worldX;
+    const worldY = pointer.worldY;
+
+    if (isPointerOverVisibleGizmo(worldX, worldY)) {
+      return;
+    }
+
+    const pickedObjectId = pickTopObjectIdAtWorldPoint(scene, worldX, worldY);
+    if (pickedObjectId) {
+      onObjectPointerDown(pointer, pickedObjectId);
+      return;
+    }
+
     const currentMode = scene.data.get('viewMode');
-    if (currentMode !== 'editor' || !pointer.leftButtonDown()) return;
+    if (currentMode !== 'editor') {
+      const event = pointer.event as MouseEvent | PointerEvent | undefined;
+      if (!(event?.metaKey || event?.ctrlKey || event?.shiftKey)) {
+        selectObject(null);
+      }
+      return;
+    }
 
     const event = pointer.event as MouseEvent | PointerEvent | undefined;
     marqueeMode = event && (event.metaKey || event.ctrlKey)
       ? 'toggle'
       : (event?.shiftKey ? 'add' : 'replace');
-    marqueeStartX = pointer.worldX;
-    marqueeStartY = pointer.worldY;
+    marqueeStartX = worldX;
+    marqueeStartY = worldY;
     marqueeHasMoved = false;
     marqueePointerId = pointer.id;
     isMarqueeSelecting = true;
@@ -1062,10 +1155,7 @@ function createEditorScene(
       if (selRect) selRect.setVisible(visible);
 
       // Toggle gizmo handles
-      const handleNames = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se',
-                          'handle_n', 'handle_s', 'handle_e', 'handle_w',
-                          'handle_rotate', 'rotate_line'];
-      for (const name of handleNames) {
+      for (const name of [...GIZMO_HANDLE_NAMES, 'rotate_line']) {
         const handle = container.getByName(name);
         if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(visible);
       }
@@ -1078,10 +1168,6 @@ function createEditorScene(
     };
     setSelectionVisible(isSelected);
     container.setData('setSelectionVisible', setSelectionVisible);
-
-    container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      onObjectPointerDown(pointer, obj.id);
-    });
 
     container.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
       container.x = dragX;
