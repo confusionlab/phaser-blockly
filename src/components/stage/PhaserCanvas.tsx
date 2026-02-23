@@ -51,12 +51,8 @@ function isPointOnOpaqueSpritePixel(scene: Phaser.Scene, sprite: Phaser.GameObje
   if (spriteWidth <= 0 || spriteHeight <= 0) return false;
   if (localX < 0 || localY < 0 || localX >= spriteWidth || localY >= spriteHeight) return false;
 
-  const frame = sprite.frame;
-  const normalizedX = Phaser.Math.Clamp(localX / spriteWidth, 0, 0.999999);
-  const normalizedY = Phaser.Math.Clamp(localY / spriteHeight, 0, 0.999999);
-  const textureX = Math.floor(frame.cutX + normalizedX * frame.cutWidth);
-  const textureY = Math.floor(frame.cutY + normalizedY * frame.cutHeight);
-  const alpha = scene.textures.getPixelAlpha(textureX, textureY, sprite.texture.key, frame.name);
+  // Phaser pixel-perfect input passes local frame-space coordinates directly.
+  const alpha = scene.textures.getPixelAlpha(localX, localY, sprite.texture.key, sprite.frame.name);
 
   if (alpha === null || alpha === undefined) {
     // Fallback if texture pixel lookup is unavailable for this source.
@@ -1069,30 +1065,9 @@ function createEditorScene(
   groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
   groupSelectionRect.setVisible(false);
   groupSelectionRect.setDepth(10_002);
-  const groupRotateLine = scene.add.graphics();
-  groupRotateLine.setVisible(false);
-  groupRotateLine.setDepth(10_002);
-  const groupHandles: Record<string, Phaser.GameObjects.Rectangle | Phaser.GameObjects.Arc> = {
-    handle_nw: scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_ne: scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_sw: scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_se: scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_n: scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_s: scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_e: scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_w: scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-    handle_rotate: scene.add.circle(0, 0, GIZMO_ROTATE_RADIUS_PX, 0x4A90D9).setVisible(false).setDepth(10_002),
-  };
 
   const setGroupGizmoVisible = (visible: boolean) => {
     groupSelectionRect.setVisible(visible);
-    groupRotateLine.setVisible(visible);
-    for (const handle of Object.values(groupHandles)) {
-      handle.setVisible(visible);
-    }
-    if (!visible) {
-      groupRotateLine.clear();
-    }
   };
 
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
@@ -1176,12 +1151,6 @@ function createEditorScene(
   };
 
   const isPointerOverVisibleGizmo = (worldX: number, worldY: number): boolean => {
-    for (const handle of Object.values(groupHandles)) {
-      if (handle.visible && handle.getBounds().contains(worldX, worldY)) {
-        return true;
-      }
-    }
-
     const { selectedObjectId: activeId, selectedObjectIds: activeIds } = useEditorStore.getState();
     const selectedIds = activeIds.length > 0
       ? activeIds
@@ -1415,28 +1384,11 @@ function createEditorScene(
     const centerY = minY + height / 2;
     const cameraZoom = scene.cameras.main.zoom || 1;
     const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
-    const handleSize = GIZMO_HANDLE_SIZE_PX / cameraZoom;
-    const edgeLong = GIZMO_EDGE_LONG_PX / cameraZoom;
-    const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / cameraZoom;
 
     groupSelectionRect.setPosition(centerX, centerY);
     groupSelectionRect.setSize(width, height);
     groupSelectionRect.setStrokeStyle(strokeWidth, 0x4A90D9);
     groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
-
-    groupHandles.handle_nw.setPosition(minX, minY).setDisplaySize(handleSize, handleSize);
-    groupHandles.handle_ne.setPosition(maxX, minY).setDisplaySize(handleSize, handleSize);
-    groupHandles.handle_sw.setPosition(minX, maxY).setDisplaySize(handleSize, handleSize);
-    groupHandles.handle_se.setPosition(maxX, maxY).setDisplaySize(handleSize, handleSize);
-    groupHandles.handle_n.setPosition(centerX, minY).setDisplaySize(edgeLong, handleSize);
-    groupHandles.handle_s.setPosition(centerX, maxY).setDisplaySize(edgeLong, handleSize);
-    groupHandles.handle_e.setPosition(maxX, centerY).setDisplaySize(handleSize, edgeLong);
-    groupHandles.handle_w.setPosition(minX, centerY).setDisplaySize(handleSize, edgeLong);
-    groupHandles.handle_rotate.setPosition(centerX, minY - rotateDistance).setDisplaySize((GIZMO_ROTATE_RADIUS_PX * 2) / cameraZoom, (GIZMO_ROTATE_RADIUS_PX * 2) / cameraZoom);
-
-    groupRotateLine.clear();
-    groupRotateLine.lineStyle(strokeWidth, 0x4A90D9, 1);
-    groupRotateLine.lineBetween(centerX, minY, centerX, minY - rotateDistance + (4 / cameraZoom));
 
     setGroupGizmoVisible(true);
   });

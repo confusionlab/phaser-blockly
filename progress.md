@@ -122,3 +122,17 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
   - `pnpm build` passes.
   - `pnpm exec eslint src/components/stage/PhaserCanvas.tsx` runs with existing hook-dependency warnings only.
   - Required skill Playwright client run attempted; still blocked by missing `playwright` package (`ERR_MODULE_NOT_FOUND`).
+- Fixed pixel-hit detection bug in `/Users/kihaahn/code/0040-pochacoding/src/components/stage/PhaserCanvas.tsx` that could cause click pick misses and forced marquee behavior:
+  - Opaque-pixel test now uses Phaser frame-local coordinates with `textures.getPixelAlpha(localX, localY, key, frameName)` (matching Phaser's pixel-perfect handler behavior).
+- Validation:
+  - `pnpm build` passes.
+  - `pnpm exec eslint src/components/stage/PhaserCanvas.tsx` runs with existing hook-dependency warnings only.
+  - Required skill Playwright client run attempted; still blocked by missing `playwright` package (`ERR_MODULE_NOT_FOUND`).
+- Simplified multi-selection gizmo in `/Users/kihaahn/code/0040-pochacoding/src/components/stage/PhaserCanvas.tsx` per user request:
+  - Removed multi-selection scale/rotate handles and rotate line.
+  - Multi-selection now shows only a combined bounding rectangle.
+  - This avoids blocked pointer interactions from non-functional multi-transform handles.
+- Validation:
+  - `pnpm build` passes.
+  - `pnpm exec eslint src/components/stage/PhaserCanvas.tsx` runs with existing hook-dependency warnings only.
+  - Required skill Playwright client run attempted; still blocked by missing `playwright` package (`ERR_MODULE_NOT_FOUND`).
