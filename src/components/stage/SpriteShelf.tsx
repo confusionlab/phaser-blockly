@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useLayoutEffect } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import type { Id } from '../../../convex/_generated/dataModel';
@@ -310,6 +310,7 @@ export function SpriteShelf() {
   const { project, addObject, removeObject, duplicateObject, updateObject, updateScene, addScene, makeComponent, detachFromComponent } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObject, selectObjects, selectScene } = useEditorStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; object: GameObject } | null>(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -320,6 +321,7 @@ export function SpriteShelf() {
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorRef = useRef<string | null>(null);
 
   const generateUploadUrl = useMutation(api.objectLibrary.generateUploadUrl);
@@ -425,12 +427,37 @@ export function SpriteShelf() {
 
   const handleContextMenu = (e: React.MouseEvent, object: GameObject) => {
     e.preventDefault();
+    setContextMenuPosition({ left: e.clientX, top: e.clientY });
     setContextMenu({ x: e.clientX, y: e.clientY, object });
   };
 
   const handleCloseContextMenu = () => {
+    setContextMenuPosition(null);
     setContextMenu(null);
   };
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current || !contextMenuPosition) return;
+
+    const margin = 8;
+    const menuRect = contextMenuRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let nextLeft = contextMenuPosition.left;
+    let nextTop = contextMenuPosition.top;
+
+    if (nextLeft + menuRect.width + margin > viewportWidth) {
+      nextLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
+    }
+    if (nextTop + menuRect.height + margin > viewportHeight) {
+      nextTop = Math.max(margin, viewportHeight - menuRect.height - margin);
+    }
+
+    if (nextLeft !== contextMenuPosition.left || nextTop !== contextMenuPosition.top) {
+      setContextMenuPosition({ left: nextLeft, top: nextTop });
+    }
+  }, [contextMenu, contextMenuPosition, folders.length]);
 
   const handleMoveObjectToFolder = (folderId: string | null) => {
     if (!contextMenu || !selectedSceneId) return;
@@ -958,8 +985,12 @@ export function SpriteShelf() {
             onClick={handleCloseContextMenu}
           />
           <Card
+            ref={contextMenuRef}
             className="fixed z-50 py-1 min-w-36 gap-0"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
+            style={{
+              left: contextMenuPosition?.left ?? contextMenu.x,
+              top: contextMenuPosition?.top ?? contextMenu.y,
+            }}
           >
             <Button
               variant="ghost"
