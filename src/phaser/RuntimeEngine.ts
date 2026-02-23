@@ -4,7 +4,7 @@ import { applyCustomGravityForce } from './gravity';
 
 // Handlers receive sprite as parameter so they work correctly for clones
 type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
-type ForeverHandler = (sprite: RuntimeSprite) => void;
+type ForeverHandler = (sprite: RuntimeSprite) => void | Promise<void>;
 type TouchDirection = 'TOP' | 'BOTTOM' | 'LEFT' | 'RIGHT' | 'SIDE';
 
 interface BoundsSnapshot {
@@ -110,6 +110,7 @@ export class RuntimeEngine {
   private handlers: Map<string, ObjectHandlers> = new Map();
   private templates: Map<string, ObjectTemplate> = new Map(); // Templates for cloning (persist after deletion)
   private activeForeverLoops: Map<string, boolean> = new Map();
+  private pendingForeverHandlers: Map<string, Set<number>> = new Map();
   private _isRunning: boolean = false;
   private phaserKeys: Map<string, Phaser.Input.Keyboard.Key> = new Map();
   private inputListenersAttached: boolean = false;
@@ -560,9 +561,33 @@ export class RuntimeEngine {
       if (!sprite || sprite.isStopped()) continue;
       if (!this.activeForeverLoops.get(spriteId)) continue;
 
-      for (const handler of h.forever) {
+      for (const [index, handler] of h.forever.entries()) {
+        const pendingIndexes = this.pendingForeverHandlers.get(spriteId);
+        if (pendingIndexes?.has(index)) continue;
+
         try {
-          handler(sprite);
+          const result = handler(sprite);
+          if (result && typeof (result as Promise<void>).then === 'function') {
+            if (!pendingIndexes) {
+              this.pendingForeverHandlers.set(spriteId, new Set([index]));
+            } else {
+              pendingIndexes.add(index);
+            }
+
+            Promise.resolve(result)
+              .catch(e => {
+                debugLog('error', `Error in async forever loop for ${spriteId}: ${e}`);
+                console.error(`Error in async forever loop for ${spriteId}:`, e);
+              })
+              .finally(() => {
+                const currentPending = this.pendingForeverHandlers.get(spriteId);
+                if (!currentPending) return;
+                currentPending.delete(index);
+                if (currentPending.size === 0) {
+                  this.pendingForeverHandlers.delete(spriteId);
+                }
+              });
+          }
         } catch (e) {
           debugLog('error', `Error in forever loop for ${spriteId}: ${e}`);
           console.error(`Error in forever loop for ${spriteId}:`, e);
@@ -935,6 +960,7 @@ export class RuntimeEngine {
   stopAll(): void {
     this._isRunning = false;
     this.activeForeverLoops.clear();
+    this.pendingForeverHandlers.clear();
     for (const sprite of this.sprites.values()) {
       sprite.stop();
     }
@@ -995,6 +1021,7 @@ export class RuntimeEngine {
     const sprite = this.sprites.get(spriteId);
     if (sprite) sprite.stop();
     this.activeForeverLoops.set(spriteId, false);
+    this.pendingForeverHandlers.delete(spriteId);
   }
 
   // --- Input Queries ---

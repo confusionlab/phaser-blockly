@@ -37,3 +37,13 @@ Original prompt: add ability to rename proj name by clicking on title in proj pa
 - Validation:
   - `pnpm build` passes.
 - Playwright skill-client remains blocked in this environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"`.
+- Fixed async-in-forever codegen/runtime bug that caused generated scripts to fail when blocks with `await` (e.g., rotate tween) were placed inside `forever`.
+- `event_forever` now generates `async function(sprite)` in `/Users/kihaahn/code/0040-pochacoding/src/phaser/CodeGenerator.ts`, so generated `await` statements are syntactically valid.
+- Runtime forever loop now supports async handlers safely in `/Users/kihaahn/code/0040-pochacoding/src/phaser/RuntimeEngine.ts`:
+  - Forever handler type accepts `void | Promise<void>`.
+  - Added per-sprite per-handler pending tracking to prevent overlapping async invocations each frame.
+  - Added async error logging and pending-state cleanup.
+  - Clears pending async forever state in `stopAll()` and `stopSprite()`.
+- Validation:
+  - `pnpm build` passes.
+  - Skill Playwright client run is still blocked in this environment with `ERR_MODULE_NOT_FOUND: Cannot find package "playwright"` from `$CODEX_HOME/skills/develop-web-game/scripts/web_game_playwright_client.js`.
