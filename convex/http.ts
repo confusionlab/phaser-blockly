@@ -8,6 +8,7 @@ type BeaconSyncPayload = {
   localId: string;
   name: string;
   data: string;
+  dataSizeBytes?: number;
   createdAt: number;
   updatedAt: number;
   schemaVersion?: number | string;
@@ -39,6 +40,10 @@ function isBeaconSyncPayload(value: unknown): value is BeaconSyncPayload {
     return false;
   }
 
+  if (payload.dataSizeBytes !== undefined && typeof payload.dataSizeBytes !== "number") {
+    return false;
+  }
+
   return true;
 }
 
@@ -57,7 +62,21 @@ http.route({
         });
       }
 
-      await ctx.runMutation(internal.projects.syncBeacon, parsed);
+      const { data, ...metadata } = parsed;
+      const dataBlob = new Blob([data], { type: "application/json" });
+      const storageId = await ctx.storage.store(dataBlob);
+
+      try {
+        await ctx.runMutation(internal.projects.syncBeacon, {
+          ...metadata,
+          storageId,
+          dataSizeBytes: dataBlob.size,
+        });
+      } catch (error) {
+        await ctx.storage.delete(storageId);
+        throw error;
+      }
+
       return new Response(null, {
         status: 204,
         headers: { "Access-Control-Allow-Origin": "*" },

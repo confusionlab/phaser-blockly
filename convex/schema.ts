@@ -99,7 +99,10 @@ export default defineSchema({
   projects: defineTable({
     localId: v.string(),
     name: v.string(),
-    data: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    // Kept optional for backwards compatibility with legacy inline records.
+    data: v.optional(v.string()),
+    dataSizeBytes: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
     // Union preserves backwards compatibility with previously written string values.

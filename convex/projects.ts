@@ -13,16 +13,21 @@ const projectSummaryValidator = v.object({
   updatedAt: v.number(),
   schemaVersion: v.number(),
   appVersion: v.optional(v.string()),
+  storageId: v.optional(v.id("_storage")),
+  dataSizeBytes: v.optional(v.number()),
 });
 
 const fullProjectValidator = v.object({
   localId: v.string(),
   name: v.string(),
-  data: v.string(),
   createdAt: v.number(),
   updatedAt: v.number(),
   schemaVersion: v.number(),
   appVersion: v.optional(v.string()),
+  storageId: v.optional(v.id("_storage")),
+  dataSizeBytes: v.optional(v.number()),
+  data: v.optional(v.string()),
+  dataUrl: v.union(v.string(), v.null()),
 });
 
 const syncResultValidator = v.object({
@@ -37,10 +42,38 @@ const syncBatchResultValidator = v.object({
   reason: v.optional(v.string()),
 });
 
+const syncPayloadValidator = v.object({
+  localId: v.string(),
+  name: v.string(),
+  storageId: v.optional(v.id("_storage")),
+  // Kept optional for backwards compatibility with older clients.
+  data: v.optional(v.string()),
+  dataSizeBytes: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  schemaVersion: v.optional(schemaVersionValidator),
+  appVersion: v.optional(v.string()),
+});
+
+type StoredProject = {
+  _id: Id<"projects">;
+  localId: string;
+  name: string;
+  storageId?: Id<"_storage">;
+  data?: string;
+  dataSizeBytes?: number;
+  createdAt: number;
+  updatedAt: number;
+  schemaVersion: number | string;
+  appVersion?: string;
+};
+
 type SyncPayload = {
   localId: string;
   name: string;
-  data: string;
+  storageId?: Id<"_storage">;
+  data?: string;
+  dataSizeBytes?: number;
   createdAt: number;
   updatedAt: number;
   schemaVersion?: number | string;
@@ -60,53 +93,134 @@ function normalizeSchemaVersion(version: number | string | undefined): number {
   return SCHEMA_VERSION;
 }
 
-function toSummary(project: {
-  _id: Id<"projects">;
-  localId: string;
-  name: string;
-  createdAt: number;
-  updatedAt: number;
-  schemaVersion: number | string;
-  appVersion?: string;
-}) {
-  return {
+function toSummary(project: StoredProject) {
+  const summary: {
+    _id: Id<"projects">;
+    localId: string;
+    name: string;
+    createdAt: number;
+    updatedAt: number;
+    schemaVersion: number;
+    appVersion?: string;
+    storageId?: Id<"_storage">;
+    dataSizeBytes?: number;
+  } = {
     _id: project._id,
     localId: project.localId,
     name: project.name,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     schemaVersion: normalizeSchemaVersion(project.schemaVersion),
-    appVersion: project.appVersion,
   };
+
+  if (project.appVersion !== undefined) {
+    summary.appVersion = project.appVersion;
+  }
+  if (project.storageId !== undefined) {
+    summary.storageId = project.storageId;
+  }
+  if (project.dataSizeBytes !== undefined) {
+    summary.dataSizeBytes = project.dataSizeBytes;
+  }
+
+  return summary;
 }
 
-function toFull(project: {
-  localId: string;
-  name: string;
-  data: string;
-  createdAt: number;
-  updatedAt: number;
-  schemaVersion: number | string;
-  appVersion?: string;
-}) {
-  return {
+async function toFull(ctx: any, project: StoredProject) {
+  const result: {
+    localId: string;
+    name: string;
+    createdAt: number;
+    updatedAt: number;
+    schemaVersion: number;
+    appVersion?: string;
+    storageId?: Id<"_storage">;
+    dataSizeBytes?: number;
+    data?: string;
+    dataUrl: string | null;
+  } = {
     localId: project.localId,
     name: project.name,
-    data: project.data,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     schemaVersion: normalizeSchemaVersion(project.schemaVersion),
-    appVersion: project.appVersion,
+    dataUrl: project.storageId ? await ctx.storage.getUrl(project.storageId) : null,
   };
+
+  if (project.appVersion !== undefined) {
+    result.appVersion = project.appVersion;
+  }
+  if (project.storageId !== undefined) {
+    result.storageId = project.storageId;
+  }
+  if (project.dataSizeBytes !== undefined) {
+    result.dataSizeBytes = project.dataSizeBytes;
+  }
+  if (project.data !== undefined) {
+    result.data = project.data;
+  }
+
+  return result;
+}
+
+function toProjectDocument(
+  payload: SyncPayload,
+  normalizedSchemaVersion: number,
+  createdAt: number,
+) {
+  const base: {
+    localId: string;
+    name: string;
+    createdAt: number;
+    updatedAt: number;
+    schemaVersion: number;
+    appVersion?: string;
+    dataSizeBytes?: number;
+  } = {
+    localId: payload.localId,
+    name: payload.name,
+    createdAt,
+    updatedAt: payload.updatedAt,
+    schemaVersion: normalizedSchemaVersion,
+  };
+
+  if (payload.appVersion !== undefined) {
+    base.appVersion = payload.appVersion;
+  }
+  if (payload.dataSizeBytes !== undefined) {
+    base.dataSizeBytes = payload.dataSizeBytes;
+  }
+
+  if (payload.storageId) {
+    return {
+      ...base,
+      storageId: payload.storageId,
+    };
+  }
+
+  if (payload.data !== undefined) {
+    return {
+      ...base,
+      data: payload.data,
+    };
+  }
+
+  throw new Error("Project sync payload must include either storageId or data");
+}
+
+async function cleanupStorage(ctx: any, storageId: Id<"_storage"> | undefined) {
+  if (storageId) {
+    await ctx.storage.delete(storageId);
+  }
 }
 
 async function upsertProject(ctx: any, payload: SyncPayload) {
   const incomingSchemaVersion = normalizeSchemaVersion(payload.schemaVersion);
 
-  const existing = await ctx.db
+  const existing = (await ctx.db
     .query("projects")
     .withIndex("by_localId", (q: any) => q.eq("localId", payload.localId))
-    .unique();
+    .unique()) as StoredProject | null;
 
   if (existing) {
     const existingSchemaVersion = normalizeSchemaVersion(existing.schemaVersion);
@@ -114,33 +228,40 @@ async function upsertProject(ctx: any, payload: SyncPayload) {
       payload.updatedAt > existing.updatedAt ||
       incomingSchemaVersion > existingSchemaVersion;
 
-    if (shouldUpdate) {
-      await ctx.db.patch(existing._id, {
-        name: payload.name,
-        data: payload.data,
-        updatedAt: payload.updatedAt,
-        schemaVersion: incomingSchemaVersion,
-        appVersion: payload.appVersion,
-      });
-      return { action: "updated" as const, id: existing._id };
+    if (!shouldUpdate) {
+      // Uploaded storage blobs should not be orphaned when updates are skipped.
+      const uploadedStorageId =
+        payload.storageId && payload.storageId !== existing.storageId
+          ? payload.storageId
+          : undefined;
+      await cleanupStorage(ctx, uploadedStorageId);
+      return {
+        action: "skipped" as const,
+        id: existing._id,
+        reason: "cloud version is newer or equal",
+      };
     }
 
-    return {
-      action: "skipped" as const,
-      id: existing._id,
-      reason: "cloud version is newer or equal",
-    };
+    const staleStorageId = payload.storageId
+      ? existing.storageId && existing.storageId !== payload.storageId
+        ? existing.storageId
+        : undefined
+      : existing.storageId;
+
+    await ctx.db.replace(
+      existing._id,
+      toProjectDocument(payload, incomingSchemaVersion, existing.createdAt),
+    );
+
+    await cleanupStorage(ctx, staleStorageId);
+
+    return { action: "updated" as const, id: existing._id };
   }
 
-  const id = await ctx.db.insert("projects", {
-    localId: payload.localId,
-    name: payload.name,
-    data: payload.data,
-    createdAt: payload.createdAt,
-    updatedAt: payload.updatedAt,
-    schemaVersion: incomingSchemaVersion,
-    appVersion: payload.appVersion,
-  });
+  const id = await ctx.db.insert(
+    "projects",
+    toProjectDocument(payload, incomingSchemaVersion, payload.createdAt),
+  );
 
   return { action: "created" as const, id };
 }
@@ -150,7 +271,7 @@ export const list = query({
   args: {},
   returns: v.array(projectSummaryValidator),
   handler: async (ctx) => {
-    const projects = await ctx.db.query("projects").collect();
+    const projects = (await ctx.db.query("projects").collect()) as StoredProject[];
     return projects.map(toSummary);
   },
 });
@@ -160,10 +281,10 @@ export const getByLocalId = query({
   args: { localId: v.string() },
   returns: v.union(projectSummaryValidator, v.null()),
   handler: async (ctx, args) => {
-    const project = await ctx.db
+    const project = (await ctx.db
       .query("projects")
       .withIndex("by_localId", (q) => q.eq("localId", args.localId))
-      .unique();
+      .unique()) as StoredProject | null;
 
     if (!project) {
       return null;
@@ -178,30 +299,30 @@ export const getFullProject = query({
   args: { localId: v.string() },
   returns: v.union(fullProjectValidator, v.null()),
   handler: async (ctx, args) => {
-    const project = await ctx.db
+    const project = (await ctx.db
       .query("projects")
       .withIndex("by_localId", (q) => q.eq("localId", args.localId))
-      .unique();
+      .unique()) as StoredProject | null;
 
     if (!project) {
       return null;
     }
 
-    return toFull(project);
+    return await toFull(ctx, project);
+  },
+});
+
+export const generateUploadUrl = mutation({
+  args: {},
+  returns: v.string(),
+  handler: async (ctx) => {
+    return await ctx.storage.generateUploadUrl();
   },
 });
 
 // Sync a project to cloud (upsert based on localId)
 export const sync = mutation({
-  args: {
-    localId: v.string(),
-    name: v.string(),
-    data: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-    schemaVersion: v.optional(schemaVersionValidator),
-    appVersion: v.optional(v.string()),
-  },
+  args: syncPayloadValidator,
   returns: syncResultValidator,
   handler: async (ctx, args) => {
     return await upsertProject(ctx, args);
@@ -211,17 +332,7 @@ export const sync = mutation({
 // Sync multiple projects at once
 export const syncBatch = mutation({
   args: {
-    projects: v.array(
-      v.object({
-        localId: v.string(),
-        name: v.string(),
-        data: v.string(),
-        createdAt: v.number(),
-        updatedAt: v.number(),
-        schemaVersion: v.optional(schemaVersionValidator),
-        appVersion: v.optional(v.string()),
-      }),
-    ),
+    projects: v.array(syncPayloadValidator),
   },
   returns: v.array(syncBatchResultValidator),
   handler: async (ctx, args) => {
@@ -242,15 +353,7 @@ export const syncBatch = mutation({
 
 // Internal mutation for sync beacons
 export const syncBeacon = internalMutation({
-  args: {
-    localId: v.string(),
-    name: v.string(),
-    data: v.string(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-    schemaVersion: v.optional(schemaVersionValidator),
-    appVersion: v.optional(v.string()),
-  },
+  args: syncPayloadValidator,
   returns: v.null(),
   handler: async (ctx, args) => {
     await upsertProject(ctx, args);
@@ -263,15 +366,16 @@ export const remove = mutation({
   args: { localId: v.string() },
   returns: v.object({ deleted: v.boolean() }),
   handler: async (ctx, args) => {
-    const project = await ctx.db
+    const project = (await ctx.db
       .query("projects")
       .withIndex("by_localId", (q) => q.eq("localId", args.localId))
-      .unique();
+      .unique()) as StoredProject | null;
 
     if (!project) {
       return { deleted: false };
     }
 
+    await cleanupStorage(ctx, project.storageId);
     await ctx.db.delete(project._id);
     return { deleted: true };
   },
@@ -282,7 +386,7 @@ export const listFull = query({
   args: {},
   returns: v.array(fullProjectValidator),
   handler: async (ctx) => {
-    const projects = await ctx.db.query("projects").collect();
-    return projects.map(toFull);
+    const projects = (await ctx.db.query("projects").collect()) as StoredProject[];
+    return await Promise.all(projects.map((project) => toFull(ctx, project)));
   },
 });

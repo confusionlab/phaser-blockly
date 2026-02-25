@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useMutation, useQuery } from 'convex/react';
+import type { Id } from '../../convex/_generated/dataModel';
 import { api } from '../../convex/_generated/api';
 import {
   createProjectSyncPayload,
@@ -22,18 +23,38 @@ interface CloudSyncOptions {
   syncOnUnmount?: boolean;
 }
 
-type LegacySyncPayload = Pick<
+interface CloudProjectRecord {
+  localId: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  schemaVersion: number | string;
+  appVersion?: string;
+  storageId?: Id<'_storage'>;
+  dataSizeBytes?: number;
+  data?: string;
+  dataUrl: string | null;
+}
+
+type StorageSyncPayload = Omit<ProjectSyncPayload, 'data'> & {
+  storageId: Id<'_storage'>;
+  dataSizeBytes: number;
+};
+
+type BeaconSyncPayload = Pick<
   ProjectSyncPayload,
-  'localId' | 'name' | 'data' | 'createdAt' | 'updatedAt'
+  'localId' | 'name' | 'data' | 'createdAt' | 'updatedAt' | 'schemaVersion' | 'appVersion'
 >;
 
-function toLegacySyncPayload(payload: ProjectSyncPayload): LegacySyncPayload {
+function toBeaconSyncPayload(payload: ProjectSyncPayload): BeaconSyncPayload {
   return {
     localId: payload.localId,
     name: payload.name,
     data: payload.data,
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt,
+    schemaVersion: payload.schemaVersion,
+    appVersion: payload.appVersion,
   };
 }
 
@@ -51,6 +72,22 @@ function getSyncBeaconUrl(): string | null {
   return `${cloudUrl.replace('.cloud', '.site')}/sync-beacon`;
 }
 
+async function loadProjectDataFromCloud(cloudProject: CloudProjectRecord): Promise<string> {
+  if (typeof cloudProject.data === 'string') {
+    return cloudProject.data;
+  }
+
+  if (cloudProject.dataUrl) {
+    const response = await fetch(cloudProject.dataUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch project data (${response.status})`);
+    }
+    return await response.text();
+  }
+
+  throw new Error(`Cloud project "${cloudProject.localId}" has no sync data`);
+}
+
 export function useCloudSync(options: CloudSyncOptions = {}) {
   const {
     syncOnMount = false,
@@ -59,6 +96,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     syncOnUnmount = true,
   } = options;
 
+  const generateUploadUrlMutation = useMutation(api.projects.generateUploadUrl);
   const syncMutation = useMutation(api.projects.syncBatch);
   const syncSingleMutation = useMutation(api.projects.sync);
   const removeProjectMutation = useMutation(api.projects.remove);
@@ -74,16 +112,43 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     beaconPayloadRef.current = currentProject ? createProjectSyncPayload(currentProject) : null;
   }, [currentProject]);
 
+  const toStorageSyncPayload = useCallback(
+    async (payload: ProjectSyncPayload): Promise<StorageSyncPayload> => {
+      const { data, ...metadata } = payload;
+      const uploadUrl = await generateUploadUrlMutation();
+      const blob = new Blob([data], { type: 'application/json' });
+
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: blob,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Project upload failed (${uploadResponse.status})`);
+      }
+
+      const uploadResult = (await uploadResponse.json()) as { storageId: string };
+      return {
+        ...metadata,
+        storageId: uploadResult.storageId as Id<'_storage'>,
+        dataSizeBytes: blob.size,
+      };
+    },
+    [generateUploadUrlMutation],
+  );
+
   const syncPayloadToCloud = useCallback(
     async (payload: ProjectSyncPayload) => {
       if (isSyncingRef.current) return;
       try {
-        await syncSingleMutation(toLegacySyncPayload(payload));
+        const storagePayload = await toStorageSyncPayload(payload);
+        await syncSingleMutation(storagePayload);
       } catch (error) {
         console.error('[CloudSync] Failed to sync payload:', error);
       }
     },
-    [syncSingleMutation],
+    [syncSingleMutation, toStorageSyncPayload],
   );
 
   const runWithRetry = useCallback(async (fn: () => Promise<void>, attempts = 2) => {
@@ -118,14 +183,21 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       }
 
       console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
-      const results = await syncMutation({ projects: localProjects.map(toLegacySyncPayload) });
+      const storageProjects: StorageSyncPayload[] = [];
+
+      for (const localProject of localProjects) {
+        const storageProject = await toStorageSyncPayload(localProject);
+        storageProjects.push(storageProject);
+      }
+
+      const results = await syncMutation({ projects: storageProjects });
       console.log('[CloudSync] Sync results:', results);
     } catch (error) {
       console.error('[CloudSync] Failed to sync to cloud:', error);
     } finally {
       isSyncingRef.current = false;
     }
-  }, [syncMutation]);
+  }, [syncMutation, toStorageSyncPayload]);
 
   // Sync a single project to cloud by local project id
   const syncProjectToCloud = useCallback(
@@ -135,7 +207,8 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         if (!project) return false;
 
         console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
-        const result = await syncSingleMutation(toLegacySyncPayload(project));
+        const storagePayload = await toStorageSyncPayload(project);
+        const result = await syncSingleMutation(storagePayload);
         console.log('[CloudSync] Single sync result:', result);
         return true;
       } catch (error) {
@@ -143,7 +216,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return false;
       }
     },
-    [syncSingleMutation],
+    [syncSingleMutation, toStorageSyncPayload],
   );
 
   const deleteProjectFromCloud = useCallback(
@@ -169,7 +242,11 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       console.log(`[CloudSync] Syncing ${cloudProjects.length} projects from cloud...`);
       const results = await Promise.all(
         cloudProjects.map(async (cloudProject) => {
-          const result = await syncProjectFromCloud(cloudProject);
+          const data = await loadProjectDataFromCloud(cloudProject as CloudProjectRecord);
+          const result = await syncProjectFromCloud({
+            ...cloudProject,
+            data,
+          });
           return { localId: cloudProject.localId, ...result };
         }),
       );
@@ -200,12 +277,27 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       await runWithRetry(async () => {
         const localProjects = await getAllProjectsForSync();
         if (localProjects.length === 0) return;
-        await syncMutation({ projects: localProjects.map(toLegacySyncPayload) });
+
+        const storageProjects: StorageSyncPayload[] = [];
+        for (const localProject of localProjects) {
+          const storageProject = await toStorageSyncPayload(localProject);
+          storageProjects.push(storageProject);
+        }
+
+        await syncMutation({ projects: storageProjects });
       });
 
       if (cloudProjects) {
         await runWithRetry(async () => {
-          await Promise.all(cloudProjects.map((cloudProject) => syncProjectFromCloud(cloudProject)));
+          await Promise.all(
+            cloudProjects.map(async (cloudProject) => {
+              const data = await loadProjectDataFromCloud(cloudProject as CloudProjectRecord);
+              await syncProjectFromCloud({
+                ...cloudProject,
+                data,
+              });
+            }),
+          );
         });
       }
     } catch (error) {
@@ -213,7 +305,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [cloudProjects, runWithRetry, syncMutation]);
+  }, [cloudProjects, runWithRetry, syncMutation, toStorageSyncPayload]);
 
   // Sync on mount if requested
   useEffect(() => {
@@ -252,7 +344,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return;
       }
 
-      navigator.sendBeacon(beaconUrl, JSON.stringify(toLegacySyncPayload(payload)));
+      navigator.sendBeacon(beaconUrl, JSON.stringify(toBeaconSyncPayload(payload)));
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);

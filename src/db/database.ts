@@ -486,6 +486,192 @@ export function downloadProject(project: Project): void {
   URL.revokeObjectURL(url);
 }
 
+const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
+const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
+const VALID_OBJECT_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
+
+const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
+  sensing_touching: 'TARGET',
+  sensing_touching_direction: 'TARGET',
+  sensing_distance_to: 'TARGET',
+  sensing_touching_object: 'TARGET',
+  motion_point_towards: 'TARGET',
+  camera_follow_object: 'TARGET',
+  control_clone_object: 'TARGET',
+  event_when_touching: 'TARGET',
+  event_when_touching_direction: 'TARGET',
+  motion_attach_to_dropdown: 'TARGET',
+  motion_attach_dropdown_to_me: 'TARGET',
+};
+
+const SOUND_REFERENCE_BLOCKS: Record<string, string> = {
+  sound_play: 'SOUND',
+  sound_play_until_done: 'SOUND',
+};
+
+const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
+  typed_variable_get: 'VAR',
+  typed_variable_set: 'VAR',
+  typed_variable_change: 'VAR',
+};
+
+interface ImportReferenceMaps {
+  objectIds: Map<string, string>;
+  variableIds: Map<string, string>;
+  soundIds: Map<string, string>;
+  componentIds: Map<string, string>;
+}
+
+interface ImportReferenceFallbacks {
+  objectNameToId?: Map<string, string>;
+  variableNameToId?: Map<string, string>;
+  soundNameToId?: Map<string, string>;
+}
+
+function cloneProjectForImport(project: Project): Project {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(project);
+  }
+  return JSON.parse(JSON.stringify(project)) as Project;
+}
+
+function readValidId(id: unknown): string | null {
+  if (typeof id !== 'string') return null;
+  const trimmed = id.trim();
+  return trimmed ? trimmed : null;
+}
+
+function rememberIdMapping(map: Map<string, string>, previousId: unknown, nextId: string): void {
+  const oldId = readValidId(previousId);
+  if (oldId) {
+    map.set(oldId, nextId);
+  }
+}
+
+function createUniqueNameIdMap(entries: Array<{ name?: string; id?: string }>): Map<string, string> {
+  const countsByName = new Map<string, number>();
+  const idByName = new Map<string, string>();
+
+  for (const entry of entries) {
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    const id = readValidId(entry.id);
+    if (!name || !id) continue;
+    countsByName.set(name, (countsByName.get(name) || 0) + 1);
+    idByName.set(name, id);
+  }
+
+  const result = new Map<string, string>();
+  for (const [name, count] of countsByName) {
+    if (count === 1) {
+      const id = idByName.get(name);
+      if (id) {
+        result.set(name, id);
+      }
+    }
+  }
+  return result;
+}
+
+function remapObjectReference(
+  rawValue: string,
+  maps: ImportReferenceMaps,
+  objectNameToId?: Map<string, string>
+): string {
+  const value = rawValue.trim();
+  if (!value || value === PICK_FROM_STAGE || VALID_OBJECT_SPECIAL_VALUES.has(value)) {
+    return rawValue;
+  }
+
+  if (value.startsWith(COMPONENT_ANY_PREFIX)) {
+    const componentId = value.slice(COMPONENT_ANY_PREFIX.length);
+    const remappedComponentId = maps.componentIds.get(componentId);
+    return remappedComponentId ? `${COMPONENT_ANY_PREFIX}${remappedComponentId}` : rawValue;
+  }
+
+  return maps.objectIds.get(value) || objectNameToId?.get(value) || rawValue;
+}
+
+function remapIdOrNameReference(
+  rawValue: string,
+  idMap: Map<string, string>,
+  nameMap?: Map<string, string>
+): string {
+  const value = rawValue.trim();
+  if (!value) return rawValue;
+  return idMap.get(value) || nameMap?.get(value) || rawValue;
+}
+
+function remapBlocklyXmlReferences(
+  blocklyXml: string,
+  maps: ImportReferenceMaps,
+  fallbacks: ImportReferenceFallbacks = {}
+): string {
+  if (!blocklyXml.trim()) return blocklyXml;
+  if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') {
+    return blocklyXml;
+  }
+
+  try {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(blocklyXml, 'text/xml');
+    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+      return blocklyXml;
+    }
+
+    let changed = false;
+    const blocks = Array.from(xmlDoc.getElementsByTagName('block'));
+    for (const block of blocks) {
+      const blockType = block.getAttribute('type') || '';
+
+      const updateField = (fieldName: string, mapper: (value: string) => string) => {
+        const fields = Array.from(block.children).filter(
+          (child): child is Element =>
+            child.tagName.toLowerCase() === 'field' &&
+            child.getAttribute('name') === fieldName
+        );
+
+        for (const field of fields) {
+          const currentValue = field.textContent || '';
+          const remappedValue = mapper(currentValue);
+          if (remappedValue !== currentValue) {
+            field.textContent = remappedValue;
+            changed = true;
+          }
+        }
+      };
+
+      const objectFieldName = OBJECT_REFERENCE_BLOCKS[blockType];
+      if (objectFieldName) {
+        updateField(objectFieldName, (value) =>
+          remapObjectReference(value, maps, fallbacks.objectNameToId)
+        );
+      }
+
+      const variableFieldName = VARIABLE_REFERENCE_BLOCKS[blockType];
+      if (variableFieldName) {
+        updateField(variableFieldName, (value) =>
+          remapIdOrNameReference(value, maps.variableIds, fallbacks.variableNameToId)
+        );
+      }
+
+      const soundFieldName = SOUND_REFERENCE_BLOCKS[blockType];
+      if (soundFieldName) {
+        updateField(soundFieldName, (value) =>
+          remapIdOrNameReference(value, maps.soundIds, fallbacks.soundNameToId)
+        );
+      }
+    }
+
+    if (!changed || !xmlDoc.documentElement) {
+      return blocklyXml;
+    }
+
+    return new XMLSerializer().serializeToString(xmlDoc.documentElement);
+  } catch {
+    return blocklyXml;
+  }
+}
+
 export async function importProject(jsonString: string): Promise<Project> {
   const data = JSON.parse(jsonString);
 
@@ -510,42 +696,154 @@ export async function importProject(jsonString: string): Promise<Project> {
   }
 
   // Migrate project if needed
-  let project = data.project as Project;
+  let project = cloneProjectForImport(data.project as Project);
   if (schemaVersion < CURRENT_SCHEMA_VERSION) {
     project = migrateProject(project, schemaVersion);
   }
 
-  // Generate new IDs to avoid conflicts with existing projects
-  const newProjectId = crypto.randomUUID();
-  const objectIdMap = new Map<string, string>();
+  // Ensure missing arrays do not break import of older files.
+  project.scenes = Array.isArray(project.scenes) ? project.scenes : [];
+  project.globalVariables = Array.isArray(project.globalVariables) ? project.globalVariables : [];
+  project.components = Array.isArray(project.components) ? project.components : [];
 
-  // Map old IDs to new ones
+  // Generate new IDs to avoid collisions and keep imported data isolated.
+  const objectIdMap = new Map<string, string>();
+  const variableIdMap = new Map<string, string>();
+  const soundIdMap = new Map<string, string>();
+  const componentIdMap = new Map<string, string>();
+
+  // Remap component IDs first so object.componentId references can be updated.
+  for (const component of project.components) {
+    const newComponentId = crypto.randomUUID();
+    rememberIdMapping(componentIdMap, component.id, newComponentId);
+    component.id = newComponentId;
+
+    component.costumes = Array.isArray(component.costumes) ? component.costumes : [];
+    component.sounds = Array.isArray(component.sounds) ? component.sounds : [];
+
+    for (const costume of component.costumes) {
+      costume.id = crypto.randomUUID();
+    }
+
+    for (const sound of component.sounds) {
+      const newSoundId = crypto.randomUUID();
+      rememberIdMapping(soundIdMap, sound.id, newSoundId);
+      sound.id = newSoundId;
+    }
+  }
+
+  // Remap variable IDs (global + local) and wire local ownership.
+  for (const variable of project.globalVariables) {
+    const newVariableId = crypto.randomUUID();
+    rememberIdMapping(variableIdMap, variable.id, newVariableId);
+    variable.id = newVariableId;
+  }
+
   for (const scene of project.scenes) {
-    const newSceneId = crypto.randomUUID();
-    scene.id = newSceneId;
+    scene.id = crypto.randomUUID();
+    scene.objects = Array.isArray(scene.objects) ? scene.objects : [];
+    scene.objectFolders = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
+    if (!scene.cameraConfig) {
+      scene.cameraConfig = {
+        followTarget: null,
+        bounds: null,
+        zoom: 1,
+      };
+    }
 
     for (const obj of scene.objects) {
-      const newObjId = crypto.randomUUID();
-      objectIdMap.set(obj.id, newObjId);
-      obj.id = newObjId;
+      const newObjectId = crypto.randomUUID();
+      rememberIdMapping(objectIdMap, obj.id, newObjectId);
+      obj.id = newObjectId;
+
+      if (obj.componentId) {
+        obj.componentId = componentIdMap.get(obj.componentId) || obj.componentId;
+      }
+
+      obj.costumes = Array.isArray(obj.costumes) ? obj.costumes : [];
+      obj.sounds = Array.isArray(obj.sounds) ? obj.sounds : [];
+      obj.localVariables = Array.isArray(obj.localVariables) ? obj.localVariables : [];
 
       for (const costume of obj.costumes) {
         costume.id = crypto.randomUUID();
       }
 
       for (const sound of obj.sounds) {
-        sound.id = crypto.randomUUID();
+        const newSoundId = crypto.randomUUID();
+        rememberIdMapping(soundIdMap, sound.id, newSoundId);
+        sound.id = newSoundId;
+      }
+
+      for (const variable of obj.localVariables) {
+        const newVariableId = crypto.randomUUID();
+        rememberIdMapping(variableIdMap, variable.id, newVariableId);
+        variable.id = newVariableId;
+        variable.objectId = obj.id;
       }
     }
+  }
 
-    if (scene.cameraConfig.followTarget && objectIdMap.has(scene.cameraConfig.followTarget)) {
-      scene.cameraConfig.followTarget = objectIdMap.get(scene.cameraConfig.followTarget)!;
+  const referenceMaps: ImportReferenceMaps = {
+    objectIds: objectIdMap,
+    variableIds: variableIdMap,
+    soundIds: soundIdMap,
+    componentIds: componentIdMap,
+  };
+
+  const globalObjectNameToId = createUniqueNameIdMap(
+    project.scenes.flatMap((scene) => scene.objects.map((obj) => ({ name: obj.name, id: obj.id })))
+  );
+  const globalVariableNameToId = createUniqueNameIdMap(
+    project.globalVariables.map((variable) => ({ name: variable.name, id: variable.id }))
+  );
+
+  for (const scene of project.scenes) {
+    const sceneObjectNameToId = createUniqueNameIdMap(
+      scene.objects.map((obj) => ({ name: obj.name, id: obj.id }))
+    );
+
+    scene.cameraConfig.followTarget = scene.cameraConfig.followTarget
+      ? remapObjectReference(scene.cameraConfig.followTarget, referenceMaps, sceneObjectNameToId)
+      : null;
+
+    for (const obj of scene.objects) {
+      const localVariableNameToId = createUniqueNameIdMap(
+        obj.localVariables.map((variable) => ({ name: variable.name, id: variable.id }))
+      );
+      const combinedVariableNameToId = createUniqueNameIdMap([
+        ...project.globalVariables.map((variable) => ({ name: variable.name, id: variable.id })),
+        ...obj.localVariables.map((variable) => ({ name: variable.name, id: variable.id })),
+      ]);
+
+      const effectiveSounds = obj.componentId
+        ? (project.components.find((component) => component.id === obj.componentId)?.sounds || [])
+        : obj.sounds;
+      const soundNameToId = createUniqueNameIdMap(
+        effectiveSounds.map((sound) => ({ name: sound.name, id: sound.id }))
+      );
+
+      // Keep object code intact while reconnecting IDs for dropdown-backed fields.
+      obj.blocklyXml = remapBlocklyXmlReferences(obj.blocklyXml || '', referenceMaps, {
+        objectNameToId: sceneObjectNameToId,
+        variableNameToId: combinedVariableNameToId.size > 0 ? combinedVariableNameToId : localVariableNameToId,
+        soundNameToId,
+      });
     }
   }
 
-  for (const variable of project.globalVariables) {
-    variable.id = crypto.randomUUID();
+  for (const component of project.components) {
+    const componentSoundNameToId = createUniqueNameIdMap(
+      component.sounds.map((sound) => ({ name: sound.name, id: sound.id }))
+    );
+
+    component.blocklyXml = remapBlocklyXmlReferences(component.blocklyXml || '', referenceMaps, {
+      objectNameToId: globalObjectNameToId,
+      variableNameToId: globalVariableNameToId,
+      soundNameToId: componentSoundNameToId,
+    });
   }
+
+  const newProjectId = crypto.randomUUID();
 
   const importedProject: Project = {
     ...project,
