@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { listProjects, loadProject, deleteProject, downloadProject, importProjectFromFile } from '@/db/database';
+import { listProjects, loadProject, deleteProject, downloadProject, importProjectFromFile, saveProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import {
   Dialog,
@@ -48,30 +48,33 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
     setProjects(list);
   }, []);
 
-  // Sync from cloud when dialog opens and cloud projects are available
+  // Cloud is the source of truth on homepage:
+  // pull all cloud projects to local cache and prune local-only records.
   useEffect(() => {
     const syncAndLoad = async () => {
-      if (cloudProjects && cloudProjects.length > 0) {
-        setSyncing(true);
-        try {
-          await syncAllFromCloud();
-          await loadProjectsList();
-        } finally {
-          setSyncing(false);
-        }
-      } else {
-        // No cloud projects, just load local
-        loadProjectsList();
+      if (cloudProjects === undefined) {
+        return;
+      }
+
+      setSyncing(true);
+      try {
+        await syncAllFromCloud({ pruneLocal: mode === 'page' });
+      } finally {
+        setSyncing(false);
+        await loadProjectsList();
       }
     };
-    syncAndLoad();
-  }, [cloudProjects, syncAllFromCloud, loadProjectsList]);
 
-  const handleCreateProject = () => {
+    void syncAndLoad();
+  }, [cloudProjects, mode, syncAllFromCloud, loadProjectsList]);
+
+  const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
     newProject(newProjectName.trim());
     const createdProject = useProjectStore.getState().project;
     if (createdProject) {
+      await saveProject(createdProject);
+
       if (createdProject.scenes.length > 0) {
         selectScene(createdProject.scenes[0].id);
       }
@@ -107,9 +110,16 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm('Are you sure you want to delete this project?')) {
+      const deletedInCloud = await deleteProjectFromCloud(projectId);
+      if (!deletedInCloud) {
+        await syncAllFromCloud({ pruneLocal: mode === 'page' });
+        await loadProjectsList();
+        return;
+      }
+
       await deleteProject(projectId);
-      await deleteProjectFromCloud(projectId);
-      loadProjectsList();
+      await syncAllFromCloud({ pruneLocal: mode === 'page' });
+      await loadProjectsList();
     }
   };
 

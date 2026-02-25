@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
+import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
 import { Play, Square, Upload, Save, Library, Sun, Moon } from 'lucide-react';
 import { MediaLibrary } from '@/components/library/MediaLibrary';
@@ -15,15 +16,45 @@ export function Toolbar() {
   const [showLibrary, setShowLibrary] = useState(false);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const projectNameInputRef = useRef<HTMLInputElement>(null);
+  const { syncProjectToCloud } = useCloudSync({
+    currentProjectId: project?.id ?? null,
+    currentProject: project,
+    syncOnUnmount: false,
+  });
 
-  const handleGoHome = () => {
+  const handleGoHome = async () => {
+    if (project) {
+      setIsSyncingCloud(true);
+      try {
+        await saveCurrentProject();
+        const synced = await syncProjectToCloud(project.id);
+        if (!synced) {
+          alert('Cloud sync failed. Please try Save again before leaving this project.');
+          return;
+        }
+      } finally {
+        setIsSyncingCloud(false);
+      }
+    }
+
     closeProject();
     navigate('/');
   };
 
   const handleSave = async () => {
-    await saveCurrentProject();
+    if (!project) return;
+    setIsSyncingCloud(true);
+    try {
+      await saveCurrentProject();
+      const synced = await syncProjectToCloud(project.id);
+      if (!synced) {
+        alert('Cloud sync failed. Please try saving again.');
+      }
+    } finally {
+      setIsSyncingCloud(false);
+    }
   };
 
   const handlePlay = () => {
@@ -68,6 +99,7 @@ export function Toolbar() {
       <div className="flex items-center gap-4">
         <button
           onClick={handleGoHome}
+          disabled={isSyncingCloud}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity"
         >
           <img src="/logo.png" alt="PochaCoding logo" className="w-8 h-8 object-contain" />
@@ -169,10 +201,10 @@ export function Toolbar() {
             variant={isDirty ? 'default' : 'secondary'}
             size="sm"
             onClick={handleSave}
-            disabled={!isDirty}
+            disabled={isSyncingCloud}
           >
             <Save className="size-4" />
-            Save
+            {isSyncingCloud ? 'Syncing...' : 'Save'}
           </Button>
         )}
       </div>

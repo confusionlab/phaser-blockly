@@ -284,6 +284,24 @@ export async function getAllProjectsForSync(): Promise<ProjectSyncPayload[]> {
   return payloads;
 }
 
+export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Promise<{ deleted: number }> {
+  const cloudIdSet = new Set(cloudLocalIds);
+  const localRecords = await db.projects.toArray();
+  const localOnlyIds = localRecords
+    .map((record) => record.id)
+    .filter((localId) => !cloudIdSet.has(localId));
+
+  if (localOnlyIds.length === 0) {
+    return { deleted: 0 };
+  }
+
+  await db.transaction('rw', db.projects, async () => {
+    await Promise.all(localOnlyIds.map((localId) => db.projects.delete(localId)));
+  });
+
+  return { deleted: localOnlyIds.length };
+}
+
 // Sync a single project from cloud to local
 export async function syncProjectFromCloud(cloudProject: {
   localId: string;

@@ -46,9 +46,10 @@ export function EditorLayout() {
   const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
 
   // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
-  useCloudSync({
+  const { syncProjectToCloud } = useCloudSync({
     currentProjectId: project?.id ?? null,
     currentProject: project,
+    syncOnUnmount: false,
   });
 
 
@@ -187,7 +188,10 @@ export function EditorLayout() {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
       if (project) {
-        saveCurrentProject();
+        void (async () => {
+          await saveCurrentProject();
+          await syncProjectToCloud(project.id);
+        })();
       }
       return;
     }
@@ -235,6 +239,7 @@ export function EditorLayout() {
     isPlaying,
     project,
     saveCurrentProject,
+    syncProjectToCloud,
     stopPlaying,
     fullscreenPanel,
     undo,
