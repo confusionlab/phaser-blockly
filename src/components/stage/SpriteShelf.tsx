@@ -755,7 +755,7 @@ export function SpriteShelf() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-card border-r">
+    <div data-object-list className="h-full flex flex-col bg-card border-r">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <DropdownMenu>

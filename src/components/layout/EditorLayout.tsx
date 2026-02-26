@@ -21,15 +21,16 @@ type FullscreenPanel = 'code' | 'stage' | null;
 export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { project, isDirty, openProject, saveCurrentProject, duplicateObject } = useProjectStore();
+  const { project, isDirty, openProject, saveCurrentProject, duplicateObject, removeObject } = useProjectStore();
   const {
     isPlaying,
     selectedSceneId,
     selectedObjectId,
+    selectedObjectIds,
     showProjectDialog,
     setShowProjectDialog,
     selectScene,
-    selectObject,
+    selectObjects,
     stopPlaying,
     undo,
     redo,
@@ -131,6 +132,7 @@ export function EditorLayout() {
                      target.tagName === 'TEXTAREA' ||
                      target.isContentEditable;
     const isInBlocklyArea = !!target.closest('[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv');
+    const isInStageOrObjectArea = !!target.closest('[data-stage-editor], [data-object-list]');
 
     // Backtick for fullscreen toggle
     if (e.key === '`' && !isTyping) {
@@ -182,15 +184,53 @@ export function EditorLayout() {
 
     // Duplicate selected object: Cmd/Ctrl + D (disabled in Blockly area)
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
-      if (isInBlocklyArea || !selectedSceneId || !selectedObjectId) {
+      if (isInBlocklyArea || !selectedSceneId) {
         return;
       }
 
-      const duplicated = duplicateObject(selectedSceneId, selectedObjectId);
-      if (duplicated) {
-        e.preventDefault();
-        selectObject(duplicated.id);
+      const selectedIds = selectedObjectIds.length > 0
+        ? selectedObjectIds
+        : selectedObjectId
+          ? [selectedObjectId]
+          : [];
+      if (selectedIds.length === 0) return;
+
+      const scene = project?.scenes.find(s => s.id === selectedSceneId);
+      const orderedIds = scene
+        ? scene.objects.map(obj => obj.id).filter(id => selectedIds.includes(id))
+        : selectedIds;
+
+      const duplicatedIds: string[] = [];
+      for (const id of orderedIds) {
+        const duplicated = duplicateObject(selectedSceneId, id);
+        if (duplicated) duplicatedIds.push(duplicated.id);
       }
+
+      if (duplicatedIds.length > 0) {
+        e.preventDefault();
+        selectObjects(duplicatedIds, duplicatedIds[0]);
+      }
+      return;
+    }
+
+    // Delete selected object(s) while focused in object list or stage editor
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping && !isInBlocklyArea) {
+      if (!isInStageOrObjectArea || !selectedSceneId) {
+        return;
+      }
+
+      const selectedIds = selectedObjectIds.length > 0
+        ? selectedObjectIds
+        : selectedObjectId
+          ? [selectedObjectId]
+          : [];
+      if (selectedIds.length === 0) return;
+
+      e.preventDefault();
+      for (const id of selectedIds) {
+        removeObject(selectedSceneId, id);
+      }
+      selectObjects([], null);
       return;
     }
 
@@ -215,8 +255,10 @@ export function EditorLayout() {
     redo,
     selectedSceneId,
     selectedObjectId,
+    selectedObjectIds,
     duplicateObject,
-    selectObject,
+    removeObject,
+    selectObjects,
   ]);
 
   useEffect(() => {

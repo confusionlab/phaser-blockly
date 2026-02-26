@@ -101,7 +101,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
         </div>
         {/* Canvas container */}
         <div className="flex-1 min-h-0 p-1">
-          <div className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">
+          <div data-stage-editor className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">
             <PhaserCanvas isPlaying={false} />
           </div>
         </div>
