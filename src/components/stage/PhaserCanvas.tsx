@@ -1034,8 +1034,10 @@ function createEditorScene(
     if (e.ctrlKey || e.metaKey) {
       // Pinch to zoom with cursor as pivot point
       const rect = scene.game.canvas.getBoundingClientRect();
-      const pointerX = e.clientX - rect.left;
-      const pointerY = e.clientY - rect.top;
+      // Convert from CSS pixels to Phaser canvas coordinates.
+      // This keeps cursor-pivot zoom accurate when the canvas is displayed at a different size.
+      const pointerX = ((e.clientX - rect.left) / rect.width) * scene.scale.width;
+      const pointerY = ((e.clientY - rect.top) / rect.height) * scene.scale.height;
 
       // Get world position before zoom
       const worldPointBefore = camera.getWorldPoint(pointerX, pointerY);
