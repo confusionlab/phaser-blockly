@@ -542,6 +542,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         ? selectedObjectIdsRef.current
         : (selectedObjectIdRef.current ? [selectedObjectIdRef.current] : []),
     );
+    const isMultiSelection = selectedIds.size > 1;
 
     // Get current object IDs in scene data
     const sceneObjectIds = new Set(selectedScene.objects.map(o => o.id));
@@ -592,7 +593,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         newContainer.setData('setSelectionVisible', setSelectionVisible);
 
         // Set initial selection visibility
-        setSelectionVisible(isSelected);
+        setSelectionVisible(!isMultiSelection && isSelected);
 
         let dragContext: {
           leaderStartX: number;
@@ -798,11 +799,11 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
       const setSelectionVisible = container.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
       if (setSelectionVisible) {
-        setSelectionVisible(isSelected);
+        setSelectionVisible(!isMultiSelection && isSelected);
       } else {
         const selectionRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
         if (selectionRect) {
-          selectionRect.setVisible(isSelected);
+          selectionRect.setVisible(!isMultiSelection && isSelected);
         }
       }
     });
@@ -1530,6 +1531,7 @@ function createEditorScene(
       ? selectedObjectIds
       : (selectedObjectId ? [selectedObjectId] : []),
   );
+  const isInitialMultiSelection = initialSelectedIds.size > 1;
   sceneData.objects.forEach((obj: GameObject, index: number) => {
     const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight, components); // true = editor mode
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
@@ -1547,7 +1549,7 @@ function createEditorScene(
         if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(false);
       }
     };
-    setSelectionVisible(isSelected);
+    setSelectionVisible(!isInitialMultiSelection && isSelected);
     container.setData('setSelectionVisible', setSelectionVisible);
 
     let dragContext: {
@@ -1663,6 +1665,7 @@ function createEditorScene(
       ? storeState.selectedObjectIds
       : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
     const selectedSet = new Set(selectedIds);
+    const isMultiSelection = selectedIds.length > 1;
 
     scene.children.each((child: Phaser.GameObjects.GameObject) => {
       if (child instanceof Phaser.GameObjects.Container && child.getData('objectData')) {
@@ -1670,12 +1673,12 @@ function createEditorScene(
         child.setData('selected', isSelected);
         const setSelectionVisible = child.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
         if (setSelectionVisible) {
-          setSelectionVisible(isSelected);
+          setSelectionVisible(!isMultiSelection && isSelected);
         } else {
           // Fallback for containers without the helper
           const selectionRect = child.getByName('selection') as Phaser.GameObjects.Rectangle;
           if (selectionRect) {
-            selectionRect.setVisible(isSelected);
+            selectionRect.setVisible(!isMultiSelection && isSelected);
           }
         }
       }
