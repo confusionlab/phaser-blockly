@@ -60,14 +60,23 @@ function normalizeProject(project: Project): Project {
   return {
     ...project,
     scenes: project.scenes.map((scene) => {
-      const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
-      const validFolderIds = new Set(objectFolders.map(folder => folder.id));
+      const rawFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
+      const validFolderIds = new Set(rawFolders.map(folder => folder.id));
+      const objectFolders = rawFolders.map((folder) => {
+        const parentId = folder.parentId ?? null;
+        return {
+          ...folder,
+          collapsed: !!folder.collapsed,
+          parentId: parentId && validFolderIds.has(parentId) && parentId !== folder.id ? parentId : null,
+        };
+      });
+      const normalizedFolderIds = new Set(objectFolders.map(folder => folder.id));
       return {
         ...scene,
         objectFolders,
         objects: scene.objects.map((obj) => ({
           ...obj,
-          folderId: obj.folderId && validFolderIds.has(obj.folderId) ? obj.folderId : null,
+          folderId: obj.folderId && normalizedFolderIds.has(obj.folderId) ? obj.folderId : null,
         })),
       };
     }),
