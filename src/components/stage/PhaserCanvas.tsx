@@ -1038,8 +1038,7 @@ function createEditorScene(
       const pointerY = e.clientY - rect.top;
 
       // Get world position before zoom
-      const worldXBefore = camera.scrollX + pointerX / camera.zoom;
-      const worldYBefore = camera.scrollY + pointerY / camera.zoom;
+      const worldPointBefore = camera.getWorldPoint(pointerX, pointerY);
 
       // Calculate new zoom (deltaY is inverted for natural feel)
       const zoomDelta = -e.deltaY * 0.01;
@@ -1048,12 +1047,11 @@ function createEditorScene(
       camera.setZoom(newZoom);
 
       // Get world position after zoom
-      const worldXAfter = camera.scrollX + pointerX / camera.zoom;
-      const worldYAfter = camera.scrollY + pointerY / camera.zoom;
+      const worldPointAfter = camera.getWorldPoint(pointerX, pointerY);
 
       // Adjust scroll to keep cursor at same world position (pivot)
-      camera.scrollX += worldXBefore - worldXAfter;
-      camera.scrollY += worldYBefore - worldYAfter;
+      camera.scrollX += worldPointBefore.x - worldPointAfter.x;
+      camera.scrollY += worldPointBefore.y - worldPointAfter.y;
     } else {
       // Two-finger pan (natural trackpad scrolling)
       // Divide by zoom to make pan speed consistent at any zoom level
