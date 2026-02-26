@@ -4,7 +4,7 @@ import { SpriteShelf } from './SpriteShelf';
 import { ObjectInspector } from './ObjectInspector';
 import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
-import { Square, Camera } from 'lucide-react';
+import { Square, Camera, Maximize2, Minimize2 } from 'lucide-react';
 
 interface StagePanelProps {
   fullscreen?: boolean;
@@ -14,6 +14,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
   const { stopPlaying, viewMode, cycleViewMode } = useEditorStore();
   const [bottomHeightPercent, setBottomHeightPercent] = useState(70); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
+  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
 
   const handleVerticalDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -82,23 +83,48 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
   }
 
   const isCameraView = viewMode !== 'editor';
+  const canvasToolbar = (
+    <div className="flex items-center gap-1 px-2 py-1 border-b border-border">
+      <Button
+        variant={isCameraView ? 'secondary' : 'ghost'}
+        size="sm"
+        className="h-7 w-7 p-0"
+        onClick={cycleViewMode}
+        title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
+      >
+        <Camera className="size-4" />
+      </Button>
+      <Button
+        variant={isCanvasFullscreen ? 'secondary' : 'ghost'}
+        size="sm"
+        className="h-7 w-7 p-0"
+        onClick={() => setIsCanvasFullscreen((prev) => !prev)}
+        title={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
+      >
+        {isCanvasFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+      </Button>
+    </div>
+  );
+
+  if (isCanvasFullscreen) {
+    return (
+      <div className="fixed inset-0 z-50 bg-background flex flex-col">
+        {canvasToolbar}
+        <div className="flex-1 min-h-0 p-1">
+          <div className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">
+            <PhaserCanvas isPlaying={false} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Phaser canvas */}
       <div className="min-h-0 flex flex-col" style={{ height: `${100 - bottomHeightPercent}%` }}>
         {/* Toolbar above stage */}
-        <div className="flex items-center gap-1 px-2 py-1 border-b border-border">
-          <Button
-            variant={isCameraView ? 'secondary' : 'ghost'}
-            size="sm"
-            className="h-7 w-7 p-0"
-            onClick={cycleViewMode}
-            title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
-          >
-            <Camera className="size-4" />
-          </Button>
-        </div>
+        {canvasToolbar}
         {/* Canvas container */}
         <div className="flex-1 min-h-0 p-1">
           <div className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">

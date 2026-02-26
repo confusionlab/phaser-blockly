@@ -266,13 +266,13 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       console.log(`[PhaserCanvas] Creating game #${thisCreationId}`);
 
       // Editor mode uses container size for infinite canvas, play mode uses game dimensions
-      const editorBgColor = selectedScene?.background?.type === 'color' ? selectedScene.background.value : backgroundColor;
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         parent: container,
         width: isPlaying ? canvasWidth : container.clientWidth,
         height: isPlaying ? canvasHeight : container.clientHeight,
-        backgroundColor: isPlaying ? backgroundColor : editorBgColor,
+        // Keep canvas outside camera viewport black so letterboxing is always consistent.
+        backgroundColor: isPlaying ? backgroundColor : '#000000',
         scale: isPlaying ? {
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -959,6 +959,12 @@ function createEditorScene(
   // Initialize view mode
   scene.data.set('viewMode', viewMode);
   updateViewMode(viewMode);
+
+  // Keep camera viewport in sync with stage panel resizes.
+  scene.scale.on('resize', () => {
+    const currentMode = scene.data.get('viewMode') as 'camera-masked' | 'camera-viewport' | 'editor' | undefined;
+    updateViewMode(currentMode ?? 'editor');
+  });
 
   // Handle 'C' key to cycle view modes
   scene.input.keyboard?.on('keydown-C', () => {
