@@ -47,6 +47,7 @@ export interface SceneFolder {
   id: string;
   name: string;
   collapsed?: boolean;
+  parentId?: string | null;
 }
 
 export interface GroundConfig {
