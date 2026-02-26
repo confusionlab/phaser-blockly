@@ -1075,9 +1075,231 @@ function createEditorScene(
   groupSelectionRect.setVisible(false);
   groupSelectionRect.setDepth(10_002);
 
+  const groupGizmoHandles: Phaser.GameObjects.Shape[] = [];
+  const createGroupHandle = (name: string, shape: Phaser.GameObjects.Shape, cursor: string) => {
+    shape.setName(name);
+    shape.setVisible(false);
+    shape.setDepth(10_003);
+    shape.setInteractive({ useHandCursor: false, cursor });
+    scene.input.setDraggable(shape);
+    groupGizmoHandles.push(shape);
+  };
+
+  createGroupHandle('group_handle_nw', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nwse-resize');
+  createGroupHandle('group_handle_ne', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nesw-resize');
+  createGroupHandle('group_handle_sw', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nesw-resize');
+  createGroupHandle('group_handle_se', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nwse-resize');
+  createGroupHandle('group_handle_n', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'ns-resize');
+  createGroupHandle('group_handle_s', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'ns-resize');
+  createGroupHandle('group_handle_e', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9), 'ew-resize');
+  createGroupHandle('group_handle_w', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9), 'ew-resize');
+  createGroupHandle('group_handle_rotate', scene.add.circle(0, 0, GIZMO_ROTATE_RADIUS_PX, 0x4A90D9), 'grab');
+
+  const groupRotateLine = scene.add.graphics();
+  groupRotateLine.setVisible(false);
+  groupRotateLine.setDepth(10_002);
+
+  const getSelectionBounds = (ids: string[]) => {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    let foundAny = false;
+
+    for (const selectedId of ids) {
+      const selectedContainer = scene.children.getByName(selectedId) as Phaser.GameObjects.Container | null;
+      if (!selectedContainer) continue;
+      const selectedHitRect = selectedContainer.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+      const bounds = selectedHitRect ? selectedHitRect.getBounds() : selectedContainer.getBounds();
+      minX = Math.min(minX, bounds.left);
+      minY = Math.min(minY, bounds.top);
+      maxX = Math.max(maxX, bounds.right);
+      maxY = Math.max(maxY, bounds.bottom);
+      foundAny = true;
+    }
+
+    if (!foundAny) return null;
+    return { minX, minY, maxX, maxY };
+  };
+
+  const updateGroupHandlePositions = (centerX: number, centerY: number, width: number, height: number) => {
+    const cameraZoom = scene.cameras.main.zoom || 1;
+    const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
+    const halfW = width / 2;
+    const halfH = height / 2;
+    const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / cameraZoom;
+    const uiScale = 1 / cameraZoom;
+
+    groupSelectionRect.setPosition(centerX, centerY);
+    groupSelectionRect.setSize(width, height);
+    groupSelectionRect.setStrokeStyle(strokeWidth, 0x4A90D9);
+    groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
+
+    const handleByName = (name: string) => groupGizmoHandles.find((h) => h.name === name);
+    const nw = handleByName('group_handle_nw') as Phaser.GameObjects.Rectangle | undefined;
+    const ne = handleByName('group_handle_ne') as Phaser.GameObjects.Rectangle | undefined;
+    const sw = handleByName('group_handle_sw') as Phaser.GameObjects.Rectangle | undefined;
+    const se = handleByName('group_handle_se') as Phaser.GameObjects.Rectangle | undefined;
+    const n = handleByName('group_handle_n') as Phaser.GameObjects.Rectangle | undefined;
+    const s = handleByName('group_handle_s') as Phaser.GameObjects.Rectangle | undefined;
+    const e = handleByName('group_handle_e') as Phaser.GameObjects.Rectangle | undefined;
+    const w = handleByName('group_handle_w') as Phaser.GameObjects.Rectangle | undefined;
+    const rotate = handleByName('group_handle_rotate') as Phaser.GameObjects.Arc | undefined;
+
+    for (const handle of [nw, ne, sw, se, n, s, e, w, rotate]) {
+      if (handle) handle.setScale(uiScale, uiScale);
+    }
+
+    nw?.setPosition(centerX - halfW, centerY - halfH);
+    ne?.setPosition(centerX + halfW, centerY - halfH);
+    sw?.setPosition(centerX - halfW, centerY + halfH);
+    se?.setPosition(centerX + halfW, centerY + halfH);
+    n?.setPosition(centerX, centerY - halfH);
+    s?.setPosition(centerX, centerY + halfH);
+    e?.setPosition(centerX + halfW, centerY);
+    w?.setPosition(centerX - halfW, centerY);
+    rotate?.setPosition(centerX, centerY - halfH - rotateDistance);
+
+    groupRotateLine.clear();
+    groupRotateLine.lineStyle(strokeWidth, 0x4A90D9, 1);
+    groupRotateLine.lineBetween(centerX, centerY - halfH, centerX, centerY - halfH - rotateDistance + 4);
+  };
+
   const setGroupGizmoVisible = (visible: boolean) => {
     groupSelectionRect.setVisible(visible);
+    groupRotateLine.setVisible(visible);
+    for (const handle of groupGizmoHandles) {
+      handle.setVisible(visible);
+    }
   };
+
+  let activeGroupTransform: {
+    pointerId: number;
+    handleName: string;
+    selectedIds: string[];
+    startCenterX: number;
+    startCenterY: number;
+    startMinX: number;
+    startMaxX: number;
+    startMinY: number;
+    startMaxY: number;
+    startPointerAngle: number;
+    startObjects: Map<string, { x: number; y: number; scaleX: number; scaleY: number; rotation: number }>;
+  } | null = null;
+
+  for (const handle of groupGizmoHandles) {
+    handle.on('dragstart', (pointer: Phaser.Input.Pointer) => {
+      const storeState = useEditorStore.getState();
+      const selectedIds = storeState.selectedObjectIds.length > 0
+        ? storeState.selectedObjectIds
+        : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+      const bounds = getSelectionBounds(selectedIds);
+      if (!bounds) return;
+
+      const startObjects = new Map<string, { x: number; y: number; scaleX: number; scaleY: number; rotation: number }>();
+      for (const id of selectedIds) {
+        const target = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+        if (!target) continue;
+        startObjects.set(id, {
+          x: target.x,
+          y: target.y,
+          scaleX: target.scaleX,
+          scaleY: target.scaleY,
+          rotation: target.rotation,
+        });
+      }
+
+      const startCenterX = (bounds.minX + bounds.maxX) / 2;
+      const startCenterY = (bounds.minY + bounds.maxY) / 2;
+      activeGroupTransform = {
+        pointerId: pointer.id,
+        handleName: handle.name,
+        selectedIds,
+        startCenterX,
+        startCenterY,
+        startMinX: bounds.minX,
+        startMaxX: bounds.maxX,
+        startMinY: bounds.minY,
+        startMaxY: bounds.maxY,
+        startPointerAngle: Math.atan2(pointer.worldY - startCenterY, pointer.worldX - startCenterX),
+        startObjects,
+      };
+    });
+
+    handle.on('drag', (pointer: Phaser.Input.Pointer) => {
+      if (!activeGroupTransform || activeGroupTransform.pointerId !== pointer.id) return;
+      const ctx = activeGroupTransform;
+
+      if (ctx.handleName === 'group_handle_rotate') {
+        const currentAngle = Math.atan2(pointer.worldY - ctx.startCenterY, pointer.worldX - ctx.startCenterX);
+        const delta = currentAngle - ctx.startPointerAngle;
+        const sin = Math.sin(delta);
+        const cos = Math.cos(delta);
+        for (const id of ctx.selectedIds) {
+          const target = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+          const startObj = ctx.startObjects.get(id);
+          if (!target || !startObj) continue;
+          const relX = startObj.x - ctx.startCenterX;
+          const relY = startObj.y - ctx.startCenterY;
+          target.x = ctx.startCenterX + (relX * cos - relY * sin);
+          target.y = ctx.startCenterY + (relX * sin + relY * cos);
+          target.rotation = startObj.rotation + delta;
+        }
+      } else {
+        const isLeft = ctx.handleName.endsWith('_w') || ctx.handleName.endsWith('_nw') || ctx.handleName.endsWith('_sw');
+        const isRight = ctx.handleName.endsWith('_e') || ctx.handleName.endsWith('_ne') || ctx.handleName.endsWith('_se');
+        const isTop = ctx.handleName.endsWith('_n') || ctx.handleName.endsWith('_nw') || ctx.handleName.endsWith('_ne');
+        const isBottom = ctx.handleName.endsWith('_s') || ctx.handleName.endsWith('_sw') || ctx.handleName.endsWith('_se');
+        const halfWidth = Math.max((ctx.startMaxX - ctx.startMinX) / 2, 1);
+        const halfHeight = Math.max((ctx.startMaxY - ctx.startMinY) / 2, 1);
+        let scaleX = 1;
+        let scaleY = 1;
+
+        if (isLeft) scaleX = (ctx.startCenterX - pointer.worldX) / halfWidth;
+        if (isRight) scaleX = (pointer.worldX - ctx.startCenterX) / halfWidth;
+        if (isTop) scaleY = (ctx.startCenterY - pointer.worldY) / halfHeight;
+        if (isBottom) scaleY = (pointer.worldY - ctx.startCenterY) / halfHeight;
+
+        const isCorner = (isLeft || isRight) && (isTop || isBottom);
+        if (isCorner) {
+          const uniform = (scaleX + scaleY) / 2;
+          scaleX = uniform;
+          scaleY = uniform;
+        }
+
+        scaleX = Math.max(0.1, scaleX);
+        scaleY = Math.max(0.1, scaleY);
+
+        for (const id of ctx.selectedIds) {
+          const target = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+          const startObj = ctx.startObjects.get(id);
+          if (!target || !startObj) continue;
+          target.x = ctx.startCenterX + (startObj.x - ctx.startCenterX) * scaleX;
+          target.y = ctx.startCenterY + (startObj.y - ctx.startCenterY) * scaleY;
+          target.setScale(Math.max(0.1, startObj.scaleX * scaleX), Math.max(0.1, startObj.scaleY * scaleY));
+        }
+      }
+
+      const liveBounds = getSelectionBounds(ctx.selectedIds);
+      if (!liveBounds) return;
+      updateGroupHandlePositions(
+        (liveBounds.minX + liveBounds.maxX) / 2,
+        (liveBounds.minY + liveBounds.maxY) / 2,
+        Math.max(1, liveBounds.maxX - liveBounds.minX),
+        Math.max(1, liveBounds.maxY - liveBounds.minY),
+      );
+    });
+
+    handle.on('dragend', () => {
+      if (!activeGroupTransform) return;
+      for (const id of activeGroupTransform.selectedIds) {
+        const target = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+        if (!target) continue;
+        onDragEnd(id, target.x, target.y, target.scaleX, target.scaleY, Phaser.Math.RadToDeg(target.rotation));
+      }
+      activeGroupTransform = null;
+    });
+  }
 
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
     const minX = Math.min(marqueeStartX, pointer.worldX);
@@ -1409,64 +1631,40 @@ function createEditorScene(
       ? storeState.selectedObjectIds
       : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
     const selectedSet = new Set(selectedIds);
-    const isMultiSelection = selectedIds.length > 1;
-
     scene.children.each((child: Phaser.GameObjects.GameObject) => {
       if (child instanceof Phaser.GameObjects.Container && child.getData('objectData')) {
         const isSelected = selectedSet.has(child.name);
         child.setData('selected', isSelected);
         const setSelectionVisible = child.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
         if (setSelectionVisible) {
-          setSelectionVisible(!isMultiSelection && isSelected);
+          setSelectionVisible(false);
         } else {
           // Fallback for containers without the helper
           const selectionRect = child.getByName('selection') as Phaser.GameObjects.Rectangle;
           if (selectionRect) {
-            selectionRect.setVisible(!isMultiSelection && isSelected);
+            selectionRect.setVisible(false);
           }
         }
       }
     });
 
-    if (!isMultiSelection) {
+    if (selectedIds.length === 0) {
       setGroupGizmoVisible(false);
       return;
     }
 
-    let minX = Number.POSITIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    let foundAny = false;
-
-    for (const selectedId of selectedIds) {
-      const selectedContainer = scene.children.getByName(selectedId) as Phaser.GameObjects.Container | null;
-      if (!selectedContainer) continue;
-      const selectedHitRect = selectedContainer.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
-      const bounds = selectedHitRect ? selectedHitRect.getBounds() : selectedContainer.getBounds();
-      minX = Math.min(minX, bounds.left);
-      minY = Math.min(minY, bounds.top);
-      maxX = Math.max(maxX, bounds.right);
-      maxY = Math.max(maxY, bounds.bottom);
-      foundAny = true;
-    }
-
-    if (!foundAny) {
+    const bounds = getSelectionBounds(selectedIds);
+    if (!bounds) {
       setGroupGizmoVisible(false);
       return;
     }
 
-    const width = Math.max(1, maxX - minX);
-    const height = Math.max(1, maxY - minY);
-    const centerX = minX + width / 2;
-    const centerY = minY + height / 2;
-    const cameraZoom = scene.cameras.main.zoom || 1;
-    const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
+    const width = Math.max(1, bounds.maxX - bounds.minX);
+    const height = Math.max(1, bounds.maxY - bounds.minY);
+    const centerX = bounds.minX + width / 2;
+    const centerY = bounds.minY + height / 2;
 
-    groupSelectionRect.setPosition(centerX, centerY);
-    groupSelectionRect.setSize(width, height);
-    groupSelectionRect.setStrokeStyle(strokeWidth, 0x4A90D9);
-    groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
+    updateGroupHandlePositions(centerX, centerY, width, height);
 
     setGroupGizmoVisible(true);
   });
