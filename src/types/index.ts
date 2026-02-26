@@ -46,6 +46,7 @@ export interface Scene {
 export interface SceneFolder {
   id: string;
   name: string;
+  parentId?: string | null;
   collapsed?: boolean;
 }
 

@@ -62,9 +62,12 @@ interface SortableObjectItemProps {
   onContextMenu: (e: React.MouseEvent) => void;
   onEditNameChange: (value: string) => void;
   onSaveRename: () => void;
+  depth?: number;
 }
 
 const FOLDER_DROP_PREFIX = 'folder-drop:';
+const OBJECT_SORT_PREFIX = 'object:';
+const FOLDER_SORT_PREFIX = 'folder:';
 
 function getFolderDropId(folderId: string): string {
   return `${FOLDER_DROP_PREFIX}${folderId}`;
@@ -72,6 +75,22 @@ function getFolderDropId(folderId: string): string {
 
 function parseFolderDropId(id: string): string | null {
   return id.startsWith(FOLDER_DROP_PREFIX) ? id.slice(FOLDER_DROP_PREFIX.length) : null;
+}
+
+function getObjectSortableId(objectId: string): string {
+  return `${OBJECT_SORT_PREFIX}${objectId}`;
+}
+
+function parseObjectSortableId(id: string): string | null {
+  return id.startsWith(OBJECT_SORT_PREFIX) ? id.slice(OBJECT_SORT_PREFIX.length) : null;
+}
+
+function getFolderSortableId(folderId: string): string {
+  return `${FOLDER_SORT_PREFIX}${folderId}`;
+}
+
+function parseFolderSortableId(id: string): string | null {
+  return id.startsWith(FOLDER_SORT_PREFIX) ? id.slice(FOLDER_SORT_PREFIX.length) : null;
 }
 
 function SortableObjectItem({
@@ -88,6 +107,7 @@ function SortableObjectItem({
   onContextMenu,
   onEditNameChange,
   onSaveRename,
+  depth = 0,
 }: SortableObjectItemProps) {
   const {
     attributes,
@@ -96,12 +116,13 @@ function SortableObjectItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: object.id });
+  } = useSortable({ id: getObjectSortableId(object.id) });
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    paddingLeft: `${8 + depth * 14}px`,
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -198,7 +219,8 @@ function SortableObjectItem({
 
 interface FolderRowProps {
   folder: SceneFolder;
-  hasObjects: boolean;
+  depth: number;
+  hasChildren: boolean;
   isEditing: boolean;
   folderEditName: string;
   folderInputRef: React.RefObject<HTMLInputElement | null>;
@@ -212,7 +234,8 @@ interface FolderRowProps {
 
 function FolderRow({
   folder,
-  hasObjects,
+  depth,
+  hasChildren,
   isEditing,
   folderEditName,
   folderInputRef,
@@ -223,19 +246,33 @@ function FolderRow({
   onSaveFolderRename,
   onCancelFolderRename,
 }: FolderRowProps) {
-  const { isOver, setNodeRef } = useDroppable({
-    id: getFolderDropId(folder.id),
-  });
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setSortableRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: getFolderSortableId(folder.id) });
+  const { isOver, setNodeRef: setDropRef } = useDroppable({ id: getFolderDropId(folder.id) });
+
+  const setCombinedRef = (node: HTMLDivElement | null) => {
+    setSortableRef(node);
+    setDropRef(node);
+  };
 
   return (
     <div
-      ref={setNodeRef}
-      className={`flex items-center gap-1 px-2 py-1 border-b transition-colors ${
-        isOver ? 'bg-primary/15' : hasObjects ? 'bg-muted/40' : 'bg-muted/20'
+      ref={setCombinedRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, paddingLeft: `${8 + depth * 14}px` }}
+      {...attributes}
+      {...listeners}
+      className={`flex items-center gap-1 py-1 border-b transition-colors ${
+        isOver ? 'bg-primary/15' : hasChildren ? 'bg-muted/40' : 'bg-muted/20'
       }`}
       onClick={onToggle}
     >
-      {hasObjects ? (
+      {hasChildren ? (
         <button
           className="h-5 w-5 flex items-center justify-center hover:bg-accent rounded"
           onClick={(e) => {
@@ -373,11 +410,12 @@ export function SpriteShelf() {
     selectObject(newObject.id);
   };
 
-  const handleAddFolder = (assignObjectId?: string) => {
+  const handleAddFolder = (assignObjectId?: string, parentId: string | null = null) => {
     if (!selectedScene || !selectedSceneId) return;
     const newFolder: SceneFolder = {
       id: crypto.randomUUID(),
       name: `Folder ${folders.length + 1}`,
+      parentId,
       collapsed: false,
     };
     updateScene(selectedSceneId, { objectFolders: [...folders, newFolder] });
@@ -406,46 +444,106 @@ export function SpriteShelf() {
 
     const activeId = String(active.id);
     const overId = String(over.id);
-    const objectIds = selectedScene.objects.map(obj => obj.id);
-    if (!objectIds.includes(activeId)) return;
 
-    const selectedIdsInScene = selectedObjectIds.filter(id => objectIds.includes(id));
-    const selectedSet = new Set(selectedIdsInScene);
-    const draggedIds = selectedSet.has(activeId) && selectedSet.size > 1
-      ? objectIds.filter(id => selectedSet.has(id))
-      : [activeId];
-    const draggedSet = new Set(draggedIds);
+    const activeObjectId = parseObjectSortableId(activeId);
+    const activeFolderId = parseFolderSortableId(activeId);
+
+    if (!activeObjectId && !activeFolderId) return;
 
     const folderDropId = parseFolderDropId(overId);
-    if (folderDropId) {
-      const nextObjects = selectedScene.objects.map(obj =>
-        draggedSet.has(obj.id) ? { ...obj, folderId: folderDropId } : obj
-      );
-      updateScene(selectedSceneId, { objects: nextObjects });
+
+    if (activeObjectId) {
+      const objectIds = selectedScene.objects.map(obj => obj.id);
+      if (!objectIds.includes(activeObjectId)) return;
+
+      const selectedIdsInScene = selectedObjectIds.filter(id => objectIds.includes(id));
+      const selectedSet = new Set(selectedIdsInScene);
+      const draggedIds = selectedSet.has(activeObjectId) && selectedSet.size > 1
+        ? objectIds.filter(id => selectedSet.has(id))
+        : [activeObjectId];
+      const draggedSet = new Set(draggedIds);
+
+      if (folderDropId) {
+        const nextObjects = selectedScene.objects.map(obj =>
+          draggedSet.has(obj.id) ? { ...obj, folderId: folderDropId } : obj
+        );
+        updateScene(selectedSceneId, { objects: nextObjects });
+        return;
+      }
+
+      const overObjectId = parseObjectSortableId(overId);
+      if (overObjectId && !draggedSet.has(overObjectId)) {
+        const activeIndex = objectIds.indexOf(activeObjectId);
+        const overIndex = objectIds.indexOf(overObjectId);
+        const movingDown = overIndex > activeIndex;
+
+        const remaining = objectIds.filter(id => !draggedSet.has(id));
+        const overIndexInRemaining = remaining.indexOf(overObjectId);
+        if (overIndexInRemaining < 0) return;
+
+        const insertIndex = movingDown ? overIndexInRemaining + 1 : overIndexInRemaining;
+        const reorderedIds = [...remaining];
+        reorderedIds.splice(insertIndex, 0, ...draggedIds);
+
+        const overObject = selectedScene.objects.find(obj => obj.id === overObjectId);
+        const nextFolderId = overObject?.folderId ?? null;
+
+        const objectMap = new Map(selectedScene.objects.map(obj => [obj.id, obj]));
+        const reorderedObjects = reorderedIds
+          .map(id => objectMap.get(id))
+          .filter((obj): obj is GameObject => !!obj)
+          .map(obj => draggedSet.has(obj.id) ? { ...obj, folderId: nextFolderId } : obj);
+
+        updateScene(selectedSceneId, { objects: reorderedObjects });
+        return;
+      }
+
+      const overFolderId = parseFolderSortableId(overId);
+      if (overFolderId) {
+        const nextObjects = selectedScene.objects.map(obj =>
+          draggedSet.has(obj.id) ? { ...obj, folderId: overFolderId } : obj
+        );
+        updateScene(selectedSceneId, { objects: nextObjects });
+      }
       return;
     }
 
-    if (!objectIds.includes(overId)) return;
-    if (draggedSet.has(overId)) return;
+    if (!activeFolderId) return;
+    if (!folders.some(folder => folder.id === activeFolderId)) return;
 
-    const activeIndex = objectIds.indexOf(activeId);
-    const overIndex = objectIds.indexOf(overId);
-    const movingDown = overIndex > activeIndex;
+    if (folderDropId && folderDropId !== activeFolderId) {
+      const isDescendantTarget = (() => {
+        let current = folderDropId;
+        while (current) {
+          if (current === activeFolderId) return true;
+          const next = folders.find(folder => folder.id === current)?.parentId ?? null;
+          current = next || '';
+        }
+        return false;
+      })();
+      if (isDescendantTarget) return;
 
-    const remaining = objectIds.filter(id => !draggedSet.has(id));
-    const overIndexInRemaining = remaining.indexOf(overId);
-    if (overIndexInRemaining < 0) return;
+      const nextFolders = folders.map(folder =>
+        folder.id === activeFolderId ? { ...folder, parentId: folderDropId } : folder
+      );
+      updateScene(selectedSceneId, { objectFolders: nextFolders });
+      return;
+    }
 
-    const insertIndex = movingDown ? overIndexInRemaining + 1 : overIndexInRemaining;
-    const reorderedIds = [...remaining];
-    reorderedIds.splice(insertIndex, 0, ...draggedIds);
+    const overFolderId = parseFolderSortableId(overId);
+    if (!overFolderId || overFolderId === activeFolderId) return;
 
-    const objectMap = new Map(selectedScene.objects.map(obj => [obj.id, obj]));
-    const reorderedObjects = reorderedIds
-      .map(id => objectMap.get(id))
-      .filter((obj): obj is GameObject => !!obj);
+    const overFolder = folders.find(folder => folder.id === overFolderId);
+    const targetParentId = overFolder?.parentId ?? null;
 
-    updateScene(selectedSceneId, { objects: reorderedObjects });
+    const reordered = [...folders];
+    const fromIndex = reordered.findIndex(folder => folder.id === activeFolderId);
+    const toIndex = reordered.findIndex(folder => folder.id === overFolderId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, { ...moved, parentId: targetParentId });
+    updateScene(selectedSceneId, { objectFolders: reordered });
   };
 
   const handleContextMenu = (e: React.MouseEvent, object: GameObject) => {
@@ -586,15 +684,29 @@ export function SpriteShelf() {
 
   const handleDeleteFolder = (folderId: string) => {
     if (!selectedSceneId || !selectedScene) return;
-    const nextFolders = folders.filter(folder => folder.id !== folderId);
+
+    const queue = [folderId];
+    const removeSet = new Set<string>();
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      if (removeSet.has(currentId)) continue;
+      removeSet.add(currentId);
+      folders
+        .filter(folder => folder.parentId === currentId)
+        .forEach(child => queue.push(child.id));
+    }
+
+    const nextFolders = folders.filter(folder => !removeSet.has(folder.id));
     const nextObjects = selectedScene.objects.map(obj =>
-      obj.folderId === folderId ? { ...obj, folderId: null } : obj
+      obj.folderId && removeSet.has(obj.folderId) ? { ...obj, folderId: null } : obj
     );
+
     updateScene(selectedSceneId, {
       objectFolders: nextFolders,
       objects: nextObjects,
     });
-    if (editingFolderId === folderId) {
+
+    if (editingFolderId && removeSet.has(editingFolderId)) {
       setEditingFolderId(null);
       setFolderEditName('');
     }
@@ -748,16 +860,43 @@ export function SpriteShelf() {
   };
 
   const folderById = new Map(folders.map(folder => [folder.id, folder]));
-  const folderFirstObjectIndex = new Map<string, number>();
-  for (let i = 0; i < selectedScene.objects.length; i++) {
-    const folderId = selectedScene.objects[i].folderId;
-    if (folderId && folderById.has(folderId) && !folderFirstObjectIndex.has(folderId)) {
-      folderFirstObjectIndex.set(folderId, i);
-    }
+  const childrenByParent = new Map<string | null, SceneFolder[]>();
+  for (const folder of folders) {
+    const parentId = folder.parentId && folderById.has(folder.parentId) ? folder.parentId : null;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(folder);
+    childrenByParent.set(parentId, siblings);
   }
-  const collapsedFolderIds = new Set(
-    folders.filter(folder => folder.collapsed).map(folder => folder.id)
-  );
+
+  const objectsByFolder = new Map<string | null, GameObject[]>();
+  for (const object of selectedScene.objects) {
+    const folderId = object.folderId && folderById.has(object.folderId) ? object.folderId : null;
+    const entries = objectsByFolder.get(folderId) ?? [];
+    entries.push(object);
+    objectsByFolder.set(folderId, entries);
+  }
+
+  const visibleRows: Array<{ kind: 'folder' | 'object'; folder?: SceneFolder; object?: GameObject; depth: number }> = [];
+  const collectRows = (parentId: string | null, depth: number, parentCollapsed: boolean) => {
+    const childFolders = childrenByParent.get(parentId) ?? [];
+    const folderObjects = objectsByFolder.get(parentId) ?? [];
+
+    for (const folder of childFolders) {
+      visibleRows.push({ kind: 'folder', folder, depth });
+      const collapsed = parentCollapsed || !!folder.collapsed;
+      if (!collapsed) {
+        collectRows(folder.id, depth + 1, collapsed);
+      }
+    }
+
+    if (!parentCollapsed) {
+      for (const object of folderObjects) {
+        visibleRows.push({ kind: 'object', object, depth });
+      }
+    }
+  };
+  collectRows(null, 0, false);
+
   const sceneObjectIdSet = new Set(selectedScene.objects.map(obj => obj.id));
   const selectedIdsInScene = selectedObjectIds.filter(id => sceneObjectIdSet.has(id));
   const willDeleteSelection = !!contextMenu &&
@@ -766,10 +905,9 @@ export function SpriteShelf() {
   const deleteLabel = willDeleteSelection
     ? `Delete Selected (${selectedIdsInScene.length})`
     : 'Delete';
-  const visibleObjectIds = selectedScene.objects
-    .filter(obj => !obj.folderId || !collapsedFolderIds.has(obj.folderId))
-    .map(obj => obj.id);
-  const foldersWithoutObjects = folders.filter(folder => !folderFirstObjectIndex.has(folder.id));
+  const sortableItemIds = visibleRows.map(row =>
+    row.kind === 'folder' ? getFolderSortableId(row.folder!.id) : getObjectSortableId(row.object!.id)
+  );
 
   const handleObjectSelect = (e: React.MouseEvent, objectId: string) => {
     const orderedIds = selectedScene.objects.map(obj => obj.id);
@@ -889,10 +1027,10 @@ export function SpriteShelf() {
 
       {/* Object List */}
       <div className="flex-1 overflow-y-auto">
-        {selectedScene.objects.length === 0 ? (
+        {visibleRows.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
             <span className="text-2xl mb-2">📦</span>
-            <span className="text-xs text-center">No objects yet</span>
+            <span className="text-xs text-center">No layers yet</span>
           </div>
         ) : (
           <DndContext
@@ -901,76 +1039,60 @@ export function SpriteShelf() {
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={visibleObjectIds}
+              items={sortableItemIds}
               strategy={verticalListSortingStrategy}
             >
               <div className="flex flex-col">
-                {selectedScene.objects.map((object, index) => {
-                  const folder = object.folderId ? folderById.get(object.folderId) : null;
-                  const shouldShowFolderRow = folder && folderFirstObjectIndex.get(folder.id) === index;
-                  const isHiddenByCollapsedFolder = !!(object.folderId && collapsedFolderIds.has(object.folderId));
+                {visibleRows.map((row) => {
+                  if (row.kind === 'folder' && row.folder) {
+                    const folder = row.folder;
+                    const hasChildren = (childrenByParent.get(folder.id)?.length ?? 0) > 0 || (objectsByFolder.get(folder.id)?.length ?? 0) > 0;
+                    return (
+                      <FolderRow
+                        key={folder.id}
+                        folder={folder}
+                        depth={row.depth}
+                        hasChildren={hasChildren}
+                        isEditing={editingFolderId === folder.id}
+                        folderEditName={folderEditName}
+                        folderInputRef={folderInputRef}
+                        onToggle={() => handleToggleFolderCollapsed(folder.id)}
+                        onStartEdit={() => handleStartFolderEdit(folder)}
+                        onDelete={() => handleDeleteFolder(folder.id)}
+                        onFolderEditNameChange={setFolderEditName}
+                        onSaveFolderRename={handleSaveFolderRename}
+                        onCancelFolderRename={() => {
+                          setEditingFolderId(null);
+                          setFolderEditName('');
+                        }}
+                      />
+                    );
+                  }
+
+                  if (!row.object) return null;
+                  const object = row.object;
                   const isComponentInstance = !!object.componentId;
                   const effectiveProps = getEffectiveObjectProps(object, project?.components || []);
-
                   return (
-                    <div key={object.id}>
-                      {shouldShowFolderRow && folder && (
-                        <FolderRow
-                          folder={folder}
-                          hasObjects
-                          isEditing={editingFolderId === folder.id}
-                          folderEditName={folderEditName}
-                          folderInputRef={folderInputRef}
-                          onToggle={() => handleToggleFolderCollapsed(folder.id)}
-                          onStartEdit={() => handleStartFolderEdit(folder)}
-                          onDelete={() => handleDeleteFolder(folder.id)}
-                          onFolderEditNameChange={setFolderEditName}
-                          onSaveFolderRename={handleSaveFolderRename}
-                          onCancelFolderRename={() => {
-                            setEditingFolderId(null);
-                            setFolderEditName('');
-                          }}
-                        />
-                      )}
-                      {!isHiddenByCollapsedFolder && (
-                        <SortableObjectItem
-                          object={object}
-                          isSelected={selectedObjectIds.includes(object.id)}
-                          isEditing={editingObjectId === object.id}
-                          isComponentInstance={isComponentInstance}
-                          effectiveCostumes={effectiveProps.costumes}
-                          effectiveCostumeIndex={effectiveProps.currentCostumeIndex}
-                          editName={editName}
-                          inputRef={inputRef}
-                          onSelect={(e) => handleObjectSelect(e, object.id)}
-                          onStartEdit={() => handleStartObjectEdit(object.id, object.name)}
-                          onContextMenu={(e) => handleContextMenu(e, object)}
-                          onEditNameChange={setEditName}
-                          onSaveRename={handleSaveObjectRename}
-                        />
-                      )}
-                    </div>
+                    <SortableObjectItem
+                      key={object.id}
+                      object={object}
+                      depth={row.depth}
+                      isSelected={selectedObjectIds.includes(object.id)}
+                      isEditing={editingObjectId === object.id}
+                      isComponentInstance={isComponentInstance}
+                      effectiveCostumes={effectiveProps.costumes}
+                      effectiveCostumeIndex={effectiveProps.currentCostumeIndex}
+                      editName={editName}
+                      inputRef={inputRef}
+                      onSelect={(e) => handleObjectSelect(e, object.id)}
+                      onStartEdit={() => handleStartObjectEdit(object.id, object.name)}
+                      onContextMenu={(e) => handleContextMenu(e, object)}
+                      onEditNameChange={setEditName}
+                      onSaveRename={handleSaveObjectRename}
+                    />
                   );
                 })}
-                {foldersWithoutObjects.map(folder => (
-                  <FolderRow
-                    key={folder.id}
-                    folder={folder}
-                    hasObjects={false}
-                    isEditing={editingFolderId === folder.id}
-                    folderEditName={folderEditName}
-                    folderInputRef={folderInputRef}
-                    onToggle={() => handleToggleFolderCollapsed(folder.id)}
-                    onStartEdit={() => handleStartFolderEdit(folder)}
-                    onDelete={() => handleDeleteFolder(folder.id)}
-                    onFolderEditNameChange={setFolderEditName}
-                    onSaveFolderRename={handleSaveFolderRename}
-                    onCancelFolderRename={() => {
-                      setEditingFolderId(null);
-                      setFolderEditName('');
-                    }}
-                  />
-                ))}
               </div>
             </SortableContext>
           </DndContext>
