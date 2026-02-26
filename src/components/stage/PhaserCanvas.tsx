@@ -97,6 +97,15 @@ function pickTopObjectIdAtWorldPoint(scene: Phaser.Scene, worldX: number, worldY
   return null;
 }
 
+function getOrderedObjectIdsForActiveScene(fallbackIds: string[] = []): string[] {
+  const { project } = useProjectStore.getState();
+  const { selectedSceneId } = useEditorStore.getState();
+  if (!project || !selectedSceneId) return fallbackIds;
+
+  const activeScene = project.scenes.find((sceneState) => sceneState.id === selectedSceneId);
+  return activeScene ? activeScene.objects.map((obj) => obj.id) : fallbackIds;
+}
+
 interface PhaserCanvasProps {
   isPlaying: boolean;
 }
@@ -597,8 +606,11 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           const selectedIds = storeState.selectedObjectIds.length > 0
             ? storeState.selectedObjectIds
             : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+          const orderedSceneObjectIds = getOrderedObjectIdsForActiveScene(
+            selectedScene.objects.map((sceneObj) => sceneObj.id),
+          );
           const dragIds = (selectedIds.length > 1 && selectedIds.includes(obj.id))
-            ? selectedScene.objects.map((o) => o.id).filter((id) => selectedIds.includes(id))
+            ? orderedSceneObjectIds.filter((id) => selectedIds.includes(id))
             : [obj.id];
           const startPositions = new Map<string, { x: number; y: number }>();
           for (const id of dragIds) {
@@ -876,6 +888,7 @@ function createEditorScene(
   cycleViewMode: () => void = () => {}
 ) {
   if (!sceneData) return;
+  const getOrderedSceneObjectIds = () => getOrderedObjectIdsForActiveScene(sceneData.objects.map((obj) => obj.id));
 
   const camera = scene.cameras.main;
 
@@ -1137,9 +1150,8 @@ function createEditorScene(
       }
     });
 
-    const orderedHitIds = sceneData.objects
-      .map((obj) => obj.id)
-      .filter((id) => hits.has(id));
+    const orderedSceneObjectIds = getOrderedSceneObjectIds();
+    const orderedHitIds = orderedSceneObjectIds.filter((id) => hits.has(id));
 
     const storeState = useEditorStore.getState();
     const currentSelected = storeState.selectedObjectIds.length > 0
@@ -1158,7 +1170,7 @@ function createEditorScene(
           toggled.add(id);
         }
       }
-      nextSelection = sceneData.objects.map((obj) => obj.id).filter((id) => toggled.has(id));
+      nextSelection = orderedSceneObjectIds.filter((id) => toggled.has(id));
     }
 
     selectObjects(nextSelection, nextSelection[0] ?? null);
@@ -1189,8 +1201,9 @@ function createEditorScene(
     const selectedIds = storeState.selectedObjectIds.length > 0
       ? storeState.selectedObjectIds
       : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+    const orderedSceneObjectIds = getOrderedSceneObjectIds();
     const dragIds = (selectedIds.length > 1 && selectedIds.includes(objectId))
-      ? sceneData.objects.map((o) => o.id).filter((id) => selectedIds.includes(id))
+      ? orderedSceneObjectIds.filter((id) => selectedIds.includes(id))
       : [objectId];
     const startPositions = new Map<string, { x: number; y: number }>();
     for (const id of dragIds) {
@@ -1324,8 +1337,9 @@ function createEditorScene(
       const selectedIds = storeState.selectedObjectIds.length > 0
         ? storeState.selectedObjectIds
         : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+      const orderedSceneObjectIds = getOrderedSceneObjectIds();
       const dragIds = (selectedIds.length > 1 && selectedIds.includes(obj.id))
-        ? sceneData.objects.map((o) => o.id).filter((id) => selectedIds.includes(id))
+        ? orderedSceneObjectIds.filter((id) => selectedIds.includes(id))
         : [obj.id];
       const startPositions = new Map<string, { x: number; y: number }>();
       for (const id of dragIds) {
