@@ -1027,6 +1027,16 @@ function createEditorScene(
   // Natural trackpad/mouse wheel controls (like Figma) - only in editor mode
   // - Two-finger pan (no modifier) = pan
   // - Pinch to zoom (ctrl/meta key on trackpad) = zoom with cursor as pivot
+  const zoomCameraAtPointer = (screenX: number, screenY: number, newZoom: number) => {
+    const worldBeforeZoom = camera.getWorldPoint(screenX, screenY);
+    camera.setZoom(newZoom);
+    const worldAfterZoom = camera.getWorldPoint(screenX, screenY);
+
+    // Keep the same world point under the pointer after zooming.
+    camera.scrollX += worldBeforeZoom.x - worldAfterZoom.x;
+    camera.scrollY += worldBeforeZoom.y - worldAfterZoom.y;
+  };
+
   scene.game.canvas.addEventListener('wheel', (e: WheelEvent) => {
     const currentMode = scene.data.get('viewMode');
 
@@ -1044,23 +1054,11 @@ function createEditorScene(
       const pointerX = e.clientX - rect.left;
       const pointerY = e.clientY - rect.top;
 
-      // Get world position before zoom
-      const worldXBefore = camera.scrollX + pointerX / camera.zoom;
-      const worldYBefore = camera.scrollY + pointerY / camera.zoom;
-
       // Calculate new zoom (deltaY is inverted for natural feel)
       const zoomDelta = -e.deltaY * 0.01;
       const zoomFactor = 1 + zoomDelta;
       const newZoom = Phaser.Math.Clamp(camera.zoom * zoomFactor, 0.1, 10);
-      camera.setZoom(newZoom);
-
-      // Get world position after zoom
-      const worldXAfter = camera.scrollX + pointerX / camera.zoom;
-      const worldYAfter = camera.scrollY + pointerY / camera.zoom;
-
-      // Adjust scroll to keep cursor at same world position (pivot)
-      camera.scrollX += worldXBefore - worldXAfter;
-      camera.scrollY += worldYBefore - worldYAfter;
+      zoomCameraAtPointer(pointerX, pointerY, newZoom);
     } else {
       // Two-finger pan (natural trackpad scrolling)
       // Divide by zoom to make pan speed consistent at any zoom level
