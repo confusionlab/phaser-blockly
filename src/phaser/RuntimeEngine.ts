@@ -71,7 +71,7 @@ export function appendRuntimeLog(
     runtimeDebugLog.shift();
   }
 
-  if (options?.emitToConsole && DEBUG_ENABLED) {
+  if (options?.emitToConsole && (DEBUG_ENABLED || options?.force)) {
     const prefix = options.consolePrefix ?? 'Runtime';
     console.log(`[${prefix} ${type}] ${message}`);
   }

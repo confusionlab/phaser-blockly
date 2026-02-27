@@ -269,16 +269,6 @@ export function BlocklyEditor() {
   const { selectedSceneId, selectedObjectId, registerCodeUndo } = useEditorStore();
   const { project, addGlobalVariable, addLocalVariable } = useProjectStore();
 
-  // Register undo/redo handler for keyboard shortcuts
-  useEffect(() => {
-    const handler: UndoRedoHandler = {
-      undo: () => workspaceRef.current?.undo(false),
-      redo: () => workspaceRef.current?.undo(true),
-    };
-    registerCodeUndo(handler);
-    return () => registerCodeUndo(null);
-  }, [registerCodeUndo]);
-
   // Keep refs in sync
   useEffect(() => {
     currentSceneIdRef.current = selectedSceneId;
@@ -342,6 +332,18 @@ export function BlocklyEditor() {
 
     pendingPersistRef.current = { sceneId, objectId, timeoutId };
   }, [flushPendingWorkspacePersist, persistWorkspaceToStore]);
+
+  // Register undo/redo handler for global keyboard shortcuts.
+  // Flushing pending persistence keeps history in sync before history-based undo/redo runs.
+  useEffect(() => {
+    const handler: UndoRedoHandler = {
+      undo: () => workspaceRef.current?.undo(false),
+      redo: () => workspaceRef.current?.undo(true),
+      beforeHistoryUndoRedo: () => flushPendingWorkspacePersist(),
+    };
+    registerCodeUndo(handler);
+    return () => registerCodeUndo(null);
+  }, [flushPendingWorkspacePersist, registerCodeUndo]);
 
   // Flush pending edits whenever selection target changes so we don't drop in-flight saves.
   useEffect(() => {
