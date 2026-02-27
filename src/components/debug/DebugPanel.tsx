@@ -3,7 +3,6 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
-import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { Project } from '@/types';
 
@@ -23,6 +22,17 @@ export function DebugPanel() {
     }, 500);
     return () => clearInterval(interval);
   }, [isPlaying, activeTab]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.shiftKey || event.code !== 'KeyD') return;
+      event.preventDefault();
+      setIsOpen((prev) => !prev);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Filter user logs for console tab
   const userLogs = runtimeDebugLog.filter(entry => entry.type === 'user');
@@ -60,18 +70,7 @@ export function DebugPanel() {
     ? formatXml(selectedObject.blocklyXml)
     : '<!-- No blocks -->';
 
-  if (!isOpen) {
-    return (
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-4 right-4 z-50 bg-gray-800 text-white hover:bg-gray-700"
-      >
-        Debug
-      </Button>
-    );
-  }
+  if (!isOpen) return null;
 
   return (
     <div className="fixed bottom-4 right-4 w-[500px] h-[400px] bg-gray-900 text-white rounded-lg shadow-2xl z-50 flex flex-col">

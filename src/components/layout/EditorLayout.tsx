@@ -334,7 +334,7 @@ export function EditorLayout() {
   // Fullscreen code editor
   if (fullscreenPanel === 'code') {
     return (
-      <div className="fixed inset-0 z-50 bg-background flex flex-col">
+      <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
         <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
           <span className="text-sm font-medium">Code Editor (Press ` or Esc to exit)</span>
           <Button variant="ghost" size="icon-sm" onClick={() => setFullscreenPanel(null)}>
@@ -351,7 +351,7 @@ export function EditorLayout() {
   // Fullscreen stage (canvas only, no properties)
   if (fullscreenPanel === 'stage') {
     return (
-      <div className="fixed inset-0 z-50 bg-background flex flex-col">
+      <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
         <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
           <span className="text-sm font-medium">Stage (Press ` or Esc to exit)</span>
           <Button variant="ghost" size="icon-sm" onClick={() => setFullscreenPanel(null)}>

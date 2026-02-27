@@ -470,7 +470,7 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
       {anyComponentInstance && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/50">
           <Component className="size-4 text-purple-600" />
-          <span className="text-xs text-muted-foreground">Component - code syncs across all instances</span>
+          <span className="text-xs text-muted-foreground">Component - code and physics sync across all instances</span>
         </div>
       )}
 
@@ -720,7 +720,10 @@ function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
         checked={hasPhysics}
         onCheckedChange={togglePhysics}
       />
-      <Label htmlFor="physics-toggle" className="text-xs text-muted-foreground cursor-pointer">
+      <Label
+        htmlFor="physics-toggle"
+        className={`text-xs cursor-pointer ${object.componentId ? 'text-purple-600' : 'text-muted-foreground'}`}
+      >
         Physics
       </Label>
     </div>
@@ -729,6 +732,7 @@ function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
 
 function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
   const physics = object.physics!;
+  const syncedLabelClass = object.componentId ? 'text-purple-600' : 'text-muted-foreground';
 
   const updatePhysics = (updates: Partial<PhysicsConfig>) => {
     updateObject(sceneId, object.id, {
@@ -740,7 +744,7 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
     <div className="space-y-4 mt-3">
       {/* Body Type */}
       <div>
-        <div className="text-xs text-muted-foreground mb-2">Body Type</div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Body Type</div>
         <div className="flex gap-2">
           <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1">
             <select
@@ -757,7 +761,7 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
 
       {/* Gravity */}
       <div>
-        <div className="text-xs text-muted-foreground mb-2">Gravity</div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Gravity</div>
         <div className="flex gap-2">
           <ScrubInput
             label="Y"
@@ -770,7 +774,7 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
 
       {/* Bounce */}
       <div>
-        <div className="text-xs text-muted-foreground mb-2">Bounce</div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Bounce</div>
         <div className="flex gap-2">
           <ScrubInput
             label=""
@@ -786,7 +790,7 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
 
       {/* Friction */}
       <div>
-        <div className="text-xs text-muted-foreground mb-2">Friction</div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Friction</div>
         <div className="flex gap-2">
           <ScrubInput
             label=""
@@ -807,7 +811,7 @@ function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
           checked={physics.allowRotation ?? false}
           onCheckedChange={(checked) => updatePhysics({ allowRotation: !!checked })}
         />
-        <Label htmlFor="allow-rotation" className="text-xs text-muted-foreground cursor-pointer">
+        <Label htmlFor="allow-rotation" className={`text-xs cursor-pointer ${syncedLabelClass}`}>
           Rotate with Physics
         </Label>
       </div>

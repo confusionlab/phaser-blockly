@@ -68,7 +68,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
 
   if (fullscreen) {
     return (
-      <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
+      <div className="fixed inset-0 z-[100001] bg-black flex items-center justify-center">
         <div className="absolute top-4 right-4 z-10">
           <Button variant="destructive" onClick={stopPlaying}>
             <Square className="size-4" />
@@ -108,7 +108,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
 
   if (isCanvasFullscreen) {
     return (
-      <div className="fixed inset-0 z-50 bg-background flex flex-col">
+      <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
         {canvasToolbar}
         <div className="flex-1 min-h-0 p-1">
           <div className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">
