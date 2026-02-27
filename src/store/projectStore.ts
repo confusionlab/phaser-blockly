@@ -876,7 +876,6 @@ registerProjectHistoryBridge(
   (project) => {
     useProjectStore.setState({
       project,
-      isDirty: project !== null,
     });
   },
 );

@@ -316,6 +316,16 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
   const object = objects[0];
   const isMultiSelection = objects.length > 1;
 
+  useEffect(() => {
+    return () => {
+      while (activeDragTransactionsRef.current > 0) {
+        activeDragTransactionsRef.current -= 1;
+        endHistoryTransaction('inspector:drag:cleanup');
+      }
+      dragStartValuesRef.current = {};
+    };
+  }, []);
+
   if (!object || !sceneId) {
     return (
       <div className="text-center text-muted-foreground text-sm py-4">
