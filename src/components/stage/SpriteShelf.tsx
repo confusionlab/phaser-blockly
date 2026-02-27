@@ -9,6 +9,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -22,6 +30,7 @@ import {
   Collection,
   useDragAndDrop,
   Button as AriaButton,
+  DropIndicator,
   type Selection,
   type Key,
 } from 'react-aria-components';
@@ -40,7 +49,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  GripVertical,
 } from 'lucide-react';
 import type { GameObject, Costume, Sound, PhysicsConfig, ColliderConfig, SceneFolder } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
@@ -148,7 +156,11 @@ export function SpriteShelf() {
     setCollapsedFoldersForScene,
   } = useEditorStore();
 
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; object: GameObject } | null>(null);
+  const [contextMenu, setContextMenu] = useState<
+    | { x: number; y: number; kind: 'object'; object: GameObject }
+    | { x: number; y: number; kind: 'folder'; folder: SceneFolder }
+    | null
+  >(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
@@ -157,6 +169,7 @@ export function SpriteShelf() {
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState(false);
+  const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
@@ -253,6 +266,18 @@ export function SpriteShelf() {
       const parsed = parseLayerNodeKey(String(target.key));
       return parsed?.type === 'folder';
     },
+    renderDropIndicator(target) {
+      return (
+        <DropIndicator
+          target={target}
+          className={({ isDropTarget }) =>
+            `mx-2 my-0.5 h-0 border-t-2 rounded border-primary/80 ${
+              isDropTarget ? 'opacity-100' : 'opacity-50'
+            }`
+          }
+        />
+      );
+    },
     onMove(event) {
       const movedKeys = Array.from(event.keys).map((key) => String(key));
       const targetKey = String(event.target.key);
@@ -307,10 +332,16 @@ export function SpriteShelf() {
     }, 0);
   };
 
-  const handleContextMenu = (e: React.MouseEvent, object: GameObject) => {
+  const handleObjectContextMenu = (e: React.MouseEvent, object: GameObject) => {
     e.preventDefault();
     setContextMenuPosition({ left: e.clientX, top: e.clientY });
-    setContextMenu({ x: e.clientX, y: e.clientY, object });
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'object', object });
+  };
+
+  const handleFolderContextMenu = (e: React.MouseEvent, folder: SceneFolder) => {
+    e.preventDefault();
+    setContextMenuPosition({ left: e.clientX, top: e.clientY });
+    setContextMenu({ x: e.clientX, y: e.clientY, kind: 'folder', folder });
   };
 
   const handleCloseContextMenu = () => {
@@ -319,7 +350,7 @@ export function SpriteShelf() {
   };
 
   const handleMoveObjectToFolder = (folderId: string | null) => {
-    if (!contextMenu) return;
+    if (!contextMenu || contextMenu.kind !== 'object') return;
     updateObject(selectedSceneId, contextMenu.object.id, {
       parentId: folderId,
       order: getNextSiblingOrder(selectedScene, folderId),
@@ -329,7 +360,7 @@ export function SpriteShelf() {
   };
 
   const handleDuplicate = () => {
-    if (!contextMenu) return;
+    if (!contextMenu || contextMenu.kind !== 'object') return;
     const duplicated = duplicateObject(selectedSceneId, contextMenu.object.id);
     if (duplicated) {
       selectObject(duplicated.id);
@@ -338,7 +369,7 @@ export function SpriteShelf() {
   };
 
   const handleCopy = () => {
-    if (!contextMenu || !project) return;
+    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
     const object = contextMenu.object;
     const effectiveProps = getEffectiveObjectProps(object, project.components || []);
 
@@ -387,7 +418,7 @@ export function SpriteShelf() {
   };
 
   const handleDelete = () => {
-    if (!contextMenu) return;
+    if (!contextMenu || contextMenu.kind !== 'object') return;
 
     const deleteIds = selectedIdsInScene.length > 1 && selectedIdsInScene.includes(contextMenu.object.id)
       ? selectedIdsInScene
@@ -434,22 +465,15 @@ export function SpriteShelf() {
     const descendants = collectFolderDescendants(folderId, folders);
     const nextFolders = folders.filter((folder) => !descendants.has(folder.id));
 
-    const rootOrderStart = getNextSiblingOrder(selectedScene, null);
-    let rootOrderOffset = 0;
+    const nextObjects = selectedScene.objects.filter(
+      (obj) => !(obj.parentId && descendants.has(obj.parentId)),
+    );
 
-    const nextObjects = selectedScene.objects.map((obj) => {
-      if (obj.parentId && descendants.has(obj.parentId)) {
-        const reassigned = {
-          ...obj,
-          parentId: null,
-          order: rootOrderStart + rootOrderOffset,
-          folderId: undefined,
-        };
-        rootOrderOffset += 1;
-        return reassigned;
-      }
-      return obj;
-    });
+    const nextScene = {
+      ...selectedScene,
+      objectFolders: nextFolders,
+      objects: nextObjects,
+    };
 
     updateScene(selectedSceneId, {
       objectFolders: nextFolders,
@@ -466,6 +490,33 @@ export function SpriteShelf() {
       selectedSceneId,
       currentCollapsed.filter((id) => !descendants.has(id)),
     );
+
+    const remainingObjectIds = new Set(nextObjects.map((obj) => obj.id));
+    const remainingSelectedIds = selectedIdsInScene.filter((id) => remainingObjectIds.has(id));
+    if (remainingSelectedIds.length > 0) {
+      const nextPrimary = selectedObjectId && remainingSelectedIds.includes(selectedObjectId)
+        ? selectedObjectId
+        : remainingSelectedIds[0];
+      selectObjects(remainingSelectedIds, nextPrimary);
+      return;
+    }
+
+    const nextOrderedIds = getSceneObjectsInLayerOrder(nextScene).map((obj) => obj.id);
+    selectObject(nextOrderedIds[0] ?? null);
+  };
+
+  const handleRequestDeleteFolder = (folder: SceneFolder) => {
+    setFolderDeleteTarget(folder);
+  };
+
+  const handleCancelDeleteFolder = () => {
+    setFolderDeleteTarget(null);
+  };
+
+  const handleConfirmDeleteFolder = () => {
+    if (!folderDeleteTarget) return;
+    handleDeleteFolder(folderDeleteTarget.id);
+    setFolderDeleteTarget(null);
   };
 
   const handleStartObjectEdit = (objectId: string, currentName: string) => {
@@ -498,7 +549,7 @@ export function SpriteShelf() {
   };
 
   const handleSaveToLibrary = async () => {
-    if (!contextMenu || !project) return;
+    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
 
     const object = contextMenu.object;
     const effectiveProps = getEffectiveObjectProps(object, project.components || []);
@@ -562,13 +613,13 @@ export function SpriteShelf() {
   };
 
   const handleMakeComponent = () => {
-    if (!contextMenu) return;
+    if (!contextMenu || contextMenu.kind !== 'object') return;
     makeComponent(selectedSceneId, contextMenu.object.id);
     handleCloseContextMenu();
   };
 
   const handleDetachFromComponent = () => {
-    if (!contextMenu) return;
+    if (!contextMenu || contextMenu.kind !== 'object') return;
     detachFromComponent(selectedSceneId, contextMenu.object.id);
     handleCloseContextMenu();
   };
@@ -595,7 +646,10 @@ export function SpriteShelf() {
     selectObject(newObject.id);
   };
 
-  const willDeleteSelection = !!contextMenu && selectedIdsInScene.length > 1 && selectedIdsInScene.includes(contextMenu.object.id);
+  const willDeleteSelection = !!contextMenu
+    && contextMenu.kind === 'object'
+    && selectedIdsInScene.length > 1
+    && selectedIdsInScene.includes(contextMenu.object.id);
   const deleteLabel = willDeleteSelection ? `Delete Selected (${selectedIdsInScene.length})` : 'Delete';
 
   const renderTreeItem = (item: ShelfTreeItem) => {
@@ -609,11 +663,16 @@ export function SpriteShelf() {
     return (
       <TreeItem key={item.key} id={item.key} textValue={item.name}>
         <TreeItemContent>
-          {({ hasChildItems, isExpanded, isSelected }) => (
+          {({ hasChildItems, isExpanded, isSelected, isDropTarget, level }) => (
             <div
               className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
-                isSelected ? 'bg-primary/10 border-l-2 border-l-primary' : 'border-l-2 border-l-transparent hover:bg-accent'
+                isSelected
+                  ? 'bg-primary/10 border-l-2 border-l-primary'
+                  : isDropTarget
+                    ? 'bg-primary/15 border-l-2 border-l-primary/60'
+                    : 'border-l-2 border-l-transparent hover:bg-accent'
               }`}
+              style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 if (item.type === 'object' && object) {
@@ -624,7 +683,9 @@ export function SpriteShelf() {
               }}
               onContextMenu={(e) => {
                 if (item.type === 'object' && object) {
-                  handleContextMenu(e, object);
+                  handleObjectContextMenu(e, object);
+                } else if (item.type === 'folder' && folder) {
+                  handleFolderContextMenu(e, folder);
                 }
               }}
             >
@@ -643,11 +704,9 @@ export function SpriteShelf() {
 
               <AriaButton
                 slot="drag"
-                className="h-5 w-5 rounded hover:bg-accent flex items-center justify-center text-muted-foreground"
+                className="sr-only"
                 aria-label={`Drag ${item.name}`}
-              >
-                <GripVertical className="size-3" />
-              </AriaButton>
+              />
 
               {item.type === 'folder' ? (
                 isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
@@ -728,34 +787,6 @@ export function SpriteShelf() {
                 </span>
               )}
 
-              {item.type === 'folder' && folder ? (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-6 w-6"
-                    title="Rename folder"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStartFolderEdit(folder);
-                    }}
-                  >
-                    <Pencil className="size-3" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="h-6 w-6 text-destructive hover:text-destructive"
-                    title="Delete folder"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteFolder(folder.id);
-                    }}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
-                </>
-              ) : null}
             </div>
           )}
         </TreeItemContent>
@@ -878,98 +909,129 @@ export function SpriteShelf() {
               top: contextMenuPosition?.top ?? contextMenu.y,
             }}
           >
-            <Button variant="ghost" size="sm" onClick={handleCopy} className="w-full justify-start rounded-none h-8">
-              <Copy className="size-4" />
-              Copy
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handlePaste}
-              disabled={!objectClipboard}
-              className="w-full justify-start rounded-none h-8"
-            >
-              <Clipboard className="size-4" />
-              Paste
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleDuplicate} className="w-full justify-start rounded-none h-8">
-              <Copy className="size-4" />
-              Duplicate
-            </Button>
-            <DropdownMenuSeparator />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleMoveObjectToFolder(null)}
-              className="w-full justify-start rounded-none h-8"
-            >
-              <FolderOpen className="size-4" />
-              Move to Root
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                if (!contextMenu) return;
-                handleAddFolder(null, contextMenu.object.id);
-                handleCloseContextMenu();
-              }}
-              className="w-full justify-start rounded-none h-8"
-            >
-              <FolderPlus className="size-4" />
-              New Folder with Object
-            </Button>
-            {folders.map((folder) => (
-              <Button
-                key={folder.id}
-                variant="ghost"
-                size="sm"
-                onClick={() => handleMoveObjectToFolder(folder.id)}
-                className="w-full justify-start rounded-none h-8"
-              >
-                <Folder className="size-4" />
-                Move to {folder.name}
-              </Button>
-            ))}
-            {!contextMenu.object.componentId ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleMakeComponent}
-                className="w-full justify-start rounded-none h-8 text-purple-600"
-              >
-                <Component className="size-4" />
-                Make Component
-              </Button>
+            {contextMenu.kind === 'object' ? (
+              <>
+                <Button variant="ghost" size="sm" onClick={handleCopy} className="w-full justify-start rounded-none h-8">
+                  <Copy className="size-4" />
+                  Copy
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handlePaste}
+                  disabled={!objectClipboard}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <Clipboard className="size-4" />
+                  Paste
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleDuplicate} className="w-full justify-start rounded-none h-8">
+                  <Copy className="size-4" />
+                  Duplicate
+                </Button>
+                <DropdownMenuSeparator />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleMoveObjectToFolder(null)}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <FolderOpen className="size-4" />
+                  Move to Root
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (!contextMenu || contextMenu.kind !== 'object') return;
+                    handleAddFolder(null, contextMenu.object.id);
+                    handleCloseContextMenu();
+                  }}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <FolderPlus className="size-4" />
+                  New Folder with Object
+                </Button>
+                {folders.map((folder) => (
+                  <Button
+                    key={folder.id}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleMoveObjectToFolder(folder.id)}
+                    className="w-full justify-start rounded-none h-8"
+                  >
+                    <Folder className="size-4" />
+                    Move to {folder.name}
+                  </Button>
+                ))}
+                {!contextMenu.object.componentId ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleMakeComponent}
+                    className="w-full justify-start rounded-none h-8 text-purple-600"
+                  >
+                    <Component className="size-4" />
+                    Make Component
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleDetachFromComponent}
+                    className="w-full justify-start rounded-none h-8"
+                  >
+                    <Unlink className="size-4" />
+                    Detach from Component
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSaveToLibrary}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <Library className="size-4" />
+                  Save to Library
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleDelete}
+                  className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                  {deleteLabel}
+                </Button>
+              </>
             ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleDetachFromComponent}
-                className="w-full justify-start rounded-none h-8"
-              >
-                <Unlink className="size-4" />
-                Detach from Component
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    handleStartFolderEdit(contextMenu.folder);
+                    handleCloseContextMenu();
+                  }}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <Pencil className="size-4" />
+                  Rename Folder
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    handleRequestDeleteFolder(contextMenu.folder);
+                    handleCloseContextMenu();
+                  }}
+                  className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                  Delete Folder
+                </Button>
+              </>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleSaveToLibrary}
-              className="w-full justify-start rounded-none h-8"
-            >
-              <Library className="size-4" />
-              Save to Library
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleDelete}
-              className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
-            >
-              <Trash2 className="size-4" />
-              {deleteLabel}
-            </Button>
           </Card>
         </>
       )}
@@ -979,6 +1041,25 @@ export function SpriteShelf() {
         onOpenChange={setShowLibrary}
         onSelect={handleLibrarySelect}
       />
+
+      <Dialog open={!!folderDeleteTarget} onOpenChange={(open) => !open && handleCancelDeleteFolder()}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete Folder</DialogTitle>
+            <DialogDescription>
+              everything inside the folder will be deleted as well.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancelDeleteFolder}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDeleteFolder}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
