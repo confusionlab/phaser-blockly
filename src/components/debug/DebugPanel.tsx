@@ -8,20 +8,6 @@ import type { Project } from '@/types';
 
 export function DebugPanel() {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'code' | 'xml' | 'state' | 'variables' | 'runtime' | 'console'>('code');
-  const [, setLogRefresh] = useState(0);
-
-  const { project } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, isPlaying, showColliderOutlines, setShowColliderOutlines } = useEditorStore();
-
-  // Auto-refresh logs and variables when playing
-  useEffect(() => {
-    if (!isPlaying || (activeTab !== 'runtime' && activeTab !== 'console' && activeTab !== 'variables')) return;
-    const interval = setInterval(() => {
-      setLogRefresh(r => r + 1);
-    }, 500);
-    return () => clearInterval(interval);
-  }, [isPlaying, activeTab]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -34,16 +20,41 @@ export function DebugPanel() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  if (!isOpen) return null;
+
+  return <DebugPanelContent onClose={() => setIsOpen(false)} />;
+}
+
+function DebugPanelContent({ onClose }: { onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<'code' | 'xml' | 'state' | 'variables' | 'runtime' | 'console'>('code');
+  const [, setLogRefresh] = useState(0);
+
+  const { project } = useProjectStore();
+  const { selectedSceneId, selectedObjectId, isPlaying, showColliderOutlines, setShowColliderOutlines } = useEditorStore();
+
+  // Auto-refresh logs and variables when playing
+  useEffect(() => {
+    if (!isPlaying || (activeTab !== 'runtime' && activeTab !== 'console' && activeTab !== 'variables')) return;
+    const interval = setInterval(() => {
+      setLogRefresh((r) => r + 1);
+    }, 500);
+    return () => clearInterval(interval);
+  }, [isPlaying, activeTab]);
+
   // Filter user logs for console tab
-  const userLogs = runtimeDebugLog.filter(entry => entry.type === 'user');
+  const userLogs = runtimeDebugLog.filter((entry) => entry.type === 'user');
+  const runtimeLogs = runtimeDebugLog.filter((entry) => entry.type !== 'user');
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const selectedObject = selectedScene?.objects.find(o => o.id === selectedObjectId);
 
-  // Generate code for selected object
-  const generatedCode = selectedObject?.blocklyXml
-    ? generateCodeForObject(selectedObject.blocklyXml, selectedObject.id)
-    : '// No blocks';
+  const generatedCode = activeTab === 'code'
+    ? (
+      selectedObject?.blocklyXml
+        ? generateCodeForObject(selectedObject.blocklyXml, selectedObject.id)
+        : '// No blocks'
+    )
+    : '';
 
   // Generate code for all objects in current scene
   const generateAllCode = (): string => {
@@ -65,12 +76,13 @@ export function DebugPanel() {
     await navigator.clipboard.writeText(code);
   };
 
-  // Format XML for display
-  const formattedXml = selectedObject?.blocklyXml
-    ? formatXml(selectedObject.blocklyXml)
-    : '<!-- No blocks -->';
-
-  if (!isOpen) return null;
+  const formattedXml = activeTab === 'xml'
+    ? (
+      selectedObject?.blocklyXml
+        ? formatXml(selectedObject.blocklyXml)
+        : '<!-- No blocks -->'
+    )
+    : '';
 
   return (
     <div className="fixed bottom-4 right-4 w-[500px] h-[400px] bg-gray-900 text-white rounded-lg shadow-2xl z-50 flex flex-col">
@@ -97,7 +109,7 @@ export function DebugPanel() {
           </TabButton>
         </div>
         <button
-          onClick={() => setIsOpen(false)}
+          onClick={onClose}
           className="text-gray-400 hover:text-white"
         >
           ×
@@ -181,11 +193,11 @@ export function DebugPanel() {
                 Clear
               </button>
             </div>
-            {runtimeDebugLog.filter(e => e.type !== 'user').length === 0 ? (
+            {runtimeLogs.length === 0 ? (
               <div className="text-gray-500">No logs yet. Press Play to start.</div>
             ) : (
               <div className="space-y-1">
-                {runtimeDebugLog.filter(e => e.type !== 'user').slice(-50).map((entry, i) => (
+                {runtimeLogs.slice(-50).map((entry, i) => (
                   <div key={i} className={`text-xs ${getLogColor(entry.type)}`}>
                     <span className="text-gray-500">[{entry.type}]</span> {entry.message}
                   </div>

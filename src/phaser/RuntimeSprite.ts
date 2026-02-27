@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
-import { runtimeDebugLog } from './RuntimeEngine';
+import { appendRuntimeLog } from './RuntimeEngine';
 import { setBodyGravityY } from './gravity';
 import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
 import type { RuntimeEngine } from './RuntimeEngine';
 
 function debugLog(type: 'info' | 'event' | 'action' | 'error', message: string) {
-  const entry = { time: Date.now(), type, message };
-  runtimeDebugLog.push(entry);
-  console.log(`[Sprite ${type}] ${message}`);
+  appendRuntimeLog(type, message, {
+    emitToConsole: true,
+    consolePrefix: 'Sprite',
+  });
 }
 
 /**

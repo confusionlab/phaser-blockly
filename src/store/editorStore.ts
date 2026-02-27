@@ -27,6 +27,7 @@ export type UndoRedoHandler = {
   redo: () => void;
   canUndo?: () => boolean;
   canRedo?: () => boolean;
+  beforeHistoryUndoRedo?: () => void;
 };
 
 type SelectionHistoryOptions = {
@@ -348,6 +349,10 @@ export const useEditorStore = create<EditorStore>((set) => ({
       }
     }
 
+    if (state.activeObjectTab === 'code' && state.codeUndoHandler?.beforeHistoryUndoRedo) {
+      state.codeUndoHandler.beforeHistoryUndoRedo();
+    }
+
     if (canUndoHistory()) {
       undoHistory();
       return;
@@ -365,6 +370,10 @@ export const useEditorStore = create<EditorStore>((set) => ({
         state.costumeUndoHandler.redo();
         return;
       }
+    }
+
+    if (state.activeObjectTab === 'code' && state.codeUndoHandler?.beforeHistoryUndoRedo) {
+      state.codeUndoHandler.beforeHistoryUndoRedo();
     }
 
     if (canRedoHistory()) {

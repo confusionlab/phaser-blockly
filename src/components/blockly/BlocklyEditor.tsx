@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as Blockly from 'blockly';
 import { registerContinuousToolbox } from '@blockly/continuous-toolbox';
 import { useProjectStore } from '@/store/projectStore';
@@ -261,6 +261,7 @@ export function BlocklyEditor() {
   const currentObjectIdRef = useRef<string | null>(null);
   const lastLoadedTargetRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
+  const pendingPersistRef = useRef<{ sceneId: string; objectId: string; timeoutId: number } | null>(null);
   const [showAddVariableDialog, setShowAddVariableDialog] = useState(false);
   const [showVariableManager, setShowVariableManager] = useState(false);
   const [showBlockSearch, setShowBlockSearch] = useState(false);
@@ -268,21 +269,90 @@ export function BlocklyEditor() {
   const { selectedSceneId, selectedObjectId, registerCodeUndo } = useEditorStore();
   const { project, addGlobalVariable, addLocalVariable } = useProjectStore();
 
-  // Register undo/redo handler for keyboard shortcuts
-  useEffect(() => {
-    const handler: UndoRedoHandler = {
-      undo: () => workspaceRef.current?.undo(false),
-      redo: () => workspaceRef.current?.undo(true),
-    };
-    registerCodeUndo(handler);
-    return () => registerCodeUndo(null);
-  }, [registerCodeUndo]);
-
   // Keep refs in sync
   useEffect(() => {
     currentSceneIdRef.current = selectedSceneId;
     currentObjectIdRef.current = selectedObjectId;
   }, [selectedSceneId, selectedObjectId]);
+
+  const persistWorkspaceToStore = useCallback((sceneId: string, objectId: string) => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    if (currentSceneIdRef.current !== sceneId || currentObjectIdRef.current !== objectId) return;
+
+    const state = useProjectStore.getState();
+    const scene = state.project?.scenes.find((s) => s.id === sceneId);
+    const obj = scene?.objects.find((o) => o.id === objectId);
+    if (!scene || !obj) return;
+
+    const topBlocks = workspace.getTopBlocks(false);
+    const xmlText = topBlocks.length === 0
+      ? ''
+      : Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(workspace));
+
+    const currentXml = obj.componentId
+      ? (state.project?.components || []).find((component) => component.id === obj.componentId)?.blocklyXml ?? ''
+      : obj.blocklyXml;
+
+    if (currentXml === xmlText) return;
+
+    if (obj.componentId) {
+      state.updateComponent(obj.componentId, { blocklyXml: xmlText });
+    } else {
+      state.updateObject(sceneId, objectId, { blocklyXml: xmlText });
+    }
+  }, []);
+
+  const flushPendingWorkspacePersist = useCallback((sceneId?: string | null, objectId?: string | null) => {
+    const pending = pendingPersistRef.current;
+    if (!pending) return;
+    if (sceneId && objectId && (pending.sceneId !== sceneId || pending.objectId !== objectId)) return;
+
+    window.clearTimeout(pending.timeoutId);
+    pendingPersistRef.current = null;
+    persistWorkspaceToStore(pending.sceneId, pending.objectId);
+  }, [persistWorkspaceToStore]);
+
+  const scheduleWorkspacePersist = useCallback((sceneId: string, objectId: string) => {
+    const pending = pendingPersistRef.current;
+    if (pending) {
+      if (pending.sceneId === sceneId && pending.objectId === objectId) {
+        window.clearTimeout(pending.timeoutId);
+      } else {
+        flushPendingWorkspacePersist(pending.sceneId, pending.objectId);
+      }
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      persistWorkspaceToStore(sceneId, objectId);
+      if (pendingPersistRef.current?.timeoutId === timeoutId) {
+        pendingPersistRef.current = null;
+      }
+    }, 120);
+
+    pendingPersistRef.current = { sceneId, objectId, timeoutId };
+  }, [flushPendingWorkspacePersist, persistWorkspaceToStore]);
+
+  // Register undo/redo handler for global keyboard shortcuts.
+  // Flushing pending persistence keeps history in sync before history-based undo/redo runs.
+  useEffect(() => {
+    const handler: UndoRedoHandler = {
+      undo: () => workspaceRef.current?.undo(false),
+      redo: () => workspaceRef.current?.undo(true),
+      beforeHistoryUndoRedo: () => flushPendingWorkspacePersist(),
+    };
+    registerCodeUndo(handler);
+    return () => registerCodeUndo(null);
+  }, [flushPendingWorkspacePersist, registerCodeUndo]);
+
+  // Flush pending edits whenever selection target changes so we don't drop in-flight saves.
+  useEffect(() => {
+    const sceneIdAtRender = selectedSceneId;
+    const objectIdAtRender = selectedObjectId;
+    return () => {
+      flushPendingWorkspacePersist(sceneIdAtRender, objectIdAtRender);
+    };
+  }, [selectedSceneId, selectedObjectId, flushPendingWorkspacePersist]);
 
   // Cmd+K to open block search, Cmd+C/V for cross-object copy/paste
   useEffect(() => {
@@ -389,23 +459,12 @@ export function BlocklyEditor() {
         const objectId = currentObjectIdRef.current;
         if (!workspaceRef.current || !sceneId || !objectId) return;
 
+        scheduleWorkspacePersist(sceneId, objectId);
+
         const state = useProjectStore.getState();
         const scene = state.project?.scenes.find(s => s.id === sceneId);
         const obj = scene?.objects.find(o => o.id === objectId);
         if (!scene || !obj) return;
-
-        // Check if workspace has any blocks
-        const topBlocks = workspaceRef.current.getTopBlocks(false);
-        const xmlText = topBlocks.length === 0
-          ? ''
-          : Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(workspaceRef.current));
-
-        // If this is a component instance, update the component definition
-        if (obj.componentId) {
-          state.updateComponent(obj.componentId, { blocklyXml: xmlText });
-        } else {
-          state.updateObject(sceneId, objectId, { blocklyXml: xmlText });
-        }
 
         // Validate references on block create/change
         if (event.type === Blockly.Events.BLOCK_CREATE || event.type === Blockly.Events.BLOCK_CHANGE) {
@@ -440,17 +499,20 @@ export function BlocklyEditor() {
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      flushPendingWorkspacePersist();
       resizeObserver.disconnect();
       if (workspaceRef.current) {
         workspaceRef.current.dispose();
         workspaceRef.current = null;
       }
     };
-  }, []);
+  }, [flushPendingWorkspacePersist, scheduleWorkspacePersist]);
 
   // Keep workspace in sync with selected object XML, including undo/redo history replays.
   useEffect(() => {
     if (!workspaceRef.current) return;
+
+    flushPendingWorkspacePersist();
 
     // Get fresh object data from store
     const state = useProjectStore.getState();
@@ -561,7 +623,7 @@ export function BlocklyEditor() {
       isLoadingRef.current = false;
     }, 50);
     lastLoadedTargetRef.current = loadTargetKey;
-  }, [selectedObjectId, selectedSceneId, project]);
+  }, [selectedObjectId, selectedSceneId, project, flushPendingWorkspacePersist]);
 
   // Get current object name for local variable option
   const currentObjectName = (() => {

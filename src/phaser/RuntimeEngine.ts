@@ -33,7 +33,12 @@ export interface DebugLogEntry {
 }
 
 export const runtimeDebugLog: DebugLogEntry[] = [];
-const DEBUG_ENABLED = true;
+const RUNTIME_DEBUG_STORAGE_KEY = 'pochacoding:runtime-debug';
+const DEBUG_ENABLED = (() => {
+  if (!import.meta.env.DEV) return false;
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(RUNTIME_DEBUG_STORAGE_KEY) === '1';
+})();
 const MAX_LOG_ENTRIES = 200;
 
 // Shared global variables that persist across scene switches
@@ -49,13 +54,27 @@ export function clearSharedGlobalVariables(): void {
 }
 
 function debugLog(type: DebugLogEntry['type'], message: string) {
-  if (!DEBUG_ENABLED) return;
+  appendRuntimeLog(type, message, { emitToConsole: true, consolePrefix: 'Runtime' });
+}
+
+export function appendRuntimeLog(
+  type: DebugLogEntry['type'],
+  message: string,
+  options?: { force?: boolean; emitToConsole?: boolean; consolePrefix?: string },
+): void {
+  if (!(options?.force || DEBUG_ENABLED)) {
+    return;
+  }
   const entry = { time: Date.now(), type, message };
   runtimeDebugLog.push(entry);
   if (runtimeDebugLog.length > MAX_LOG_ENTRIES) {
     runtimeDebugLog.shift();
   }
-  console.log(`[Runtime ${type}] ${message}`);
+
+  if (options?.emitToConsole && (DEBUG_ENABLED || options?.force)) {
+    const prefix = options.consolePrefix ?? 'Runtime';
+    console.log(`[${prefix} ${type}] ${message}`);
+  }
 }
 
 export function clearDebugLog() {
@@ -1013,12 +1032,11 @@ export class RuntimeEngine {
     } else {
       message = String(value);
     }
-    const entry: DebugLogEntry = { time: Date.now(), type: 'user', message };
-    runtimeDebugLog.push(entry);
-    if (runtimeDebugLog.length > 200) {
-      runtimeDebugLog.shift();
-    }
-    console.log(`[User] ${message}`);
+    appendRuntimeLog('user', message, {
+      force: true,
+      emitToConsole: true,
+      consolePrefix: 'User',
+    });
   }
 
   stopAll(): void {
