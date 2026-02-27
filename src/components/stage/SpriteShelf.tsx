@@ -177,12 +177,15 @@ export function SpriteShelf() {
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const suppressNextAriaSelectionRef = useRef(false);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
+  const dragPreviewLabelRef = useRef('Moving item');
 
   const generateUploadUrl = useMutation(api.objectLibrary.generateUploadUrl);
   const createLibraryItem = useMutation(api.objectLibrary.create);
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
   const folders = selectedScene?.objectFolders ?? [];
+  const objectNameById = new Map((selectedScene?.objects ?? []).map((obj) => [obj.id, obj.name]));
+  const folderNameById = new Map(folders.map((folder) => [folder.id, folder.name]));
 
   useLayoutEffect(() => {
     if (!contextMenu || !contextMenuRef.current || !contextMenuPosition) return;
@@ -209,9 +212,30 @@ export function SpriteShelf() {
 
   const { dragAndDropHooks } = useDragAndDrop<ShelfTreeItem>({
     getItems(keys) {
-      return Array.from(keys).map((key) => ({
+      const keyStrings = Array.from(keys).map((key) => String(key));
+      const names = keyStrings
+        .map((key) => {
+          const parsed = parseLayerNodeKey(key);
+          if (!parsed) return null;
+          if (parsed.type === 'object') return objectNameById.get(parsed.id) ?? 'Object';
+          return folderNameById.get(parsed.id) ?? 'Folder';
+        })
+        .filter((name): name is string => !!name);
+
+      dragPreviewLabelRef.current = names.length <= 1
+        ? (names[0] ?? 'Moving item')
+        : `${names.length} items`;
+
+      return keyStrings.map((key) => ({
         'text/plain': String(key),
       }));
+    },
+    renderDragPreview() {
+      return (
+        <div className="rounded border bg-background px-2 py-1 text-xs shadow-md">
+          {dragPreviewLabelRef.current}
+        </div>
+      );
     },
     getDropOperation() {
       return 'move';
