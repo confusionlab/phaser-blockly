@@ -14,6 +14,7 @@ import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
+import { runInHistoryTransaction } from '@/store/universalHistory';
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | 'stage' | null;
@@ -133,7 +134,7 @@ export function EditorLayout() {
   // Select first scene when project changes
   useEffect(() => {
     if (project && project.scenes.length > 0) {
-      selectScene(project.scenes[0].id);
+      selectScene(project.scenes[0].id, { recordHistory: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
@@ -199,13 +200,27 @@ export function EditorLayout() {
 
     // Undo: Cmd+Z or Ctrl+Z
     if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+      if (isTyping && !isInBlocklyArea) {
+        return;
+      }
       e.preventDefault();
       undo();
       return;
     }
 
-    // Redo: Cmd+Shift+Z or Ctrl+Shift+Z
+    // Redo: Cmd+Shift+Z / Ctrl+Shift+Z / Ctrl+Y
     if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
+      if (isTyping && !isInBlocklyArea) {
+        return;
+      }
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (e.ctrlKey && e.key.toLowerCase() === 'y') {
+      if (isTyping && !isInBlocklyArea) {
+        return;
+      }
       e.preventDefault();
       redo();
       return;
@@ -227,17 +242,19 @@ export function EditorLayout() {
 
       e.preventDefault();
 
-      const duplicatedIds: string[] = [];
-      idsToDuplicate.forEach((objectId) => {
-        const duplicated = duplicateObject(selectedSceneId, objectId);
-        if (duplicated) {
-          duplicatedIds.push(duplicated.id);
+      runInHistoryTransaction('shortcut:duplicate', () => {
+        const duplicatedIds: string[] = [];
+        idsToDuplicate.forEach((objectId) => {
+          const duplicated = duplicateObject(selectedSceneId, objectId);
+          if (duplicated) {
+            duplicatedIds.push(duplicated.id);
+          }
+        });
+
+        if (duplicatedIds.length > 0) {
+          selectObjects(duplicatedIds, duplicatedIds[0]);
         }
       });
-
-      if (duplicatedIds.length > 0) {
-        selectObjects(duplicatedIds, duplicatedIds[0]);
-      }
       return;
     }
 
@@ -256,8 +273,10 @@ export function EditorLayout() {
       }
 
       e.preventDefault();
-      idsToDelete.forEach((objectId) => removeObject(selectedSceneId, objectId));
-      selectObjects([], null);
+      runInHistoryTransaction('shortcut:delete', () => {
+        idsToDelete.forEach((objectId) => removeObject(selectedSceneId, objectId));
+        selectObjects([], null);
+      });
       return;
     }
 

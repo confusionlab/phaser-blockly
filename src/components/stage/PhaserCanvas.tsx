@@ -7,6 +7,7 @@ import { setBodyGravityY } from '@/phaser/gravity';
 import type { Scene as SceneData, GameObject, ComponentDefinition, Variable } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
+import { runInHistoryTransaction } from '@/store/universalHistory';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -650,16 +651,21 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
         newContainer.on('dragend', () => {
           if (dragContext) {
-            for (const id of dragContext.objectIds) {
-              const selectedContainer = phaserScene.children.getByName(id) as Phaser.GameObjects.Container | null;
-              if (selectedContainer) {
-                handleObjectDragEnd(id, selectedContainer.x, selectedContainer.y);
+            const currentDragContext = dragContext;
+            runInHistoryTransaction('stage:drag-selection', () => {
+              for (const id of currentDragContext.objectIds) {
+                const selectedContainer = phaserScene.children.getByName(id) as Phaser.GameObjects.Container | null;
+                if (selectedContainer) {
+                  handleObjectDragEnd(id, selectedContainer.x, selectedContainer.y);
+                }
               }
-            }
+            });
             dragContext = null;
             return;
           }
-          handleObjectDragEnd(obj.id, newContainer.x, newContainer.y);
+          runInHistoryTransaction('stage:drag-object', () => {
+            handleObjectDragEnd(obj.id, newContainer.x, newContainer.y);
+          });
         });
       } else {
         // Update existing object - convert user coords to Phaser coords
@@ -1418,12 +1424,15 @@ function createEditorScene(
 
     handle.on('dragend', () => {
       if (!groupTransformContext || groupTransformContext.handleName !== handleName) return;
-      for (const id of groupTransformContext.selectedIds) {
-        const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-        if (!selectedContainer) continue;
-        const rotationDeg = Phaser.Math.RadToDeg(selectedContainer.rotation);
-        onDragEnd(id, selectedContainer.x, selectedContainer.y, selectedContainer.scaleX, selectedContainer.scaleY, rotationDeg);
-      }
+      const currentTransformContext = groupTransformContext;
+      runInHistoryTransaction('stage:transform-selection', () => {
+        for (const id of currentTransformContext.selectedIds) {
+          const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+          if (!selectedContainer) continue;
+          const rotationDeg = Phaser.Math.RadToDeg(selectedContainer.rotation);
+          onDragEnd(id, selectedContainer.x, selectedContainer.y, selectedContainer.scaleX, selectedContainer.scaleY, rotationDeg);
+        }
+      });
       groupTransformContext = null;
     });
   }
@@ -1464,12 +1473,15 @@ function createEditorScene(
     if (!activeTranslateDrag || activeTranslateDrag.pointerId !== pointer.id) return;
 
     if (activeTranslateDrag.hasMoved) {
-      for (const id of activeTranslateDrag.objectIds) {
-        const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-        if (draggedContainer) {
-          onDragEnd(id, draggedContainer.x, draggedContainer.y);
+      const currentTranslateDrag = activeTranslateDrag;
+      runInHistoryTransaction('stage:translate-selection', () => {
+        for (const id of currentTranslateDrag.objectIds) {
+          const draggedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+          if (draggedContainer) {
+            onDragEnd(id, draggedContainer.x, draggedContainer.y);
+          }
         }
-      }
+      });
     }
 
     activeTranslateDrag = null;
@@ -1605,22 +1617,29 @@ function createEditorScene(
 
     container.on('dragend', () => {
       if (dragContext) {
-        for (const id of dragContext.objectIds) {
-          const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
-          if (selectedContainer) {
-            onDragEnd(id, selectedContainer.x, selectedContainer.y);
+        const currentDragContext = dragContext;
+        runInHistoryTransaction('stage:drag-selection', () => {
+          for (const id of currentDragContext.objectIds) {
+            const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+            if (selectedContainer) {
+              onDragEnd(id, selectedContainer.x, selectedContainer.y);
+            }
           }
-        }
+        });
         dragContext = null;
         return;
       }
-      onDragEnd(obj.id, container.x, container.y);
+      runInHistoryTransaction('stage:drag-object', () => {
+        onDragEnd(obj.id, container.x, container.y);
+      });
     });
 
     // Handle transform end from gizmo (includes scale and rotation)
     container.on('transformend', () => {
       const rotationDeg = Phaser.Math.RadToDeg(container.rotation);
-      onDragEnd(obj.id, container.x, container.y, container.scaleX, container.scaleY, rotationDeg);
+      runInHistoryTransaction('stage:transform-object', () => {
+        onDragEnd(obj.id, container.x, container.y, container.scaleX, container.scaleY, rotationDeg);
+      });
     });
   });
 

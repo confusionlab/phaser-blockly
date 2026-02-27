@@ -10,6 +10,7 @@ import {
   ColorPickerSelection,
 } from '@/components/ui/color-picker';
 import { Plus, X } from 'lucide-react';
+import { runInHistoryTransaction } from '@/store/universalHistory';
 
 export function SceneTabs() {
   const { project, addScene, removeScene, updateScene } = useProjectStore();
@@ -63,11 +64,13 @@ export function SceneTabs() {
   const handleDeleteScene = (sceneId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (project.scenes.length > 1) {
-      removeScene(sceneId);
-      if (selectedSceneId === sceneId) {
-        const remaining = project.scenes.filter(s => s.id !== sceneId);
-        selectScene(remaining[0]?.id || null);
-      }
+      runInHistoryTransaction('scene-tabs:delete-scene', () => {
+        removeScene(sceneId);
+        if (selectedSceneId === sceneId) {
+          const remaining = project.scenes.filter(s => s.id !== sceneId);
+          selectScene(remaining[0]?.id || null);
+        }
+      });
     }
   };
 
