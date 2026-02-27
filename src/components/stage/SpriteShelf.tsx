@@ -207,6 +207,53 @@ export function SpriteShelf() {
     }
   }, [contextMenu, contextMenuPosition]);
 
+  const { dragAndDropHooks } = useDragAndDrop<ShelfTreeItem>({
+    getItems(keys) {
+      return Array.from(keys).map((key) => ({
+        'text/plain': String(key),
+      }));
+    },
+    getDropOperation() {
+      return 'move';
+    },
+    shouldAcceptItemDrop(target) {
+      const parsed = parseLayerNodeKey(String(target.key));
+      return parsed?.type === 'folder';
+    },
+    renderDropIndicator(target) {
+      return (
+        <DropIndicator
+          target={target}
+          className={({ isDropTarget }) =>
+            `mx-2 my-0.5 h-0 border-t-2 rounded border-primary/80 ${
+              isDropTarget ? 'opacity-100' : 'opacity-50'
+            }`
+          }
+        />
+      );
+    },
+    onMove(event) {
+      if (!selectedScene || !selectedSceneId) {
+        return;
+      }
+
+      const movedKeys = Array.from(event.keys).map((key) => String(key));
+      const targetKey = String(event.target.key);
+      const dropPosition = event.target.dropPosition;
+
+      const nextScene = moveSceneLayerNodes(
+        selectedScene,
+        movedKeys,
+        {
+          key: targetKey,
+          dropPosition,
+        },
+      );
+
+      updateScene(selectedSceneId, nextScene);
+    },
+  });
+
   if (!selectedScene || !selectedSceneId) return null;
 
   const layerTree = getSceneTree(selectedScene);
@@ -311,49 +358,6 @@ export function SpriteShelf() {
     selectionAnchorObjectIdRef.current = objectId;
     selectObject(objectId);
   };
-
-  const { dragAndDropHooks } = useDragAndDrop<ShelfTreeItem>({
-    getItems(keys) {
-      return Array.from(keys).map((key) => ({
-        'text/plain': String(key),
-      }));
-    },
-    getDropOperation() {
-      return 'move';
-    },
-    shouldAcceptItemDrop(target) {
-      const parsed = parseLayerNodeKey(String(target.key));
-      return parsed?.type === 'folder';
-    },
-    renderDropIndicator(target) {
-      return (
-        <DropIndicator
-          target={target}
-          className={({ isDropTarget }) =>
-            `mx-2 my-0.5 h-0 border-t-2 rounded border-primary/80 ${
-              isDropTarget ? 'opacity-100' : 'opacity-50'
-            }`
-          }
-        />
-      );
-    },
-    onMove(event) {
-      const movedKeys = Array.from(event.keys).map((key) => String(key));
-      const targetKey = String(event.target.key);
-      const dropPosition = event.target.dropPosition;
-
-      const nextScene = moveSceneLayerNodes(
-        selectedScene,
-        movedKeys,
-        {
-          key: targetKey,
-          dropPosition,
-        },
-      );
-
-      updateScene(selectedSceneId, nextScene);
-    },
-  });
 
   const handleAddObject = () => {
     const newName = `Object ${selectedScene.objects.length + 1}`;
