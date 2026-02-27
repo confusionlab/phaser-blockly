@@ -511,8 +511,38 @@ export function SpriteShelf() {
       const [activeFolder] = nextFolders.splice(activeFolderIndex, 1);
       if (!activeFolder) return;
 
-      const overFolderId = overEntry.type === 'folder' ? overEntry.folder.id : overEntry.object.folderId;
-      const insertBeforeId = overFolderId ?? null;
+      const getInsertBeforeFolderId = (): string | null => {
+        if (overEntry.type === 'folder') return overEntry.folder.id;
+
+        for (let i = overEntryIndex + 1; i < displayEntries.length; i++) {
+          const entry = displayEntries[i];
+          if (entry.type === 'folder' && (entry.folder.parentId ?? null) === targetParentId) {
+            return entry.folder.id;
+          }
+          if (entry.type === 'object' && (entry.object.folderId ?? null) !== targetParentId) {
+            break;
+          }
+        }
+
+        for (let i = overEntryIndex - 1; i >= 0; i--) {
+          const entry = displayEntries[i];
+          if (entry.type === 'folder' && (entry.folder.parentId ?? null) === targetParentId) {
+            const nextIndex = folders.findIndex(folder => folder.id === entry.folder.id);
+            if (nextIndex >= 0 && nextIndex + 1 < folders.length) {
+              const maybeNextSibling = folders.slice(nextIndex + 1).find(folder => (folder.parentId ?? null) === targetParentId);
+              return maybeNextSibling?.id ?? null;
+            }
+            return null;
+          }
+          if (entry.type === 'object' && (entry.object.folderId ?? null) !== targetParentId) {
+            break;
+          }
+        }
+
+        return null;
+      };
+
+      const insertBeforeId = getInsertBeforeFolderId();
       let insertIndex = nextFolders.length;
       if (insertBeforeId) {
         const foundIndex = nextFolders.findIndex(folder => folder.id === insertBeforeId);
@@ -951,7 +981,10 @@ export function SpriteShelf() {
 
   for (const object of selectedScene.objects) {
     const folderId = object.folderId;
-    if (folderId && visibleFolderSet.has(folderId) && !hiddenByCollapsedFolder(folderId)) {
+    if (folderId) {
+      if (!visibleFolderSet.has(folderId) || hiddenByCollapsedFolder(folderId)) {
+        continue;
+      }
       const ancestors: SceneFolder[] = [];
       const visited = new Set<string>();
       let current = folderById.get(folderId);
