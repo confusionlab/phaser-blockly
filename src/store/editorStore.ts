@@ -1,5 +1,14 @@
 import { create } from 'zustand';
 import type { PlayValidationIssue } from '@/lib/playValidation';
+import {
+  canRedoHistory,
+  canUndoHistory,
+  recordHistoryChange,
+  redoHistory,
+  registerSelectionHistoryBridge,
+  syncHistorySnapshot,
+  undoHistory,
+} from '@/store/universalHistory';
 
 export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
 
@@ -16,6 +25,12 @@ export type ObjectPickerCallback = (objectId: string) => void;
 export type UndoRedoHandler = {
   undo: () => void;
   redo: () => void;
+  canUndo?: () => boolean;
+  canRedo?: () => boolean;
+};
+
+type SelectionHistoryOptions = {
+  recordHistory?: boolean;
 };
 
 interface EditorStore {
@@ -57,9 +72,9 @@ interface EditorStore {
   codeUndoHandler: UndoRedoHandler | null;
 
   // Actions
-  selectScene: (sceneId: string | null) => void;
-  selectObject: (objectId: string | null) => void;
-  selectObjects: (objectIds: string[], primaryObjectId?: string | null) => void;
+  selectScene: (sceneId: string | null, options?: SelectionHistoryOptions) => void;
+  selectObject: (objectId: string | null, options?: SelectionHistoryOptions) => void;
+  selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
 
   startPlaying: () => void;
@@ -148,18 +163,28 @@ export const useEditorStore = create<EditorStore>((set) => ({
   codeUndoHandler: null,
 
   // Actions
-  selectScene: (sceneId) => {
+  selectScene: (sceneId, options) => {
     set({ selectedSceneId: sceneId, selectedObjectId: null, selectedObjectIds: [] });
+    if (options?.recordHistory !== false) {
+      recordHistoryChange({ source: 'selection:scene' });
+    } else {
+      syncHistorySnapshot();
+    }
   },
 
-  selectObject: (objectId) => {
+  selectObject: (objectId, options) => {
     set({
       selectedObjectId: objectId,
       selectedObjectIds: objectId ? [objectId] : [],
     });
+    if (options?.recordHistory !== false) {
+      recordHistoryChange({ source: 'selection:object' });
+    } else {
+      syncHistorySnapshot();
+    }
   },
 
-  selectObjects: (objectIds, primaryObjectId = null) => {
+  selectObjects: (objectIds, primaryObjectId = null, options) => {
     const uniqueIds = Array.from(new Set(objectIds));
     const primary = primaryObjectId && uniqueIds.includes(primaryObjectId)
       ? primaryObjectId
@@ -168,6 +193,11 @@ export const useEditorStore = create<EditorStore>((set) => ({
       selectedObjectId: primary,
       selectedObjectIds: uniqueIds,
     });
+    if (options?.recordHistory !== false) {
+      recordHistoryChange({ source: 'selection:objects' });
+    } else {
+      syncHistorySnapshot();
+    }
   },
 
   startPlaying: () => {
@@ -224,6 +254,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
       activeObjectTab: 'code',
       showPlayValidationDialog: false,
     });
+    recordHistoryChange({ source: 'selection:validation-focus' });
   },
 
   toggleFolderCollapsed: (sceneId, folderId) => {
@@ -311,8 +342,18 @@ export const useEditorStore = create<EditorStore>((set) => ({
   undo: () => {
     const state = useEditorStore.getState();
     if (state.activeObjectTab === 'costumes' && state.costumeUndoHandler) {
-      state.costumeUndoHandler.undo();
-    } else if (state.activeObjectTab === 'code' && state.codeUndoHandler) {
+      if (!state.costumeUndoHandler.canUndo || state.costumeUndoHandler.canUndo()) {
+        state.costumeUndoHandler.undo();
+        return;
+      }
+    }
+
+    if (canUndoHistory()) {
+      undoHistory();
+      return;
+    }
+
+    if (state.activeObjectTab === 'code' && state.codeUndoHandler) {
       state.codeUndoHandler.undo();
     }
   },
@@ -320,9 +361,37 @@ export const useEditorStore = create<EditorStore>((set) => ({
   redo: () => {
     const state = useEditorStore.getState();
     if (state.activeObjectTab === 'costumes' && state.costumeUndoHandler) {
-      state.costumeUndoHandler.redo();
-    } else if (state.activeObjectTab === 'code' && state.codeUndoHandler) {
+      if (!state.costumeUndoHandler.canRedo || state.costumeUndoHandler.canRedo()) {
+        state.costumeUndoHandler.redo();
+        return;
+      }
+    }
+
+    if (canRedoHistory()) {
+      redoHistory();
+      return;
+    }
+
+    if (state.activeObjectTab === 'code' && state.codeUndoHandler) {
       state.codeUndoHandler.redo();
     }
   },
 }));
+
+registerSelectionHistoryBridge(
+  () => {
+    const state = useEditorStore.getState();
+    return {
+      selectedSceneId: state.selectedSceneId,
+      selectedObjectId: state.selectedObjectId,
+      selectedObjectIds: [...state.selectedObjectIds],
+    };
+  },
+  (selection) => {
+    useEditorStore.setState({
+      selectedSceneId: selection.selectedSceneId,
+      selectedObjectId: selection.selectedObjectId,
+      selectedObjectIds: [...selection.selectedObjectIds],
+    });
+  },
+);

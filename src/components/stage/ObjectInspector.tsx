@@ -14,6 +14,11 @@ import {
 import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink, Component } from 'lucide-react';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig } from '@/types';
+import {
+  beginHistoryTransaction,
+  endHistoryTransaction,
+  runInHistoryTransaction,
+} from '@/store/universalHistory';
 
 // Color swatch with popup picker
 interface ColorSwatchProps {
@@ -307,6 +312,7 @@ interface ObjectPropertiesProps {
 function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesProps) {
   const [linkScale, setLinkScale] = useState(true);
   const dragStartValuesRef = useRef<Partial<Record<'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation', Map<string, number>>>>({});
+  const activeDragTransactionsRef = useRef(0);
   const object = objects[0];
   const isMultiSelection = objects.length > 1;
 
@@ -333,9 +339,11 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
   const rotationField = getSharedNumber((selectedObj) => selectedObj.rotation);
 
   const applyToSelected = (buildUpdates: (obj: GameObject) => Partial<GameObject>) => {
-    for (const selectedObj of objects) {
-      updateObject(sceneId, selectedObj.id, buildUpdates(selectedObj));
-    }
+    runInHistoryTransaction('inspector:apply-selected', () => {
+      for (const selectedObj of objects) {
+        updateObject(sceneId, selectedObj.id, buildUpdates(selectedObj));
+      }
+    });
   };
 
   const clamp = (value: number, minValue?: number, maxValue?: number) => {
@@ -349,11 +357,19 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
     field: 'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation',
     picker: (obj: GameObject) => number,
   ) => {
+    if (activeDragTransactionsRef.current === 0) {
+      beginHistoryTransaction(`inspector:drag:${field}`);
+    }
+    activeDragTransactionsRef.current += 1;
     dragStartValuesRef.current[field] = new Map(objects.map((selectedObj) => [selectedObj.id, picker(selectedObj)]));
   };
 
   const clearDragStart = (field: 'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation') => {
     delete dragStartValuesRef.current[field];
+    activeDragTransactionsRef.current = Math.max(0, activeDragTransactionsRef.current - 1);
+    if (activeDragTransactionsRef.current === 0) {
+      endHistoryTransaction(`inspector:drag:${field}`);
+    }
   };
 
   const handlePositionChange = (

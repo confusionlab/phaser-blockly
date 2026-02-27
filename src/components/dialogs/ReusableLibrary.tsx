@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { X } from 'lucide-react';
 import type { ReusableObject } from '@/types';
+import { runInHistoryTransaction } from '@/store/universalHistory';
 
 interface ReusableLibraryProps {
   onClose: () => void;
@@ -47,19 +48,21 @@ export function ReusableLibrary({ onClose }: ReusableLibraryProps) {
       if (!reusable) return;
 
       // Create a new GameObject from the reusable
-      const newObject = addObject(selectedSceneId, reusable.name);
+      runInHistoryTransaction('reusable-library:insert-object', () => {
+        const newObject = addObject(selectedSceneId, reusable.name);
 
-      // Update with reusable data
-      const { project, updateObject } = useProjectStore.getState();
-      if (project) {
-        updateObject(selectedSceneId, newObject.id, {
-          spriteAssetId: reusable.spriteAssetId,
-          physics: reusable.defaultPhysics,
-          blocklyXml: reusable.blocklyXml,
-        });
-      }
+        // Update with reusable data
+        const { project, updateObject } = useProjectStore.getState();
+        if (project) {
+          updateObject(selectedSceneId, newObject.id, {
+            spriteAssetId: reusable.spriteAssetId,
+            physics: reusable.defaultPhysics,
+            blocklyXml: reusable.blocklyXml,
+          });
+        }
 
-      selectObject(newObject.id);
+        selectObject(newObject.id);
+      });
       onClose();
     } catch (e) {
       console.error('Failed to insert reusable:', e);

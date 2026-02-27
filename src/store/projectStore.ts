@@ -10,6 +10,11 @@ import {
   normalizeProjectLayering,
   normalizeSceneLayering,
 } from '@/utils/layerTree';
+import {
+  recordHistoryChange,
+  registerProjectHistoryBridge,
+  resetHistory,
+} from '@/store/universalHistory';
 
 interface ProjectStore {
   project: Project | null;
@@ -64,6 +69,18 @@ interface ProjectStore {
   getComponent: (componentId: string) => ComponentDefinition | undefined;
 }
 
+let lastUpdatedAtMs = 0;
+
+function createUpdatedAt(): Date {
+  const now = Date.now();
+  if (now <= lastUpdatedAtMs) {
+    lastUpdatedAtMs += 1;
+  } else {
+    lastUpdatedAtMs = now;
+  }
+  return new Date(lastUpdatedAtMs);
+}
+
 function normalizeProject(project: Project): Project {
   return normalizeProjectLayering({
     ...project,
@@ -86,10 +103,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   // Project actions
   newProject: (name: string) => {
     set({ project: createDefaultProject(name), isDirty: true });
+    resetHistory();
   },
 
   openProject: (project: Project) => {
     set({ project: normalizeProject(project), isDirty: false });
+    resetHistory();
   },
 
   saveCurrentProject: async () => {
@@ -102,13 +121,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   closeProject: () => {
     set({ project: null, isDirty: false });
+    resetHistory();
   },
 
   updateProjectName: (name: string) => {
     set(state => ({
-      project: state.project ? { ...state.project, name, updatedAt: new Date() } : null,
+      project: state.project ? { ...state.project, name, updatedAt: createUpdatedAt() } : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:update-name' });
   },
 
   updateProjectSettings: (settings: Partial<Project['settings']>) => {
@@ -117,11 +138,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ? {
             ...state.project,
             settings: { ...state.project.settings, ...settings },
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:update-settings', allowMerge: true });
   },
 
   // Scene actions
@@ -139,11 +161,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: {
           ...state.project,
           scenes: [...state.project.scenes, newScene],
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:add-scene' });
   },
 
   removeScene: (sceneId: string) => {
@@ -154,11 +177,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: {
           ...state.project,
           scenes: state.project.scenes.filter(s => s.id !== sceneId),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:remove-scene' });
   },
 
   updateScene: (sceneId: string, updates: Partial<Scene>) => {
@@ -171,11 +195,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           scenes: state.project.scenes.map(s =>
             s.id === sceneId ? normalizeSceneLayering({ ...s, ...updates }) : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:update-scene', allowMerge: true });
   },
 
   reorderScenes: (sceneIds: string[]) => {
@@ -194,11 +219,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: {
           ...state.project,
           scenes: reorderedScenes,
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:reorder-scenes' });
   },
 
   // Object actions
@@ -223,11 +249,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ? normalizeSceneLayering({ ...s, objects: [...s.objects, newObject] })
               : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:add-object' });
 
     return newObject;
   },
@@ -244,11 +271,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ? normalizeSceneLayering({ ...s, objects: s.objects.filter(o => o.id !== objectId) })
               : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:remove-object' });
   },
 
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => {
@@ -339,7 +367,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                   }),
                 }),
               })),
-              updatedAt: new Date(),
+              updatedAt: createUpdatedAt(),
             },
             isDirty: true,
           };
@@ -360,7 +388,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                     })
                   : s
               ),
-              updatedAt: new Date(),
+              updatedAt: createUpdatedAt(),
             },
             isDirty: true,
           };
@@ -383,11 +411,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 })
               : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:update-object', allowMerge: true });
   },
 
   duplicateObject: (sceneId: string, objectId: string) => {
@@ -434,11 +463,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                   })
                 : s
             ),
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:duplicate-object' });
 
     return duplicate;
   },
@@ -469,11 +499,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               },
             );
           }),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:reorder-object' });
   },
 
   // Variable actions (global)
@@ -483,11 +514,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ? {
             ...state.project,
             globalVariables: [...state.project.globalVariables, variable],
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:add-global-variable' });
   },
 
   removeGlobalVariable: (variableId: string) => {
@@ -496,11 +528,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ? {
             ...state.project,
             globalVariables: state.project.globalVariables.filter(v => v.id !== variableId),
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:remove-global-variable' });
   },
 
   updateGlobalVariable: (variableId: string, updates: Partial<Variable>) => {
@@ -511,11 +544,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             globalVariables: state.project.globalVariables.map(v =>
               v.id === variableId ? { ...v, ...updates } : v
             ),
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:update-global-variable', allowMerge: true });
   },
 
   // Variable actions (local - per object)
@@ -537,11 +571,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 }
               : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:add-local-variable' });
   },
 
   removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => {
@@ -562,11 +597,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 }
               : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:remove-local-variable' });
   },
 
   updateLocalVariable: (sceneId: string, objectId: string, variableId: string, updates: Partial<Variable>) => {
@@ -592,11 +628,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 }
               : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:update-local-variable', allowMerge: true });
   },
 
   // Legacy aliases
@@ -654,11 +691,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                   }
                 : s
             ),
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:make-component' });
 
     return component;
   },
@@ -671,11 +709,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             components: (state.project.components || []).map(c =>
               c.id === componentId ? { ...c, ...updates } : c
             ),
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:update-component', allowMerge: true });
   },
 
   deleteComponent: (componentId: string) => {
@@ -713,11 +752,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ...state.project,
           components: (state.project.components || []).filter(c => c.id !== componentId),
           scenes: updatedScenes,
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:delete-component' });
   },
 
   addComponentInstance: (sceneId: string, componentId: string) => {
@@ -761,11 +801,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 ? normalizeSceneLayering({ ...s, objects: [...s.objects, newObject] })
                 : s
             ),
-            updatedAt: new Date(),
+            updatedAt: createUpdatedAt(),
           }
         : null,
       isDirty: true,
     }));
+    recordHistoryChange({ source: 'project:add-component-instance' });
 
     return newObject;
   },
@@ -805,11 +846,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 }
               : s
           ),
-          updatedAt: new Date(),
+          updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
+    recordHistoryChange({ source: 'project:detach-component' });
   },
 
   // Helpers
@@ -828,3 +870,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return (project?.components || []).find(c => c.id === componentId);
   },
 }));
+
+registerProjectHistoryBridge(
+  () => useProjectStore.getState().project,
+  (project) => {
+    useProjectStore.setState({
+      project,
+      isDirty: project !== null,
+    });
+  },
+);

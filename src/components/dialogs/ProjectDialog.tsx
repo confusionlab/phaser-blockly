@@ -76,7 +76,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
       await saveProject(createdProject);
 
       if (createdProject.scenes.length > 0) {
-        selectScene(createdProject.scenes[0].id);
+        selectScene(createdProject.scenes[0].id, { recordHistory: false });
       }
       if (onProjectOpen) {
         onProjectOpen(createdProject);
@@ -94,7 +94,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
       if (project) {
         openProject(project);
         if (project.scenes.length > 0) {
-          selectScene(project.scenes[0].id);
+          selectScene(project.scenes[0].id, { recordHistory: false });
         }
         if (onProjectOpen) {
           onProjectOpen(project);
@@ -138,7 +138,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
       const project = await importProjectFromFile(file);
       openProject(project);
       if (project.scenes.length > 0) {
-        selectScene(project.scenes[0].id);
+        selectScene(project.scenes[0].id, { recordHistory: false });
       }
       loadProjectsList();
       if (onProjectOpen) {

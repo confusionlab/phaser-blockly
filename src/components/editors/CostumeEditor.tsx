@@ -17,6 +17,8 @@ export function CostumeEditor() {
     const handler: UndoRedoHandler = {
       undo: () => canvasRef.current?.undo(),
       redo: () => canvasRef.current?.redo(),
+      canUndo: () => canvasRef.current?.canUndo() ?? false,
+      canRedo: () => canvasRef.current?.canRedo() ?? false,
     };
     registerCostumeUndo(handler);
     return () => registerCostumeUndo(null);
