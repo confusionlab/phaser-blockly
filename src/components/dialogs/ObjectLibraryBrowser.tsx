@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Trash2, Loader2, Image, Music } from "lucide-react";
-import type { Costume, Sound, PhysicsConfig, ColliderConfig } from "@/types";
+import type { Costume, Sound, PhysicsConfig, ColliderConfig, Variable } from "@/types";
 import { urlToDataUrl } from "@/utils/convexHelpers";
 
 interface ObjectLibraryItem {
@@ -31,10 +31,15 @@ interface ObjectLibraryItem {
     name: string;
     storageId: Id<"_storage">;
     url: string | null;
+    duration?: number;
+    trimStart?: number;
+    trimEnd?: number;
   }>;
   blocklyXml: string;
+  currentCostumeIndex?: number;
   physics?: PhysicsConfig;
   collider?: ColliderConfig;
+  localVariables?: Variable[];
   createdAt: number;
 }
 
@@ -46,8 +51,10 @@ interface ObjectLibraryBrowserProps {
     costumes: Costume[];
     sounds: Sound[];
     blocklyXml: string;
+    currentCostumeIndex: number;
     physics: PhysicsConfig | null;
     collider: ColliderConfig | null;
+    localVariables: Variable[];
   }) => void;
 }
 
@@ -64,8 +71,13 @@ export function ObjectLibraryBrowser({
 
   const handleDelete = async (id: Id<"objectLibrary">) => {
     if (!confirm("Delete this object from library? All associated costumes and sounds will be removed.")) return;
-    await removeItem({ id });
-    if (selectedId === id) setSelectedId(null);
+    try {
+      await removeItem({ id });
+      if (selectedId === id) setSelectedId(null);
+    } catch (error) {
+      console.error("Failed to delete object:", error);
+      alert("Failed to delete object");
+    }
   };
 
   const handleSelect = async () => {
@@ -103,6 +115,9 @@ export function ObjectLibraryBrowser({
             id: crypto.randomUUID(),
             name: sound.name,
             assetId: dataUrl,
+            duration: sound.duration,
+            trimStart: sound.trimStart,
+            trimEnd: sound.trimEnd,
           };
         })
       );
@@ -112,8 +127,10 @@ export function ObjectLibraryBrowser({
         costumes,
         sounds,
         blocklyXml: item.blocklyXml,
+        currentCostumeIndex: item.currentCostumeIndex ?? 0,
         physics: item.physics ?? null,
         collider: item.collider ?? null,
+        localVariables: item.localVariables ?? [],
       });
       onOpenChange(false);
     } catch (error) {

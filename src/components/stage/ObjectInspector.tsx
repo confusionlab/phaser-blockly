@@ -23,28 +23,6 @@ interface ColorSwatchProps {
 
 function ColorSwatch({ value, onChange }: ColorSwatchProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Close on click outside
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-
-    // Delay to avoid immediate close on the same click
-    const timer = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside);
-    }, 0);
-
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isOpen]);
 
   const handleColorChange = useCallback((value: Parameters<typeof Color>[0]) => {
     try {
@@ -56,20 +34,27 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
   }, [onChange]);
 
   return (
-    <div ref={containerRef} className="relative">
+    <div className="relative">
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="w-8 h-8 rounded-md border border-border cursor-pointer shadow-sm hover:scale-105 transition-transform"
         style={{ backgroundColor: value }}
         title={value}
       />
       {isOpen && (
-        <div className="absolute top-10 right-0 z-50 bg-popover border rounded-lg shadow-lg p-3 w-52">
-          <ColorPicker value={value} onChange={handleColorChange} className="h-auto gap-3">
-            <ColorPickerSelection className="h-32 rounded-md" />
-            <ColorPickerHue />
-          </ColorPicker>
-        </div>
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setIsOpen(false)}
+          />
+          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-lg p-3 shadow-lg">
+            <ColorPicker value={value} onChange={handleColorChange} className="w-48">
+              <ColorPickerSelection className="h-32 rounded mb-2" />
+              <ColorPickerHue />
+            </ColorPicker>
+          </div>
+        </>
       )}
     </div>
   );

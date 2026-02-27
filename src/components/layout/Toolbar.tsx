@@ -5,14 +5,12 @@ import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
-import { Upload, Save, Library, Sun, Moon } from 'lucide-react';
-import { MediaLibrary } from '@/components/library/MediaLibrary';
+import { Upload, Save, Sun, Moon } from 'lucide-react';
 
 export function Toolbar() {
   const navigate = useNavigate();
   const { project, isDirty, saveCurrentProject, closeProject, updateProjectName } = useProjectStore();
   const { isDarkMode, toggleDarkMode } = useEditorStore();
-  const [showLibrary, setShowLibrary] = useState(false);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
@@ -145,15 +143,6 @@ export function Toolbar() {
           {isDarkMode ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </Button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowLibrary(true)}
-        >
-          <Library className="size-4" />
-          Library
-        </Button>
-
         {project && (
           <Button
             variant="ghost"
@@ -178,14 +167,6 @@ export function Toolbar() {
           </Button>
         )}
       </div>
-
-      <MediaLibrary
-        open={showLibrary}
-        onOpenChange={setShowLibrary}
-        onSelect={(url, type) => {
-          console.log('Selected:', type, url);
-        }}
-      />
     </div>
   );
 }

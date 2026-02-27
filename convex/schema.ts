@@ -20,6 +20,7 @@ const physicsValidator = v.object({
   velocityX: v.number(),
   velocityY: v.number(),
   bounce: v.number(),
+  friction: v.number(),
   allowRotation: v.boolean(),
 });
 
@@ -38,17 +39,21 @@ const colliderValidator = v.object({
   radius: v.number(),
 });
 
-export default defineSchema({
-  // Legacy library table (kept for backwards compatibility)
-  library: defineTable({
-    name: v.string(),
-    type: v.union(v.literal("image"), v.literal("sound")),
-    storageId: v.id("_storage"),
-    thumbnail: v.optional(v.string()),
-    mimeType: v.string(),
-    size: v.number(),
-  }).index("by_type", ["type"]),
+const variableValidator = v.object({
+  id: v.string(),
+  name: v.string(),
+  type: v.union(
+    v.literal("string"),
+    v.literal("integer"),
+    v.literal("float"),
+    v.literal("boolean"),
+  ),
+  defaultValue: v.union(v.number(), v.string(), v.boolean()),
+  scope: v.union(v.literal("global"), v.literal("local")),
+  objectId: v.optional(v.string()),
+});
 
+export default defineSchema({
   // Costume library - images for sprites
   costumeLibrary: defineTable({
     name: v.string(),
@@ -87,11 +92,16 @@ export default defineSchema({
         id: v.string(),
         name: v.string(),
         storageId: v.id("_storage"),
+        duration: v.optional(v.number()),
+        trimStart: v.optional(v.number()),
+        trimEnd: v.optional(v.number()),
       }),
     ),
     blocklyXml: v.string(),
+    currentCostumeIndex: v.optional(v.number()),
     physics: v.optional(physicsValidator),
     collider: v.optional(colliderValidator),
+    localVariables: v.optional(v.array(variableValidator)),
     createdAt: v.number(),
   }),
 

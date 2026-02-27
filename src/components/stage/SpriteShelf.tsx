@@ -680,6 +680,9 @@ export function SpriteShelf() {
         id: string;
         name: string;
         storageId: Id<'_storage'>;
+        duration?: number;
+        trimStart?: number;
+        trimEnd?: number;
       }> = [];
 
       for (const sound of effectiveProps.sounds) {
@@ -688,6 +691,9 @@ export function SpriteShelf() {
           id: sound.id,
           name: sound.name,
           storageId: storageId as Id<'_storage'>,
+          duration: sound.duration,
+          trimStart: sound.trimStart,
+          trimEnd: sound.trimEnd,
         });
       }
 
@@ -702,8 +708,10 @@ export function SpriteShelf() {
         costumes,
         sounds,
         blocklyXml: effectiveProps.blocklyXml,
+        currentCostumeIndex: effectiveProps.currentCostumeIndex,
         physics: effectiveProps.physics ?? undefined,
         collider: effectiveProps.collider ?? undefined,
+        localVariables: object.localVariables,
       });
     } catch (error) {
       console.error('Failed to save object to library:', error);
@@ -730,10 +738,14 @@ export function SpriteShelf() {
     costumes: Costume[];
     sounds: Sound[];
     blocklyXml: string;
+    currentCostumeIndex: number;
     physics: PhysicsConfig | null;
     collider: ColliderConfig | null;
+    localVariables: GameObject['localVariables'];
   }) => {
     const newObject = addObject(selectedSceneId, data.name);
+    const maxCostumeIndex = Math.max(0, data.costumes.length - 1);
+    const safeCostumeIndex = Math.min(Math.max(0, data.currentCostumeIndex), maxCostumeIndex);
 
     updateObject(selectedSceneId, newObject.id, {
       costumes: data.costumes,
@@ -741,7 +753,11 @@ export function SpriteShelf() {
       blocklyXml: data.blocklyXml,
       physics: data.physics,
       collider: data.collider,
-      currentCostumeIndex: 0,
+      currentCostumeIndex: safeCostumeIndex,
+      localVariables: data.localVariables.map((variable) => ({
+        ...variable,
+        id: crypto.randomUUID(),
+      })),
     });
 
     selectObject(newObject.id);

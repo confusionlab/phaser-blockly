@@ -89,13 +89,18 @@ export const CostumeList = memo(({
   };
 
   const handleLibrarySelect = (data: { name: string; dataUrl: string; bounds?: { x: number; y: number; width: number; height: number } }) => {
-    const newCostume: Costume = {
-      id: crypto.randomUUID(),
-      name: data.name,
-      assetId: data.dataUrl,
-      bounds: data.bounds,
-    };
-    onAddCostume(newCostume);
+    try {
+      const newCostume: Costume = {
+        id: crypto.randomUUID(),
+        name: data.name,
+        assetId: data.dataUrl,
+        bounds: data.bounds,
+      };
+      onAddCostume(newCostume);
+    } catch (error) {
+      console.error('Failed to add costume from library:', error);
+      alert('Failed to add costume from library');
+    }
   };
 
   const handleSaveToLibrary = async (index: number) => {
@@ -124,6 +129,7 @@ export const CostumeList = memo(({
       });
     } catch (error) {
       console.error('Failed to save costume to library:', error);
+      alert('Failed to save costume to library');
     } finally {
       setSavingToLibrary(null);
     }

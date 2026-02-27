@@ -30,7 +30,7 @@ export async function compressAudio(dataUrl: string): Promise<string> {
     }
 
     // Fallback: encode as compressed WAV
-    const wavDataUrl = encodeAsWav(monoBuffer, audioContext.sampleRate);
+    const wavDataUrl = await encodeAsWav(monoBuffer, audioContext.sampleRate);
     audioContext.close();
     return wavDataUrl;
   } catch (error) {
@@ -133,7 +133,7 @@ async function encodeWithMediaRecorder(
 /**
  * Encode audio as WAV (fallback, less compression but universal support)
  */
-function encodeAsWav(buffer: AudioBuffer, sampleRate: number): string {
+async function encodeAsWav(buffer: AudioBuffer, sampleRate: number): Promise<string> {
   const numChannels = buffer.numberOfChannels;
   const length = buffer.length * numChannels * 2; // 16-bit samples
   const arrayBuffer = new ArrayBuffer(44 + length);
@@ -164,7 +164,7 @@ function encodeAsWav(buffer: AudioBuffer, sampleRate: number): string {
   }
 
   const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
-  return URL.createObjectURL(blob);
+  return blobToDataUrl(blob);
 }
 
 function writeString(view: DataView, offset: number, string: string): void {

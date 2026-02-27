@@ -1,8 +1,14 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
+import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  ColorPicker,
+  ColorPickerHue,
+  ColorPickerSelection,
+} from '@/components/ui/color-picker';
 import { Plus, X } from 'lucide-react';
 
 export function SceneTabs() {
@@ -10,7 +16,7 @@ export function SceneTabs() {
   const { selectedSceneId, selectScene } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const colorInputRef = useRef<HTMLInputElement>(null);
+  const [showBgColorPicker, setShowBgColorPicker] = useState(false);
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const currentBgColor = selectedScene?.background?.type === 'color'
@@ -22,6 +28,15 @@ export function SceneTabs() {
       updateScene(selectedSceneId, {
         background: { type: 'color', value: color }
       });
+    }
+  };
+
+  const handleBgPickerChange = (value: Parameters<typeof Color>[0]) => {
+    try {
+      const hex = Color(value).hex();
+      handleBgColorChange(hex);
+    } catch {
+      // Ignore invalid color values from picker
     }
   };
 
@@ -112,21 +127,29 @@ export function SceneTabs() {
       <div className="flex-1" />
 
       {/* Background color picker */}
-      <div className="flex items-center gap-2">
+      <div className="relative flex items-center gap-2">
         <span className="text-xs text-muted-foreground">BG:</span>
         <button
-          onClick={() => colorInputRef.current?.click()}
+          type="button"
+          onClick={() => setShowBgColorPicker(!showBgColorPicker)}
           className="w-7 h-7 rounded border-2 border-border hover:border-primary transition-colors cursor-pointer"
           style={{ backgroundColor: currentBgColor }}
           title="Change background color"
         />
-        <input
-          ref={colorInputRef}
-          type="color"
-          value={currentBgColor}
-          onChange={(e) => handleBgColorChange(e.target.value)}
-          className="sr-only"
-        />
+        {showBgColorPicker && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowBgColorPicker(false)}
+            />
+            <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-lg p-3 shadow-lg">
+              <ColorPicker value={currentBgColor} onChange={handleBgPickerChange} className="w-48">
+                <ColorPickerSelection className="h-32 rounded mb-2" />
+                <ColorPickerHue />
+              </ColorPicker>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

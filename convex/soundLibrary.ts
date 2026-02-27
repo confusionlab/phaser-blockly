@@ -17,7 +17,7 @@ export const list = query({
   args: {},
   returns: v.array(soundWithUrlValidator),
   handler: async (ctx) => {
-    const items = await ctx.db.query("soundLibrary").collect();
+    const items = await ctx.db.query("soundLibrary").order("desc").collect();
 
     return await Promise.all(
       items.map(async (item) => ({

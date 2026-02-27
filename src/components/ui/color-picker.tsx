@@ -41,7 +41,7 @@ interface ColorPickerContextValue {
 }
 
 const ColorPickerContext = createContext<ColorPickerContextValue | undefined>(undefined)
-const SATURATION_EPSILON = 1e-4
+const SATURATION_EPSILON = 0.01
 
 export const useColorPicker = () => {
   const context = useContext(ColorPickerContext)

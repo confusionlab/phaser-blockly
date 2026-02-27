@@ -91,14 +91,19 @@ export const SoundList = memo(({
   };
 
   const handleLibrarySelect = async (data: { name: string; dataUrl: string }) => {
-    const duration = await getAudioDuration(data.dataUrl);
-    const newSound: Sound = {
-      id: crypto.randomUUID(),
-      name: data.name,
-      assetId: data.dataUrl,
-      duration,
-    };
-    onAddSound(newSound);
+    try {
+      const duration = await getAudioDuration(data.dataUrl);
+      const newSound: Sound = {
+        id: crypto.randomUUID(),
+        name: data.name,
+        assetId: data.dataUrl,
+        duration,
+      };
+      onAddSound(newSound);
+    } catch (error) {
+      console.error('Failed to add sound from library:', error);
+      alert('Failed to add sound from library');
+    }
   };
 
   const handleSaveToLibrary = async (index: number) => {
@@ -121,6 +126,7 @@ export const SoundList = memo(({
       });
     } catch (error) {
       console.error('Failed to save sound to library:', error);
+      alert('Failed to save sound to library');
     } finally {
       setSavingToLibrary(null);
     }

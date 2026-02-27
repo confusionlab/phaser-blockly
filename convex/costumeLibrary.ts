@@ -25,7 +25,7 @@ export const list = query({
   args: {},
   returns: v.array(costumeWithUrlValidator),
   handler: async (ctx) => {
-    const items = await ctx.db.query("costumeLibrary").collect();
+    const items = await ctx.db.query("costumeLibrary").order("desc").collect();
 
     return await Promise.all(
       items.map(async (item) => ({

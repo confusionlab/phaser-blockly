@@ -15,6 +15,7 @@ const physicsValidator = v.object({
   velocityX: v.number(),
   velocityY: v.number(),
   bounce: v.number(),
+  friction: v.number(),
   allowRotation: v.boolean(),
 });
 
@@ -43,6 +44,23 @@ const objectLibrarySoundValidator = v.object({
   id: v.string(),
   name: v.string(),
   storageId: v.id("_storage"),
+  duration: v.optional(v.number()),
+  trimStart: v.optional(v.number()),
+  trimEnd: v.optional(v.number()),
+});
+
+const variableValidator = v.object({
+  id: v.string(),
+  name: v.string(),
+  type: v.union(
+    v.literal("string"),
+    v.literal("integer"),
+    v.literal("float"),
+    v.literal("boolean"),
+  ),
+  defaultValue: v.union(v.number(), v.string(), v.boolean()),
+  scope: v.union(v.literal("global"), v.literal("local")),
+  objectId: v.optional(v.string()),
 });
 
 const objectLibraryCostumeWithUrlValidator = v.object({
@@ -57,6 +75,9 @@ const objectLibrarySoundWithUrlValidator = v.object({
   id: v.string(),
   name: v.string(),
   storageId: v.id("_storage"),
+  duration: v.optional(v.number()),
+  trimStart: v.optional(v.number()),
+  trimEnd: v.optional(v.number()),
   url: v.union(v.string(), v.null()),
 });
 
@@ -68,8 +89,10 @@ const objectLibraryWithUrlsValidator = v.object({
   costumes: v.array(objectLibraryCostumeWithUrlValidator),
   sounds: v.array(objectLibrarySoundWithUrlValidator),
   blocklyXml: v.string(),
+  currentCostumeIndex: v.optional(v.number()),
   physics: v.optional(physicsValidator),
   collider: v.optional(colliderValidator),
+  localVariables: v.optional(v.array(variableValidator)),
   createdAt: v.number(),
 });
 
@@ -77,7 +100,7 @@ export const list = query({
   args: {},
   returns: v.array(objectLibraryWithUrlsValidator),
   handler: async (ctx) => {
-    const items = await ctx.db.query("objectLibrary").collect();
+    const items = await ctx.db.query("objectLibrary").order("desc").collect();
 
     return await Promise.all(
       items.map(async (item) => {
@@ -120,8 +143,10 @@ export const create = mutation({
     costumes: v.array(objectLibraryCostumeValidator),
     sounds: v.array(objectLibrarySoundValidator),
     blocklyXml: v.string(),
+    currentCostumeIndex: v.number(),
     physics: v.optional(physicsValidator),
     collider: v.optional(colliderValidator),
+    localVariables: v.array(variableValidator),
   },
   returns: v.id("objectLibrary"),
   handler: async (ctx, args) => {

@@ -81,6 +81,7 @@ export function CostumeLibraryBrowser({
       }
     } catch (error) {
       console.error("Failed to upload costume:", error);
+      alert("Failed to upload costume");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -88,8 +89,14 @@ export function CostumeLibraryBrowser({
   };
 
   const handleDelete = async (id: Id<"costumeLibrary">) => {
-    await removeItem({ id });
-    if (selectedId === id) setSelectedId(null);
+    if (!confirm("Delete this costume from library?")) return;
+    try {
+      await removeItem({ id });
+      if (selectedId === id) setSelectedId(null);
+    } catch (error) {
+      console.error("Failed to delete costume:", error);
+      alert("Failed to delete costume");
+    }
   };
 
   const handleSelect = async () => {
@@ -111,6 +118,7 @@ export function CostumeLibraryBrowser({
       onOpenChange(false);
     } catch (error) {
       console.error("Failed to load costume:", error);
+      alert("Failed to load costume");
     } finally {
       setLoadingSelect(false);
     }

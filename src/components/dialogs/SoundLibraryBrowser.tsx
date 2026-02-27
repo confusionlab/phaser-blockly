@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Trash2, Upload, Loader2, Play, Square } from "lucide-react";
 import { uploadDataUrlToStorage, urlToDataUrl, blobToDataUrl } from "@/utils/convexHelpers";
+import { compressAudio, getAudioDuration } from "@/utils/audioProcessor";
 
 interface SoundLibraryBrowserProps {
   open: boolean;
@@ -57,11 +58,10 @@ export function SoundLibraryBrowser({
       for (const file of Array.from(files)) {
         if (!file.type.startsWith("audio/")) continue;
 
-        // Get audio duration
-        const duration = await getAudioDuration(file);
-
-        // Convert file to data URL for upload
-        const dataUrl = await blobToDataUrl(file);
+        // Convert and compress for consistent library storage
+        const originalDataUrl = await blobToDataUrl(file);
+        const dataUrl = await compressAudio(originalDataUrl);
+        const duration = await getAudioDuration(dataUrl);
 
         // Upload to Convex storage
         const { storageId, size, mimeType } = await uploadDataUrlToStorage(
@@ -80,6 +80,7 @@ export function SoundLibraryBrowser({
       }
     } catch (error) {
       console.error("Failed to upload sound:", error);
+      alert("Failed to upload sound");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -87,13 +88,21 @@ export function SoundLibraryBrowser({
   };
 
   const handleDelete = async (id: Id<"soundLibrary">) => {
+    if (!confirm("Delete this sound from library?")) return;
+
     // Stop if this sound is playing
     if (playingId === id) {
       audioRef.current?.pause();
       setPlayingId(null);
     }
-    await removeItem({ id });
-    if (selectedId === id) setSelectedId(null);
+
+    try {
+      await removeItem({ id });
+      if (selectedId === id) setSelectedId(null);
+    } catch (error) {
+      console.error("Failed to delete sound:", error);
+      alert("Failed to delete sound");
+    }
   };
 
   const handlePlay = (url: string, id: string) => {
@@ -104,7 +113,10 @@ export function SoundLibraryBrowser({
       if (audioRef.current) audioRef.current.pause();
       audioRef.current = new Audio(url);
       audioRef.current.onended = () => setPlayingId(null);
-      audioRef.current.play();
+      void audioRef.current.play().catch((error) => {
+        console.error("Failed to play sound preview:", error);
+        setPlayingId(null);
+      });
       setPlayingId(id);
     }
   };
@@ -127,6 +139,7 @@ export function SoundLibraryBrowser({
       onOpenChange(false);
     } catch (error) {
       console.error("Failed to load sound:", error);
+      alert("Failed to load sound");
     } finally {
       setLoadingSelect(false);
     }
@@ -239,19 +252,4 @@ export function SoundLibraryBrowser({
       </DialogContent>
     </Dialog>
   );
-}
-
-async function getAudioDuration(file: File): Promise<number | undefined> {
-  return new Promise((resolve) => {
-    const audio = document.createElement("audio");
-    audio.onloadedmetadata = () => {
-      resolve(audio.duration);
-      URL.revokeObjectURL(audio.src);
-    };
-    audio.onerror = () => {
-      resolve(undefined);
-      URL.revokeObjectURL(audio.src);
-    };
-    audio.src = URL.createObjectURL(file);
-  });
 }
