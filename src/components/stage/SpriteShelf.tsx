@@ -338,6 +338,9 @@ export function SpriteShelf() {
     e.preventDefault();
     e.stopPropagation();
     suppressNextAriaSelectionRef.current = true;
+    queueMicrotask(() => {
+      suppressNextAriaSelectionRef.current = false;
+    });
 
     if (e.shiftKey) {
       const anchorId = selectionAnchorObjectIdRef.current ?? selectedObjectId ?? objectId;
@@ -593,6 +596,17 @@ export function SpriteShelf() {
   };
 
   const handleRequestDeleteFolder = (folder: SceneFolder) => {
+    const descendants = collectFolderDescendants(folder.id, folders);
+    const hasChildFolders = descendants.size > 1;
+    const hasChildObjects = selectedScene.objects.some(
+      (obj) => !!obj.parentId && descendants.has(obj.parentId),
+    );
+
+    if (!hasChildFolders && !hasChildObjects) {
+      handleDeleteFolder(folder.id);
+      return;
+    }
+
     setFolderDeleteTarget(folder);
   };
 

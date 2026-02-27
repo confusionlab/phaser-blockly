@@ -1232,14 +1232,7 @@ function createEditorScene(
 
     if (!marqueeHasMoved) {
       if (marqueeMode === 'replace') {
-        const storeState = useEditorStore.getState();
-        const currentSelected = storeState.selectedObjectIds.length > 0
-          ? storeState.selectedObjectIds
-          : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
-        // Avoid unexpectedly clearing an existing multi-selection on a plain background click.
-        if (currentSelected.length <= 1) {
-          selectObject(null);
-        }
+        selectObject(null);
       }
       isMarqueeSelecting = false;
       marqueePointerId = null;

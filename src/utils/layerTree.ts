@@ -470,6 +470,15 @@ export function moveSceneLayerNodes(
   let destinationIndex = 0;
 
   const targetNode = target.key ? nodeByKey.get(target.key) : null;
+  if (
+    targetNode
+    && target.dropPosition
+    && target.dropPosition !== 'on'
+    && sanitizedSet.has(targetNode.key)
+  ) {
+    // Dropping relative to an item that's part of the drag selection should be a no-op.
+    return normalizedScene;
+  }
 
   if (!targetNode || !target.dropPosition) {
     const rootSiblings = siblingsByParent.get(ROOT_KEY) ?? [];
