@@ -63,6 +63,7 @@ import {
   parseLayerNodeKey,
   type LayerTreeNode,
 } from '@/utils/layerTree';
+import { runInHistoryTransaction } from '@/store/universalHistory';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -387,39 +388,43 @@ export function SpriteShelf() {
   };
 
   const handleAddObject = () => {
-    const newName = `Object ${selectedScene.objects.length + 1}`;
-    const newObject = addObject(selectedSceneId, newName);
-    selectObject(newObject.id);
+    runInHistoryTransaction('sprite-shelf:add-object', () => {
+      const newName = `Object ${selectedScene.objects.length + 1}`;
+      const newObject = addObject(selectedSceneId, newName);
+      selectObject(newObject.id);
+    });
   };
 
   const handleAddFolder = (parentId: string | null = null, assignObjectId?: string) => {
-    const newFolder: SceneFolder = {
-      id: crypto.randomUUID(),
-      name: `Folder ${folders.length + 1}`,
-      parentId,
-      order: getNextSiblingOrder(selectedScene, parentId),
-    };
-    updateScene(selectedSceneId, { objectFolders: [...folders, newFolder] });
+    runInHistoryTransaction('sprite-shelf:add-folder', () => {
+      const newFolder: SceneFolder = {
+        id: crypto.randomUUID(),
+        name: `Folder ${folders.length + 1}`,
+        parentId,
+        order: getNextSiblingOrder(selectedScene, parentId),
+      };
+      updateScene(selectedSceneId, { objectFolders: [...folders, newFolder] });
 
-    if (assignObjectId) {
-      updateObject(selectedSceneId, assignObjectId, {
-        parentId: newFolder.id,
-        order: getNextSiblingOrder(selectedScene, newFolder.id),
-        folderId: undefined,
-      });
-    }
+      if (assignObjectId) {
+        updateObject(selectedSceneId, assignObjectId, {
+          parentId: newFolder.id,
+          order: getNextSiblingOrder(selectedScene, newFolder.id),
+          folderId: undefined,
+        });
+      }
+    });
   };
 
   const handleAddScene = () => {
     if (!project) return;
-    const newName = `Scene ${project.scenes.length + 1}`;
-    addScene(newName);
-    setTimeout(() => {
+    runInHistoryTransaction('sprite-shelf:add-scene', () => {
+      const newName = `Scene ${project.scenes.length + 1}`;
+      addScene(newName);
       const nextScene = useProjectStore.getState().project?.scenes.at(-1);
       if (nextScene) {
         selectScene(nextScene.id);
       }
-    }, 0);
+    });
   };
 
   const handleObjectContextMenu = (e: React.MouseEvent, object: GameObject) => {
@@ -477,33 +482,36 @@ export function SpriteShelf() {
 
   const handlePaste = () => {
     if (!objectClipboard) return;
+    const clipboard = objectClipboard;
 
-    const newObject = addObject(selectedSceneId, `${objectClipboard.name} (copy)`);
+    runInHistoryTransaction('sprite-shelf:paste-object', () => {
+      const newObject = addObject(selectedSceneId, `${clipboard.name} (copy)`);
 
-    const newCostumes = objectClipboard.costumes.map((costume) => ({
-      ...costume,
-      id: crypto.randomUUID(),
-    }));
-    const newSounds = objectClipboard.sounds.map((sound) => ({
-      ...sound,
-      id: crypto.randomUUID(),
-    }));
-    const newLocalVariables = (objectClipboard.localVariables || []).map((variable) => ({
-      ...variable,
-      id: crypto.randomUUID(),
-    }));
+      const newCostumes = clipboard.costumes.map((costume) => ({
+        ...costume,
+        id: crypto.randomUUID(),
+      }));
+      const newSounds = clipboard.sounds.map((sound) => ({
+        ...sound,
+        id: crypto.randomUUID(),
+      }));
+      const newLocalVariables = (clipboard.localVariables || []).map((variable) => ({
+        ...variable,
+        id: crypto.randomUUID(),
+      }));
 
-    updateObject(selectedSceneId, newObject.id, {
-      costumes: newCostumes,
-      sounds: newSounds,
-      blocklyXml: objectClipboard.blocklyXml,
-      physics: objectClipboard.physics,
-      collider: objectClipboard.collider,
-      localVariables: newLocalVariables,
-      currentCostumeIndex: 0,
+      updateObject(selectedSceneId, newObject.id, {
+        costumes: newCostumes,
+        sounds: newSounds,
+        blocklyXml: clipboard.blocklyXml,
+        physics: clipboard.physics,
+        collider: clipboard.collider,
+        localVariables: newLocalVariables,
+        currentCostumeIndex: 0,
+      });
+
+      selectObject(newObject.id);
     });
-
-    selectObject(newObject.id);
     handleCloseContextMenu();
   };
 
@@ -514,19 +522,21 @@ export function SpriteShelf() {
       ? selectedIdsInScene
       : [contextMenu.object.id];
 
-    const deleteSet = new Set(deleteIds);
-    deleteIds.forEach((id) => removeObject(selectedSceneId, id));
+    runInHistoryTransaction('sprite-shelf:delete-object', () => {
+      const deleteSet = new Set(deleteIds);
+      deleteIds.forEach((id) => removeObject(selectedSceneId, id));
 
-    const remainingSelectedIds = selectedIdsInScene.filter((id) => !deleteSet.has(id));
-    if (remainingSelectedIds.length > 0) {
-      const nextPrimary = selectedObjectId && remainingSelectedIds.includes(selectedObjectId)
-        ? selectedObjectId
-        : remainingSelectedIds[0];
-      selectObjects(remainingSelectedIds, nextPrimary);
-    } else {
-      const remainingSceneIds = orderedSceneObjectIds.filter((id) => !deleteSet.has(id));
-      selectObject(remainingSceneIds[0] ?? null);
-    }
+      const remainingSelectedIds = selectedIdsInScene.filter((id) => !deleteSet.has(id));
+      if (remainingSelectedIds.length > 0) {
+        const nextPrimary = selectedObjectId && remainingSelectedIds.includes(selectedObjectId)
+          ? selectedObjectId
+          : remainingSelectedIds[0];
+        selectObjects(remainingSelectedIds, nextPrimary);
+      } else {
+        const remainingSceneIds = orderedSceneObjectIds.filter((id) => !deleteSet.has(id));
+        selectObject(remainingSceneIds[0] ?? null);
+      }
+    });
 
     handleCloseContextMenu();
   };
@@ -565,34 +575,36 @@ export function SpriteShelf() {
       objects: nextObjects,
     };
 
-    updateScene(selectedSceneId, {
-      objectFolders: nextFolders,
-      objects: nextObjects,
+    runInHistoryTransaction('sprite-shelf:delete-folder', () => {
+      updateScene(selectedSceneId, {
+        objectFolders: nextFolders,
+        objects: nextObjects,
+      });
+
+      if (editingFolderId && descendants.has(editingFolderId)) {
+        setEditingFolderId(null);
+        setFolderEditName('');
+      }
+
+      const currentCollapsed = collapsedFolderIdsByScene[selectedSceneId] ?? [];
+      setCollapsedFoldersForScene(
+        selectedSceneId,
+        currentCollapsed.filter((id) => !descendants.has(id)),
+      );
+
+      const remainingObjectIds = new Set(nextObjects.map((obj) => obj.id));
+      const remainingSelectedIds = selectedIdsInScene.filter((id) => remainingObjectIds.has(id));
+      if (remainingSelectedIds.length > 0) {
+        const nextPrimary = selectedObjectId && remainingSelectedIds.includes(selectedObjectId)
+          ? selectedObjectId
+          : remainingSelectedIds[0];
+        selectObjects(remainingSelectedIds, nextPrimary);
+        return;
+      }
+
+      const nextOrderedIds = getSceneObjectsInLayerOrder(nextScene).map((obj) => obj.id);
+      selectObject(nextOrderedIds[0] ?? null);
     });
-
-    if (editingFolderId && descendants.has(editingFolderId)) {
-      setEditingFolderId(null);
-      setFolderEditName('');
-    }
-
-    const currentCollapsed = collapsedFolderIdsByScene[selectedSceneId] ?? [];
-    setCollapsedFoldersForScene(
-      selectedSceneId,
-      currentCollapsed.filter((id) => !descendants.has(id)),
-    );
-
-    const remainingObjectIds = new Set(nextObjects.map((obj) => obj.id));
-    const remainingSelectedIds = selectedIdsInScene.filter((id) => remainingObjectIds.has(id));
-    if (remainingSelectedIds.length > 0) {
-      const nextPrimary = selectedObjectId && remainingSelectedIds.includes(selectedObjectId)
-        ? selectedObjectId
-        : remainingSelectedIds[0];
-      selectObjects(remainingSelectedIds, nextPrimary);
-      return;
-    }
-
-    const nextOrderedIds = getSceneObjectsInLayerOrder(nextScene).map((obj) => obj.id);
-    selectObject(nextOrderedIds[0] ?? null);
   };
 
   const handleRequestDeleteFolder = (folder: SceneFolder) => {
@@ -743,24 +755,26 @@ export function SpriteShelf() {
     collider: ColliderConfig | null;
     localVariables: GameObject['localVariables'];
   }) => {
-    const newObject = addObject(selectedSceneId, data.name);
-    const maxCostumeIndex = Math.max(0, data.costumes.length - 1);
-    const safeCostumeIndex = Math.min(Math.max(0, data.currentCostumeIndex), maxCostumeIndex);
+    runInHistoryTransaction('sprite-shelf:add-from-library', () => {
+      const newObject = addObject(selectedSceneId, data.name);
+      const maxCostumeIndex = Math.max(0, data.costumes.length - 1);
+      const safeCostumeIndex = Math.min(Math.max(0, data.currentCostumeIndex), maxCostumeIndex);
 
-    updateObject(selectedSceneId, newObject.id, {
-      costumes: data.costumes,
-      sounds: data.sounds,
-      blocklyXml: data.blocklyXml,
-      physics: data.physics,
-      collider: data.collider,
-      currentCostumeIndex: safeCostumeIndex,
-      localVariables: data.localVariables.map((variable) => ({
-        ...variable,
-        id: crypto.randomUUID(),
-      })),
+      updateObject(selectedSceneId, newObject.id, {
+        costumes: data.costumes,
+        sounds: data.sounds,
+        blocklyXml: data.blocklyXml,
+        physics: data.physics,
+        collider: data.collider,
+        currentCostumeIndex: safeCostumeIndex,
+        localVariables: data.localVariables.map((variable) => ({
+          ...variable,
+          id: crypto.randomUUID(),
+        })),
+      });
+
+      selectObject(newObject.id);
     });
-
-    selectObject(newObject.id);
   };
 
   const willDeleteSelection = !!contextMenu

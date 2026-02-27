@@ -259,6 +259,7 @@ export function BlocklyEditor() {
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
   const currentSceneIdRef = useRef<string | null>(null);
   const currentObjectIdRef = useRef<string | null>(null);
+  const lastLoadedTargetRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const [showAddVariableDialog, setShowAddVariableDialog] = useState(false);
   const [showVariableManager, setShowVariableManager] = useState(false);
@@ -447,12 +448,9 @@ export function BlocklyEditor() {
     };
   }, []);
 
-  // Load workspace when object ID changes (not when XML changes - we're the ones changing it)
+  // Keep workspace in sync with selected object XML, including undo/redo history replays.
   useEffect(() => {
     if (!workspaceRef.current) return;
-    isLoadingRef.current = true;
-    setTypedVariableLoading(true);
-    workspaceRef.current.clear();
 
     // Get fresh object data from store
     const state = useProjectStore.getState();
@@ -469,6 +467,20 @@ export function BlocklyEditor() {
         effectiveSounds = component.sounds || [];
       }
     }
+
+    const loadTargetKey = `${selectedSceneId ?? ''}:${selectedObjectId ?? ''}`;
+    const currentTopBlocks = workspaceRef.current.getTopBlocks(false);
+    const currentWorkspaceXml = currentTopBlocks.length === 0
+      ? ''
+      : Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(workspaceRef.current));
+
+    if (lastLoadedTargetRef.current === loadTargetKey && currentWorkspaceXml === blocklyXml) {
+      return;
+    }
+
+    isLoadingRef.current = true;
+    setTypedVariableLoading(true);
+    workspaceRef.current.clear();
 
     const expectedConnections = new Map<string, { parentId: string; inputName: string }>();
 
@@ -548,7 +560,8 @@ export function BlocklyEditor() {
     setTimeout(() => {
       isLoadingRef.current = false;
     }, 50);
-  }, [selectedObjectId, selectedSceneId]);
+    lastLoadedTargetRef.current = loadTargetKey;
+  }, [selectedObjectId, selectedSceneId, project]);
 
   // Get current object name for local variable option
   const currentObjectName = (() => {
