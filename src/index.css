@@ -33,6 +33,14 @@ body {
   color: var(--blockly-toolbox-fg) !important;
 }
 
+.blocklyToolbox,
+.blocklyToolboxCategoryGroup,
+.blocklyToolboxContents,
+.blocklyTreeRoot {
+  background-color: var(--blockly-toolbox-bg) !important;
+  color: var(--blockly-toolbox-fg) !important;
+}
+
 .blocklyMainBackground {
   fill: var(--blockly-workspace-bg) !important;
 }
@@ -54,6 +62,23 @@ body {
 
 .blocklyTreeLabel {
   color: var(--blockly-toolbox-fg) !important;
+}
+
+.blocklyToolboxCategory {
+  background-color: transparent !important;
+}
+
+.blocklyToolboxCategory:not(.blocklyToolboxSelected):hover {
+  background-color: var(--blockly-toolbox-hover-bg) !important;
+}
+
+.blocklyToolboxSelected,
+.blocklyToolboxSelected:hover {
+  background-color: var(--blockly-toolbox-active-bg) !important;
+}
+
+.blocklyToolboxSelected .blocklyToolboxCategoryLabel {
+  color: var(--blockly-toolbox-selected-fg) !important;
 }
 
 .categoryBubble {
@@ -86,8 +111,7 @@ body {
   max-width: 250px !important;
 }
 
-.blocklyFlyoutLabelText,
-.blocklyFlyout .blocklyText {
+.blocklyFlyoutLabelText {
   fill: var(--blockly-flyout-fg) !important;
 }
 
@@ -239,6 +263,9 @@ body {
   --blockly-workspace-bg: oklch(0.97 0.001 106.42);
   --blockly-toolbox-bg: oklch(1 0 0);
   --blockly-toolbox-fg: oklch(0.216 0.006 56.043);
+  --blockly-toolbox-hover-bg: oklch(0.95 0.002 56.04);
+  --blockly-toolbox-active-bg: oklch(0.89 0.003 56.04);
+  --blockly-toolbox-selected-fg: oklch(0.216 0.006 56.043);
   --blockly-flyout-bg: oklch(0.985 0.001 106.423);
   --blockly-flyout-fg: oklch(0.216 0.006 56.043);
   --blockly-scrollbar-thumb: oklch(0.72 0.008 56.04);
@@ -287,6 +314,9 @@ body {
   --blockly-workspace-bg: oklch(0.2 0.006 56.04);
   --blockly-toolbox-bg: oklch(0.24 0.006 56.04);
   --blockly-toolbox-fg: oklch(0.92 0.002 106.423);
+  --blockly-toolbox-hover-bg: oklch(0.3 0.007 56.04);
+  --blockly-toolbox-active-bg: oklch(0.36 0.008 56.04);
+  --blockly-toolbox-selected-fg: oklch(0.95 0.002 106.423);
   --blockly-flyout-bg: oklch(0.26 0.007 56.04);
   --blockly-flyout-fg: oklch(0.93 0.002 106.423);
   --blockly-scrollbar-thumb: oklch(0.47 0.01 56.04);
