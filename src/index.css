@@ -5,20 +5,6 @@
 
 @theme {
   --font-sans: "Nunito", system-ui, sans-serif;
-
-  --color-primary: #4A90D9;
-  --color-primary-dark: #3A7BC8;
-  --color-secondary: #7C4DFF;
-  --color-success: #4CAF50;
-  --color-warning: #FF9800;
-  --color-danger: #F44336;
-
-  --color-bg-main: #F5F5F5;
-  --color-bg-panel: #FFFFFF;
-  --color-bg-dark: #2D2D2D;
-
-  --color-border: #E0E0E0;
-  --color-border-dark: #424242;
 }
 
 * {
@@ -35,17 +21,20 @@ html, body, #root {
 
 body {
   font-family: var(--font-sans);
-  background-color: var(--color-bg-main);
-  color: #333;
 }
 
 /* Blockly workspace styling */
 .blocklySvg {
-  background-color: #f9f9f9 !important;
+  background-color: var(--blockly-workspace-bg) !important;
 }
 
 .blocklyToolboxDiv {
-  background-color: #fff !important;
+  background-color: var(--blockly-toolbox-bg) !important;
+  color: var(--blockly-toolbox-fg) !important;
+}
+
+.blocklyMainBackground {
+  fill: var(--blockly-workspace-bg) !important;
 }
 
 /* Make Blockly toolbox category buttons smaller */
@@ -60,6 +49,11 @@ body {
 
 .blocklyToolboxCategoryLabel {
   font-size: 10px !important;
+  color: var(--blockly-toolbox-fg) !important;
+}
+
+.blocklyTreeLabel {
+  color: var(--blockly-toolbox-fg) !important;
 }
 
 .categoryBubble {
@@ -88,7 +82,13 @@ body {
 }
 
 .blocklyFlyoutBackground {
+  fill: var(--blockly-flyout-bg) !important;
   max-width: 250px !important;
+}
+
+.blocklyFlyoutLabelText,
+.blocklyFlyout .blocklyText {
+  fill: var(--blockly-flyout-fg) !important;
 }
 
 /* Hide flyout scrollbar */
@@ -112,8 +112,29 @@ body {
 }
 
 .blocklyScrollbarHandle {
+  fill: var(--blockly-scrollbar-thumb) !important;
   rx: 3px !important;
   ry: 3px !important;
+}
+
+.blocklyWidgetDiv,
+.blocklyDropDownDiv {
+  color: var(--popover-foreground);
+}
+
+.blocklyDropDownDiv .goog-menu {
+  background: var(--popover);
+  border: 1px solid var(--border);
+}
+
+.blocklyDropDownDiv .goog-menuitem {
+  color: var(--popover-foreground);
+}
+
+.blocklyDropDownDiv .goog-menuitem-highlight,
+.blocklyDropDownDiv .goog-menuitem-hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 /* Custom scrollbar */
@@ -123,17 +144,17 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--scrollbar-track);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1;
+  background: var(--scrollbar-thumb-hover);
 }
 
 @theme inline {
@@ -210,6 +231,20 @@ body {
   --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
   --sidebar-border: oklch(0.923 0.003 48.717);
   --sidebar-ring: oklch(0.709 0.01 56.259);
+
+  --scrollbar-track: oklch(0.96 0.001 106.42);
+  --scrollbar-thumb: oklch(0.81 0.003 56.04);
+  --scrollbar-thumb-hover: oklch(0.71 0.006 56.04);
+
+  --blockly-workspace-bg: oklch(0.97 0.001 106.42);
+  --blockly-toolbox-bg: oklch(1 0 0);
+  --blockly-toolbox-fg: oklch(0.216 0.006 56.043);
+  --blockly-flyout-bg: oklch(0.985 0.001 106.423);
+  --blockly-flyout-fg: oklch(0.216 0.006 56.043);
+  --blockly-scrollbar-thumb: oklch(0.72 0.008 56.04);
+
+  --checkerboard-tile: oklch(0.88 0.002 56.04);
+  --checkerboard-bg: oklch(0.94 0.001 56.04);
 }
 
 .dark {
@@ -244,6 +279,36 @@ body {
   --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.553 0.013 58.071);
+
+  --scrollbar-track: oklch(0.24 0.006 56.04);
+  --scrollbar-thumb: oklch(0.44 0.01 56.04);
+  --scrollbar-thumb-hover: oklch(0.56 0.013 56.04);
+
+  --blockly-workspace-bg: oklch(0.2 0.006 56.04);
+  --blockly-toolbox-bg: oklch(0.24 0.006 56.04);
+  --blockly-toolbox-fg: oklch(0.92 0.002 106.423);
+  --blockly-flyout-bg: oklch(0.26 0.007 56.04);
+  --blockly-flyout-fg: oklch(0.93 0.002 106.423);
+  --blockly-scrollbar-thumb: oklch(0.47 0.01 56.04);
+
+  --checkerboard-tile: oklch(0.34 0.007 56.04);
+  --checkerboard-bg: oklch(0.28 0.006 56.04);
+}
+
+.checkerboard-bg {
+  background-image:
+    linear-gradient(45deg, var(--checkerboard-tile) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checkerboard-tile) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checkerboard-tile) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checkerboard-tile) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background-color: var(--checkerboard-bg);
+}
+
+.checkerboard-bg-sm {
+  background-size: 10px 10px;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0;
 }
 
 @layer base {

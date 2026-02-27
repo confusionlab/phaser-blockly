@@ -172,18 +172,7 @@ export function ObjectLibraryBrowser({
                 >
                   {/* Thumbnail */}
                   <div
-                    className="w-full aspect-square rounded-lg overflow-hidden mb-2"
-                    style={{
-                      backgroundImage: `
-                        linear-gradient(45deg, #d0d0d0 25%, transparent 25%),
-                        linear-gradient(-45deg, #d0d0d0 25%, transparent 25%),
-                        linear-gradient(45deg, transparent 75%, #d0d0d0 75%),
-                        linear-gradient(-45deg, transparent 75%, #d0d0d0 75%)
-                      `,
-                      backgroundSize: "10px 10px",
-                      backgroundPosition: "0 0, 0 5px, 5px -5px, -5px 0px",
-                      backgroundColor: "#f0f0f0",
-                    }}
+                    className="w-full aspect-square rounded-lg overflow-hidden mb-2 checkerboard-bg checkerboard-bg-sm"
                   >
                     <img
                       src={item.thumbnail}

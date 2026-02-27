@@ -294,9 +294,9 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-gray-900 rounded-xl shadow-2xl w-[500px] max-h-[600px] flex flex-col overflow-hidden border border-gray-700">
+      <div className="bg-popover text-popover-foreground rounded-xl shadow-2xl w-[500px] max-h-[600px] flex flex-col overflow-hidden border border-border">
         {/* Search input */}
-        <div className="p-4 border-b border-gray-700">
+        <div className="p-4 border-b border-border">
           <input
             ref={searchInputRef}
             type="text"
@@ -307,7 +307,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
             }}
             onKeyDown={handleKeyDown}
             placeholder="Search blocks and commands..."
-            className="w-full px-4 py-3 text-lg bg-gray-800 text-white border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-500"
+            className="w-full px-4 py-3 text-lg bg-background text-foreground border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
             autoFocus
           />
         </div>
@@ -318,7 +318,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
             <div
               key={item.id}
               className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                index === selectedIndex ? 'bg-gray-700' : 'hover:bg-gray-800'
+                index === selectedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/70'
               }`}
               onClick={() => executeItem(item)}
             >
@@ -335,24 +335,24 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <div className="text-sm text-gray-400">{item.category}</div>
+                <div className="text-sm text-muted-foreground">{item.category}</div>
               </div>
             </div>
           ))}
           {filteredItems.length === 0 && (
-            <div className="text-center text-gray-500 py-8">
+            <div className="text-center text-muted-foreground py-8">
               No results found
             </div>
           )}
         </div>
 
         {/* Instructions */}
-        <div className="px-4 py-2 bg-gray-800 border-t border-gray-700 text-xs text-gray-400 text-center">
-          <span className="font-medium text-gray-300">↑↓</span> Navigate
-          <span className="mx-3 text-gray-600">|</span>
-          <span className="font-medium text-gray-300">Enter</span> Select
-          <span className="mx-3 text-gray-600">|</span>
-          <span className="font-medium text-gray-300">Esc</span> Close
+        <div className="px-4 py-2 bg-muted/50 border-t border-border text-xs text-muted-foreground text-center">
+          <span className="font-medium text-foreground">↑↓</span> Navigate
+          <span className="mx-3 text-muted-foreground/70">|</span>
+          <span className="font-medium text-foreground">Enter</span> Select
+          <span className="mx-3 text-muted-foreground/70">|</span>
+          <span className="font-medium text-foreground">Esc</span> Close
         </div>
       </div>
     </div>

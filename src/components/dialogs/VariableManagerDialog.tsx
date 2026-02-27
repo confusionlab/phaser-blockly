@@ -109,7 +109,7 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     const isEditing = editingId === variable.id;
 
     return (
-      <div className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 group">
+      <div className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-accent group">
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <span className="text-lg flex-shrink-0">{getTypeIcon(variable.type)}</span>
           {isEditing ? (
@@ -128,7 +128,7 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
                 variant="ghost"
                 size="sm"
                 onClick={() => onSaveRename(variable.id)}
-                className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-100"
+                className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-600 hover:bg-emerald-500/15 dark:text-emerald-400 dark:hover:text-emerald-300"
               >
                 <Check className="w-4 h-4" />
               </Button>
@@ -136,7 +136,7 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
                 variant="ghost"
                 size="sm"
                 onClick={cancelEditing}
-                className="h-7 w-7 p-0 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-accent"
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -144,7 +144,7 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
           ) : (
             <div className="min-w-0">
               <div className="font-medium truncate">{variable.name}</div>
-              <div className="text-xs text-gray-500">{getTypeLabel(variable.type)}</div>
+              <div className="text-xs text-muted-foreground">{getTypeLabel(variable.type)}</div>
             </div>
           )}
         </div>
@@ -154,7 +154,7 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
               variant="ghost"
               size="sm"
               onClick={() => startEditing(variable)}
-              className="h-7 w-7 p-0 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-accent"
             >
               <Pencil className="w-3.5 h-3.5" />
             </Button>
@@ -162,7 +162,7 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
               variant="ghost"
               size="sm"
               onClick={onDelete}
-              className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-100"
+              className="h-7 w-7 p-0 text-red-500 hover:text-red-500 hover:bg-red-500/15 dark:text-red-400 dark:hover:text-red-300"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
@@ -182,9 +182,9 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
         <div className="space-y-4 py-2 max-h-[400px] overflow-y-auto">
           {/* Global Variables */}
           <div>
-            <div className="text-sm font-medium text-gray-500 mb-2">Global Variables</div>
+            <div className="text-sm font-medium text-muted-foreground mb-2">Global Variables</div>
             {globalVariables.length === 0 ? (
-              <div className="text-sm text-gray-400 italic py-2">No global variables</div>
+              <div className="text-sm text-muted-foreground italic py-2">No global variables</div>
             ) : (
               <div className="space-y-1">
                 {globalVariables.map(v => (
@@ -202,11 +202,11 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
           {/* Local Variables */}
           {currentObject && (
             <div>
-              <div className="text-sm font-medium text-gray-500 mb-2">
+              <div className="text-sm font-medium text-muted-foreground mb-2">
                 Local Variables ({currentObject.name})
               </div>
               {localVariables.length === 0 ? (
-                <div className="text-sm text-gray-400 italic py-2">No local variables</div>
+                <div className="text-sm text-muted-foreground italic py-2">No local variables</div>
               ) : (
                 <div className="space-y-1">
                   {localVariables.map(v => (

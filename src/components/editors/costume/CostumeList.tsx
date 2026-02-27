@@ -207,18 +207,7 @@ export const CostumeList = memo(({
             >
               {/* Thumbnail with checkerboard for transparency - zoomed to bounds */}
               <div
-                className="aspect-square rounded mb-1.5 overflow-hidden border relative"
-                style={{
-                  backgroundImage: `
-                    linear-gradient(45deg, #d0d0d0 25%, transparent 25%),
-                    linear-gradient(-45deg, #d0d0d0 25%, transparent 25%),
-                    linear-gradient(45deg, transparent 75%, #d0d0d0 75%),
-                    linear-gradient(-45deg, transparent 75%, #d0d0d0 75%)
-                  `,
-                  backgroundSize: '10px 10px',
-                  backgroundPosition: '0 0, 0 5px, 5px -5px, -5px 0px',
-                  backgroundColor: '#f0f0f0',
-                }}
+                className="aspect-square rounded mb-1.5 overflow-hidden border relative checkerboard-bg checkerboard-bg-sm"
               >
                 {costume.bounds && costume.bounds.width > 0 && costume.bounds.height > 0 ? (
                   // Zoomed thumbnail using bounds

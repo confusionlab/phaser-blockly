@@ -1187,19 +1187,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     canRedo: () => historyIndexRef.current < historyRef.current.length - 1,
   }), [saveHistory, commitSelection]);
 
-  // Checkerboard pattern for transparency visualization
-  const checkerboardStyle = {
-    backgroundImage: `
-      linear-gradient(45deg, #e0e0e0 25%, transparent 25%),
-      linear-gradient(-45deg, #e0e0e0 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, #e0e0e0 75%),
-      linear-gradient(-45deg, transparent 75%, #e0e0e0 75%)
-    `,
-    backgroundSize: '20px 20px',
-    backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
-    backgroundColor: '#f5f5f5',
-  };
-
   return (
     <div className="flex-1 overflow-hidden bg-muted/50 flex flex-col">
       {/* Zoom controls */}
@@ -1236,11 +1223,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         onWheel={handleWheel}
       >
         <div
-          className="border shadow-sm relative overflow-hidden flex-shrink-0"
+          className="border shadow-sm relative overflow-hidden flex-shrink-0 checkerboard-bg"
           style={{
             width: displaySize,
             height: displaySize,
-            ...checkerboardStyle,
           }}
         >
           {/* Main canvas */}
