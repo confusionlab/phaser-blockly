@@ -1,8 +1,9 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { Project, ReusableObject } from '../types';
+import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -88,6 +89,8 @@ function deserializeProjectFromRecord(record: ProjectRecord): {
     project.updatedAt = new Date();
     migrated = true;
   }
+
+  project = normalizeProjectLayering(project);
 
   return {
     project,
@@ -437,14 +440,30 @@ export interface ExportedProject {
 type MigrationFn = (project: Project) => Project;
 
 const migrations: Record<number, MigrationFn> = {
-  // Example for future migrations:
-  // 2: (project) => {
-  //   // Migrate from v1 to v2
-  //   project.scenes.forEach(scene => {
-  //     scene.newField = scene.newField ?? 'default';
-  //   });
-  //   return project;
-  // },
+  // v2: Ensure basic scene defaults for older files.
+  2: (project) => {
+    const scenes = Array.isArray(project.scenes) ? project.scenes : [];
+    return {
+      ...project,
+      scenes: scenes.map((scene) => ({
+        ...scene,
+        objectFolders: Array.isArray(scene.objectFolders) ? scene.objectFolders : [],
+        cameraConfig: scene.cameraConfig ?? {
+          followTarget: null,
+          bounds: null,
+          zoom: 1,
+        },
+      })),
+      components: Array.isArray(project.components) ? project.components : [],
+      globalVariables: Array.isArray(project.globalVariables) ? project.globalVariables : [],
+      schemaVersion: 2,
+    };
+  },
+  // v3: Normalize robust layer tree structure (parentId/order).
+  3: (project) => ({
+    ...normalizeProjectLayering(project),
+    schemaVersion: 3,
+  }),
 };
 
 function migrateProject(project: Project, fromVersion: number): Project {
@@ -846,7 +865,7 @@ export async function importProject(jsonString: string): Promise<Project> {
   const newProjectId = crypto.randomUUID();
 
   const importedProject: Project = {
-    ...project,
+    ...normalizeProjectLayering(project),
     id: newProjectId,
     name: `${project.name} (imported)`,
     createdAt: new Date(),

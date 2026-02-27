@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import type { Project, Scene, GameObject, Variable, ComponentDefinition, SceneFolder } from '../types';
 import { createDefaultProject, createDefaultScene, createDefaultGameObject } from '../types';
 import { saveProject } from '../db/database';
+import {
+  getNextSiblingOrder,
+  getObjectNodeKey,
+  getSceneObjectsInLayerOrder,
+  moveSceneLayerNodes,
+  normalizeProjectLayering,
+  normalizeSceneLayering,
+} from '@/utils/layerTree';
 
 interface ProjectStore {
   project: Project | null;
@@ -57,21 +65,18 @@ interface ProjectStore {
 }
 
 function normalizeProject(project: Project): Project {
-  return {
+  return normalizeProjectLayering({
     ...project,
     scenes: project.scenes.map((scene) => {
       const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
-      const validFolderIds = new Set(objectFolders.map(folder => folder.id));
-      return {
+      const objects: GameObject[] = Array.isArray(scene.objects) ? scene.objects : [];
+      return normalizeSceneLayering({
         ...scene,
         objectFolders,
-        objects: scene.objects.map((obj) => ({
-          ...obj,
-          folderId: obj.folderId && validFolderIds.has(obj.folderId) ? obj.folderId : null,
-        })),
-      };
+        objects,
+      });
     }),
-  };
+  });
 }
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
@@ -164,7 +169,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: {
           ...state.project,
           scenes: state.project.scenes.map(s =>
-            s.id === sceneId ? { ...s, ...updates } : s
+            s.id === sceneId ? normalizeSceneLayering({ ...s, ...updates }) : s
           ),
           updatedAt: new Date(),
         },
@@ -198,7 +203,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // Object actions
   addObject: (sceneId: string, name: string) => {
-    const newObject = createDefaultGameObject(name);
+    const scene = get().project?.scenes.find((s) => s.id === sceneId);
+    const newObject = {
+      ...createDefaultGameObject(name),
+      parentId: null,
+      order: scene ? getNextSiblingOrder(scene, null) : 0,
+      folderId: undefined,
+      layer: undefined,
+    };
 
     set(state => {
       if (!state.project) return state;
@@ -208,7 +220,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ...state.project,
           scenes: state.project.scenes.map(s =>
             s.id === sceneId
-              ? { ...s, objects: [...s.objects, newObject] }
+              ? normalizeSceneLayering({ ...s, objects: [...s.objects, newObject] })
               : s
           ),
           updatedAt: new Date(),
@@ -229,7 +241,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ...state.project,
           scenes: state.project.scenes.map(s =>
             s.id === sceneId
-              ? { ...s, objects: s.objects.filter(o => o.id !== objectId) }
+              ? normalizeSceneLayering({ ...s, objects: s.objects.filter(o => o.id !== objectId) })
               : s
           ),
           updatedAt: new Date(),
@@ -260,6 +272,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           'scaleY',
           'visible',
           'rotation',
+          'parentId',
+          'order',
+          'folderId',
+          'layer',
         ]);
 
         // Shared component properties (sync across all instances of the same component)
@@ -300,25 +316,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ),
               // Update all instances with synced properties + this instance with instance-specific
               scenes: state.project.scenes.map(s => ({
-                ...s,
-                objects: s.objects.map(o => {
-                  if (o.componentId === componentId) {
-                    // All instances get synced updates
-                    const syncedObjUpdates: Partial<GameObject> = {};
-                    for (const syncKey of componentSyncKeys) {
-                      const value = syncedUpdates[syncKey];
-                      if (value !== undefined) {
-                        (syncedObjUpdates as Record<string, unknown>)[syncKey] = value;
+                ...normalizeSceneLayering({
+                  ...s,
+                  objects: s.objects.map(o => {
+                    if (o.componentId === componentId) {
+                      // All instances get synced updates
+                      const syncedObjUpdates: Partial<GameObject> = {};
+                      for (const syncKey of componentSyncKeys) {
+                        const value = syncedUpdates[syncKey];
+                        if (value !== undefined) {
+                          (syncedObjUpdates as Record<string, unknown>)[syncKey] = value;
+                        }
                       }
-                    }
 
-                    // This specific instance also gets instance-specific updates
-                    if (o.id === objectId) {
-                      return { ...o, ...syncedObjUpdates, ...instanceUpdates };
+                      // This specific instance also gets instance-specific updates
+                      if (o.id === objectId) {
+                        return { ...o, ...syncedObjUpdates, ...instanceUpdates };
+                      }
+                      return { ...o, ...syncedObjUpdates };
                     }
-                    return { ...o, ...syncedObjUpdates };
-                  }
-                  return o;
+                    return o;
+                  }),
                 }),
               })),
               updatedAt: new Date(),
@@ -334,12 +352,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ...state.project,
               scenes: state.project.scenes.map(s =>
                 s.id === sceneId
-                  ? {
+                  ? normalizeSceneLayering({
                       ...s,
                       objects: s.objects.map(o =>
                         o.id === objectId ? { ...o, ...instanceUpdates } : o
                       ),
-                    }
+                    })
                   : s
               ),
               updatedAt: new Date(),
@@ -357,12 +375,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           ...state.project,
           scenes: state.project.scenes.map(s =>
             s.id === sceneId
-              ? {
+              ? normalizeSceneLayering({
                   ...s,
                   objects: s.objects.map(o =>
                     o.id === objectId ? { ...o, ...updates } : o
                   ),
-                }
+                })
               : s
           ),
           updatedAt: new Date(),
@@ -388,6 +406,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       name: original.componentId ? original.name : `${original.name} Copy`,
       x: original.x + 50,
       y: original.y + 50,
+      order: original.order + 1,
     };
 
     set(state => ({
@@ -396,15 +415,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ...state.project,
             scenes: state.project.scenes.map(s =>
               s.id === sceneId
-                ? {
+                ? normalizeSceneLayering({
                     ...s,
                     objects: (() => {
-                      const next = [...s.objects];
+                      const originalParentId = original.parentId ?? null;
+                      const next = s.objects.map((obj) => {
+                        if (obj.id === original.id) return obj;
+                        if ((obj.parentId ?? null) !== originalParentId) return obj;
+                        if (obj.order >= duplicate.order) {
+                          return { ...obj, order: obj.order + 1 };
+                        }
+                        return obj;
+                      });
                       const insertIndex = originalIndex >= 0 ? originalIndex + 1 : next.length;
                       next.splice(insertIndex, 0, duplicate);
                       return next;
                     })(),
-                  }
+                  })
                 : s
             ),
             updatedAt: new Date(),
@@ -426,11 +453,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           scenes: state.project.scenes.map(s => {
             if (s.id !== sceneId) return s;
 
-            const objects = [...s.objects];
-            const [removed] = objects.splice(fromIndex, 1);
-            objects.splice(toIndex, 0, removed);
+            const orderedObjects = getSceneObjectsInLayerOrder(s);
+            const boundedFrom = Math.max(0, Math.min(fromIndex, orderedObjects.length - 1));
+            const boundedTo = Math.max(0, Math.min(toIndex, orderedObjects.length - 1));
+            const moved = orderedObjects[boundedFrom];
+            const target = orderedObjects[boundedTo];
+            if (!moved || !target || moved.id === target.id) return s;
 
-            return { ...s, objects };
+            return moveSceneLayerNodes(
+              s,
+              [getObjectNodeKey(moved.id)],
+              {
+                key: getObjectNodeKey(target.id),
+                dropPosition: boundedTo > boundedFrom ? 'after' : 'before',
+              },
+            );
           }),
           updatedAt: new Date(),
         },
@@ -646,28 +683,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (!state.project) return state;
 
       // Detach all instances first
-      const updatedScenes = state.project.scenes.map(scene => ({
-        ...scene,
-        objects: scene.objects.map(obj => {
-          if (obj.componentId === componentId) {
-            const component = (state.project!.components || []).find(c => c.id === componentId);
-            if (component) {
-              // Copy component data back to the object
-              return {
-                ...obj,
-                componentId: undefined,
-                blocklyXml: component.blocklyXml,
-                costumes: component.costumes,
-                currentCostumeIndex: component.currentCostumeIndex,
-                physics: component.physics,
-                collider: component.collider,
-                sounds: component.sounds,
-              };
+      const updatedScenes = state.project.scenes.map(scene =>
+        normalizeSceneLayering({
+          ...scene,
+          objects: scene.objects.map(obj => {
+            if (obj.componentId === componentId) {
+              const component = (state.project!.components || []).find(c => c.id === componentId);
+              if (component) {
+                // Copy component data back to the object
+                return {
+                  ...obj,
+                  componentId: undefined,
+                  blocklyXml: component.blocklyXml,
+                  costumes: component.costumes,
+                  currentCostumeIndex: component.currentCostumeIndex,
+                  physics: component.physics,
+                  collider: component.collider,
+                  sounds: component.sounds,
+                };
+              }
             }
-          }
-          return obj;
+            return obj;
+          }),
         }),
-      }));
+      );
 
       return {
         project: {
@@ -687,6 +726,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     const component = (state.project.components || []).find(c => c.id === componentId);
     if (!component) return null;
+    const scene = state.project.scenes.find((s) => s.id === sceneId);
 
     const newObject: GameObject = {
       id: crypto.randomUUID(),
@@ -698,7 +738,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       scaleY: 1,
       rotation: 0,
       visible: true,
-      layer: 0,
+      parentId: null,
+      order: scene ? getNextSiblingOrder(scene, null) : 0,
+      layer: undefined,
       componentId,
       // These are ignored when componentId is set, but we need them for the type
       physics: null,
@@ -716,7 +758,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
             ...state.project,
             scenes: state.project.scenes.map(s =>
               s.id === sceneId
-                ? { ...s, objects: [...s.objects, newObject] }
+                ? normalizeSceneLayering({ ...s, objects: [...s.objects, newObject] })
                 : s
             ),
             updatedAt: new Date(),

@@ -46,7 +46,8 @@ export interface Scene {
 export interface SceneFolder {
   id: string;
   name: string;
-  collapsed?: boolean;
+  parentId: string | null;
+  order: number;
 }
 
 export interface GroundConfig {
@@ -79,7 +80,10 @@ export interface GameObject {
   scaleY: number;
   rotation: number;
   visible: boolean;
-  layer: number;
+  parentId: string | null;
+  order: number;
+  // Legacy fields retained for migration compatibility.
+  layer?: number;
   folderId?: string | null;
   // If componentId is set, physics/blocklyXml/costumes/sounds/collider come from the component
   componentId?: string;
@@ -200,7 +204,7 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 2,
+    schemaVersion: 3,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     globalVariables: [],
     components: [],
@@ -260,6 +264,8 @@ export function createDefaultGameObject(name: string): GameObject {
     scaleY: 1,
     rotation: 0,
     visible: true,
+    parentId: null,
+    order: 0,
     layer: 0,
     folderId: null,
     physics: null,

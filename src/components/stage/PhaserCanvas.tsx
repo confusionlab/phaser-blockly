@@ -6,6 +6,7 @@ import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeF
 import { setBodyGravityY } from '@/phaser/gravity';
 import type { Scene as SceneData, GameObject, ComponentDefinition, Variable } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
+import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -103,7 +104,7 @@ function getOrderedObjectIdsForActiveScene(fallbackIds: string[] = []): string[]
   if (!project || !selectedSceneId) return fallbackIds;
 
   const activeScene = project.scenes.find((sceneState) => sceneState.id === selectedSceneId);
-  return activeScene ? activeScene.objects.map((obj) => obj.id) : fallbackIds;
+  return activeScene ? getSceneObjectsInLayerOrder(activeScene).map((obj) => obj.id) : fallbackIds;
 }
 
 interface PhaserCanvasProps {
@@ -559,8 +560,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     toRemove.forEach(c => c.destroy());
 
     // Update or create objects (reverse depth so top of list = top render)
-    const objectCount = selectedScene.objects.length;
-    selectedScene.objects.forEach((obj, index) => {
+    const orderedSceneObjects = getSceneObjectsInLayerOrder(selectedScene);
+    const objectCount = orderedSceneObjects.length;
+    orderedSceneObjects.forEach((obj, index) => {
       let container = phaserScene.children.getByName(obj.id) as Phaser.GameObjects.Container | undefined;
 
       // Get effective props (resolves component references)
@@ -608,7 +610,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             ? storeState.selectedObjectIds
             : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
           const orderedSceneObjectIds = getOrderedObjectIdsForActiveScene(
-            selectedScene.objects.map((sceneObj) => sceneObj.id),
+            orderedSceneObjects.map((sceneObj) => sceneObj.id),
           );
           const dragIds = (selectedIds.length > 1 && selectedIds.includes(obj.id))
             ? orderedSceneObjectIds.filter((id) => selectedIds.includes(id))
@@ -889,7 +891,9 @@ function createEditorScene(
   cycleViewMode: () => void = () => {}
 ) {
   if (!sceneData) return;
-  const getOrderedSceneObjectIds = () => getOrderedObjectIdsForActiveScene(sceneData.objects.map((obj) => obj.id));
+  const getOrderedSceneObjectIds = () => getOrderedObjectIdsForActiveScene(
+    getSceneObjectsInLayerOrder(sceneData).map((obj) => obj.id),
+  );
 
   const camera = scene.cameras.main;
 
@@ -1527,14 +1531,15 @@ function createEditorScene(
   });
 
   // Create objects (reverse depth so top of list = top render)
-  const objectCount = sceneData.objects.length;
+  const orderedSceneObjects = getSceneObjectsInLayerOrder(sceneData);
+  const objectCount = orderedSceneObjects.length;
   const initialSelectedIds = new Set(
     selectedObjectIds.length > 0
       ? selectedObjectIds
       : (selectedObjectId ? [selectedObjectId] : []),
   );
   const isInitialMultiSelection = initialSelectedIds.size > 1;
-  sceneData.objects.forEach((obj: GameObject, index: number) => {
+  orderedSceneObjects.forEach((obj: GameObject, index: number) => {
     const container = createObjectVisual(scene, obj, true, canvasWidth, canvasHeight, components); // true = editor mode
     container.setDepth(objectCount - index); // Top of list = highest depth = renders on top
     const isSelected = initialSelectedIds.has(obj.id);
@@ -1858,8 +1863,9 @@ function createPlaySceneContent(
   }
 
   // Create objects and register them with runtime (reverse depth so top of list = top render)
-  const objectCount = sceneData.objects.length;
-  sceneData.objects.forEach((obj: GameObject, index: number) => {
+  const orderedSceneObjects = getSceneObjectsInLayerOrder(sceneData);
+  const objectCount = orderedSceneObjects.length;
+  orderedSceneObjects.forEach((obj: GameObject, index: number) => {
     // Get effective properties (resolves component references)
     const effectiveProps = getEffectiveObjectProps(obj, components);
 

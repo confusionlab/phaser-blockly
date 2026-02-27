@@ -45,6 +45,7 @@ interface EditorStore {
   showPlayValidationDialog: boolean;
   playValidationIssues: PlayValidationIssue[];
   activeObjectTab: ObjectEditorTab;
+  collapsedFolderIdsByScene: Record<string, string[]>;
 
   // Object picker state
   objectPickerOpen: boolean;
@@ -75,6 +76,9 @@ interface EditorStore {
   setShowPlayValidationDialog: (show: boolean) => void;
   setPlayValidationIssues: (issues: PlayValidationIssue[]) => void;
   focusPlayValidationIssue: (issue: PlayValidationIssue) => void;
+  toggleFolderCollapsed: (sceneId: string, folderId: string) => void;
+  setFolderCollapsed: (sceneId: string, folderId: string, collapsed: boolean) => void;
+  setCollapsedFoldersForScene: (sceneId: string, folderIds: string[]) => void;
 
   // Object picker actions
   openObjectPicker: (callback: ObjectPickerCallback, excludeId?: string | null) => void;
@@ -132,6 +136,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   showPlayValidationDialog: false,
   playValidationIssues: [],
   activeObjectTab: 'code' as ObjectEditorTab,
+  collapsedFolderIdsByScene: {},
 
   // Object picker state
   objectPickerOpen: false,
@@ -219,6 +224,49 @@ export const useEditorStore = create<EditorStore>((set) => ({
       activeObjectTab: 'code',
       showPlayValidationDialog: false,
     });
+  },
+
+  toggleFolderCollapsed: (sceneId, folderId) => {
+    set((state) => {
+      const current = new Set(state.collapsedFolderIdsByScene[sceneId] ?? []);
+      if (current.has(folderId)) {
+        current.delete(folderId);
+      } else {
+        current.add(folderId);
+      }
+      return {
+        collapsedFolderIdsByScene: {
+          ...state.collapsedFolderIdsByScene,
+          [sceneId]: Array.from(current),
+        },
+      };
+    });
+  },
+
+  setFolderCollapsed: (sceneId, folderId, collapsed) => {
+    set((state) => {
+      const current = new Set(state.collapsedFolderIdsByScene[sceneId] ?? []);
+      if (collapsed) {
+        current.add(folderId);
+      } else {
+        current.delete(folderId);
+      }
+      return {
+        collapsedFolderIdsByScene: {
+          ...state.collapsedFolderIdsByScene,
+          [sceneId]: Array.from(current),
+        },
+      };
+    });
+  },
+
+  setCollapsedFoldersForScene: (sceneId, folderIds) => {
+    set((state) => ({
+      collapsedFolderIdsByScene: {
+        ...state.collapsedFolderIdsByScene,
+        [sceneId]: Array.from(new Set(folderIds)),
+      },
+    }));
   },
 
   setActiveObjectTab: (tab) => {
