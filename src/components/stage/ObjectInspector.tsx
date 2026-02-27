@@ -46,11 +46,13 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
     };
   }, [isOpen]);
 
-  const handleColorChange = useCallback((rgba: unknown) => {
-    // ColorPicker passes [r, g, b, a] tuple
-    const rgbaArray = rgba as [number, number, number, number];
-    const hex = Color.rgb(rgbaArray[0], rgbaArray[1], rgbaArray[2]).hex();
-    onChange(hex);
+  const handleColorChange = useCallback((value: Parameters<typeof Color>[0]) => {
+    try {
+      const hex = Color(value).hex();
+      onChange(hex);
+    } catch {
+      // Ignore invalid color values from picker
+    }
   }, [onChange]);
 
   return (

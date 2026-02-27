@@ -41,6 +41,7 @@ interface ColorPickerContextValue {
 }
 
 const ColorPickerContext = createContext<ColorPickerContextValue | undefined>(undefined)
+const SATURATION_EPSILON = 1e-4
 
 export const useColorPicker = () => {
   const context = useContext(ColorPickerContext)
@@ -164,12 +165,13 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
     // Only sync on mount or when not dragging
     if (isDragging) return
 
-    const s_hsl = saturation / 100
-    const l = lightness / 100
+    const s_hsl = Math.max(0, Math.min(1, saturation / 100))
+    const l = Math.max(0, Math.min(1, lightness / 100))
 
     // HSL to HSV conversion
     const v = l + s_hsl * Math.min(l, 1 - l)
-    const s_hsv = v === 0 ? 0 : 2 * (1 - l / v)
+    const s_hsvRaw = v === 0 ? 0 : 2 * (1 - l / v)
+    const s_hsv = Math.abs(s_hsvRaw) < SATURATION_EPSILON ? 0 : s_hsvRaw
 
     // x = saturation in HSV, y = 1 - value
     const newX = Math.max(0, Math.min(1, s_hsv))
@@ -203,18 +205,18 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
       // The visual picker uses HSV color model:
       // x = saturation (0 = grey/white, 1 = fully saturated)
       // y = inverse value (0 = bright, 1 = dark)
-      const s_hsv = x
-      const v = 1 - y
+      const s_hsv = Math.max(0, Math.min(1, x))
+      const v = Math.max(0, Math.min(1, 1 - y))
 
       // Convert HSV to HSL
       const l = v * (1 - s_hsv / 2)
       let s_hsl = 0
-      if (l > 0 && l < 1) {
+      if (s_hsv > SATURATION_EPSILON && l > SATURATION_EPSILON && l < 1 - SATURATION_EPSILON) {
         s_hsl = (v - l) / Math.min(l, 1 - l)
       }
 
-      setSaturation(s_hsl * 100)
-      setLightness(l * 100)
+      setSaturation(Math.max(0, Math.min(100, s_hsl * 100)))
+      setLightness(Math.max(0, Math.min(100, l * 100)))
     },
     [isDragging, setSaturation, setLightness],
   )

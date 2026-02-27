@@ -4,7 +4,8 @@ import { SpriteShelf } from './SpriteShelf';
 import { ObjectInspector } from './ObjectInspector';
 import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
-import { Square, Camera, Maximize2, Minimize2 } from 'lucide-react';
+import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from 'lucide-react';
+import { tryStartPlaying } from '@/lib/playStartGuard';
 
 interface StagePanelProps {
   fullscreen?: boolean;
@@ -66,14 +67,37 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
+  const handleRestartPlaying = () => {
+    stopPlaying();
+    requestAnimationFrame(() => {
+      tryStartPlaying();
+    });
+  };
+
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-[100001] bg-black flex items-center justify-center">
         <div className="absolute top-4 right-4 z-10">
-          <Button variant="destructive" onClick={stopPlaying}>
-            <Square className="size-4" />
-            Stop
-          </Button>
+          <div className="inline-flex items-center gap-1 rounded-full bg-black/60 border border-white/15 p-1">
+            <button
+              type="button"
+              onClick={handleRestartPlaying}
+              title="Restart"
+              aria-label="Restart"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors"
+            >
+              <RotateCcw className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={stopPlaying}
+              title="Stop"
+              aria-label="Stop"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors"
+            >
+              <Square className="size-4 fill-current" />
+            </button>
+          </div>
         </div>
         <div className="w-full h-full flex items-center justify-center">
           <PhaserCanvas isPlaying={true} />
@@ -84,25 +108,36 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
 
   const isCameraView = viewMode !== 'editor';
   const canvasToolbar = (
-    <div className="flex items-center gap-1 px-2 py-1 border-b border-border">
-      <Button
-        variant={isCameraView ? 'secondary' : 'ghost'}
-        size="sm"
-        className="h-7 w-7 p-0"
-        onClick={cycleViewMode}
-        title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
+    <div className="flex items-center justify-between px-2 py-1 border-b border-border">
+      <div className="flex items-center gap-1">
+        <Button
+          variant={isCameraView ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 w-7 p-0"
+          onClick={cycleViewMode}
+          title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
+        >
+          <Camera className="size-4" />
+        </Button>
+        <Button
+          variant={isCanvasFullscreen ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-7 w-7 p-0"
+          onClick={() => setIsCanvasFullscreen((prev) => !prev)}
+          title={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
+        >
+          {isCanvasFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+        </Button>
+      </div>
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 items-center justify-center text-green-500 hover:text-green-400 transition-colors"
+        onClick={tryStartPlaying}
+        title="Play"
+        aria-label="Play"
       >
-        <Camera className="size-4" />
-      </Button>
-      <Button
-        variant={isCanvasFullscreen ? 'secondary' : 'ghost'}
-        size="sm"
-        className="h-7 w-7 p-0"
-        onClick={() => setIsCanvasFullscreen((prev) => !prev)}
-        title={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
-      >
-        {isCanvasFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-      </Button>
+        <Play className="size-5 fill-current" />
+      </button>
     </div>
   );
 

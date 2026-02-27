@@ -5,14 +5,13 @@ import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
-import { Play, Square, Upload, Save, Library, Sun, Moon } from 'lucide-react';
+import { Upload, Save, Library, Sun, Moon } from 'lucide-react';
 import { MediaLibrary } from '@/components/library/MediaLibrary';
-import { tryStartPlaying } from '@/lib/playStartGuard';
 
 export function Toolbar() {
   const navigate = useNavigate();
   const { project, isDirty, saveCurrentProject, closeProject, updateProjectName } = useProjectStore();
-  const { isPlaying, stopPlaying, isDarkMode, toggleDarkMode } = useEditorStore();
+  const { isDarkMode, toggleDarkMode } = useEditorStore();
   const [showLibrary, setShowLibrary] = useState(false);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
@@ -54,14 +53,6 @@ export function Toolbar() {
       }
     } finally {
       setIsSyncingCloud(false);
-    }
-  };
-
-  const handlePlay = () => {
-    if (isPlaying) {
-      stopPlaying();
-    } else {
-      tryStartPlaying();
     }
   };
 
@@ -141,28 +132,7 @@ export function Toolbar() {
         )}
       </div>
 
-      {/* Center section - Play controls */}
-      <div className="flex items-center gap-2">
-        {project && (
-          <Button
-            onClick={handlePlay}
-            variant={isPlaying ? 'destructive' : 'default'}
-            className={!isPlaying ? 'bg-green-600 hover:bg-green-700' : ''}
-          >
-            {isPlaying ? (
-              <>
-                <Square className="size-4" />
-                Stop
-              </>
-            ) : (
-              <>
-                <Play className="size-4" />
-                Play
-              </>
-            )}
-          </Button>
-        )}
-      </div>
+      <div />
 
       {/* Right section - Actions */}
       <div className="flex items-center gap-2">
