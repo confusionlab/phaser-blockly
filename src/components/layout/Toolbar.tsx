@@ -91,7 +91,7 @@ export function Toolbar() {
           disabled={isSyncingCloud}
           className="flex items-center gap-2 hover:opacity-80 transition-opacity"
         >
-          <img src="/logo.png" alt="PochaCoding logo" className="w-8 h-8 object-contain" />
+          <img src="/logo.png" alt="PochaCoding logo" className="w-8 h-8 object-contain dark:invert" />
           <span className="font-semibold text-primary">PochaCoding</span>
         </button>
 
