@@ -40,6 +40,28 @@ function phaserToUser(phaserX: number, phaserY: number, canvasWidth: number, can
   };
 }
 
+function hashTextureInput(value: string): string {
+  // FNV-1a hash keeps runtime cost low while producing deterministic texture keys.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function getCostumeTextureKey(objectId: string, costumeId: string, assetId: string): string {
+  return `costume_${objectId}_${costumeId}_${hashTextureInput(assetId)}`;
+}
+
+function destroyEditorContainer(scene: Phaser.Scene, container: Phaser.GameObjects.Container): void {
+  const textureKey = container.getData('textureKey') as string | undefined;
+  if (textureKey && textureKey.startsWith('costume_') && scene.textures.exists(textureKey)) {
+    scene.textures.remove(textureKey);
+  }
+  container.destroy();
+}
+
 function isPointOnOpaqueSpritePixel(scene: Phaser.Scene, sprite: Phaser.GameObjects.Image, worldX: number, worldY: number): boolean {
   if (!sprite.visible || !sprite.active || sprite.alpha <= 0) return false;
   if (!sprite.texture || !sprite.frame) return false;
@@ -127,14 +149,12 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const selectedSceneIdRef = useRef(selectedSceneId);
   const selectedObjectIdRef = useRef(selectedObjectId);
   const selectedObjectIdsRef = useRef(selectedObjectIds);
-  const isPlayingRef = useRef(isPlaying);
   const canvasDimensionsRef = useRef({ width: 800, height: 600 });
 
   // Keep refs in sync
   selectedSceneIdRef.current = selectedSceneId;
   selectedObjectIdRef.current = selectedObjectId;
   selectedObjectIdsRef.current = selectedObjectIds;
-  isPlayingRef.current = isPlaying;
   if (project) {
     canvasDimensionsRef.current = { width: project.settings.canvasWidth, height: project.settings.canvasHeight };
   }
@@ -421,11 +441,12 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     }
 
     return () => {
-      console.log(`[PhaserCanvas] Cleanup triggered (wasPlayingOnCreation=${wasPlayingOnCreation}, isPlayingRef=${isPlayingRef.current})`);
+      const isStillPlaying = useEditorStore.getState().isPlaying;
+      console.log(`[PhaserCanvas] Cleanup triggered (wasPlayingOnCreation=${wasPlayingOnCreation}, isStillPlaying=${isStillPlaying})`);
 
       // Skip cleanup if we're still in play mode - scene switches during play don't need full cleanup
       // This happens when selectedSceneId changes but isPlaying stays true
-      if (wasPlayingOnCreation && isPlayingRef.current && playModeInitialSceneRef.current !== null) {
+      if (wasPlayingOnCreation && isStillPlaying && playModeInitialSceneRef.current !== null) {
         console.log('[PhaserCanvas] Skipping cleanup - still in active play session');
         return;
       }
@@ -558,7 +579,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         }
       }
     });
-    toRemove.forEach(c => c.destroy());
+    toRemove.forEach((container) => destroyEditorContainer(phaserScene, container));
 
     // Update or create objects (reverse depth so top of list = top render)
     const orderedSceneObjects = getSceneObjectsInLayerOrder(selectedScene);
@@ -668,21 +689,22 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           });
         });
       } else {
+        const targetContainer = container;
         // Update existing object - convert user coords to Phaser coords
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
         const ch = phaserScene.data.get('canvasHeight') as number || 600;
         const phaserPos = userToPhaser(obj.x, obj.y, cw, ch);
-        container.setPosition(phaserPos.x, phaserPos.y);
-        container.setScale(obj.scaleX, obj.scaleY);
-        container.setRotation(Phaser.Math.DegToRad(obj.rotation));
-        container.setVisible(obj.visible);
+        targetContainer.setPosition(phaserPos.x, phaserPos.y);
+        targetContainer.setScale(obj.scaleX, obj.scaleY);
+        targetContainer.setRotation(Phaser.Math.DegToRad(obj.rotation));
+        targetContainer.setVisible(obj.visible);
 
         // Update costume if changed (use effective props for component instances)
         const costumes = effectiveProps.costumes || [];
         const currentCostumeIndex = effectiveProps.currentCostumeIndex ?? 0;
         const currentCostume = costumes[currentCostumeIndex];
-        const storedCostumeId = container.getData('costumeId');
-        const storedAssetId = container.getData('assetId');
+        const storedCostumeId = targetContainer.getData('costumeId');
+        const storedAssetId = targetContainer.getData('assetId');
 
         // Check if costume ID or asset content changed
         const costumeChanged = currentCostume && (
@@ -692,10 +714,10 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
         if (costumeChanged) {
           // Costume changed - update the sprite
-          const existingSprite = container.getByName('sprite') as Phaser.GameObjects.Image | null;
+          const existingSprite = targetContainer.getByName('sprite') as Phaser.GameObjects.Image | null;
 
           // Get the old texture key to remove it
-          const oldTextureKey = container.getData('textureKey') as string | undefined;
+          const oldTextureKey = targetContainer.getData('textureKey') as string | undefined;
 
           if (existingSprite) {
             existingSprite.destroy();
@@ -775,26 +797,26 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             }
           };
 
-          // Use a unique texture key with timestamp to guarantee uniqueness
-          const textureKey = `costume_${obj.id}_${currentCostume.id}_${Date.now()}`;
+          const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
 
           // Always load fresh - we removed any existing texture above
           const img = new Image();
           img.onload = () => {
             // Check if container still exists and this is still the expected costume
-            if (!container || container.getData('assetId') !== currentCostume.assetId) return;
+            if (!targetContainer.active || !targetContainer.scene) return;
+            if (targetContainer.getData('assetId') !== currentCostume.assetId) return;
             if (phaserScene.textures.exists(textureKey)) return;
 
             phaserScene.textures.addImage(textureKey, img);
             const sprite = phaserScene.add.image(0, 0, textureKey);
-            updateWithSprite(sprite, container, currentCostume.bounds);
+            updateWithSprite(sprite, targetContainer, currentCostume.bounds);
           };
           img.src = currentCostume.assetId;
 
-          container.setData('costumeId', currentCostume.id);
-          container.setData('assetId', currentCostume.assetId);
-          container.setData('textureKey', textureKey);
-          container.setData('bounds', currentCostume.bounds);
+          targetContainer.setData('costumeId', currentCostume.id);
+          targetContainer.setData('assetId', currentCostume.assetId);
+          targetContainer.setData('textureKey', textureKey);
+          targetContainer.setData('bounds', currentCostume.bounds);
         }
       }
 
@@ -1678,38 +1700,49 @@ function createEditorScene(
     }
   });
 
+  let selectionStamp = '';
+  let selectedIdsCache: string[] = [];
+
+  const applySelectionVisuals = (selectedIds: string[]) => {
+    const selectedSet = new Set(selectedIds);
+    const isMultiSelection = selectedIds.length > 1;
+
+    scene.children.each((child: Phaser.GameObjects.GameObject) => {
+      if (!(child instanceof Phaser.GameObjects.Container) || !child.getData('objectData')) return;
+      const isSelected = selectedSet.has(child.name);
+      child.setData('selected', isSelected);
+      const setSelectionVisible = child.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
+      if (setSelectionVisible) {
+        setSelectionVisible(!isMultiSelection && isSelected);
+      } else {
+        // Fallback for containers without the helper.
+        const selectionRect = child.getByName('selection') as Phaser.GameObjects.Rectangle | null;
+        if (selectionRect) {
+          selectionRect.setVisible(!isMultiSelection && isSelected);
+        }
+      }
+    });
+  };
+
   scene.events.on('update', () => {
     const storeState = useEditorStore.getState();
     const selectedIds = storeState.selectedObjectIds.length > 0
       ? storeState.selectedObjectIds
       : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
-    const selectedSet = new Set(selectedIds);
-    const isMultiSelection = selectedIds.length > 1;
+    const nextSelectionStamp = selectedIds.join('|');
+    if (nextSelectionStamp !== selectionStamp) {
+      selectionStamp = nextSelectionStamp;
+      selectedIdsCache = [...selectedIds];
+      applySelectionVisuals(selectedIdsCache);
+    }
 
-    scene.children.each((child: Phaser.GameObjects.GameObject) => {
-      if (child instanceof Phaser.GameObjects.Container && child.getData('objectData')) {
-        const isSelected = selectedSet.has(child.name);
-        child.setData('selected', isSelected);
-        const setSelectionVisible = child.getData('setSelectionVisible') as ((visible: boolean) => void) | undefined;
-        if (setSelectionVisible) {
-          setSelectionVisible(!isMultiSelection && isSelected);
-        } else {
-          // Fallback for containers without the helper
-          const selectionRect = child.getByName('selection') as Phaser.GameObjects.Rectangle;
-          if (selectionRect) {
-            selectionRect.setVisible(!isMultiSelection && isSelected);
-          }
-        }
-      }
-    });
-
-    if (selectedIds.length === 0) {
+    if (selectedIdsCache.length === 0) {
       setGroupGizmoVisible(false);
       return;
     }
 
     if (!groupTransformContext) {
-      const selectionBounds = getSelectionBounds(selectedIds);
+      const selectionBounds = getSelectionBounds(selectedIdsCache);
       if (!selectionBounds) {
         setGroupGizmoVisible(false);
         return;
@@ -2439,8 +2472,7 @@ function createObjectVisual(
   const currentCostume = costumes[currentCostumeIndex];
 
   if (currentCostume && currentCostume.assetId) {
-    // Use unique texture key with timestamp
-    const textureKey = `costume_${obj.id}_${currentCostume.id}_${Date.now()}`;
+    const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
 
     // Store costume ID, assetId, textureKey, and bounds for change detection
     container.setData('costumeId', currentCostume.id);
@@ -2448,9 +2480,10 @@ function createObjectVisual(
     container.setData('textureKey', textureKey);
     container.setData('bounds', currentCostume.bounds);
 
-    // Load texture from data URL (always fresh load with unique key)
+    // Load texture from data URL
     const img = new Image();
     img.onload = () => {
+      if (!container.active || !container.scene) return;
       if (scene.textures.exists(textureKey)) return; // Avoid double-add
       scene.textures.addImage(textureKey, img);
 

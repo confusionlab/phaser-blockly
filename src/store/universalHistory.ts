@@ -88,14 +88,14 @@ function captureEntry(): HistoryEntry | null {
 
   const project = state.projectGetter();
   const selection = state.selectionGetter();
-
-  const clonedProject = cloneProject(project);
   const clonedSelection = cloneSelection(selection);
 
   return {
-    project: clonedProject,
+    // Project store updates are immutable, so keeping snapshot references here is safe and
+    // avoids deep-cloning the full project on every single history record.
+    project,
     selection: clonedSelection,
-    projectStamp: getProjectStamp(clonedProject),
+    projectStamp: getProjectStamp(project),
     selectionStamp: getSelectionStamp(clonedSelection),
   };
 }
