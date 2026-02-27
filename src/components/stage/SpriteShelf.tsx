@@ -175,6 +175,8 @@ export function SpriteShelf() {
   const sceneInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const suppressNextAriaSelectionRef = useRef(false);
+  const selectionAnchorObjectIdRef = useRef<string | null>(null);
 
   const generateUploadUrl = useMutation(api.objectLibrary.generateUploadUrl);
   const createLibraryItem = useMutation(api.objectLibrary.create);
@@ -231,6 +233,11 @@ export function SpriteShelf() {
   };
 
   const handleSelectionChange = (selection: Selection) => {
+    if (suppressNextAriaSelectionRef.current) {
+      suppressNextAriaSelectionRef.current = false;
+      return;
+    }
+
     const nextKeys = selectionToSet(selection);
     const nextObjectIds = Array.from(nextKeys)
       .map((key) => parseLayerNodeKey(String(key)))
@@ -250,7 +257,59 @@ export function SpriteShelf() {
     const nextPrimary = selectedObjectId && nextObjectIds.includes(selectedObjectId)
       ? selectedObjectId
       : nextObjectIds[0];
+    selectionAnchorObjectIdRef.current = nextPrimary;
     selectObjects(nextObjectIds, nextPrimary);
+  };
+
+  const handleObjectRowClick = (e: React.MouseEvent, objectId: string) => {
+    if (e.button !== 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    suppressNextAriaSelectionRef.current = true;
+
+    if (e.shiftKey) {
+      const anchorId = selectionAnchorObjectIdRef.current ?? selectedObjectId ?? objectId;
+      const anchorIndex = orderedSceneObjectIds.indexOf(anchorId);
+      const targetIndex = orderedSceneObjectIds.indexOf(objectId);
+      if (anchorIndex === -1 || targetIndex === -1) {
+        selectionAnchorObjectIdRef.current = objectId;
+        selectObject(objectId);
+        return;
+      }
+
+      const start = Math.min(anchorIndex, targetIndex);
+      const end = Math.max(anchorIndex, targetIndex);
+      const rangeIds = orderedSceneObjectIds.slice(start, end + 1);
+      selectionAnchorObjectIdRef.current = anchorId;
+      selectObjects(rangeIds, objectId);
+      return;
+    }
+
+    if (e.metaKey || e.ctrlKey) {
+      const current = new Set(selectedIdsInScene);
+      if (current.has(objectId)) {
+        current.delete(objectId);
+      } else {
+        current.add(objectId);
+      }
+
+      const nextIds = orderedSceneObjectIds.filter((id) => current.has(id));
+      selectionAnchorObjectIdRef.current = objectId;
+      if (nextIds.length === 0) {
+        selectObject(null);
+        return;
+      }
+
+      const nextPrimary = nextIds.includes(objectId)
+        ? objectId
+        : (selectedObjectId && nextIds.includes(selectedObjectId) ? selectedObjectId : nextIds[0]);
+      selectObjects(nextIds, nextPrimary);
+      return;
+    }
+
+    selectionAnchorObjectIdRef.current = objectId;
+    selectObject(objectId);
   };
 
   const { dragAndDropHooks } = useDragAndDrop<ShelfTreeItem>({
@@ -679,6 +738,11 @@ export function SpriteShelf() {
                   handleStartObjectEdit(object.id, object.name);
                 } else if (item.type === 'folder' && folder) {
                   handleStartFolderEdit(folder);
+                }
+              }}
+              onClick={(e) => {
+                if (item.type === 'object' && object) {
+                  handleObjectRowClick(e, object.id);
                 }
               }}
               onContextMenu={(e) => {
