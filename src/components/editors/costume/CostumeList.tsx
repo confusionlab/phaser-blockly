@@ -1,11 +1,11 @@
-import { useRef, useState, memo } from 'react';
+import { useRef, useState, memo, useEffect } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
-import { Plus, X, Upload, Loader2, Library, Save } from 'lucide-react';
+import { Plus, Upload, Loader2, Library, Copy, Trash2 } from 'lucide-react';
 import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
@@ -34,6 +34,19 @@ export const CostumeList = memo(({
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState<number | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ index: number; x: number; y: number } | null>(null);
+
+  const handleCloseContextMenu = () => setContextMenu(null);
+
+  useEffect(() => {
+    const closeOnEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+      }
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, []);
 
   const generateUploadUrl = useMutation(api.costumeLibrary.generateUploadUrl);
   const createLibraryItem = useMutation(api.costumeLibrary.create);
@@ -135,6 +148,18 @@ export const CostumeList = memo(({
     }
   };
 
+  const handleDuplicateCostume = (index: number) => {
+    const costume = costumes[index];
+    if (!costume) return;
+
+    onAddCostume({
+      ...costume,
+      id: crypto.randomUUID(),
+      name: `${costume.name} copy`,
+      bounds: costume.bounds ? { ...costume.bounds } : undefined,
+    });
+  };
+
   return (
     <div className="flex flex-col h-full w-48 border-r bg-muted/30">
       {/* Header */}
@@ -198,6 +223,14 @@ export const CostumeList = memo(({
             <Card
               key={costume.id}
               onClick={() => onSelectCostume(index)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({
+                  index,
+                  x: e.clientX,
+                  y: e.clientY,
+                });
+              }}
               className={cn(
                 'relative group cursor-pointer p-1.5 transition-colors',
                 index === selectedIndex
@@ -251,37 +284,6 @@ export const CostumeList = memo(({
                 className="w-full h-5 px-1 text-[10px] text-center bg-transparent border-none focus:bg-background"
               />
 
-              {/* Delete button */}
-              {costumes.length > 1 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteCostume(index);
-                  }}
-                  className="absolute top-0 right-0 w-4 h-4 bg-destructive text-destructive-foreground rounded-bl rounded-tr opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  title="Delete costume"
-                >
-                  <X className="size-2.5" />
-                </button>
-              )}
-
-              {/* Save to library button */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSaveToLibrary(index);
-                }}
-                disabled={savingToLibrary === index}
-                className="absolute bottom-6 right-0 w-4 h-4 bg-primary text-primary-foreground rounded-l opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center disabled:opacity-50"
-                title="Save to library"
-              >
-                {savingToLibrary === index ? (
-                  <Loader2 className="size-2.5 animate-spin" />
-                ) : (
-                  <Save className="size-2.5" />
-                )}
-              </button>
-
               {/* Index badge */}
               <div className="absolute top-0 left-0 w-4 h-4 bg-foreground text-background rounded-tl rounded-br flex items-center justify-center text-[9px] font-medium">
                 {index + 1}
@@ -290,6 +292,61 @@ export const CostumeList = memo(({
           ))
         )}
       </div>
+
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={handleCloseContextMenu} />
+          <Card
+            className="fixed z-50 py-1 min-w-44 gap-0"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                handleSaveToLibrary(contextMenu.index);
+                handleCloseContextMenu();
+              }}
+              disabled={savingToLibrary === contextMenu.index}
+              className="w-full justify-start rounded-none h-8"
+            >
+              {savingToLibrary === contextMenu.index ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Library className="size-4" />
+              )}
+              Add to Library
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                handleDuplicateCostume(contextMenu.index);
+                handleCloseContextMenu();
+              }}
+              className="w-full justify-start rounded-none h-8"
+            >
+              <Copy className="size-4" />
+              Duplicate
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (costumes.length > 1) {
+                  onDeleteCostume(contextMenu.index);
+                }
+                handleCloseContextMenu();
+              }}
+              disabled={costumes.length <= 1}
+              className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
+            >
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          </Card>
+        </>
+      )}
 
       {/* Costume Library Browser Dialog */}
       <CostumeLibraryBrowser
