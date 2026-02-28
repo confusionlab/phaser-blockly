@@ -6,6 +6,7 @@ import { useCloudSync } from '@/hooks/useCloudSync';
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -34,7 +35,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [newProjectName, setNewProjectName] = useState('');
   const [tab, setTab] = useState<string>(currentProject ? 'open' : 'new');
-  const [showCreateForm, setShowCreateForm] = useState(mode === 'page');
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -83,7 +84,8 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
       } else {
         onClose?.();
       }
-      setShowCreateForm(false);
+      setIsCreateModalOpen(false);
+      setNewProjectName('');
     }
   };
 
@@ -248,7 +250,13 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
           <div className="flex items-center justify-between gap-3">
             <h1 className="text-2xl font-semibold">Projects</h1>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => setShowCreateForm(value => !value)}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setNewProjectName('');
+                  setIsCreateModalOpen(true);
+                }}
+              >
                 <Plus className="size-4" />
                 New
               </Button>
@@ -259,9 +267,13 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
             </div>
           </div>
 
-          {showCreateForm && (
-            <Card className="p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Create Project</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Project Name</label>
                 <Input
                   value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
@@ -269,18 +281,18 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
                   placeholder="My Awesome Game"
                   autoFocus
                 />
-                <div className="flex items-center gap-2">
-                  <Button onClick={handleCreateProject} disabled={!newProjectName.trim()}>
-                    <Plus className="size-4" />
-                    Create
-                  </Button>
-                  <Button variant="ghost" onClick={() => setShowCreateForm(false)}>
-                    Cancel
-                  </Button>
-                </div>
               </div>
-            </Card>
-          )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleCreateProject} disabled={!newProjectName.trim()}>
+                  <Plus className="size-4" />
+                  Create
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <div className="flex-1 overflow-auto rounded-lg border p-3" onDrop={handleDrop} onDragOver={handleDragOver}>
             {projectList}
