@@ -7,6 +7,11 @@ import App from './App.tsx'
 
 const rootElement = document.getElementById('root')
 const convexUrl = import.meta.env.VITE_CONVEX_URL
+const appBranch = import.meta.env.APP_BRANCH
+
+if (appBranch) {
+  document.title = appBranch
+}
 
 if (!rootElement) {
   throw new Error('Root element not found')
