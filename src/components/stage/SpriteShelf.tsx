@@ -395,7 +395,7 @@ export function SpriteShelf() {
     });
   };
 
-  const handleAddFolder = (parentId: string | null = null, assignObjectId?: string) => {
+  const handleAddFolder = (parentId: string | null = null, assignObjectIds?: string[]) => {
     runInHistoryTransaction('sprite-shelf:add-folder', () => {
       const newFolder: SceneFolder = {
         id: crypto.randomUUID(),
@@ -403,15 +403,36 @@ export function SpriteShelf() {
         parentId,
         order: getNextSiblingOrder(selectedScene, parentId),
       };
-      updateScene(selectedSceneId, { objectFolders: [...folders, newFolder] });
+      const candidateIds = Array.isArray(assignObjectIds) ? assignObjectIds : [];
+      const assignSet = new Set(candidateIds);
+      const orderedAssignIds = orderedSceneObjectIds.filter((id) => assignSet.has(id));
 
-      if (assignObjectId) {
-        updateObject(selectedSceneId, assignObjectId, {
-          parentId: newFolder.id,
-          order: getNextSiblingOrder(selectedScene, newFolder.id),
-          folderId: undefined,
-        });
+      if (orderedAssignIds.length === 0) {
+        updateScene(selectedSceneId, { objectFolders: [...folders, newFolder] });
+        return;
       }
+
+      const assignedOrderById = new Map(
+        orderedAssignIds.map((id, index) => [id, index]),
+      );
+
+      const nextObjects = selectedScene.objects.map((obj) => {
+        const nextOrder = assignedOrderById.get(obj.id);
+        if (nextOrder === undefined) {
+          return obj;
+        }
+        return {
+          ...obj,
+          parentId: newFolder.id,
+          order: nextOrder,
+          folderId: undefined,
+        };
+      });
+
+      updateScene(selectedSceneId, {
+        objectFolders: [...folders, newFolder],
+        objects: nextObjects,
+      });
     });
   };
 
@@ -444,13 +465,42 @@ export function SpriteShelf() {
     setContextMenu(null);
   };
 
+  const getContextMenuObjectActionIds = (): string[] => {
+    if (!contextMenu || contextMenu.kind !== 'object') {
+      return [];
+    }
+    if (selectedIdsInScene.length > 1 && selectedIdsInScene.includes(contextMenu.object.id)) {
+      return selectedIdsInScene;
+    }
+    return [contextMenu.object.id];
+  };
+
   const handleMoveObjectToFolder = (folderId: string | null) => {
-    if (!contextMenu || contextMenu.kind !== 'object') return;
-    updateObject(selectedSceneId, contextMenu.object.id, {
-      parentId: folderId,
-      order: getNextSiblingOrder(selectedScene, folderId),
-      folderId: undefined,
+    const objectIds = getContextMenuObjectActionIds();
+    if (objectIds.length === 0) return;
+
+    const movingIdSet = new Set(objectIds);
+    const orderedMovingIds = orderedSceneObjectIds.filter((id) => movingIdSet.has(id));
+    const baseOrder = getNextSiblingOrder(selectedScene, folderId);
+    const nextOrderById = new Map(
+      orderedMovingIds.map((id, index) => [id, baseOrder + index]),
+    );
+
+    updateScene(selectedSceneId, {
+      objects: selectedScene.objects.map((obj) => {
+        const nextOrder = nextOrderById.get(obj.id);
+        if (nextOrder === undefined) {
+          return obj;
+        }
+        return {
+          ...obj,
+          parentId: folderId,
+          order: nextOrder,
+          folderId: undefined,
+        };
+      }),
     });
+
     handleCloseContextMenu();
   };
 
@@ -1080,7 +1130,7 @@ export function SpriteShelf() {
                   size="sm"
                   onClick={() => {
                     if (!contextMenu || contextMenu.kind !== 'object') return;
-                    handleAddFolder(null, contextMenu.object.id);
+                    handleAddFolder(null, getContextMenuObjectActionIds());
                     handleCloseContextMenu();
                   }}
                   className="w-full justify-start rounded-none h-8"
