@@ -1191,16 +1191,61 @@ function createEditorScene(
     };
   };
 
-  const updateGroupGizmo = (bounds: { centerX: number; centerY: number; width: number; height: number }) => {
+  const getSingleSelectionGizmoFrame = (selectedId: string) => {
+    const selectedContainer = scene.children.getByName(selectedId) as Phaser.GameObjects.Container | null;
+    if (!selectedContainer) return null;
+
+    const selectedHitRect = selectedContainer.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+    const localCenterX = selectedHitRect ? selectedHitRect.x : 0;
+    const localCenterY = selectedHitRect ? selectedHitRect.y : 0;
+
+    const worldMatrix = selectedContainer.getWorldTransformMatrix();
+    const worldCenter = worldMatrix.transformPoint(localCenterX, localCenterY);
+
+    const localWidth = selectedHitRect ? selectedHitRect.width : selectedContainer.width;
+    const localHeight = selectedHitRect ? selectedHitRect.height : selectedContainer.height;
+    const width = Math.max(1, localWidth * Math.abs(selectedContainer.scaleX));
+    const height = Math.max(1, localHeight * Math.abs(selectedContainer.scaleY));
+
+    return {
+      centerX: worldCenter.x,
+      centerY: worldCenter.y,
+      width,
+      height,
+      rotation: selectedContainer.rotation,
+    };
+  };
+
+  const getSelectionGizmoFrame = (selectedIds: string[]) => {
+    if (selectedIds.length === 1) {
+      return getSingleSelectionGizmoFrame(selectedIds[0]);
+    }
+    const bounds = getSelectionBounds(selectedIds);
+    if (!bounds) return null;
+    return {
+      ...bounds,
+      rotation: 0,
+    };
+  };
+
+  const updateGroupGizmo = (frame: { centerX: number; centerY: number; width: number; height: number; rotation?: number }) => {
     const cameraZoom = scene.cameras.main.zoom || 1;
     const uiScale = 1 / cameraZoom;
     const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
-    const halfW = bounds.width / 2;
-    const halfH = bounds.height / 2;
+    const halfW = frame.width / 2;
+    const halfH = frame.height / 2;
     const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / cameraZoom;
+    const rotation = frame.rotation ?? 0;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const rotateOffset = (ox: number, oy: number) => ({
+      x: frame.centerX + ox * cos - oy * sin,
+      y: frame.centerY + ox * sin + oy * cos,
+    });
 
-    groupSelectionRect.setPosition(bounds.centerX, bounds.centerY);
-    groupSelectionRect.setSize(bounds.width, bounds.height);
+    groupSelectionRect.setPosition(frame.centerX, frame.centerY);
+    groupSelectionRect.setSize(frame.width, frame.height);
+    groupSelectionRect.setRotation(rotation);
     groupSelectionRect.setStrokeStyle(strokeWidth, 0x4A90D9);
     groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
 
@@ -1208,22 +1253,45 @@ function createEditorScene(
       const handle = groupHandles.get(name);
       if (!handle) return;
       handle.setPosition(x, y);
-      handle.setScale(uiScale, uiScale);
+      const isHorizontalSide = name === 'handle_n' || name === 'handle_s';
+      const isVerticalSide = name === 'handle_e' || name === 'handle_w';
+      if (isHorizontalSide) {
+        handle.setScale(uiScale, uiScale * 0.7);
+      } else if (isVerticalSide) {
+        handle.setScale(uiScale * 0.7, uiScale);
+      } else {
+        handle.setScale(uiScale, uiScale);
+      }
+      if (name !== 'handle_rotate') {
+        handle.setRotation(rotation);
+      }
     };
 
-    setHandle('handle_nw', bounds.centerX - halfW, bounds.centerY - halfH);
-    setHandle('handle_ne', bounds.centerX + halfW, bounds.centerY - halfH);
-    setHandle('handle_sw', bounds.centerX - halfW, bounds.centerY + halfH);
-    setHandle('handle_se', bounds.centerX + halfW, bounds.centerY + halfH);
-    setHandle('handle_n', bounds.centerX, bounds.centerY - halfH);
-    setHandle('handle_s', bounds.centerX, bounds.centerY + halfH);
-    setHandle('handle_e', bounds.centerX + halfW, bounds.centerY);
-    setHandle('handle_w', bounds.centerX - halfW, bounds.centerY);
-    setHandle('handle_rotate', bounds.centerX, bounds.centerY - halfH - rotateDistance);
+    const nw = rotateOffset(-halfW, -halfH);
+    const ne = rotateOffset(halfW, -halfH);
+    const sw = rotateOffset(-halfW, halfH);
+    const se = rotateOffset(halfW, halfH);
+    const n = rotateOffset(0, -halfH);
+    const s = rotateOffset(0, halfH);
+    const e = rotateOffset(halfW, 0);
+    const w = rotateOffset(-halfW, 0);
+    const rotateHandlePos = rotateOffset(0, -halfH - rotateDistance);
+
+    setHandle('handle_nw', nw.x, nw.y);
+    setHandle('handle_ne', ne.x, ne.y);
+    setHandle('handle_sw', sw.x, sw.y);
+    setHandle('handle_se', se.x, se.y);
+    setHandle('handle_n', n.x, n.y);
+    setHandle('handle_s', s.x, s.y);
+    setHandle('handle_e', e.x, e.y);
+    setHandle('handle_w', w.x, w.y);
+    setHandle('handle_rotate', rotateHandlePos.x, rotateHandlePos.y);
 
     groupRotateLine.clear();
     groupRotateLine.lineStyle(strokeWidth, 0x4A90D9, 1);
-    groupRotateLine.lineBetween(bounds.centerX, bounds.centerY - halfH, bounds.centerX, bounds.centerY - halfH - rotateDistance + 4 / cameraZoom);
+    const lineStart = rotateOffset(0, -halfH);
+    const lineEnd = rotateOffset(0, -halfH - rotateDistance + 4 / cameraZoom);
+    groupRotateLine.lineBetween(lineStart.x, lineStart.y, lineEnd.x, lineEnd.y);
   };
 
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
@@ -1437,9 +1505,9 @@ function createEditorScene(
         }
       }
 
-      const updatedBounds = getSelectionBounds(groupTransformContext.selectedIds);
-      if (updatedBounds) {
-        updateGroupGizmo(updatedBounds);
+      const updatedFrame = getSelectionGizmoFrame(groupTransformContext.selectedIds);
+      if (updatedFrame) {
+        updateGroupGizmo(updatedFrame);
       }
     });
 
@@ -1739,12 +1807,12 @@ function createEditorScene(
     }
 
     if (!groupTransformContext) {
-      const selectionBounds = getSelectionBounds(selectedIdsCache);
-      if (!selectionBounds) {
+      const selectionFrame = getSelectionGizmoFrame(selectedIdsCache);
+      if (!selectionFrame) {
         setGroupGizmoVisible(false);
         return;
       }
-      updateGroupGizmo(selectionBounds);
+      updateGroupGizmo(selectionFrame);
     }
 
     setGroupGizmoVisible(true);
