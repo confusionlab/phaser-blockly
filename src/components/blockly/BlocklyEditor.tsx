@@ -7,10 +7,12 @@ import {
   getToolboxConfig,
   registerTypedVariablesCategory,
   setAddVariableCallback,
+  setMessageDialogCallback,
   setTypedVariableLoading,
   updateVariableBlockAppearance,
 } from './toolbox';
 import { AddVariableDialog } from '@/components/dialogs/AddVariableDialog';
+import { MessageDialog } from '@/components/dialogs/MessageDialog';
 import { VariableManagerDialog } from '@/components/dialogs/VariableManagerDialog';
 import { BlockSearchModal } from './BlockSearchModal';
 import type { UndoRedoHandler } from '@/store/editorStore';
@@ -188,6 +190,13 @@ const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
   'control_switch_scene': 'SCENE',
 };
 
+// Block types that have message reference dropdowns
+const MESSAGE_REFERENCE_BLOCKS: Record<string, string> = {
+  'event_when_receive': 'MESSAGE',
+  'control_broadcast': 'MESSAGE',
+  'control_broadcast_wait': 'MESSAGE',
+};
+
 // Special values that are always valid (not object IDs)
 const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
 
@@ -198,7 +207,9 @@ function validateBlockReferences(
   objectSoundIds: Set<string>,
   validVariableIds: Set<string>,
   sceneIds: Set<string>,
-  sceneNameCounts: Map<string, number>
+  sceneNameCounts: Map<string, number>,
+  messageIds: Set<string>,
+  messageNameCounts: Map<string, number>,
 ) {
   const allBlocks = workspace.getAllBlocks(false);
 
@@ -253,6 +264,17 @@ function validateBlockReferences(
       }
     }
 
+    // Check message references
+    const messageFieldName = MESSAGE_REFERENCE_BLOCKS[blockType];
+    if (messageFieldName) {
+      const fieldValue = block.getFieldValue(messageFieldName);
+      const hasLegacyUniqueName = !!fieldValue && (messageNameCounts.get(fieldValue) || 0) === 1;
+      if (!fieldValue || (!messageIds.has(fieldValue) && !hasLegacyUniqueName)) {
+        hasError = true;
+        errors.push('Message not found in project');
+      }
+    }
+
     // Apply visual feedback
     if (hasError) {
       block.setWarningText(errors.join('\n'));
@@ -280,14 +302,23 @@ export function BlocklyEditor() {
   const lastLoadedTargetRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const pendingPersistRef = useRef<{ sceneId: string; objectId: string; timeoutId: number } | null>(null);
+  const pendingMessageFieldApplyRef = useRef<((messageId: string) => void) | null>(null);
   const [showAddVariableDialog, setShowAddVariableDialog] = useState(false);
   const [showVariableManager, setShowVariableManager] = useState(false);
   const [showBlockSearch, setShowBlockSearch] = useState(false);
+  const [showMessageDialog, setShowMessageDialog] = useState(false);
+  const [messageDialogMode, setMessageDialogMode] = useState<'create' | 'rename'>('create');
+  const [messageDialogName, setMessageDialogName] = useState('');
+  const [messageDialogError, setMessageDialogError] = useState<string | null>(null);
+  const [messageDialogSelectedId, setMessageDialogSelectedId] = useState<string | null>(null);
 
   const { selectedSceneId, selectedObjectId, registerCodeUndo } = useEditorStore();
-  const { project, addGlobalVariable, addLocalVariable } = useProjectStore();
+  const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage } = useProjectStore();
   const sceneDropdownStamp = project?.scenes
     .map((scene, index) => `${index}:${scene.id}:${scene.name}`)
+    .join('|') ?? '';
+  const messageDropdownStamp = project?.messages
+    .map((message, index) => `${index}:${message.id}:${message.name}`)
     .join('|') ?? '';
 
   // Keep refs in sync
@@ -374,6 +405,68 @@ export function BlocklyEditor() {
       flushPendingWorkspacePersist(sceneIdAtRender, objectIdAtRender);
     };
   }, [selectedSceneId, selectedObjectId, flushPendingWorkspacePersist]);
+
+  useEffect(() => {
+    setMessageDialogCallback((mode, selectedMessageId, applySelectedMessageId) => {
+      pendingMessageFieldApplyRef.current = applySelectedMessageId;
+      setMessageDialogMode(mode);
+      setMessageDialogSelectedId(selectedMessageId);
+      const selectedMessage = (useProjectStore.getState().project?.messages || []).find(
+        (message) => message.id === selectedMessageId,
+      );
+      setMessageDialogName(mode === 'rename' ? selectedMessage?.name || '' : '');
+      setMessageDialogError(null);
+      setShowMessageDialog(true);
+    });
+
+    return () => {
+      setMessageDialogCallback(null);
+    };
+  }, []);
+
+  const closeMessageDialog = useCallback(() => {
+    pendingMessageFieldApplyRef.current = null;
+    setShowMessageDialog(false);
+    setMessageDialogError(null);
+    setMessageDialogName('');
+    setMessageDialogSelectedId(null);
+    setMessageDialogMode('create');
+  }, []);
+
+  const handleSubmitMessageDialog = useCallback(() => {
+    const trimmedName = messageDialogName.trim();
+    if (!trimmedName) {
+      setMessageDialogError('Please enter a message name');
+      return;
+    }
+
+    if (messageDialogMode === 'create') {
+      const created = addMessage(trimmedName);
+      if (!created) {
+        setMessageDialogError('Failed to create message');
+        return;
+      }
+      pendingMessageFieldApplyRef.current?.(created.id);
+      closeMessageDialog();
+      return;
+    }
+
+    if (!messageDialogSelectedId) {
+      setMessageDialogError('No message selected');
+      return;
+    }
+
+    updateMessage(messageDialogSelectedId, { name: trimmedName });
+    pendingMessageFieldApplyRef.current?.(messageDialogSelectedId);
+    closeMessageDialog();
+  }, [
+    addMessage,
+    closeMessageDialog,
+    messageDialogMode,
+    messageDialogName,
+    messageDialogSelectedId,
+    updateMessage,
+  ]);
 
   // Cmd+K to open block search, Cmd+C/V for cross-object copy/paste
   useEffect(() => {
@@ -510,6 +603,11 @@ export function BlocklyEditor() {
           (state.project?.scenes || []).forEach((projectScene) => {
             sceneNameCounts.set(projectScene.name, (sceneNameCounts.get(projectScene.name) || 0) + 1);
           });
+          const messageIds = new Set((state.project?.messages || []).map((message) => message.id));
+          const messageNameCounts = new Map<string, number>();
+          (state.project?.messages || []).forEach((message) => {
+            messageNameCounts.set(message.name, (messageNameCounts.get(message.name) || 0) + 1);
+          });
 
           validateBlockReferences(
             workspaceRef.current!,
@@ -518,6 +616,8 @@ export function BlocklyEditor() {
             validVariableIds,
             sceneIds,
             sceneNameCounts,
+            messageIds,
+            messageNameCounts,
           );
         }
       }
@@ -653,6 +753,11 @@ export function BlocklyEditor() {
       (state.project?.scenes || []).forEach((projectScene) => {
         sceneNameCounts.set(projectScene.name, (sceneNameCounts.get(projectScene.name) || 0) + 1);
       });
+      const messageIds = new Set((state.project?.messages || []).map((message) => message.id));
+      const messageNameCounts = new Map<string, number>();
+      (state.project?.messages || []).forEach((message) => {
+        messageNameCounts.set(message.name, (messageNameCounts.get(message.name) || 0) + 1);
+      });
 
       validateBlockReferences(
         workspaceRef.current,
@@ -661,6 +766,8 @@ export function BlocklyEditor() {
         validVariableIds,
         sceneIds,
         sceneNameCounts,
+        messageIds,
+        messageNameCounts,
       );
     }
 
@@ -686,6 +793,21 @@ export function BlocklyEditor() {
       }
     }
   }, [sceneDropdownStamp]);
+
+  useEffect(() => {
+    if (!workspaceRef.current) return;
+
+    const allBlocks = workspaceRef.current.getAllBlocks(false);
+    for (const block of allBlocks) {
+      const messageFieldName = MESSAGE_REFERENCE_BLOCKS[block.type];
+      if (!messageFieldName) continue;
+
+      const field = block.getField(messageFieldName);
+      if (field instanceof Blockly.FieldDropdown) {
+        field.forceRerender();
+      }
+    }
+  }, [messageDropdownStamp]);
 
   // Get current object name for local variable option
   const currentObjectName = (() => {
@@ -726,6 +848,24 @@ export function BlocklyEditor() {
         workspace={workspaceRef.current}
         onNewVariable={() => setShowAddVariableDialog(true)}
         onManageVariables={() => setShowVariableManager(true)}
+      />
+      <MessageDialog
+        open={showMessageDialog}
+        mode={messageDialogMode}
+        name={messageDialogName}
+        error={messageDialogError}
+        onNameChange={(name) => {
+          setMessageDialogName(name);
+          if (messageDialogError) {
+            setMessageDialogError(null);
+          }
+        }}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeMessageDialog();
+          }
+        }}
+        onSubmit={handleSubmitMessageDialog}
       />
     </>
   );

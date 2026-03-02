@@ -440,18 +440,27 @@ export function registerCodeGenerators(): void {
   // --- Messages ---
 
   javascriptGenerator.forBlock['event_when_receive'] = function(block) {
-    const message = block.getFieldValue('MESSAGE') || 'message1';
+    const message = block.getFieldValue('MESSAGE') || '';
+    if (!message) {
+      return '/* when I receive: message not selected */\n';
+    }
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
     return `runtime.onMessage(spriteId, ${asJsString(message)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['control_broadcast'] = function(block) {
-    const message = block.getFieldValue('MESSAGE') || 'message1';
+    const message = block.getFieldValue('MESSAGE') || '';
+    if (!message) {
+      return '/* broadcast: message not selected */\n';
+    }
     return `runtime.broadcast(${asJsString(message)});\n`;
   };
 
   javascriptGenerator.forBlock['control_broadcast_wait'] = function(block) {
-    const message = block.getFieldValue('MESSAGE') || 'message1';
+    const message = block.getFieldValue('MESSAGE') || '';
+    if (!message) {
+      return '/* broadcast and wait: message not selected */\n';
+    }
     return `await runtime.broadcastAndWait(${asJsString(message)});\n`;
   };
 

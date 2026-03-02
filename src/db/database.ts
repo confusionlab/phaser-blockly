@@ -1,9 +1,15 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { CostumeEditorMode, CostumeVectorDocument, Project, ReusableObject } from '../types';
+import type {
+  CostumeEditorMode,
+  CostumeVectorDocument,
+  MessageDefinition,
+  Project,
+  ReusableObject,
+} from '../types';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -99,6 +105,29 @@ function normalizeCostumeMetadataInProject(project: Project): Project {
   };
 }
 
+function normalizeMessagesInProject(project: Project): Project {
+  const normalizedMessages: MessageDefinition[] = Array.isArray(project.messages)
+    ? project.messages
+        .filter((message): message is MessageDefinition => {
+          return (
+            typeof message?.id === 'string' &&
+            message.id.trim().length > 0 &&
+            typeof message?.name === 'string' &&
+            message.name.trim().length > 0
+          );
+        })
+        .map((message) => ({
+          id: message.id.trim(),
+          name: message.name.trim(),
+        }))
+    : [];
+
+  return {
+    ...project,
+    messages: normalizedMessages,
+  };
+}
+
 function serializeProjectData(project: Project): string {
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
   return JSON.stringify(rest);
@@ -133,6 +162,7 @@ function deserializeProjectFromRecord(record: ProjectRecord): {
     migrated = true;
   }
 
+  project = normalizeMessagesInProject(project);
   project = normalizeCostumeMetadataInProject(project);
   project = normalizeProjectLayering(project);
 
@@ -393,6 +423,8 @@ export async function syncProjectFromCloud(cloudProject: {
     migrated = true;
   }
 
+  incomingProject = normalizeMessagesInProject(incomingProject);
+
   const incomingRecord: ProjectRecord = {
     id: incomingProject.id,
     name: incomingProject.name,
@@ -535,6 +567,71 @@ function remapLegacySceneNameRefsInBlocklyXml(
   }
 }
 
+const MESSAGE_REFERENCE_BLOCKS: Record<string, string> = {
+  event_when_receive: 'MESSAGE',
+  control_broadcast: 'MESSAGE',
+  control_broadcast_wait: 'MESSAGE',
+};
+
+function normalizeMessageName(name: unknown): string {
+  return typeof name === 'string' ? name.trim() : '';
+}
+
+function remapLegacyMessageRefsInBlocklyXml(
+  blocklyXml: string,
+  messageIdSet: Set<string>,
+  messageNameToId: Map<string, string>,
+  ensureMessageIdForName: (name: string) => string,
+): string {
+  if (!blocklyXml.trim()) return blocklyXml;
+  if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') {
+    return blocklyXml;
+  }
+
+  try {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(blocklyXml, 'text/xml');
+    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+      return blocklyXml;
+    }
+
+    let changed = false;
+    const blocks = Array.from(xmlDoc.getElementsByTagName('block'));
+    for (const block of blocks) {
+      const blockType = block.getAttribute('type') || '';
+      const messageFieldName = MESSAGE_REFERENCE_BLOCKS[blockType];
+      if (!messageFieldName) continue;
+
+      const fields = Array.from(block.children).filter(
+        (child): child is Element =>
+          child.tagName.toLowerCase() === 'field' &&
+          child.getAttribute('name') === messageFieldName,
+      );
+
+      for (const field of fields) {
+        const currentValue = (field.textContent || '').trim();
+        if (!currentValue || messageIdSet.has(currentValue)) {
+          continue;
+        }
+
+        const messageId = messageNameToId.get(currentValue) || ensureMessageIdForName(currentValue);
+        if (messageId && messageId !== currentValue) {
+          field.textContent = messageId;
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed || !xmlDoc.documentElement) {
+      return blocklyXml;
+    }
+
+    return new XMLSerializer().serializeToString(xmlDoc.documentElement);
+  } catch {
+    return blocklyXml;
+  }
+}
+
 const migrations: Record<number, MigrationFn> = {
   // v2: Ensure basic scene defaults for older files.
   2: (project) => {
@@ -552,6 +649,7 @@ const migrations: Record<number, MigrationFn> = {
       })),
       components: Array.isArray(project.components) ? project.components : [],
       globalVariables: Array.isArray(project.globalVariables) ? project.globalVariables : [],
+      messages: Array.isArray(project.messages) ? project.messages : [],
       schemaVersion: 2,
     };
   },
@@ -625,6 +723,80 @@ const migrations: Record<number, MigrationFn> = {
         ),
       })),
       schemaVersion: 5,
+    };
+  },
+  // v6: Migrate message fields from free-text names to stable message IDs.
+  6: (project) => {
+    const scenes = Array.isArray(project.scenes) ? project.scenes : [];
+    const components = Array.isArray(project.components) ? project.components : [];
+    const existingMessages = Array.isArray(project.messages) ? project.messages : [];
+
+    const messages: MessageDefinition[] = [];
+    const messageIdSet = new Set<string>();
+    const messageNameToId = new Map<string, string>();
+
+    for (const maybeMessage of existingMessages) {
+      const name = normalizeMessageName(maybeMessage?.name);
+      if (!name) continue;
+
+      let id = readValidId(maybeMessage?.id) || crypto.randomUUID();
+      while (messageIdSet.has(id)) {
+        id = crypto.randomUUID();
+      }
+
+      messages.push({ id, name });
+      messageIdSet.add(id);
+      if (!messageNameToId.has(name)) {
+        messageNameToId.set(name, id);
+      }
+    }
+
+    const ensureMessageIdForName = (rawName: string): string => {
+      const normalizedName = normalizeMessageName(rawName);
+      if (!normalizedName) {
+        return '';
+      }
+      const existingId = messageNameToId.get(normalizedName);
+      if (existingId) {
+        return existingId;
+      }
+
+      let id = crypto.randomUUID();
+      while (messageIdSet.has(id)) {
+        id = crypto.randomUUID();
+      }
+
+      messages.push({ id, name: normalizedName });
+      messageIdSet.add(id);
+      messageNameToId.set(normalizedName, id);
+      return id;
+    };
+
+    return {
+      ...project,
+      scenes: scenes.map((scene) => ({
+        ...scene,
+        objects: (scene.objects || []).map((obj) => ({
+          ...obj,
+          blocklyXml: remapLegacyMessageRefsInBlocklyXml(
+            obj.blocklyXml || '',
+            messageIdSet,
+            messageNameToId,
+            ensureMessageIdForName,
+          ),
+        })),
+      })),
+      components: components.map((component) => ({
+        ...component,
+        blocklyXml: remapLegacyMessageRefsInBlocklyXml(
+          component.blocklyXml || '',
+          messageIdSet,
+          messageNameToId,
+          ensureMessageIdForName,
+        ),
+      })),
+      messages,
+      schemaVersion: 6,
     };
   },
 };
@@ -705,6 +877,7 @@ interface ImportReferenceMaps {
   objectIds: Map<string, string>;
   variableIds: Map<string, string>;
   soundIds: Map<string, string>;
+  messageIds: Map<string, string>;
   componentIds: Map<string, string>;
   sceneIds: Map<string, string>;
 }
@@ -713,6 +886,7 @@ interface ImportReferenceFallbacks {
   objectNameToId?: Map<string, string>;
   variableNameToId?: Map<string, string>;
   soundNameToId?: Map<string, string>;
+  messageNameToId?: Map<string, string>;
   sceneNameToId?: Map<string, string>;
 }
 
@@ -849,6 +1023,13 @@ function remapBlocklyXmlReferences(
         );
       }
 
+      const messageFieldName = MESSAGE_REFERENCE_BLOCKS[blockType];
+      if (messageFieldName) {
+        updateField(messageFieldName, (value) =>
+          remapIdOrNameReference(value, maps.messageIds, fallbacks.messageNameToId)
+        );
+      }
+
       const sceneFieldName = SCENE_REFERENCE_BLOCKS[blockType];
       if (sceneFieldName) {
         updateField(sceneFieldName, (value) =>
@@ -900,14 +1081,24 @@ export async function importProject(jsonString: string): Promise<Project> {
   project.scenes = Array.isArray(project.scenes) ? project.scenes : [];
   project.globalVariables = Array.isArray(project.globalVariables) ? project.globalVariables : [];
   project.components = Array.isArray(project.components) ? project.components : [];
+  project.messages = Array.isArray(project.messages) ? project.messages : [];
   project = normalizeCostumeMetadataInProject(project);
 
   // Generate new IDs to avoid collisions and keep imported data isolated.
   const objectIdMap = new Map<string, string>();
   const variableIdMap = new Map<string, string>();
   const soundIdMap = new Map<string, string>();
+  const messageIdMap = new Map<string, string>();
   const componentIdMap = new Map<string, string>();
   const sceneIdMap = new Map<string, string>();
+
+  for (const message of project.messages) {
+    const newMessageId = crypto.randomUUID();
+    rememberIdMapping(messageIdMap, message.id, newMessageId);
+    message.id = newMessageId;
+    const normalizedName = normalizeMessageName(message.name);
+    message.name = normalizedName || 'message';
+  }
 
   // Remap component IDs first so object.componentId references can be updated.
   for (const component of project.components) {
@@ -990,6 +1181,7 @@ export async function importProject(jsonString: string): Promise<Project> {
     objectIds: objectIdMap,
     variableIds: variableIdMap,
     soundIds: soundIdMap,
+    messageIds: messageIdMap,
     componentIds: componentIdMap,
     sceneIds: sceneIdMap,
   };
@@ -1002,6 +1194,9 @@ export async function importProject(jsonString: string): Promise<Project> {
   );
   const globalVariableNameToId = createUniqueNameIdMap(
     project.globalVariables.map((variable) => ({ name: variable.name, id: variable.id }))
+  );
+  const globalMessageNameToId = createUniqueNameIdMap(
+    project.messages.map((message) => ({ name: message.name, id: message.id }))
   );
 
   for (const scene of project.scenes) {
@@ -1034,6 +1229,7 @@ export async function importProject(jsonString: string): Promise<Project> {
         objectNameToId: sceneObjectNameToId,
         variableNameToId: combinedVariableNameToId.size > 0 ? combinedVariableNameToId : localVariableNameToId,
         soundNameToId,
+        messageNameToId: globalMessageNameToId,
         sceneNameToId: globalSceneNameToId,
       });
     }
@@ -1048,6 +1244,7 @@ export async function importProject(jsonString: string): Promise<Project> {
       objectNameToId: globalObjectNameToId,
       variableNameToId: globalVariableNameToId,
       soundNameToId: componentSoundNameToId,
+      messageNameToId: globalMessageNameToId,
       sceneNameToId: globalSceneNameToId,
     });
   }

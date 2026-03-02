@@ -1,6 +1,19 @@
 import { create } from 'zustand';
-import type { Project, Scene, GameObject, Variable, ComponentDefinition, SceneFolder } from '../types';
-import { createDefaultProject, createDefaultScene, createDefaultGameObject } from '../types';
+import type {
+  Project,
+  Scene,
+  GameObject,
+  Variable,
+  ComponentDefinition,
+  SceneFolder,
+  MessageDefinition,
+} from '../types';
+import {
+  createDefaultProject,
+  createDefaultScene,
+  createDefaultGameObject,
+  createDefaultMessage,
+} from '../types';
 import { saveProject } from '../db/database';
 import {
   getNextSiblingOrder,
@@ -27,6 +40,8 @@ interface ProjectStore {
   closeProject: () => void;
   updateProjectName: (name: string) => void;
   updateProjectSettings: (settings: Partial<Project['settings']>) => void;
+  addMessage: (name: string) => MessageDefinition | null;
+  updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => void;
 
   // Scene actions
   addScene: (name: string) => void;
@@ -84,6 +99,13 @@ function createUpdatedAt(): Date {
 function normalizeProject(project: Project): Project {
   return normalizeProjectLayering({
     ...project,
+    messages: (Array.isArray(project.messages) ? project.messages : []).filter(
+      (message): message is MessageDefinition =>
+        typeof message?.id === 'string' &&
+        message.id.trim().length > 0 &&
+        typeof message?.name === 'string' &&
+        message.name.trim().length > 0,
+    ),
     scenes: project.scenes.map((scene) => {
       const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
       const objects: GameObject[] = Array.isArray(scene.objects) ? scene.objects : [];
@@ -144,6 +166,42 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       isDirty: true,
     }));
     recordHistoryChange({ source: 'project:update-settings', allowMerge: true });
+  },
+
+  addMessage: (name: string) => {
+    const trimmedName = name.trim();
+    if (!trimmedName || !get().project) return null;
+
+    const newMessage = createDefaultMessage(trimmedName);
+    set(state => ({
+      project: state.project
+        ? {
+            ...state.project,
+            messages: [...(state.project.messages || []), newMessage],
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:add-message' });
+
+    return newMessage;
+  },
+
+  updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => {
+    set(state => ({
+      project: state.project
+        ? {
+            ...state.project,
+            messages: (state.project.messages || []).map((message) =>
+              message.id === messageId ? { ...message, ...updates } : message
+            ),
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:update-message', allowMerge: true });
   },
 
   // Scene actions

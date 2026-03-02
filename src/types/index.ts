@@ -7,6 +7,7 @@ export interface Project {
   updatedAt: Date;
   schemaVersion: number;
   scenes: Scene[];
+  messages: MessageDefinition[];
   globalVariables: Variable[];
   settings: ProjectSettings;
   components: ComponentDefinition[];
@@ -193,6 +194,11 @@ export interface Variable {
   objectId?: string;
 }
 
+export interface MessageDefinition {
+  id: string;
+  name: string;
+}
+
 // Editor State Types
 
 export interface EditorState {
@@ -213,8 +219,9 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 5,
+    schemaVersion: 6,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
+    messages: [],
     globalVariables: [],
     components: [],
     settings: {
@@ -222,6 +229,13 @@ export function createDefaultProject(name: string): Project {
       canvasHeight: 600,
       backgroundColor: '#87CEEB',
     },
+  };
+}
+
+export function createDefaultMessage(name: string): MessageDefinition {
+  return {
+    id: crypto.randomUUID(),
+    name,
   };
 }
 

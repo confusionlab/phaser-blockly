@@ -1,12 +1,23 @@
 import * as Blockly from 'blockly';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import type { Variable, VariableType } from '@/types';
+import type { MessageDefinition, Variable, VariableType } from '@/types';
 
 // Special value for "pick from stage" option
 const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
 // Prefix for "any component instance" option
 const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
+const CREATE_MESSAGE_OPTION = '__CREATE_MESSAGE_OPTION__';
+const RENAME_SELECTED_MESSAGE_OPTION = '__RENAME_SELECTED_MESSAGE_OPTION__';
+
+type MessageDialogMode = 'create' | 'rename';
+type MessageDialogCallback = (
+  mode: MessageDialogMode,
+  selectedMessageId: string | null,
+  applySelectedMessageId: (messageId: string) => void,
+) => void;
+
+let messageDialogCallback: MessageDialogCallback | null = null;
 
 // Custom FieldDropdown that preserves unknown values (for object IDs that may not be loaded yet)
 class PreservingFieldDropdown extends Blockly.FieldDropdown {
@@ -134,6 +145,42 @@ class PreservingSceneFieldDropdown extends Blockly.FieldDropdown {
     }
 
     return '(select scene)';
+  }
+}
+
+class PreservingMessageFieldDropdown extends Blockly.FieldDropdown {
+  protected override doClassValidation_(newValue?: any): string | null {
+    if (newValue === null || newValue === undefined) {
+      return null;
+    }
+    return String(newValue);
+  }
+
+  override getText(): string {
+    const value = this.getValue();
+    if (!value) return '(select message)';
+
+    const options = this.getOptions(false);
+    for (const option of options) {
+      if (option[1] === value && typeof option[0] === 'string') {
+        return option[0];
+      }
+    }
+
+    const project = useProjectStore.getState().project;
+    if (project) {
+      const byId = project.messages?.find((message) => message.id === value);
+      if (byId) {
+        return byId.name;
+      }
+
+      const byNameCount = (project.messages || []).filter((message) => message.name === value).length;
+      if (byNameCount === 1) {
+        return value;
+      }
+    }
+
+    return '(select message)';
   }
 }
 
@@ -301,6 +348,47 @@ function getSceneDropdownOptions(): Array<[string, string]> {
   });
 }
 
+function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[string, string]> {
+  const project = useProjectStore.getState().project;
+  const messages = (project?.messages || []).filter((message): message is MessageDefinition => {
+    return (
+      typeof message.id === 'string' &&
+      message.id.trim().length > 0 &&
+      typeof message.name === 'string' &&
+      message.name.trim().length > 0
+    );
+  });
+
+  const options: Array<[string, string]> = [];
+  if (messages.length === 0) {
+    options.push(['(select message)', '']);
+  } else {
+    const nameCounts = new Map<string, number>();
+    for (const message of messages) {
+      nameCounts.set(message.name, (nameCounts.get(message.name) || 0) + 1);
+    }
+
+    const seenCounts = new Map<string, number>();
+    for (const message of messages) {
+      const duplicateCount = nameCounts.get(message.name) || 0;
+      if (duplicateCount <= 1) {
+        options.push([message.name, message.id]);
+        continue;
+      }
+      const nextIndex = (seenCounts.get(message.name) || 0) + 1;
+      seenCounts.set(message.name, nextIndex);
+      options.push([`${message.name} (${nextIndex})`, message.id]);
+    }
+  }
+
+  options.push(['+ New message...', CREATE_MESSAGE_OPTION]);
+  const hasSelectedMessage = !!selectedMessageId && messages.some((message) => message.id === selectedMessageId);
+  if (hasSelectedMessage) {
+    options.push(['Rename selected message...', RENAME_SELECTED_MESSAGE_OPTION]);
+  }
+  return options;
+}
+
 // Dropdown with special options + objects
 function getTargetDropdownOptions(
   includeEdge: boolean = false,
@@ -359,6 +447,36 @@ function createObjectPickerValidator(excludeCurrentObject: boolean = true) {
       return null;
     }
     return newValue;
+  };
+}
+
+function createMessageDropdownValidator() {
+  return function(this: Blockly.FieldDropdown, newValue: string): string | null {
+    if (newValue !== CREATE_MESSAGE_OPTION && newValue !== RENAME_SELECTED_MESSAGE_OPTION) {
+      return newValue;
+    }
+    if (!messageDialogCallback) {
+      return null;
+    }
+
+    const selectedMessageId = this.getValue();
+    if (newValue === RENAME_SELECTED_MESSAGE_OPTION) {
+      const messages = useProjectStore.getState().project?.messages || [];
+      const selectedExists = messages.some((message) => message.id === selectedMessageId);
+      if (!selectedExists) {
+        return null;
+      }
+    }
+
+    messageDialogCallback(
+      newValue === CREATE_MESSAGE_OPTION ? 'create' : 'rename',
+      selectedMessageId || null,
+      (messageId: string) => {
+        this.setValue(messageId);
+      },
+    );
+
+    return null;
   };
 }
 
@@ -1785,13 +1903,19 @@ function registerCustomBlocks() {
   // Advanced events
   Blockly.Blocks['event_when_receive'] = {
     init: function() {
+      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
+      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
+      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
+
       this.appendDummyInput()
         .appendField('when I receive')
-        .appendField(new Blockly.FieldTextInput('message1'), 'MESSAGE');
+        .appendField(messageFieldRef, 'MESSAGE');
       this.appendStatementInput('NEXT')
         .setCheck(null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when message is received');
+      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
+      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
@@ -1894,26 +2018,38 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['control_broadcast'] = {
     init: function() {
+      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
+      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
+      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
+
       this.appendDummyInput()
         .appendField('broadcast')
-        .appendField(new Blockly.FieldTextInput('message1'), 'MESSAGE');
+        .appendField(messageFieldRef, 'MESSAGE');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
       this.setTooltip('Send a message to all objects');
+      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
+      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
   Blockly.Blocks['control_broadcast_wait'] = {
     init: function() {
+      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
+      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
+      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
+
       this.appendDummyInput()
         .appendField('broadcast')
-        .appendField(new Blockly.FieldTextInput('message1'), 'MESSAGE')
+        .appendField(messageFieldRef, 'MESSAGE')
         .appendField('and wait');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
       this.setTooltip('Send a message and wait');
+      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
+      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
@@ -2401,6 +2537,10 @@ let addVariableCallback: (() => void) | null = null;
 
 export function setAddVariableCallback(callback: (() => void) | null) {
   addVariableCallback = callback;
+}
+
+export function setMessageDialogCallback(callback: MessageDialogCallback | null) {
+  messageDialogCallback = callback;
 }
 
 // Register button callbacks for the Variables category
