@@ -29,6 +29,8 @@ export type UndoRedoHandler = {
   canRedo?: () => boolean;
   beforeHistoryUndoRedo?: () => void;
   deleteSelection?: () => boolean;
+  duplicateSelection?: () => boolean | Promise<boolean>;
+  isTextEditing?: () => boolean;
 };
 
 type SelectionHistoryOptions = {

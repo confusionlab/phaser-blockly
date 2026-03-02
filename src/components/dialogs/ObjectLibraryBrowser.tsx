@@ -102,7 +102,7 @@ export function ObjectLibraryBrowser({
             name: costume.name,
             assetId: dataUrl,
             bounds: costume.bounds,
-            editorMode: costume.editorMode ?? 'bitmap',
+            editorMode: costume.editorMode ?? 'vector',
             vectorDocument: costume.vectorDocument,
           };
         })

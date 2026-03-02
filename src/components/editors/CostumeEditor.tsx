@@ -34,13 +34,15 @@ export function CostumeEditor() {
       canUndo: () => canvasRef.current?.canUndo() ?? false,
       canRedo: () => canvasRef.current?.canRedo() ?? false,
       deleteSelection: () => canvasRef.current?.deleteSelection() ?? false,
+      duplicateSelection: () => canvasRef.current?.duplicateSelection() ?? false,
+      isTextEditing: () => canvasRef.current?.isTextEditing() ?? false,
     };
     registerCostumeUndo(handler);
     return () => registerCostumeUndo(null);
   }, [registerCostumeUndo]);
 
-  const [editorMode, setEditorMode] = useState<EditorMode>('bitmap');
-  const [activeTool, setActiveTool] = useState<DrawingTool>('brush');
+  const [editorMode, setEditorMode] = useState<EditorMode>('vector');
+  const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
   const [textStyle, setTextStyle] = useState<TextToolStyle>({
@@ -142,7 +144,7 @@ export function CostumeEditor() {
       currentCostumeIdRef.current = currentCostume.id;
       isLoadingRef.current = true;
 
-      const initialMode: EditorMode = currentCostume.editorMode === 'vector' ? 'vector' : 'bitmap';
+      const initialMode: EditorMode = currentCostume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
       setEditorMode(initialMode);
       setActiveTool((prev) => ensureToolForMode(initialMode, prev));
 

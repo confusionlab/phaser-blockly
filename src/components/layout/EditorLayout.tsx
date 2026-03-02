@@ -230,6 +230,14 @@ export function EditorLayout() {
 
     // Duplicate selected object(s): Cmd/Ctrl + D (disabled in Blockly area)
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+      if (activeObjectTab === 'costumes') {
+        e.preventDefault();
+        void Promise.resolve(costumeUndoHandler?.duplicateSelection?.()).catch((error) => {
+          console.error('Failed to duplicate costume selection:', error);
+        });
+        return;
+      }
+
       if (isInBlocklyArea || !selectedSceneId) {
         return;
       }
@@ -285,6 +293,10 @@ export function EditorLayout() {
         idsToDelete.forEach((objectId) => removeObject(selectedSceneId, objectId));
         selectObjects([], null);
       });
+      return;
+    }
+
+    if (e.key === 'Enter' && activeObjectTab === 'costumes' && costumeUndoHandler?.isTextEditing?.()) {
       return;
     }
 

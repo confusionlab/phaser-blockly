@@ -257,7 +257,7 @@ export function createDefaultGameObject(name: string): GameObject {
     id: crypto.randomUUID(),
     name: 'costume1',
     assetId: generateCircleCostume(color),
-    editorMode: 'bitmap',
+    editorMode: 'vector',
   };
 
   return {

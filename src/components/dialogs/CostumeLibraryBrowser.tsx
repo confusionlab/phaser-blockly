@@ -77,7 +77,7 @@ export function CostumeLibraryBrowser({
           storageId: storageId as Id<"_storage">,
           thumbnail,
           bounds: bounds || undefined,
-          editorMode: 'bitmap',
+          editorMode: 'vector',
           mimeType,
           size,
         });
@@ -117,7 +117,7 @@ export function CostumeLibraryBrowser({
         name: item.name,
         dataUrl,
         bounds: item.bounds ?? undefined,
-        editorMode: item.editorMode ?? 'bitmap',
+        editorMode: item.editorMode ?? 'vector',
         vectorDocument: item.vectorDocument ?? undefined,
       });
       onOpenChange(false);

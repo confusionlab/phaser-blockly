@@ -62,7 +62,7 @@ export const CostumeList = memo(({
       id: crypto.randomUUID(),
       name: `costume${costumes.length + 1}`,
       assetId: canvas.toDataURL('image/png'),
-      editorMode: 'bitmap',
+      editorMode: 'vector',
     };
     onAddCostume(newCostume);
   };
@@ -90,7 +90,7 @@ export const CostumeList = memo(({
             name: file.name.replace(/\.[^/.]+$/, ''),
             assetId: processedDataUrl,
             bounds: bounds || undefined,
-            editorMode: 'bitmap',
+            editorMode: 'vector',
           };
           onAddCostume(newCostume);
         } catch (error) {
@@ -116,7 +116,7 @@ export const CostumeList = memo(({
         name: data.name,
         assetId: data.dataUrl,
         bounds: data.bounds,
-        editorMode: data.editorMode ?? 'bitmap',
+        editorMode: data.editorMode ?? 'vector',
         vectorDocument: data.vectorDocument,
       };
       onAddCostume(newCostume);
@@ -250,9 +250,9 @@ export const CostumeList = memo(({
                   : 'hover:bg-accent'
               )}
             >
-              {/* Thumbnail with checkerboard for transparency - zoomed to bounds */}
+              {/* Thumbnail - transparent areas remain transparent */}
               <div
-                className="aspect-square rounded mb-1.5 overflow-hidden border relative checkerboard-bg checkerboard-bg-sm"
+                className="aspect-square rounded mb-0.5 overflow-hidden border relative"
               >
                 {costume.bounds && costume.bounds.width > 0 && costume.bounds.height > 0 ? (
                   // Zoomed thumbnail using bounds
@@ -296,8 +296,8 @@ export const CostumeList = memo(({
                 className="w-full h-5 px-1 text-[10px] text-center bg-transparent border-none focus:bg-background"
               />
 
-              {/* Index badge */}
-              <div className="absolute top-0 left-0 w-4 h-4 bg-foreground text-background rounded-tl rounded-br flex items-center justify-center text-[9px] font-medium">
+              {/* Index number */}
+              <div className="absolute top-1 left-1 text-[10px] font-medium text-foreground/80">
                 {index + 1}
               </div>
             </Card>

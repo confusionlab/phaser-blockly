@@ -6,6 +6,7 @@ import {
   Ellipse,
   Line,
   IText,
+  ActiveSelection,
   FabricImage,
 } from 'fabric';
 import * as Select from '@radix-ui/react-select';
@@ -53,6 +54,8 @@ export interface CostumeCanvasHandle {
   setEditorMode: (mode: EditorMode) => Promise<void>;
   getEditorMode: () => EditorMode;
   deleteSelection: () => boolean;
+  duplicateSelection: () => Promise<boolean>;
+  isTextEditing: () => boolean;
   clear: () => void;
   undo: () => void;
   redo: () => void;
@@ -114,15 +117,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
+  const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
   const colliderCanvasRef = useRef<HTMLCanvasElement>(null);
+  const bitmapSelectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const colliderCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
 
   const [zoom, setZoom] = useState(1);
-  const [editorModeState, setEditorModeState] = useState<EditorMode>('bitmap');
+  const [editorModeState, setEditorModeState] = useState<EditorMode>('vector');
   const displaySize = BASE_DISPLAY_SIZE * zoom;
 
-  const editorModeRef = useRef<EditorMode>('bitmap');
+  const editorModeRef = useRef<EditorMode>('vector');
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
 
@@ -168,6 +173,19 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const colliderDragModeRef = useRef<'none' | 'move' | 'resize-tl' | 'resize-tr' | 'resize-bl' | 'resize-br' | 'resize-l' | 'resize-r' | 'resize-t' | 'resize-b'>('none');
   const colliderDragStartRef = useRef<{ x: number; y: number; collider: ColliderConfig } | null>(null);
 
+  const bitmapSelectionRef = useRef<{
+    imageData: ImageData;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const bitmapSelectionStartRef = useRef<{ x: number; y: number } | null>(null);
+  const bitmapMarqueeRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const bitmapSelectionDragModeRef = useRef<'none' | 'marquee' | 'move'>('none');
+  const bitmapSelectionDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const bitmapSelectionBusyRef = useRef(false);
+
   const setEditorMode = useCallback((mode: EditorMode) => {
     editorModeRef.current = mode;
     setEditorModeState(mode);
@@ -177,15 +195,82 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
   }, []);
 
+  const drawBitmapSelectionOverlay = useCallback(() => {
+    const overlayCtx = bitmapSelectionCtxRef.current;
+    if (!overlayCtx) return;
+
+    overlayCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+    const floating = bitmapSelectionRef.current;
+    if (floating) {
+      const temp = document.createElement('canvas');
+      temp.width = floating.width;
+      temp.height = floating.height;
+      const tempCtx = temp.getContext('2d');
+      if (tempCtx) {
+        tempCtx.putImageData(floating.imageData, 0, 0);
+        overlayCtx.drawImage(temp, floating.x, floating.y);
+      }
+
+      overlayCtx.strokeStyle = '#0066ff';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.setLineDash([6, 6]);
+      overlayCtx.strokeRect(floating.x, floating.y, floating.width, floating.height);
+      overlayCtx.setLineDash([]);
+    }
+
+    const marquee = bitmapMarqueeRectRef.current;
+    if (marquee && bitmapSelectionDragModeRef.current === 'marquee') {
+      overlayCtx.fillStyle = 'rgba(0, 102, 255, 0.1)';
+      overlayCtx.fillRect(marquee.x, marquee.y, marquee.width, marquee.height);
+      overlayCtx.strokeStyle = '#0066ff';
+      overlayCtx.lineWidth = 2;
+      overlayCtx.setLineDash([6, 6]);
+      overlayCtx.strokeRect(marquee.x, marquee.y, marquee.width, marquee.height);
+      overlayCtx.setLineDash([]);
+    }
+  }, []);
+
+  const drawFloatingSelectionToContext = useCallback((ctx: CanvasRenderingContext2D) => {
+    const floating = bitmapSelectionRef.current;
+    if (!floating) return;
+    const temp = document.createElement('canvas');
+    temp.width = floating.width;
+    temp.height = floating.height;
+    const tempCtx = temp.getContext('2d');
+    if (!tempCtx) return;
+    tempCtx.putImageData(floating.imageData, 0, 0);
+    ctx.drawImage(temp, floating.x, floating.y);
+  }, []);
+
   const getCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     if (fabricCanvas) {
-      return fabricCanvas.toCanvasElement(1);
+      const composed = fabricCanvas.toCanvasElement(1);
+      const composedCtx = composed.getContext('2d');
+      if (composedCtx && editorModeRef.current === 'bitmap') {
+        drawFloatingSelectionToContext(composedCtx);
+      }
+      return composed;
     }
     const fallback = document.createElement('canvas');
     fallback.width = CANVAS_SIZE;
     fallback.height = CANVAS_SIZE;
     return fallback;
+  }, [drawFloatingSelectionToContext]);
+
+  const getSelectionMousePos = useCallback((event: MouseEvent) => {
+    const canvas = bitmapSelectionCanvasRef.current;
+    if (!canvas) {
+      return { x: 0, y: 0 };
+    }
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_SIZE / rect.width;
+    const scaleY = CANVAS_SIZE / rect.height;
+    return {
+      x: Math.max(0, Math.min(CANVAS_SIZE, (event.clientX - rect.left) * scaleX)),
+      y: Math.max(0, Math.min(CANVAS_SIZE, (event.clientY - rect.top) * scaleY)),
+    };
   }, []);
 
   const createSnapshot = useCallback((): CanvasHistorySnapshot => {
@@ -198,12 +283,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       };
     }
 
-    const composed = fabricCanvas.toCanvasElement(1);
+    const composed = getCanvasElement();
     const bitmapDataUrl = composed.toDataURL('image/png');
     const mode = editorModeRef.current;
     const vectorJson = mode === 'vector' ? JSON.stringify(fabricCanvas.toJSON()) : null;
     return { mode, bitmapDataUrl, vectorJson };
-  }, []);
+  }, [getCanvasElement]);
 
   const saveHistory = useCallback(() => {
     if (suppressHistoryRef.current) return;
@@ -257,6 +342,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
 
+    bitmapSelectionRef.current = null;
+    bitmapSelectionStartRef.current = null;
+    bitmapMarqueeRectRef.current = null;
+    bitmapSelectionDragModeRef.current = 'none';
+    bitmapSelectionDragOffsetRef.current = null;
+    drawBitmapSelectionOverlay();
+
     suppressHistoryRef.current = true;
     fabricCanvas.clear();
 
@@ -291,7 +383,35 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     fabricCanvas.requestRenderAll();
     suppressHistoryRef.current = false;
-  }, []);
+  }, [drawBitmapSelectionOverlay]);
+
+  const commitBitmapSelection = useCallback(async () => {
+    const fabricCanvas = fabricCanvasRef.current;
+    const floating = bitmapSelectionRef.current;
+    if (!fabricCanvas || !floating) return false;
+    if (bitmapSelectionBusyRef.current) return false;
+
+    bitmapSelectionBusyRef.current = true;
+    try {
+      const raster = fabricCanvas.toCanvasElement(1);
+      const rasterCtx = raster.getContext('2d');
+      if (!rasterCtx) return false;
+
+      const temp = document.createElement('canvas');
+      temp.width = floating.width;
+      temp.height = floating.height;
+      const tempCtx = temp.getContext('2d');
+      if (!tempCtx) return false;
+      tempCtx.putImageData(floating.imageData, 0, 0);
+      rasterCtx.drawImage(temp, floating.x, floating.y);
+
+      await loadBitmapLayer(raster.toDataURL('image/png'), false);
+      saveHistory();
+      return true;
+    } finally {
+      bitmapSelectionBusyRef.current = false;
+    }
+  }, [loadBitmapLayer, saveHistory]);
 
   const flattenBitmapLayer = useCallback(async () => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -429,7 +549,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       };
     }
 
-    const composed = fabricCanvas.toCanvasElement(1);
+    const composed = getCanvasElement();
     const dataUrl = composed.toDataURL('image/webp', 0.85);
     const bounds = calculateBoundsFromCanvas(composed);
 
@@ -451,7 +571,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       bounds,
       editorMode: mode,
     };
-  }, []);
+  }, [getCanvasElement]);
 
   const deleteSelection = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -475,11 +595,80 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return true;
   }, [saveHistory]);
 
+  const cloneFabricObject = useCallback(async (obj: any) => {
+    if (!obj || typeof obj.clone !== 'function') {
+      throw new Error('Object is not cloneable');
+    }
+
+    const maybePromise = obj.clone();
+    if (maybePromise && typeof maybePromise.then === 'function') {
+      return await maybePromise;
+    }
+
+    return await new Promise<any>((resolve) => {
+      obj.clone((cloned: any) => resolve(cloned));
+    });
+  }, []);
+
+  const duplicateSelection = useCallback(async (): Promise<boolean> => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+    if (editorModeRef.current !== 'vector') return false;
+
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (!activeObject) return false;
+    if (isTextObject(activeObject) && (activeObject as any).isEditing) return false;
+
+    const moveOffset = 20;
+    const clones: any[] = [];
+
+    if (activeObject.type === 'activeSelection' && typeof activeObject.getObjects === 'function') {
+      const selectedObjects = (activeObject.getObjects() as any[]).filter(Boolean);
+      for (const selected of selectedObjects) {
+        const cloned = await cloneFabricObject(selected);
+        cloned.set({
+          left: (typeof cloned.left === 'number' ? cloned.left : 0) + moveOffset,
+          top: (typeof cloned.top === 'number' ? cloned.top : 0) + moveOffset,
+        });
+        fabricCanvas.add(cloned);
+        clones.push(cloned);
+      }
+    } else {
+      const cloned = await cloneFabricObject(activeObject);
+      cloned.set({
+        left: (typeof cloned.left === 'number' ? cloned.left : 0) + moveOffset,
+        top: (typeof cloned.top === 'number' ? cloned.top : 0) + moveOffset,
+      });
+      fabricCanvas.add(cloned);
+      clones.push(cloned);
+    }
+
+    if (clones.length === 0) return false;
+
+    if (clones.length === 1) {
+      fabricCanvas.setActiveObject(clones[0]);
+    } else {
+      const nextSelection = new ActiveSelection(clones, { canvas: fabricCanvas });
+      fabricCanvas.setActiveObject(nextSelection);
+    }
+
+    fabricCanvas.requestRenderAll();
+    saveHistory();
+    return true;
+  }, [cloneFabricObject, saveHistory]);
+
+  const isTextEditing = useCallback((): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas || editorModeRef.current !== 'vector') return false;
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    return !!activeObject && isTextObject(activeObject) && !!(activeObject as any).isEditing;
+  }, []);
+
   const loadCostume = useCallback(async (costume: Costume) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
 
-    const requestedMode: EditorMode = costume.editorMode === 'vector' ? 'vector' : 'bitmap';
+    const requestedMode: EditorMode = costume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
     const hasValidVectorDocument =
       requestedMode === 'vector' &&
       costume.vectorDocument?.version === 1 &&
@@ -499,6 +688,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           await loadBitmapLayer(costume.assetId, false);
           setEditorMode('bitmap');
         }
+      } else if (requestedMode === 'vector') {
+        await loadBitmapLayer(costume.assetId, false);
+        const rasterizedCanvas = fabricCanvas.toCanvasElement(1);
+        await loadBitmapAsSingleVectorImage(rasterizedCanvas);
+        setEditorMode('vector');
       } else {
         await loadBitmapLayer(costume.assetId, false);
         setEditorMode('bitmap');
@@ -510,7 +704,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     historyRef.current = [];
     historyIndexRef.current = -1;
     saveHistory();
-  }, [loadBitmapLayer, saveHistory, setEditorMode]);
+  }, [loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
 
   const configureCanvasForTool = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -540,6 +734,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       const selectable = allowSelection;
       obj.selectable = selectable;
       obj.evented = selectable;
+      obj.lockMovementX = !selectable;
+      obj.lockMovementY = !selectable;
+      obj.lockRotation = !selectable;
+      obj.lockScalingX = !selectable;
+      obj.lockScalingY = !selectable;
       obj.borderColor = VECTOR_SELECTION_COLOR;
       obj.borderScaleFactor = VECTOR_SELECTION_BORDER_SCALE;
       obj.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
@@ -721,6 +920,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           object = new Rect({
             left: pointer.x,
             top: pointer.y,
+            originX: 'left',
+            originY: 'top',
             width: 1,
             height: 1,
             fill: color,
@@ -858,9 +1059,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (colliderCanvas) {
       colliderCtxRef.current = colliderCanvas.getContext('2d');
     }
+    const bitmapSelectionCanvas = bitmapSelectionCanvasRef.current;
+    if (bitmapSelectionCanvas) {
+      bitmapSelectionCtxRef.current = bitmapSelectionCanvas.getContext('2d');
+      drawBitmapSelectionOverlay();
+    }
 
     void loadBitmapLayer('', false).then(() => {
-      setEditorMode('bitmap');
+      setEditorMode('vector');
       historyRef.current = [];
       historyIndexRef.current = -1;
       saveHistory();
@@ -881,7 +1087,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [applyFill, configureCanvasForTool, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncTextSelectionState, syncTextStyleFromSelection]);
+  }, [applyFill, configureCanvasForTool, drawBitmapSelectionOverlay, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncTextSelectionState, syncTextStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -1122,6 +1328,175 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
   }, [activeTool, drawCollider]);
 
+  // Bitmap marquee selection (main-like behavior): drag box, move floating pixels, click outside to deselect.
+  useEffect(() => {
+    const overlayCanvas = bitmapSelectionCanvasRef.current;
+    if (!overlayCanvas) return;
+    const isBitmapSelect = editorModeState === 'bitmap' && activeTool === 'select';
+    if (!isBitmapSelect) {
+      drawBitmapSelectionOverlay();
+      return;
+    }
+
+    const isInsideFloatingSelection = (x: number, y: number) => {
+      const floating = bitmapSelectionRef.current;
+      if (!floating) return false;
+      return (
+        x >= floating.x &&
+        x <= floating.x + floating.width &&
+        y >= floating.y &&
+        y <= floating.y + floating.height
+      );
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (bitmapSelectionBusyRef.current) return;
+      const pos = getSelectionMousePos(event);
+      const floating = bitmapSelectionRef.current;
+
+      if (floating) {
+        if (isInsideFloatingSelection(pos.x, pos.y)) {
+          bitmapSelectionDragModeRef.current = 'move';
+          bitmapSelectionDragOffsetRef.current = {
+            x: pos.x - floating.x,
+            y: pos.y - floating.y,
+          };
+          return;
+        }
+        void commitBitmapSelection();
+        return;
+      }
+
+      bitmapSelectionDragModeRef.current = 'marquee';
+      bitmapSelectionStartRef.current = pos;
+      bitmapMarqueeRectRef.current = {
+        x: pos.x,
+        y: pos.y,
+        width: 0,
+        height: 0,
+      };
+      drawBitmapSelectionOverlay();
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (bitmapSelectionBusyRef.current) return;
+      const mode = bitmapSelectionDragModeRef.current;
+      if (mode === 'none') return;
+      const pos = getSelectionMousePos(event);
+
+      if (mode === 'move') {
+        const floating = bitmapSelectionRef.current;
+        const dragOffset = bitmapSelectionDragOffsetRef.current;
+        if (!floating || !dragOffset) return;
+        const nextX = Math.max(0, Math.min(CANVAS_SIZE - floating.width, pos.x - dragOffset.x));
+        const nextY = Math.max(0, Math.min(CANVAS_SIZE - floating.height, pos.y - dragOffset.y));
+        floating.x = nextX;
+        floating.y = nextY;
+        drawBitmapSelectionOverlay();
+        return;
+      }
+
+      const start = bitmapSelectionStartRef.current;
+      if (!start) return;
+      const x = Math.min(start.x, pos.x);
+      const y = Math.min(start.y, pos.y);
+      const width = Math.abs(pos.x - start.x);
+      const height = Math.abs(pos.y - start.y);
+      bitmapMarqueeRectRef.current = { x, y, width, height };
+      drawBitmapSelectionOverlay();
+    };
+
+    const handleMouseUp = async () => {
+      const mode = bitmapSelectionDragModeRef.current;
+      if (mode === 'none') return;
+      bitmapSelectionDragModeRef.current = 'none';
+
+      if (mode === 'move') {
+        bitmapSelectionDragOffsetRef.current = null;
+        drawBitmapSelectionOverlay();
+        return;
+      }
+
+      const marquee = bitmapMarqueeRectRef.current;
+      bitmapSelectionStartRef.current = null;
+      bitmapMarqueeRectRef.current = null;
+      drawBitmapSelectionOverlay();
+
+      if (!marquee || marquee.width < 1 || marquee.height < 1) {
+        return;
+      }
+
+      const width = Math.max(1, Math.floor(marquee.width));
+      const height = Math.max(1, Math.floor(marquee.height));
+      const x = Math.floor(marquee.x);
+      const y = Math.floor(marquee.y);
+
+      const fabricCanvas = fabricCanvasRef.current;
+      if (!fabricCanvas || bitmapSelectionBusyRef.current) return;
+
+      bitmapSelectionBusyRef.current = true;
+      try {
+        const raster = fabricCanvas.toCanvasElement(1);
+        const rasterCtx = raster.getContext('2d', { willReadFrequently: true });
+        if (!rasterCtx) return;
+
+        const selectionImageData = rasterCtx.getImageData(x, y, width, height);
+        let hasVisiblePixel = false;
+        for (let i = 3; i < selectionImageData.data.length; i += 4) {
+          if (selectionImageData.data[i] > 0) {
+            hasVisiblePixel = true;
+            break;
+          }
+        }
+        if (!hasVisiblePixel) {
+          return;
+        }
+
+        rasterCtx.clearRect(x, y, width, height);
+        await loadBitmapLayer(raster.toDataURL('image/png'), false);
+        bitmapSelectionRef.current = {
+          imageData: selectionImageData,
+          x,
+          y,
+          width,
+          height,
+        };
+        drawBitmapSelectionOverlay();
+      } finally {
+        bitmapSelectionBusyRef.current = false;
+      }
+    };
+
+    overlayCanvas.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      overlayCanvas.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [
+    activeTool,
+    commitBitmapSelection,
+    drawBitmapSelectionOverlay,
+    editorModeState,
+    getSelectionMousePos,
+    loadBitmapLayer,
+  ]);
+
+  // If we leave bitmap select mode with a floating selection, commit it to avoid losing pixels.
+  useEffect(() => {
+    if (editorModeState === 'bitmap' && activeTool === 'select') {
+      return;
+    }
+    if (bitmapSelectionRef.current) {
+      void commitBitmapSelection();
+      return;
+    }
+    drawBitmapSelectionOverlay();
+  }, [activeTool, commitBitmapSelection, drawBitmapSelectionOverlay, editorModeState]);
+
   // Expose imperative methods.
   useImperativeHandle(ref, () => ({
     toDataURL: () => {
@@ -1158,6 +1533,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     deleteSelection,
 
+    duplicateSelection,
+
+    isTextEditing,
+
     clear: () => {
       void (async () => {
         await loadBitmapLayer('', false);
@@ -1193,6 +1572,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     setEditorMode,
     switchEditorMode,
     deleteSelection,
+    duplicateSelection,
+    isTextEditing,
   ]);
 
   // Handle wheel zoom.
@@ -1307,6 +1688,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               position: 'absolute',
               top: 0,
               left: 0,
+            }}
+          />
+
+          <canvas
+            ref={bitmapSelectionCanvasRef}
+            width={CANVAS_SIZE}
+            height={CANVAS_SIZE}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: displaySize,
+              height: displaySize,
+              pointerEvents: editorModeState === 'bitmap' && activeTool === 'select' ? 'auto' : 'none',
             }}
           />
 
