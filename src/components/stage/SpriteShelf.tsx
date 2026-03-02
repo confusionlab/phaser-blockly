@@ -49,6 +49,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  GripVertical,
 } from 'lucide-react';
 import type {
   GameObject,
@@ -154,6 +155,7 @@ export function SpriteShelf() {
     updateScene,
     addScene,
     removeScene,
+    reorderScenes,
     makeComponent,
     detachFromComponent,
   } = useProjectStore();
@@ -183,6 +185,8 @@ export function SpriteShelf() {
   } | null>(null);
   const [sceneContextMenuPosition, setSceneContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [sceneDropdownOpen, setSceneDropdownOpen] = useState(false);
+  const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
+  const [sceneDropTarget, setSceneDropTarget] = useState<{ sceneId: string; position: 'before' | 'after' } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -499,6 +503,34 @@ export function SpriteShelf() {
         selectScene(nextScene.id);
       }
     });
+  };
+
+  const handleSceneDrop = (targetSceneId: string) => {
+    if (!project || !draggedSceneId) return;
+
+    const sourceIndex = project.scenes.findIndex((scene) => scene.id === draggedSceneId);
+    const targetIndex = project.scenes.findIndex((scene) => scene.id === targetSceneId);
+    if (sourceIndex === -1 || targetIndex === -1) {
+      setDraggedSceneId(null);
+      setSceneDropTarget(null);
+      return;
+    }
+
+    const dropPosition = sceneDropTarget?.sceneId === targetSceneId ? sceneDropTarget.position : 'after';
+    let insertIndex = targetIndex + (dropPosition === 'after' ? 1 : 0);
+    if (sourceIndex < insertIndex) {
+      insertIndex -= 1;
+    }
+
+    if (sourceIndex !== insertIndex) {
+      const nextSceneIds = project.scenes.map((scene) => scene.id);
+      const [movedSceneId] = nextSceneIds.splice(sourceIndex, 1);
+      nextSceneIds.splice(insertIndex, 0, movedSceneId);
+      reorderScenes(nextSceneIds);
+    }
+
+    setDraggedSceneId(null);
+    setSceneDropTarget(null);
   };
 
   const handleObjectContextMenu = (e: React.MouseEvent, object: GameObject) => {
@@ -1141,7 +1173,29 @@ export function SpriteShelf() {
               ) : (
                 <DropdownMenuItem
                   key={scene.id}
+                  draggable
                   onClick={() => selectScene(scene.id)}
+                  onDragStart={(e) => {
+                    setDraggedSceneId(scene.id);
+                    setSceneDropTarget(null);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', scene.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedSceneId(null);
+                    setSceneDropTarget(null);
+                  }}
+                  onDragOver={(e) => {
+                    if (!draggedSceneId || draggedSceneId === scene.id) return;
+                    e.preventDefault();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const position: 'before' | 'after' = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                    setSceneDropTarget({ sceneId: scene.id, position });
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    handleSceneDrop(scene.id);
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1152,8 +1206,19 @@ export function SpriteShelf() {
                       sceneId: scene.id,
                     });
                   }}
-                  className={`group flex items-center justify-between ${scene.id === selectedSceneId ? 'bg-accent' : ''}`}
+                  className={`group flex items-center justify-between ${
+                    scene.id === selectedSceneId ? 'bg-accent' : ''
+                  } ${
+                    sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'before'
+                      ? 'border-t-2 border-primary'
+                      : ''
+                  } ${
+                    sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'after'
+                      ? 'border-b-2 border-primary'
+                      : ''
+                  }`}
                 >
+                  <GripVertical className="size-3 text-muted-foreground/70" />
                   <span className="flex-1">{scene.name}</span>
                   <Button
                     variant="ghost"
