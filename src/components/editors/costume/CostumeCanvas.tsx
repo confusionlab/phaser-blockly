@@ -8,8 +8,11 @@ import {
   IText,
   FabricImage,
 } from 'fabric';
+import * as Select from '@radix-ui/react-select';
+import { Undo2, Redo2, Move, ChevronDown, Check } from 'lucide-react';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
+import { Button } from '@/components/ui/button';
 import type { DrawingTool, EditorMode, TextToolStyle } from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig } from '@/types';
 
@@ -19,6 +22,11 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.1;
 const HANDLE_SIZE = 16;
+const VECTOR_SELECTION_COLOR = '#005eff';
+const VECTOR_SELECTION_CORNER_COLOR = '#ffffff';
+const VECTOR_SELECTION_CORNER_STROKE = '#005eff';
+const VECTOR_SELECTION_BORDER_OPACITY = 1;
+const VECTOR_SELECTION_BORDER_SCALE = 2;
 
 type CanvasHistorySnapshot = {
   mode: EditorMode;
@@ -57,11 +65,19 @@ interface CostumeCanvasProps {
   brushColor: string;
   brushSize: number;
   textStyle: TextToolStyle;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  onToolChange: (tool: DrawingTool) => void;
+  colliderType: ColliderConfig['type'];
+  onColliderTypeChange: (type: ColliderConfig['type']) => void;
   collider: ColliderConfig | null;
   onHistoryChange?: () => void;
   onColliderChange?: (collider: ColliderConfig) => void;
   onModeChange?: (mode: EditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
+  onTextSelectionChange?: (hasTextSelection: boolean) => void;
 }
 
 function isTextObject(obj: unknown): obj is { type: string; set: (props: Record<string, unknown>) => void } {
@@ -75,12 +91,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   brushColor,
   brushSize,
   textStyle,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  onToolChange,
+  colliderType,
+  onColliderTypeChange,
   collider,
   onHistoryChange,
   onColliderChange,
   onModeChange,
   onTextStyleSync,
+  onTextSelectionChange,
 }, ref) => {
+  const colliderTypes: { value: ColliderConfig['type']; label: string }[] = [
+    { value: 'none', label: 'None' },
+    { value: 'box', label: 'Box' },
+    { value: 'circle', label: 'Circle' },
+    { value: 'capsule', label: 'Capsule' },
+  ];
+
   const containerRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
   const colliderCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -116,6 +147,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const onTextStyleSyncRef = useRef(onTextStyleSync);
   onTextStyleSyncRef.current = onTextStyleSync;
 
+  const onTextSelectionChangeRef = useRef(onTextSelectionChange);
+  onTextSelectionChangeRef.current = onTextSelectionChange;
+
   const colliderRef = useRef(collider);
   colliderRef.current = collider;
 
@@ -138,6 +172,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     editorModeRef.current = mode;
     setEditorModeState(mode);
     onModeChangeRef.current?.(mode);
+    if (mode !== 'vector') {
+      onTextSelectionChangeRef.current?.(false);
+    }
   }, []);
 
   const getCanvasElement = useCallback((): HTMLCanvasElement => {
@@ -209,6 +246,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
   }, []);
 
+  const syncTextSelectionState = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return;
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    onTextSelectionChangeRef.current?.(!!activeObject && isTextObject(activeObject));
+  }, []);
+
   const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
@@ -255,6 +299,62 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const rasterized = fabricCanvas.toCanvasElement(1).toDataURL('image/png');
     await loadBitmapLayer(rasterized, false);
   }, [loadBitmapLayer]);
+
+  const loadBitmapAsSingleVectorImage = useCallback(async (bitmapCanvas: HTMLCanvasElement) => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return;
+
+    suppressHistoryRef.current = true;
+    fabricCanvas.clear();
+
+    const bounds = calculateBoundsFromCanvas(bitmapCanvas);
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+      fabricCanvas.requestRenderAll();
+      suppressHistoryRef.current = false;
+      return;
+    }
+
+    const croppedCanvas = document.createElement('canvas');
+    croppedCanvas.width = bounds.width;
+    croppedCanvas.height = bounds.height;
+    const croppedCtx = croppedCanvas.getContext('2d');
+    if (!croppedCtx) {
+      suppressHistoryRef.current = false;
+      return;
+    }
+
+    croppedCtx.drawImage(
+      bitmapCanvas,
+      bounds.x,
+      bounds.y,
+      bounds.width,
+      bounds.height,
+      0,
+      0,
+      bounds.width,
+      bounds.height
+    );
+
+    try {
+      const image = await FabricImage.fromURL(croppedCanvas.toDataURL('image/png'));
+      image.set({
+        left: bounds.x + bounds.width / 2,
+        top: bounds.y + bounds.height / 2,
+        originX: 'center',
+        originY: 'center',
+        selectable: true,
+        evented: true,
+        hasControls: true,
+        hasBorders: true,
+      } as any);
+      fabricCanvas.add(image);
+    } catch (error) {
+      console.error('Failed to create vector image from bitmap bounds:', error);
+    }
+
+    fabricCanvas.requestRenderAll();
+    suppressHistoryRef.current = false;
+  }, []);
 
   const applySnapshot = useCallback(async (snapshot: CanvasHistorySnapshot) => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -305,18 +405,19 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!fabricCanvas) return;
     if (editorModeRef.current === nextMode) return;
 
-    const rasterized = fabricCanvas.toCanvasElement(1).toDataURL('image/png');
+    const rasterizedCanvas = fabricCanvas.toCanvasElement(1);
+    const rasterized = rasterizedCanvas.toDataURL('image/png');
 
     if (nextMode === 'bitmap') {
       await loadBitmapLayer(rasterized, false);
       setEditorMode('bitmap');
     } else {
-      await loadBitmapLayer(rasterized, true);
+      await loadBitmapAsSingleVectorImage(rasterizedCanvas);
       setEditorMode('vector');
     }
 
     saveHistory();
-  }, [loadBitmapLayer, saveHistory, setEditorMode]);
+  }, [loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
 
   const exportCostumeState = useCallback((): CostumeCanvasExportState => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -431,10 +532,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const allowSelection = mode === 'vector' && tool === 'select';
     fabricCanvas.selection = allowSelection;
+    fabricCanvas.selectionColor = 'rgba(0, 94, 255, 0.14)';
+    fabricCanvas.selectionBorderColor = VECTOR_SELECTION_COLOR;
+    fabricCanvas.selectionLineWidth = 2;
+    fabricCanvas.selectionDashArray = [];
     fabricCanvas.forEachObject((obj: any) => {
       const selectable = allowSelection;
       obj.selectable = selectable;
       obj.evented = selectable;
+      obj.borderColor = VECTOR_SELECTION_COLOR;
+      obj.borderScaleFactor = VECTOR_SELECTION_BORDER_SCALE;
+      obj.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
+      obj.cornerStyle = 'rect';
+      obj.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
+      obj.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
+      obj.cornerSize = 12;
+      obj.transparentCorners = false;
+      obj.padding = 2;
     });
 
     let cursor = 'default';
@@ -715,12 +829,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const onSelectionChange = () => {
       syncTextStyleFromSelection();
+      syncTextSelectionState();
     };
 
     const onTextChanged = () => {
       if (editorModeRef.current !== 'vector') return;
       syncTextStyleFromSelection();
+      syncTextSelectionState();
       saveHistory();
+    };
+
+    const onSelectionCleared = () => {
+      onTextSelectionChangeRef.current?.(false);
     };
 
     fabricCanvas.on('mouse:down', onMouseDown);
@@ -730,6 +850,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvas.on('object:modified', onObjectModified);
     fabricCanvas.on('selection:created', onSelectionChange);
     fabricCanvas.on('selection:updated', onSelectionChange);
+    fabricCanvas.on('selection:cleared', onSelectionCleared);
     fabricCanvas.on('text:changed', onTextChanged);
     fabricCanvas.on('text:editing:exited', onTextChanged);
 
@@ -754,12 +875,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.off('object:modified', onObjectModified);
       fabricCanvas.off('selection:created', onSelectionChange);
       fabricCanvas.off('selection:updated', onSelectionChange);
+      fabricCanvas.off('selection:cleared', onSelectionCleared);
       fabricCanvas.off('text:changed', onTextChanged);
       fabricCanvas.off('text:editing:exited', onTextChanged);
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [applyFill, configureCanvasForTool, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncTextStyleFromSelection]);
+  }, [applyFill, configureCanvasForTool, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncTextSelectionState, syncTextStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -1082,30 +1204,85 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   return (
     <div className="flex-1 overflow-hidden bg-muted/50 flex flex-col">
-      <div className="flex items-center justify-center gap-2 py-2 border-b bg-background/50">
-        <button
-          onClick={() => setZoom((prev) => Math.max(MIN_ZOOM, prev - ZOOM_STEP))}
-          className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
-          disabled={zoom <= MIN_ZOOM}
-        >
-          -
-        </button>
-        <span className="text-xs text-muted-foreground w-16 text-center">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button
-          onClick={() => setZoom((prev) => Math.min(MAX_ZOOM, prev + ZOOM_STEP))}
-          className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
-          disabled={zoom >= MAX_ZOOM}
-        >
-          +
-        </button>
-        <button
-          onClick={() => setZoom(1)}
-          className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded ml-2"
-        >
-          Reset
-        </button>
+      <div className="flex items-center py-2 px-3 border-b bg-background/50">
+        <div className="flex-1 flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="size-8" onClick={onUndo} disabled={!canUndo} title="Undo">
+            <Undo2 className="size-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="size-8" onClick={onRedo} disabled={!canRedo} title="Redo">
+            <Redo2 className="size-4" />
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-center gap-2">
+          <button
+            onClick={() => setZoom((prev) => Math.max(MIN_ZOOM, prev - ZOOM_STEP))}
+            className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
+            disabled={zoom <= MIN_ZOOM}
+          >
+            -
+          </button>
+          <span className="text-xs text-muted-foreground w-16 text-center">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            onClick={() => setZoom((prev) => Math.min(MAX_ZOOM, prev + ZOOM_STEP))}
+            className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
+            disabled={zoom >= MAX_ZOOM}
+          >
+            +
+          </button>
+          <button
+            onClick={() => setZoom(1)}
+            className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded ml-2"
+          >
+            Reset
+          </button>
+        </div>
+
+        <div className="flex-1 flex items-center justify-end gap-2">
+          <span className="text-xs text-muted-foreground">Collider:</span>
+          <Select.Root value={colliderType} onValueChange={(value) => onColliderTypeChange(value as ColliderConfig['type'])}>
+            <Select.Trigger className="inline-flex items-center justify-between gap-1 h-8 px-2 text-xs bg-background border rounded hover:bg-accent min-w-[90px]">
+              <Select.Value />
+              <Select.Icon>
+                <ChevronDown className="size-3" />
+              </Select.Icon>
+            </Select.Trigger>
+            <Select.Portal>
+              <Select.Content className="bg-popover border rounded-md shadow-md z-50">
+                <Select.Viewport className="p-1">
+                  {colliderTypes.map(({ value, label }) => (
+                    <Select.Item
+                      key={value}
+                      value={value}
+                      className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-accent data-[highlighted]:bg-accent"
+                    >
+                      <Select.ItemIndicator>
+                        <Check className="size-3" />
+                      </Select.ItemIndicator>
+                      <Select.ItemText>{label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Viewport>
+              </Select.Content>
+            </Select.Portal>
+          </Select.Root>
+
+          {colliderType !== 'none' && (
+            <Button
+              variant={activeTool === 'collider' ? 'default' : 'outline'}
+              size="sm"
+              className="h-8 px-2 gap-1"
+              onClick={() => onToolChange('collider')}
+              title="Edit Collider"
+              style={activeTool === 'collider' ? { backgroundColor: '#22c55e', borderColor: '#22c55e' } : { borderColor: '#22c55e', color: '#22c55e' }}
+            >
+              <Move className="size-3" />
+              <span className="text-xs">Edit</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       <div

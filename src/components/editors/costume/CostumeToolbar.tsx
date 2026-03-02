@@ -15,15 +15,14 @@ import {
   Circle,
   Square,
   Minus,
-  Undo2,
-  Redo2,
-  Move,
   ChevronDown,
   Check,
   Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from 'lucide-react';
 import Color from 'color';
-import type { ColliderConfig } from '@/types';
 
 export type EditorMode = 'bitmap' | 'vector';
 export type DrawingTool = 'select' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
@@ -61,20 +60,15 @@ ToolButton.displayName = 'ToolButton';
 interface CostumeToolbarProps {
   editorMode: EditorMode;
   activeTool: DrawingTool;
+  showTextControls: boolean;
   brushColor: string;
   brushSize: number;
   textStyle: TextToolStyle;
-  canUndo: boolean;
-  canRedo: boolean;
-  colliderType: ColliderConfig['type'];
   onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
   onColorChange: (color: string) => void;
   onBrushSizeChange: (size: number) => void;
   onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
-  onUndo: () => void;
-  onRedo: () => void;
-  onColliderTypeChange: (type: ColliderConfig['type']) => void;
 }
 
 const bitmapTools: { tool: DrawingTool; icon: React.ReactNode; label: string }[] = [
@@ -95,13 +89,6 @@ const vectorTools: { tool: DrawingTool; icon: React.ReactNode; label: string }[]
   { tool: 'text', icon: <Type className="size-4" />, label: 'Text' },
 ];
 
-const colliderTypes: { value: ColliderConfig['type']; label: string }[] = [
-  { value: 'none', label: 'None' },
-  { value: 'box', label: 'Box' },
-  { value: 'circle', label: 'Circle' },
-  { value: 'capsule', label: 'Capsule' },
-];
-
 const fontFamilyOptions = [
   'Arial',
   'Verdana',
@@ -113,20 +100,15 @@ const fontFamilyOptions = [
 export const CostumeToolbar = memo(({
   editorMode,
   activeTool,
+  showTextControls,
   brushColor,
   brushSize,
   textStyle,
-  canUndo,
-  canRedo,
-  colliderType,
   onEditorModeChange,
   onToolChange,
   onColorChange,
   onBrushSizeChange,
   onTextStyleChange,
-  onUndo,
-  onRedo,
-  onColliderTypeChange,
 }: CostumeToolbarProps) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [colorPickerPosition, setColorPickerPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
@@ -258,7 +240,7 @@ export const CostumeToolbar = memo(({
         </div>
       )}
 
-      {editorMode === 'vector' && (
+      {editorMode === 'vector' && showTextControls && (
         <div className="flex items-center gap-2 border-r pr-2">
           <Select.Root
             value={textStyle.fontFamily}
@@ -327,9 +309,9 @@ export const CostumeToolbar = memo(({
                 onClick={() => onTextStyleChange({ textAlign: align })}
                 title={`Align ${align}`}
               >
-                {align === 'left' && <span className="text-xs">L</span>}
-                {align === 'center' && <span className="text-xs">C</span>}
-                {align === 'right' && <span className="text-xs">R</span>}
+                {align === 'left' && <AlignLeft className="size-3.5" />}
+                {align === 'center' && <AlignCenter className="size-3.5" />}
+                {align === 'right' && <AlignRight className="size-3.5" />}
               </Button>
             ))}
           </div>
@@ -354,60 +336,6 @@ export const CostumeToolbar = memo(({
         </div>
       )}
 
-      <div className="flex items-center gap-0.5 border-r pr-2">
-        <Button variant="ghost" size="icon" className="size-8" onClick={onUndo} disabled={!canUndo} title="Undo">
-          <Undo2 className="size-4" />
-        </Button>
-        <Button variant="ghost" size="icon" className="size-8" onClick={onRedo} disabled={!canRedo} title="Redo">
-          <Redo2 className="size-4" />
-        </Button>
-      </div>
-
-      <div className="flex-1" />
-
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">Collider:</span>
-        <Select.Root value={colliderType} onValueChange={(value) => onColliderTypeChange(value as ColliderConfig['type'])}>
-          <Select.Trigger className="inline-flex items-center justify-between gap-1 h-8 px-2 text-xs bg-background border rounded hover:bg-accent min-w-[90px]">
-            <Select.Value />
-            <Select.Icon>
-              <ChevronDown className="size-3" />
-            </Select.Icon>
-          </Select.Trigger>
-          <Select.Portal>
-            <Select.Content className="bg-popover border rounded-md shadow-md z-50">
-              <Select.Viewport className="p-1">
-                {colliderTypes.map(({ value, label }) => (
-                  <Select.Item
-                    key={value}
-                    value={value}
-                    className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-accent data-[highlighted]:bg-accent"
-                  >
-                    <Select.ItemIndicator>
-                      <Check className="size-3" />
-                    </Select.ItemIndicator>
-                    <Select.ItemText>{label}</Select.ItemText>
-                  </Select.Item>
-                ))}
-              </Select.Viewport>
-            </Select.Content>
-          </Select.Portal>
-        </Select.Root>
-
-        {colliderType !== 'none' && (
-          <Button
-            variant={activeTool === 'collider' ? 'default' : 'outline'}
-            size="sm"
-            className="h-8 px-2 gap-1"
-            onClick={() => onToolChange('collider')}
-            title="Edit Collider"
-            style={activeTool === 'collider' ? { backgroundColor: '#22c55e', borderColor: '#22c55e' } : { borderColor: '#22c55e', color: '#22c55e' }}
-          >
-            <Move className="size-3" />
-            <span className="text-xs">Edit</span>
-          </Button>
-        )}
-      </div>
     </div>
   );
 });

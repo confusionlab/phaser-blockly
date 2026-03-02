@@ -50,6 +50,7 @@ export function CostumeEditor() {
     textAlign: 'left',
     opacity: 1,
   });
+  const [hasTextSelection, setHasTextSelection] = useState(false);
 
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -238,6 +239,9 @@ export function CostumeEditor() {
   const handleCanvasModeChange = useCallback((mode: EditorMode) => {
     setEditorMode(mode);
     setActiveTool((prev) => ensureToolForMode(mode, prev));
+    if (mode !== 'vector') {
+      setHasTextSelection(false);
+    }
   }, []);
 
   const handleToolChange = useCallback((tool: DrawingTool) => {
@@ -310,20 +314,15 @@ export function CostumeEditor() {
       <CostumeToolbar
         editorMode={editorMode}
         activeTool={activeTool}
+        showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
         brushColor={brushColor}
         brushSize={brushSize}
         textStyle={textStyle}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        colliderType={collider?.type ?? 'none'}
         onEditorModeChange={handleEditorModeChange}
         onToolChange={handleToolChange}
         onColorChange={setBrushColor}
         onBrushSizeChange={setBrushSize}
         onTextStyleChange={handleTextStyleChange}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onColliderTypeChange={handleColliderTypeChange}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -342,11 +341,19 @@ export function CostumeEditor() {
           brushColor={brushColor}
           brushSize={brushSize}
           textStyle={textStyle}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onToolChange={handleToolChange}
+          colliderType={collider?.type ?? 'none'}
+          onColliderTypeChange={handleColliderTypeChange}
           collider={collider}
           onHistoryChange={handleHistoryChange}
           onColliderChange={handleColliderChange}
           onModeChange={handleCanvasModeChange}
           onTextStyleSync={handleTextStyleChange}
+          onTextSelectionChange={setHasTextSelection}
         />
       </div>
     </div>
