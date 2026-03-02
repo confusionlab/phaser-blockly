@@ -19,8 +19,9 @@ import type { Costume, CostumeBounds, ColliderConfig } from '@/types';
 
 const CANVAS_SIZE = 1024;
 const BASE_DISPLAY_SIZE = 480;
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 4;
+const BASE_VIEW_SCALE = BASE_DISPLAY_SIZE / CANVAS_SIZE;
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 10;
 const ZOOM_STEP = 0.1;
 const HANDLE_SIZE = 16;
 const VECTOR_SELECTION_COLOR = '#005eff';
@@ -143,9 +144,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
 
   const [zoom, setZoom] = useState(1);
+  const [cameraCenter, setCameraCenter] = useState({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
+  const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
+  const [isViewportPanning, setIsViewportPanning] = useState(false);
   const [editorModeState, setEditorModeState] = useState<EditorMode>('vector');
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
-  const displaySize = BASE_DISPLAY_SIZE * zoom;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const cameraCenterRef = useRef(cameraCenter);
+  cameraCenterRef.current = cameraCenter;
+  const viewportSizeRef = useRef(viewportSize);
+  viewportSizeRef.current = viewportSize;
+  const panSessionRef = useRef<{
+    startX: number;
+    startY: number;
+    cameraStartX: number;
+    cameraStartY: number;
+  } | null>(null);
 
   const editorModeRef = useRef<EditorMode>('vector');
   const activeToolRef = useRef(activeTool);
@@ -227,6 +242,46 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (typeof requestId !== 'number') return true;
     return loadRequestIdRef.current === requestId;
   }, []);
+
+  const clampZoom = useCallback((value: number) => {
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
+  }, []);
+
+  const zoomAtScreenPoint = useCallback((screenX: number, screenY: number, nextZoom: number) => {
+    const clampedZoom = clampZoom(nextZoom);
+    const currentZoom = zoomRef.current;
+    if (Math.abs(clampedZoom - currentZoom) < 0.0001) return;
+
+    const view = viewportSizeRef.current;
+    if (view.width <= 0 || view.height <= 0) {
+      setZoom(clampedZoom);
+      return;
+    }
+
+    const currentCamera = cameraCenterRef.current;
+    const beforeScale = BASE_VIEW_SCALE * currentZoom;
+    const afterScale = BASE_VIEW_SCALE * clampedZoom;
+
+    const worldBefore = {
+      x: (screenX - view.width / 2) / beforeScale + currentCamera.x,
+      y: (screenY - view.height / 2) / beforeScale + currentCamera.y,
+    };
+    const worldAfter = {
+      x: (screenX - view.width / 2) / afterScale + currentCamera.x,
+      y: (screenY - view.height / 2) / afterScale + currentCamera.y,
+    };
+
+    setCameraCenter({
+      x: currentCamera.x + (worldBefore.x - worldAfter.x),
+      y: currentCamera.y + (worldBefore.y - worldAfter.y),
+    });
+    setZoom(clampedZoom);
+  }, [clampZoom]);
+
+  const zoomAroundViewportCenter = useCallback((nextZoom: number) => {
+    const view = viewportSizeRef.current;
+    zoomAtScreenPoint(view.width / 2, view.height / 2, nextZoom);
+  }, [zoomAtScreenPoint]);
 
   const drawBitmapSelectionOverlay = useCallback(() => {
     const overlayCtx = bitmapSelectionCtxRef.current;
@@ -1329,16 +1384,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory();
   }, [brushColor, textStyle, saveHistory]);
 
-  // Resize CSS dimensions for zoom.
-  useEffect(() => {
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) return;
-    fabricCanvas.setDimensions(
-      { width: displaySize, height: displaySize },
-      { cssOnly: true }
-    );
-  }, [displaySize]);
-
   // Draw collider when collider/tool changes.
   useEffect(() => {
     drawCollider(collider, activeTool === 'collider');
@@ -1522,6 +1567,85 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       colliderCanvas.removeEventListener('mouseleave', handleMouseUp);
     };
   }, [activeTool, drawCollider]);
+
+  // Keep viewport size in sync with panel size.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateViewportSize = () => {
+      const rect = container.getBoundingClientRect();
+      setViewportSize({
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height),
+      });
+    };
+
+    updateViewportSize();
+    const observer = new ResizeObserver(updateViewportSize);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // Stage-like pan behavior: middle/right mouse drag.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (event.button !== 1 && event.button !== 2) return;
+      if (!container.contains(event.target as Node)) return;
+      event.preventDefault();
+
+      const camera = cameraCenterRef.current;
+      panSessionRef.current = {
+        startX: event.clientX,
+        startY: event.clientY,
+        cameraStartX: camera.x,
+        cameraStartY: camera.y,
+      };
+      setIsViewportPanning(true);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const pan = panSessionRef.current;
+      if (!pan) return;
+      event.preventDefault();
+      const currentScale = BASE_VIEW_SCALE * zoomRef.current;
+      const dx = (event.clientX - pan.startX) / currentScale;
+      const dy = (event.clientY - pan.startY) / currentScale;
+      setCameraCenter({
+        x: pan.cameraStartX - dx,
+        y: pan.cameraStartY - dy,
+      });
+    };
+
+    const endPan = () => {
+      if (!panSessionRef.current) return;
+      panSessionRef.current = null;
+      setIsViewportPanning(false);
+    };
+
+    const handleContextMenu = (event: MouseEvent) => {
+      if (container.contains(event.target as Node)) {
+        event.preventDefault();
+      }
+    };
+
+    container.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', endPan);
+    window.addEventListener('blur', endPan);
+    container.addEventListener('contextmenu', handleContextMenu);
+
+    return () => {
+      container.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', endPan);
+      window.removeEventListener('blur', endPan);
+      container.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, []);
 
   // Bitmap marquee selection: drag box to extract a floating bitmap object with Fabric transform gizmos.
   useEffect(() => {
@@ -1770,12 +1894,35 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isTextEditing,
   ]);
 
-  // Handle wheel zoom.
+  // Natural wheel controls (stage-matched):
+  // - ctrl/cmd + wheel: zoom at cursor pivot.
+  // - plain wheel: pan viewport.
   const handleWheel = useCallback((e: React.WheelEvent) => {
+    const container = containerRef.current;
+    if (!container) return;
     e.preventDefault();
-    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-    setZoom((prev) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev + delta)));
-  }, []);
+
+    if (e.ctrlKey || e.metaKey) {
+      const rect = container.getBoundingClientRect();
+      const pointerX = e.clientX - rect.left;
+      const pointerY = e.clientY - rect.top;
+      const zoomDelta = -e.deltaY * 0.01;
+      const zoomFactor = Math.max(0.01, 1 + zoomDelta);
+      const nextZoom = clampZoom(zoomRef.current * zoomFactor);
+      zoomAtScreenPoint(pointerX, pointerY, nextZoom);
+      return;
+    }
+
+    const currentScale = BASE_VIEW_SCALE * zoomRef.current;
+    setCameraCenter((prev) => ({
+      x: prev.x + e.deltaX / currentScale,
+      y: prev.y + e.deltaY / currentScale,
+    }));
+  }, [clampZoom, zoomAtScreenPoint]);
+
+  const currentViewScale = BASE_VIEW_SCALE * zoom;
+  const canvasLeft = viewportSize.width / 2 - cameraCenter.x * currentViewScale;
+  const canvasTop = viewportSize.height / 2 - cameraCenter.y * currentViewScale;
 
   return (
     <div className="flex-1 overflow-hidden bg-muted/50 flex flex-col">
@@ -1791,7 +1938,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
         <div className="flex items-center justify-center gap-2">
           <button
-            onClick={() => setZoom((prev) => Math.max(MIN_ZOOM, prev - ZOOM_STEP))}
+            onClick={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
             className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
             disabled={zoom <= MIN_ZOOM}
           >
@@ -1801,14 +1948,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             {Math.round(zoom * 100)}%
           </span>
           <button
-            onClick={() => setZoom((prev) => Math.min(MAX_ZOOM, prev + ZOOM_STEP))}
+            onClick={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
             className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
             disabled={zoom >= MAX_ZOOM}
           >
             +
           </button>
           <button
-            onClick={() => setZoom(1)}
+            onClick={() => zoomAroundViewportCenter(1)}
             className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded ml-2"
           >
             Reset
@@ -1862,14 +2009,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
       <div
         ref={containerRef}
-        className="flex-1 overflow-auto flex items-center justify-center p-4"
+        className="flex-1 overflow-hidden relative"
         onWheel={handleWheel}
+        style={{ cursor: isViewportPanning ? 'grabbing' : undefined }}
       >
         <div
-          className="border shadow-sm relative overflow-hidden flex-shrink-0 checkerboard-bg"
+          className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg"
           style={{
-            width: displaySize,
-            height: displaySize,
+            width: CANVAS_SIZE,
+            height: CANVAS_SIZE,
+            transform: `translate(${canvasLeft}px, ${canvasTop}px) scale(${currentViewScale})`,
+            transformOrigin: 'top left',
           }}
         >
           <canvas
@@ -1877,8 +2027,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             width={CANVAS_SIZE}
             height={CANVAS_SIZE}
             style={{
-              width: displaySize,
-              height: displaySize,
+              width: CANVAS_SIZE,
+              height: CANVAS_SIZE,
               position: 'absolute',
               top: 0,
               left: 0,
@@ -1893,8 +2043,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               position: 'absolute',
               top: 0,
               left: 0,
-              width: displaySize,
-              height: displaySize,
+              width: CANVAS_SIZE,
+              height: CANVAS_SIZE,
               pointerEvents: editorModeState === 'bitmap' && activeTool === 'select' && !hasBitmapFloatingSelection ? 'auto' : 'none',
             }}
           />
@@ -1907,8 +2057,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               position: 'absolute',
               top: 0,
               left: 0,
-              width: displaySize,
-              height: displaySize,
+              width: CANVAS_SIZE,
+              height: CANVAS_SIZE,
               pointerEvents: activeTool === 'collider' ? 'auto' : 'none',
             }}
           />
