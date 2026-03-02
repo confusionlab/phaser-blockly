@@ -61,9 +61,9 @@ class CompositePencilBrush extends PencilBrush {
 }
 
 const VECTOR_POINT_CONTROL_STYLE = {
-  cornerColor: '#ffffff',
-  cornerStrokeColor: '#005eff',
-  cornerSize: 12,
+  cornerColor: '#0ea5e9',
+  cornerStrokeColor: '#ffffff',
+  cornerSize: 14,
   transparentCorners: false,
 };
 
@@ -1129,15 +1129,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       obj.controls = controlsUtils.createPathControls(obj, {
         ...VECTOR_POINT_CONTROL_STYLE,
         pointStyle: {
-          controlFill: '#ffffff',
-          controlStroke: VECTOR_SELECTION_COLOR,
+          controlFill: '#0ea5e9',
+          controlStroke: '#ffffff',
         },
         controlPointStyle: {
-          controlFill: '#ffffff',
-          controlStroke: VECTOR_SELECTION_COLOR,
+          controlFill: '#0ea5e9',
+          controlStroke: '#ffffff',
           connectionDashArray: [4, 3],
         },
       });
+      if (typeof obj.setControlVisible === 'function') {
+        for (const key of Object.keys(obj.controls || {})) {
+          obj.setControlVisible(key, true);
+        }
+      }
       return true;
     }
 
@@ -1146,6 +1151,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         ...VECTOR_POINT_CONTROL_STYLE,
         cursorStyle: 'crosshair',
       });
+      if (typeof obj.setControlVisible === 'function') {
+        for (const key of Object.keys(obj.controls || {})) {
+          obj.setControlVisible(key, true);
+        }
+      }
       return true;
     }
 
@@ -1230,6 +1240,30 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       mode === 'bitmap' &&
       tool === 'select' &&
       !!floatingBitmapObject;
+
+    if (isVectorPointMode) {
+      const originalActiveObject = fabricCanvas.getActiveObject() as any;
+      let replacementActiveObject: any = originalActiveObject;
+      let convertedAny = false;
+      const objects = [...fabricCanvas.getObjects()];
+      for (const obj of objects) {
+        if (!isVectorPointSelectableObject(obj) || isPathLikeVectorObject(obj)) continue;
+        const converted = ensurePathLikeObjectForVectorTool(obj as any);
+        if (converted && converted !== obj) {
+          convertedAny = true;
+          if (originalActiveObject && obj === originalActiveObject) {
+            replacementActiveObject = converted;
+          }
+        }
+      }
+      if (replacementActiveObject && replacementActiveObject !== originalActiveObject) {
+        fabricCanvas.setActiveObject(replacementActiveObject);
+      }
+      if (convertedAny) {
+        saveHistory();
+      }
+    }
+
     restoreAllOriginalControls();
     fabricCanvas.selection = isVectorSelectionMode;
     fabricCanvas.selectionColor = 'rgba(0, 94, 255, 0.14)';
@@ -1309,7 +1343,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyCanvasCursor(fabricCanvas, cursor);
     fabricCanvas.requestRenderAll();
     syncSelectionState();
-  }, [activateVectorPointEditing, applyVectorPointControls, restoreAllOriginalControls, restoreOriginalControls, syncBrushCursorOverlay, syncSelectionState]);
+  }, [activateVectorPointEditing, applyVectorPointControls, ensurePathLikeObjectForVectorTool, restoreAllOriginalControls, restoreOriginalControls, saveHistory, syncBrushCursorOverlay, syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -1448,6 +1482,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           fabricCanvas.requestRenderAll();
           return;
         }
+        queueMicrotask(() => {
+          const canvas = fabricCanvasRef.current;
+          if (!canvas) return;
+          const clicked = opt.target as any;
+          if (clicked && canvas.getObjects().includes(clicked)) {
+            canvas.setActiveObject(clicked);
+          }
+          activateVectorPointEditing(true);
+          configureCanvasForTool();
+        });
         return;
       }
 
