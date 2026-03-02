@@ -163,16 +163,17 @@ export function CostumeEditor() {
     return true;
   }, [getUpdatedCostumesWithCanvasState, updateObject]);
 
-  const saveToCostume = useCallback(() => {
-    const editorState = useEditorStore.getState();
-    persistCanvasStateToObject(editorState.selectedSceneId, editorState.selectedObjectId);
+  const saveToCostume = useCallback((sceneId: string | null, objectId: string | null) => {
+    persistCanvasStateToObject(sceneId, objectId);
   }, [persistCanvasStateToObject]);
 
-  const debouncedSave = useCallback(() => {
+  const debouncedSave = useCallback((sceneId: string | null, objectId: string | null) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
-    saveTimeoutRef.current = setTimeout(saveToCostume, 300);
+    saveTimeoutRef.current = setTimeout(() => {
+      saveToCostume(sceneId, objectId);
+    }, 300);
   }, [saveToCostume]);
 
   useEffect(() => {
@@ -249,7 +250,8 @@ export function CostumeEditor() {
       setCanUndo(canvasRef.current.canUndo());
       setCanRedo(canvasRef.current.canRedo());
     }
-    debouncedSave();
+    const editorState = useEditorStore.getState();
+    debouncedSave(editorState.selectedSceneId, editorState.selectedObjectId);
   }, [debouncedSave]);
 
   const persistCurrentCostumeInMemory = useCallback(() => {
