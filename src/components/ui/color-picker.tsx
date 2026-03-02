@@ -37,11 +37,67 @@ interface ColorPickerContextValue {
   setSaturation: (saturation: number) => void
   setLightness: (lightness: number) => void
   setAlpha: (alpha: number) => void
+  setHsl: (hue: number, saturation: number, lightness: number) => void
+  setHsla: (hue: number, saturation: number, lightness: number, alpha: number) => void
   setMode: (mode: string) => void
 }
 
 const ColorPickerContext = createContext<ColorPickerContextValue | undefined>(undefined)
 const SATURATION_EPSILON = 0.01
+const STATE_EPSILON = 0.001
+
+interface ColorState {
+  hue: number
+  saturation: number
+  lightness: number
+  alpha: number
+}
+
+const DEFAULT_COLOR_STATE: ColorState = {
+  hue: 0,
+  saturation: 100,
+  lightness: 50,
+  alpha: 100,
+}
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+const normalizeHue = (value: number, fallbackHue: number) => {
+  if (!Number.isFinite(value)) {
+    return fallbackHue
+  }
+  return ((value % 360) + 360) % 360
+}
+
+const normalizeState = (state: ColorState, fallback: ColorState): ColorState => ({
+  hue: normalizeHue(state.hue, fallback.hue),
+  saturation: clamp(state.saturation, 0, 100),
+  lightness: clamp(state.lightness, 0, 100),
+  alpha: clamp(state.alpha, 0, 100),
+})
+
+const isStateEqual = (a: ColorState, b: ColorState) =>
+  Math.abs(a.hue - b.hue) < STATE_EPSILON &&
+  Math.abs(a.saturation - b.saturation) < STATE_EPSILON &&
+  Math.abs(a.lightness - b.lightness) < STATE_EPSILON &&
+  Math.abs(a.alpha - b.alpha) < STATE_EPSILON
+
+const parseColorToState = (
+  input: Parameters<typeof Color>[0] | undefined,
+  fallback: ColorState,
+): ColorState => {
+  try {
+    const color = Color(input)
+    const hsl = color.hsl()
+    const hue = normalizeHue(hsl.hue(), fallback.hue)
+    const saturation = Number.isFinite(hsl.saturationl()) ? hsl.saturationl() : fallback.saturation
+    const lightness = Number.isFinite(hsl.lightness()) ? hsl.lightness() : fallback.lightness
+    const alpha = Number.isFinite(color.alpha()) ? color.alpha() * 100 : fallback.alpha
+    return normalizeState({ hue, saturation, lightness, alpha }, fallback)
+  } catch {
+    return fallback
+  }
+}
 
 export const useColorPicker = () => {
   const context = useContext(ColorPickerContext)
@@ -66,82 +122,101 @@ export const ColorPicker = ({
   className,
   ...props
 }: ColorPickerProps) => {
-  // Parse initial color
-  const getInitialHSL = () => {
-    try {
-      const color = Color(value || defaultValue)
-      const hue = color.hue()
-      const saturation = color.saturationl()
-      const lightness = color.lightness()
-      const alpha = color.alpha()
-
-      return {
-        h: Number.isFinite(hue) ? hue : 0,
-        s: Number.isFinite(saturation) ? saturation : 100,
-        l: Number.isFinite(lightness) ? lightness : 50,
-        a: Number.isFinite(alpha) ? alpha * 100 : 100,
-      }
-    } catch {
-      return { h: 0, s: 100, l: 50, a: 100 }
-    }
-  }
-
-  const initial = getInitialHSL()
-  const [hue, setHue] = useState(initial.h)
-  const [saturation, setSaturation] = useState(initial.s)
-  const [lightness, setLightness] = useState(initial.l)
-  const [alpha, setAlpha] = useState(initial.a)
+  const initialState = useMemo(
+    () => parseColorToState(value ?? defaultValue, DEFAULT_COLOR_STATE),
+    [value, defaultValue],
+  )
+  const [colorState, setColorState] = useState<ColorState>(initialState)
+  const colorStateRef = useRef(colorState)
   const [mode, setMode] = useState("hex")
 
-  // Track if we're updating from internal changes
-  const isInternalChange = useRef(false)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
 
-  // Notify parent of internal changes only
-  const handleColorChange = useCallback((h: number, s: number, l: number, a: number) => {
-    isInternalChange.current = true
-    setHue(h)
-    setSaturation(s)
-    setLightness(l)
-    setAlpha(a)
-
+  const emitChange = useCallback((state: ColorState) => {
     if (onChangeRef.current) {
-      const color = Color.hsl(h, s, l).alpha(a / 100)
+      const color = Color.hsl(state.hue, state.saturation, state.lightness).alpha(state.alpha / 100)
       const rgba = color.rgb().array()
-      onChangeRef.current([rgba[0], rgba[1], rgba[2], a / 100])
+      onChangeRef.current([rgba[0], rgba[1], rgba[2], state.alpha / 100])
     }
   }, [])
 
-  // Wrapped setters that notify parent
-  const setHueAndNotify = useCallback((h: number) => {
-    handleColorChange(h, saturation, lightness, alpha)
-  }, [saturation, lightness, alpha, handleColorChange])
+  const applyState = useCallback(
+    (nextState: ColorState, notify: boolean) => {
+      setColorState(prevState => {
+        const normalized = normalizeState(nextState, prevState)
+        if (isStateEqual(prevState, normalized)) {
+          colorStateRef.current = prevState
+          return prevState
+        }
+        colorStateRef.current = normalized
+        if (notify) {
+          emitChange(normalized)
+        }
+        return normalized
+      })
+    },
+    [emitChange],
+  )
 
-  const setSaturationAndNotify = useCallback((s: number) => {
-    handleColorChange(hue, s, lightness, alpha)
-  }, [hue, lightness, alpha, handleColorChange])
+  const updateState = useCallback(
+    (updater: (prevState: ColorState) => ColorState, notify = true) => {
+      const nextState = updater(colorStateRef.current)
+      applyState(nextState, notify)
+    },
+    [applyState],
+  )
 
-  const setLightnessAndNotify = useCallback((l: number) => {
-    handleColorChange(hue, saturation, l, alpha)
-  }, [hue, saturation, alpha, handleColorChange])
+  // Sync state when parent controls `value`.
+  useEffect(() => {
+    if (value === undefined) {
+      return
+    }
+    const parsed = parseColorToState(value, colorStateRef.current)
+    applyState(parsed, false)
+  }, [value, applyState])
 
-  const setAlphaAndNotify = useCallback((a: number) => {
-    handleColorChange(hue, saturation, lightness, a)
-  }, [hue, saturation, lightness, handleColorChange])
+  const setHueAndNotify = useCallback(
+    (hue: number) => updateState(prevState => ({ ...prevState, hue })),
+    [updateState],
+  )
+  const setSaturationAndNotify = useCallback(
+    (saturation: number) => updateState(prevState => ({ ...prevState, saturation })),
+    [updateState],
+  )
+  const setLightnessAndNotify = useCallback(
+    (lightness: number) => updateState(prevState => ({ ...prevState, lightness })),
+    [updateState],
+  )
+  const setAlphaAndNotify = useCallback(
+    (alpha: number) => updateState(prevState => ({ ...prevState, alpha })),
+    [updateState],
+  )
+  const setHslAndNotify = useCallback(
+    (hue: number, saturation: number, lightness: number) =>
+      updateState(prevState => ({ ...prevState, hue, saturation, lightness })),
+    [updateState],
+  )
+  const setHslaAndNotify = useCallback(
+    (hue: number, saturation: number, lightness: number, alpha: number) =>
+      updateState(() => ({ hue, saturation, lightness, alpha })),
+    [updateState],
+  )
 
   return (
     <ColorPickerContext.Provider
       value={{
-        hue,
-        saturation,
-        lightness,
-        alpha,
+        hue: colorState.hue,
+        saturation: colorState.saturation,
+        lightness: colorState.lightness,
+        alpha: colorState.alpha,
         mode,
         setHue: setHueAndNotify,
         setSaturation: setSaturationAndNotify,
         setLightness: setLightnessAndNotify,
         setAlpha: setAlphaAndNotify,
+        setHsl: setHslAndNotify,
+        setHsla: setHslaAndNotify,
         setMode,
       }}
     >
@@ -157,12 +232,10 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
   const [isDragging, setIsDragging] = useState(false)
   const [positionX, setPositionX] = useState(0)
   const [positionY, setPositionY] = useState(0)
-  const { hue, saturation, lightness, setSaturation, setLightness } = useColorPicker()
-  const initializedRef = useRef(false)
+  const { hue, saturation, lightness, setHsl } = useColorPicker()
 
   // Sync cursor position from HSL values (convert HSL to HSV for visual position)
   useEffect(() => {
-    // Only sync on mount or when not dragging
     if (isDragging) return
 
     const s_hsl = Math.max(0, Math.min(1, saturation / 100))
@@ -177,12 +250,8 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
     const newX = Math.max(0, Math.min(1, s_hsv))
     const newY = Math.max(0, Math.min(1, 1 - v))
 
-    // Only update if not yet initialized (on mount)
-    if (!initializedRef.current) {
-      setPositionX(newX)
-      setPositionY(newY)
-      initializedRef.current = true
-    }
+    setPositionX(newX)
+    setPositionY(newY)
   }, [saturation, lightness, isDragging])
 
   const backgroundGradient = useMemo(() => {
@@ -191,9 +260,9 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
             hsl(${hue}, 100%, 50%)`
   }, [hue])
 
-  const handlePointerMove = useCallback(
+  const updateFromPointerEvent = useCallback(
     (event: PointerEvent) => {
-      if (!(isDragging && containerRef.current)) {
+      if (!containerRef.current) {
         return
       }
       const rect = containerRef.current.getBoundingClientRect()
@@ -215,14 +284,19 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
         s_hsl = (v - l) / Math.min(l, 1 - l)
       }
 
-      setSaturation(Math.max(0, Math.min(100, s_hsl * 100)))
-      setLightness(Math.max(0, Math.min(100, l * 100)))
+      setHsl(hue, Math.max(0, Math.min(100, s_hsl * 100)), Math.max(0, Math.min(100, l * 100)))
     },
-    [isDragging, setSaturation, setLightness],
+    [hue, setHsl],
   )
 
   useEffect(() => {
     const handlePointerUp = () => setIsDragging(false)
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!isDragging) {
+        return
+      }
+      updateFromPointerEvent(event)
+    }
 
     if (isDragging) {
       window.addEventListener("pointermove", handlePointerMove)
@@ -233,7 +307,7 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
       window.removeEventListener("pointermove", handlePointerMove)
       window.removeEventListener("pointerup", handlePointerUp)
     }
-  }, [isDragging, handlePointerMove])
+  }, [isDragging, updateFromPointerEvent])
 
   return (
     <div
@@ -241,7 +315,7 @@ export const ColorPickerSelection = memo(({ className, ...props }: ColorPickerSe
       onPointerDown={e => {
         e.preventDefault()
         setIsDragging(true)
-        handlePointerMove(e.nativeEvent)
+        updateFromPointerEvent(e.nativeEvent)
       }}
       ref={containerRef}
       style={{
@@ -317,7 +391,7 @@ export const ColorPickerAlpha = ({ className, ...props }: ColorPickerAlphaProps)
 export type ColorPickerEyeDropperProps = ComponentProps<typeof Button>
 
 export const ColorPickerEyeDropper = ({ className, ...props }: ColorPickerEyeDropperProps) => {
-  const { setHue, setSaturation, setLightness, setAlpha } = useColorPicker()
+  const { setHsla } = useColorPicker()
 
   const handleEyeDropper = async () => {
     try {
@@ -327,10 +401,7 @@ export const ColorPickerEyeDropper = ({ className, ...props }: ColorPickerEyeDro
       const color = Color(result.sRGBHex)
       const [h, s, l] = color.hsl().array()
 
-      setHue(h)
-      setSaturation(s)
-      setLightness(l)
-      setAlpha(100)
+      setHsla(h, s, l, 100)
     } catch (error) {
       console.error("EyeDropper failed:", error)
     }
