@@ -817,42 +817,6 @@ export function SpriteShelf() {
     setSceneDeleteTarget(null);
   };
 
-  const handleCloseSceneContextMenu = () => {
-    setSceneContextMenu(null);
-    setSceneContextMenuPosition(null);
-  };
-
-  const handleDeleteScene = (sceneId: string) => {
-    if (!project || project.scenes.length <= 1) return;
-
-    runInHistoryTransaction('sprite-shelf:delete-scene', () => {
-      removeScene(sceneId);
-      clearSceneUiState(sceneId);
-
-      if (selectedSceneId === sceneId) {
-        const remainingScenes = useProjectStore.getState().project?.scenes ?? [];
-        selectScene(remainingScenes[0]?.id ?? null);
-      }
-    });
-  };
-
-  const handleRequestDeleteScene = (sceneId: string) => {
-    if (!project || project.scenes.length <= 1) return;
-    const scene = project.scenes.find((candidate) => candidate.id === sceneId);
-    if (!scene) return;
-    setSceneDeleteTarget({ id: scene.id, name: scene.name });
-  };
-
-  const handleCancelDeleteScene = () => {
-    setSceneDeleteTarget(null);
-  };
-
-  const handleConfirmDeleteScene = () => {
-    if (!sceneDeleteTarget) return;
-    handleDeleteScene(sceneDeleteTarget.id);
-    setSceneDeleteTarget(null);
-  };
-
   const handleSaveToLibrary = async () => {
     if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
 
