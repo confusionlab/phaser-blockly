@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { RuntimeSprite } from './RuntimeSprite';
 import { applyCustomGravityForce } from './gravity';
+import { normalizeConfiguredKey, normalizeKeyboardCode } from '@/utils/keyboard';
 
 // Handlers receive sprite as parameter so they work correctly for clones
 type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
@@ -146,7 +147,7 @@ export class RuntimeEngine {
   private pendingForeverHandlers: Map<string, Set<number>> = new Map();
   private _isRunning: boolean = false;
   private _hasStarted: boolean = false;
-  private phaserKeys: Map<string, Phaser.Input.Keyboard.Key> = new Map();
+  private pressedKeys: Set<string> = new Set();
   private inputListenersAttached: boolean = false;
   private keydownListener: ((event: KeyboardEvent) => void) | null = null;
   private keyupListener: ((event: KeyboardEvent) => void) | null = null;
@@ -212,7 +213,6 @@ export class RuntimeEngine {
   get canvasHeight(): number { return this._canvasHeight; }
 
   private setupInputListeners(): void {
-    // Create Phaser key objects for reliable key detection
     const keyboard = this.scene.input.keyboard;
     if (!keyboard) {
       debugLog('error', 'Keyboard input not available!');
@@ -225,37 +225,20 @@ export class RuntimeEngine {
 
     debugLog('info', 'Setting up keyboard input...');
 
-    // Register keys we care about
-    const keysToRegister = [
-      ['SPACE', Phaser.Input.Keyboard.KeyCodes.SPACE],
-      ['UP', Phaser.Input.Keyboard.KeyCodes.UP],
-      ['DOWN', Phaser.Input.Keyboard.KeyCodes.DOWN],
-      ['LEFT', Phaser.Input.Keyboard.KeyCodes.LEFT],
-      ['RIGHT', Phaser.Input.Keyboard.KeyCodes.RIGHT],
-      ['W', Phaser.Input.Keyboard.KeyCodes.W],
-      ['A', Phaser.Input.Keyboard.KeyCodes.A],
-      ['S', Phaser.Input.Keyboard.KeyCodes.S],
-      ['D', Phaser.Input.Keyboard.KeyCodes.D],
-    ] as const;
-
-    for (const [name, code] of keysToRegister) {
-      // Do not capture these keys globally so users can still type in inputs.
-      this.phaserKeys.set(name, keyboard.addKey(code, false));
-    }
-    debugLog('info', `Registered ${keysToRegister.length} keys: ${keysToRegister.map(k => k[0]).join(', ')}`);
-
     // Listen for key down events for event_key_pressed blocks
     this.keydownListener = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) {
         return;
       }
       const key = this.normalizeKey(event.code);
+      this.pressedKeys.add(key);
       debugLog('event', `Key down: ${event.code} -> ${key}`);
       this.triggerKeyPressed(key);
     };
 
     this.keyupListener = (event: KeyboardEvent) => {
       const key = this.normalizeKey(event.code);
+      this.pressedKeys.delete(key);
       debugLog('event', `Key up: ${event.code} -> ${key}`);
     };
 
@@ -265,19 +248,7 @@ export class RuntimeEngine {
   }
 
   private normalizeKey(code: string): string {
-    // Map browser key codes to our key names
-    const mapping: Record<string, string> = {
-      'Space': 'SPACE',
-      'ArrowUp': 'UP',
-      'ArrowDown': 'DOWN',
-      'ArrowLeft': 'LEFT',
-      'ArrowRight': 'RIGHT',
-      'KeyW': 'W',
-      'KeyA': 'A',
-      'KeyS': 'S',
-      'KeyD': 'D',
-    };
-    return mapping[code] || code;
+    return normalizeKeyboardCode(code);
   }
 
   // --- Sprite Management ---
@@ -376,12 +347,13 @@ export class RuntimeEngine {
   }
 
   onKeyPressed(spriteId: string, key: string, handler: EventHandler): void {
-    debugLog('info', `Registering onKeyPressed(${key}) for sprite ${spriteId}`);
+    const normalizedKey = normalizeConfiguredKey(key);
+    debugLog('info', `Registering onKeyPressed(${normalizedKey}) for sprite ${spriteId}`);
     const h = this.handlers.get(spriteId);
     if (h) {
-      if (!h.onKeyPressed.has(key)) h.onKeyPressed.set(key, []);
-      h.onKeyPressed.get(key)!.push(handler);
-      debugLog('info', `Key handler registered for ${spriteId}, key=${key}`);
+      if (!h.onKeyPressed.has(normalizedKey)) h.onKeyPressed.set(normalizedKey, []);
+      h.onKeyPressed.get(normalizedKey)!.push(handler);
+      debugLog('info', `Key handler registered for ${spriteId}, key=${normalizedKey}`);
     } else {
       debugLog('error', `No handlers found for sprite ${spriteId}`);
     }
@@ -542,11 +514,8 @@ export class RuntimeEngine {
     this._isRunning = true;
     this._hasStarted = true;
 
-    // Re-setup input listeners if keys are missing (can happen after game restart)
-    if (this.phaserKeys.size === 0) {
-      this.inputListenersAttached = false; // Reset flag so setupInputListeners doesn't skip
-      this.setupInputListeners();
-    } else if (!this.inputListenersAttached) {
+    // Re-setup input listeners if they were detached (can happen after game restart)
+    if (!this.inputListenersAttached) {
       this.setupInputListeners();
     }
 
@@ -614,15 +583,8 @@ export class RuntimeEngine {
     if (this.frameCount % 60 === 0) {
       debugLog('info', `Update frame ${this.frameCount}, active forever loops: ${this.activeForeverLoops.size}`);
 
-      // Log key states
-      const keyStates: string[] = [];
-      for (const [key, phaserKey] of this.phaserKeys) {
-        if (phaserKey.isDown) {
-          keyStates.push(key);
-        }
-      }
-      if (keyStates.length > 0) {
-        debugLog('info', `Keys currently down: ${keyStates.join(', ')}`);
+      if (this.pressedKeys.size > 0) {
+        debugLog('info', `Keys currently down: ${Array.from(this.pressedKeys).sort().join(', ')}`);
       }
     }
 
@@ -1099,12 +1061,8 @@ export class RuntimeEngine {
       this.keydownListener = null;
       this.keyupListener = null;
       this.inputListenersAttached = false;
-      // Remove all registered keys
-      for (const key of this.phaserKeys.values()) {
-        keyboard.removeKey(key);
-      }
-      this.phaserKeys.clear();
     }
+    this.pressedKeys.clear();
 
     // Remove physics listeners
     this.scene.matter?.world?.off('beforeupdate', this.applyCustomGravity);
@@ -1130,19 +1088,15 @@ export class RuntimeEngine {
 
   private lastKeyCheckLog = 0;
   isKeyPressed(key: string): boolean {
-    const phaserKey = this.phaserKeys.get(key);
-    if (phaserKey) {
-      const isDown = phaserKey.isDown;
-      // Log only once per second to avoid spam
-      const now = Date.now();
-      if (isDown && now - this.lastKeyCheckLog > 1000) {
-        debugLog('action', `isKeyPressed(${key}) = ${isDown}`);
-        this.lastKeyCheckLog = now;
-      }
-      return isDown;
+    const normalizedKey = normalizeConfiguredKey(key);
+    const isDown = this.pressedKeys.has(normalizedKey);
+    // Log only once per second to avoid spam
+    const now = Date.now();
+    if (isDown && now - this.lastKeyCheckLog > 1000) {
+      debugLog('action', `isKeyPressed(${normalizedKey}) = ${isDown}`);
+      this.lastKeyCheckLog = now;
     }
-    debugLog('error', `isKeyPressed: Unknown key "${key}"`);
-    return false;
+    return isDown;
   }
 
   isMouseDown(): boolean {

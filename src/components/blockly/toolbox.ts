@@ -2,6 +2,7 @@ import * as Blockly from 'blockly';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { MessageDefinition, Variable, VariableType } from '@/types';
+import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
 
 // Special value for "pick from stage" option
 const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
@@ -323,6 +324,10 @@ function getTouchDirectionOptions(): Array<[string, string]> {
     ['right', 'RIGHT'],
     ['side', 'SIDE'],
   ];
+}
+
+function getKeyDropdownOptions(): Array<[string, string]> {
+  return KEY_DROPDOWN_OPTIONS.map(([label, value]) => [label, value]);
 }
 
 function getSceneDropdownOptions(): Array<[string, string]> {
@@ -931,17 +936,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('🔑 when')
-        .appendField(new Blockly.FieldDropdown([
-          ['space', 'SPACE'],
-          ['up arrow', 'UP'],
-          ['down arrow', 'DOWN'],
-          ['left arrow', 'LEFT'],
-          ['right arrow', 'RIGHT'],
-          ['w', 'W'],
-          ['a', 'A'],
-          ['s', 'S'],
-          ['d', 'D'],
-        ]), 'KEY')
+        .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
         .appendField('pressed');
       this.appendStatementInput('NEXT')
         .setCheck(null);
@@ -1313,17 +1308,7 @@ function registerCustomBlocks() {
     init: function() {
       this.appendDummyInput()
         .appendField('key')
-        .appendField(new Blockly.FieldDropdown([
-          ['space', 'SPACE'],
-          ['up arrow', 'UP'],
-          ['down arrow', 'DOWN'],
-          ['left arrow', 'LEFT'],
-          ['right arrow', 'RIGHT'],
-          ['w', 'W'],
-          ['a', 'A'],
-          ['s', 'S'],
-          ['d', 'D'],
-        ]), 'KEY')
+        .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
         .appendField('pressed?');
       this.setOutput(true, 'Boolean');
       this.setColour('#5CB1D6');
