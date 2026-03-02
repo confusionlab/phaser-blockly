@@ -217,6 +217,56 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (!containerRef.current || !project) return;
 
+    const cleanupPhaserInstance = (reason: string) => {
+      const isStillPlaying = useEditorStore.getState().isPlaying;
+      console.log(`[PhaserCanvas] Cleanup triggered (${reason}, isStillPlaying=${isStillPlaying})`);
+
+      // During in-play scene sync (selectedSceneId changes while still playing),
+      // keep the active runtime alive and skip full teardown.
+      if (isStillPlaying && playModeInitialSceneRef.current !== null) {
+        console.log('[PhaserCanvas] Skipping cleanup - still in active play session');
+        return;
+      }
+
+      // Clear play mode tracking
+      playModeInitialSceneRef.current = null;
+
+      // Clear shared global variables when play session ends
+      clearSharedGlobalVariables();
+
+      // Clean up all scene runtimes (for multi-scene play mode)
+      for (const [sceneId, runtime] of sceneRuntimes) {
+        try {
+          runtime.cleanup();
+        } catch (e) {
+          console.warn(`[PhaserCanvas] Error cleaning up runtime for scene ${sceneId}:`, e);
+        }
+      }
+      sceneRuntimes.clear();
+
+      if (runtimeRef.current) {
+        runtimeRef.current.cleanup();
+        setCurrentRuntime(null);
+        runtimeRef.current = null;
+      }
+      if (gameRef.current) {
+        // Stop all sounds before destroying to prevent AudioContext errors
+        try {
+          const sceneManager = gameRef.current.scene;
+          sceneManager.getScenes(true).forEach(scene => {
+            if (scene?.sound) {
+              scene.sound.stopAll();
+              scene.sound.removeAll();
+            }
+          });
+        } catch {
+          // Ignore - scene might not exist
+        }
+        gameRef.current.destroy(true);
+        gameRef.current = null;
+      }
+    };
+
     // In play mode, only recreate game when play mode starts (not when selectedSceneId changes)
     // Check if this is just a scene change during an active play session
     const isSceneChangeInPlayMode = isPlaying &&
@@ -225,12 +275,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
     if (isSceneChangeInPlayMode) {
       console.log('[PhaserCanvas] Skipping game recreation - play mode already active, scene change handled internally');
-      // Return a no-op cleanup since we're not creating anything new
-      return () => {};
+      return () => cleanupPhaserInstance('scene-sync');
     }
-
-    // Track whether this effect instance actually created a game (for cleanup decision)
-    const wasPlayingOnCreation = isPlaying;
 
     if (isPlaying) {
       // Store the initial scene for this play session
@@ -441,55 +487,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       createGame();
     }
 
-    return () => {
-      const isStillPlaying = useEditorStore.getState().isPlaying;
-      console.log(`[PhaserCanvas] Cleanup triggered (wasPlayingOnCreation=${wasPlayingOnCreation}, isStillPlaying=${isStillPlaying})`);
-
-      // Skip cleanup if we're still in play mode - scene switches during play don't need full cleanup
-      // This happens when selectedSceneId changes but isPlaying stays true
-      if (wasPlayingOnCreation && isStillPlaying && playModeInitialSceneRef.current !== null) {
-        console.log('[PhaserCanvas] Skipping cleanup - still in active play session');
-        return;
-      }
-
-      // Clear play mode tracking
-      playModeInitialSceneRef.current = null;
-
-      // Clear shared global variables when play session ends
-      clearSharedGlobalVariables();
-
-      // Clean up all scene runtimes (for multi-scene play mode)
-      for (const [sceneId, runtime] of sceneRuntimes) {
-        try {
-          runtime.cleanup();
-        } catch (e) {
-          console.warn(`[PhaserCanvas] Error cleaning up runtime for scene ${sceneId}:`, e);
-        }
-      }
-      sceneRuntimes.clear();
-
-      if (runtimeRef.current) {
-        runtimeRef.current.cleanup();
-        setCurrentRuntime(null);
-        runtimeRef.current = null;
-      }
-      if (gameRef.current) {
-        // Stop all sounds before destroying to prevent AudioContext errors
-        try {
-          const sceneManager = gameRef.current.scene;
-          sceneManager.getScenes(true).forEach(scene => {
-            if (scene?.sound) {
-              scene.sound.stopAll();
-              scene.sound.removeAll();
-            }
-          });
-        } catch {
-          // Ignore - scene might not exist
-        }
-        gameRef.current.destroy(true);
-        gameRef.current = null;
-      }
-    };
+    return () => cleanupPhaserInstance('effect-dispose');
   }, [project?.id, selectedSceneId, isPlaying, handleObjectDragEnd]);
 
   // Toggle collider debug rendering at runtime (without recreating game)
