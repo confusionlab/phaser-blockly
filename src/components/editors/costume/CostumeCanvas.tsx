@@ -1153,6 +1153,54 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return false;
   }, [restoreOriginalControls]);
 
+  const activateVectorPointEditing = useCallback((saveConversionToHistory: boolean): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+    if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'vector') return false;
+
+    let activeObject = fabricCanvas.getActiveObject() as any;
+    if (!activeObject) return false;
+    if (!isVectorPointSelectableObject(activeObject)) {
+      fabricCanvas.discardActiveObject();
+      fabricCanvas.requestRenderAll();
+      return false;
+    }
+
+    if (!isPathLikeVectorObject(activeObject)) {
+      const converted = ensurePathLikeObjectForVectorTool(activeObject);
+      if (!converted) {
+        fabricCanvas.discardActiveObject();
+        fabricCanvas.requestRenderAll();
+        return false;
+      }
+      if (converted !== activeObject) {
+        activeObject = converted;
+        fabricCanvas.setActiveObject(activeObject);
+        if (saveConversionToHistory) {
+          saveHistory();
+        }
+      }
+    }
+
+    const applied = applyVectorPointControls(activeObject);
+    if (!applied) return false;
+
+    activeObject.hasControls = true;
+    activeObject.hasBorders = true;
+    activeObject.borderColor = VECTOR_SELECTION_COLOR;
+    activeObject.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
+    activeObject.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
+    activeObject.cornerSize = 12;
+    activeObject.transparentCorners = false;
+    activeObject.lockMovementX = true;
+    activeObject.lockMovementY = true;
+    activeObject.lockRotation = true;
+    activeObject.lockScalingX = true;
+    activeObject.lockScalingY = true;
+    fabricCanvas.requestRenderAll();
+    return true;
+  }, [applyVectorPointControls, ensurePathLikeObjectForVectorTool, saveHistory]);
+
   const configureCanvasForTool = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
@@ -1241,33 +1289,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         activeObject = null;
       }
 
-      if (activeObject && isVectorPointMode && !isPathLikeVectorObject(activeObject)) {
-        const previous = activeObject;
-        const converted = ensurePathLikeObjectForVectorTool(activeObject);
-        if (converted) {
-          activeObject = converted;
-          fabricCanvas.setActiveObject(converted);
-          if (converted !== previous) {
-            saveHistory();
-          }
-        } else {
-          fabricCanvas.discardActiveObject();
-          activeObject = null;
-        }
-      }
-
-      if (activeObject && isVectorPointMode && isPathLikeVectorObject(activeObject)) {
-        const activeObjectAny = activeObject as any;
-        const applied = applyVectorPointControls(activeObjectAny);
-        if (applied) {
-          activeObjectAny.hasControls = true;
-          activeObjectAny.hasBorders = true;
-          activeObjectAny.borderColor = VECTOR_SELECTION_COLOR;
-          activeObjectAny.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
-          activeObjectAny.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
-          activeObjectAny.cornerSize = 12;
-          activeObjectAny.transparentCorners = false;
-        }
+      if (activeObject && isVectorPointMode) {
+        activateVectorPointEditing(false);
       }
     }
 
@@ -1286,7 +1309,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyCanvasCursor(fabricCanvas, cursor);
     fabricCanvas.requestRenderAll();
     syncSelectionState();
-  }, [applyVectorPointControls, ensurePathLikeObjectForVectorTool, restoreAllOriginalControls, restoreOriginalControls, saveHistory, syncBrushCursorOverlay, syncSelectionState]);
+  }, [activateVectorPointEditing, applyVectorPointControls, restoreAllOriginalControls, restoreOriginalControls, syncBrushCursorOverlay, syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -1425,30 +1448,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           fabricCanvas.requestRenderAll();
           return;
         }
-        let target = opt.target as any;
-        if (!isPathLikeVectorObject(target)) {
-          const converted = ensurePathLikeObjectForVectorTool(target);
-          if (!converted) {
-            fabricCanvas.discardActiveObject();
-            fabricCanvas.requestRenderAll();
-            return;
-          }
-          if (converted !== target) {
-            saveHistory();
-          }
-          target = converted;
-        }
-        fabricCanvas.setActiveObject(target);
-        if (applyVectorPointControls(target)) {
-          target.hasControls = true;
-          target.hasBorders = true;
-          target.lockMovementX = true;
-          target.lockMovementY = true;
-          target.lockScalingX = true;
-          target.lockScalingY = true;
-          target.lockRotation = true;
-        }
-        fabricCanvas.requestRenderAll();
         return;
       }
 
@@ -1598,6 +1597,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       syncTextSelectionState();
       syncSelectionState();
       if (editorModeRef.current === 'vector' && activeToolRef.current === 'vector') {
+        activateVectorPointEditing(true);
         configureCanvasForTool();
       }
     };
@@ -1622,6 +1622,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       onTextSelectionChangeRef.current?.(false);
       syncSelectionState();
       if (editorModeRef.current === 'vector' && activeToolRef.current === 'vector') {
+        activateVectorPointEditing(false);
         configureCanvasForTool();
       }
     };
@@ -1668,7 +1669,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, loadBitmapLayer, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection]);
+  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, loadBitmapLayer, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
