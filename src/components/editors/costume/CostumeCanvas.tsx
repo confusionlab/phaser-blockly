@@ -44,6 +44,7 @@ export interface CostumeCanvasHandle {
   exportCostumeState: () => CostumeCanvasExportState;
   setEditorMode: (mode: EditorMode) => Promise<void>;
   getEditorMode: () => EditorMode;
+  deleteSelection: () => boolean;
   clear: () => void;
   undo: () => void;
   redo: () => void;
@@ -350,6 +351,28 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       editorMode: mode,
     };
   }, []);
+
+  const deleteSelection = useCallback((): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+    if (editorModeRef.current !== 'vector') return false;
+
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (!activeObject) return false;
+    if (isTextObject(activeObject) && (activeObject as any).isEditing) return false;
+
+    if (activeObject.type === 'activeSelection' && typeof activeObject.getObjects === 'function') {
+      const selectedObjects = activeObject.getObjects() as any[];
+      selectedObjects.forEach((obj) => fabricCanvas.remove(obj));
+    } else {
+      fabricCanvas.remove(activeObject);
+    }
+
+    fabricCanvas.discardActiveObject();
+    fabricCanvas.requestRenderAll();
+    saveHistory();
+    return true;
+  }, [saveHistory]);
 
   const loadCostume = useCallback(async (costume: Costume) => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -694,6 +717,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       syncTextStyleFromSelection();
     };
 
+    const onTextChanged = () => {
+      if (editorModeRef.current !== 'vector') return;
+      syncTextStyleFromSelection();
+      saveHistory();
+    };
+
     fabricCanvas.on('mouse:down', onMouseDown);
     fabricCanvas.on('mouse:move', onMouseMove);
     fabricCanvas.on('mouse:up', onMouseUp);
@@ -701,6 +730,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvas.on('object:modified', onObjectModified);
     fabricCanvas.on('selection:created', onSelectionChange);
     fabricCanvas.on('selection:updated', onSelectionChange);
+    fabricCanvas.on('text:changed', onTextChanged);
+    fabricCanvas.on('text:editing:exited', onTextChanged);
 
     const colliderCanvas = colliderCanvasRef.current;
     if (colliderCanvas) {
@@ -723,6 +754,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.off('object:modified', onObjectModified);
       fabricCanvas.off('selection:created', onSelectionChange);
       fabricCanvas.off('selection:updated', onSelectionChange);
+      fabricCanvas.off('text:changed', onTextChanged);
+      fabricCanvas.off('text:editing:exited', onTextChanged);
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
@@ -740,8 +773,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const activeObject = fabricCanvas.getActiveObject() as any;
     if (!activeObject) return;
 
+    let changed = false;
     if (isTextObject(activeObject)) {
-      activeObject.set({
+      const textObject = activeObject as any;
+      if (textObject.fill !== brushColor) changed = true;
+      if (textObject.fontFamily !== textStyle.fontFamily) changed = true;
+      if (textObject.fontSize !== textStyle.fontSize) changed = true;
+      if (textObject.fontWeight !== textStyle.fontWeight) changed = true;
+      if (textObject.textAlign !== textStyle.textAlign) changed = true;
+      if (textObject.opacity !== textStyle.opacity) changed = true;
+      textObject.set({
         fill: brushColor,
         fontFamily: textStyle.fontFamily,
         fontSize: textStyle.fontSize,
@@ -750,14 +791,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         opacity: textStyle.opacity,
       });
     } else {
+      if (activeObject.fill !== brushColor) changed = true;
+      if (activeObject.stroke !== brushColor) changed = true;
       activeObject.set({
         fill: brushColor,
         stroke: brushColor,
       });
     }
+
+    if (!changed) return;
+
     activeObject.setCoords?.();
     fabricCanvas.requestRenderAll();
-  }, [brushColor, textStyle]);
+    saveHistory();
+  }, [brushColor, textStyle, saveHistory]);
 
   // Resize CSS dimensions for zoom.
   useEffect(() => {
@@ -987,6 +1034,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     getEditorMode: () => editorModeRef.current,
 
+    deleteSelection,
+
     clear: () => {
       void (async () => {
         await loadBitmapLayer('', false);
@@ -1021,6 +1070,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory,
     setEditorMode,
     switchEditorMode,
+    deleteSelection,
   ]);
 
   // Handle wheel zoom.

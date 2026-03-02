@@ -39,6 +39,8 @@ export function EditorLayout() {
     playValidationIssues,
     setShowPlayValidationDialog,
     focusPlayValidationIssue,
+    activeObjectTab,
+    costumeUndoHandler,
   } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(70);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
@@ -260,6 +262,12 @@ export function EditorLayout() {
 
     // Delete selected object(s): Delete/Backspace (disabled in Blockly area)
     if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping && !isInBlocklyArea) {
+      if (activeObjectTab === 'costumes') {
+        e.preventDefault();
+        costumeUndoHandler?.deleteSelection?.();
+        return;
+      }
+
       if (!selectedSceneId) {
         return;
       }
@@ -307,6 +315,8 @@ export function EditorLayout() {
     removeObject,
     selectObjects,
     getPanelFromElement,
+    activeObjectTab,
+    costumeUndoHandler,
   ]);
 
   useEffect(() => {

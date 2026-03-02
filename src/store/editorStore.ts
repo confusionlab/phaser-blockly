@@ -28,6 +28,7 @@ export type UndoRedoHandler = {
   canUndo?: () => boolean;
   canRedo?: () => boolean;
   beforeHistoryUndoRedo?: () => void;
+  deleteSelection?: () => boolean;
 };
 
 type SelectionHistoryOptions = {

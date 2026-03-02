@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import * as Select from '@radix-ui/react-select';
 import { Button } from '@/components/ui/button';
@@ -129,7 +129,8 @@ export const CostumeToolbar = memo(({
   onColliderTypeChange,
 }: CostumeToolbarProps) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const colorPickerRef = useRef<HTMLDivElement>(null);
+  const [colorPickerPosition, setColorPickerPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const colorButtonRef = useRef<HTMLButtonElement>(null);
 
   const handleColorChange = useCallback((value: Parameters<typeof Color.rgb>[0]) => {
     try {
@@ -142,8 +143,36 @@ export const CostumeToolbar = memo(({
 
   const tools = editorMode === 'vector' ? vectorTools : bitmapTools;
 
+  const updateColorPickerPosition = useCallback(() => {
+    const button = colorButtonRef.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const pickerWidth = 212; // 192px content + padding/border
+    const viewportPadding = 8;
+    const left = Math.max(
+      viewportPadding,
+      Math.min(rect.left, window.innerWidth - pickerWidth - viewportPadding)
+    );
+    setColorPickerPosition({
+      left,
+      top: rect.bottom + 8,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showColorPicker) return;
+    updateColorPickerPosition();
+    const onViewportChange = () => updateColorPickerPosition();
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
+    return () => {
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('scroll', onViewportChange, true);
+    };
+  }, [showColorPicker, updateColorPickerPosition]);
+
   return (
-    <div className="flex items-center gap-2 px-3 py-2 border-b bg-background overflow-x-auto">
+    <div className="flex items-center gap-2 px-3 py-2 border-b bg-background overflow-x-auto overflow-y-hidden">
       <div className="flex items-center gap-1 border-r pr-2">
         <Button
           variant={editorMode === 'bitmap' ? 'default' : 'outline'}
@@ -176,18 +205,30 @@ export const CostumeToolbar = memo(({
         ))}
       </div>
 
-      <div className="relative flex items-center gap-2 border-r pr-2" ref={colorPickerRef}>
+      <div className="relative flex items-center gap-2 border-r pr-2">
         <button
+          ref={colorButtonRef}
           type="button"
           className="size-7 rounded border cursor-pointer"
           style={{ backgroundColor: brushColor }}
-          onClick={() => setShowColorPicker(!showColorPicker)}
+          onClick={() => {
+            if (!showColorPicker) {
+              updateColorPickerPosition();
+            }
+            setShowColorPicker(!showColorPicker);
+          }}
           title="Color"
         />
         {showColorPicker && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowColorPicker(false)} />
-            <div className="absolute left-0 top-full mt-1 z-50 bg-popover border rounded-lg p-3 shadow-lg">
+            <div
+              className="fixed z-50 bg-popover border rounded-lg p-3 shadow-lg"
+              style={{
+                left: colorPickerPosition.left,
+                top: colorPickerPosition.top,
+              }}
+            >
               <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
                 <ColorPickerSelection className="h-32 rounded mb-2" />
                 <ColorPickerHue />

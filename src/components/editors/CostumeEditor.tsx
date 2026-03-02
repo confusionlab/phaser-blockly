@@ -33,6 +33,7 @@ export function CostumeEditor() {
       redo: () => canvasRef.current?.redo(),
       canUndo: () => canvasRef.current?.canUndo() ?? false,
       canRedo: () => canvasRef.current?.canRedo() ?? false,
+      deleteSelection: () => canvasRef.current?.deleteSelection() ?? false,
     };
     registerCostumeUndo(handler);
     return () => registerCostumeUndo(null);
@@ -244,7 +245,19 @@ export function CostumeEditor() {
   }, [editorMode]);
 
   const handleTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
-    setTextStyle((prev) => ({ ...prev, ...updates }));
+    setTextStyle((prev) => {
+      const next = { ...prev, ...updates };
+      if (
+        next.fontFamily === prev.fontFamily &&
+        next.fontSize === prev.fontSize &&
+        next.fontWeight === prev.fontWeight &&
+        next.textAlign === prev.textAlign &&
+        next.opacity === prev.opacity
+      ) {
+        return prev;
+      }
+      return next;
+    });
   }, []);
 
   const handleColliderTypeChange = useCallback((type: ColliderConfig['type']) => {
