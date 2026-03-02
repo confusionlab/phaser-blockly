@@ -9,6 +9,7 @@ import {
   type DrawingTool,
   type MoveOrderAction,
   type TextToolStyle,
+  type VectorHandleType,
 } from './costume/CostumeToolbar';
 import { getEffectiveObjectProps, createDefaultColliderConfig } from '@/types';
 import type { Costume, ColliderConfig, CostumeEditorMode, CostumeBounds, CostumeVectorDocument } from '@/types';
@@ -61,6 +62,7 @@ export function CostumeEditor() {
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
+  const [vectorHandleType, setVectorHandleType] = useState<VectorHandleType>('corner');
   const [textStyle, setTextStyle] = useState<TextToolStyle>({
     fontFamily: 'Arial',
     fontSize: 32,
@@ -417,6 +419,8 @@ export function CostumeEditor() {
         onEditorModeChange={handleEditorModeChange}
         onToolChange={handleToolChange}
         onMoveOrder={handleMoveOrder}
+        vectorHandleType={vectorHandleType}
+        onVectorHandleTypeChange={setVectorHandleType}
         onAlign={handleAlign}
         alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
         onColorChange={setBrushColor}
@@ -439,6 +443,7 @@ export function CostumeEditor() {
           activeTool={activeTool}
           brushColor={brushColor}
           brushSize={brushSize}
+          vectorHandleType={vectorHandleType}
           textStyle={textStyle}
           canUndo={canUndo}
           canRedo={canRedo}

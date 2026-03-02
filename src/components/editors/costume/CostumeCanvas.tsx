@@ -15,7 +15,7 @@ import {
 } from 'fabric';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
-import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle } from './CostumeToolbar';
+import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle, VectorHandleType } from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CostumeCanvasHeader } from './CostumeCanvasHeader';
 
@@ -31,6 +31,8 @@ const VECTOR_SELECTION_CORNER_COLOR = '#ffffff';
 const VECTOR_SELECTION_CORNER_STROKE = '#005eff';
 const VECTOR_SELECTION_BORDER_OPACITY = 1;
 const VECTOR_SELECTION_BORDER_SCALE = 2;
+const VECTOR_JSON_EXTRA_PROPS = ['nodeHandleTypes'];
+const CIRCLE_CUBIC_KAPPA = 0.5522847498307936;
 
 function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
   fabricCanvas.defaultCursor = cursor;
@@ -66,8 +68,6 @@ const VECTOR_POINT_CONTROL_STYLE = {
   cornerSize: 14,
   transparentCorners: false,
 };
-
-const ELLIPSE_VECTOR_SEGMENTS = 24;
 
 type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
@@ -106,6 +106,7 @@ interface CostumeCanvasProps {
   activeTool: DrawingTool;
   brushColor: string;
   brushSize: number;
+  vectorHandleType: VectorHandleType;
   textStyle: TextToolStyle;
   canUndo: boolean;
   canRedo: boolean;
@@ -160,6 +161,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   activeTool,
   brushColor,
   brushSize,
+  vectorHandleType,
   textStyle,
   canUndo,
   canRedo,
@@ -214,6 +216,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
 
+  const vectorHandleTypeRef = useRef<VectorHandleType>(vectorHandleType);
+  vectorHandleTypeRef.current = vectorHandleType;
+
   const textStyleRef = useRef(textStyle);
   textStyleRef.current = textStyle;
 
@@ -261,6 +266,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const originalControlsRef = useRef<WeakMap<object, Record<string, Control> | undefined>>(new WeakMap());
   const brushCursorEnabledRef = useRef(false);
   const brushCursorPosRef = useRef<{ x: number; y: number } | null>(null);
+  const activePathAnchorRef = useRef<{ path: any; anchorIndex: number } | null>(null);
 
   const syncSelectionState = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -311,6 +317,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     setEditorModeState(mode);
     onModeChangeRef.current?.(mode);
     if (mode !== 'vector') {
+      activePathAnchorRef.current = null;
       onTextSelectionChangeRef.current?.(false);
     }
     syncSelectionState();
@@ -417,7 +424,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const composed = getCanvasElement();
     const bitmapDataUrl = composed.toDataURL('image/png');
     const mode = editorModeRef.current;
-    const vectorJson = mode === 'vector' ? JSON.stringify(fabricCanvas.toJSON()) : null;
+    const vectorJson = mode === 'vector' ? JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS)) : null;
     return { mode, bitmapDataUrl, vectorJson };
   }, [getCanvasElement]);
 
@@ -715,7 +722,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         editorMode: mode,
         vectorDocument: {
           version: 1,
-          fabricJson: JSON.stringify(fabricCanvas.toJSON()),
+          fabricJson: JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS)),
         },
       };
     }
@@ -1010,6 +1017,321 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return new Point(x, y).transform(matrix);
   }, []);
 
+  const isNearlyEqual = useCallback((a: number, b: number) => Math.abs(a - b) <= 0.0001, []);
+
+  const getPathCommands = useCallback((pathObj: any) => {
+    if (!pathObj || !Array.isArray(pathObj.path)) return [] as any[];
+    return pathObj.path as any[];
+  }, []);
+
+  const getCommandType = useCallback((command: any): string => {
+    if (!Array.isArray(command) || typeof command[0] !== 'string') return '';
+    return command[0].toUpperCase();
+  }, []);
+
+  const getCommandEndpoint = useCallback((command: any): Point | null => {
+    if (!Array.isArray(command) || command.length < 3) return null;
+    const x = Number(command[command.length - 2]);
+    const y = Number(command[command.length - 1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return new Point(x, y);
+  }, []);
+
+  const getLastDrawableCommandIndex = useCallback((pathObj: any): number => {
+    const commands = getPathCommands(pathObj);
+    for (let i = commands.length - 1; i >= 0; i -= 1) {
+      if (getCommandType(commands[i]) !== 'Z') {
+        return i;
+      }
+    }
+    return -1;
+  }, [getCommandType, getPathCommands]);
+
+  const isClosedPath = useCallback((pathObj: any): boolean => {
+    const commands = getPathCommands(pathObj);
+    if (commands.length === 0) return false;
+    if (commands.some((command) => getCommandType(command) === 'Z')) return true;
+    const start = getCommandEndpoint(commands[0]);
+    const lastIndex = getLastDrawableCommandIndex(pathObj);
+    const end = lastIndex >= 0 ? getCommandEndpoint(commands[lastIndex]) : null;
+    if (!start || !end) return false;
+    return isNearlyEqual(start.x, end.x) && isNearlyEqual(start.y, end.y);
+  }, [getCommandEndpoint, getCommandType, getLastDrawableCommandIndex, getPathCommands, isNearlyEqual]);
+
+  const normalizeAnchorIndex = useCallback((pathObj: any, anchorIndex: number): number => {
+    if (anchorIndex <= 0) return 0;
+    const commands = getPathCommands(pathObj);
+    if (!commands[anchorIndex]) return anchorIndex;
+    const closed = isClosedPath(pathObj);
+    if (!closed) return anchorIndex;
+    const lastDrawable = getLastDrawableCommandIndex(pathObj);
+    if (anchorIndex !== lastDrawable) return anchorIndex;
+    const start = getCommandEndpoint(commands[0]);
+    const end = getCommandEndpoint(commands[anchorIndex]);
+    if (!start || !end) return anchorIndex;
+    if (isNearlyEqual(start.x, end.x) && isNearlyEqual(start.y, end.y)) {
+      return 0;
+    }
+    return anchorIndex;
+  }, [getCommandEndpoint, getLastDrawableCommandIndex, getPathCommands, isClosedPath, isNearlyEqual]);
+
+  const getPathNodeHandleTypes = useCallback((pathObj: any): Record<string, VectorHandleType> => {
+    const raw = pathObj?.nodeHandleTypes;
+    if (!raw || typeof raw !== 'object') return {};
+    const out: Record<string, VectorHandleType> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (value === 'linear' || value === 'corner' || value === 'smooth' || value === 'symmetric') {
+        out[key] = value;
+      }
+    }
+    return out;
+  }, []);
+
+  const setPathNodeHandleType = useCallback((pathObj: any, anchorIndex: number, type: VectorHandleType) => {
+    const normalized = normalizeAnchorIndex(pathObj, anchorIndex);
+    const next = getPathNodeHandleTypes(pathObj);
+    next[String(normalized)] = type;
+    pathObj.set?.('nodeHandleTypes', next);
+  }, [getPathNodeHandleTypes, normalizeAnchorIndex]);
+
+  const getPathNodeHandleType = useCallback((pathObj: any, anchorIndex: number): VectorHandleType | null => {
+    const normalized = normalizeAnchorIndex(pathObj, anchorIndex);
+    const map = getPathNodeHandleTypes(pathObj);
+    return map[String(normalized)] ?? null;
+  }, [getPathNodeHandleTypes, normalizeAnchorIndex]);
+
+  const findPreviousDrawableCommandIndex = useCallback((pathObj: any, commandIndex: number): number => {
+    const commands = getPathCommands(pathObj);
+    for (let i = commandIndex - 1; i >= 0; i -= 1) {
+      if (getCommandType(commands[i]) !== 'Z') return i;
+    }
+    if (isClosedPath(pathObj)) {
+      for (let i = commands.length - 1; i >= 0; i -= 1) {
+        if (getCommandType(commands[i]) !== 'Z') return i;
+      }
+    }
+    return 0;
+  }, [getCommandType, getPathCommands, isClosedPath]);
+
+  const getAnchorPointForIndex = useCallback((pathObj: any, anchorIndex: number): Point | null => {
+    const commands = getPathCommands(pathObj);
+    if (!commands[anchorIndex]) return null;
+    return getCommandEndpoint(commands[anchorIndex]);
+  }, [getCommandEndpoint, getPathCommands]);
+
+  const findIncomingCubicCommandIndex = useCallback((pathObj: any, anchorIndex: number): number => {
+    const commands = getPathCommands(pathObj);
+    let found = -1;
+    for (let i = 0; i < commands.length; i += 1) {
+      if (getCommandType(commands[i]) !== 'C') continue;
+      const normalized = normalizeAnchorIndex(pathObj, i);
+      if (normalized === anchorIndex) {
+        found = i;
+      }
+    }
+    return found;
+  }, [getCommandType, getPathCommands, normalizeAnchorIndex]);
+
+  const findOutgoingCubicCommandIndex = useCallback((pathObj: any, anchorIndex: number): number => {
+    const commands = getPathCommands(pathObj);
+    for (let i = 0; i < commands.length; i += 1) {
+      if (getCommandType(commands[i]) !== 'C') continue;
+      const previousIndex = findPreviousDrawableCommandIndex(pathObj, i);
+      const normalizedPrevious = normalizeAnchorIndex(pathObj, previousIndex);
+      if (normalizedPrevious === anchorIndex) {
+        return i;
+      }
+    }
+    return -1;
+  }, [findPreviousDrawableCommandIndex, getCommandType, getPathCommands, normalizeAnchorIndex]);
+
+  const parsePathControlKey = useCallback((key: string): { commandIndex: number; changed: 'anchor' | 'incoming' | 'outgoing' } | null => {
+    const cp1 = /^c_(\d+)_C_CP_1$/i.exec(key);
+    if (cp1) {
+      return { commandIndex: Number(cp1[1]), changed: 'outgoing' };
+    }
+    const cp2 = /^c_(\d+)_C_CP_2$/i.exec(key);
+    if (cp2) {
+      return { commandIndex: Number(cp2[1]), changed: 'incoming' };
+    }
+    const anchor = /^c_(\d+)_/i.exec(key);
+    if (anchor) {
+      return { commandIndex: Number(anchor[1]), changed: 'anchor' };
+    }
+    return null;
+  }, []);
+
+  const resolveAnchorFromPathControlKey = useCallback((pathObj: any, key: string): { anchorIndex: number; changed: 'anchor' | 'incoming' | 'outgoing' } | null => {
+    const parsed = parsePathControlKey(key);
+    if (!parsed) return null;
+    if (parsed.changed === 'incoming' || parsed.changed === 'anchor') {
+      return {
+        anchorIndex: normalizeAnchorIndex(pathObj, parsed.commandIndex),
+        changed: parsed.changed,
+      };
+    }
+    const previousIndex = findPreviousDrawableCommandIndex(pathObj, parsed.commandIndex);
+    return {
+      anchorIndex: normalizeAnchorIndex(pathObj, previousIndex),
+      changed: 'outgoing',
+    };
+  }, [findPreviousDrawableCommandIndex, normalizeAnchorIndex, parsePathControlKey]);
+
+  const removeDuplicateClosedPathAnchorControl = useCallback((pathObj: any, controls: Record<string, Control>) => {
+    if (!isClosedPath(pathObj)) return;
+    const commands = getPathCommands(pathObj);
+    if (commands.length === 0) return;
+    const lastDrawable = getLastDrawableCommandIndex(pathObj);
+    if (lastDrawable <= 0) return;
+
+    const start = getCommandEndpoint(commands[0]);
+    const end = getCommandEndpoint(commands[lastDrawable]);
+    if (!start || !end) return;
+    if (!isNearlyEqual(start.x, end.x) || !isNearlyEqual(start.y, end.y)) return;
+
+    const commandType = getCommandType(commands[lastDrawable]);
+    if (!commandType) return;
+    delete controls[`c_${lastDrawable}_${commandType}`];
+  }, [
+    getCommandEndpoint,
+    getCommandType,
+    getLastDrawableCommandIndex,
+    getPathCommands,
+    isClosedPath,
+    isNearlyEqual,
+  ]);
+
+  const enforcePathAnchorHandleType = useCallback((
+    pathObj: any,
+    anchorIndex: number,
+    changed: 'anchor' | 'incoming' | 'outgoing' | null
+  ) => {
+    const handleType = getPathNodeHandleType(pathObj, anchorIndex) ?? 'corner';
+    if (handleType === 'corner') return;
+
+    const commands = getPathCommands(pathObj);
+    const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
+    const anchorPoint = getAnchorPointForIndex(pathObj, normalizedAnchor);
+    if (!anchorPoint) return;
+
+    const incomingCommandIndex = findIncomingCubicCommandIndex(pathObj, normalizedAnchor);
+    const outgoingCommandIndex = findOutgoingCubicCommandIndex(pathObj, normalizedAnchor);
+    const incomingCommand = incomingCommandIndex >= 0 ? commands[incomingCommandIndex] : null;
+    const outgoingCommand = outgoingCommandIndex >= 0 ? commands[outgoingCommandIndex] : null;
+
+    if (handleType === 'linear') {
+      if (incomingCommand && getCommandType(incomingCommand) === 'C') {
+        incomingCommand[3] = anchorPoint.x;
+        incomingCommand[4] = anchorPoint.y;
+      }
+      if (outgoingCommand && getCommandType(outgoingCommand) === 'C') {
+        outgoingCommand[1] = anchorPoint.x;
+        outgoingCommand[2] = anchorPoint.y;
+      }
+      pathObj.set('dirty', true);
+      pathObj.setDimensions();
+      pathObj.setCoords();
+      return;
+    }
+
+    if (!incomingCommand || !outgoingCommand) {
+      return;
+    }
+
+    const incomingVec = {
+      x: Number(incomingCommand[3]) - anchorPoint.x,
+      y: Number(incomingCommand[4]) - anchorPoint.y,
+    };
+    const outgoingVec = {
+      x: Number(outgoingCommand[1]) - anchorPoint.x,
+      y: Number(outgoingCommand[2]) - anchorPoint.y,
+    };
+    const incomingLength = Math.hypot(incomingVec.x, incomingVec.y);
+    const outgoingLength = Math.hypot(outgoingVec.x, outgoingVec.y);
+
+    let baseDirX = 1;
+    let baseDirY = 0;
+    if (changed === 'incoming' && incomingLength > 0.0001) {
+      baseDirX = incomingVec.x / incomingLength;
+      baseDirY = incomingVec.y / incomingLength;
+    } else if (changed === 'outgoing' && outgoingLength > 0.0001) {
+      baseDirX = -outgoingVec.x / outgoingLength;
+      baseDirY = -outgoingVec.y / outgoingLength;
+    } else if (incomingLength > 0.0001) {
+      baseDirX = incomingVec.x / incomingLength;
+      baseDirY = incomingVec.y / incomingLength;
+    } else if (outgoingLength > 0.0001) {
+      baseDirX = -outgoingVec.x / outgoingLength;
+      baseDirY = -outgoingVec.y / outgoingLength;
+    }
+
+    let nextIncomingLength = incomingLength;
+    let nextOutgoingLength = outgoingLength;
+    if (handleType === 'symmetric') {
+      if (changed === 'incoming') {
+        nextOutgoingLength = incomingLength;
+      } else if (changed === 'outgoing') {
+        nextIncomingLength = outgoingLength;
+      } else {
+        const maxLength = Math.max(incomingLength, outgoingLength);
+        nextIncomingLength = maxLength;
+        nextOutgoingLength = maxLength;
+      }
+    } else {
+      if (nextIncomingLength <= 0.0001 && nextOutgoingLength > 0.0001) {
+        nextIncomingLength = nextOutgoingLength;
+      }
+      if (nextOutgoingLength <= 0.0001 && nextIncomingLength > 0.0001) {
+        nextOutgoingLength = nextIncomingLength;
+      }
+    }
+
+    incomingCommand[3] = anchorPoint.x + baseDirX * nextIncomingLength;
+    incomingCommand[4] = anchorPoint.y + baseDirY * nextIncomingLength;
+    outgoingCommand[1] = anchorPoint.x - baseDirX * nextOutgoingLength;
+    outgoingCommand[2] = anchorPoint.y - baseDirY * nextOutgoingLength;
+
+    pathObj.set('dirty', true);
+    pathObj.setDimensions();
+    pathObj.setCoords();
+  }, [
+    findIncomingCubicCommandIndex,
+    findOutgoingCubicCommandIndex,
+    getAnchorPointForIndex,
+    getCommandType,
+    getPathCommands,
+    getPathNodeHandleType,
+    normalizeAnchorIndex,
+  ]);
+
+  const createFourPointEllipsePathData = useCallback((obj: any): string | null => {
+    const rx = Math.max(1, typeof obj.rx === 'number' ? obj.rx : ((obj.width || 1) / 2));
+    const ry = Math.max(1, typeof obj.ry === 'number' ? obj.ry : ((obj.height || 1) / 2));
+    const kx = rx * CIRCLE_CUBIC_KAPPA;
+    const ky = ry * CIRCLE_CUBIC_KAPPA;
+    const p0 = toCanvasPoint(obj, rx, 0);
+    const p1 = toCanvasPoint(obj, 0, ry);
+    const p2 = toCanvasPoint(obj, -rx, 0);
+    const p3 = toCanvasPoint(obj, 0, -ry);
+    const c01a = toCanvasPoint(obj, rx, ky);
+    const c01b = toCanvasPoint(obj, kx, ry);
+    const c12a = toCanvasPoint(obj, -kx, ry);
+    const c12b = toCanvasPoint(obj, -rx, ky);
+    const c23a = toCanvasPoint(obj, -rx, -ky);
+    const c23b = toCanvasPoint(obj, -kx, -ry);
+    const c30a = toCanvasPoint(obj, kx, -ry);
+    const c30b = toCanvasPoint(obj, rx, -ky);
+    const r = (value: number) => Math.round(value * 1000) / 1000;
+    return [
+      `M ${r(p0.x)} ${r(p0.y)}`,
+      `C ${r(c01a.x)} ${r(c01a.y)} ${r(c01b.x)} ${r(c01b.y)} ${r(p1.x)} ${r(p1.y)}`,
+      `C ${r(c12a.x)} ${r(c12a.y)} ${r(c12b.x)} ${r(c12b.y)} ${r(p2.x)} ${r(p2.y)}`,
+      `C ${r(c23a.x)} ${r(c23a.y)} ${r(c23b.x)} ${r(c23b.y)} ${r(p3.x)} ${r(p3.y)}`,
+      `C ${r(c30a.x)} ${r(c30a.y)} ${r(c30b.x)} ${r(c30b.y)} ${r(p0.x)} ${r(p0.y)}`,
+      'Z',
+    ].join(' ');
+  }, [toCanvasPoint]);
+
   const buildPathDataFromPoints = useCallback((points: Point[], closed: boolean): string => {
     if (points.length === 0) return '';
     const rounded = (value: number) => Math.round(value * 1000) / 1000;
@@ -1035,17 +1357,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       };
     }
 
-    if (type === 'ellipse' || type === 'circle') {
-      const rx = Math.max(1, typeof obj.rx === 'number' ? obj.rx : ((obj.width || 1) / 2));
-      const ry = Math.max(1, typeof obj.ry === 'number' ? obj.ry : ((obj.height || 1) / 2));
-      const points: Point[] = [];
-      for (let i = 0; i < ELLIPSE_VECTOR_SEGMENTS; i += 1) {
-        const t = (Math.PI * 2 * i) / ELLIPSE_VECTOR_SEGMENTS;
-        points.push(toCanvasPoint(obj, Math.cos(t) * rx, Math.sin(t) * ry));
-      }
-      return points.length >= 3 ? { points, closed: true } : null;
-    }
-
     if (typeof obj.getCoords === 'function') {
       const coords = obj.getCoords() as Array<{ x: number; y: number }> | undefined;
       if (Array.isArray(coords) && coords.length >= 2) {
@@ -1063,15 +1374,37 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!obj || !isVectorPointSelectableObject(obj)) return null;
     if (isPathLikeVectorObject(obj)) return obj;
 
-    const sampled = sampleObjectOutlinePoints(obj);
-    if (!sampled || sampled.points.length < 2) return null;
-
-    const pathData = buildPathDataFromPoints(sampled.points, sampled.closed);
+    const type = getFabricObjectType(obj);
+    let pathData = '';
+    let shouldFill = false;
+    let initialNodeHandleTypes: Record<string, VectorHandleType> = {};
+    if (type === 'ellipse' || type === 'circle') {
+      pathData = createFourPointEllipsePathData(obj) ?? '';
+      shouldFill = true;
+      initialNodeHandleTypes = {
+        '0': 'symmetric',
+        '1': 'symmetric',
+        '2': 'symmetric',
+        '3': 'symmetric',
+      };
+    } else {
+      const sampled = sampleObjectOutlinePoints(obj);
+      if (!sampled || sampled.points.length < 2) return null;
+      pathData = buildPathDataFromPoints(sampled.points, sampled.closed);
+      shouldFill = sampled.closed;
+      if (sampled.closed) {
+        for (let i = 0; i < sampled.points.length; i += 1) {
+          initialNodeHandleTypes[String(i)] = 'corner';
+        }
+      } else {
+        initialNodeHandleTypes = { '0': 'linear', '1': 'linear' };
+      }
+    }
     if (!pathData) return null;
 
     const strokeValue = obj.stroke ?? obj.fill ?? '#000000';
     const path = new Path(pathData, {
-      fill: sampled.closed ? (obj.fill ?? null) : null,
+      fill: shouldFill ? (obj.fill ?? null) : null,
       stroke: strokeValue,
       strokeWidth: typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
       strokeLineCap: obj.strokeLineCap,
@@ -1083,6 +1416,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fillRule: obj.fillRule,
       paintFirst: obj.paintFirst,
       shadow: obj.shadow ?? null,
+      nodeHandleTypes: initialNodeHandleTypes,
       selectable: true,
       evented: true,
       hasControls: true,
@@ -1090,7 +1424,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     } as any);
     path.setCoords();
     return path;
-  }, [buildPathDataFromPoints, sampleObjectOutlinePoints]);
+  }, [buildPathDataFromPoints, createFourPointEllipsePathData, sampleObjectOutlinePoints]);
 
   const ensurePathLikeObjectForVectorTool = useCallback((obj: any): any | null => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1126,7 +1460,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     if (type === 'path') {
-      obj.controls = controlsUtils.createPathControls(obj, {
+      const controls = controlsUtils.createPathControls(obj, {
         ...VECTOR_POINT_CONTROL_STYLE,
         pointStyle: {
           controlFill: '#0ea5e9',
@@ -1138,6 +1472,50 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           connectionDashArray: [4, 3],
         },
       });
+      removeDuplicateClosedPathAnchorControl(obj, controls);
+      for (const [key, control] of Object.entries(controls)) {
+        const originalMouseDownHandler = control.mouseDownHandler;
+        control.mouseDownHandler = ((eventData: any, transform: any, x: number, y: number) => {
+          const pathObj = transform?.target;
+          if (pathObj && getFabricObjectType(pathObj) === 'path') {
+            const resolved = resolveAnchorFromPathControlKey(pathObj, key);
+            if (resolved) {
+              activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
+              const existingType = getPathNodeHandleType(pathObj, resolved.anchorIndex);
+              if (!existingType) {
+                setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
+                enforcePathAnchorHandleType(pathObj, resolved.anchorIndex, resolved.changed);
+                pathObj.canvas?.requestRenderAll?.();
+              }
+            }
+          }
+          if (typeof originalMouseDownHandler === 'function') {
+            return originalMouseDownHandler.call(control, eventData, transform, x, y);
+          }
+          return false;
+        }) as any;
+
+        const originalActionHandler = control.actionHandler;
+        if (typeof originalActionHandler !== 'function') continue;
+        control.actionHandler = ((eventData: any, transform: any, x: number, y: number) => {
+          const performed = originalActionHandler.call(control, eventData, transform, x, y);
+          const pathObj = transform?.target;
+          if (!pathObj || getFabricObjectType(pathObj) !== 'path') {
+            return performed;
+          }
+          const resolved = resolveAnchorFromPathControlKey(pathObj, key);
+          if (resolved) {
+            const existingType = getPathNodeHandleType(pathObj, resolved.anchorIndex);
+            if (!existingType) {
+              setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
+            }
+            activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
+            enforcePathAnchorHandleType(pathObj, resolved.anchorIndex, resolved.changed);
+          }
+          return performed;
+        }) as any;
+      }
+      obj.controls = controls;
       if (typeof obj.setControlVisible === 'function') {
         for (const key of Object.keys(obj.controls || {})) {
           obj.setControlVisible(key, true);
@@ -1161,7 +1539,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     restoreOriginalControls(obj);
     return false;
-  }, [restoreOriginalControls]);
+  }, [
+    enforcePathAnchorHandleType,
+    getPathNodeHandleType,
+    removeDuplicateClosedPathAnchorControl,
+    resolveAnchorFromPathControlKey,
+    restoreOriginalControls,
+    setPathNodeHandleType,
+  ]);
 
   const activateVectorPointEditing = useCallback((saveConversionToHistory: boolean): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1663,6 +2048,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         void commitBitmapSelection();
         return;
       }
+      activePathAnchorRef.current = null;
       onTextSelectionChangeRef.current?.(false);
       syncSelectionState();
       if (editorModeRef.current === 'vector' && activeToolRef.current === 'vector') {
@@ -1719,6 +2105,21 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   useEffect(() => {
     configureCanvasForTool();
   }, [activeTool, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, configureCanvasForTool]);
+
+  useEffect(() => {
+    const activeAnchor = activePathAnchorRef.current;
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!activeAnchor || !fabricCanvas) return;
+    if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'vector') return;
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (!activeObject || activeObject !== activeAnchor.path) return;
+    if (getFabricObjectType(activeObject) !== 'path') return;
+
+    setPathNodeHandleType(activeObject, activeAnchor.anchorIndex, vectorHandleType);
+    enforcePathAnchorHandleType(activeObject, activeAnchor.anchorIndex, null);
+    fabricCanvas.requestRenderAll();
+    saveHistory();
+  }, [enforcePathAnchorHandleType, saveHistory, setPathNodeHandleType, vectorHandleType]);
 
   // Sync selected vector object style when controls change.
   useEffect(() => {

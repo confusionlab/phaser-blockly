@@ -35,6 +35,7 @@ import type { CostumeEditorMode } from '@/types';
 export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'vector' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
+export type VectorHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';
 export type AlignAction =
   | 'top-left'
   | 'top-center'
@@ -86,6 +87,8 @@ interface CostumeToolbarProps {
   onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
+  vectorHandleType: VectorHandleType;
+  onVectorHandleTypeChange: (type: VectorHandleType) => void;
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
@@ -132,6 +135,13 @@ const alignGrid: Array<{ action: AlignAction; label: string; title: string }> = 
   { action: 'bottom-right', label: '↘', title: 'Bottom Right' },
 ];
 
+const vectorHandleTypeOptions: Array<{ value: VectorHandleType; label: string }> = [
+  { value: 'linear', label: 'Linear' },
+  { value: 'corner', label: 'Corner' },
+  { value: 'smooth', label: 'Smooth' },
+  { value: 'symmetric', label: 'Symmetric' },
+];
+
 export const CostumeToolbar = memo(({
   editorMode,
   activeTool,
@@ -142,6 +152,8 @@ export const CostumeToolbar = memo(({
   onEditorModeChange,
   onToolChange,
   onMoveOrder,
+  vectorHandleType,
+  onVectorHandleTypeChange,
   onAlign,
   alignDisabled,
   onColorChange,
@@ -249,6 +261,35 @@ export const CostumeToolbar = memo(({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
+      )}
+
+      {editorMode === 'vector' && activeTool === 'vector' && (
+        <div className="flex items-center gap-2 border-r pr-2">
+          <span className="text-xs text-muted-foreground whitespace-nowrap">Handles</span>
+          <Select.Root value={vectorHandleType} onValueChange={(value) => onVectorHandleTypeChange(value as VectorHandleType)}>
+            <Select.Trigger className="h-8 min-w-[120px] rounded-md border bg-background px-2 text-xs flex items-center justify-between gap-2">
+              <Select.Value />
+            </Select.Trigger>
+            <Select.Portal>
+              <Select.Content className="z-[70] bg-popover border rounded-md shadow-md">
+                <Select.Viewport className="p-1">
+                  {vectorHandleTypeOptions.map((option) => (
+                    <Select.Item
+                      key={option.value}
+                      value={option.value}
+                      className="text-xs px-2 py-1.5 rounded hover:bg-muted cursor-pointer flex items-center justify-between gap-2"
+                    >
+                      <Select.ItemText>{option.label}</Select.ItemText>
+                      <Select.ItemIndicator>
+                        <Check className="size-3" />
+                      </Select.ItemIndicator>
+                    </Select.Item>
+                  ))}
+                </Select.Viewport>
+              </Select.Content>
+            </Select.Portal>
+          </Select.Root>
         </div>
       )}
 
