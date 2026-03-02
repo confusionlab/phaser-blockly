@@ -42,7 +42,7 @@ export function EditorLayout() {
     activeObjectTab,
     costumeUndoHandler,
   } = useEditorStore();
-  const [dividerPosition, setDividerPosition] = useState(70);
+  const [dividerPosition, setDividerPosition] = useState(60);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isLoading, setIsLoading] = useState(false);

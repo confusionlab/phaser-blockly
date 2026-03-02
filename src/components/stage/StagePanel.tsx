@@ -15,7 +15,7 @@ interface StagePanelProps {
 export function StagePanel({ fullscreen = false }: StagePanelProps) {
   const { stopPlaying, viewMode, cycleViewMode, selectedSceneId, selectedObjectId, selectObject } = useEditorStore();
   const { project } = useProjectStore();
-  const [bottomHeightPercent, setBottomHeightPercent] = useState(70); // percentage
+  const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const fullscreenSelectionRef = useRef<{ sceneId: string | null; objectId: string | null } | null>(null);
