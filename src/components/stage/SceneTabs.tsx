@@ -14,7 +14,7 @@ import { runInHistoryTransaction } from '@/store/universalHistory';
 
 export function SceneTabs() {
   const { project, addScene, removeScene, updateScene } = useProjectStore();
-  const { selectedSceneId, selectScene } = useEditorStore();
+  const { selectedSceneId, selectScene, clearSceneUiState } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [showBgColorPicker, setShowBgColorPicker] = useState(false);
@@ -66,6 +66,7 @@ export function SceneTabs() {
     if (project.scenes.length > 1) {
       runInHistoryTransaction('scene-tabs:delete-scene', () => {
         removeScene(sceneId);
+        clearSceneUiState(sceneId);
         if (selectedSceneId === sceneId) {
           const remaining = project.scenes.filter(s => s.id !== sceneId);
           selectScene(remaining[0]?.id || null);
