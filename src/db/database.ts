@@ -3,7 +3,7 @@ import type { CostumeEditorMode, CostumeVectorDocument, Project, ReusableObject 
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -483,6 +483,58 @@ export interface ExportedProject {
 // Schema migration functions - add new migrations here as schema evolves
 type MigrationFn = (project: Project) => Project;
 
+function remapLegacySceneNameRefsInBlocklyXml(
+  blocklyXml: string,
+  sceneNameToId: Map<string, string>,
+  sceneIds: Set<string>
+): string {
+  if (!blocklyXml.trim()) return blocklyXml;
+  if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') {
+    return blocklyXml;
+  }
+
+  try {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(blocklyXml, 'text/xml');
+    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+      return blocklyXml;
+    }
+
+    let changed = false;
+    const blocks = Array.from(xmlDoc.getElementsByTagName('block'));
+    for (const block of blocks) {
+      if ((block.getAttribute('type') || '') !== 'control_switch_scene') continue;
+
+      const fields = Array.from(block.children).filter(
+        (child): child is Element =>
+          child.tagName.toLowerCase() === 'field' &&
+          child.getAttribute('name') === 'SCENE'
+      );
+
+      for (const field of fields) {
+        const currentValue = (field.textContent || '').trim();
+        if (!currentValue || sceneIds.has(currentValue)) {
+          continue;
+        }
+
+        const remappedId = sceneNameToId.get(currentValue);
+        if (remappedId && remappedId !== currentValue) {
+          field.textContent = remappedId;
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed || !xmlDoc.documentElement) {
+      return blocklyXml;
+    }
+
+    return new XMLSerializer().serializeToString(xmlDoc.documentElement);
+  } catch {
+    return blocklyXml;
+  }
+}
+
 const migrations: Record<number, MigrationFn> = {
   // v2: Ensure basic scene defaults for older files.
   2: (project) => {
@@ -532,6 +584,49 @@ const migrations: Record<number, MigrationFn> = {
     })),
     schemaVersion: 4,
   }),
+  // v5: Migrate legacy scene-name references in Blockly "switch scene" blocks to scene IDs.
+  5: (project) => {
+    const scenes = Array.isArray(project.scenes) ? project.scenes : [];
+    const countsByName = new Map<string, number>();
+    for (const scene of scenes) {
+      const name = typeof scene.name === 'string' ? scene.name.trim() : '';
+      if (!name) continue;
+      countsByName.set(name, (countsByName.get(name) || 0) + 1);
+    }
+
+    const sceneNameToId = new Map<string, string>();
+    for (const scene of scenes) {
+      const name = typeof scene.name === 'string' ? scene.name.trim() : '';
+      if (!name) continue;
+      if ((countsByName.get(name) || 0) !== 1) continue;
+      sceneNameToId.set(name, scene.id);
+    }
+    const sceneIds = new Set(scenes.map((scene) => scene.id));
+
+    return {
+      ...project,
+      scenes: scenes.map((scene) => ({
+        ...scene,
+        objects: (scene.objects || []).map((obj) => ({
+          ...obj,
+          blocklyXml: remapLegacySceneNameRefsInBlocklyXml(
+            obj.blocklyXml || '',
+            sceneNameToId,
+            sceneIds,
+          ),
+        })),
+      })),
+      components: (project.components || []).map((component) => ({
+        ...component,
+        blocklyXml: remapLegacySceneNameRefsInBlocklyXml(
+          component.blocklyXml || '',
+          sceneNameToId,
+          sceneIds,
+        ),
+      })),
+      schemaVersion: 5,
+    };
+  },
 };
 
 function migrateProject(project: Project, fromVersion: number): Project {
@@ -602,17 +697,23 @@ const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
   typed_variable_change: 'VAR',
 };
 
+const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
+  control_switch_scene: 'SCENE',
+};
+
 interface ImportReferenceMaps {
   objectIds: Map<string, string>;
   variableIds: Map<string, string>;
   soundIds: Map<string, string>;
   componentIds: Map<string, string>;
+  sceneIds: Map<string, string>;
 }
 
 interface ImportReferenceFallbacks {
   objectNameToId?: Map<string, string>;
   variableNameToId?: Map<string, string>;
   soundNameToId?: Map<string, string>;
+  sceneNameToId?: Map<string, string>;
 }
 
 function cloneProjectForImport(project: Project): Project {
@@ -747,6 +848,13 @@ function remapBlocklyXmlReferences(
           remapIdOrNameReference(value, maps.soundIds, fallbacks.soundNameToId)
         );
       }
+
+      const sceneFieldName = SCENE_REFERENCE_BLOCKS[blockType];
+      if (sceneFieldName) {
+        updateField(sceneFieldName, (value) =>
+          remapIdOrNameReference(value, maps.sceneIds, fallbacks.sceneNameToId)
+        );
+      }
     }
 
     if (!changed || !xmlDoc.documentElement) {
@@ -799,6 +907,7 @@ export async function importProject(jsonString: string): Promise<Project> {
   const variableIdMap = new Map<string, string>();
   const soundIdMap = new Map<string, string>();
   const componentIdMap = new Map<string, string>();
+  const sceneIdMap = new Map<string, string>();
 
   // Remap component IDs first so object.componentId references can be updated.
   for (const component of project.components) {
@@ -830,7 +939,9 @@ export async function importProject(jsonString: string): Promise<Project> {
   }
 
   for (const scene of project.scenes) {
-    scene.id = crypto.randomUUID();
+    const newSceneId = crypto.randomUUID();
+    rememberIdMapping(sceneIdMap, scene.id, newSceneId);
+    scene.id = newSceneId;
     scene.objects = Array.isArray(scene.objects) ? scene.objects : [];
     scene.objectFolders = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
     if (!scene.cameraConfig) {
@@ -880,10 +991,14 @@ export async function importProject(jsonString: string): Promise<Project> {
     variableIds: variableIdMap,
     soundIds: soundIdMap,
     componentIds: componentIdMap,
+    sceneIds: sceneIdMap,
   };
 
   const globalObjectNameToId = createUniqueNameIdMap(
     project.scenes.flatMap((scene) => scene.objects.map((obj) => ({ name: obj.name, id: obj.id })))
+  );
+  const globalSceneNameToId = createUniqueNameIdMap(
+    project.scenes.map((scene) => ({ name: scene.name, id: scene.id }))
   );
   const globalVariableNameToId = createUniqueNameIdMap(
     project.globalVariables.map((variable) => ({ name: variable.name, id: variable.id }))
@@ -919,6 +1034,7 @@ export async function importProject(jsonString: string): Promise<Project> {
         objectNameToId: sceneObjectNameToId,
         variableNameToId: combinedVariableNameToId.size > 0 ? combinedVariableNameToId : localVariableNameToId,
         soundNameToId,
+        sceneNameToId: globalSceneNameToId,
       });
     }
   }
@@ -932,6 +1048,7 @@ export async function importProject(jsonString: string): Promise<Project> {
       objectNameToId: globalObjectNameToId,
       variableNameToId: globalVariableNameToId,
       soundNameToId: componentSoundNameToId,
+      sceneNameToId: globalSceneNameToId,
     });
   }
 

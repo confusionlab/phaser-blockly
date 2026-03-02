@@ -183,6 +183,11 @@ const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
   'typed_variable_change': 'VAR',
 };
 
+// Block types that have scene reference dropdowns
+const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
+  'control_switch_scene': 'SCENE',
+};
+
 // Special values that are always valid (not object IDs)
 const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
 
@@ -191,7 +196,9 @@ function validateBlockReferences(
   workspace: Blockly.WorkspaceSvg,
   sceneObjectIds: Set<string>,
   objectSoundIds: Set<string>,
-  validVariableIds: Set<string>
+  validVariableIds: Set<string>,
+  sceneIds: Set<string>,
+  sceneNameCounts: Map<string, number>
 ) {
   const allBlocks = workspace.getAllBlocks(false);
 
@@ -232,6 +239,17 @@ function validateBlockReferences(
       if (fieldValue && fieldValue !== '' && !validVariableIds.has(fieldValue)) {
         hasError = true;
         errors.push('Variable not found');
+      }
+    }
+
+    // Check scene references
+    const sceneFieldName = SCENE_REFERENCE_BLOCKS[blockType];
+    if (sceneFieldName) {
+      const fieldValue = block.getFieldValue(sceneFieldName);
+      const hasLegacyUniqueName = !!fieldValue && (sceneNameCounts.get(fieldValue) || 0) === 1;
+      if (!fieldValue || (!sceneIds.has(fieldValue) && !hasLegacyUniqueName)) {
+        hasError = true;
+        errors.push('Scene not found in project');
       }
     }
 
@@ -484,8 +502,20 @@ export function BlocklyEditor() {
           const validVariableIds = new Set<string>();
           (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
           (obj.localVariables || []).forEach(v => validVariableIds.add(v.id));
+          const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
+          const sceneNameCounts = new Map<string, number>();
+          (state.project?.scenes || []).forEach((projectScene) => {
+            sceneNameCounts.set(projectScene.name, (sceneNameCounts.get(projectScene.name) || 0) + 1);
+          });
 
-          validateBlockReferences(workspaceRef.current!, sceneObjectIds, objectSoundIds, validVariableIds);
+          validateBlockReferences(
+            workspaceRef.current!,
+            sceneObjectIds,
+            objectSoundIds,
+            validVariableIds,
+            sceneIds,
+            sceneNameCounts,
+          );
         }
       }
     });
@@ -615,8 +645,20 @@ export function BlocklyEditor() {
       const validVariableIds = new Set<string>();
       (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
       (obj?.localVariables || []).forEach(v => validVariableIds.add(v.id));
+      const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
+      const sceneNameCounts = new Map<string, number>();
+      (state.project?.scenes || []).forEach((projectScene) => {
+        sceneNameCounts.set(projectScene.name, (sceneNameCounts.get(projectScene.name) || 0) + 1);
+      });
 
-      validateBlockReferences(workspaceRef.current, sceneObjectIds, objectSoundIds, validVariableIds);
+      validateBlockReferences(
+        workspaceRef.current,
+        sceneObjectIds,
+        objectSoundIds,
+        validVariableIds,
+        sceneIds,
+        sceneNameCounts,
+      );
     }
 
     setTimeout(() => {

@@ -483,10 +483,10 @@ export function registerCodeGenerators(): void {
   // --- Scene Switching ---
 
   javascriptGenerator.forBlock['control_switch_scene'] = function(block) {
-    const sceneName = block.getFieldValue('SCENE') || 'Scene 1';
+    const sceneRef = block.getFieldValue('SCENE') || '';
     const mode = block.getFieldValue('MODE') || 'RESUME';
     const restart = mode === 'RESTART';
-    return `runtime.switchToScene(${asJsString(sceneName)}, ${restart});\n`;
+    return `runtime.switchToScene(${asJsString(sceneRef)}, ${restart});\n`;
   };
 
   // --- Sound ---

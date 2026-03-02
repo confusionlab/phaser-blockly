@@ -98,6 +98,7 @@ interface EditorStore {
   toggleFolderCollapsed: (sceneId: string, folderId: string) => void;
   setFolderCollapsed: (sceneId: string, folderId: string, collapsed: boolean) => void;
   setCollapsedFoldersForScene: (sceneId: string, folderIds: string[]) => void;
+  clearSceneUiState: (sceneId: string) => void;
 
   // Object picker actions
   openObjectPicker: (callback: ObjectPickerCallback, excludeId?: string | null) => void;
@@ -302,6 +303,15 @@ export const useEditorStore = create<EditorStore>((set) => ({
         [sceneId]: Array.from(new Set(folderIds)),
       },
     }));
+  },
+
+  clearSceneUiState: (sceneId) => {
+    set((state) => {
+      const { [sceneId]: _deleted, ...rest } = state.collapsedFolderIdsByScene;
+      return {
+        collapsedFolderIdsByScene: rest,
+      };
+    });
   },
 
   setActiveObjectTab: (tab) => {

@@ -14,9 +14,10 @@ import { runInHistoryTransaction } from '@/store/universalHistory';
 
 export function SceneTabs() {
   const { project, addScene, removeScene, updateScene } = useProjectStore();
-  const { selectedSceneId, selectScene } = useEditorStore();
+  const { selectedSceneId, selectScene, clearSceneUiState } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
   const [showBgColorPicker, setShowBgColorPicker] = useState(false);
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
@@ -51,14 +52,31 @@ export function SceneTabs() {
   const handleDoubleClick = (scene: typeof project.scenes[0]) => {
     setEditingId(scene.id);
     setEditName(scene.name);
+    setEditError(null);
   };
 
   const handleSaveEdit = () => {
-    if (editingId && editName.trim()) {
-      updateScene(editingId, { name: editName.trim() });
+    if (!editingId) return;
+
+    const nextName = editName.trim();
+    if (!nextName) {
+      setEditError('Scene name is required.');
+      return;
     }
+
+    const normalizedNextName = nextName.toLowerCase();
+    const duplicateExists = project.scenes.some(
+      (scene) => scene.id !== editingId && scene.name.trim().toLowerCase() === normalizedNextName,
+    );
+    if (duplicateExists) {
+      setEditError('Scene name must be unique.');
+      return;
+    }
+
+    updateScene(editingId, { name: nextName });
     setEditingId(null);
     setEditName('');
+    setEditError(null);
   };
 
   const handleDeleteScene = (sceneId: string, e: React.MouseEvent) => {
@@ -66,6 +84,7 @@ export function SceneTabs() {
     if (project.scenes.length > 1) {
       runInHistoryTransaction('scene-tabs:delete-scene', () => {
         removeScene(sceneId);
+        clearSceneUiState(sceneId);
         if (selectedSceneId === sceneId) {
           const remaining = project.scenes.filter(s => s.id !== sceneId);
           selectScene(remaining[0]?.id || null);
@@ -90,10 +109,22 @@ export function SceneTabs() {
           {editingId === scene.id ? (
             <Input
               value={editName}
-              onChange={e => setEditName(e.target.value)}
+              onChange={e => {
+                setEditName(e.target.value);
+                setEditError(null);
+              }}
               onBlur={handleSaveEdit}
-              onKeyDown={e => e.key === 'Enter' && handleSaveEdit()}
-              className="w-24 h-6 px-1 py-0.5 text-sm"
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  handleSaveEdit();
+                }
+                if (e.key === 'Escape') {
+                  setEditingId(null);
+                  setEditName('');
+                  setEditError(null);
+                }
+              }}
+              className={`w-24 h-6 px-1 py-0.5 text-sm ${editError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
               autoFocus
               onClick={e => e.stopPropagation()}
             />

@@ -31,6 +31,10 @@ const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
   typed_variable_change: 'VAR',
 };
 
+const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
+  control_switch_scene: 'SCENE',
+};
+
 const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES']);
 
 export interface PlayValidationIssue {
@@ -57,6 +61,8 @@ function validateBlockElement(
   object: GameObject,
   soundIds: Set<string>,
   variableIds: Set<string>,
+  sceneIds: Set<string>,
+  sceneNameCounts: Map<string, number>,
   componentsById: Map<string, Project['components'][number]>
 ): PlayValidationIssue[] {
   const issues: PlayValidationIssue[] = [];
@@ -118,12 +124,30 @@ function validateBlockElement(
     }
   }
 
+  const sceneFieldName = SCENE_REFERENCE_BLOCKS[blockType];
+  if (sceneFieldName) {
+    const value = getFieldValue(blockElement, sceneFieldName);
+    if (!value) {
+      pushIssue('Missing scene selection in dropdown.');
+    } else {
+      const hasLegacyUniqueName = (sceneNameCounts.get(value) || 0) === 1;
+      if (!sceneIds.has(value) && !hasLegacyUniqueName) {
+        pushIssue('Selected scene target is missing in this project.');
+      }
+    }
+  }
+
   return issues;
 }
 
 export function validateProjectBeforePlay(project: Project): PlayValidationIssue[] {
   const issues: PlayValidationIssue[] = [];
   const componentsById = new Map((project.components || []).map((component) => [component.id, component]));
+  const sceneIds = new Set(project.scenes.map((scene) => scene.id));
+  const sceneNameCounts = new Map<string, number>();
+  for (const scene of project.scenes) {
+    sceneNameCounts.set(scene.name, (sceneNameCounts.get(scene.name) || 0) + 1);
+  }
 
   for (const scene of project.scenes) {
     for (const object of scene.objects) {
@@ -148,6 +172,8 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
               object,
               soundIds,
               variableIds,
+              sceneIds,
+              sceneNameCounts,
               componentsById
             )
           );

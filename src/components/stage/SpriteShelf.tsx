@@ -153,6 +153,7 @@ export function SpriteShelf() {
     updateObject,
     updateScene,
     addScene,
+    removeScene,
     makeComponent,
     detachFromComponent,
   } = useProjectStore();
@@ -166,6 +167,7 @@ export function SpriteShelf() {
     selectScene,
     collapsedFolderIdsByScene,
     setCollapsedFoldersForScene,
+    clearSceneUiState,
   } = useEditorStore();
 
   const [contextMenu, setContextMenu] = useState<
@@ -174,19 +176,29 @@ export function SpriteShelf() {
     | null
   >(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [sceneContextMenu, setSceneContextMenu] = useState<{
+    x: number;
+    y: number;
+    sceneId: string;
+  } | null>(null);
+  const [sceneContextMenuPosition, setSceneContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [sceneDropdownOpen, setSceneDropdownOpen] = useState(false);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
+  const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const suppressNextAriaSelectionRef = useRef(false);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
   const dragPreviewLabelRef = useRef('Moving item');
@@ -221,6 +233,29 @@ export function SpriteShelf() {
       setContextMenuPosition({ left: nextLeft, top: nextTop });
     }
   }, [contextMenu, contextMenuPosition]);
+
+  useLayoutEffect(() => {
+    if (!sceneContextMenu || !sceneContextMenuRef.current || !sceneContextMenuPosition) return;
+
+    const margin = 8;
+    const menuRect = sceneContextMenuRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let nextLeft = sceneContextMenuPosition.left;
+    let nextTop = sceneContextMenuPosition.top;
+
+    if (nextLeft + menuRect.width + margin > viewportWidth) {
+      nextLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
+    }
+    if (nextTop + menuRect.height + margin > viewportHeight) {
+      nextTop = Math.max(margin, viewportHeight - menuRect.height - margin);
+    }
+
+    if (nextLeft !== sceneContextMenuPosition.left || nextTop !== sceneContextMenuPosition.top) {
+      setSceneContextMenuPosition({ left: nextLeft, top: nextTop });
+    }
+  }, [sceneContextMenu, sceneContextMenuPosition]);
 
   const { dragAndDropHooks } = useDragAndDrop<ShelfTreeItem>({
     getItems(keys) {
@@ -718,15 +753,68 @@ export function SpriteShelf() {
     e.stopPropagation();
     setEditingSceneId(sceneId);
     setEditName(currentName);
+    setSceneEditError(null);
     setTimeout(() => sceneInputRef.current?.focus(), 0);
   };
 
   const handleSaveSceneRename = () => {
-    if (editingSceneId && editName.trim()) {
-      updateScene(editingSceneId, { name: editName.trim() });
+    if (!editingSceneId) return;
+
+    const nextName = editName.trim();
+    if (!nextName) {
+      setSceneEditError('Scene name is required.');
+      return;
     }
+
+    const normalizedNextName = nextName.toLowerCase();
+    const duplicateExists = !!project?.scenes.some(
+      (scene) => scene.id !== editingSceneId && scene.name.trim().toLowerCase() === normalizedNextName,
+    );
+    if (duplicateExists) {
+      setSceneEditError('Scene name must be unique.');
+      return;
+    }
+
+    updateScene(editingSceneId, { name: nextName });
     setEditingSceneId(null);
     setEditName('');
+    setSceneEditError(null);
+  };
+
+  const handleCloseSceneContextMenu = () => {
+    setSceneContextMenu(null);
+    setSceneContextMenuPosition(null);
+  };
+
+  const handleDeleteScene = (sceneId: string) => {
+    if (!project || project.scenes.length <= 1) return;
+
+    runInHistoryTransaction('sprite-shelf:delete-scene', () => {
+      removeScene(sceneId);
+      clearSceneUiState(sceneId);
+
+      if (selectedSceneId === sceneId) {
+        const remainingScenes = useProjectStore.getState().project?.scenes ?? [];
+        selectScene(remainingScenes[0]?.id ?? null);
+      }
+    });
+  };
+
+  const handleRequestDeleteScene = (sceneId: string) => {
+    if (!project || project.scenes.length <= 1) return;
+    const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+    if (!scene) return;
+    setSceneDeleteTarget({ id: scene.id, name: scene.name });
+  };
+
+  const handleCancelDeleteScene = () => {
+    setSceneDeleteTarget(null);
+  };
+
+  const handleConfirmDeleteScene = () => {
+    if (!sceneDeleteTarget) return;
+    handleDeleteScene(sceneDeleteTarget.id);
+    setSceneDeleteTarget(null);
   };
 
   const handleSaveToLibrary = async () => {
@@ -1009,14 +1097,17 @@ export function SpriteShelf() {
   return (
     <div className="h-full flex flex-col bg-card border-r">
       <div className="flex items-center justify-between px-3 py-2 border-b">
-        <DropdownMenu>
+        <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-1 text-xs font-medium hover:text-primary transition-colors">
               {selectedScene.name}
               <ChevronRight className="size-3" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-48">
+          <DropdownMenuContent
+            align="start"
+            className={`min-w-48 ${sceneContextMenu ? 'pointer-events-none' : ''}`}
+          >
             {project?.scenes.map((scene) => (
               editingSceneId === scene.id ? (
                 <div
@@ -1027,13 +1118,23 @@ export function SpriteShelf() {
                   <Input
                     ref={sceneInputRef}
                     value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
+                    onChange={(e) => {
+                      setEditName(e.target.value);
+                      setSceneEditError(null);
+                    }}
                     onBlur={handleSaveSceneRename}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === 'Escape') handleSaveSceneRename();
+                      if (e.key === 'Enter') {
+                        handleSaveSceneRename();
+                      }
+                      if (e.key === 'Escape') {
+                        setEditingSceneId(null);
+                        setEditName('');
+                        setSceneEditError(null);
+                      }
                     }}
                     onClick={(e) => e.stopPropagation()}
-                    className="h-6 text-xs flex-1"
+                    className={`h-6 text-xs flex-1 ${sceneEditError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                     autoFocus
                   />
                 </div>
@@ -1041,6 +1142,16 @@ export function SpriteShelf() {
                 <DropdownMenuItem
                   key={scene.id}
                   onClick={() => selectScene(scene.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSceneContextMenuPosition({ left: e.clientX, top: e.clientY });
+                    setSceneContextMenu({
+                      x: e.clientX,
+                      y: e.clientY,
+                      sceneId: scene.id,
+                    });
+                  }}
                   className={`group flex items-center justify-between ${scene.id === selectedSceneId ? 'bg-accent' : ''}`}
                 >
                   <span className="flex-1">{scene.name}</span>
@@ -1244,6 +1355,34 @@ export function SpriteShelf() {
         </>
       )}
 
+      {sceneContextMenu && (
+        <>
+          <div className="fixed inset-0 z-[9999]" onClick={handleCloseSceneContextMenu} />
+          <Card
+            ref={sceneContextMenuRef}
+            className="fixed z-[10000] py-1 min-w-40 gap-0 pointer-events-auto"
+            style={{
+              left: sceneContextMenuPosition?.left ?? sceneContextMenu.x,
+              top: sceneContextMenuPosition?.top ?? sceneContextMenu.y,
+            }}
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                handleRequestDeleteScene(sceneContextMenu.sceneId);
+                handleCloseSceneContextMenu();
+              }}
+              className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
+              disabled={!project || project.scenes.length <= 1}
+            >
+              <Trash2 className="size-4" />
+              Delete Scene
+            </Button>
+          </Card>
+        </>
+      )}
+
       <ObjectLibraryBrowser
         open={showLibrary}
         onOpenChange={setShowLibrary}
@@ -1263,6 +1402,25 @@ export function SpriteShelf() {
               Cancel
             </Button>
             <Button variant="destructive" onClick={handleConfirmDeleteFolder}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!sceneDeleteTarget} onOpenChange={(open) => !open && handleCancelDeleteScene()}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete Scene</DialogTitle>
+            <DialogDescription>
+              Are you sure? everything inside the scene will be deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCancelDeleteScene}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDeleteScene}>
               Delete
             </Button>
           </DialogFooter>
