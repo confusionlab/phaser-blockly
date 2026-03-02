@@ -187,6 +187,7 @@ export function SpriteShelf() {
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState(false);
@@ -752,15 +753,68 @@ export function SpriteShelf() {
     e.stopPropagation();
     setEditingSceneId(sceneId);
     setEditName(currentName);
+    setSceneEditError(null);
     setTimeout(() => sceneInputRef.current?.focus(), 0);
   };
 
   const handleSaveSceneRename = () => {
-    if (editingSceneId && editName.trim()) {
-      updateScene(editingSceneId, { name: editName.trim() });
+    if (!editingSceneId) return;
+
+    const nextName = editName.trim();
+    if (!nextName) {
+      setSceneEditError('Scene name is required.');
+      return;
     }
+
+    const normalizedNextName = nextName.toLowerCase();
+    const duplicateExists = !!project?.scenes.some(
+      (scene) => scene.id !== editingSceneId && scene.name.trim().toLowerCase() === normalizedNextName,
+    );
+    if (duplicateExists) {
+      setSceneEditError('Scene name must be unique.');
+      return;
+    }
+
+    updateScene(editingSceneId, { name: nextName });
     setEditingSceneId(null);
     setEditName('');
+    setSceneEditError(null);
+  };
+
+  const handleCloseSceneContextMenu = () => {
+    setSceneContextMenu(null);
+    setSceneContextMenuPosition(null);
+  };
+
+  const handleDeleteScene = (sceneId: string) => {
+    if (!project || project.scenes.length <= 1) return;
+
+    runInHistoryTransaction('sprite-shelf:delete-scene', () => {
+      removeScene(sceneId);
+      clearSceneUiState(sceneId);
+
+      if (selectedSceneId === sceneId) {
+        const remainingScenes = useProjectStore.getState().project?.scenes ?? [];
+        selectScene(remainingScenes[0]?.id ?? null);
+      }
+    });
+  };
+
+  const handleRequestDeleteScene = (sceneId: string) => {
+    if (!project || project.scenes.length <= 1) return;
+    const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+    if (!scene) return;
+    setSceneDeleteTarget({ id: scene.id, name: scene.name });
+  };
+
+  const handleCancelDeleteScene = () => {
+    setSceneDeleteTarget(null);
+  };
+
+  const handleConfirmDeleteScene = () => {
+    if (!sceneDeleteTarget) return;
+    handleDeleteScene(sceneDeleteTarget.id);
+    setSceneDeleteTarget(null);
   };
 
   const handleCloseSceneContextMenu = () => {
@@ -1100,13 +1154,23 @@ export function SpriteShelf() {
                   <Input
                     ref={sceneInputRef}
                     value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
+                    onChange={(e) => {
+                      setEditName(e.target.value);
+                      setSceneEditError(null);
+                    }}
                     onBlur={handleSaveSceneRename}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === 'Escape') handleSaveSceneRename();
+                      if (e.key === 'Enter') {
+                        handleSaveSceneRename();
+                      }
+                      if (e.key === 'Escape') {
+                        setEditingSceneId(null);
+                        setEditName('');
+                        setSceneEditError(null);
+                      }
                     }}
                     onClick={(e) => e.stopPropagation()}
-                    className="h-6 text-xs flex-1"
+                    className={`h-6 text-xs flex-1 ${sceneEditError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                     autoFocus
                   />
                 </div>

@@ -2047,13 +2047,13 @@ export class RuntimeEngine {
   }
 
   // --- Scene switching ---
-  private _pendingSceneSwitch: { sceneName: string; restart: boolean } | null = null;
+  private _pendingSceneSwitch: { sceneRef: string; restart: boolean } | null = null;
 
-  switchToScene(sceneName: string, restart: boolean = false): void {
-    this._pendingSceneSwitch = { sceneName, restart };
+  switchToScene(sceneRef: string, restart: boolean = false): void {
+    this._pendingSceneSwitch = { sceneRef, restart };
   }
 
-  get pendingSceneSwitch(): { sceneName: string; restart: boolean } | null {
+  get pendingSceneSwitch(): { sceneRef: string; restart: boolean } | null {
     return this._pendingSceneSwitch;
   }
 

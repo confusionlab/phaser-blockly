@@ -213,7 +213,7 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 4,
+    schemaVersion: 5,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     globalVariables: [],
     components: [],

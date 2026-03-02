@@ -100,6 +100,43 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
   }
 }
 
+// Custom FieldDropdown for scene references that preserves unknown values
+class PreservingSceneFieldDropdown extends Blockly.FieldDropdown {
+  protected override doClassValidation_(newValue?: any): string | null {
+    if (newValue === null || newValue === undefined) {
+      return null;
+    }
+    return String(newValue);
+  }
+
+  override getText(): string {
+    const value = this.getValue();
+    if (!value) return '(select scene)';
+
+    const options = this.getOptions(false);
+    for (const option of options) {
+      if (option[1] === value && typeof option[0] === 'string') {
+        return option[0];
+      }
+    }
+
+    const project = useProjectStore.getState().project;
+    if (project) {
+      const byId = project.scenes.find((scene) => scene.id === value);
+      if (byId) {
+        return byId.name;
+      }
+
+      const byNameCount = project.scenes.filter((scene) => scene.name === value).length;
+      if (byNameCount === 1) {
+        return value;
+      }
+    }
+
+    return '(select scene)';
+  }
+}
+
 // Store reference to the field being picked for (so callback can update it)
 let pendingPickerField: Blockly.FieldDropdown | null = null;
 
@@ -239,6 +276,29 @@ function getTouchDirectionOptions(): Array<[string, string]> {
     ['right', 'RIGHT'],
     ['side', 'SIDE'],
   ];
+}
+
+function getSceneDropdownOptions(): Array<[string, string]> {
+  const project = useProjectStore.getState().project;
+  if (!project || project.scenes.length === 0) {
+    return [['(no scenes)', '']];
+  }
+
+  const nameCounts = new Map<string, number>();
+  for (const scene of project.scenes) {
+    nameCounts.set(scene.name, (nameCounts.get(scene.name) || 0) + 1);
+  }
+
+  const seenCounts = new Map<string, number>();
+  return project.scenes.map((scene) => {
+    const duplicateCount = nameCounts.get(scene.name) || 0;
+    if (duplicateCount <= 1) {
+      return [scene.name, scene.id];
+    }
+    const nextIndex = (seenCounts.get(scene.name) || 0) + 1;
+    seenCounts.set(scene.name, nextIndex);
+    return [`${scene.name} (${nextIndex})`, scene.id];
+  });
 }
 
 // Dropdown with special options + objects
@@ -1776,7 +1836,7 @@ function registerCustomBlocks() {
           ['restart', 'RESTART'],
         ]), 'MODE')
         .appendField('scene')
-        .appendField(new Blockly.FieldTextInput('Scene 1'), 'SCENE');
+        .appendField(new PreservingSceneFieldDropdown(getSceneDropdownOptions), 'SCENE');
       this.setPreviousStatement(true, null);
       this.setColour('#FFBF00');
       this.setTooltip('Switch to another scene (go to = resume where you left off, restart = start fresh)');

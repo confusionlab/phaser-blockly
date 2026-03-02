@@ -132,6 +132,17 @@ function getOrderedObjectIdsForActiveScene(fallbackIds: string[] = []): string[]
   return activeScene ? getSceneObjectsInLayerOrder(activeScene).map((obj) => obj.id) : fallbackIds;
 }
 
+function resolveSceneByReference(scenes: SceneData[], sceneRef: string): SceneData | undefined {
+  const normalizedRef = sceneRef.trim();
+  if (!normalizedRef) return undefined;
+
+  const byId = scenes.find((scene) => scene.id === normalizedRef);
+  if (byId) return byId;
+
+  const byName = scenes.filter((scene) => scene.name === normalizedRef);
+  return byName.length === 1 ? byName[0] : undefined;
+}
+
 interface PhaserCanvasProps {
   isPlaying: boolean;
 }
@@ -358,7 +369,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
               // Check for scene switch
               const pendingSwitch = runtimeRef.current.pendingSceneSwitch;
               if (pendingSwitch) {
-                const targetSceneData = project.scenes.find(s => s.name === pendingSwitch.sceneName);
+                const targetSceneData = resolveSceneByReference(project.scenes, pendingSwitch.sceneRef);
                 if (targetSceneData) {
                   runtimeRef.current.clearPendingSceneSwitch();
                   // Use consistent scene key format for all scenes
@@ -1848,7 +1859,7 @@ function createPlaySceneConfig(
         // Check for scene switch from this scene's runtime
         const pendingSwitch = runtime.pendingSceneSwitch;
         if (pendingSwitch) {
-          const targetSceneData = allScenes.find(s => s.name === pendingSwitch.sceneName);
+          const targetSceneData = resolveSceneByReference(allScenes, pendingSwitch.sceneRef);
           if (targetSceneData) {
             runtime.clearPendingSceneSwitch();
             const currentSceneKey = `PlayScene_${sceneId}`;
