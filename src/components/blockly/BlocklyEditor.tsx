@@ -286,6 +286,9 @@ export function BlocklyEditor() {
 
   const { selectedSceneId, selectedObjectId, registerCodeUndo } = useEditorStore();
   const { project, addGlobalVariable, addLocalVariable } = useProjectStore();
+  const sceneDropdownStamp = project?.scenes
+    .map((scene, index) => `${index}:${scene.id}:${scene.name}`)
+    .join('|') ?? '';
 
   // Keep refs in sync
   useEffect(() => {
@@ -666,6 +669,23 @@ export function BlocklyEditor() {
     }, 50);
     lastLoadedTargetRef.current = loadTargetKey;
   }, [selectedObjectId, selectedSceneId, project, flushPendingWorkspacePersist]);
+
+  // Blockly does not auto-rerender existing dropdown field labels when menu text changes.
+  // Refresh scene reference fields so renamed scenes are reflected on already-selected values.
+  useEffect(() => {
+    if (!workspaceRef.current) return;
+
+    const allBlocks = workspaceRef.current.getAllBlocks(false);
+    for (const block of allBlocks) {
+      const sceneFieldName = SCENE_REFERENCE_BLOCKS[block.type];
+      if (!sceneFieldName) continue;
+
+      const field = block.getField(sceneFieldName);
+      if (field instanceof Blockly.FieldDropdown) {
+        field.forceRerender();
+      }
+    }
+  }, [sceneDropdownStamp]);
 
   // Get current object name for local variable option
   const currentObjectName = (() => {
