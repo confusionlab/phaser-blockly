@@ -125,6 +125,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const [zoom, setZoom] = useState(1);
   const [editorModeState, setEditorModeState] = useState<EditorMode>('vector');
+  const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const displaySize = BASE_DISPLAY_SIZE * zoom;
 
   const editorModeRef = useRef<EditorMode>('vector');
@@ -173,18 +174,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const colliderDragModeRef = useRef<'none' | 'move' | 'resize-tl' | 'resize-tr' | 'resize-bl' | 'resize-br' | 'resize-l' | 'resize-r' | 'resize-t' | 'resize-b'>('none');
   const colliderDragStartRef = useRef<{ x: number; y: number; collider: ColliderConfig } | null>(null);
 
-  const bitmapSelectionRef = useRef<{
-    imageData: ImageData;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>(null);
+  const bitmapFloatingObjectRef = useRef<any | null>(null);
   const bitmapSelectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const bitmapMarqueeRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
-  const bitmapSelectionDragModeRef = useRef<'none' | 'marquee' | 'move'>('none');
-  const bitmapSelectionDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const bitmapSelectionDragModeRef = useRef<'none' | 'marquee'>('none');
   const bitmapSelectionBusyRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
 
   const setEditorMode = useCallback((mode: EditorMode) => {
     editorModeRef.current = mode;
@@ -195,29 +190,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
   }, []);
 
+  const isLoadRequestActive = useCallback((requestId?: number) => {
+    if (typeof requestId !== 'number') return true;
+    return loadRequestIdRef.current === requestId;
+  }, []);
+
   const drawBitmapSelectionOverlay = useCallback(() => {
     const overlayCtx = bitmapSelectionCtxRef.current;
     if (!overlayCtx) return;
 
     overlayCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
-    const floating = bitmapSelectionRef.current;
-    if (floating) {
-      const temp = document.createElement('canvas');
-      temp.width = floating.width;
-      temp.height = floating.height;
-      const tempCtx = temp.getContext('2d');
-      if (tempCtx) {
-        tempCtx.putImageData(floating.imageData, 0, 0);
-        overlayCtx.drawImage(temp, floating.x, floating.y);
-      }
-
-      overlayCtx.strokeStyle = '#0066ff';
-      overlayCtx.lineWidth = 2;
-      overlayCtx.setLineDash([6, 6]);
-      overlayCtx.strokeRect(floating.x, floating.y, floating.width, floating.height);
-      overlayCtx.setLineDash([]);
-    }
 
     const marquee = bitmapMarqueeRectRef.current;
     if (marquee && bitmapSelectionDragModeRef.current === 'marquee') {
@@ -231,33 +213,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
   }, []);
 
-  const drawFloatingSelectionToContext = useCallback((ctx: CanvasRenderingContext2D) => {
-    const floating = bitmapSelectionRef.current;
-    if (!floating) return;
-    const temp = document.createElement('canvas');
-    temp.width = floating.width;
-    temp.height = floating.height;
-    const tempCtx = temp.getContext('2d');
-    if (!tempCtx) return;
-    tempCtx.putImageData(floating.imageData, 0, 0);
-    ctx.drawImage(temp, floating.x, floating.y);
-  }, []);
-
   const getCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     if (fabricCanvas) {
-      const composed = fabricCanvas.toCanvasElement(1);
-      const composedCtx = composed.getContext('2d');
-      if (composedCtx && editorModeRef.current === 'bitmap') {
-        drawFloatingSelectionToContext(composedCtx);
-      }
-      return composed;
+      return fabricCanvas.toCanvasElement(1);
     }
     const fallback = document.createElement('canvas');
     fallback.width = CANVAS_SIZE;
     fallback.height = CANVAS_SIZE;
     return fallback;
-  }, [drawFloatingSelectionToContext]);
+  }, []);
 
   const getSelectionMousePos = useCallback((event: MouseEvent) => {
     const canvas = bitmapSelectionCanvasRef.current;
@@ -338,23 +303,34 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     onTextSelectionChangeRef.current?.(!!activeObject && isTextObject(activeObject));
   }, []);
 
-  const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean) => {
+  const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean, requestId?: number): Promise<boolean> => {
     const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) return;
+    if (!fabricCanvas) return false;
+    if (!isLoadRequestActive(requestId)) return false;
 
-    bitmapSelectionRef.current = null;
-    bitmapSelectionStartRef.current = null;
-    bitmapMarqueeRectRef.current = null;
-    bitmapSelectionDragModeRef.current = 'none';
-    bitmapSelectionDragOffsetRef.current = null;
-    drawBitmapSelectionOverlay();
-
-    suppressHistoryRef.current = true;
-    fabricCanvas.clear();
-
+    let image: FabricImage | null = null;
     if (dataUrl) {
       try {
-        const image = await FabricImage.fromURL(dataUrl);
+        image = await FabricImage.fromURL(dataUrl);
+      } catch (error) {
+        console.error('Failed to load bitmap layer:', error);
+        return false;
+      }
+      if (!isLoadRequestActive(requestId)) return false;
+    }
+
+    suppressHistoryRef.current = true;
+    try {
+      bitmapFloatingObjectRef.current = null;
+      setHasBitmapFloatingSelection(false);
+      bitmapSelectionStartRef.current = null;
+      bitmapMarqueeRectRef.current = null;
+      bitmapSelectionDragModeRef.current = 'none';
+      drawBitmapSelectionOverlay();
+
+      fabricCanvas.clear();
+
+      if (image) {
         const width = image.width || 1;
         const height = image.height || 1;
         const scale = Math.min(CANVAS_SIZE / width, CANVAS_SIZE / height, 1);
@@ -376,36 +352,37 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         } as any);
         image.scale(scale);
         fabricCanvas.add(image);
-      } catch (error) {
-        console.error('Failed to load bitmap layer:', error);
       }
-    }
 
-    fabricCanvas.requestRenderAll();
-    suppressHistoryRef.current = false;
-  }, [drawBitmapSelectionOverlay]);
+      fabricCanvas.requestRenderAll();
+      return true;
+    } finally {
+      suppressHistoryRef.current = false;
+    }
+  }, [drawBitmapSelectionOverlay, isLoadRequestActive]);
 
   const commitBitmapSelection = useCallback(async () => {
     const fabricCanvas = fabricCanvasRef.current;
-    const floating = bitmapSelectionRef.current;
-    if (!fabricCanvas || !floating) return false;
+    const floatingObject = bitmapFloatingObjectRef.current;
+    if (!fabricCanvas || !floatingObject) return false;
     if (bitmapSelectionBusyRef.current) return false;
 
     bitmapSelectionBusyRef.current = true;
     try {
+      if (fabricCanvas.getActiveObject() === floatingObject) {
+        fabricCanvas.discardActiveObject();
+      }
+      floatingObject.set({
+        selectable: false,
+        evented: false,
+        hasControls: false,
+        hasBorders: false,
+      });
+      fabricCanvas.requestRenderAll();
+
       const raster = fabricCanvas.toCanvasElement(1);
-      const rasterCtx = raster.getContext('2d');
-      if (!rasterCtx) return false;
-
-      const temp = document.createElement('canvas');
-      temp.width = floating.width;
-      temp.height = floating.height;
-      const tempCtx = temp.getContext('2d');
-      if (!tempCtx) return false;
-      tempCtx.putImageData(floating.imageData, 0, 0);
-      rasterCtx.drawImage(temp, floating.x, floating.y);
-
-      await loadBitmapLayer(raster.toDataURL('image/png'), false);
+      const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
+      if (!loaded) return false;
       saveHistory();
       return true;
     } finally {
@@ -420,61 +397,68 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     await loadBitmapLayer(rasterized, false);
   }, [loadBitmapLayer]);
 
-  const loadBitmapAsSingleVectorImage = useCallback(async (bitmapCanvas: HTMLCanvasElement) => {
+  const loadBitmapAsSingleVectorImage = useCallback(async (bitmapCanvas: HTMLCanvasElement, requestId?: number): Promise<boolean> => {
     const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) return;
-
-    suppressHistoryRef.current = true;
-    fabricCanvas.clear();
+    if (!fabricCanvas) return false;
+    if (!isLoadRequestActive(requestId)) return false;
 
     const bounds = calculateBoundsFromCanvas(bitmapCanvas);
-    if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
-      fabricCanvas.requestRenderAll();
-      suppressHistoryRef.current = false;
-      return;
+    let image: FabricImage | null = null;
+
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      const croppedCanvas = document.createElement('canvas');
+      croppedCanvas.width = bounds.width;
+      croppedCanvas.height = bounds.height;
+      const croppedCtx = croppedCanvas.getContext('2d');
+      if (!croppedCtx) {
+        return false;
+      }
+
+      croppedCtx.drawImage(
+        bitmapCanvas,
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        0,
+        0,
+        bounds.width,
+        bounds.height
+      );
+
+      try {
+        image = await FabricImage.fromURL(croppedCanvas.toDataURL('image/png'));
+      } catch (error) {
+        console.error('Failed to create vector image from bitmap bounds:', error);
+        return false;
+      }
+      if (!isLoadRequestActive(requestId)) return false;
     }
 
-    const croppedCanvas = document.createElement('canvas');
-    croppedCanvas.width = bounds.width;
-    croppedCanvas.height = bounds.height;
-    const croppedCtx = croppedCanvas.getContext('2d');
-    if (!croppedCtx) {
-      suppressHistoryRef.current = false;
-      return;
-    }
-
-    croppedCtx.drawImage(
-      bitmapCanvas,
-      bounds.x,
-      bounds.y,
-      bounds.width,
-      bounds.height,
-      0,
-      0,
-      bounds.width,
-      bounds.height
-    );
-
+    suppressHistoryRef.current = true;
     try {
-      const image = await FabricImage.fromURL(croppedCanvas.toDataURL('image/png'));
-      image.set({
-        left: bounds.x + bounds.width / 2,
-        top: bounds.y + bounds.height / 2,
-        originX: 'center',
-        originY: 'center',
-        selectable: true,
-        evented: true,
-        hasControls: true,
-        hasBorders: true,
-      } as any);
-      fabricCanvas.add(image);
-    } catch (error) {
-      console.error('Failed to create vector image from bitmap bounds:', error);
-    }
+      fabricCanvas.clear();
 
-    fabricCanvas.requestRenderAll();
-    suppressHistoryRef.current = false;
-  }, []);
+      if (image && bounds) {
+        image.set({
+          left: bounds.x + bounds.width / 2,
+          top: bounds.y + bounds.height / 2,
+          originX: 'center',
+          originY: 'center',
+          selectable: true,
+          evented: true,
+          hasControls: true,
+          hasBorders: true,
+        } as any);
+        fabricCanvas.add(image);
+      }
+
+      fabricCanvas.requestRenderAll();
+      return true;
+    } finally {
+      suppressHistoryRef.current = false;
+    }
+  }, [isLoadRequestActive]);
 
   const applySnapshot = useCallback(async (snapshot: CanvasHistorySnapshot) => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -516,7 +500,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fillColor = hexToRgb(brushColorRef.current);
     floodFill(imageData, Math.floor(x), Math.floor(y), fillColor, 32);
     ctx.putImageData(imageData, 0, 0);
-    await loadBitmapLayer(raster.toDataURL('image/png'), false);
+    const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
+    if (!loaded) return;
     saveHistory();
   }, [loadBitmapLayer, saveHistory]);
 
@@ -529,10 +514,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const rasterized = rasterizedCanvas.toDataURL('image/png');
 
     if (nextMode === 'bitmap') {
-      await loadBitmapLayer(rasterized, false);
+      const loaded = await loadBitmapLayer(rasterized, false);
+      if (!loaded) return;
       setEditorMode('bitmap');
     } else {
-      await loadBitmapAsSingleVectorImage(rasterizedCanvas);
+      const loaded = await loadBitmapAsSingleVectorImage(rasterizedCanvas);
+      if (!loaded) return;
       setEditorMode('vector');
     }
 
@@ -667,6 +654,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const loadCostume = useCallback(async (costume: Costume) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
+    const requestId = ++loadRequestIdRef.current;
 
     const requestedMode: EditorMode = costume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
     const hasValidVectorDocument =
@@ -674,37 +662,46 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       costume.vectorDocument?.version === 1 &&
       typeof costume.vectorDocument.fabricJson === 'string';
 
-    suppressHistoryRef.current = true;
-    try {
-      if (hasValidVectorDocument) {
-        try {
-          const parsed = JSON.parse(costume.vectorDocument!.fabricJson);
-          fabricCanvas.clear();
-          await fabricCanvas.loadFromJSON(parsed);
-          fabricCanvas.requestRenderAll();
-          setEditorMode('vector');
-        } catch (error) {
-          console.warn('Invalid vector document. Falling back to bitmap mode.', error);
-          await loadBitmapLayer(costume.assetId, false);
-          setEditorMode('bitmap');
-        }
-      } else if (requestedMode === 'vector') {
-        await loadBitmapLayer(costume.assetId, false);
-        const rasterizedCanvas = fabricCanvas.toCanvasElement(1);
-        await loadBitmapAsSingleVectorImage(rasterizedCanvas);
+    if (hasValidVectorDocument) {
+      let loadedVector = false;
+      try {
+        const parsed = JSON.parse(costume.vectorDocument!.fabricJson);
+        suppressHistoryRef.current = true;
+        fabricCanvas.clear();
+        await fabricCanvas.loadFromJSON(parsed);
+        if (!isLoadRequestActive(requestId)) return;
+        fabricCanvas.requestRenderAll();
         setEditorMode('vector');
-      } else {
-        await loadBitmapLayer(costume.assetId, false);
+        loadedVector = true;
+      } catch (error) {
+        console.warn('Invalid vector document. Falling back to bitmap mode.', error);
+      } finally {
+        suppressHistoryRef.current = false;
+      }
+
+      if (!loadedVector) {
+        const loaded = await loadBitmapLayer(costume.assetId, false, requestId);
+        if (!loaded || !isLoadRequestActive(requestId)) return;
         setEditorMode('bitmap');
       }
-    } finally {
-      suppressHistoryRef.current = false;
+    } else if (requestedMode === 'vector') {
+      const loadedBitmap = await loadBitmapLayer(costume.assetId, false, requestId);
+      if (!loadedBitmap || !isLoadRequestActive(requestId)) return;
+      const rasterizedCanvas = fabricCanvas.toCanvasElement(1);
+      const loadedVector = await loadBitmapAsSingleVectorImage(rasterizedCanvas, requestId);
+      if (!loadedVector || !isLoadRequestActive(requestId)) return;
+      setEditorMode('vector');
+    } else {
+      const loaded = await loadBitmapLayer(costume.assetId, false, requestId);
+      if (!loaded || !isLoadRequestActive(requestId)) return;
+      setEditorMode('bitmap');
     }
 
+    if (!isLoadRequestActive(requestId)) return;
     historyRef.current = [];
     historyIndexRef.current = -1;
     saveHistory();
-  }, [loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
+  }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
 
   const configureCanvasForTool = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -724,14 +721,21 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.isDrawingMode = false;
     }
 
-    const allowSelection = mode === 'vector' && tool === 'select';
-    fabricCanvas.selection = allowSelection;
+    const isVectorSelectionMode = mode === 'vector' && tool === 'select';
+    const floatingBitmapObject = bitmapFloatingObjectRef.current;
+    const isBitmapFloatingSelectionMode =
+      mode === 'bitmap' &&
+      tool === 'select' &&
+      !!floatingBitmapObject;
+    fabricCanvas.selection = isVectorSelectionMode;
     fabricCanvas.selectionColor = 'rgba(0, 94, 255, 0.14)';
     fabricCanvas.selectionBorderColor = VECTOR_SELECTION_COLOR;
     fabricCanvas.selectionLineWidth = 2;
     fabricCanvas.selectionDashArray = [];
     fabricCanvas.forEachObject((obj: any) => {
-      const selectable = allowSelection;
+      const selectable =
+        isVectorSelectionMode ||
+        (isBitmapFloatingSelectionMode && obj === floatingBitmapObject);
       obj.selectable = selectable;
       obj.evented = selectable;
       obj.lockMovementX = !selectable;
@@ -884,6 +888,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       const pointer = fabricCanvas.getScenePoint(opt.e);
       const mode = editorModeRef.current;
       const tool = activeToolRef.current;
+      const floatingBitmapObject = bitmapFloatingObjectRef.current;
+
+      if (mode === 'bitmap' && tool === 'select' && floatingBitmapObject) {
+        if (!opt.target || opt.target !== floatingBitmapObject) {
+          void commitBitmapSelection();
+        }
+        return;
+      }
 
       if (tool === 'fill' && mode === 'bitmap') {
         void applyFill(pointer.x, pointer.y);
@@ -1041,6 +1053,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
 
     const onSelectionCleared = () => {
+      if (
+        editorModeRef.current === 'bitmap' &&
+        activeToolRef.current === 'select' &&
+        bitmapFloatingObjectRef.current &&
+        !bitmapSelectionBusyRef.current
+      ) {
+        void commitBitmapSelection();
+        return;
+      }
       onTextSelectionChangeRef.current?.(false);
     };
 
@@ -1065,13 +1086,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       drawBitmapSelectionOverlay();
     }
 
-    void loadBitmapLayer('', false).then(() => {
-      setEditorMode('vector');
-      historyRef.current = [];
-      historyIndexRef.current = -1;
-      saveHistory();
-      configureCanvasForTool();
-    });
+    setEditorMode('vector');
+    historyRef.current = [];
+    historyIndexRef.current = -1;
+    saveHistory();
+    configureCanvasForTool();
 
     return () => {
       fabricCanvas.off('mouse:down', onMouseDown);
@@ -1087,12 +1106,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [applyFill, configureCanvasForTool, drawBitmapSelectionOverlay, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncTextSelectionState, syncTextStyleFromSelection]);
+  }, [applyFill, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncTextSelectionState, syncTextStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
     configureCanvasForTool();
-  }, [activeTool, brushColor, brushSize, editorModeState, configureCanvasForTool]);
+  }, [activeTool, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, configureCanvasForTool]);
 
   // Sync selected vector object style when controls change.
   useEffect(() => {
@@ -1328,45 +1347,19 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
   }, [activeTool, drawCollider]);
 
-  // Bitmap marquee selection (main-like behavior): drag box, move floating pixels, click outside to deselect.
+  // Bitmap marquee selection: drag box to extract a floating bitmap object with Fabric transform gizmos.
   useEffect(() => {
     const overlayCanvas = bitmapSelectionCanvasRef.current;
     if (!overlayCanvas) return;
     const isBitmapSelect = editorModeState === 'bitmap' && activeTool === 'select';
-    if (!isBitmapSelect) {
+    if (!isBitmapSelect || hasBitmapFloatingSelection) {
       drawBitmapSelectionOverlay();
       return;
     }
 
-    const isInsideFloatingSelection = (x: number, y: number) => {
-      const floating = bitmapSelectionRef.current;
-      if (!floating) return false;
-      return (
-        x >= floating.x &&
-        x <= floating.x + floating.width &&
-        y >= floating.y &&
-        y <= floating.y + floating.height
-      );
-    };
-
     const handleMouseDown = (event: MouseEvent) => {
       if (bitmapSelectionBusyRef.current) return;
       const pos = getSelectionMousePos(event);
-      const floating = bitmapSelectionRef.current;
-
-      if (floating) {
-        if (isInsideFloatingSelection(pos.x, pos.y)) {
-          bitmapSelectionDragModeRef.current = 'move';
-          bitmapSelectionDragOffsetRef.current = {
-            x: pos.x - floating.x,
-            y: pos.y - floating.y,
-          };
-          return;
-        }
-        void commitBitmapSelection();
-        return;
-      }
-
       bitmapSelectionDragModeRef.current = 'marquee';
       bitmapSelectionStartRef.current = pos;
       bitmapMarqueeRectRef.current = {
@@ -1384,18 +1377,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (mode === 'none') return;
       const pos = getSelectionMousePos(event);
 
-      if (mode === 'move') {
-        const floating = bitmapSelectionRef.current;
-        const dragOffset = bitmapSelectionDragOffsetRef.current;
-        if (!floating || !dragOffset) return;
-        const nextX = Math.max(0, Math.min(CANVAS_SIZE - floating.width, pos.x - dragOffset.x));
-        const nextY = Math.max(0, Math.min(CANVAS_SIZE - floating.height, pos.y - dragOffset.y));
-        floating.x = nextX;
-        floating.y = nextY;
-        drawBitmapSelectionOverlay();
-        return;
-      }
-
       const start = bitmapSelectionStartRef.current;
       if (!start) return;
       const x = Math.min(start.x, pos.x);
@@ -1410,12 +1391,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       const mode = bitmapSelectionDragModeRef.current;
       if (mode === 'none') return;
       bitmapSelectionDragModeRef.current = 'none';
-
-      if (mode === 'move') {
-        bitmapSelectionDragOffsetRef.current = null;
-        drawBitmapSelectionOverlay();
-        return;
-      }
 
       const marquee = bitmapMarqueeRectRef.current;
       bitmapSelectionStartRef.current = null;
@@ -1453,14 +1428,48 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         }
 
         rasterCtx.clearRect(x, y, width, height);
-        await loadBitmapLayer(raster.toDataURL('image/png'), false);
-        bitmapSelectionRef.current = {
-          imageData: selectionImageData,
-          x,
-          y,
-          width,
-          height,
-        };
+        const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
+        if (!loaded) return;
+
+        const selectionCanvas = document.createElement('canvas');
+        selectionCanvas.width = width;
+        selectionCanvas.height = height;
+        const selectionCtx = selectionCanvas.getContext('2d');
+        if (!selectionCtx) return;
+        selectionCtx.putImageData(selectionImageData, 0, 0);
+
+        const floatingImage = await FabricImage.fromURL(selectionCanvas.toDataURL('image/png'));
+        floatingImage.set({
+          left: x + width / 2,
+          top: y + height / 2,
+          originX: 'center',
+          originY: 'center',
+          selectable: true,
+          evented: true,
+          hasControls: true,
+          hasBorders: true,
+          lockMovementX: false,
+          lockMovementY: false,
+          lockRotation: false,
+          lockScalingX: false,
+          lockScalingY: false,
+        } as any);
+        (floatingImage as any).__bitmapFloatingSelection = true;
+        floatingImage.borderColor = VECTOR_SELECTION_COLOR;
+        floatingImage.borderScaleFactor = VECTOR_SELECTION_BORDER_SCALE;
+        floatingImage.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
+        floatingImage.cornerStyle = 'rect';
+        floatingImage.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
+        floatingImage.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
+        floatingImage.cornerSize = 12;
+        floatingImage.transparentCorners = false;
+
+        fabricCanvas.add(floatingImage);
+        fabricCanvas.setActiveObject(floatingImage);
+        bitmapFloatingObjectRef.current = floatingImage;
+        setHasBitmapFloatingSelection(true);
+        configureCanvasForTool();
+        fabricCanvas.requestRenderAll();
         drawBitmapSelectionOverlay();
       } finally {
         bitmapSelectionBusyRef.current = false;
@@ -1478,9 +1487,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
   }, [
     activeTool,
-    commitBitmapSelection,
+    configureCanvasForTool,
     drawBitmapSelectionOverlay,
     editorModeState,
+    hasBitmapFloatingSelection,
     getSelectionMousePos,
     loadBitmapLayer,
   ]);
@@ -1490,7 +1500,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (editorModeState === 'bitmap' && activeTool === 'select') {
       return;
     }
-    if (bitmapSelectionRef.current) {
+    if (bitmapFloatingObjectRef.current) {
       void commitBitmapSelection();
       return;
     }
@@ -1701,7 +1711,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               left: 0,
               width: displaySize,
               height: displaySize,
-              pointerEvents: editorModeState === 'bitmap' && activeTool === 'select' ? 'auto' : 'none',
+              pointerEvents: editorModeState === 'bitmap' && activeTool === 'select' && !hasBitmapFloatingSelection ? 'auto' : 'none',
             }}
           />
 

@@ -58,11 +58,13 @@ export function CostumeEditor() {
   const [canRedo, setCanRedo] = useState(false);
 
   const currentCostumeIdRef = useRef<string | null>(null);
+  const loadRequestIdRef = useRef(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const justSavedRef = useRef(false);
   const isLoadingRef = useRef(true);
 
   useEffect(() => {
+    loadRequestIdRef.current += 1;
     currentCostumeIdRef.current = null;
     isLoadingRef.current = true;
     if (saveTimeoutRef.current) {
@@ -143,12 +145,14 @@ export function CostumeEditor() {
     if (currentCostumeIdRef.current !== currentCostume.id) {
       currentCostumeIdRef.current = currentCostume.id;
       isLoadingRef.current = true;
+      const requestId = ++loadRequestIdRef.current;
 
       const initialMode: EditorMode = currentCostume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
       setEditorMode(initialMode);
       setActiveTool((prev) => ensureToolForMode(initialMode, prev));
 
       canvasRef.current.loadCostume(currentCostume).finally(() => {
+        if (loadRequestIdRef.current !== requestId) return;
         isLoadingRef.current = false;
         const resolvedMode = canvasRef.current?.getEditorMode() ?? initialMode;
         setEditorMode(resolvedMode);
