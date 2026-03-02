@@ -726,6 +726,8 @@ export function SpriteShelf() {
         name: string;
         storageId: Id<'_storage'>;
         bounds?: { x: number; y: number; width: number; height: number };
+        editorMode?: 'bitmap' | 'vector';
+        vectorDocument?: { version: 1; fabricJson: string };
       }> = [];
 
       for (const costume of effectiveProps.costumes) {
@@ -735,6 +737,8 @@ export function SpriteShelf() {
           name: costume.name,
           storageId: storageId as Id<'_storage'>,
           bounds: costume.bounds,
+          editorMode: costume.editorMode,
+          vectorDocument: costume.vectorDocument,
         });
       }
 

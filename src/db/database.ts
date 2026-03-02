@@ -3,7 +3,7 @@ import type { Project, ReusableObject } from '../types';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -463,6 +463,40 @@ const migrations: Record<number, MigrationFn> = {
   3: (project) => ({
     ...normalizeProjectLayering(project),
     schemaVersion: 3,
+  }),
+  // v4: Add costume editor metadata defaults.
+  4: (project) => ({
+    ...project,
+    scenes: (project.scenes || []).map((scene) => ({
+      ...scene,
+      objects: (scene.objects || []).map((obj) => ({
+        ...obj,
+        costumes: (obj.costumes || []).map((costume) => ({
+          ...costume,
+          editorMode: costume.editorMode === 'vector' ? 'vector' : 'bitmap',
+          vectorDocument:
+            costume.vectorDocument &&
+            costume.vectorDocument.version === 1 &&
+            typeof costume.vectorDocument.fabricJson === 'string'
+              ? costume.vectorDocument
+              : undefined,
+        })),
+      })),
+    })),
+    components: (project.components || []).map((component) => ({
+      ...component,
+      costumes: (component.costumes || []).map((costume) => ({
+        ...costume,
+        editorMode: costume.editorMode === 'vector' ? 'vector' : 'bitmap',
+        vectorDocument:
+          costume.vectorDocument &&
+          costume.vectorDocument.version === 1 &&
+          typeof costume.vectorDocument.fabricJson === 'string'
+            ? costume.vectorDocument
+            : undefined,
+      })),
+    })),
+    schemaVersion: 4,
   }),
 };
 

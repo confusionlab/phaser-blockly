@@ -62,6 +62,7 @@ export const CostumeList = memo(({
       id: crypto.randomUUID(),
       name: `costume${costumes.length + 1}`,
       assetId: canvas.toDataURL('image/png'),
+      editorMode: 'bitmap',
     };
     onAddCostume(newCostume);
   };
@@ -89,6 +90,7 @@ export const CostumeList = memo(({
             name: file.name.replace(/\.[^/.]+$/, ''),
             assetId: processedDataUrl,
             bounds: bounds || undefined,
+            editorMode: 'bitmap',
           };
           onAddCostume(newCostume);
         } catch (error) {
@@ -101,13 +103,21 @@ export const CostumeList = memo(({
     }
   };
 
-  const handleLibrarySelect = (data: { name: string; dataUrl: string; bounds?: { x: number; y: number; width: number; height: number } }) => {
+  const handleLibrarySelect = (data: {
+    name: string;
+    dataUrl: string;
+    bounds?: { x: number; y: number; width: number; height: number };
+    editorMode?: 'bitmap' | 'vector';
+    vectorDocument?: { version: 1; fabricJson: string };
+  }) => {
     try {
       const newCostume: Costume = {
         id: crypto.randomUUID(),
         name: data.name,
         assetId: data.dataUrl,
         bounds: data.bounds,
+        editorMode: data.editorMode ?? 'bitmap',
+        vectorDocument: data.vectorDocument,
       };
       onAddCostume(newCostume);
     } catch (error) {
@@ -137,6 +147,8 @@ export const CostumeList = memo(({
         storageId: storageId as Id<"_storage">,
         thumbnail,
         bounds: costume.bounds,
+        editorMode: costume.editorMode,
+        vectorDocument: costume.vectorDocument,
         mimeType,
         size,
       });

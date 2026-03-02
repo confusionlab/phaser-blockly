@@ -3,16 +3,30 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import { CostumeList } from './costume/CostumeList';
 import { CostumeCanvas, type CostumeCanvasHandle } from './costume/CostumeCanvas';
-import { CostumeToolbar, type DrawingTool } from './costume/CostumeToolbar';
+import {
+  CostumeToolbar,
+  type DrawingTool,
+  type EditorMode,
+  type TextToolStyle,
+} from './costume/CostumeToolbar';
 import { getEffectiveObjectProps, createDefaultColliderConfig } from '@/types';
 import type { Costume, ColliderConfig } from '@/types';
+
+const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'rectangle', 'circle', 'line', 'text', 'collider']);
+const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'line', 'collider']);
+
+function ensureToolForMode(mode: EditorMode, tool: DrawingTool): DrawingTool {
+  if (mode === 'vector') {
+    return VECTOR_TOOLS.has(tool) ? tool : 'select';
+  }
+  return BITMAP_TOOLS.has(tool) ? tool : 'brush';
+}
 
 export function CostumeEditor() {
   const canvasRef = useRef<CostumeCanvasHandle>(null);
   const { project, updateObject } = useProjectStore();
   const { selectedSceneId, selectedObjectId, registerCostumeUndo } = useEditorStore();
 
-  // Register undo/redo handler for keyboard shortcuts
   useEffect(() => {
     const handler: UndoRedoHandler = {
       undo: () => canvasRef.current?.undo(),
@@ -24,25 +38,29 @@ export function CostumeEditor() {
     return () => registerCostumeUndo(null);
   }, [registerCostumeUndo]);
 
-  // Tool state
+  const [editorMode, setEditorMode] = useState<EditorMode>('bitmap');
   const [activeTool, setActiveTool] = useState<DrawingTool>('brush');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
+  const [textStyle, setTextStyle] = useState<TextToolStyle>({
+    fontFamily: 'Arial',
+    fontSize: 32,
+    fontWeight: 'normal',
+    textAlign: 'left',
+    opacity: 1,
+  });
 
-  // History state for UI
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
-  // Track current costume to detect changes
   const currentCostumeIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const justSavedRef = useRef(false);
   const isLoadingRef = useRef(false);
 
-  const scene = project?.scenes.find(s => s.id === selectedSceneId);
-  const object = scene?.objects.find(o => o.id === selectedObjectId);
+  const scene = project?.scenes.find((s) => s.id === selectedSceneId);
+  const object = scene?.objects.find((o) => o.id === selectedObjectId);
 
-  // Get effective costumes (from component if applicable)
   const effectiveProps = useMemo(() => {
     if (!object || !project) return null;
     return getEffectiveObjectProps(object, project.components || []);
@@ -52,50 +70,49 @@ export function CostumeEditor() {
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
 
-  // Save canvas to current costume - reads fresh data from store at execution time
   const saveToCostume = useCallback(() => {
     if (!canvasRef.current) return;
-    if (isLoadingRef.current) return; // Don't save while loading
+    if (isLoadingRef.current) return;
 
-    // Get fresh data directly from stores at save time (not from closures)
     const editorState = useEditorStore.getState();
     const projectState = useProjectStore.getState();
 
     const sceneId = editorState.selectedSceneId;
     const objectId = editorState.selectedObjectId;
-
     if (!sceneId || !objectId || !projectState.project) return;
 
-    // Get fresh object data from store
-    const freshScene = projectState.project.scenes.find(s => s.id === sceneId);
-    const freshObject = freshScene?.objects.find(o => o.id === objectId);
+    const freshScene = projectState.project.scenes.find((s) => s.id === sceneId);
+    const freshObject = freshScene?.objects.find((o) => o.id === objectId);
     if (!freshObject) return;
 
-    // Get effective props fresh
     const freshEffectiveProps = getEffectiveObjectProps(freshObject, projectState.project.components || []);
     const freshCostumes = freshEffectiveProps.costumes || [];
     const freshCostumeIndex = freshEffectiveProps.currentCostumeIndex ?? 0;
-
     if (freshCostumes.length === 0) return;
 
-    // Get both data URL and bounds in one call
-    const { dataUrl, bounds } = canvasRef.current.toDataURLWithBounds();
-    if (!dataUrl) return;
+    const state = canvasRef.current.exportCostumeState();
+    if (!state.dataUrl) return;
 
     justSavedRef.current = true;
     const updatedCostumes = freshCostumes.map((c, i) =>
-      i === freshCostumeIndex ? { ...c, assetId: dataUrl, bounds: bounds || undefined } : c
+      i === freshCostumeIndex
+        ? {
+            ...c,
+            assetId: state.dataUrl,
+            bounds: state.bounds || undefined,
+            editorMode: state.editorMode,
+            vectorDocument: state.vectorDocument,
+          }
+        : c
     );
 
     updateObject(sceneId, objectId, { costumes: updatedCostumes });
 
-    // Clear the flag after a short delay
     setTimeout(() => {
       justSavedRef.current = false;
     }, 100);
   }, [updateObject]);
 
-  // Debounced save - stable function that doesn't need to change
   const debouncedSave = useCallback(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -103,25 +120,30 @@ export function CostumeEditor() {
     saveTimeoutRef.current = setTimeout(saveToCostume, 300);
   }, [saveToCostume]);
 
-  // Load costume when selection changes
   useEffect(() => {
     if (!canvasRef.current || costumes.length === 0) return;
-    if (justSavedRef.current) return; // Skip if we just saved
+    if (justSavedRef.current) return;
 
     const currentCostume = costumes[currentCostumeIndex];
     if (!currentCostume) return;
 
-    // Only reload if costume changed
     if (currentCostumeIdRef.current !== currentCostume.id) {
       currentCostumeIdRef.current = currentCostume.id;
       isLoadingRef.current = true;
-      canvasRef.current.loadFromDataURL(currentCostume.assetId).then(() => {
+
+      const initialMode: EditorMode = currentCostume.editorMode === 'vector' ? 'vector' : 'bitmap';
+      setEditorMode(initialMode);
+      setActiveTool((prev) => ensureToolForMode(initialMode, prev));
+
+      canvasRef.current.loadCostume(currentCostume).finally(() => {
         isLoadingRef.current = false;
+        const resolvedMode = canvasRef.current?.getEditorMode() ?? initialMode;
+        setEditorMode(resolvedMode);
+        setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
   }, [costumes, currentCostumeIndex]);
 
-  // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
@@ -130,7 +152,6 @@ export function CostumeEditor() {
     };
   }, []);
 
-  // Handle history changes
   const handleHistoryChange = useCallback(() => {
     if (canvasRef.current) {
       setCanUndo(canvasRef.current.canUndo());
@@ -139,51 +160,45 @@ export function CostumeEditor() {
     debouncedSave();
   }, [debouncedSave]);
 
-  // Costume management handlers
+  const persistCurrentCostumeInMemory = useCallback(() => {
+    if (!canvasRef.current || costumes.length === 0) {
+      return costumes;
+    }
+    const state = canvasRef.current.exportCostumeState();
+    return costumes.map((c, i) =>
+      i === currentCostumeIndex
+        ? {
+            ...c,
+            assetId: state.dataUrl,
+            bounds: state.bounds || undefined,
+            editorMode: state.editorMode,
+            vectorDocument: state.vectorDocument,
+          }
+        : c
+    );
+  }, [costumes, currentCostumeIndex]);
+
   const handleSelectCostume = useCallback((index: number) => {
     if (!selectedSceneId || !selectedObjectId) return;
 
-    // Save current costume before switching
-    if (canvasRef.current && costumes.length > 0) {
-      const { dataUrl, bounds } = canvasRef.current.toDataURLWithBounds();
-      const updatedCostumes = costumes.map((c, i) =>
-        i === currentCostumeIndex ? { ...c, assetId: dataUrl, bounds: bounds || undefined } : c
-      );
-      // Clear the costume ID ref to force reload of new costume
-      currentCostumeIdRef.current = null;
-      updateObject(selectedSceneId, selectedObjectId, {
-        costumes: updatedCostumes,
-        currentCostumeIndex: index,
-      });
-    } else {
-      currentCostumeIdRef.current = null;
-      updateObject(selectedSceneId, selectedObjectId, { currentCostumeIndex: index });
-    }
-  }, [selectedSceneId, selectedObjectId, costumes, currentCostumeIndex, updateObject]);
+    const updatedCostumes = persistCurrentCostumeInMemory();
+    currentCostumeIdRef.current = null;
+    updateObject(selectedSceneId, selectedObjectId, {
+      costumes: updatedCostumes,
+      currentCostumeIndex: index,
+    });
+  }, [selectedSceneId, selectedObjectId, persistCurrentCostumeInMemory, updateObject]);
 
   const handleAddCostume = useCallback((costume: Costume) => {
     if (!selectedSceneId || !selectedObjectId) return;
 
-    // Save current costume before adding new one
-    if (canvasRef.current && costumes.length > 0) {
-      const { dataUrl, bounds } = canvasRef.current.toDataURLWithBounds();
-      const updatedCostumes = costumes.map((c, i) =>
-        i === currentCostumeIndex ? { ...c, assetId: dataUrl, bounds: bounds || undefined } : c
-      );
-      // Clear the costume ID ref to force reload of new costume
-      currentCostumeIdRef.current = null;
-      updateObject(selectedSceneId, selectedObjectId, {
-        costumes: [...updatedCostumes, costume],
-        currentCostumeIndex: updatedCostumes.length, // Select the new costume
-      });
-    } else {
-      currentCostumeIdRef.current = null;
-      updateObject(selectedSceneId, selectedObjectId, {
-        costumes: [...costumes, costume],
-        currentCostumeIndex: costumes.length,
-      });
-    }
-  }, [selectedSceneId, selectedObjectId, costumes, currentCostumeIndex, updateObject]);
+    const updatedCostumes = persistCurrentCostumeInMemory();
+    currentCostumeIdRef.current = null;
+    updateObject(selectedSceneId, selectedObjectId, {
+      costumes: [...updatedCostumes, costume],
+      currentCostumeIndex: updatedCostumes.length,
+    });
+  }, [selectedSceneId, selectedObjectId, persistCurrentCostumeInMemory, updateObject]);
 
   const handleDeleteCostume = useCallback((index: number) => {
     if (!selectedSceneId || !selectedObjectId || costumes.length <= 1) return;
@@ -191,7 +206,6 @@ export function CostumeEditor() {
     const updatedCostumes = costumes.filter((_, i) => i !== index);
     const newIndex = Math.min(currentCostumeIndex, updatedCostumes.length - 1);
 
-    // Clear the costume ID ref to force reload
     currentCostumeIdRef.current = null;
     updateObject(selectedSceneId, selectedObjectId, {
       costumes: updatedCostumes,
@@ -202,7 +216,6 @@ export function CostumeEditor() {
   const handleRenameCostume = useCallback((index: number, name: string) => {
     if (!selectedSceneId || !selectedObjectId) return;
 
-    // For rename, we DON'T want to reload the canvas, so set justSaved flag
     justSavedRef.current = true;
     const updatedCostumes = costumes.map((c, i) =>
       i === index ? { ...c, name } : c
@@ -213,17 +226,35 @@ export function CostumeEditor() {
     }, 100);
   }, [selectedSceneId, selectedObjectId, costumes, updateObject]);
 
-  // Collider type change handler
+  const handleEditorModeChange = useCallback((mode: EditorMode) => {
+    setEditorMode(mode);
+    setActiveTool((prev) => ensureToolForMode(mode, prev));
+    if (canvasRef.current) {
+      void canvasRef.current.setEditorMode(mode);
+    }
+  }, []);
+
+  const handleCanvasModeChange = useCallback((mode: EditorMode) => {
+    setEditorMode(mode);
+    setActiveTool((prev) => ensureToolForMode(mode, prev));
+  }, []);
+
+  const handleToolChange = useCallback((tool: DrawingTool) => {
+    setActiveTool(ensureToolForMode(editorMode, tool));
+  }, [editorMode]);
+
+  const handleTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
+    setTextStyle((prev) => ({ ...prev, ...updates }));
+  }, []);
+
   const handleColliderTypeChange = useCallback((type: ColliderConfig['type']) => {
     if (!selectedSceneId || !selectedObjectId) return;
 
-    // For rename/collider changes, we DON'T want to reload the canvas
     justSavedRef.current = true;
 
     if (type === 'none') {
       updateObject(selectedSceneId, selectedObjectId, { collider: null });
     } else {
-      // Create default collider config with the new type, preserving existing offset/dimensions if possible
       const newCollider: ColliderConfig = collider
         ? { ...collider, type }
         : createDefaultColliderConfig(type);
@@ -235,7 +266,6 @@ export function CostumeEditor() {
     }, 100);
   }, [selectedSceneId, selectedObjectId, collider, updateObject]);
 
-  // Collider config change handler (for moving/resizing)
   const handleColliderChange = useCallback((newCollider: ColliderConfig) => {
     if (!selectedSceneId || !selectedObjectId) return;
 
@@ -246,7 +276,6 @@ export function CostumeEditor() {
     }, 100);
   }, [selectedSceneId, selectedObjectId, updateObject]);
 
-  // Undo/Redo handlers
   const handleUndo = useCallback(() => {
     canvasRef.current?.undo();
   }, []);
@@ -265,25 +294,26 @@ export function CostumeEditor() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar */}
       <CostumeToolbar
+        editorMode={editorMode}
         activeTool={activeTool}
         brushColor={brushColor}
         brushSize={brushSize}
+        textStyle={textStyle}
         canUndo={canUndo}
         canRedo={canRedo}
         colliderType={collider?.type ?? 'none'}
-        onToolChange={setActiveTool}
+        onEditorModeChange={handleEditorModeChange}
+        onToolChange={handleToolChange}
         onColorChange={setBrushColor}
         onBrushSizeChange={setBrushSize}
+        onTextStyleChange={handleTextStyleChange}
         onUndo={handleUndo}
         onRedo={handleRedo}
         onColliderTypeChange={handleColliderTypeChange}
       />
 
-      {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Costume List */}
         <CostumeList
           costumes={costumes}
           selectedIndex={currentCostumeIndex}
@@ -293,15 +323,17 @@ export function CostumeEditor() {
           onRenameCostume={handleRenameCostume}
         />
 
-        {/* Right: Canvas */}
         <CostumeCanvas
           ref={canvasRef}
           activeTool={activeTool}
           brushColor={brushColor}
           brushSize={brushSize}
+          textStyle={textStyle}
           collider={collider}
           onHistoryChange={handleHistoryChange}
           onColliderChange={handleColliderChange}
+          onModeChange={handleCanvasModeChange}
+          onTextStyleSync={handleTextStyleChange}
         />
       </div>
     </div>

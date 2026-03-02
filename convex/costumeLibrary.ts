@@ -8,6 +8,13 @@ const boundsValidator = v.object({
   height: v.number(),
 });
 
+const editorModeValidator = v.union(v.literal("bitmap"), v.literal("vector"));
+
+const vectorDocumentValidator = v.object({
+  version: v.literal(1),
+  fabricJson: v.string(),
+});
+
 const costumeWithUrlValidator = v.object({
   _id: v.id("costumeLibrary"),
   _creationTime: v.number(),
@@ -15,6 +22,8 @@ const costumeWithUrlValidator = v.object({
   storageId: v.id("_storage"),
   thumbnail: v.string(),
   bounds: v.optional(boundsValidator),
+  editorMode: v.optional(editorModeValidator),
+  vectorDocument: v.optional(vectorDocumentValidator),
   mimeType: v.string(),
   size: v.number(),
   createdAt: v.number(),
@@ -50,6 +59,8 @@ export const create = mutation({
     storageId: v.id("_storage"),
     thumbnail: v.string(),
     bounds: v.optional(boundsValidator),
+    editorMode: v.optional(editorModeValidator),
+    vectorDocument: v.optional(vectorDocumentValidator),
     mimeType: v.string(),
     size: v.number(),
   },

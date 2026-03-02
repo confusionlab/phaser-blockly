@@ -6,19 +6,28 @@
  * Convert a data URL to a Blob for upload
  */
 export function dataUrlToBlob(dataUrl: string): Blob {
-  const parts = dataUrl.split(",");
-  const mimeMatch = parts[0].match(/:(.*?);/);
-  const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream";
-  const base64Data = parts[1];
-  const byteString = atob(base64Data);
-  const arrayBuffer = new ArrayBuffer(byteString.length);
-  const uint8Array = new Uint8Array(arrayBuffer);
-
-  for (let i = 0; i < byteString.length; i++) {
-    uint8Array[i] = byteString.charCodeAt(i);
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex < 0) {
+    throw new Error("Invalid data URL");
   }
 
-  return new Blob([uint8Array], { type: mimeType });
+  const header = dataUrl.slice(0, commaIndex);
+  const data = dataUrl.slice(commaIndex + 1);
+  const mimeMatch = header.match(/^data:([^;,]+)?/i);
+  const mimeType = mimeMatch?.[1] || "application/octet-stream";
+  const isBase64 = /;base64/i.test(header);
+
+  if (isBase64) {
+    const byteString = atob(data);
+    const uint8Array = new Uint8Array(byteString.length);
+    for (let i = 0; i < byteString.length; i++) {
+      uint8Array[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([uint8Array], { type: mimeType });
+  }
+
+  // Non-base64 data URLs are percent-encoded text payloads (for example SVG).
+  return new Blob([decodeURIComponent(data)], { type: mimeType });
 }
 
 /**

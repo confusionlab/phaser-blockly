@@ -8,6 +8,13 @@ const boundsValidator = v.object({
   height: v.number(),
 });
 
+const editorModeValidator = v.union(v.literal("bitmap"), v.literal("vector"));
+
+const vectorDocumentValidator = v.object({
+  version: v.literal(1),
+  fabricJson: v.string(),
+});
+
 const physicsValidator = v.object({
   enabled: v.boolean(),
   bodyType: v.union(v.literal("dynamic"), v.literal("static")),
@@ -38,6 +45,8 @@ const objectLibraryCostumeValidator = v.object({
   name: v.string(),
   storageId: v.id("_storage"),
   bounds: v.optional(boundsValidator),
+  editorMode: v.optional(editorModeValidator),
+  vectorDocument: v.optional(vectorDocumentValidator),
 });
 
 const objectLibrarySoundValidator = v.object({
@@ -68,6 +77,8 @@ const objectLibraryCostumeWithUrlValidator = v.object({
   name: v.string(),
   storageId: v.id("_storage"),
   bounds: v.optional(boundsValidator),
+  editorMode: v.optional(editorModeValidator),
+  vectorDocument: v.optional(vectorDocumentValidator),
   url: v.union(v.string(), v.null()),
 });
 

@@ -110,6 +110,11 @@ export interface Costume {
   name: string;
   assetId: string; // Reference to Asset
   bounds?: CostumeBounds; // Bounding box of visible (non-transparent) pixels
+  editorMode?: 'bitmap' | 'vector';
+  vectorDocument?: {
+    version: 1;
+    fabricJson: string;
+  };
 }
 
 export interface Sound {
@@ -204,7 +209,7 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 3,
+    schemaVersion: 4,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     globalVariables: [],
     components: [],
@@ -252,6 +257,7 @@ export function createDefaultGameObject(name: string): GameObject {
     id: crypto.randomUUID(),
     name: 'costume1',
     assetId: generateCircleCostume(color),
+    editorMode: 'bitmap',
   };
 
   return {

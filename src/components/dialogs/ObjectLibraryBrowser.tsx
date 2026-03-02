@@ -25,6 +25,8 @@ interface ObjectLibraryItem {
     storageId: Id<"_storage">;
     url: string | null;
     bounds?: { x: number; y: number; width: number; height: number };
+    editorMode?: 'bitmap' | 'vector';
+    vectorDocument?: { version: 1; fabricJson: string };
   }>;
   sounds: Array<{
     id: string;
@@ -100,6 +102,8 @@ export function ObjectLibraryBrowser({
             name: costume.name,
             assetId: dataUrl,
             bounds: costume.bounds,
+            editorMode: costume.editorMode ?? 'bitmap',
+            vectorDocument: costume.vectorDocument,
           };
         })
       );

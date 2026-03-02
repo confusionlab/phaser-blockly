@@ -27,6 +27,8 @@ interface CostumeLibraryBrowserProps {
     name: string;
     dataUrl: string;
     bounds?: CostumeBounds;
+    editorMode?: 'bitmap' | 'vector';
+    vectorDocument?: { version: 1; fabricJson: string };
   }) => void;
 }
 
@@ -75,6 +77,7 @@ export function CostumeLibraryBrowser({
           storageId: storageId as Id<"_storage">,
           thumbnail,
           bounds: bounds || undefined,
+          editorMode: 'bitmap',
           mimeType,
           size,
         });
@@ -114,6 +117,8 @@ export function CostumeLibraryBrowser({
         name: item.name,
         dataUrl,
         bounds: item.bounds ?? undefined,
+        editorMode: item.editorMode ?? 'bitmap',
+        vectorDocument: item.vectorDocument ?? undefined,
       });
       onOpenChange(false);
     } catch (error) {
