@@ -1477,24 +1477,24 @@ function createEditorScene(
         const safeWidth = Math.max(1, bounds.width);
         const safeHeight = Math.max(1, bounds.height);
 
-        if (handleName === 'handle_n') sy = (bounds.height - dy) / safeHeight;
-        else if (handleName === 'handle_s') sy = (bounds.height + dy) / safeHeight;
-        else if (handleName === 'handle_e') sx = (bounds.width + dx) / safeWidth;
-        else if (handleName === 'handle_w') sx = (bounds.width - dx) / safeWidth;
+        if (handleName === 'handle_n') sy = (bounds.height - (2 * dy)) / safeHeight;
+        else if (handleName === 'handle_s') sy = (bounds.height + (2 * dy)) / safeHeight;
+        else if (handleName === 'handle_e') sx = (bounds.width + (2 * dx)) / safeWidth;
+        else if (handleName === 'handle_w') sx = (bounds.width - (2 * dx)) / safeWidth;
         else if (handleName === 'handle_nw') {
-          const uniform = (safeWidth + (-dx - dy) / 2) / safeWidth;
+          const uniform = (safeWidth + (-dx - dy)) / safeWidth;
           sx = uniform;
           sy = uniform;
         } else if (handleName === 'handle_ne') {
-          const uniform = (safeWidth + (dx - dy) / 2) / safeWidth;
+          const uniform = (safeWidth + (dx - dy)) / safeWidth;
           sx = uniform;
           sy = uniform;
         } else if (handleName === 'handle_sw') {
-          const uniform = (safeWidth + (-dx + dy) / 2) / safeWidth;
+          const uniform = (safeWidth + (-dx + dy)) / safeWidth;
           sx = uniform;
           sy = uniform;
         } else if (handleName === 'handle_se') {
-          const uniform = (safeWidth + (dx + dy) / 2) / safeWidth;
+          const uniform = (safeWidth + (dx + dy)) / safeWidth;
           sx = uniform;
           sy = uniform;
         }
@@ -2323,35 +2323,35 @@ function createObjectVisual(
 
             // Corner handles (proportional)
             if (handleName === 'handle_nw') {
-              const avgDelta = (-dx - dy) / 2;
+              const avgDelta = -dx - dy;
               const scale = (startWidth + avgDelta) / startWidth;
               newScaleX = startScaleX * scale;
               newScaleY = startScaleY * scale;
             } else if (handleName === 'handle_ne') {
-              const avgDelta = (dx - dy) / 2;
+              const avgDelta = dx - dy;
               const scale = (startWidth + avgDelta) / startWidth;
               newScaleX = startScaleX * scale;
               newScaleY = startScaleY * scale;
             } else if (handleName === 'handle_sw') {
-              const avgDelta = (-dx + dy) / 2;
+              const avgDelta = -dx + dy;
               const scale = (startWidth + avgDelta) / startWidth;
               newScaleX = startScaleX * scale;
               newScaleY = startScaleY * scale;
             } else if (handleName === 'handle_se') {
-              const avgDelta = (dx + dy) / 2;
+              const avgDelta = dx + dy;
               const scale = (startWidth + avgDelta) / startWidth;
               newScaleX = startScaleX * scale;
               newScaleY = startScaleY * scale;
             }
             // Edge handles (axis scale)
             else if (handleName === 'handle_n') {
-              newScaleY = startScaleY * (startHeight - dy) / startHeight;
+              newScaleY = startScaleY * (startHeight - (2 * dy)) / startHeight;
             } else if (handleName === 'handle_s') {
-              newScaleY = startScaleY * (startHeight + dy) / startHeight;
+              newScaleY = startScaleY * (startHeight + (2 * dy)) / startHeight;
             } else if (handleName === 'handle_e') {
-              newScaleX = startScaleX * (startWidth + dx) / startWidth;
+              newScaleX = startScaleX * (startWidth + (2 * dx)) / startWidth;
             } else if (handleName === 'handle_w') {
-              newScaleX = startScaleX * (startWidth - dx) / startWidth;
+              newScaleX = startScaleX * (startWidth - (2 * dx)) / startWidth;
             }
 
             // Apply scale with minimum
