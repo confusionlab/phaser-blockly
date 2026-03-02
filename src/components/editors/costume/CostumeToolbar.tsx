@@ -30,8 +30,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import Color from 'color';
+import type { CostumeEditorMode } from '@/types';
 
-export type EditorMode = 'bitmap' | 'vector';
+export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'vector' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
 export type AlignAction =

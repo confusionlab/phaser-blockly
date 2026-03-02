@@ -105,16 +105,20 @@ export interface CostumeBounds {
   height: number; // Height of visible content
 }
 
+export type CostumeEditorMode = 'bitmap' | 'vector';
+
+export interface CostumeVectorDocument {
+  version: 1;
+  fabricJson: string;
+}
+
 export interface Costume {
   id: string;
   name: string;
   assetId: string; // Reference to Asset
   bounds?: CostumeBounds; // Bounding box of visible (non-transparent) pixels
-  editorMode?: 'bitmap' | 'vector';
-  vectorDocument?: {
-    version: 1;
-    fabricJson: string;
-  };
+  editorMode?: CostumeEditorMode;
+  vectorDocument?: CostumeVectorDocument;
 }
 
 export interface Sound {

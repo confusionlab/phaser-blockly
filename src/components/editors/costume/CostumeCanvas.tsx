@@ -9,13 +9,11 @@ import {
   ActiveSelection,
   FabricImage,
 } from 'fabric';
-import * as Select from '@radix-ui/react-select';
-import { Undo2, Redo2, Move, ChevronDown, Check } from 'lucide-react';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
-import { Button } from '@/components/ui/button';
-import type { AlignAction, DrawingTool, EditorMode, MoveOrderAction, TextToolStyle } from './CostumeToolbar';
-import type { Costume, CostumeBounds, ColliderConfig } from '@/types';
+import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle } from './CostumeToolbar';
+import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
+import { CostumeCanvasHeader } from './CostumeCanvasHeader';
 
 const CANVAS_SIZE = 1024;
 const BASE_DISPLAY_SIZE = 480;
@@ -31,7 +29,7 @@ const VECTOR_SELECTION_BORDER_OPACITY = 1;
 const VECTOR_SELECTION_BORDER_SCALE = 2;
 
 type CanvasHistorySnapshot = {
-  mode: EditorMode;
+  mode: CostumeEditorMode;
   bitmapDataUrl: string;
   vectorJson: string | null;
 };
@@ -39,11 +37,8 @@ type CanvasHistorySnapshot = {
 export interface CostumeCanvasExportState {
   dataUrl: string;
   bounds: CostumeBounds | null;
-  editorMode: EditorMode;
-  vectorDocument?: {
-    version: 1;
-    fabricJson: string;
-  };
+  editorMode: CostumeEditorMode;
+  vectorDocument?: CostumeVectorDocument;
 }
 
 export interface CostumeCanvasHandle {
@@ -52,8 +47,8 @@ export interface CostumeCanvasHandle {
   loadFromDataURL: (dataUrl: string) => Promise<void>;
   loadCostume: (costume: Costume) => Promise<void>;
   exportCostumeState: () => CostumeCanvasExportState;
-  setEditorMode: (mode: EditorMode) => Promise<void>;
-  getEditorMode: () => EditorMode;
+  setEditorMode: (mode: CostumeEditorMode) => Promise<void>;
+  getEditorMode: () => CostumeEditorMode;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => boolean;
@@ -81,7 +76,7 @@ interface CostumeCanvasProps {
   collider: ColliderConfig | null;
   onHistoryChange?: () => void;
   onColliderChange?: (collider: ColliderConfig) => void;
-  onModeChange?: (mode: EditorMode) => void;
+  onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
@@ -128,13 +123,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onTextSelectionChange,
   onSelectionStateChange,
 }, ref) => {
-  const colliderTypes: { value: ColliderConfig['type']; label: string }[] = [
-    { value: 'none', label: 'None' },
-    { value: 'box', label: 'Box' },
-    { value: 'circle', label: 'Circle' },
-    { value: 'capsule', label: 'Capsule' },
-  ];
-
   const containerRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -147,7 +135,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [cameraCenter, setCameraCenter] = useState({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [isViewportPanning, setIsViewportPanning] = useState(false);
-  const [editorModeState, setEditorModeState] = useState<EditorMode>('vector');
+  const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>('vector');
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -162,7 +150,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     cameraStartY: number;
   } | null>(null);
 
-  const editorModeRef = useRef<EditorMode>('vector');
+  const editorModeRef = useRef<CostumeEditorMode>('vector');
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
 
@@ -228,7 +216,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
   }, []);
 
-  const setEditorMode = useCallback((mode: EditorMode) => {
+  const setEditorMode = useCallback((mode: CostumeEditorMode) => {
     editorModeRef.current = mode;
     setEditorModeState(mode);
     onModeChangeRef.current?.(mode);
@@ -594,7 +582,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory();
   }, [loadBitmapLayer, saveHistory]);
 
-  const switchEditorMode = useCallback(async (nextMode: EditorMode) => {
+  const switchEditorMode = useCallback(async (nextMode: CostumeEditorMode) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
     if (editorModeRef.current === nextMode) return;
@@ -865,7 +853,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!fabricCanvas) return;
     const requestId = ++loadRequestIdRef.current;
 
-    const requestedMode: EditorMode = costume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
+    const requestedMode: CostumeEditorMode = costume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
     const hasValidVectorDocument =
       requestedMode === 'vector' &&
       costume.vectorDocument?.version === 1 &&
@@ -1836,7 +1824,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     exportCostumeState,
 
-    setEditorMode: async (mode: EditorMode) => {
+    setEditorMode: async (mode: CostumeEditorMode) => {
       await switchEditorMode(mode);
       configureCanvasForTool();
     },
@@ -1926,86 +1914,22 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   return (
     <div className="flex-1 overflow-hidden bg-muted/50 flex flex-col">
-      <div className="flex items-center py-2 px-3 border-b bg-background/50">
-        <div className="flex-1 flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="size-8" onClick={onUndo} disabled={!canUndo} title="Undo">
-            <Undo2 className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" className="size-8" onClick={onRedo} disabled={!canRedo} title="Redo">
-            <Redo2 className="size-4" />
-          </Button>
-        </div>
-
-        <div className="flex items-center justify-center gap-2">
-          <button
-            onClick={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
-            className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
-            disabled={zoom <= MIN_ZOOM}
-          >
-            -
-          </button>
-          <span className="text-xs text-muted-foreground w-16 text-center">
-            {Math.round(zoom * 100)}%
-          </span>
-          <button
-            onClick={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
-            className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
-            disabled={zoom >= MAX_ZOOM}
-          >
-            +
-          </button>
-          <button
-            onClick={() => zoomAroundViewportCenter(1)}
-            className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded ml-2"
-          >
-            Reset
-          </button>
-        </div>
-
-        <div className="flex-1 flex items-center justify-end gap-2">
-          <span className="text-xs text-muted-foreground">Collider:</span>
-          <Select.Root value={colliderType} onValueChange={(value) => onColliderTypeChange(value as ColliderConfig['type'])}>
-            <Select.Trigger className="inline-flex items-center justify-between gap-1 h-8 px-2 text-xs bg-background border rounded hover:bg-accent min-w-[90px]">
-              <Select.Value />
-              <Select.Icon>
-                <ChevronDown className="size-3" />
-              </Select.Icon>
-            </Select.Trigger>
-            <Select.Portal>
-              <Select.Content className="bg-popover border rounded-md shadow-md z-50">
-                <Select.Viewport className="p-1">
-                  {colliderTypes.map(({ value, label }) => (
-                    <Select.Item
-                      key={value}
-                      value={value}
-                      className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-accent data-[highlighted]:bg-accent"
-                    >
-                      <Select.ItemIndicator>
-                        <Check className="size-3" />
-                      </Select.ItemIndicator>
-                      <Select.ItemText>{label}</Select.ItemText>
-                    </Select.Item>
-                  ))}
-                </Select.Viewport>
-              </Select.Content>
-            </Select.Portal>
-          </Select.Root>
-
-          {colliderType !== 'none' && (
-            <Button
-              variant={activeTool === 'collider' ? 'default' : 'outline'}
-              size="sm"
-              className="h-8 px-2 gap-1"
-              onClick={() => onToolChange('collider')}
-              title="Edit Collider"
-              style={activeTool === 'collider' ? { backgroundColor: '#22c55e', borderColor: '#22c55e' } : { borderColor: '#22c55e', color: '#22c55e' }}
-            >
-              <Move className="size-3" />
-              <span className="text-xs">Edit</span>
-            </Button>
-          )}
-        </div>
-      </div>
+      <CostumeCanvasHeader
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        zoom={zoom}
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
+        onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
+        onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
+        onZoomReset={() => zoomAroundViewportCenter(1)}
+        colliderType={colliderType}
+        onColliderTypeChange={onColliderTypeChange}
+        activeTool={activeTool}
+        onToolChange={onToolChange}
+      />
 
       <div
         ref={containerRef}

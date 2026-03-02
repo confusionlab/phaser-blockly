@@ -50,7 +50,17 @@ import {
   FolderOpen,
   FolderPlus,
 } from 'lucide-react';
-import type { GameObject, Costume, Sound, PhysicsConfig, ColliderConfig, SceneFolder } from '@/types';
+import type {
+  GameObject,
+  Costume,
+  Sound,
+  PhysicsConfig,
+  ColliderConfig,
+  SceneFolder,
+  CostumeBounds,
+  CostumeEditorMode,
+  CostumeVectorDocument,
+} from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
 import {
@@ -733,9 +743,9 @@ export function SpriteShelf() {
         id: string;
         name: string;
         storageId: Id<'_storage'>;
-        bounds?: { x: number; y: number; width: number; height: number };
-        editorMode?: 'bitmap' | 'vector';
-        vectorDocument?: { version: 1; fabricJson: string };
+        bounds?: CostumeBounds;
+        editorMode?: CostumeEditorMode;
+        vectorDocument?: CostumeVectorDocument;
       }> = [];
 
       for (const costume of effectiveProps.costumes) {

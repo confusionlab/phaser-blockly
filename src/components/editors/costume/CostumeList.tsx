@@ -10,7 +10,7 @@ import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
-import type { Costume } from '@/types';
+import type { Costume, CostumeBounds, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { cn } from '@/lib/utils';
 
 interface CostumeListProps {
@@ -106,9 +106,9 @@ export const CostumeList = memo(({
   const handleLibrarySelect = (data: {
     name: string;
     dataUrl: string;
-    bounds?: { x: number; y: number; width: number; height: number };
-    editorMode?: 'bitmap' | 'vector';
-    vectorDocument?: { version: 1; fabricJson: string };
+    bounds?: CostumeBounds;
+    editorMode?: CostumeEditorMode;
+    vectorDocument?: CostumeVectorDocument;
   }) => {
     try {
       const newCostume: Costume = {

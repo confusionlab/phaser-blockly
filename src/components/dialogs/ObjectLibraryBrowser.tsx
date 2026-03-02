@@ -12,7 +12,16 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Trash2, Loader2, Image, Music } from "lucide-react";
-import type { Costume, Sound, PhysicsConfig, ColliderConfig, Variable } from "@/types";
+import type {
+  Costume,
+  Sound,
+  PhysicsConfig,
+  ColliderConfig,
+  Variable,
+  CostumeBounds,
+  CostumeEditorMode,
+  CostumeVectorDocument,
+} from "@/types";
 import { urlToDataUrl } from "@/utils/convexHelpers";
 
 interface ObjectLibraryItem {
@@ -24,9 +33,9 @@ interface ObjectLibraryItem {
     name: string;
     storageId: Id<"_storage">;
     url: string | null;
-    bounds?: { x: number; y: number; width: number; height: number };
-    editorMode?: 'bitmap' | 'vector';
-    vectorDocument?: { version: 1; fabricJson: string };
+    bounds?: CostumeBounds;
+    editorMode?: CostumeEditorMode;
+    vectorDocument?: CostumeVectorDocument;
   }>;
   sounds: Array<{
     id: string;

@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Trash2, Upload, Loader2 } from "lucide-react";
-import type { CostumeBounds } from "@/types";
+import type { CostumeBounds, CostumeEditorMode, CostumeVectorDocument } from "@/types";
 import {
   uploadDataUrlToStorage,
   generateThumbnail,
@@ -27,8 +27,8 @@ interface CostumeLibraryBrowserProps {
     name: string;
     dataUrl: string;
     bounds?: CostumeBounds;
-    editorMode?: 'bitmap' | 'vector';
-    vectorDocument?: { version: 1; fabricJson: string };
+    editorMode?: CostumeEditorMode;
+    vectorDocument?: CostumeVectorDocument;
   }) => void;
 }
 

@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Project, ReusableObject } from '../types';
+import type { CostumeEditorMode, CostumeVectorDocument, Project, ReusableObject } from '../types';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
@@ -56,6 +56,49 @@ function normalizeSchemaVersion(version: unknown): number {
   return 1;
 }
 
+function normalizeCostumeEditorMode(mode: unknown): CostumeEditorMode {
+  return mode === 'bitmap' ? 'bitmap' : 'vector';
+}
+
+function sanitizeVectorDocument(value: unknown): CostumeVectorDocument | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const maybe = value as { version?: unknown; fabricJson?: unknown };
+  if (maybe.version !== 1 || typeof maybe.fabricJson !== 'string') {
+    return undefined;
+  }
+  return {
+    version: 1,
+    fabricJson: maybe.fabricJson,
+  };
+}
+
+function normalizeCostumeMetadataInProject(project: Project): Project {
+  return {
+    ...project,
+    scenes: (project.scenes || []).map((scene) => ({
+      ...scene,
+      objects: (scene.objects || []).map((obj) => ({
+        ...obj,
+        costumes: (obj.costumes || []).map((costume) => ({
+          ...costume,
+          editorMode: normalizeCostumeEditorMode(costume.editorMode),
+          vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
+        })),
+      })),
+    })),
+    components: (project.components || []).map((component) => ({
+      ...component,
+      costumes: (component.costumes || []).map((costume) => ({
+        ...costume,
+        editorMode: normalizeCostumeEditorMode(costume.editorMode),
+        vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
+      })),
+    })),
+  };
+}
+
 function serializeProjectData(project: Project): string {
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
   return JSON.stringify(rest);
@@ -90,6 +133,7 @@ function deserializeProjectFromRecord(record: ProjectRecord): {
     migrated = true;
   }
 
+  project = normalizeCostumeMetadataInProject(project);
   project = normalizeProjectLayering(project);
 
   return {
@@ -473,13 +517,8 @@ const migrations: Record<number, MigrationFn> = {
         ...obj,
         costumes: (obj.costumes || []).map((costume) => ({
           ...costume,
-          editorMode: costume.editorMode === 'vector' ? 'vector' : 'bitmap',
-          vectorDocument:
-            costume.vectorDocument &&
-            costume.vectorDocument.version === 1 &&
-            typeof costume.vectorDocument.fabricJson === 'string'
-              ? costume.vectorDocument
-              : undefined,
+          editorMode: normalizeCostumeEditorMode(costume.editorMode),
+          vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
         })),
       })),
     })),
@@ -487,13 +526,8 @@ const migrations: Record<number, MigrationFn> = {
       ...component,
       costumes: (component.costumes || []).map((costume) => ({
         ...costume,
-        editorMode: costume.editorMode === 'vector' ? 'vector' : 'bitmap',
-        vectorDocument:
-          costume.vectorDocument &&
-          costume.vectorDocument.version === 1 &&
-          typeof costume.vectorDocument.fabricJson === 'string'
-            ? costume.vectorDocument
-            : undefined,
+        editorMode: normalizeCostumeEditorMode(costume.editorMode),
+        vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
       })),
     })),
     schemaVersion: 4,
@@ -758,6 +792,7 @@ export async function importProject(jsonString: string): Promise<Project> {
   project.scenes = Array.isArray(project.scenes) ? project.scenes : [];
   project.globalVariables = Array.isArray(project.globalVariables) ? project.globalVariables : [];
   project.components = Array.isArray(project.components) ? project.components : [];
+  project = normalizeCostumeMetadataInProject(project);
 
   // Generate new IDs to avoid collisions and keep imported data isolated.
   const objectIdMap = new Map<string, string>();
@@ -776,6 +811,8 @@ export async function importProject(jsonString: string): Promise<Project> {
 
     for (const costume of component.costumes) {
       costume.id = crypto.randomUUID();
+      costume.editorMode = normalizeCostumeEditorMode(costume.editorMode);
+      costume.vectorDocument = sanitizeVectorDocument(costume.vectorDocument);
     }
 
     for (const sound of component.sounds) {
@@ -819,6 +856,8 @@ export async function importProject(jsonString: string): Promise<Project> {
 
       for (const costume of obj.costumes) {
         costume.id = crypto.randomUUID();
+        costume.editorMode = normalizeCostumeEditorMode(costume.editorMode);
+        costume.vectorDocument = sanitizeVectorDocument(costume.vectorDocument);
       }
 
       for (const sound of obj.sounds) {
