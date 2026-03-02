@@ -21,6 +21,7 @@ const GIZMO_HANDLE_SIZE_PX = 8;
 const GIZMO_EDGE_LONG_PX = 16;
 const GIZMO_ROTATE_DISTANCE_PX = 24;
 const GIZMO_ROTATE_RADIUS_PX = 6;
+const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
@@ -559,7 +560,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     } else {
       // Editor mode - full viewport
       camera.setViewport(0, 0, containerWidth, containerHeight);
-      camera.setZoom(1);
+      camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
       camera.centerOn(canvasW / 2, canvasH / 2);
     }
   }, [viewMode, isPlaying]);
@@ -989,7 +990,7 @@ function createEditorScene(
     } else {
       // Editor mode - full viewport, free pan
       camera.setViewport(0, 0, containerWidth, containerHeight);
-      camera.setZoom(1);
+      camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
       camera.centerOn(canvasWidth / 2, canvasHeight / 2);
     }
   };
