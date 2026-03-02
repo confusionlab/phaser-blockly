@@ -145,6 +145,7 @@ export class RuntimeEngine {
   private activeForeverLoops: Map<string, boolean> = new Map();
   private pendingForeverHandlers: Map<string, Set<number>> = new Map();
   private _isRunning: boolean = false;
+  private _hasStarted: boolean = false;
   private phaserKeys: Map<string, Phaser.Input.Keyboard.Key> = new Map();
   private inputListenersAttached: boolean = false;
   private keydownListener: ((event: KeyboardEvent) => void) | null = null;
@@ -526,8 +527,20 @@ export class RuntimeEngine {
   }
 
   async start(): Promise<void> {
+    if (this._isRunning) {
+      debugLog('info', 'Runtime start called while already running; ignoring');
+      return;
+    }
+
+    if (this._hasStarted) {
+      debugLog('info', 'Runtime start called after initialization; resuming runtime');
+      this.resume();
+      return;
+    }
+
     debugLog('info', '=== Runtime starting ===');
     this._isRunning = true;
+    this._hasStarted = true;
 
     // Re-setup input listeners if keys are missing (can happen after game restart)
     if (this.phaserKeys.size === 0) {
@@ -570,6 +583,12 @@ export class RuntimeEngine {
       if (!sprite.isClone) {
         this.updateTemplateHandlers(spriteId);
       }
+    }
+
+    // Runtime may have been stopped while awaiting async onStart handlers.
+    if (!this._isRunning) {
+      debugLog('info', 'Runtime start aborted before completion');
+      return;
     }
 
     // Start forever loops
@@ -1054,6 +1073,7 @@ export class RuntimeEngine {
   cleanup(): void {
     debugLog('info', 'RuntimeEngine cleanup');
     this.stopAll();
+    this._hasStarted = false;
 
     // Stop all sounds before destroying
     try {
