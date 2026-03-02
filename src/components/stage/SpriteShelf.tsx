@@ -150,6 +150,7 @@ export function SpriteShelf() {
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
+    activeObjectTab,
     selectObject,
     selectObjects,
     selectScene,
@@ -286,7 +287,11 @@ export function SpriteShelf() {
   const orderedSceneObjectIds = getSceneObjectsInLayerOrder(selectedScene).map((obj) => obj.id);
   const sceneObjectIdSet = new Set(selectedScene.objects.map((obj) => obj.id));
 
-  const selectedIdsInScene = selectedObjectIds.filter((id) => sceneObjectIdSet.has(id));
+  const selectedIdsInScene = (
+    selectedObjectIds.length > 0
+      ? selectedObjectIds
+      : (selectedObjectId ? [selectedObjectId] : [])
+  ).filter((id) => sceneObjectIdSet.has(id));
   const selectedTreeKeys = new Set<Key>(selectedIdsInScene.map((id) => getObjectNodeKey(id)));
 
   const collapsedFolderIds = new Set(collapsedFolderIdsByScene[selectedSceneId] ?? []);
@@ -320,6 +325,9 @@ export function SpriteShelf() {
 
     if (nextObjectIds.length === 0) {
       if (nextKeys.size > 0) {
+        return;
+      }
+      if (activeObjectTab === 'costumes') {
         return;
       }
       selectObject(null);

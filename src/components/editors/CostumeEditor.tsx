@@ -58,7 +58,16 @@ export function CostumeEditor() {
   const currentCostumeIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const justSavedRef = useRef(false);
-  const isLoadingRef = useRef(false);
+  const isLoadingRef = useRef(true);
+
+  useEffect(() => {
+    currentCostumeIdRef.current = null;
+    isLoadingRef.current = true;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+  }, [selectedSceneId, selectedObjectId]);
 
   const scene = project?.scenes.find((s) => s.id === selectedSceneId);
   const object = scene?.objects.find((o) => o.id === selectedObjectId);
@@ -155,6 +164,9 @@ export function CostumeEditor() {
   }, []);
 
   const handleHistoryChange = useCallback(() => {
+    if (isLoadingRef.current) {
+      return;
+    }
     if (canvasRef.current) {
       setCanUndo(canvasRef.current.canUndo());
       setCanRedo(canvasRef.current.canRedo());
@@ -163,10 +175,16 @@ export function CostumeEditor() {
   }, [debouncedSave]);
 
   const persistCurrentCostumeInMemory = useCallback(() => {
+    if (isLoadingRef.current) {
+      return costumes;
+    }
     if (!canvasRef.current || costumes.length === 0) {
       return costumes;
     }
     const state = canvasRef.current.exportCostumeState();
+    if (!state.dataUrl) {
+      return costumes;
+    }
     return costumes.map((c, i) =>
       i === currentCostumeIndex
         ? {

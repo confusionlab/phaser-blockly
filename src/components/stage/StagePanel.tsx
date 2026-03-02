@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { PhaserCanvas } from './PhaserCanvas';
 import { SpriteShelf } from './SpriteShelf';
 import { ObjectInspector } from './ObjectInspector';
 import { useEditorStore } from '@/store/editorStore';
+import { useProjectStore } from '@/store/projectStore';
 import { Button } from '@/components/ui/button';
 import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
@@ -12,10 +13,47 @@ interface StagePanelProps {
 }
 
 export function StagePanel({ fullscreen = false }: StagePanelProps) {
-  const { stopPlaying, viewMode, cycleViewMode } = useEditorStore();
+  const { stopPlaying, viewMode, cycleViewMode, selectedSceneId, selectedObjectId, selectObject } = useEditorStore();
+  const { project } = useProjectStore();
   const [bottomHeightPercent, setBottomHeightPercent] = useState(70); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
+  const fullscreenSelectionRef = useRef<{ sceneId: string | null; objectId: string | null } | null>(null);
+
+  const toggleCanvasFullscreen = useCallback(() => {
+    if (!isCanvasFullscreen) {
+      fullscreenSelectionRef.current = {
+        sceneId: selectedSceneId,
+        objectId: selectedObjectId,
+      };
+      setIsCanvasFullscreen(true);
+      return;
+    }
+    setIsCanvasFullscreen(false);
+  }, [isCanvasFullscreen, selectedObjectId, selectedSceneId]);
+
+  useEffect(() => {
+    if (isCanvasFullscreen) {
+      return;
+    }
+    const preserved = fullscreenSelectionRef.current;
+    if (!preserved?.sceneId || !preserved.objectId) {
+      return;
+    }
+    const storeState = useEditorStore.getState();
+    if (storeState.selectedObjectId) {
+      return;
+    }
+    const scene = project?.scenes.find((candidate) => candidate.id === preserved.sceneId);
+    if (!scene) {
+      return;
+    }
+    const exists = scene.objects.some((obj) => obj.id === preserved.objectId);
+    if (!exists) {
+      return;
+    }
+    selectObject(preserved.objectId);
+  }, [isCanvasFullscreen, project, selectObject]);
 
   const handleVerticalDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -123,7 +161,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
           variant={isCanvasFullscreen ? 'secondary' : 'ghost'}
           size="sm"
           className="h-7 w-7 p-0"
-          onClick={() => setIsCanvasFullscreen((prev) => !prev)}
+          onClick={toggleCanvasFullscreen}
           title={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
         >
           {isCanvasFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}

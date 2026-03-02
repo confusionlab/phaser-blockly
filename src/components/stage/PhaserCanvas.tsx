@@ -75,12 +75,14 @@ function isPointOnOpaqueSpritePixel(scene: Phaser.Scene, sprite: Phaser.GameObje
   if (spriteWidth <= 0 || spriteHeight <= 0) return false;
   if (localX < 0 || localY < 0 || localX >= spriteWidth || localY >= spriteHeight) return false;
 
-  // Phaser pixel-perfect input passes local frame-space coordinates directly.
-  const alpha = scene.textures.getPixelAlpha(localX, localY, sprite.texture.key, sprite.frame.name);
+  // `getPixelAlpha` expects frame-space pixel indices. Clamp and floor to avoid null on subpixels.
+  const pixelX = Math.floor(Math.max(0, Math.min(spriteWidth - 1, localX)));
+  const pixelY = Math.floor(Math.max(0, Math.min(spriteHeight - 1, localY)));
+  const alpha = scene.textures.getPixelAlpha(pixelX, pixelY, sprite.texture.key, sprite.frame.name);
 
   if (alpha === null || alpha === undefined) {
-    // Fallback if texture pixel lookup is unavailable for this source.
-    return true;
+    // Treat unknown alpha as miss to avoid broad non-pixel-perfect selections.
+    return false;
   }
   return alpha >= PIXEL_HIT_ALPHA_TOLERANCE;
 }
@@ -143,7 +145,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const playModeInitialSceneRef = useRef<string | null>(null);
 
   const { project, updateObject } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObject, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
   const selectedSceneIdRef = useRef(selectedSceneId);
@@ -336,7 +338,6 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
               createEditorScene(
                 this,
                 selectedScene,
-                selectObject,
                 selectObjects,
                 selectedObjectId,
                 selectedObjectIds,
@@ -762,7 +763,6 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                 hitRect.setPosition(offsetX, offsetY);
                 hitRect.removeInteractive();
                 hitRect.setInteractive({ useHandCursor: true });
-                phaserScene.input.setDraggable(hitRect);
               }
 
               const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
@@ -784,7 +784,6 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                 hitRect.setPosition(0, 0);
                 hitRect.removeInteractive();
                 hitRect.setInteractive({ useHandCursor: true });
-                phaserScene.input.setDraggable(hitRect);
               }
 
               const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
@@ -905,7 +904,6 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 function createEditorScene(
   scene: Phaser.Scene,
   sceneData: SceneData | undefined,
-  selectObject: (id: string | null) => void,
   selectObjects: (ids: string[], primaryObjectId?: string | null) => void,
   selectedObjectId: string | null,
   selectedObjectIds: string[],
@@ -1329,9 +1327,7 @@ function createEditorScene(
     const maxY = Math.max(marqueeStartY, pointerWorldY);
 
     if (!marqueeHasMoved) {
-      if (marqueeMode === 'replace') {
-        selectObject(null);
-      }
+      // Keep current selection on empty clicks.
       isMarqueeSelecting = false;
       marqueePointerId = null;
       return;
@@ -1604,14 +1600,7 @@ function createEditorScene(
     if (currentMode !== 'editor') {
       const event = pointer.event as MouseEvent | PointerEvent | undefined;
       if (!(event?.metaKey || event?.ctrlKey || event?.shiftKey)) {
-        const storeState = useEditorStore.getState();
-        const currentSelected = storeState.selectedObjectIds.length > 0
-          ? storeState.selectedObjectIds
-          : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
-        // Keep multi-selection stable unless user explicitly changes it.
-        if (currentSelected.length <= 1) {
-          selectObject(null);
-        }
+        // Keep current selection on empty clicks.
       }
       return;
     }
@@ -2278,37 +2267,12 @@ function createObjectVisual(
     hitRect.setName('hitArea');
     container.add(hitRect);
 
-    // Track drag offset to prevent jumping
-    let dragOffsetX = 0;
-    let dragOffsetY = 0;
-
     // Set up editor interactivity immediately (with one-frame fallback for scene init edge cases).
     const setupEditorInteractivity = () => {
       if (!hitRect || !hitRect.scene) return;
       if (container.getData('editorInteractivityBound')) return;
 
       hitRect.setInteractive({ useHandCursor: true });
-      scene.input.setDraggable(hitRect);
-
-      // Forward hit area events to container
-      hitRect.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-        container.emit('pointerdown', pointer);
-      });
-      hitRect.on('dragstart', (pointer: Phaser.Input.Pointer) => {
-        // Record offset between pointer and container position
-        dragOffsetX = container.x - pointer.worldX;
-        dragOffsetY = container.y - pointer.worldY;
-        container.emit('dragstart', pointer);
-      });
-      hitRect.on('drag', (pointer: Phaser.Input.Pointer) => {
-        // Move container maintaining the initial offset
-        const newX = pointer.worldX + dragOffsetX;
-        const newY = pointer.worldY + dragOffsetY;
-        container.emit('drag', pointer, newX, newY);
-      });
-      hitRect.on('dragend', (pointer: Phaser.Input.Pointer) => {
-        container.emit('dragend', pointer);
-      });
 
       // Set up gizmo handle drag logic
       let startScaleX = 1, startScaleY = 1;
@@ -2495,7 +2459,6 @@ function createObjectVisual(
         hitRect.setPosition(offsetX, offsetY);
         hitRect.removeInteractive();
         hitRect.setInteractive({ useHandCursor: true });
-        scene.input.setDraggable(hitRect);
       }
 
       // Update selection rectangle
@@ -2519,7 +2482,6 @@ function createObjectVisual(
         hitRect.setPosition(0, 0);
         hitRect.removeInteractive();
         hitRect.setInteractive({ useHandCursor: true });
-        scene.input.setDraggable(hitRect);
       }
 
       if (selectionRect) {
