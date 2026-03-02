@@ -8,6 +8,10 @@ import {
   IText,
   ActiveSelection,
   FabricImage,
+  Control,
+  Point,
+  controlsUtils,
+  util,
 } from 'fabric';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
@@ -27,6 +31,215 @@ const VECTOR_SELECTION_CORNER_COLOR = '#ffffff';
 const VECTOR_SELECTION_CORNER_STROKE = '#005eff';
 const VECTOR_SELECTION_BORDER_OPACITY = 1;
 const VECTOR_SELECTION_BORDER_SCALE = 2;
+
+function createBrushCursor(size: number, color: string, isEraser: boolean): string {
+  const diameter = Math.max(6, Math.round(size));
+  const cursorSize = diameter + 4;
+  const center = Math.floor(cursorSize / 2);
+  const radius = Math.max(1, diameter / 2 - 1);
+  const stroke = isEraser ? '#111111' : color;
+  const fill = isEraser ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.06)';
+  const strokeWidth = isEraser ? 1.5 : 1.25;
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${cursorSize}' height='${cursorSize}' viewBox='0 0 ${cursorSize} ${cursorSize}'><circle cx='${center}' cy='${center}' r='${radius}' fill='${fill}' stroke='${stroke}' stroke-width='${strokeWidth}'/></svg>`;
+  return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}") ${center} ${center}, crosshair`;
+}
+
+function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
+  fabricCanvas.defaultCursor = cursor;
+  fabricCanvas.hoverCursor = cursor;
+  fabricCanvas.moveCursor = cursor;
+  fabricCanvas.freeDrawingCursor = cursor;
+  if (fabricCanvas.upperCanvasEl) {
+    fabricCanvas.upperCanvasEl.style.cursor = cursor;
+  }
+  if (fabricCanvas.lowerCanvasEl) {
+    fabricCanvas.lowerCanvasEl.style.cursor = cursor;
+  }
+}
+
+const VECTOR_POINT_CONTROL_STYLE = {
+  cornerColor: '#ffffff',
+  cornerStrokeColor: '#005eff',
+  cornerSize: 12,
+  transparentCorners: false,
+};
+
+type RectPointKey = 'tl' | 'tr' | 'br' | 'bl';
+type EllipsePointKey = 'left' | 'right' | 'top' | 'bottom';
+type LinePointKey = 'start' | 'end';
+
+function getCanvasTransformMatrix(target: any) {
+  return util.multiplyTransformMatrices(
+    target.getViewportTransform(),
+    target.calcTransformMatrix()
+  );
+}
+
+function toLocalObjectPoint(target: any, x: number, y: number) {
+  return new Point(x, y).transform(util.invertTransform(target.calcOwnMatrix()));
+}
+
+function getRectLocalPoint(rect: any, key: RectPointKey): Point {
+  const halfW = Math.max(0.5, (typeof rect.width === 'number' ? rect.width : 1) / 2);
+  const halfH = Math.max(0.5, (typeof rect.height === 'number' ? rect.height : 1) / 2);
+  if (key === 'tl') return new Point(-halfW, -halfH);
+  if (key === 'tr') return new Point(halfW, -halfH);
+  if (key === 'br') return new Point(halfW, halfH);
+  return new Point(-halfW, halfH);
+}
+
+function getOppositeRectKey(key: RectPointKey): RectPointKey {
+  if (key === 'tl') return 'br';
+  if (key === 'tr') return 'bl';
+  if (key === 'br') return 'tl';
+  return 'tr';
+}
+
+function createRectPointControls(): Record<string, Control> {
+  const keys: RectPointKey[] = ['tl', 'tr', 'br', 'bl'];
+  const controls: Record<string, Control> = {};
+
+  for (const key of keys) {
+    controls[`p_${key}`] = new Control({
+      actionName: 'modifyRect',
+      cursorStyle: 'crosshair',
+      positionHandler: (_dim, _finalMatrix, target) => {
+        const local = getRectLocalPoint(target, key);
+        return local.transform(getCanvasTransformMatrix(target));
+      },
+      actionHandler: (_eventData, transform, x, y) => {
+        const rect = transform.target as any;
+        const anchor = getRectLocalPoint(rect, getOppositeRectKey(key));
+        const mouse = toLocalObjectPoint(rect, x, y);
+        const nextWidth = Math.max(1, Math.abs(mouse.x - anchor.x));
+        const nextHeight = Math.max(1, Math.abs(mouse.y - anchor.y));
+        const nextCenterLocal = anchor.add(mouse).scalarDivide(2);
+        const nextCenterWorld = nextCenterLocal.transform(rect.calcOwnMatrix());
+
+        rect.set({
+          width: nextWidth,
+          height: nextHeight,
+        });
+        if (typeof rect.rx === 'number') {
+          rect.set('rx', Math.min(rect.rx, nextWidth / 2));
+        }
+        if (typeof rect.ry === 'number') {
+          rect.set('ry', Math.min(rect.ry, nextHeight / 2));
+        }
+        rect.setPositionByOrigin(nextCenterWorld, 'center', 'center');
+        rect.setCoords();
+        rect.set('dirty', true);
+        return true;
+      },
+      ...VECTOR_POINT_CONTROL_STYLE,
+    });
+  }
+
+  return controls;
+}
+
+function getEllipseLocalPoint(ellipse: any, key: EllipsePointKey): Point {
+  const rx = Math.max(0.5, typeof ellipse.rx === 'number' ? ellipse.rx : ((ellipse.width || 1) / 2));
+  const ry = Math.max(0.5, typeof ellipse.ry === 'number' ? ellipse.ry : ((ellipse.height || 1) / 2));
+  if (key === 'left') return new Point(-rx, 0);
+  if (key === 'right') return new Point(rx, 0);
+  if (key === 'top') return new Point(0, -ry);
+  return new Point(0, ry);
+}
+
+function getOppositeEllipseKey(key: EllipsePointKey): EllipsePointKey {
+  if (key === 'left') return 'right';
+  if (key === 'right') return 'left';
+  if (key === 'top') return 'bottom';
+  return 'top';
+}
+
+function createEllipsePointControls(): Record<string, Control> {
+  const keys: EllipsePointKey[] = ['left', 'right', 'top', 'bottom'];
+  const controls: Record<string, Control> = {};
+
+  for (const key of keys) {
+    controls[`p_${key}`] = new Control({
+      actionName: 'modifyEllipse',
+      cursorStyle: 'crosshair',
+      positionHandler: (_dim, _finalMatrix, target) => {
+        const local = getEllipseLocalPoint(target, key);
+        return local.transform(getCanvasTransformMatrix(target));
+      },
+      actionHandler: (_eventData, transform, x, y) => {
+        const ellipse = transform.target as any;
+        const anchor = getEllipseLocalPoint(ellipse, getOppositeEllipseKey(key));
+        const mouse = toLocalObjectPoint(ellipse, x, y);
+        const centerLocal = anchor.add(mouse).scalarDivide(2);
+        const centerWorld = centerLocal.transform(ellipse.calcOwnMatrix());
+
+        if (key === 'left' || key === 'right') {
+          const nextRx = Math.max(1, Math.abs(mouse.x - anchor.x) / 2);
+          ellipse.set('rx', nextRx);
+        } else {
+          const nextRy = Math.max(1, Math.abs(mouse.y - anchor.y) / 2);
+          ellipse.set('ry', nextRy);
+        }
+
+        ellipse.setPositionByOrigin(centerWorld, 'center', 'center');
+        ellipse.setCoords();
+        ellipse.set('dirty', true);
+        return true;
+      },
+      ...VECTOR_POINT_CONTROL_STYLE,
+    });
+  }
+
+  return controls;
+}
+
+function getLineLocalPoint(line: any, key: LinePointKey): Point {
+  const points = line.calcLinePoints() as { x1: number; y1: number; x2: number; y2: number };
+  if (key === 'start') return new Point(points.x1, points.y1);
+  return new Point(points.x2, points.y2);
+}
+
+function createLinePointControls(): Record<string, Control> {
+  const keys: LinePointKey[] = ['start', 'end'];
+  const controls: Record<string, Control> = {};
+
+  for (const key of keys) {
+    controls[`p_${key}`] = new Control({
+      actionName: 'modifyLine',
+      cursorStyle: 'crosshair',
+      positionHandler: (_dim, _finalMatrix, target) => {
+        const local = getLineLocalPoint(target, key);
+        return local.transform(getCanvasTransformMatrix(target));
+      },
+      actionHandler: (_eventData, transform, x, y) => {
+        const line = transform.target as any;
+        const start = getLineLocalPoint(line, 'start');
+        const end = getLineLocalPoint(line, 'end');
+        const movedPoint = toLocalObjectPoint(line, x, y);
+        const nextStart = key === 'start' ? movedPoint : start;
+        const nextEnd = key === 'end' ? movedPoint : end;
+        const centerLocal = nextStart.add(nextEnd).scalarDivide(2);
+        const centerWorld = centerLocal.transform(line.calcOwnMatrix());
+        const relStart = nextStart.subtract(centerLocal);
+        const relEnd = nextEnd.subtract(centerLocal);
+
+        line.set({
+          x1: relStart.x,
+          y1: relStart.y,
+          x2: relEnd.x,
+          y2: relEnd.y,
+        });
+        line.setPositionByOrigin(centerWorld, 'center', 'center');
+        line.setCoords();
+        line.set('dirty', true);
+        return true;
+      },
+      ...VECTOR_POINT_CONTROL_STYLE,
+    });
+  }
+
+  return controls;
+}
 
 type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
@@ -204,6 +417,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const bitmapSelectionDragModeRef = useRef<'none' | 'marquee'>('none');
   const bitmapSelectionBusyRef = useRef(false);
   const loadRequestIdRef = useRef(0);
+  const originalControlsRef = useRef<WeakMap<object, Record<string, Control> | undefined>>(new WeakMap());
 
   const syncSelectionState = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -900,6 +1114,72 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory();
   }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
 
+  const restoreOriginalControls = useCallback((obj: any) => {
+    if (!obj || typeof obj !== 'object') return;
+    const original = originalControlsRef.current.get(obj);
+    if (!original) return;
+    obj.controls = original;
+    originalControlsRef.current.delete(obj);
+  }, []);
+
+  const restoreAllOriginalControls = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return;
+    fabricCanvas.forEachObject((obj: any) => restoreOriginalControls(obj));
+  }, [restoreOriginalControls]);
+
+  const applyVectorPointControls = useCallback((obj: any): boolean => {
+    if (!obj || typeof obj !== 'object') return false;
+    if (isImageObject(obj) || isTextObject(obj)) return false;
+    if (obj.type === 'activeSelection') return false;
+
+    if (!originalControlsRef.current.has(obj)) {
+      originalControlsRef.current.set(obj, obj.controls);
+    }
+
+    if (obj.type === 'path') {
+      obj.controls = controlsUtils.createPathControls(obj, {
+        ...VECTOR_POINT_CONTROL_STYLE,
+        pointStyle: {
+          controlFill: '#ffffff',
+          controlStroke: VECTOR_SELECTION_COLOR,
+        },
+        controlPointStyle: {
+          controlFill: '#ffffff',
+          controlStroke: VECTOR_SELECTION_COLOR,
+          connectionDashArray: [4, 3],
+        },
+      });
+      return true;
+    }
+
+    if ((obj.type === 'polyline' || obj.type === 'polygon') && Array.isArray((obj as any).points) && (obj as any).points.length > 1) {
+      obj.controls = controlsUtils.createPolyControls(obj, {
+        ...VECTOR_POINT_CONTROL_STYLE,
+        cursorStyle: 'crosshair',
+      });
+      return true;
+    }
+
+    if (obj.type === 'rect') {
+      obj.controls = createRectPointControls();
+      return true;
+    }
+
+    if (obj.type === 'ellipse') {
+      obj.controls = createEllipsePointControls();
+      return true;
+    }
+
+    if (obj.type === 'line' && typeof obj.calcLinePoints === 'function') {
+      obj.controls = createLinePointControls();
+      return true;
+    }
+
+    restoreOriginalControls(obj);
+    return false;
+  }, [restoreOriginalControls]);
+
   const configureCanvasForTool = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
@@ -925,6 +1205,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       mode === 'bitmap' &&
       tool === 'select' &&
       !!floatingBitmapObject;
+    restoreAllOriginalControls();
     fabricCanvas.selection = isVectorSelectionMode;
     fabricCanvas.selectionColor = 'rgba(0, 94, 255, 0.14)';
     fabricCanvas.selectionBorderColor = VECTOR_SELECTION_COLOR;
@@ -938,6 +1219,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           : (isBitmapFloatingSelectionMode && obj === floatingBitmapObject);
       obj.selectable = selectable;
       obj.evented = selectable;
+      obj.hasControls = selectable;
+      obj.hasBorders = selectable;
       obj.lockMovementX = !selectable || isVectorPointMode;
       obj.lockMovementY = !selectable || isVectorPointMode;
       obj.lockRotation = !selectable;
@@ -962,10 +1245,30 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (!isVectorSelectionMode && !isVectorPointMode && activeObject !== floatingBitmapObject) {
         fabricCanvas.discardActiveObject();
       }
+
+      if (isVectorPointMode && isVectorPointEditableObject(activeObject)) {
+        const activeObjectAny = activeObject as any;
+        const applied = applyVectorPointControls(activeObjectAny);
+        if (applied) {
+          activeObjectAny.hasControls = true;
+          activeObjectAny.hasBorders = true;
+          activeObjectAny.borderColor = VECTOR_SELECTION_COLOR;
+          activeObjectAny.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
+          activeObjectAny.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
+          activeObjectAny.cornerSize = 12;
+          activeObjectAny.transparentCorners = false;
+        }
+      }
     }
 
     let cursor = 'default';
-    if (tool === 'brush' || tool === 'eraser' || tool === 'fill' || tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'vector') {
+    if (mode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
+      cursor = createBrushCursor(
+        brushSizeRef.current,
+        brushColorRef.current,
+        tool === 'eraser'
+      );
+    } else if (tool === 'fill' || tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'vector') {
       cursor = 'crosshair';
     } else if (tool === 'text') {
       cursor = 'text';
@@ -973,15 +1276,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       cursor = 'move';
     }
 
-    fabricCanvas.defaultCursor = cursor;
-    if (fabricCanvas.upperCanvasEl) {
-      fabricCanvas.upperCanvasEl.style.cursor = cursor;
-    }
-    if (fabricCanvas.lowerCanvasEl) {
-      fabricCanvas.lowerCanvasEl.style.cursor = cursor;
-    }
+    applyCanvasCursor(fabricCanvas, cursor);
+    fabricCanvas.requestRenderAll();
     syncSelectionState();
-  }, [syncSelectionState]);
+  }, [applyVectorPointControls, restoreAllOriginalControls, syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -1229,9 +1527,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         void (async () => {
           await flattenBitmapLayer();
           saveHistory();
+          configureCanvasForTool();
         })();
       } else {
         saveHistory();
+        configureCanvasForTool();
       }
     };
 
@@ -1261,6 +1561,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       syncTextStyleFromSelection();
       syncTextSelectionState();
       syncSelectionState();
+      if (editorModeRef.current === 'vector' && activeToolRef.current === 'vector') {
+        configureCanvasForTool();
+      }
     };
 
     const onTextChanged = () => {
@@ -1282,6 +1585,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
       onTextSelectionChangeRef.current?.(false);
       syncSelectionState();
+      if (editorModeRef.current === 'vector' && activeToolRef.current === 'vector') {
+        configureCanvasForTool();
+      }
     };
 
     fabricCanvas.on('mouse:down', onMouseDown);
@@ -1312,6 +1618,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     configureCanvasForTool();
 
     return () => {
+      restoreAllOriginalControls();
       fabricCanvas.off('mouse:down', onMouseDown);
       fabricCanvas.off('mouse:move', onMouseMove);
       fabricCanvas.off('mouse:up', onMouseUp);
@@ -1325,7 +1632,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [applyFill, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection]);
+  }, [applyFill, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, flattenBitmapLayer, loadBitmapLayer, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -1885,10 +2192,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   // Natural wheel controls (stage-matched):
   // - ctrl/cmd + wheel: zoom at cursor pivot.
   // - plain wheel: pan viewport.
-  const handleWheel = useCallback((e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: WheelEvent) => {
     const container = containerRef.current;
     if (!container) return;
     e.preventDefault();
+    e.stopPropagation();
 
     if (e.ctrlKey || e.metaKey) {
       const rect = container.getBoundingClientRect();
@@ -1908,6 +2216,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }));
   }, [clampZoom, zoomAtScreenPoint]);
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onWheel = (event: WheelEvent) => handleWheel(event);
+    container.addEventListener('wheel', onWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('wheel', onWheel);
+    };
+  }, [handleWheel]);
+
+  const handleZoomReset = useCallback(() => {
+    setZoom(1);
+    setCameraCenter({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
+  }, []);
+
   const currentViewScale = BASE_VIEW_SCALE * zoom;
   const canvasLeft = viewportSize.width / 2 - cameraCenter.x * currentViewScale;
   const canvasTop = viewportSize.height / 2 - cameraCenter.y * currentViewScale;
@@ -1924,7 +2249,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         maxZoom={MAX_ZOOM}
         onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
         onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
-        onZoomReset={() => zoomAroundViewportCenter(1)}
+        onZoomReset={handleZoomReset}
         colliderType={colliderType}
         onColliderTypeChange={onColliderTypeChange}
         activeTool={activeTool}
@@ -1934,8 +2259,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       <div
         ref={containerRef}
         className="flex-1 overflow-hidden relative"
-        onWheel={handleWheel}
-        style={{ cursor: isViewportPanning ? 'grabbing' : undefined }}
+        style={{
+          cursor: isViewportPanning ? 'grabbing' : undefined,
+          overscrollBehavior: 'contain',
+        }}
       >
         <div
           className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg"

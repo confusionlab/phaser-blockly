@@ -252,7 +252,7 @@ export const CostumeList = memo(({
             >
               {/* Thumbnail - transparent areas remain transparent */}
               <div
-                className="aspect-square rounded mb-0.5 overflow-hidden border relative"
+                className="aspect-square rounded overflow-hidden relative"
               >
                 {costume.bounds && costume.bounds.width > 0 && costume.bounds.height > 0 ? (
                   // Zoomed thumbnail using bounds
@@ -293,7 +293,7 @@ export const CostumeList = memo(({
                 value={costume.name}
                 onChange={(e) => onRenameCostume(index, e.target.value)}
                 onClick={(e) => e.stopPropagation()}
-                className="w-full h-5 px-1 text-[10px] text-center bg-transparent border-none focus:bg-background"
+                className="w-full h-4 mt-0.5 px-1 text-[10px] leading-none text-center bg-transparent border-none focus:bg-background"
               />
 
               {/* Index number */}
