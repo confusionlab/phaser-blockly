@@ -1201,23 +1201,83 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isNearlyEqual,
   ]);
 
+  const clonePoint = useCallback((point: Point | null): Point | null => {
+    if (!point) return null;
+    return new Point(point.x, point.y);
+  }, []);
+
+  const toParentPlanePoint = useCallback((pathObj: any, point: Point): Point | null => {
+    if (!pathObj || !point || !pathObj.pathOffset || typeof pathObj.calcOwnMatrix !== 'function') return null;
+    return new Point(point.x - pathObj.pathOffset.x, point.y - pathObj.pathOffset.y).transform(pathObj.calcOwnMatrix());
+  }, []);
+
+  const stabilizePathAfterAnchorMutation = useCallback((pathObj: any, anchorPoint: Point) => {
+    const anchorBefore = toParentPlanePoint(pathObj, anchorPoint);
+    pathObj.setDimensions();
+    const anchorAfter = toParentPlanePoint(pathObj, anchorPoint);
+    if (anchorBefore && anchorAfter) {
+      const diffX = anchorAfter.x - anchorBefore.x;
+      const diffY = anchorAfter.y - anchorBefore.y;
+      if (Math.abs(diffX) > 0.0001) {
+        pathObj.left -= diffX;
+      }
+      if (Math.abs(diffY) > 0.0001) {
+        pathObj.top -= diffY;
+      }
+    }
+    pathObj.set('dirty', true);
+    pathObj.setCoords();
+  }, [toParentPlanePoint]);
+
   const enforcePathAnchorHandleType = useCallback((
     pathObj: any,
     anchorIndex: number,
-    changed: 'anchor' | 'incoming' | 'outgoing' | null
+    changed: 'anchor' | 'incoming' | 'outgoing' | null,
+    dragState?: {
+      previousAnchor: Point;
+      previousIncoming: Point | null;
+      previousOutgoing: Point | null;
+    }
   ) => {
-    const handleType = getPathNodeHandleType(pathObj, anchorIndex) ?? 'corner';
-    if (handleType === 'corner') return;
-
     const commands = getPathCommands(pathObj);
     const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
     const anchorPoint = getAnchorPointForIndex(pathObj, normalizedAnchor);
     if (!anchorPoint) return;
 
+    const handleType = getPathNodeHandleType(pathObj, anchorIndex) ?? 'corner';
     const incomingCommandIndex = findIncomingCubicCommandIndex(pathObj, normalizedAnchor);
     const outgoingCommandIndex = findOutgoingCubicCommandIndex(pathObj, normalizedAnchor);
     const incomingCommand = incomingCommandIndex >= 0 ? commands[incomingCommandIndex] : null;
     const outgoingCommand = outgoingCommandIndex >= 0 ? commands[outgoingCommandIndex] : null;
+
+    if (changed === 'anchor' && dragState?.previousAnchor) {
+      const deltaX = anchorPoint.x - dragState.previousAnchor.x;
+      const deltaY = anchorPoint.y - dragState.previousAnchor.y;
+      if (incomingCommand && getCommandType(incomingCommand) === 'C') {
+        const baseIncoming = dragState.previousIncoming ?? new Point(Number(incomingCommand[3]), Number(incomingCommand[4]));
+        incomingCommand[3] = baseIncoming.x + deltaX;
+        incomingCommand[4] = baseIncoming.y + deltaY;
+      }
+      if (outgoingCommand && getCommandType(outgoingCommand) === 'C') {
+        const baseOutgoing = dragState.previousOutgoing ?? new Point(Number(outgoingCommand[1]), Number(outgoingCommand[2]));
+        outgoingCommand[1] = baseOutgoing.x + deltaX;
+        outgoingCommand[2] = baseOutgoing.y + deltaY;
+      }
+      if (handleType === 'linear') {
+        if (incomingCommand && getCommandType(incomingCommand) === 'C') {
+          incomingCommand[3] = anchorPoint.x;
+          incomingCommand[4] = anchorPoint.y;
+        }
+        if (outgoingCommand && getCommandType(outgoingCommand) === 'C') {
+          outgoingCommand[1] = anchorPoint.x;
+          outgoingCommand[2] = anchorPoint.y;
+        }
+      }
+      stabilizePathAfterAnchorMutation(pathObj, anchorPoint);
+      return;
+    }
+
+    if (handleType === 'corner') return;
 
     if (handleType === 'linear') {
       if (incomingCommand && getCommandType(incomingCommand) === 'C') {
@@ -1228,9 +1288,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         outgoingCommand[1] = anchorPoint.x;
         outgoingCommand[2] = anchorPoint.y;
       }
-      pathObj.set('dirty', true);
-      pathObj.setDimensions();
-      pathObj.setCoords();
+      stabilizePathAfterAnchorMutation(pathObj, anchorPoint);
       return;
     }
 
@@ -1291,9 +1349,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     outgoingCommand[1] = anchorPoint.x - baseDirX * nextOutgoingLength;
     outgoingCommand[2] = anchorPoint.y - baseDirY * nextOutgoingLength;
 
-    pathObj.set('dirty', true);
-    pathObj.setDimensions();
-    pathObj.setCoords();
+    stabilizePathAfterAnchorMutation(pathObj, anchorPoint);
   }, [
     findIncomingCubicCommandIndex,
     findOutgoingCubicCommandIndex,
@@ -1302,6 +1358,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getPathCommands,
     getPathNodeHandleType,
     normalizeAnchorIndex,
+    stabilizePathAfterAnchorMutation,
   ]);
 
   const createFourPointEllipsePathData = useCallback((obj: any): string | null => {
@@ -1484,8 +1541,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               const existingType = getPathNodeHandleType(pathObj, resolved.anchorIndex);
               if (!existingType) {
                 setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
-                enforcePathAnchorHandleType(pathObj, resolved.anchorIndex, resolved.changed);
-                pathObj.canvas?.requestRenderAll?.();
               }
             }
           }
@@ -1498,6 +1553,38 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         const originalActionHandler = control.actionHandler;
         if (typeof originalActionHandler !== 'function') continue;
         control.actionHandler = ((eventData: any, transform: any, x: number, y: number) => {
+          const pathObjBefore = transform?.target;
+          const resolvedBefore = pathObjBefore && getFabricObjectType(pathObjBefore) === 'path'
+            ? resolveAnchorFromPathControlKey(pathObjBefore, key)
+            : null;
+
+          let dragState: {
+            previousAnchor: Point;
+            previousIncoming: Point | null;
+            previousOutgoing: Point | null;
+          } | undefined;
+
+          if (pathObjBefore && resolvedBefore) {
+            const anchorBefore = getAnchorPointForIndex(pathObjBefore, resolvedBefore.anchorIndex);
+            if (anchorBefore) {
+              const incomingIndexBefore = findIncomingCubicCommandIndex(pathObjBefore, resolvedBefore.anchorIndex);
+              const outgoingIndexBefore = findOutgoingCubicCommandIndex(pathObjBefore, resolvedBefore.anchorIndex);
+              const incomingCommandBefore = incomingIndexBefore >= 0 ? pathObjBefore.path?.[incomingIndexBefore] : null;
+              const outgoingCommandBefore = outgoingIndexBefore >= 0 ? pathObjBefore.path?.[outgoingIndexBefore] : null;
+              const incomingBefore = incomingCommandBefore && getCommandType(incomingCommandBefore) === 'C'
+                ? new Point(Number(incomingCommandBefore[3]), Number(incomingCommandBefore[4]))
+                : null;
+              const outgoingBefore = outgoingCommandBefore && getCommandType(outgoingCommandBefore) === 'C'
+                ? new Point(Number(outgoingCommandBefore[1]), Number(outgoingCommandBefore[2]))
+                : null;
+              dragState = {
+                previousAnchor: new Point(anchorBefore.x, anchorBefore.y),
+                previousIncoming: clonePoint(incomingBefore),
+                previousOutgoing: clonePoint(outgoingBefore),
+              };
+            }
+          }
+
           const performed = originalActionHandler.call(control, eventData, transform, x, y);
           const pathObj = transform?.target;
           if (!pathObj || getFabricObjectType(pathObj) !== 'path') {
@@ -1510,7 +1597,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
             }
             activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
-            enforcePathAnchorHandleType(pathObj, resolved.anchorIndex, resolved.changed);
+            enforcePathAnchorHandleType(pathObj, resolved.anchorIndex, resolved.changed, dragState);
           }
           return performed;
         }) as any;
@@ -1540,7 +1627,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     restoreOriginalControls(obj);
     return false;
   }, [
+    clonePoint,
     enforcePathAnchorHandleType,
+    findIncomingCubicCommandIndex,
+    findOutgoingCubicCommandIndex,
+    getAnchorPointForIndex,
+    getCommandType,
     getPathNodeHandleType,
     removeDuplicateClosedPathAnchorControl,
     resolveAnchorFromPathControlKey,
