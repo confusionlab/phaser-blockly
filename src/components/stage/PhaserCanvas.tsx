@@ -1128,6 +1128,8 @@ function createEditorScene(
 
   const groupHandles = new Map<string, Phaser.GameObjects.Shape | Phaser.GameObjects.Arc>();
   const createGroupHandle = (name: string, shape: Phaser.GameObjects.Shape | Phaser.GameObjects.Arc, cursor: string) => {
+    shape.setFillStyle(0xffffff, 1);
+    shape.setStrokeStyle(1.5, 0x4A90D9, 1);
     shape.setName(name);
     shape.setVisible(false);
     shape.setDepth(10_004);
@@ -1232,6 +1234,7 @@ function createEditorScene(
     const cameraZoom = scene.cameras.main.zoom || 1;
     const uiScale = 1 / cameraZoom;
     const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
+    const frameColor = 0x7bb4e8;
     const halfW = frame.width / 2;
     const halfH = frame.height / 2;
     const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / cameraZoom;
@@ -1246,8 +1249,8 @@ function createEditorScene(
     groupSelectionRect.setPosition(frame.centerX, frame.centerY);
     groupSelectionRect.setSize(frame.width, frame.height);
     groupSelectionRect.setRotation(rotation);
-    groupSelectionRect.setStrokeStyle(strokeWidth, 0x4A90D9);
-    groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
+    groupSelectionRect.setStrokeStyle(strokeWidth, frameColor);
+    groupSelectionRect.setFillStyle(frameColor, 0.06);
 
     const setHandle = (name: string, x: number, y: number) => {
       const handle = groupHandles.get(name);
@@ -1288,7 +1291,7 @@ function createEditorScene(
     setHandle('handle_rotate', rotateHandlePos.x, rotateHandlePos.y);
 
     groupRotateLine.clear();
-    groupRotateLine.lineStyle(strokeWidth, 0x4A90D9, 1);
+    groupRotateLine.lineStyle(strokeWidth, frameColor, 1);
     const lineStart = rotateOffset(0, -halfH);
     const lineEnd = rotateOffset(0, -halfH - rotateDistance + 4 / cameraZoom);
     groupRotateLine.lineBetween(lineStart.x, lineStart.y, lineEnd.x, lineEnd.y);
