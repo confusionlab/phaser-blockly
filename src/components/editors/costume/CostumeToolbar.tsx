@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/color-picker';
 import {
   MousePointer2,
+  PenTool,
   Pencil,
   Eraser,
   PaintBucket,
@@ -22,10 +23,27 @@ import {
   AlignCenter,
   AlignRight,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import Color from 'color';
 
 export type EditorMode = 'bitmap' | 'vector';
-export type DrawingTool = 'select' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
+export type DrawingTool = 'select' | 'vector' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
+export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
+export type AlignAction =
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'middle-left'
+  | 'middle-center'
+  | 'middle-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right';
 
 export interface TextToolStyle {
   fontFamily: string;
@@ -66,6 +84,9 @@ interface CostumeToolbarProps {
   textStyle: TextToolStyle;
   onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
+  onMoveOrder: (action: MoveOrderAction) => void;
+  onAlign: (action: AlignAction) => void;
+  alignDisabled: boolean;
   onColorChange: (color: string) => void;
   onBrushSizeChange: (size: number) => void;
   onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
@@ -83,6 +104,7 @@ const bitmapTools: { tool: DrawingTool; icon: React.ReactNode; label: string }[]
 
 const vectorTools: { tool: DrawingTool; icon: React.ReactNode; label: string }[] = [
   { tool: 'select', icon: <MousePointer2 className="size-4" />, label: 'Select' },
+  { tool: 'vector', icon: <PenTool className="size-4" />, label: 'Vector Point' },
   { tool: 'rectangle', icon: <Square className="size-4" />, label: 'Rectangle' },
   { tool: 'circle', icon: <Circle className="size-4" />, label: 'Circle' },
   { tool: 'line', icon: <Minus className="size-4" />, label: 'Line' },
@@ -97,6 +119,18 @@ const fontFamilyOptions = [
   'Courier New',
 ];
 
+const alignGrid: Array<{ action: AlignAction; label: string; title: string }> = [
+  { action: 'top-left', label: '↖', title: 'Top Left' },
+  { action: 'top-center', label: '↑', title: 'Top Center' },
+  { action: 'top-right', label: '↗', title: 'Top Right' },
+  { action: 'middle-left', label: '←', title: 'Middle Left' },
+  { action: 'middle-center', label: '•', title: 'Center' },
+  { action: 'middle-right', label: '→', title: 'Middle Right' },
+  { action: 'bottom-left', label: '↙', title: 'Bottom Left' },
+  { action: 'bottom-center', label: '↓', title: 'Bottom Center' },
+  { action: 'bottom-right', label: '↘', title: 'Bottom Right' },
+];
+
 export const CostumeToolbar = memo(({
   editorMode,
   activeTool,
@@ -106,6 +140,9 @@ export const CostumeToolbar = memo(({
   textStyle,
   onEditorModeChange,
   onToolChange,
+  onMoveOrder,
+  onAlign,
+  alignDisabled,
   onColorChange,
   onBrushSizeChange,
   onTextStyleChange,
@@ -185,6 +222,58 @@ export const CostumeToolbar = memo(({
             onClick={onToolChange}
           />
         ))}
+      </div>
+
+      {editorMode === 'vector' && (
+        <div className="flex items-center border-r pr-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
+                Move Order
+                <ChevronDown className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[160px]">
+              <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
+                Move Forward
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onMoveOrder('backward')}>
+                Move Backward
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onMoveOrder('front')}>
+                Move To Front
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onMoveOrder('back')}>
+                Move To Back
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+
+      <div className="flex items-center border-r pr-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1" disabled={alignDisabled}>
+              Align
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-[140px] p-2">
+            <div className="grid grid-cols-3 gap-1">
+              {alignGrid.map((item) => (
+                <DropdownMenuItem
+                  key={item.action}
+                  className="h-8 w-8 justify-center rounded border p-0 text-sm"
+                  title={item.title}
+                  onClick={() => onAlign(item.action)}
+                >
+                  {item.label}
+                </DropdownMenuItem>
+              ))}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="relative flex items-center gap-2 border-r pr-2">

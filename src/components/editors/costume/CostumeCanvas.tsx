@@ -14,7 +14,7 @@ import { Undo2, Redo2, Move, ChevronDown, Check } from 'lucide-react';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { Button } from '@/components/ui/button';
-import type { DrawingTool, EditorMode, TextToolStyle } from './CostumeToolbar';
+import type { AlignAction, DrawingTool, EditorMode, MoveOrderAction, TextToolStyle } from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig } from '@/types';
 
 const CANVAS_SIZE = 1024;
@@ -55,6 +55,8 @@ export interface CostumeCanvasHandle {
   getEditorMode: () => EditorMode;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
+  moveSelectionOrder: (action: MoveOrderAction) => boolean;
+  alignSelection: (action: AlignAction) => boolean;
   isTextEditing: () => boolean;
   clear: () => void;
   undo: () => void;
@@ -81,12 +83,28 @@ interface CostumeCanvasProps {
   onModeChange?: (mode: EditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
+  onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
 }
 
 function isTextObject(obj: unknown): obj is { type: string; set: (props: Record<string, unknown>) => void } {
   if (!obj || typeof obj !== 'object') return false;
   const maybe = obj as { type?: string };
   return maybe.type === 'i-text' || maybe.type === 'textbox' || maybe.type === 'text';
+}
+
+function isImageObject(obj: unknown): obj is { type: string } {
+  if (!obj || typeof obj !== 'object') return false;
+  return (obj as { type?: string }).type === 'image';
+}
+
+function isVectorPointEditableObject(obj: unknown): obj is { type: string } {
+  if (!obj || typeof obj !== 'object') return false;
+  const type = (obj as { type?: string }).type;
+  if (!type) return false;
+  if (type === 'image') return false;
+  if (type === 'i-text' || type === 'textbox' || type === 'text') return false;
+  if (type === 'activeSelection') return false;
+  return true;
 }
 
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
@@ -107,6 +125,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onModeChange,
   onTextStyleSync,
   onTextSelectionChange,
+  onSelectionStateChange,
 }, ref) => {
   const colliderTypes: { value: ColliderConfig['type']; label: string }[] = [
     { value: 'none', label: 'None' },
@@ -155,6 +174,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const onTextSelectionChangeRef = useRef(onTextSelectionChange);
   onTextSelectionChangeRef.current = onTextSelectionChange;
+  const onSelectionStateChangeRef = useRef(onSelectionStateChange);
+  onSelectionStateChangeRef.current = onSelectionStateChange;
 
   const colliderRef = useRef(collider);
   colliderRef.current = collider;
@@ -181,6 +202,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const bitmapSelectionBusyRef = useRef(false);
   const loadRequestIdRef = useRef(0);
 
+  const syncSelectionState = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current;
+    const hasBitmap = !!bitmapFloatingObjectRef.current;
+    const hasActive = !!fabricCanvas?.getActiveObject();
+    const hasSelection = hasBitmap || (editorModeRef.current === 'vector' && hasActive);
+    onSelectionStateChangeRef.current?.({
+      hasSelection,
+      hasBitmapFloatingSelection: hasBitmap,
+    });
+  }, []);
+
   const setEditorMode = useCallback((mode: EditorMode) => {
     editorModeRef.current = mode;
     setEditorModeState(mode);
@@ -188,7 +220,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (mode !== 'vector') {
       onTextSelectionChangeRef.current?.(false);
     }
-  }, []);
+    syncSelectionState();
+  }, [syncSelectionState]);
 
   const isLoadRequestActive = useCallback((requestId?: number) => {
     if (typeof requestId !== 'number') return true;
@@ -355,11 +388,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
 
       fabricCanvas.requestRenderAll();
+      syncSelectionState();
       return true;
     } finally {
       suppressHistoryRef.current = false;
     }
-  }, [drawBitmapSelectionOverlay, isLoadRequestActive]);
+  }, [drawBitmapSelectionOverlay, isLoadRequestActive, syncSelectionState]);
 
   const commitBitmapSelection = useCallback(async () => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -644,6 +678,126 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return true;
   }, [cloneFabricObject, saveHistory]);
 
+  const moveSelectionOrder = useCallback((action: MoveOrderAction): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+    if (editorModeRef.current !== 'vector') return false;
+
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (!activeObject) return false;
+    if (isTextObject(activeObject) && (activeObject as any).isEditing) return false;
+
+    const selectedObjects = activeObject.type === 'activeSelection' && typeof activeObject.getObjects === 'function'
+      ? (activeObject.getObjects() as any[]).filter(Boolean)
+      : [activeObject];
+    if (selectedObjects.length === 0) return false;
+
+    const stack = fabricCanvas.getObjects();
+    const withIndices = selectedObjects
+      .map((obj) => ({ obj, index: stack.indexOf(obj) }))
+      .filter((entry) => entry.index >= 0)
+      .sort((a, b) => a.index - b.index);
+    if (withIndices.length === 0) return false;
+
+    if (action === 'forward') {
+      for (const entry of [...withIndices].reverse()) {
+        fabricCanvas.bringObjectForward(entry.obj, false);
+      }
+    } else if (action === 'backward') {
+      for (const entry of withIndices) {
+        fabricCanvas.sendObjectBackwards(entry.obj, false);
+      }
+    } else if (action === 'front') {
+      for (const entry of withIndices) {
+        fabricCanvas.bringObjectToFront(entry.obj);
+      }
+    } else {
+      for (const entry of [...withIndices].reverse()) {
+        fabricCanvas.sendObjectToBack(entry.obj);
+      }
+    }
+
+    fabricCanvas.requestRenderAll();
+    saveHistory();
+    return true;
+  }, [saveHistory]);
+
+  const alignSelection = useCallback((action: AlignAction): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
+    const mode = editorModeRef.current;
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    const selectionObject = mode === 'bitmap'
+      ? bitmapFloatingObjectRef.current
+      : activeObject;
+    if (!selectionObject) return false;
+    if (isTextObject(selectionObject) && (selectionObject as any).isEditing) return false;
+
+    const selectedObjects = selectionObject.type === 'activeSelection' && typeof selectionObject.getObjects === 'function'
+      ? (selectionObject.getObjects() as any[]).filter(Boolean)
+      : [selectionObject];
+    if (selectedObjects.length === 0) return false;
+
+    const boundsList = selectedObjects
+      .map((obj) => ({ obj, rect: obj.getBoundingRect() as { left: number; top: number; width: number; height: number } }))
+      .filter((entry) => Number.isFinite(entry.rect.left) && Number.isFinite(entry.rect.top));
+    if (boundsList.length === 0) return false;
+
+    let minLeft = Number.POSITIVE_INFINITY;
+    let minTop = Number.POSITIVE_INFINITY;
+    let maxRight = Number.NEGATIVE_INFINITY;
+    let maxBottom = Number.NEGATIVE_INFINITY;
+    for (const { rect } of boundsList) {
+      minLeft = Math.min(minLeft, rect.left);
+      minTop = Math.min(minTop, rect.top);
+      maxRight = Math.max(maxRight, rect.left + rect.width);
+      maxBottom = Math.max(maxBottom, rect.top + rect.height);
+    }
+    const groupWidth = Math.max(1, maxRight - minLeft);
+    const groupHeight = Math.max(1, maxBottom - minTop);
+
+    let targetLeft = minLeft;
+    let targetTop = minTop;
+    if (action.endsWith('left')) {
+      targetLeft = 0;
+    } else if (action.endsWith('center')) {
+      targetLeft = (CANVAS_SIZE - groupWidth) / 2;
+    } else if (action.endsWith('right')) {
+      targetLeft = CANVAS_SIZE - groupWidth;
+    }
+
+    if (action.startsWith('top')) {
+      targetTop = 0;
+    } else if (action.startsWith('middle')) {
+      targetTop = (CANVAS_SIZE - groupHeight) / 2;
+    } else if (action.startsWith('bottom')) {
+      targetTop = CANVAS_SIZE - groupHeight;
+    }
+
+    const dx = targetLeft - minLeft;
+    const dy = targetTop - minTop;
+    if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+      return false;
+    }
+
+    for (const { obj } of boundsList) {
+      obj.set({
+        left: (typeof obj.left === 'number' ? obj.left : 0) + dx,
+        top: (typeof obj.top === 'number' ? obj.top : 0) + dy,
+      });
+      obj.setCoords?.();
+    }
+
+    if (selectionObject.setCoords) {
+      selectionObject.setCoords();
+    }
+    fabricCanvas.requestRenderAll();
+    saveHistory();
+    syncSelectionState();
+    return true;
+  }, [saveHistory, syncSelectionState]);
+
   const isTextEditing = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || editorModeRef.current !== 'vector') return false;
@@ -722,6 +876,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const isVectorSelectionMode = mode === 'vector' && tool === 'select';
+    const isVectorPointMode = mode === 'vector' && tool === 'vector';
     const floatingBitmapObject = bitmapFloatingObjectRef.current;
     const isBitmapFloatingSelectionMode =
       mode === 'bitmap' &&
@@ -733,13 +888,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvas.selectionLineWidth = 2;
     fabricCanvas.selectionDashArray = [];
     fabricCanvas.forEachObject((obj: any) => {
-      const selectable =
-        isVectorSelectionMode ||
-        (isBitmapFloatingSelectionMode && obj === floatingBitmapObject);
+      const selectable = isVectorSelectionMode
+        ? true
+        : isVectorPointMode
+          ? isVectorPointEditableObject(obj)
+          : (isBitmapFloatingSelectionMode && obj === floatingBitmapObject);
       obj.selectable = selectable;
       obj.evented = selectable;
-      obj.lockMovementX = !selectable;
-      obj.lockMovementY = !selectable;
+      obj.lockMovementX = !selectable || isVectorPointMode;
+      obj.lockMovementY = !selectable || isVectorPointMode;
       obj.lockRotation = !selectable;
       obj.lockScalingX = !selectable;
       obj.lockScalingY = !selectable;
@@ -754,8 +911,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       obj.padding = 2;
     });
 
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (activeObject) {
+      if (isVectorPointMode && !isVectorPointEditableObject(activeObject)) {
+        fabricCanvas.discardActiveObject();
+      }
+      if (!isVectorSelectionMode && !isVectorPointMode && activeObject !== floatingBitmapObject) {
+        fabricCanvas.discardActiveObject();
+      }
+    }
+
     let cursor = 'default';
-    if (tool === 'brush' || tool === 'eraser' || tool === 'fill' || tool === 'line' || tool === 'circle' || tool === 'rectangle') {
+    if (tool === 'brush' || tool === 'eraser' || tool === 'fill' || tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'vector') {
       cursor = 'crosshair';
     } else if (tool === 'text') {
       cursor = 'text';
@@ -770,7 +937,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (fabricCanvas.lowerCanvasEl) {
       fabricCanvas.lowerCanvasEl.style.cursor = cursor;
     }
-  }, []);
+    syncSelectionState();
+  }, [syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -894,6 +1062,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         if (!opt.target || opt.target !== floatingBitmapObject) {
           void commitBitmapSelection();
         }
+        return;
+      }
+
+      if (mode === 'vector' && tool === 'vector' && opt.target && isImageObject(opt.target)) {
+        fabricCanvas.discardActiveObject();
+        fabricCanvas.requestRenderAll();
         return;
       }
 
@@ -1043,6 +1217,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const onSelectionChange = () => {
       syncTextStyleFromSelection();
       syncTextSelectionState();
+      syncSelectionState();
     };
 
     const onTextChanged = () => {
@@ -1063,6 +1238,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         return;
       }
       onTextSelectionChangeRef.current?.(false);
+      syncSelectionState();
     };
 
     fabricCanvas.on('mouse:down', onMouseDown);
@@ -1106,7 +1282,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [applyFill, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncTextSelectionState, syncTextStyleFromSelection]);
+  }, [applyFill, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, flattenBitmapLayer, loadBitmapLayer, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -1468,6 +1644,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         fabricCanvas.setActiveObject(floatingImage);
         bitmapFloatingObjectRef.current = floatingImage;
         setHasBitmapFloatingSelection(true);
+        syncSelectionState();
         configureCanvasForTool();
         fabricCanvas.requestRenderAll();
         drawBitmapSelectionOverlay();
@@ -1493,6 +1670,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     hasBitmapFloatingSelection,
     getSelectionMousePos,
     loadBitmapLayer,
+    syncSelectionState,
   ]);
 
   // If we leave bitmap select mode with a floating selection, commit it to avoid losing pixels.
@@ -1545,6 +1723,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     duplicateSelection,
 
+    moveSelectionOrder,
+
+    alignSelection,
+
     isTextEditing,
 
     clear: () => {
@@ -1583,6 +1765,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     switchEditorMode,
     deleteSelection,
     duplicateSelection,
+    moveSelectionOrder,
+    alignSelection,
     isTextEditing,
   ]);
 

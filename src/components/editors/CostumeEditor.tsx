@@ -5,14 +5,16 @@ import { CostumeList } from './costume/CostumeList';
 import { CostumeCanvas, type CostumeCanvasHandle } from './costume/CostumeCanvas';
 import {
   CostumeToolbar,
+  type AlignAction,
   type DrawingTool,
   type EditorMode,
+  type MoveOrderAction,
   type TextToolStyle,
 } from './costume/CostumeToolbar';
 import { getEffectiveObjectProps, createDefaultColliderConfig } from '@/types';
 import type { Costume, ColliderConfig } from '@/types';
 
-const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'rectangle', 'circle', 'line', 'text', 'collider']);
+const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'vector', 'rectangle', 'circle', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'line', 'collider']);
 
 function ensureToolForMode(mode: EditorMode, tool: DrawingTool): DrawingTool {
@@ -56,6 +58,8 @@ export function CostumeEditor() {
 
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [hasCanvasSelection, setHasCanvasSelection] = useState(false);
+  const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
 
   const currentCostumeIdRef = useRef<string | null>(null);
   const loadRequestIdRef = useRef(0);
@@ -272,6 +276,19 @@ export function CostumeEditor() {
     setActiveTool(ensureToolForMode(editorMode, tool));
   }, [editorMode]);
 
+  const handleMoveOrder = useCallback((action: MoveOrderAction) => {
+    canvasRef.current?.moveSelectionOrder(action);
+  }, []);
+
+  const handleAlign = useCallback((action: AlignAction) => {
+    canvasRef.current?.alignSelection(action);
+  }, []);
+
+  const handleSelectionStateChange = useCallback((state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => {
+    setHasCanvasSelection(state.hasSelection);
+    setHasBitmapFloatingSelection(state.hasBitmapFloatingSelection);
+  }, []);
+
   const handleTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
     setTextStyle((prev) => {
       const next = { ...prev, ...updates };
@@ -344,6 +361,9 @@ export function CostumeEditor() {
         textStyle={textStyle}
         onEditorModeChange={handleEditorModeChange}
         onToolChange={handleToolChange}
+        onMoveOrder={handleMoveOrder}
+        onAlign={handleAlign}
+        alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
         onColorChange={setBrushColor}
         onBrushSizeChange={setBrushSize}
         onTextStyleChange={handleTextStyleChange}
@@ -378,6 +398,7 @@ export function CostumeEditor() {
           onModeChange={handleCanvasModeChange}
           onTextStyleSync={handleTextStyleChange}
           onTextSelectionChange={setHasTextSelection}
+          onSelectionStateChange={handleSelectionStateChange}
         />
       </div>
     </div>
