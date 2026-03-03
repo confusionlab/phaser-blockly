@@ -201,6 +201,71 @@ class PreservingMessageFieldDropdown extends Blockly.FieldDropdown {
 // Store reference to the field being picked for (so callback can update it)
 let pendingPickerField: Blockly.FieldDropdown | null = null;
 
+function buildGroupBlockToggleIcon(collapsed: boolean): string {
+  const vertical = collapsed
+    ? '<line x1="6" y1="3" x2="6" y2="9" stroke="#555" stroke-width="1.5" stroke-linecap="round" />'
+    : '';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">
+    <rect x="0.75" y="0.75" width="10.5" height="10.5" rx="2" fill="#fff" stroke="#777" />
+    <line x1="3" y1="6" x2="9" y2="6" stroke="#555" stroke-width="1.5" stroke-linecap="round" />
+    ${vertical}
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const GROUP_BLOCK_EXPANDED_ICON = buildGroupBlockToggleIcon(false);
+const GROUP_BLOCK_COLLAPSED_ICON = buildGroupBlockToggleIcon(true);
+const GROUP_BLOCK_COLOUR = '#9AA0A6';
+
+function syncGroupBlockToggleIcon(block: Blockly.Block): void {
+  const toggleField = block.getField('TOGGLE');
+  if (!(toggleField instanceof Blockly.FieldImage)) return;
+
+  const icon = block.isCollapsed() ? GROUP_BLOCK_COLLAPSED_ICON : GROUP_BLOCK_EXPANDED_ICON;
+  if (toggleField.getValue() !== icon) {
+    toggleField.setValue(icon);
+  }
+}
+
+function updateCollapsedGroupRow(block: Blockly.Block): void {
+  if (!block.isCollapsed()) return;
+  const collapsedInput = block.getInput(Blockly.Block.COLLAPSED_INPUT_NAME);
+  if (!collapsedInput) return;
+
+  const nameOnly = block.getFieldValue('NAME') || 'group name';
+  const collapsedTextField = collapsedInput.fieldRow.find((field) => {
+    return (field as Blockly.Field<unknown> & { name?: string }).name === Blockly.Block.COLLAPSED_FIELD_NAME;
+  });
+  if (collapsedTextField) {
+    collapsedTextField.setValue(nameOnly);
+  }
+
+  collapsedInput.removeField('GROUP_COLLAPSE_TOGGLE', true);
+
+  const collapsedToggleField = new Blockly.FieldImage(
+    GROUP_BLOCK_COLLAPSED_ICON,
+    12,
+    12,
+    '',
+    (field: Blockly.FieldImage) => {
+      const sourceBlock = field.getSourceBlock();
+      if (!sourceBlock) return;
+      sourceBlock.setCollapsed(false);
+      syncGroupBlockToggleIcon(sourceBlock);
+    }
+  );
+  collapsedInput.insertFieldAt(0, collapsedToggleField, 'GROUP_COLLAPSE_TOGGLE');
+}
+
+function setGroupBlockCollapsed(block: Blockly.Block, collapsed: boolean): void {
+  block.setCollapsed(collapsed);
+  syncGroupBlockToggleIcon(block);
+  updateCollapsedGroupRow(block);
+  if (block.rendered && block instanceof Blockly.BlockSvg) {
+    block.render();
+  }
+}
+
 // Helper to generate dropdown options with component grouping
 function generateObjectDropdownOptions(
   excludeId?: string,
@@ -583,6 +648,7 @@ export function getToolboxConfig(): any {
               TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
             }
           },
+          { kind: 'block', type: 'control_group_block' },
           { kind: 'block', type: 'control_repeat_until' },
           { kind: 'block', type: 'control_for_each' },
           { kind: 'block', type: 'control_current_item' },
@@ -1505,6 +1571,68 @@ function registerCustomBlocks() {
       this.setColour('#FFBF00');
       this.setTooltip('Repeat until condition is true');
     }
+  };
+
+  Blockly.Blocks['control_group_block'] = {
+    init: function() {
+      const toggleField = new Blockly.FieldImage(
+        GROUP_BLOCK_EXPANDED_ICON,
+        12,
+        12,
+        '',
+        (field: Blockly.FieldImage) => {
+          const sourceBlock = field.getSourceBlock();
+          if (!sourceBlock) return;
+          setGroupBlockCollapsed(sourceBlock, !sourceBlock.isCollapsed());
+        }
+      );
+
+      this.appendDummyInput()
+        .appendField(toggleField, 'TOGGLE')
+        .appendField('group block')
+        .appendField(new Blockly.FieldTextInput('group name'), 'NAME');
+      this.appendStatementInput('DO')
+        .setCheck(null);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(GROUP_BLOCK_COLOUR);
+      this.setTooltip('Visually group blocks with a name. Does not affect behavior.');
+      setTimeout(() => {
+        syncGroupBlockToggleIcon(this);
+        updateCollapsedGroupRow(this);
+      }, 0);
+    },
+    toString: function(opt_maxLength?: number) {
+      const name = this.getFieldValue('NAME') || 'group name';
+      if (opt_maxLength && name.length > opt_maxLength) {
+        return `${name.slice(0, Math.max(0, opt_maxLength - 3))}...`;
+      }
+      return name;
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (!event) return;
+
+      if (event.type === Blockly.Events.BLOCK_CREATE) {
+        const createEvent = event as Blockly.Events.BlockCreate;
+        if (createEvent.ids?.includes(this.id)) {
+          syncGroupBlockToggleIcon(this);
+        }
+        return;
+      }
+
+      if (event.type !== Blockly.Events.BLOCK_CHANGE) return;
+      const changeEvent = event as Blockly.Events.BlockChange;
+      if (changeEvent.blockId !== this.id) return;
+      if (changeEvent.element === 'collapsed') {
+        syncGroupBlockToggleIcon(this);
+        setTimeout(() => updateCollapsedGroupRow(this), 0);
+        return;
+      }
+
+      if (changeEvent.element === 'field' && changeEvent.name === 'NAME' && this.isCollapsed()) {
+        updateCollapsedGroupRow(this);
+      }
+    },
   };
 
   Blockly.Blocks['control_for_each'] = {
