@@ -1,0 +1,320 @@
+import type { ComponentDefinition, GameObject, Variable, VariableType } from '@/types';
+import { VARIABLE_REFERENCE_BLOCKS } from '@/lib/blocklyReferenceMaps';
+
+export const VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+export interface VariableDefinitionSnapshot {
+  id: string;
+  name: string;
+  type: VariableType;
+  scope: 'global' | 'local';
+  defaultValue: number | string | boolean;
+}
+
+export interface VariableDefinitionConflict {
+  id: string;
+  existing: VariableDefinitionSnapshot;
+  incoming: VariableDefinitionSnapshot;
+  existingSource: string;
+  incomingSource: string;
+}
+
+interface IndexedVariableDefinition extends VariableDefinitionSnapshot {
+  source: string;
+}
+
+interface NormalizeVariableOptions {
+  scope: 'global' | 'local';
+  objectId?: string | null;
+}
+
+export interface VariableDefinitionIndexResult {
+  byId: Map<string, VariableDefinitionSnapshot>;
+  conflicts: VariableDefinitionConflict[];
+}
+
+function safeVariableId(id: unknown): string {
+  if (typeof id === 'string' && id.trim().length > 0) {
+    return id.trim();
+  }
+  return crypto.randomUUID();
+}
+
+export function normalizeVariableName(name: unknown): string {
+  if (typeof name !== 'string') return '';
+  return name.trim();
+}
+
+export function isValidVariableName(name: string): boolean {
+  return VARIABLE_NAME_PATTERN.test(name);
+}
+
+export function normalizeVariableType(type: unknown): VariableType {
+  switch (type) {
+    case 'string':
+    case 'integer':
+    case 'float':
+    case 'boolean':
+      return type;
+    default:
+      return 'integer';
+  }
+}
+
+export function coerceDefaultValue(
+  type: VariableType,
+  value: unknown,
+): number | string | boolean {
+  switch (type) {
+    case 'integer': {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? Math.floor(numeric) : 0;
+    }
+    case 'float': {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : 0;
+    }
+    case 'string':
+      return typeof value === 'string' ? value : String(value ?? '');
+    case 'boolean':
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'true' || normalized === '1') return true;
+        if (normalized === 'false' || normalized === '0' || normalized === '') return false;
+      }
+      return Boolean(value);
+  }
+}
+
+export function normalizeVariableDefinition(
+  variable: Variable,
+  { scope, objectId }: NormalizeVariableOptions,
+): Variable {
+  const type = normalizeVariableType(variable.type);
+  const normalizedName = normalizeVariableName(variable.name) || 'variable';
+  const normalized: Variable = {
+    id: safeVariableId(variable.id),
+    name: normalizedName,
+    type,
+    defaultValue: coerceDefaultValue(type, variable.defaultValue),
+    scope,
+  };
+  if (scope === 'local' && objectId) {
+    normalized.objectId = objectId;
+  }
+  return normalized;
+}
+
+export function normalizeVariableDefinitions(
+  variables: Variable[] | undefined,
+  options: NormalizeVariableOptions,
+): Variable[] {
+  const source = Array.isArray(variables) ? variables : [];
+  const seenIds = new Set<string>();
+  const normalized: Variable[] = [];
+  for (const variable of source) {
+    const next = normalizeVariableDefinition(variable, options);
+    if (seenIds.has(next.id)) continue;
+    seenIds.add(next.id);
+    normalized.push(next);
+  }
+  return normalized;
+}
+
+function normalizeVariableSnapshot(
+  variable: Variable,
+  options: NormalizeVariableOptions,
+): VariableDefinitionSnapshot {
+  const normalized = normalizeVariableDefinition(variable, options);
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    type: normalized.type,
+    scope: normalized.scope,
+    defaultValue: normalized.defaultValue,
+  };
+}
+
+function sameDefinition(
+  left: VariableDefinitionSnapshot,
+  right: VariableDefinitionSnapshot,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.name === right.name &&
+    left.type === right.type &&
+    left.scope === right.scope &&
+    left.defaultValue === right.defaultValue
+  );
+}
+
+function pushDefinition(
+  byId: Map<string, IndexedVariableDefinition>,
+  conflicts: VariableDefinitionConflict[],
+  incoming: VariableDefinitionSnapshot,
+  source: string,
+): void {
+  const existing = byId.get(incoming.id);
+  if (!existing) {
+    byId.set(incoming.id, { ...incoming, source });
+    return;
+  }
+
+  if (sameDefinition(existing, incoming)) return;
+
+  conflicts.push({
+    id: incoming.id,
+    existing: {
+      id: existing.id,
+      name: existing.name,
+      type: existing.type,
+      scope: existing.scope,
+      defaultValue: existing.defaultValue,
+    },
+    incoming,
+    existingSource: existing.source,
+    incomingSource: source,
+  });
+}
+
+export function buildVariableDefinitionIndex(
+  globalVariables: Variable[],
+  components: ComponentDefinition[],
+  allObjects: GameObject[],
+): VariableDefinitionIndexResult {
+  const indexed = new Map<string, IndexedVariableDefinition>();
+  const conflicts: VariableDefinitionConflict[] = [];
+
+  for (const variable of globalVariables || []) {
+    pushDefinition(
+      indexed,
+      conflicts,
+      normalizeVariableSnapshot(variable, { scope: 'global' }),
+      `global:${variable.id}`,
+    );
+  }
+
+  const componentsById = new Map((components || []).map((component) => [component.id, component]));
+
+  for (const component of components || []) {
+    for (const variable of component.localVariables || []) {
+      pushDefinition(
+        indexed,
+        conflicts,
+        normalizeVariableSnapshot(variable, { scope: 'local' }),
+        `component:${component.id}`,
+      );
+    }
+  }
+
+  for (const object of allObjects || []) {
+    if (object.componentId) {
+      const componentLocalVariables = componentsById.get(object.componentId)?.localVariables || [];
+      if (componentLocalVariables.length > 0) {
+        const componentIds = new Set(componentLocalVariables.map((variable) => variable.id));
+        for (const variable of object.localVariables || []) {
+          if (componentIds.has(variable.id)) continue;
+          pushDefinition(
+            indexed,
+            conflicts,
+            normalizeVariableSnapshot(variable, { scope: 'local' }),
+            `object:${object.id}`,
+          );
+        }
+      } else {
+        for (const variable of object.localVariables || []) {
+          pushDefinition(
+            indexed,
+            conflicts,
+            normalizeVariableSnapshot(variable, { scope: 'local' }),
+            `object:${object.id}`,
+          );
+        }
+      }
+      continue;
+    }
+
+    for (const variable of object.localVariables || []) {
+      pushDefinition(
+        indexed,
+        conflicts,
+        normalizeVariableSnapshot(variable, { scope: 'local', objectId: object.id }),
+        `object:${object.id}`,
+      );
+    }
+  }
+
+  const byId = new Map<string, VariableDefinitionSnapshot>();
+  for (const [id, variable] of indexed.entries()) {
+    byId.set(id, {
+      id,
+      name: variable.name,
+      type: variable.type,
+      scope: variable.scope,
+      defaultValue: variable.defaultValue,
+    });
+  }
+
+  return { byId, conflicts };
+}
+
+export function hasVariableNameConflict(
+  variables: Variable[],
+  name: string,
+  excludeId?: string,
+): boolean {
+  const normalized = normalizeVariableName(name).toLowerCase();
+  if (!normalized) return false;
+
+  return variables.some((variable) => {
+    if (excludeId && variable.id === excludeId) return false;
+    return normalizeVariableName(variable.name).toLowerCase() === normalized;
+  });
+}
+
+export function remapVariableIdsInBlocklyXml(
+  blocklyXml: string,
+  variableIdMap: Map<string, string>,
+): string {
+  if (!blocklyXml.trim() || variableIdMap.size === 0) return blocklyXml;
+  if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') return blocklyXml;
+
+  try {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(blocklyXml, 'text/xml');
+    if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+      return blocklyXml;
+    }
+
+    let changed = false;
+    const blocks = Array.from(xmlDoc.getElementsByTagName('block'));
+    for (const block of blocks) {
+      const blockType = block.getAttribute('type') || '';
+      const variableFieldName = VARIABLE_REFERENCE_BLOCKS[blockType];
+      if (!variableFieldName) continue;
+
+      const fields = Array.from(block.children).filter(
+        (child): child is Element =>
+          child.tagName.toLowerCase() === 'field' && child.getAttribute('name') === variableFieldName,
+      );
+
+      for (const field of fields) {
+        const rawValue = field.textContent || '';
+        const value = rawValue.trim();
+        const remapped = variableIdMap.get(value);
+        if (remapped && remapped !== value) {
+          field.textContent = remapped;
+          changed = true;
+        }
+      }
+    }
+
+    if (!changed || !xmlDoc.documentElement) {
+      return blocklyXml;
+    }
+
+    return new XMLSerializer().serializeToString(xmlDoc.documentElement);
+  } catch {
+    return blocklyXml;
+  }
+}

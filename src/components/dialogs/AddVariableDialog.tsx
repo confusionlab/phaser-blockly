@@ -9,6 +9,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useEditorStore } from '@/store/editorStore';
+import { useProjectStore } from '@/store/projectStore';
 import type { Variable, VariableType } from '@/types';
 
 interface AddVariableDialogProps {
@@ -39,6 +41,42 @@ export function AddVariableDialog({ open, onOpenChange, onAdd, objectName }: Add
   const [scope, setScope] = useState<'global' | 'local'>('global');
   const [type, setType] = useState<VariableType>('integer');
   const [error, setError] = useState<string | null>(null);
+  const project = useProjectStore((state) => state.project);
+  const { selectedSceneId, selectedObjectId, selectedComponentId } = useEditorStore();
+
+  const hasDuplicateName = (candidateName: string): boolean => {
+    if (!project) return false;
+    const normalizedCandidate = candidateName.toLowerCase();
+
+    if (scope === 'global') {
+      return (project.globalVariables || []).some(
+        (variable) => variable.name.trim().toLowerCase() === normalizedCandidate,
+      );
+    }
+
+    if (selectedSceneId && selectedObjectId) {
+      const scene = project.scenes.find((sceneItem) => sceneItem.id === selectedSceneId);
+      const object = scene?.objects.find((objectItem) => objectItem.id === selectedObjectId);
+      if (!object) return false;
+      const component = object.componentId
+        ? (project.components || []).find((componentItem) => componentItem.id === object.componentId)
+        : null;
+      const componentLocalVariables = component?.localVariables || [];
+      const localVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (object.localVariables || []);
+      return localVariables.some((variable) => variable.name.trim().toLowerCase() === normalizedCandidate);
+    }
+
+    if (selectedComponentId) {
+      const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+      return (component?.localVariables || []).some(
+        (variable) => variable.name.trim().toLowerCase() === normalizedCandidate,
+      );
+    }
+
+    return false;
+  };
 
   const handleAdd = () => {
     const trimmedName = name.trim();
@@ -50,6 +88,11 @@ export function AddVariableDialog({ open, onOpenChange, onAdd, objectName }: Add
     // Check for invalid characters (only allow letters, numbers, underscore)
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedName)) {
       setError('Variable name must start with a letter or underscore, and contain only letters, numbers, and underscores');
+      return;
+    }
+
+    if (hasDuplicateName(trimmedName)) {
+      setError(scope === 'global' ? 'A global variable with this name already exists' : 'A local variable with this name already exists');
       return;
     }
 

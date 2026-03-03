@@ -71,6 +71,24 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     ? componentLocalVariables
     : (currentObject?.localVariables || []);
 
+  const hasDuplicateGlobalName = (candidateName: string, excludeId?: string): boolean => {
+    const normalized = candidateName.trim().toLowerCase();
+    if (!normalized) return false;
+    return globalVariables.some((variable) => {
+      if (excludeId && variable.id === excludeId) return false;
+      return variable.name.trim().toLowerCase() === normalized;
+    });
+  };
+
+  const hasDuplicateLocalName = (candidateName: string, excludeId?: string): boolean => {
+    const normalized = candidateName.trim().toLowerCase();
+    if (!normalized) return false;
+    return localVariables.some((variable) => {
+      if (excludeId && variable.id === excludeId) return false;
+      return variable.name.trim().toLowerCase() === normalized;
+    });
+  };
+
   const updateComponentLocalVariables = (nextLocalVariables: Variable[]) => {
     if (!componentIdForLocal) return;
     updateComponent(componentIdForLocal, { localVariables: nextLocalVariables });
@@ -110,6 +128,10 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
   const saveRenameGlobal = (varId: string) => {
     const trimmed = editName.trim();
     if (trimmed && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
+      if (hasDuplicateGlobalName(trimmed, varId)) {
+        alert('A global variable with this name already exists.');
+        return;
+      }
       updateGlobalVariable(varId, { name: trimmed });
     }
     setEditingId(null);
@@ -121,6 +143,11 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     if (!trimmed || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
       setEditingId(null);
       setEditName('');
+      return;
+    }
+
+    if (hasDuplicateLocalName(trimmed, varId)) {
+      alert('A local variable with this name already exists.');
       return;
     }
 

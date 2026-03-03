@@ -15,6 +15,7 @@ import {
   getProjectedChunkSizePx,
   parseChunkKey,
 } from '@/lib/background/chunkMath';
+import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -2184,40 +2185,20 @@ function createPlaySceneContent(
   // Store runtime for this scene (for pause/resume)
   sceneRuntimes.set(sceneId, runtime);
 
-  const componentsById = new Map(components.map((component) => [component.id, component]));
+  const { byId: variableDefinitionsById, conflicts: variableDefinitionConflicts } = buildVariableDefinitionIndex(
+    globalVariables,
+    components,
+    allObjects,
+  );
+  if (variableDefinitionConflicts.length > 0) {
+    console.warn(
+      `[PhaserCanvas] Detected ${variableDefinitionConflicts.length} variable ID conflict(s). Using first definition for each ID.`,
+      variableDefinitionConflicts.slice(0, 5),
+    );
+  }
 
   // Set up variable lookup for typed variables
-  runtime.setVariableLookup((varId: string) => {
-    // Check global variables
-    const globalVar = globalVariables.find(v => v.id === varId);
-    if (globalVar) {
-      return {
-        name: globalVar.name,
-        type: globalVar.type,
-        scope: globalVar.scope,
-        defaultValue: globalVar.defaultValue,
-      };
-    }
-    // Check local variables in all objects
-    for (const obj of allObjects) {
-      const componentLocalVariables = obj.componentId
-        ? componentsById.get(obj.componentId)?.localVariables || []
-        : [];
-      const localVariables = componentLocalVariables.length > 0
-        ? componentLocalVariables
-        : (obj.localVariables || []);
-      const localVar = localVariables.find(v => v.id === varId);
-      if (localVar) {
-        return {
-          name: localVar.name,
-          type: localVar.type,
-          scope: localVar.scope,
-          defaultValue: localVar.defaultValue,
-        };
-      }
-    }
-    return undefined;
-  });
+  runtime.setVariableLookup((varId: string) => variableDefinitionsById.get(varId));
 
   // Configure ground from scene settings
   if (sceneData.ground) {

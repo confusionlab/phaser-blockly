@@ -656,20 +656,21 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['variables_get'] = function(block) {
     const varName = javascriptGenerator.getVariableName(block.getFieldValue('VAR'));
-    return [`runtime.getVariable('${varName}', sprite.id)`, Order.ATOMIC];
+    // Legacy Blockly variables are treated as global-only.
+    return [`runtime.getVariable(${asJsString(varName)})`, Order.ATOMIC];
   };
 
   javascriptGenerator.forBlock['variables_set'] = function(block) {
     const varName = javascriptGenerator.getVariableName(block.getFieldValue('VAR'));
     const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ASSIGNMENT) || '0';
-    return `runtime.setVariable('${varName}', ${value}, sprite.id);\n`;
+    return `runtime.setVariable(${asJsString(varName)}, ${value});\n`;
   };
 
   // Change variable by
   javascriptGenerator.forBlock['math_change'] = function(block) {
     const varName = javascriptGenerator.getVariableName(block.getFieldValue('VAR'));
     const delta = javascriptGenerator.valueToCode(block, 'DELTA', Order.ASSIGNMENT) || '1';
-    return `runtime.changeVariable('${varName}', ${delta}, sprite.id);\n`;
+    return `runtime.changeVariable(${asJsString(varName)}, ${delta});\n`;
   };
 
   // --- Typed Variable generators ---

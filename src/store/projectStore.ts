@@ -24,6 +24,13 @@ import {
   normalizeSceneLayering,
 } from '@/utils/layerTree';
 import {
+  hasVariableNameConflict,
+  isValidVariableName,
+  normalizeVariableDefinition,
+  normalizeVariableDefinitions,
+  remapVariableIdsInBlocklyXml,
+} from '@/lib/variableUtils';
+import {
   recordHistoryChange,
   registerProjectHistoryBridge,
   resetHistory,
@@ -140,6 +147,17 @@ function normalizeComponentName(name: string): string {
   return name.trim().toLowerCase();
 }
 
+function hasDuplicateVariableNames(variables: Variable[]): boolean {
+  const seen = new Set<string>();
+  for (const variable of variables) {
+    const normalizedName = variable.name.trim().toLowerCase();
+    if (!normalizedName) continue;
+    if (seen.has(normalizedName)) return true;
+    seen.add(normalizedName);
+  }
+  return false;
+}
+
 function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
   return {
     name: obj.name,
@@ -203,6 +221,12 @@ function getEffectiveComponentLocalVariables(
 }
 
 function normalizeProject(project: Project): Project {
+  const normalizedGlobalVariables = normalizeVariableDefinitions(project.globalVariables || [], { scope: 'global' });
+  const normalizedComponents = (Array.isArray(project.components) ? project.components : []).map((component) => ({
+    ...component,
+    localVariables: normalizeVariableDefinitions(component.localVariables || [], { scope: 'local' }),
+  }));
+
   return normalizeProjectLayering({
     ...project,
     messages: (Array.isArray(project.messages) ? project.messages : []).filter(
@@ -212,9 +236,17 @@ function normalizeProject(project: Project): Project {
         typeof message?.name === 'string' &&
         message.name.trim().length > 0,
     ),
-    scenes: project.scenes.map((scene) => {
+    globalVariables: normalizedGlobalVariables,
+    components: normalizedComponents,
+    scenes: (Array.isArray(project.scenes) ? project.scenes : []).map((scene) => {
       const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
-      const objects: GameObject[] = Array.isArray(scene.objects) ? scene.objects : [];
+      const objects: GameObject[] = (Array.isArray(scene.objects) ? scene.objects : []).map((obj) => ({
+        ...obj,
+        localVariables: normalizeVariableDefinitions(obj.localVariables || [], {
+          scope: 'local',
+          objectId: obj.componentId ? null : obj.id,
+        }),
+      }));
       return normalizeSceneLayering({
         ...scene,
         objectFolders,
@@ -584,14 +616,33 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (!original) return null;
     const originalIndex = scene?.objects.findIndex(o => o.id === objectId) ?? -1;
 
+    const duplicateId = crypto.randomUUID();
+    let duplicateBlocklyXml = original.blocklyXml;
+    let duplicateLocalVariables = cloneVariableDefinitions(original.localVariables || []);
+
+    if (!original.componentId) {
+      const variableIdMap = new Map<string, string>();
+      duplicateLocalVariables = (original.localVariables || []).map((variable) => {
+        const remappedId = crypto.randomUUID();
+        variableIdMap.set(variable.id, remappedId);
+        return normalizeVariableDefinition(
+          { ...variable, id: remappedId },
+          { scope: 'local', objectId: duplicateId },
+        );
+      });
+      duplicateBlocklyXml = remapVariableIdsInBlocklyXml(original.blocklyXml || '', variableIdMap);
+    }
+
     const duplicate: GameObject = {
       ...original,
-      id: crypto.randomUUID(),
+      id: duplicateId,
       // Component instances keep the original name (they're instances of the same component)
       name: original.componentId ? original.name : `${original.name} Copy`,
       x: original.x + 50,
       y: original.y + 50,
       order: original.order + 1,
+      blocklyXml: duplicateBlocklyXml,
+      localVariables: duplicateLocalVariables,
     };
 
     set(state => ({
@@ -665,16 +716,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // Variable actions (global)
   addGlobalVariable: (variable: Variable) => {
-    set(state => ({
-      project: state.project
-        ? {
-            ...state.project,
-            globalVariables: [...state.project.globalVariables, variable],
-            updatedAt: createUpdatedAt(),
-          }
-        : null,
-      isDirty: true,
-    }));
+    set(state => {
+      if (!state.project) return state;
+
+      const nextVariable = normalizeVariableDefinition(variable, { scope: 'global' });
+      if (!isValidVariableName(nextVariable.name)) return state;
+      if (state.project.globalVariables.some((existing) => existing.id === nextVariable.id)) return state;
+      if (hasVariableNameConflict(state.project.globalVariables, nextVariable.name)) return state;
+
+      return {
+        project: {
+          ...state.project,
+          globalVariables: [...state.project.globalVariables, nextVariable],
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
     recordHistoryChange({ source: 'project:add-global-variable' });
   },
 
@@ -693,18 +751,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   updateGlobalVariable: (variableId: string, updates: Partial<Variable>) => {
-    set(state => ({
-      project: state.project
-        ? {
-            ...state.project,
-            globalVariables: state.project.globalVariables.map(v =>
-              v.id === variableId ? { ...v, ...updates } : v
-            ),
-            updatedAt: createUpdatedAt(),
-          }
-        : null,
-      isDirty: true,
-    }));
+    set(state => {
+      if (!state.project) return state;
+
+      const current = state.project.globalVariables.find((variable) => variable.id === variableId);
+      if (!current) return state;
+
+      const nextVariable = normalizeVariableDefinition(
+        { ...current, ...updates, id: current.id },
+        { scope: 'global' },
+      );
+      if (!isValidVariableName(nextVariable.name)) return state;
+      if (hasVariableNameConflict(state.project.globalVariables, nextVariable.name, variableId)) return state;
+
+      return {
+        project: {
+          ...state.project,
+          globalVariables: state.project.globalVariables.map((variable) =>
+            variable.id === variableId ? nextVariable : variable
+          ),
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
     recordHistoryChange({ source: 'project:update-global-variable', allowMerge: true });
   },
 
@@ -723,10 +793,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         if (!component) return state;
 
         const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
-        if (currentLocalVariables.some((existing) => existing.id === variable.id)) {
+        const normalizedVariable = normalizeVariableDefinition(variable, { scope: 'local' });
+        if (!isValidVariableName(normalizedVariable.name)) return state;
+        if (currentLocalVariables.some((existing) => existing.id === normalizedVariable.id)) {
           return state;
         }
-        const nextLocalVariables: Variable[] = [...currentLocalVariables, { ...variable, scope: 'local' }];
+        if (hasVariableNameConflict(currentLocalVariables, normalizedVariable.name)) {
+          return state;
+        }
+        const nextLocalVariables: Variable[] = [...currentLocalVariables, normalizedVariable];
 
         return {
           project: {
@@ -750,6 +825,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         };
       }
 
+      const currentLocalVariables = targetObject.localVariables || [];
+      const normalizedVariable = normalizeVariableDefinition(variable, { scope: 'local', objectId });
+      if (!isValidVariableName(normalizedVariable.name)) return state;
+      if (currentLocalVariables.some((existing) => existing.id === normalizedVariable.id)) return state;
+      if (hasVariableNameConflict(currentLocalVariables, normalizedVariable.name)) return state;
+
       return {
         project: {
           ...state.project,
@@ -759,7 +840,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                   ...s,
                   objects: s.objects.map(o =>
                     o.id === objectId
-                      ? { ...o, localVariables: [...(o.localVariables || []), variable] }
+                      ? { ...o, localVariables: [...(o.localVariables || []), normalizedVariable] }
                       : o
                   ),
                 }
@@ -851,11 +932,18 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         if (!component) return state;
 
         const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
-        if (!currentLocalVariables.some((existing) => existing.id === variableId)) {
+        const currentVariable = currentLocalVariables.find((existing) => existing.id === variableId);
+        if (!currentVariable) {
           return state;
         }
+        const nextVariable = normalizeVariableDefinition(
+          { ...currentVariable, ...updates, id: currentVariable.id },
+          { scope: 'local' },
+        );
+        if (!isValidVariableName(nextVariable.name)) return state;
+        if (hasVariableNameConflict(currentLocalVariables, nextVariable.name, variableId)) return state;
         const nextLocalVariables: Variable[] = currentLocalVariables.map((existing) =>
-          existing.id === variableId ? { ...existing, ...updates, scope: 'local' } : existing
+          existing.id === variableId ? nextVariable : existing
         );
 
         return {
@@ -880,6 +968,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         };
       }
 
+      const currentLocalVariables = targetObject.localVariables || [];
+      const currentVariable = currentLocalVariables.find((existing) => existing.id === variableId);
+      if (!currentVariable) return state;
+      const nextVariable = normalizeVariableDefinition(
+        { ...currentVariable, ...updates, id: currentVariable.id },
+        { scope: 'local', objectId },
+      );
+      if (!isValidVariableName(nextVariable.name)) return state;
+      if (hasVariableNameConflict(currentLocalVariables, nextVariable.name, variableId)) return state;
+
       return {
         project: {
           ...state.project,
@@ -892,7 +990,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                       ? {
                           ...o,
                           localVariables: (o.localVariables || []).map(v =>
-                            v.id === variableId ? { ...v, ...updates } : v
+                            v.id === variableId ? nextVariable : v
                           ),
                         }
                       : o
@@ -982,9 +1080,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const componentExists = (state.project.components || []).some((component) => component.id === componentId);
       if (!componentExists) return state;
 
+      const normalizedUpdates: Partial<ComponentDefinition> = { ...updates };
+      if (updates.localVariables !== undefined) {
+        const normalizedLocalVariables = normalizeVariableDefinitions(updates.localVariables, { scope: 'local' });
+        if (hasDuplicateVariableNames(normalizedLocalVariables)) return state;
+        normalizedUpdates.localVariables = normalizedLocalVariables;
+      }
+
       const syncedInstanceUpdates: Partial<ComponentBackedObjectFields> = {};
       for (const key of COMPONENT_SYNC_KEYS) {
-        const value = updates[key];
+        const value = normalizedUpdates[key];
         if (value !== undefined) {
           (syncedInstanceUpdates as Record<string, unknown>)[key] = value;
         }
@@ -995,7 +1100,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project: {
           ...state.project,
           components: (state.project.components || []).map((component) =>
-            component.id === componentId ? { ...component, ...updates } : component
+            component.id === componentId ? { ...component, ...normalizedUpdates } : component
           ),
           scenes: hasSyncedUpdates
             ? state.project.scenes.map((scene) => ({

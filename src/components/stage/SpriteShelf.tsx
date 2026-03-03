@@ -75,6 +75,7 @@ import {
   type LayerTreeNode,
 } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
+import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -86,6 +87,26 @@ let objectClipboard: {
   collider: ColliderConfig | null;
   localVariables: GameObject['localVariables'];
 } | null = null;
+
+function remapLocalVariablesForInsertion(
+  localVariables: GameObject['localVariables'],
+  blocklyXml: string,
+  objectId: string,
+): { localVariables: GameObject['localVariables']; blocklyXml: string } {
+  const idMap = new Map<string, string>();
+  const remappedLocalVariables = (localVariables || []).map((variable) => {
+    const remappedId = crypto.randomUUID();
+    idMap.set(variable.id, remappedId);
+    return normalizeVariableDefinition(
+      { ...variable, id: remappedId },
+      { scope: 'local', objectId },
+    );
+  });
+  return {
+    localVariables: remappedLocalVariables,
+    blocklyXml: remapVariableIdsInBlocklyXml(blocklyXml || '', idMap),
+  };
+}
 
 interface ShelfTreeItem {
   key: string;
@@ -608,6 +629,12 @@ export function SpriteShelf() {
     if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
     const object = contextMenu.object;
     const effectiveProps = getEffectiveObjectProps(object, project.components || []);
+    const componentLocalVariables = object.componentId
+      ? (project.components || []).find((component) => component.id === object.componentId)?.localVariables || []
+      : [];
+    const effectiveLocalVariables = componentLocalVariables.length > 0
+      ? componentLocalVariables
+      : (object.localVariables || []);
 
     objectClipboard = {
       name: object.name,
@@ -616,7 +643,7 @@ export function SpriteShelf() {
       blocklyXml: effectiveProps.blocklyXml,
       physics: effectiveProps.physics ? JSON.parse(JSON.stringify(effectiveProps.physics)) : null,
       collider: effectiveProps.collider ? JSON.parse(JSON.stringify(effectiveProps.collider)) : null,
-      localVariables: object.localVariables ? JSON.parse(JSON.stringify(object.localVariables)) : [],
+      localVariables: JSON.parse(JSON.stringify(effectiveLocalVariables)),
     };
     handleCloseContextMenu();
   };
@@ -627,6 +654,11 @@ export function SpriteShelf() {
 
     runInHistoryTransaction('sprite-shelf:paste-object', () => {
       const newObject = addObject(selectedSceneId, `${clipboard.name} (copy)`);
+      const variableRemap = remapLocalVariablesForInsertion(
+        clipboard.localVariables || [],
+        clipboard.blocklyXml,
+        newObject.id,
+      );
 
       const newCostumes = clipboard.costumes.map((costume) => ({
         ...costume,
@@ -636,18 +668,14 @@ export function SpriteShelf() {
         ...sound,
         id: crypto.randomUUID(),
       }));
-      const newLocalVariables = (clipboard.localVariables || []).map((variable) => ({
-        ...variable,
-        id: crypto.randomUUID(),
-      }));
 
       updateObject(selectedSceneId, newObject.id, {
         costumes: newCostumes,
         sounds: newSounds,
-        blocklyXml: clipboard.blocklyXml,
+        blocklyXml: variableRemap.blocklyXml,
         physics: clipboard.physics,
         collider: clipboard.collider,
-        localVariables: newLocalVariables,
+        localVariables: variableRemap.localVariables,
         currentCostumeIndex: 0,
       });
 
@@ -921,7 +949,9 @@ export function SpriteShelf() {
         currentCostumeIndex: effectiveProps.currentCostumeIndex,
         physics: effectiveProps.physics ?? undefined,
         collider: effectiveProps.collider ?? undefined,
-        localVariables: object.localVariables,
+        localVariables: object.componentId
+          ? (project.components || []).find((component) => component.id === object.componentId)?.localVariables || []
+          : object.localVariables,
       });
     } catch (error) {
       console.error('Failed to save object to library:', error);
@@ -1001,20 +1031,22 @@ export function SpriteShelf() {
   }) => {
     runInHistoryTransaction('sprite-shelf:add-from-library', () => {
       const newObject = addObject(selectedSceneId, data.name);
+      const variableRemap = remapLocalVariablesForInsertion(
+        data.localVariables || [],
+        data.blocklyXml,
+        newObject.id,
+      );
       const maxCostumeIndex = Math.max(0, data.costumes.length - 1);
       const safeCostumeIndex = Math.min(Math.max(0, data.currentCostumeIndex), maxCostumeIndex);
 
       updateObject(selectedSceneId, newObject.id, {
         costumes: data.costumes,
         sounds: data.sounds,
-        blocklyXml: data.blocklyXml,
+        blocklyXml: variableRemap.blocklyXml,
         physics: data.physics,
         collider: data.collider,
         currentCostumeIndex: safeCostumeIndex,
-        localVariables: data.localVariables.map((variable) => ({
-          ...variable,
-          id: crypto.randomUUID(),
-        })),
+        localVariables: variableRemap.localVariables,
       });
 
       selectObject(newObject.id);

@@ -17,6 +17,7 @@ import {
   VALID_OBJECT_SPECIAL_VALUES,
   VARIABLE_REFERENCE_BLOCKS,
 } from '@/lib/blocklyReferenceMaps';
+import { normalizeVariableDefinition } from '@/lib/variableUtils';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
@@ -1115,8 +1116,11 @@ export async function importProject(jsonString: string): Promise<Project> {
       if (!remappedVariableId) {
         rememberIdMapping(variableIdMap, variable.id, newVariableId);
       }
-      variable.id = newVariableId;
-      variable.scope = 'local';
+      const normalizedVariable = normalizeVariableDefinition(
+        { ...variable, id: newVariableId },
+        { scope: 'local' },
+      );
+      Object.assign(variable, normalizedVariable);
       delete variable.objectId;
     }
   }
@@ -1125,7 +1129,11 @@ export async function importProject(jsonString: string): Promise<Project> {
   for (const variable of project.globalVariables) {
     const newVariableId = crypto.randomUUID();
     rememberIdMapping(variableIdMap, variable.id, newVariableId);
-    variable.id = newVariableId;
+    const normalizedVariable = normalizeVariableDefinition(
+      { ...variable, id: newVariableId },
+      { scope: 'global' },
+    );
+    Object.assign(variable, normalizedVariable);
   }
 
   for (const scene of project.scenes) {
@@ -1180,8 +1188,11 @@ export async function importProject(jsonString: string): Promise<Project> {
         if (!remappedVariableId) {
           rememberIdMapping(variableIdMap, variable.id, newVariableId);
         }
-        variable.id = newVariableId;
-        variable.objectId = obj.id;
+        const normalizedVariable = normalizeVariableDefinition(
+          { ...variable, id: newVariableId },
+          { scope: 'local', objectId: obj.id },
+        );
+        Object.assign(variable, normalizedVariable);
       }
     }
   }

@@ -1,6 +1,7 @@
 import * as Blockly from 'blockly';
 import type { GameObject, Project, Scene } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
+import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import {
   COMPONENT_ANY_PREFIX,
   OBJECT_REFERENCE_BLOCKS,
@@ -39,6 +40,9 @@ export interface PlayValidationIssue {
   message: string;
 }
 
+type SceneValidationContext = Pick<Scene, 'id' | 'name' | 'objects'>;
+type ObjectValidationContext = Pick<GameObject, 'id' | 'name'>;
+
 function getFieldValue(blockElement: Element, fieldName: string): string {
   const fields = Array.from(blockElement.children).filter((node) => node.tagName === 'field');
   const field = fields.find((node) => node.getAttribute('name') === fieldName);
@@ -65,8 +69,8 @@ function isTypeReporterElement(blockElement: Element | null): boolean {
 function validateBlockElement(
   blockElement: Element,
   blockIndex: number,
-  scene: Scene,
-  object: GameObject,
+  scene: SceneValidationContext,
+  object: ObjectValidationContext,
   soundIds: Set<string>,
   variableIds: Set<string>,
   sceneIds: Set<string>,
@@ -192,6 +196,25 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
     sceneNameCounts.set(scene.name, (sceneNameCounts.get(scene.name) || 0) + 1);
   }
 
+  const allObjects = project.scenes.flatMap((scene) => scene.objects);
+  const { conflicts: variableConflicts } = buildVariableDefinitionIndex(
+    project.globalVariables || [],
+    project.components || [],
+    allObjects,
+  );
+  for (const conflict of variableConflicts.slice(0, 20)) {
+    issues.push({
+      id: `variable-conflict:${conflict.id}:${conflict.existingSource}:${conflict.incomingSource}`,
+      sceneId: project.scenes[0]?.id || '',
+      sceneName: project.scenes[0]?.name || 'Project',
+      objectId: '',
+      objectName: 'Variables',
+      blockId: 'variables',
+      blockType: 'variables',
+      message: `Variable ID "${conflict.id}" is defined inconsistently (${conflict.existingSource} vs ${conflict.incomingSource}).`,
+    });
+  }
+
   for (const scene of project.scenes) {
     for (const object of scene.objects) {
       const { blocklyXml, sounds } = getEffectiveObjectProps(object, project.components || []);
@@ -239,6 +262,54 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
           message: 'Invalid block XML (cannot parse object code).',
         });
       }
+    }
+  }
+
+  const componentValidationScene: SceneValidationContext = {
+    id: project.scenes[0]?.id || '',
+    name: project.scenes[0]?.name || 'Project',
+    objects: allObjects,
+  };
+
+  for (const component of project.components || []) {
+    const blocklyXml = component.blocklyXml || '';
+    if (!blocklyXml.trim()) continue;
+
+    const soundIds = new Set((component.sounds || []).map((sound) => sound.id));
+    const variableIds = new Set<string>(project.globalVariables.map((variable) => variable.id));
+    for (const localVariable of component.localVariables || []) {
+      variableIds.add(localVariable.id);
+    }
+
+    try {
+      const xml = Blockly.utils.xml.textToDom(blocklyXml);
+      const blocks = Array.from(xml.getElementsByTagName('block'));
+      for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+        issues.push(
+          ...validateBlockElement(
+            blocks[blockIndex],
+            blockIndex,
+            componentValidationScene,
+            { id: '', name: `[Component] ${component.name}` },
+            soundIds,
+            variableIds,
+            sceneIds,
+            sceneNameCounts,
+            componentsById,
+          )
+        );
+      }
+    } catch {
+      issues.push({
+        id: `component:${component.id}:xml-parse`,
+        sceneId: componentValidationScene.id,
+        sceneName: componentValidationScene.name,
+        objectId: '',
+        objectName: `[Component] ${component.name}`,
+        blockId: 'xml',
+        blockType: 'xml',
+        message: 'Invalid block XML (cannot parse component code).',
+      });
     }
   }
 
