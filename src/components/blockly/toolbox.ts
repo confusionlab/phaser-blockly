@@ -396,16 +396,13 @@ function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[st
 
 // Dropdown with special options + objects
 function getTargetDropdownOptions(
-  includeEdge: boolean = false,
+  _includeEdge: boolean = false,
   includeMouse: boolean = false,
   includeMyClones: boolean = false,
   includeGround: boolean = false
 ): () => Array<[string, string]> {
   return function() {
     const specialOptions: Array<[string, string]> = [];
-    if (includeEdge) {
-      specialOptions.push(['edge', 'EDGE']);
-    }
     if (includeGround) {
       specialOptions.push(['ground', 'GROUND']);
     }
@@ -502,8 +499,24 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'event_clicked' },
           { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'event_when_receive' },
-          { kind: 'block', type: 'event_when_touching' },
-          { kind: 'block', type: 'event_when_touching_direction' },
+          {
+            kind: 'block',
+            type: 'event_when_touching_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'event_when_touching_direction_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
         ],
       },
       {
@@ -540,7 +553,15 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'control_broadcast' },
           { kind: 'block', type: 'control_broadcast_wait' },
           { kind: 'block', type: 'control_clone' },
-          { kind: 'block', type: 'control_clone_object' },
+          {
+            kind: 'block',
+            type: 'control_clone_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
           { kind: 'block', type: 'control_delete_clone' },
           { kind: 'block', type: 'control_delete_object' },
         ],
@@ -614,7 +635,15 @@ export function getToolboxConfig(): any {
               DIRECTION: { shadow: { type: 'math_number', fields: { NUM: '90' } } }
             }
           },
-          { kind: 'block', type: 'motion_point_towards' },
+          {
+            kind: 'block',
+            type: 'motion_point_towards_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_mouse' },
+              },
+            },
+          },
           {
             kind: 'block',
             type: 'motion_rotate_tween',
@@ -629,10 +658,24 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'sensing_object_x' },
           { kind: 'block', type: 'sensing_object_y' },
           { kind: 'sep', gap: '16' },
-          { kind: 'block', type: 'motion_attach_to_dropdown' },
-          { kind: 'block', type: 'motion_attach_to_block' },
-          { kind: 'block', type: 'motion_attach_block_to_me' },
-          { kind: 'block', type: 'motion_attach_dropdown_to_me' },
+          {
+            kind: 'block',
+            type: 'motion_attach_to_block',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'motion_attach_block_to_me',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
           { kind: 'block', type: 'motion_detach' },
         ],
       },
@@ -749,7 +792,15 @@ export function getToolboxConfig(): any {
         colour: '#0fBDA8',
         contents: [
           { kind: 'block', type: 'camera_follow_me' },
-          { kind: 'block', type: 'camera_follow_object' },
+          {
+            kind: 'block',
+            type: 'camera_follow_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
           { kind: 'block', type: 'camera_stop_follow' },
           {
             kind: 'block',
@@ -814,11 +865,38 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'sensing_mouse_down' },
           { kind: 'block', type: 'sensing_mouse_x' },
           { kind: 'block', type: 'sensing_mouse_y' },
-          { kind: 'block', type: 'sensing_touching' },
-          { kind: 'block', type: 'sensing_touching_direction' },
+          {
+            kind: 'block',
+            type: 'sensing_touching_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_ground' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'sensing_touching_direction_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_ground' },
+              },
+            },
+          },
           { kind: 'block', type: 'sensing_touching_object' },
+          { kind: 'block', type: 'object_from_dropdown' },
+          { kind: 'block', type: 'target_mouse' },
+          { kind: 'block', type: 'target_ground' },
           { kind: 'block', type: 'sensing_all_touching_objects' },
-          { kind: 'block', type: 'sensing_distance_to' },
+          {
+            kind: 'block',
+            type: 'sensing_distance_to_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_mouse' },
+              },
+            },
+          },
           { kind: 'block', type: 'sensing_is_clone_of' },
         ],
       },
@@ -1361,6 +1439,20 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['sensing_touching_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('touching');
+      this.appendDummyInput()
+        .appendField('?');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Is this touching the selected target?');
+    }
+  };
+
   Blockly.Blocks['sensing_touching_direction'] = {
     init: function() {
       this.appendDummyInput()
@@ -1374,6 +1466,22 @@ function registerCustomBlocks() {
       this.setTooltip('Is this touching target from a specific direction?');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['sensing_touching_direction_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('touching');
+      this.appendDummyInput()
+        .appendField('from')
+        .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION')
+        .appendField('?');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Is this touching target from a specific direction?');
     }
   };
 
@@ -1402,6 +1510,18 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['sensing_distance_to_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('distance to');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Number');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Distance to target');
+    }
+  };
+
   Blockly.Blocks['sensing_touching_object'] = {
     init: function() {
       this.appendDummyInput()
@@ -1409,6 +1529,39 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Object');
       this.setColour('#5CB1D6');
       this.setTooltip('Returns the object this sprite is touching, or null if not touching anything');
+    }
+  };
+
+  Blockly.Blocks['object_from_dropdown'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('object')
+        .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Pick an object from a dropdown');
+      const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
+      if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['target_mouse'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('mouse');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Mouse pointer target');
+    }
+  };
+
+  Blockly.Blocks['target_ground'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('ground');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Ground target');
     }
   };
 
@@ -1696,6 +1849,19 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['camera_follow_object_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('camera follow');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#0fBDA8');
+      this.setTooltip('Camera follows the specified object');
+    }
+  };
+
   Blockly.Blocks['camera_stop_follow'] = {
     init: function() {
       this.appendDummyInput()
@@ -1919,6 +2085,19 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['event_when_touching_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('when touching');
+      this.setInputsInline(true);
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs when touching target');
+    }
+  };
+
   Blockly.Blocks['event_when_touching_direction'] = {
     init: function() {
       this.appendDummyInput()
@@ -1932,6 +2111,22 @@ function registerCustomBlocks() {
       this.setTooltip('Runs when touching target from a specific direction');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['event_when_touching_direction_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('when touching');
+      this.setInputsInline(true);
+      this.appendDummyInput()
+        .appendField('from')
+        .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs when touching target from a specific direction');
     }
   };
 
@@ -1975,6 +2170,19 @@ function registerCustomBlocks() {
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(false));
+    }
+  };
+
+  Blockly.Blocks['control_clone_object_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('clone');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Create a clone of the specified object');
     }
   };
 
@@ -2051,6 +2259,19 @@ function registerCustomBlocks() {
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['motion_point_towards_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('point towards');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Point towards target');
     }
   };
 
@@ -2510,7 +2731,9 @@ function checkTypeCompatibility(expectedType: VariableType, valueBlock: Blockly.
              blockType === 'sensing_key_pressed' ||
              blockType === 'sensing_mouse_down' ||
              blockType === 'sensing_touching' ||
+             blockType === 'sensing_touching_value' ||
              blockType === 'sensing_touching_direction' ||
+             blockType === 'sensing_touching_direction_value' ||
              blockType === 'sensing_touching_ground' ||
              (blockType === 'typed_variable_get' && getVariableById(valueBlock.getFieldValue('VAR'))?.type === 'boolean');
   }

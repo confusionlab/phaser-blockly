@@ -842,9 +842,10 @@ export function downloadProject(project: Project): void {
 
 const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
 const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
-const VALID_OBJECT_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
+const VALID_OBJECT_SPECIAL_VALUES = new Set(['GROUND', 'MOUSE', 'MY_CLONES', '']);
 
 const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
+  object_from_dropdown: 'TARGET',
   sensing_touching: 'TARGET',
   sensing_touching_direction: 'TARGET',
   sensing_distance_to: 'TARGET',
