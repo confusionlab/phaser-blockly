@@ -169,7 +169,7 @@ export function ObjectLibraryBrowser({
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <p className="mb-2">No objects in library</p>
-              <p className="text-sm">Right-click an object and select "Save to Library" to add it here</p>
+              <p className="text-sm">Object saving is unavailable from the object right-click menu.</p>
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-4 pr-4">

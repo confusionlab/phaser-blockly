@@ -636,6 +636,7 @@ export function getToolboxConfig(): any {
         name: 'Control',
         colour: '#FFBF00',
         contents: [
+          { kind: 'block', type: 'control_group_block' },
           {
             kind: 'block',
             type: 'control_wait',
@@ -650,7 +651,6 @@ export function getToolboxConfig(): any {
               TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
             }
           },
-          { kind: 'block', type: 'control_group_block' },
           { kind: 'block', type: 'control_repeat_until' },
           { kind: 'block', type: 'control_while' },
           { kind: 'block', type: 'control_for_each' },

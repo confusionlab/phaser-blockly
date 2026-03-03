@@ -1,7 +1,4 @@
 import { useState, useRef, useLayoutEffect } from 'react';
-import { useMutation } from 'convex/react';
-import { api } from '../../../convex/_generated/api';
-import type { Id } from '../../../convex/_generated/dataModel';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
@@ -37,7 +34,6 @@ import {
 } from 'react-aria-components';
 import {
   Plus,
-  Library,
   Pencil,
   Copy,
   Clipboard,
@@ -58,12 +54,8 @@ import type {
   PhysicsConfig,
   ColliderConfig,
   SceneFolder,
-  CostumeBounds,
-  CostumeEditorMode,
-  CostumeVectorDocument,
 } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
-import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
 import {
   getFolderNodeKey,
   getNextSiblingOrder,
@@ -221,7 +213,6 @@ export function SpriteShelf() {
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
   const [showComponentLibrary, setShowComponentLibrary] = useState(false);
-  const [, setSavingToLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
@@ -233,9 +224,6 @@ export function SpriteShelf() {
   const suppressNextAriaSelectionRef = useRef(false);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
   const dragPreviewLabelRef = useRef('Moving item');
-
-  const generateUploadUrl = useMutation(api.objectLibrary.generateUploadUrl);
-  const createLibraryItem = useMutation(api.objectLibrary.create);
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
   const folders = selectedScene?.objectFolders ?? [];
@@ -883,84 +871,6 @@ export function SpriteShelf() {
     setSceneDeleteTarget(null);
   };
 
-  const handleSaveToLibrary = async () => {
-    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
-
-    const object = contextMenu.object;
-    const effectiveProps = getEffectiveObjectProps(object, project.components || []);
-
-    handleCloseContextMenu();
-    setSavingToLibrary(true);
-
-    try {
-      const costumes: Array<{
-        id: string;
-        name: string;
-        storageId: Id<'_storage'>;
-        bounds?: CostumeBounds;
-        editorMode?: CostumeEditorMode;
-        vectorDocument?: CostumeVectorDocument;
-      }> = [];
-
-      for (const costume of effectiveProps.costumes) {
-        const { storageId } = await uploadDataUrlToStorage(costume.assetId, generateUploadUrl);
-        costumes.push({
-          id: costume.id,
-          name: costume.name,
-          storageId: storageId as Id<'_storage'>,
-          bounds: costume.bounds,
-          editorMode: costume.editorMode,
-          vectorDocument: costume.vectorDocument,
-        });
-      }
-
-      const sounds: Array<{
-        id: string;
-        name: string;
-        storageId: Id<'_storage'>;
-        duration?: number;
-        trimStart?: number;
-        trimEnd?: number;
-      }> = [];
-
-      for (const sound of effectiveProps.sounds) {
-        const { storageId } = await uploadDataUrlToStorage(sound.assetId, generateUploadUrl);
-        sounds.push({
-          id: sound.id,
-          name: sound.name,
-          storageId: storageId as Id<'_storage'>,
-          duration: sound.duration,
-          trimStart: sound.trimStart,
-          trimEnd: sound.trimEnd,
-        });
-      }
-
-      let thumbnail = '';
-      if (effectiveProps.costumes.length > 0) {
-        thumbnail = await generateThumbnail(effectiveProps.costumes[0].assetId, 128);
-      }
-
-      await createLibraryItem({
-        name: object.name,
-        thumbnail,
-        costumes,
-        sounds,
-        blocklyXml: effectiveProps.blocklyXml,
-        currentCostumeIndex: effectiveProps.currentCostumeIndex,
-        physics: effectiveProps.physics ?? undefined,
-        collider: effectiveProps.collider ?? undefined,
-        localVariables: object.componentId
-          ? (project.components || []).find((component) => component.id === object.componentId)?.localVariables || []
-          : object.localVariables,
-      });
-    } catch (error) {
-      console.error('Failed to save object to library:', error);
-      alert('Failed to save object to library');
-    } finally {
-      setSavingToLibrary(false);
-    }
-  };
-
   const handleMakeComponent = () => {
     if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
 
@@ -1009,14 +919,6 @@ export function SpriteShelf() {
     if (selectedComponentId === componentId) {
       selectComponent(null);
     }
-  };
-
-  const handleDeleteComponentFromContextMenu = () => {
-    if (!contextMenu || contextMenu.kind !== 'object') return;
-    const componentId = contextMenu.object.componentId;
-    if (!componentId) return;
-    handleDeleteComponentById(componentId);
-    handleCloseContextMenu();
   };
 
   const handleLibrarySelect = (data: {
@@ -1429,15 +1331,6 @@ export function SpriteShelf() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleMoveObjectToFolder(null)}
-                  className="w-full justify-start rounded-none h-8"
-                >
-                  <FolderOpen className="size-4" />
-                  Move to Root
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
                   onClick={() => {
                     if (!contextMenu || contextMenu.kind !== 'object') return;
                     handleAddFolder(null, getContextMenuObjectActionIds());
@@ -1481,26 +1374,8 @@ export function SpriteShelf() {
                       <Unlink className="size-4" />
                       Detach from Component
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleDeleteComponentFromContextMenu}
-                      className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="size-4" />
-                      Delete Component
-                    </Button>
                   </>
                 )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleSaveToLibrary}
-                  className="w-full justify-start rounded-none h-8"
-                >
-                  <Library className="size-4" />
-                  Save to Library
-                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
