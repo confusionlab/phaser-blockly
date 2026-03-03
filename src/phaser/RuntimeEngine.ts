@@ -45,12 +45,14 @@ const MAX_LOG_ENTRIES = 200;
 // Shared global variables that persist across scene switches
 // This is module-level so all RuntimeEngine instances share the same data
 const sharedGlobalVariables: Map<string, number | string | boolean> = new Map();
+let sharedTimerStartMs: number | null = null;
 
 /**
  * Clear shared global variables - call this when the play session ends, not on scene switch
  */
 export function clearSharedGlobalVariables(): void {
   sharedGlobalVariables.clear();
+  sharedTimerStartMs = null;
   debugLog('info', 'Shared global variables cleared');
 }
 
@@ -551,6 +553,9 @@ export class RuntimeEngine {
     debugLog('info', '=== Runtime starting ===');
     this._isRunning = true;
     this._hasStarted = true;
+    if (sharedTimerStartMs === null) {
+      sharedTimerStartMs = Date.now();
+    }
 
     // Re-setup input listeners if they were detached (can happen after game restart)
     if (!this.inputListenersAttached) {
@@ -1157,6 +1162,18 @@ export class RuntimeEngine {
 
   getMouseWorldY(): number {
     return this.scene.input.activePointer.worldY;
+  }
+
+  getTimerSeconds(): number {
+    if (sharedTimerStartMs === null) {
+      sharedTimerStartMs = Date.now();
+    }
+    const elapsedSeconds = (Date.now() - sharedTimerStartMs) / 1000;
+    return Math.round(elapsedSeconds * 100) / 100;
+  }
+
+  resetTimer(): void {
+    sharedTimerStartMs = Date.now();
   }
 
   // --- Variables ---

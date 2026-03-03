@@ -247,6 +247,12 @@ export function registerCodeGenerators(): void {
     return `while (!(${condition})) {\n${statements}  await runtime.wait(0);\n}\n`;
   };
 
+  javascriptGenerator.forBlock['control_while'] = function(block) {
+    const condition = javascriptGenerator.valueToCode(block, 'CONDITION', Order.ATOMIC) || 'false';
+    const statements = javascriptGenerator.statementToCode(block, 'DO');
+    return `while (${condition}) {\n${statements}  await runtime.wait(0);\n}\n`;
+  };
+
   javascriptGenerator.forBlock['control_group_block'] = function(block) {
     return javascriptGenerator.statementToCode(block, 'DO');
   };
@@ -295,6 +301,86 @@ export function registerCodeGenerators(): void {
     }
   };
 
+  // --- Operators ---
+
+  javascriptGenerator.forBlock['operator_join'] = function(block) {
+    const string1 = javascriptGenerator.valueToCode(block, 'STRING1', Order.ATOMIC) || "''";
+    const string2 = javascriptGenerator.valueToCode(block, 'STRING2', Order.ATOMIC) || "''";
+    return [`(String(${string1} ?? '') + String(${string2} ?? ''))`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['operator_letter_of'] = function(block) {
+    const letter = javascriptGenerator.valueToCode(block, 'LETTER', Order.ATOMIC) || '1';
+    const string = javascriptGenerator.valueToCode(block, 'STRING', Order.ATOMIC) || "''";
+    return [
+      `((__text, __index) => {
+  const __s = String(__text ?? '');
+  const __i = Math.floor(Number(__index)) - 1;
+  return Number.isFinite(__i) && __i >= 0 && __i < __s.length ? __s.charAt(__i) : '';
+})(${string}, ${letter})`,
+      Order.FUNCTION_CALL,
+    ];
+  };
+
+  javascriptGenerator.forBlock['operator_length'] = function(block) {
+    const string = javascriptGenerator.valueToCode(block, 'STRING', Order.ATOMIC) || "''";
+    return [`String(${string} ?? '').length`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['operator_contains'] = function(block) {
+    const string1 = javascriptGenerator.valueToCode(block, 'STRING1', Order.ATOMIC) || "''";
+    const string2 = javascriptGenerator.valueToCode(block, 'STRING2', Order.ATOMIC) || "''";
+    return [`String(${string1} ?? '').includes(String(${string2} ?? ''))`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['operator_mod'] = function(block) {
+    const num1 = javascriptGenerator.valueToCode(block, 'NUM1', Order.ATOMIC) || '0';
+    const num2 = javascriptGenerator.valueToCode(block, 'NUM2', Order.ATOMIC) || '0';
+    return [
+      `((__a, __b) => {
+  const a = Number(__a);
+  const b = Number(__b);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b === 0) return 0;
+  return ((a % b) + b) % b;
+})(${num1}, ${num2})`,
+      Order.FUNCTION_CALL,
+    ];
+  };
+
+  javascriptGenerator.forBlock['operator_round'] = function(block) {
+    const num = javascriptGenerator.valueToCode(block, 'NUM', Order.ATOMIC) || '0';
+    return [`((__n) => { const n = Number(__n); return Number.isFinite(n) ? Math.round(n) : 0; })(${num})`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['operator_mathop'] = function(block) {
+    const operation = block.getFieldValue('OP') || 'SQRT';
+    const num = javascriptGenerator.valueToCode(block, 'NUM', Order.ATOMIC) || '0';
+    return [
+      `((__op, __n) => {
+  const n = Number(__n);
+  if (!Number.isFinite(n)) return 0;
+  switch (__op) {
+    case 'ABS': return Math.abs(n);
+    case 'FLOOR': return Math.floor(n);
+    case 'CEILING': return Math.ceil(n);
+    case 'SQRT': return Math.sqrt(n);
+    case 'SIN': return Math.sin((n * Math.PI) / 180);
+    case 'COS': return Math.cos((n * Math.PI) / 180);
+    case 'TAN': return Math.tan((n * Math.PI) / 180);
+    case 'ASIN': return (Math.asin(n) * 180) / Math.PI;
+    case 'ACOS': return (Math.acos(n) * 180) / Math.PI;
+    case 'ATAN': return (Math.atan(n) * 180) / Math.PI;
+    case 'LN': return Math.log(n);
+    case 'LOG': return Math.log10(n);
+    case 'EXP': return Math.exp(n);
+    case 'POW10': return Math.pow(10, n);
+    default: return n;
+  }
+})(${asJsString(operation)}, ${num})`,
+      Order.FUNCTION_CALL,
+    ];
+  };
+
   // --- Sensing ---
 
   javascriptGenerator.forBlock['sensing_key_pressed'] = function(block) {
@@ -312,6 +398,14 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['sensing_mouse_y'] = function() {
     return ['runtime.getMouseY()', Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['sensing_timer'] = function() {
+    return ['runtime.getTimerSeconds()', Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['sensing_reset_timer'] = function() {
+    return 'runtime.resetTimer();\n';
   };
 
   // --- Physics ---

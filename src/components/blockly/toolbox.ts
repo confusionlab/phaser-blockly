@@ -609,6 +609,8 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'event_clicked' },
           { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'event_when_receive' },
+          { kind: 'block', type: 'control_broadcast' },
+          { kind: 'block', type: 'control_broadcast_wait' },
           {
             kind: 'block',
             type: 'event_when_touching_value',
@@ -650,6 +652,7 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'control_group_block' },
           { kind: 'block', type: 'control_repeat_until' },
+          { kind: 'block', type: 'control_while' },
           { kind: 'block', type: 'control_for_each' },
           { kind: 'block', type: 'control_current_item' },
           { kind: 'block', type: 'control_wait_until' },
@@ -662,8 +665,6 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'control_random_choice' },
           { kind: 'block', type: 'control_stop' },
           { kind: 'block', type: 'control_switch_scene' },
-          { kind: 'block', type: 'control_broadcast' },
-          { kind: 'block', type: 'control_broadcast_wait' },
           {
             kind: 'block',
             type: 'control_spawn_type_at',
@@ -1013,6 +1014,8 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'sensing_mouse_down' },
           { kind: 'block', type: 'sensing_mouse_x' },
           { kind: 'block', type: 'sensing_mouse_y' },
+          { kind: 'block', type: 'sensing_timer' },
+          { kind: 'block', type: 'sensing_reset_timer' },
           {
             kind: 'block',
             type: 'sensing_touching_value',
@@ -1148,6 +1151,60 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'logic_operation' },
           { kind: 'block', type: 'logic_negate' },
+          {
+            kind: 'block',
+            type: 'operator_join',
+            inputs: {
+              STRING1: { shadow: { type: 'text', fields: { TEXT: 'apple' } } },
+              STRING2: { shadow: { type: 'text', fields: { TEXT: 'banana' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'operator_letter_of',
+            inputs: {
+              LETTER: { shadow: { type: 'math_number', fields: { NUM: '1' } } },
+              STRING: { shadow: { type: 'text', fields: { TEXT: 'apple' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'operator_length',
+            inputs: {
+              STRING: { shadow: { type: 'text', fields: { TEXT: 'apple' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'operator_contains',
+            inputs: {
+              STRING1: { shadow: { type: 'text', fields: { TEXT: 'apple' } } },
+              STRING2: { shadow: { type: 'text', fields: { TEXT: 'a' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'operator_mod',
+            inputs: {
+              NUM1: { shadow: { type: 'math_number', fields: { NUM: '10' } } },
+              NUM2: { shadow: { type: 'math_number', fields: { NUM: '3' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'operator_round',
+            inputs: {
+              NUM: { shadow: { type: 'math_number', fields: { NUM: '3.14' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'operator_mathop',
+            fields: { OP: 'SQRT' },
+            inputs: {
+              NUM: { shadow: { type: 'math_number', fields: { NUM: '9' } } }
+            }
+          },
         ],
       },
       {
@@ -1579,6 +1636,21 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['control_while'] = {
+    init: function() {
+      this.appendValueInput('CONDITION')
+        .setCheck('Boolean')
+        .appendField('while');
+      this.appendStatementInput('DO')
+        .setCheck(null);
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Repeat while condition is true');
+    }
+  };
+
   Blockly.Blocks['control_group_block'] = {
     init: function() {
       const toggleField = new Blockly.FieldImage(
@@ -1732,6 +1804,27 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Number');
       this.setColour('#5CB1D6');
       this.setTooltip('Mouse y position');
+    }
+  };
+
+  Blockly.Blocks['sensing_timer'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('timer');
+      this.setOutput(true, 'Number');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Seconds since game start (2 decimal places)');
+    }
+  };
+
+  Blockly.Blocks['sensing_reset_timer'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('reset timer');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#5CB1D6');
+      this.setTooltip('Reset timer to 0 seconds');
     }
   };
 
@@ -2777,6 +2870,113 @@ function registerCustomBlocks() {
     }
   };
 
+  // Operators
+  Blockly.Blocks['operator_join'] = {
+    init: function() {
+      this.appendValueInput('STRING1')
+        .appendField('join');
+      this.appendValueInput('STRING2');
+      this.setInputsInline(true);
+      this.setOutput(true, 'String');
+      this.setColour('#59C059');
+      this.setTooltip('Join two values as text');
+    }
+  };
+
+  Blockly.Blocks['operator_letter_of'] = {
+    init: function() {
+      this.appendValueInput('LETTER')
+        .setCheck('Number')
+        .appendField('letter');
+      this.appendValueInput('STRING')
+        .appendField('of');
+      this.setInputsInline(true);
+      this.setOutput(true, 'String');
+      this.setColour('#59C059');
+      this.setTooltip('Get the letter at position (1-based)');
+    }
+  };
+
+  Blockly.Blocks['operator_length'] = {
+    init: function() {
+      this.appendValueInput('STRING')
+        .appendField('length of');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Number');
+      this.setColour('#59C059');
+      this.setTooltip('Get text length');
+    }
+  };
+
+  Blockly.Blocks['operator_contains'] = {
+    init: function() {
+      this.appendValueInput('STRING1');
+      this.appendValueInput('STRING2')
+        .appendField('contains');
+      this.appendDummyInput()
+        .appendField('?');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour('#59C059');
+      this.setTooltip('Check whether text contains another value');
+    }
+  };
+
+  Blockly.Blocks['operator_mod'] = {
+    init: function() {
+      this.appendValueInput('NUM1')
+        .setCheck('Number');
+      this.appendValueInput('NUM2')
+        .setCheck('Number')
+        .appendField('mod');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Number');
+      this.setColour('#59C059');
+      this.setTooltip('Modulo (remainder) operation');
+    }
+  };
+
+  Blockly.Blocks['operator_round'] = {
+    init: function() {
+      this.appendValueInput('NUM')
+        .setCheck('Number')
+        .appendField('round');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Number');
+      this.setColour('#59C059');
+      this.setTooltip('Round to nearest integer');
+    }
+  };
+
+  Blockly.Blocks['operator_mathop'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField(new Blockly.FieldDropdown([
+          ['abs', 'ABS'],
+          ['floor', 'FLOOR'],
+          ['ceiling', 'CEILING'],
+          ['sqrt', 'SQRT'],
+          ['sin', 'SIN'],
+          ['cos', 'COS'],
+          ['tan', 'TAN'],
+          ['asin', 'ASIN'],
+          ['acos', 'ACOS'],
+          ['atan', 'ATAN'],
+          ['ln', 'LN'],
+          ['log', 'LOG'],
+          ['e ^', 'EXP'],
+          ['10 ^', 'POW10'],
+        ]), 'OP')
+        .appendField('of');
+      this.appendValueInput('NUM')
+        .setCheck('Number');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Number');
+      this.setColour('#59C059');
+      this.setTooltip('Apply a math operation to a number');
+    }
+  };
+
   // Custom math_number block (reporter block with editable number)
   Blockly.Blocks['math_number'] = {
     init: function() {
@@ -3095,18 +3295,26 @@ function checkTypeCompatibility(expectedType: VariableType, valueBlock: Blockly.
   switch (expectedType) {
     case 'string':
       return blockType === 'text' ||
+             blockType === 'operator_join' ||
+             blockType === 'operator_letter_of' ||
              (blockType === 'typed_variable_get' && getVariableById(valueBlock.getFieldValue('VAR'))?.type === 'string');
     case 'integer':
     case 'float':
       return blockType === 'math_number' ||
              blockType === 'math_arithmetic' ||
              blockType === 'math_random_int' ||
+             blockType === 'sensing_timer' ||
+             blockType === 'operator_length' ||
+             blockType === 'operator_mod' ||
+             blockType === 'operator_round' ||
+             blockType === 'operator_mathop' ||
              (blockType === 'typed_variable_get' && ['integer', 'float'].includes(getVariableById(valueBlock.getFieldValue('VAR'))?.type || ''));
     case 'boolean':
       return blockType === 'logic_boolean' ||
              blockType === 'logic_compare' ||
              blockType === 'logic_operation' ||
              blockType === 'logic_negate' ||
+             blockType === 'operator_contains' ||
              blockType === 'sensing_key_pressed' ||
              blockType === 'sensing_mouse_down' ||
              blockType === 'sensing_touching' ||
