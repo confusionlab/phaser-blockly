@@ -209,6 +209,12 @@ const TYPE_REFERENCE_BLOCKS: Record<string, string> = {
   'sensing_type_literal': 'TYPE',
 };
 
+const TYPE_REPORTER_BLOCK_TYPES = new Set([
+  'sensing_type_literal',
+  'sensing_my_type',
+  'sensing_type_of_object',
+]);
+
 // Special values that are always valid (not object IDs)
 const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_TYPE', 'MY_CLONES', '']);
 
@@ -225,6 +231,11 @@ function validateBlockReferences(
   messageNameCounts: Map<string, number>,
 ) {
   const allBlocks = workspace.getAllBlocks(false);
+
+  const isTypeReporterBlock = (block: Blockly.Block | null): boolean => {
+    if (!block) return false;
+    return TYPE_REPORTER_BLOCK_TYPES.has(block.type);
+  };
 
   for (const block of allBlocks) {
     const blockType = block.type;
@@ -307,6 +318,21 @@ function validateBlockReferences(
       } else if (!validTypeTokens.has(fieldValue)) {
         hasError = true;
         errors.push('Selected type not found in project');
+      }
+    }
+
+    // Type comparisons must compare type reporters against type reporters/literals.
+    if (blockType === 'logic_compare') {
+      const left = block.getInputTargetBlock('A');
+      const right = block.getInputTargetBlock('B');
+      const leftIsTypeLiteral = left?.type === 'sensing_type_literal';
+      const rightIsTypeLiteral = right?.type === 'sensing_type_literal';
+      if (leftIsTypeLiteral !== rightIsTypeLiteral) {
+        const otherSide = leftIsTypeLiteral ? right : left;
+        if (!isTypeReporterBlock(otherSide)) {
+          hasError = true;
+          errors.push('Invalid type comparison. Use "type of(object)" or "my type" when comparing to a type literal.');
+        }
       }
     }
 
