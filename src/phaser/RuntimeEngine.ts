@@ -110,6 +110,18 @@ interface QueuedMessage {
   resolveWhenDone?: () => void;
 }
 
+type ComponentRegistrar = (runtime: RuntimeEngine, spriteId: string, sprite: RuntimeSprite) => void;
+
+interface ComponentSpawnTemplate {
+  componentId: string;
+  name: string;
+  costumes: import('../types').Costume[];
+  currentCostumeIndex: number;
+  physicsConfig: import('../types').PhysicsConfig | null;
+  colliderConfig: import('../types').ColliderConfig | null;
+  sounds: import('../types').Sound[];
+}
+
 // Template for cloning - stores original object state
 interface ObjectTemplate {
   id: string;
@@ -143,6 +155,7 @@ export class RuntimeEngine {
 
   private handlers: Map<string, ObjectHandlers> = new Map();
   private templates: Map<string, ObjectTemplate> = new Map(); // Templates for cloning (persist after deletion)
+  private componentTemplates: Map<string, { template: ComponentSpawnTemplate; registerHandlers: ComponentRegistrar | null }> = new Map();
   private activeForeverLoops: Map<string, boolean> = new Map();
   private pendingForeverHandlers: Map<string, Set<number>> = new Map();
   private _isRunning: boolean = false;
@@ -257,11 +270,13 @@ export class RuntimeEngine {
     id: string,
     name: string,
     container: Phaser.GameObjects.Container,
-    componentId?: string | null
+    componentId?: string | null,
+    typeToken?: string
   ): RuntimeSprite {
     const sprite = new RuntimeSprite(this.scene, container, id, name);
     sprite.setRuntime(this);
     sprite.componentId = componentId || null;
+    sprite.typeToken = typeToken ?? (componentId ? `component:${componentId}` : '');
     this.sprites.set(id, sprite);
     this.handlers.set(id, {
       onStart: [],
@@ -304,6 +319,21 @@ export class RuntimeEngine {
     debugLog('info', `Saved template for "${sprite.name}" (${spriteId})`);
   }
 
+  registerComponentTemplate(
+    componentId: string,
+    template: Omit<ComponentSpawnTemplate, 'componentId'>,
+    registerHandlers: ComponentRegistrar | null
+  ): void {
+    const typeToken = `component:${componentId}`;
+    this.componentTemplates.set(typeToken, {
+      template: {
+        componentId,
+        ...template,
+      },
+      registerHandlers,
+    });
+  }
+
   // Update template with handlers (call after code execution registers handlers)
   private updateTemplateHandlers(spriteId: string): void {
     const template = this.templates.get(spriteId);
@@ -321,6 +351,14 @@ export class RuntimeEngine {
         forever: [...handlers.forever],
       };
     }
+  }
+
+  getMyType(spriteId: string): string {
+    return this.sprites.get(spriteId)?.typeToken ?? '';
+  }
+
+  getTypeOf(obj: RuntimeSprite | null): string {
+    return obj?.typeToken ?? '';
   }
 
   getSprite(id: string): RuntimeSprite | undefined {
@@ -742,13 +780,12 @@ export class RuntimeEngine {
     }
   }
 
-  private areRelatedClones(id1: string, id2: string): boolean {
+  private areSameType(id1: string, id2: string): boolean {
     const sprite1 = this.sprites.get(id1);
     const sprite2 = this.sprites.get(id2);
     if (!sprite1 || !sprite2) return false;
-    const original1 = sprite1.cloneParentId || sprite1.id;
-    const original2 = sprite2.cloneParentId || sprite2.id;
-    return original1 === original2;
+    if (!sprite1.typeToken || !sprite2.typeToken) return false;
+    return sprite1.typeToken === sprite2.typeToken;
   }
 
   private getSpriteBoundsSnapshot(sprite: RuntimeSprite): BoundsSnapshot {
@@ -933,8 +970,8 @@ export class RuntimeEngine {
         );
       }
 
-      if (sourceStillAlive() && this.areRelatedClones(sourceId, targetId)) {
-        this.triggerTouchHandlersForTarget(sourceId, 'MY_CLONES', direction, sourceHandlers);
+      if (sourceStillAlive() && this.areSameType(sourceId, targetId)) {
+        this.triggerTouchHandlersForTarget(sourceId, 'MY_TYPE', direction, sourceHandlers);
       }
     };
 
@@ -1070,6 +1107,7 @@ export class RuntimeEngine {
     // Clear all handlers
     this.handlers.clear();
     this.sprites.clear();
+    this.componentTemplates.clear();
     // Note: Don't clear globalVariables here - they persist across scene switches
     // Use clearSharedGlobalVariables() when the entire play session ends
     this.localVariables.clear();
@@ -1223,7 +1261,82 @@ export class RuntimeEngine {
     }
   }
 
-  // --- Clone System ---
+  // --- Spawn / Legacy Clone System ---
+
+  async spawnTypeAt(typeToken: string, userX: number, userY: number): Promise<RuntimeSprite | null> {
+    if (!typeToken.startsWith('component:')) {
+      debugLog('error', `Unsupported type token "${typeToken}". Only component types can be spawned.`);
+      return null;
+    }
+
+    const componentTemplate = this.componentTemplates.get(typeToken);
+    if (!componentTemplate) {
+      debugLog('error', `No component template found for "${typeToken}"`);
+      return null;
+    }
+
+    const { template, registerHandlers } = componentTemplate;
+    const { x, y } = this.userToPhaser(userX, userY);
+    this.cloneCounter++;
+    const spawnedId = `${template.componentId}_spawn_${this.cloneCounter}`;
+
+    const graphics = this.scene.add.graphics();
+    graphics.fillStyle(this.getObjectColor(spawnedId), 1);
+    graphics.fillRoundedRect(-32, -32, 64, 64, 8);
+
+    const container = this.scene.add.container(x, y, [graphics]);
+    container.setName(spawnedId);
+    container.setSize(64, 64);
+    container.setDepth(this.scene.children.length + 1);
+
+    const spawned = this.registerSprite(
+      spawnedId,
+      `${template.name} (spawned)`,
+      container,
+      template.componentId,
+      typeToken
+    );
+
+    if (template.costumes.length > 0) {
+      spawned.setCostumes([...template.costumes], template.currentCostumeIndex || 0);
+    }
+    spawned.setColliderConfig(template.colliderConfig);
+    spawned.setPhysicsConfig(template.physicsConfig);
+    if (template.sounds.length > 0) {
+      this.registerSounds(template.sounds);
+    }
+
+    if (registerHandlers) {
+      try {
+        registerHandlers(this, spawnedId, spawned);
+      } catch (e) {
+        debugLog('error', `Failed to register handlers for spawned type "${typeToken}": ${e}`);
+      }
+    }
+
+    if (template.physicsConfig?.enabled) {
+      spawned.enablePhysics();
+    }
+
+    const spawnedHandlers = this.handlers.get(spawnedId);
+    if (spawnedHandlers) {
+      const onStartPromises: Promise<void>[] = [];
+      for (const handler of spawnedHandlers.onStart) {
+        onStartPromises.push(
+          Promise.resolve(handler(spawned)).catch((e) => {
+            debugLog('error', `Error in onStart for spawned ${spawnedId}: ${e}`);
+          })
+        );
+      }
+      await Promise.all(onStartPromises);
+
+      if (spawnedHandlers.forever.length > 0) {
+        this.activeForeverLoops.set(spawnedId, true);
+      }
+    }
+
+    return spawned;
+  }
 
   private static MAX_CLONES = 300; // Prevent infinite clone crashes
 
@@ -1448,15 +1561,12 @@ export class RuntimeEngine {
       return sprite.isTouchingGround();
     }
 
-    // Handle MY_CLONES - check if touching any clone of the same original object
-    if (targetId === 'MY_CLONES') {
-      // Get the original object ID (if this is a clone, use its cloneParentId; otherwise use its own id)
-      const originalId = sprite.cloneParentId || sprite.id;
+    if (targetId === 'MY_TYPE') {
+      const sourceType = sprite.typeToken;
+      if (!sourceType) return false;
       for (const target of this.sprites.values()) {
         if (target.id === spriteId) continue; // Don't check self
-        // Check if target is a clone of the same original, or is the original itself
-        const targetOriginalId = target.cloneParentId || target.id;
-        if (targetOriginalId === originalId && target.id !== spriteId) {
+        if (target.typeToken === sourceType && target.id !== spriteId) {
           if (this.isTouchingSingle(sprite, target)) {
             return true;
           }
@@ -1509,12 +1619,12 @@ export class RuntimeEngine {
       return actual ? this.directionMatches(actual, wanted) : false;
     }
 
-    if (targetId === 'MY_CLONES') {
-      const originalId = sprite.cloneParentId || sprite.id;
+    if (targetId === 'MY_TYPE') {
+      const sourceType = sprite.typeToken;
+      if (!sourceType) return false;
       for (const target of this.sprites.values()) {
         if (target.id === spriteId) continue;
-        const targetOriginalId = target.cloneParentId || target.id;
-        if (targetOriginalId === originalId && target.id !== spriteId) {
+        if (target.typeToken === sourceType && target.id !== spriteId) {
           if (this.isTouchingDirectionSingle(sprite, target, wanted)) {
             return true;
           }
@@ -1561,11 +1671,9 @@ export class RuntimeEngine {
 
       // Apply filter if specified
       if (filter) {
-        if (filter === 'MY_CLONES') {
-          // Only consider clones of the same original object
-          const originalId = sprite.cloneParentId || sprite.id;
-          const targetOriginalId = target.cloneParentId || target.id;
-          if (targetOriginalId !== originalId) continue;
+        if (filter === 'MY_TYPE') {
+          const sourceType = sprite.typeToken;
+          if (!sourceType || target.typeToken !== sourceType) continue;
         } else if (filter.startsWith('COMPONENT_ANY:')) {
           // Only consider instances of a specific component
           const componentId = filter.substring('COMPONENT_ANY:'.length);
@@ -1585,7 +1693,7 @@ export class RuntimeEngine {
   }
 
   async forEachTouchingClone(spriteId: string, callback: (clone: RuntimeSprite) => Promise<void>): Promise<void> {
-    const touchingClones = this.getAllTouchingObjects(spriteId, 'MY_CLONES');
+    const touchingClones = this.getAllTouchingObjects(spriteId, 'MY_TYPE');
     for (const clone of touchingClones) {
       if (!clone.isStopped()) {
         await callback(clone);

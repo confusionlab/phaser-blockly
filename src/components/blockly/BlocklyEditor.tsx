@@ -172,6 +172,13 @@ const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
   'motion_attach_dropdown_to_me': 'TARGET',
 };
 
+const DEPRECATED_BLOCK_MESSAGES: Record<string, string> = {
+  control_clone: 'Deprecated clone block. Use "spawn type at x,y".',
+  control_clone_object: 'Deprecated clone block. Use "spawn type at x,y".',
+  control_delete_clone: 'Deprecated clone block. Use "delete object" patterns with spawned instances.',
+  sensing_is_clone_of: 'Deprecated clone/type check. Use "my type", "type of(object)", and "=".',
+};
+
 // Block types that have sound reference dropdowns
 const SOUND_REFERENCE_BLOCKS: Record<string, string> = {
   'sound_play': 'SOUND',
@@ -197,8 +204,13 @@ const MESSAGE_REFERENCE_BLOCKS: Record<string, string> = {
   'control_broadcast_wait': 'MESSAGE',
 };
 
+const TYPE_REFERENCE_BLOCKS: Record<string, string> = {
+  'control_spawn_type_at': 'TYPE',
+  'sensing_type_literal': 'TYPE',
+};
+
 // Special values that are always valid (not object IDs)
-const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
+const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_TYPE', 'MY_CLONES', '']);
 
 // Validate all blocks in workspace for broken references
 function validateBlockReferences(
@@ -206,6 +218,7 @@ function validateBlockReferences(
   sceneObjectIds: Set<string>,
   objectSoundIds: Set<string>,
   validVariableIds: Set<string>,
+  validTypeTokens: Set<string>,
   sceneIds: Set<string>,
   sceneNameCounts: Map<string, number>,
   messageIds: Set<string>,
@@ -218,10 +231,20 @@ function validateBlockReferences(
     let hasError = false;
     const errors: string[] = [];
 
+    const deprecatedMessage = DEPRECATED_BLOCK_MESSAGES[blockType];
+    if (deprecatedMessage) {
+      hasError = true;
+      errors.push(deprecatedMessage);
+    }
+
     // Check object references
     const objectFieldName = OBJECT_REFERENCE_BLOCKS[blockType];
     if (objectFieldName) {
       const fieldValue = block.getFieldValue(objectFieldName);
+      if (fieldValue === 'MY_CLONES') {
+        hasError = true;
+        errors.push('Deprecated target "myself (cloned)". Use "my type".');
+      }
       if (fieldValue && !VALID_SPECIAL_VALUES.has(fieldValue)) {
         // Check if it's a component reference (starts with COMPONENT_ANY:)
         if (fieldValue.startsWith('COMPONENT_ANY:')) {
@@ -272,6 +295,18 @@ function validateBlockReferences(
       if (!fieldValue || (!messageIds.has(fieldValue) && !hasLegacyUniqueName)) {
         hasError = true;
         errors.push('Message not found in project');
+      }
+    }
+
+    const typeFieldName = TYPE_REFERENCE_BLOCKS[blockType];
+    if (typeFieldName) {
+      const fieldValue = block.getFieldValue(typeFieldName);
+      if (!fieldValue) {
+        hasError = true;
+        errors.push('Type not selected');
+      } else if (!validTypeTokens.has(fieldValue)) {
+        hasError = true;
+        errors.push('Selected type not found in project');
       }
     }
 
@@ -598,6 +633,7 @@ export function BlocklyEditor() {
           const validVariableIds = new Set<string>();
           (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
           (obj.localVariables || []).forEach(v => validVariableIds.add(v.id));
+          const validTypeTokens = new Set((state.project?.components || []).map((component) => `component:${component.id}`));
           const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
           const sceneNameCounts = new Map<string, number>();
           (state.project?.scenes || []).forEach((projectScene) => {
@@ -614,6 +650,7 @@ export function BlocklyEditor() {
             sceneObjectIds,
             objectSoundIds,
             validVariableIds,
+            validTypeTokens,
             sceneIds,
             sceneNameCounts,
             messageIds,
@@ -748,6 +785,7 @@ export function BlocklyEditor() {
       const validVariableIds = new Set<string>();
       (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
       (obj?.localVariables || []).forEach(v => validVariableIds.add(v.id));
+      const validTypeTokens = new Set((state.project?.components || []).map((component) => `component:${component.id}`));
       const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
       const sceneNameCounts = new Map<string, number>();
       (state.project?.scenes || []).forEach((projectScene) => {
@@ -764,6 +802,7 @@ export function BlocklyEditor() {
         sceneObjectIds,
         objectSoundIds,
         validVariableIds,
+        validTypeTokens,
         sceneIds,
         sceneNameCounts,
         messageIds,

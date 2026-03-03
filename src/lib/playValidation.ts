@@ -35,7 +35,18 @@ const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
   control_switch_scene: 'SCENE',
 };
 
-const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES']);
+const TYPE_REFERENCE_BLOCKS: Record<string, string> = {
+  control_spawn_type_at: 'TYPE',
+  sensing_type_literal: 'TYPE',
+};
+
+const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_TYPE', 'MY_CLONES']);
+const DEPRECATED_BLOCK_MESSAGES: Record<string, string> = {
+  control_clone: 'Deprecated clone block. Use "spawn type at x,y".',
+  control_clone_object: 'Deprecated clone block. Use "spawn type at x,y".',
+  control_delete_clone: 'Deprecated clone block. Use "delete object" patterns with spawned instances.',
+  sensing_is_clone_of: 'Deprecated clone/type check. Use "my type", "type of(object)", and "=".',
+};
 
 export interface PlayValidationIssue {
   id: string;
@@ -87,11 +98,18 @@ function validateBlockElement(
     return issues;
   }
 
+  const deprecatedMessage = DEPRECATED_BLOCK_MESSAGES[blockType];
+  if (deprecatedMessage) {
+    pushIssue(deprecatedMessage);
+  }
+
   const objectFieldName = OBJECT_REFERENCE_BLOCKS[blockType];
   if (objectFieldName) {
     const value = getFieldValue(blockElement, objectFieldName);
     if (!value || value === PICK_FROM_STAGE) {
       pushIssue('Missing object selection in dropdown.');
+    } else if (value === 'MY_CLONES') {
+      pushIssue('Deprecated target "myself (cloned)". Use "my type".');
     } else if (value.startsWith(COMPONENT_ANY_PREFIX)) {
       const componentId = value.slice(COMPONENT_ANY_PREFIX.length);
       const component = componentsById.get(componentId);
@@ -133,6 +151,21 @@ function validateBlockElement(
       const hasLegacyUniqueName = (sceneNameCounts.get(value) || 0) === 1;
       if (!sceneIds.has(value) && !hasLegacyUniqueName) {
         pushIssue('Selected scene target is missing in this project.');
+      }
+    }
+  }
+
+  const typeFieldName = TYPE_REFERENCE_BLOCKS[blockType];
+  if (typeFieldName) {
+    const value = getFieldValue(blockElement, typeFieldName);
+    if (!value) {
+      pushIssue('Missing type selection.');
+    } else if (!value.startsWith('component:')) {
+      pushIssue('Invalid type token. Expected a component type.');
+    } else {
+      const componentId = value.slice('component:'.length);
+      if (!componentsById.has(componentId)) {
+        pushIssue('Selected component type is missing in this project.');
       }
     }
   }

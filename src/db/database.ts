@@ -842,7 +842,7 @@ export function downloadProject(project: Project): void {
 
 const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
 const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
-const VALID_OBJECT_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
+const VALID_OBJECT_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_TYPE', 'MY_CLONES', '']);
 
 const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
   sensing_touching: 'TARGET',
@@ -871,6 +871,11 @@ const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
 
 const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
   control_switch_scene: 'SCENE',
+};
+
+const TYPE_REFERENCE_BLOCKS: Record<string, string> = {
+  control_spawn_type_at: 'TYPE',
+  sensing_type_literal: 'TYPE',
 };
 
 interface ImportReferenceMaps {
@@ -963,6 +968,15 @@ function remapIdOrNameReference(
   return idMap.get(value) || nameMap?.get(value) || rawValue;
 }
 
+function remapTypeReference(rawValue: string, maps: ImportReferenceMaps): string {
+  const value = rawValue.trim();
+  if (!value) return rawValue;
+  if (!value.startsWith('component:')) return rawValue;
+  const componentId = value.slice('component:'.length);
+  const remappedComponentId = maps.componentIds.get(componentId);
+  return remappedComponentId ? `component:${remappedComponentId}` : rawValue;
+}
+
 function remapBlocklyXmlReferences(
   blocklyXml: string,
   maps: ImportReferenceMaps,
@@ -1035,6 +1049,11 @@ function remapBlocklyXmlReferences(
         updateField(sceneFieldName, (value) =>
           remapIdOrNameReference(value, maps.sceneIds, fallbacks.sceneNameToId)
         );
+      }
+
+      const typeFieldName = TYPE_REFERENCE_BLOCKS[blockType];
+      if (typeFieldName) {
+        updateField(typeFieldName, (value) => remapTypeReference(value, maps));
       }
     }
 

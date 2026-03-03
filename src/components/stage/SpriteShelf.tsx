@@ -5,6 +5,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
+import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -158,6 +159,7 @@ export function SpriteShelf() {
     reorderScenes,
     makeComponent,
     detachFromComponent,
+    addComponentInstance,
   } = useProjectStore();
   const {
     selectedSceneId,
@@ -194,6 +196,7 @@ export function SpriteShelf() {
   const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showComponentLibrary, setShowComponentLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
@@ -969,6 +972,13 @@ export function SpriteShelf() {
     });
   };
 
+  const handleComponentLibrarySelect = (componentId: string) => {
+    const instance = addComponentInstance(selectedSceneId, componentId);
+    if (instance) {
+      selectObject(instance.id);
+    }
+  };
+
   const willDeleteSelection = !!contextMenu
     && contextMenu.kind === 'object'
     && selectedIdsInScene.length > 1
@@ -1255,6 +1265,14 @@ export function SpriteShelf() {
           >
             {savingToLibrary ? <Loader2 className="size-4 animate-spin" /> : <Library className="size-4" />}
           </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={() => setShowComponentLibrary(true)}
+            title="Component Library"
+          >
+            <Component className="size-4" />
+          </Button>
         </div>
       </div>
 
@@ -1452,6 +1470,11 @@ export function SpriteShelf() {
         open={showLibrary}
         onOpenChange={setShowLibrary}
         onSelect={handleLibrarySelect}
+      />
+      <ComponentLibraryBrowser
+        open={showComponentLibrary}
+        onOpenChange={setShowComponentLibrary}
+        onSelect={handleComponentLibrarySelect}
       />
 
       <Dialog open={!!folderDeleteTarget} onOpenChange={(open) => !open && handleCancelDeleteFolder()}>
