@@ -1098,7 +1098,13 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'typed_variable_get' },
           { kind: 'sep', gap: '8' },
           { kind: 'label', text: 'Set Variable' },
-          { kind: 'block', type: 'typed_variable_set' },
+          {
+            kind: 'block',
+            type: 'typed_variable_set',
+            inputs: {
+              VALUE: { shadow: { type: 'math_number', fields: { NUM: '0' } } }
+            }
+          },
           {
             kind: 'block',
             type: 'typed_variable_change',
