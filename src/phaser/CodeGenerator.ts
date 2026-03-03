@@ -479,6 +479,10 @@ export function registerCodeGenerators(): void {
     return [asJsString('MOUSE'), Order.ATOMIC];
   };
 
+  javascriptGenerator.forBlock['target_myself'] = function() {
+    return ['sprite', Order.ATOMIC];
+  };
+
   javascriptGenerator.forBlock['target_ground'] = function() {
     return [asJsString('GROUND'), Order.ATOMIC];
   };

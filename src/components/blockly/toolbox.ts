@@ -552,7 +552,15 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'control_switch_scene' },
           { kind: 'block', type: 'control_broadcast' },
           { kind: 'block', type: 'control_broadcast_wait' },
-          { kind: 'block', type: 'control_clone' },
+          {
+            kind: 'block',
+            type: 'control_clone_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_myself' },
+              },
+            },
+          },
           {
             kind: 'block',
             type: 'control_clone_object_value',
@@ -823,7 +831,15 @@ export function getToolboxConfig(): any {
         name: 'Camera',
         colour: '#0fBDA8',
         contents: [
-          { kind: 'block', type: 'camera_follow_me' },
+          {
+            kind: 'block',
+            type: 'camera_follow_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_myself' },
+              },
+            },
+          },
           {
             kind: 'block',
             type: 'camera_follow_object_value',
@@ -917,6 +933,7 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'sensing_touching_object' },
           { kind: 'block', type: 'object_from_dropdown' },
+          { kind: 'block', type: 'target_myself' },
           { kind: 'block', type: 'target_mouse' },
           { kind: 'block', type: 'target_ground' },
           { kind: 'block', type: 'sensing_all_touching_objects' },
@@ -1592,6 +1609,16 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Object');
       this.setColour('#5CB1D6');
       this.setTooltip('Mouse pointer target');
+    }
+  };
+
+  Blockly.Blocks['target_myself'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('myself');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Current object target');
     }
   };
 

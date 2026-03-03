@@ -24,9 +24,7 @@ const PREPLUG_BLOCKS: Record<string, PreplugConfig> = {
   event_when_touching_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
   event_when_touching_direction_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
   motion_point_towards_value: { input: 'TARGET', blockType: 'target_mouse' },
-  control_clone_object_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
   control_delete_object: { input: 'OBJECT', blockType: 'object_from_dropdown' },
-  camera_follow_object_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
   sensing_touching_value: { input: 'TARGET', blockType: 'target_ground' },
   sensing_touching_direction_value: { input: 'TARGET', blockType: 'target_ground' },
   sensing_distance_to_value: { input: 'TARGET', blockType: 'target_mouse' },
@@ -36,6 +34,13 @@ const PREPLUG_BLOCKS: Record<string, PreplugConfig> = {
   sensing_is_clone_of: { input: 'OBJECT', blockType: 'object_from_dropdown' },
   motion_attach_to_block: { input: 'TARGET', blockType: 'object_from_dropdown' },
   motion_attach_block_to_me: { input: 'TARGET', blockType: 'object_from_dropdown' },
+};
+
+const PREPLUG_BY_ITEM_ID: Record<string, PreplugConfig> = {
+  control_clone: { input: 'TARGET', blockType: 'target_myself' },
+  control_clone_object: { input: 'TARGET', blockType: 'object_from_dropdown' },
+  camera_follow_me: { input: 'TARGET', blockType: 'target_myself' },
+  camera_follow_object: { input: 'TARGET', blockType: 'object_from_dropdown' },
 };
 
 // All available items for search
@@ -97,7 +102,7 @@ const ALL_ITEMS: SearchItem[] = [
   { id: 'controls_if', type: 'block', blockType: 'controls_if', label: 'if then', category: 'Control', categoryColor: '#FFBF00' },
   { id: 'controls_if_else', type: 'block', blockType: 'controls_if', label: 'if then else', category: 'Control', categoryColor: '#FFBF00' },
   { id: 'control_stop', type: 'block', blockType: 'control_stop', label: 'stop', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_clone', type: 'block', blockType: 'control_clone', label: 'clone myself', category: 'Control', categoryColor: '#FFBF00' },
+  { id: 'control_clone', type: 'block', blockType: 'control_clone_object_value', label: 'clone myself', category: 'Control', categoryColor: '#FFBF00' },
   { id: 'control_clone_object', type: 'block', blockType: 'control_clone_object_value', label: 'clone object', category: 'Control', categoryColor: '#FFBF00' },
   { id: 'control_delete_clone', type: 'block', blockType: 'control_delete_clone', label: 'delete myself', category: 'Control', categoryColor: '#FFBF00' },
   { id: 'control_delete_object', type: 'block', blockType: 'control_delete_object', label: 'delete object', category: 'Control', categoryColor: '#FFBF00' },
@@ -114,6 +119,7 @@ const ALL_ITEMS: SearchItem[] = [
   { id: 'sensing_touching_object', type: 'block', blockType: 'sensing_touching_object', label: "object I'm touching", category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'sensing_distance_to', type: 'block', blockType: 'sensing_distance_to_value', label: 'distance to', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'object_from_dropdown', type: 'block', blockType: 'object_from_dropdown', label: 'object (dropdown)', category: 'Sensing', categoryColor: '#5CB1D6' },
+  { id: 'target_myself', type: 'block', blockType: 'target_myself', label: 'myself (target)', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'target_mouse', type: 'block', blockType: 'target_mouse', label: 'mouse (target)', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'target_ground', type: 'block', blockType: 'target_ground', label: 'ground (target)', category: 'Sensing', categoryColor: '#5CB1D6' },
   { id: 'sensing_object_x', type: 'block', blockType: 'sensing_object_x', label: "object's x", category: 'Sensing', categoryColor: '#5CB1D6' },
@@ -121,7 +127,7 @@ const ALL_ITEMS: SearchItem[] = [
   { id: 'sensing_object_costume', type: 'block', blockType: 'sensing_object_costume', label: "object's costume #", category: 'Sensing', categoryColor: '#5CB1D6' },
 
   // Camera
-  { id: 'camera_follow_me', type: 'block', blockType: 'camera_follow_me', label: 'camera follow me', category: 'Camera', categoryColor: '#0fBDA8' },
+  { id: 'camera_follow_me', type: 'block', blockType: 'camera_follow_object_value', label: 'camera follow me', category: 'Camera', categoryColor: '#0fBDA8' },
   { id: 'camera_follow_object', type: 'block', blockType: 'camera_follow_object_value', label: 'camera follow object', category: 'Camera', categoryColor: '#0fBDA8' },
   { id: 'camera_stop_follow', type: 'block', blockType: 'camera_stop_follow', label: 'camera stop following', category: 'Camera', categoryColor: '#0fBDA8' },
   { id: 'camera_set_follow_offset', type: 'block', blockType: 'camera_set_follow_offset', label: 'set camera offset x y', category: 'Camera', categoryColor: '#0fBDA8' },
@@ -274,7 +280,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
         }
 
         // Mirror toolbox preplug defaults for modular value-input blocks.
-        const preplug = PREPLUG_BLOCKS[item.blockType];
+        const preplug = PREPLUG_BY_ITEM_ID[item.id] || PREPLUG_BLOCKS[item.blockType];
         if (preplug) {
           const targetInput = block.getInput(preplug.input);
           if (targetInput?.connection) {
