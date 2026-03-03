@@ -64,18 +64,30 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
   // Generate code for all objects in current scene
   const generateAllCode = (): string => {
-    if (!selectedScene) return '// No scene selected';
-
     const allCode: string[] = [];
-    for (const obj of selectedScene.objects) {
-      const effectiveProps = getEffectiveObjectProps(obj, components);
-      if (effectiveProps.blocklyXml) {
-        allCode.push(`// ========== ${obj.name} (${obj.id}) ==========`);
-        allCode.push(generateCodeForObject(effectiveProps.blocklyXml, obj.id));
+    if (selectedScene) {
+      allCode.push(`// ===== Scene Objects: ${selectedScene.name} =====`);
+      for (const obj of selectedScene.objects) {
+        const effectiveProps = getEffectiveObjectProps(obj, components);
+        if (effectiveProps.blocklyXml) {
+          allCode.push(`// ========== ${obj.name} (${obj.id}) ==========`);
+          allCode.push(generateCodeForObject(effectiveProps.blocklyXml, obj.id));
+          allCode.push('');
+        }
+      }
+    }
+
+    const componentsWithCode = components.filter((component) => !!component.blocklyXml);
+    if (componentsWithCode.length > 0) {
+      allCode.push('// ===== Components =====');
+      for (const component of componentsWithCode) {
+        allCode.push(`// ========== ${component.name} (${component.id}) ==========`);
+        allCode.push(generateCodeForObject(component.blocklyXml, component.id));
         allCode.push('');
       }
     }
-    return allCode.length > 0 ? allCode.join('\n') : '// No objects with code';
+
+    return allCode.length > 0 ? allCode.join('\n') : '// No objects or components with code';
   };
 
   const copyAllCode = async () => {
