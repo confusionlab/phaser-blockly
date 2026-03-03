@@ -4,10 +4,17 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
-import type { Scene as SceneData, GameObject, ComponentDefinition, Variable } from '@/types';
+import type { Scene as SceneData, GameObject, ComponentDefinition, Variable, BackgroundConfig } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
+import {
+  DEFAULT_BACKGROUND_CHUNK_SIZE,
+  getChunkCenterWorld,
+  getChunkRangeForWorldBounds,
+  getProjectedChunkSizePx,
+  parseChunkKey,
+} from '@/lib/background/chunkMath';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -22,6 +29,11 @@ const GIZMO_EDGE_LONG_PX = 16;
 const GIZMO_ROTATE_DISTANCE_PX = 24;
 const GIZMO_ROTATE_RADIUS_PX = 6;
 const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
+const BACKGROUND_IMAGE_CACHE_LIMIT = 256;
+const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
+
+const backgroundDecodeCache = new Map<string, HTMLImageElement>();
+const backgroundDecodePending = new Map<string, Promise<HTMLImageElement>>();
 
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
@@ -53,6 +65,199 @@ function hashTextureInput(value: string): string {
 
 function getCostumeTextureKey(objectId: string, costumeId: string, assetId: string): string {
   return `costume_${objectId}_${costumeId}_${hashTextureInput(assetId)}`;
+}
+
+function getBackgroundTextureKey(dataUrl: string): string {
+  return `background_chunk_${hashTextureInput(dataUrl)}`;
+}
+
+function getSceneBackgroundBaseColor(background: BackgroundConfig | null | undefined): string {
+  if (typeof background?.value === 'string') {
+    const normalized = background.value.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+      return normalized;
+    }
+  }
+  return '#87CEEB';
+}
+
+function isTiledBackground(background: BackgroundConfig | null | undefined): background is BackgroundConfig & { type: 'tiled'; chunks: Record<string, string> } {
+  return !!background && background.type === 'tiled' && !!background.chunks && typeof background.chunks === 'object';
+}
+
+function getTiledBackgroundChunkSize(background: BackgroundConfig | null | undefined): number {
+  if (!background || background.type !== 'tiled') return DEFAULT_BACKGROUND_CHUNK_SIZE;
+  if (!Number.isFinite(background.chunkSize) || (background.chunkSize ?? 0) <= 0) {
+    return DEFAULT_BACKGROUND_CHUNK_SIZE;
+  }
+  return Math.max(32, Math.floor(background.chunkSize as number));
+}
+
+function cacheDecodedBackgroundImage(dataUrl: string, image: HTMLImageElement): void {
+  if (backgroundDecodeCache.has(dataUrl)) {
+    backgroundDecodeCache.delete(dataUrl);
+  }
+  backgroundDecodeCache.set(dataUrl, image);
+  while (backgroundDecodeCache.size > BACKGROUND_IMAGE_CACHE_LIMIT) {
+    const oldestKey = backgroundDecodeCache.keys().next().value;
+    if (!oldestKey) break;
+    backgroundDecodeCache.delete(oldestKey);
+  }
+}
+
+function decodeBackgroundImage(dataUrl: string): Promise<HTMLImageElement> {
+  const cached = backgroundDecodeCache.get(dataUrl);
+  if (cached) {
+    cacheDecodedBackgroundImage(dataUrl, cached);
+    return Promise.resolve(cached);
+  }
+
+  const pending = backgroundDecodePending.get(dataUrl);
+  if (pending) return pending;
+
+  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      cacheDecodedBackgroundImage(dataUrl, image);
+      backgroundDecodePending.delete(dataUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      backgroundDecodePending.delete(dataUrl);
+      reject(new Error('Failed to decode background chunk image.'));
+    };
+    image.src = dataUrl;
+  });
+
+  backgroundDecodePending.set(dataUrl, promise);
+  return promise;
+}
+
+async function ensureBackgroundTexture(scene: Phaser.Scene, dataUrl: string): Promise<string | null> {
+  const textureKey = getBackgroundTextureKey(dataUrl);
+  if (scene.textures.exists(textureKey)) return textureKey;
+  try {
+    const image = await decodeBackgroundImage(dataUrl);
+    if (!scene.textures.exists(textureKey)) {
+      scene.textures.addImage(textureKey, image);
+    }
+    return textureKey;
+  } catch {
+    return null;
+  }
+}
+
+interface TiledBackgroundLayerState {
+  root: Phaser.GameObjects.Container;
+  sprites: Map<string, Phaser.GameObjects.Image>;
+  background: BackgroundConfig | null;
+  canvasWidth: number;
+  canvasHeight: number;
+}
+
+function createTiledBackgroundLayerState(
+  scene: Phaser.Scene,
+  background: BackgroundConfig | null | undefined,
+  canvasWidth: number,
+  canvasHeight: number,
+): TiledBackgroundLayerState {
+  const root = scene.add.container(0, 0);
+  root.setDepth(-3000);
+  return {
+    root,
+    sprites: new Map<string, Phaser.GameObjects.Image>(),
+    background: background ?? null,
+    canvasWidth,
+    canvasHeight,
+  };
+}
+
+function clearTiledBackgroundSprites(layer: TiledBackgroundLayerState): void {
+  layer.sprites.forEach((sprite) => sprite.destroy());
+  layer.sprites.clear();
+}
+
+function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundLayerState): void {
+  const background = layer.background;
+  if (!isTiledBackground(background)) {
+    clearTiledBackgroundSprites(layer);
+    layer.root.setVisible(false);
+    return;
+  }
+
+  const chunkEntries = Object.entries(background.chunks);
+  if (chunkEntries.length === 0) {
+    clearTiledBackgroundSprites(layer);
+    layer.root.setVisible(false);
+    return;
+  }
+
+  layer.root.setVisible(true);
+  const chunkSize = getTiledBackgroundChunkSize(background);
+  const camera = scene.cameras.main;
+  const projectedChunkSize = getProjectedChunkSizePx(chunkSize, camera.zoom);
+
+  if (projectedChunkSize < BACKGROUND_MIN_PROJECTED_CHUNK_SIZE) {
+    clearTiledBackgroundSprites(layer);
+    return;
+  }
+
+  const worldView = camera.worldView;
+  const cornerTopLeft = phaserToUser(worldView.left, worldView.top, layer.canvasWidth, layer.canvasHeight);
+  const cornerTopRight = phaserToUser(worldView.right, worldView.top, layer.canvasWidth, layer.canvasHeight);
+  const cornerBottomLeft = phaserToUser(worldView.left, worldView.bottom, layer.canvasWidth, layer.canvasHeight);
+  const cornerBottomRight = phaserToUser(worldView.right, worldView.bottom, layer.canvasWidth, layer.canvasHeight);
+
+  const minX = Math.min(cornerTopLeft.x, cornerTopRight.x, cornerBottomLeft.x, cornerBottomRight.x);
+  const maxX = Math.max(cornerTopLeft.x, cornerTopRight.x, cornerBottomLeft.x, cornerBottomRight.x);
+  const minY = Math.min(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y);
+  const maxY = Math.max(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y);
+  const visibleRange = getChunkRangeForWorldBounds(minX, maxX, minY, maxY, chunkSize, 1);
+
+  const visibleKeys = new Set<string>();
+
+  chunkEntries.forEach(([key, dataUrl]) => {
+    if (!dataUrl) return;
+    const parsed = parseChunkKey(key);
+    if (!parsed) return;
+    if (
+      parsed.cx < visibleRange.minCx ||
+      parsed.cx > visibleRange.maxCx ||
+      parsed.cy < visibleRange.minCy ||
+      parsed.cy > visibleRange.maxCy
+    ) {
+      return;
+    }
+
+    visibleKeys.add(key);
+    const textureKey = getBackgroundTextureKey(dataUrl);
+    if (!scene.textures.exists(textureKey)) {
+      void ensureBackgroundTexture(scene, dataUrl);
+      return;
+    }
+
+    let sprite = layer.sprites.get(key);
+    if (!sprite || !sprite.active) {
+      sprite = scene.add.image(0, 0, textureKey);
+      sprite.setOrigin(0.5, 0.5);
+      layer.root.add(sprite);
+      layer.sprites.set(key, sprite);
+    } else if (sprite.texture.key !== textureKey) {
+      sprite.setTexture(textureKey);
+    }
+
+    const center = getChunkCenterWorld(parsed.cx, parsed.cy, chunkSize);
+    const centerPhaser = userToPhaser(center.x, center.y, layer.canvasWidth, layer.canvasHeight);
+    sprite.setPosition(centerPhaser.x, centerPhaser.y);
+    sprite.setDisplaySize(chunkSize, chunkSize);
+    sprite.setVisible(true);
+  });
+
+  layer.sprites.forEach((sprite, key) => {
+    if (visibleKeys.has(key)) return;
+    sprite.destroy();
+    layer.sprites.delete(key);
+  });
 }
 
 function destroyEditorContainer(scene: Phaser.Scene, container: Phaser.GameObjects.Container): void {
@@ -410,6 +615,11 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             }
           },
           update: function(this: Phaser.Scene) {
+            const tiledBackgroundLayer = this.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+            if (tiledBackgroundLayer) {
+              updateTiledBackgroundLayer(this, tiledBackgroundLayer);
+            }
+
             if (isPlaying && runtimeRef.current) {
               runtimeRef.current.update();
 
@@ -854,11 +1064,15 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene || !selectedScene) return;
 
-    const bgColorValue = selectedScene.background?.type === 'color'
-      ? selectedScene.background.value
-      : '#87CEEB';
+    const bgColorValue = getSceneBackgroundBaseColor(selectedScene.background);
 
     phaserScene.cameras.main.setBackgroundColor(bgColorValue);
+
+    const tiledBackgroundLayer = phaserScene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+    if (tiledBackgroundLayer) {
+      tiledBackgroundLayer.background = selectedScene.background ?? null;
+      updateTiledBackgroundLayer(phaserScene, tiledBackgroundLayer);
+    }
 
     // Update bounds graphics color to contrast with new background
     const boundsGraphics = phaserScene.data.get('boundsGraphics') as Phaser.GameObjects.Graphics | undefined;
@@ -933,8 +1147,16 @@ function createEditorScene(
   const camera = scene.cameras.main;
 
   // Set background color (same everywhere)
-  const bgColorValue = sceneData.background?.type === 'color' ? sceneData.background.value : '#2d2d44';
+  const bgColorValue = getSceneBackgroundBaseColor(sceneData.background);
   camera.setBackgroundColor(bgColorValue);
+
+  const tiledBackgroundLayer = createTiledBackgroundLayerState(
+    scene,
+    sceneData.background ?? null,
+    canvasWidth,
+    canvasHeight,
+  );
+  updateTiledBackgroundLayer(scene, tiledBackgroundLayer);
 
   // Calculate if background is dark to choose contrasting border color
   const bgColor = Phaser.Display.Color.HexStringToColor(bgColorValue);
@@ -965,6 +1187,11 @@ function createEditorScene(
   scene.data.set('groundGraphics', groundGraphics);
   scene.data.set('canvasWidth', canvasWidth);
   scene.data.set('canvasHeight', canvasHeight);
+  scene.data.set('tiledBackgroundLayer', tiledBackgroundLayer);
+  scene.events.once('shutdown', () => {
+    clearTiledBackgroundSprites(tiledBackgroundLayer);
+    tiledBackgroundLayer.root.destroy();
+  });
 
   // Function to update the view based on current mode
   const updateViewMode = (mode: 'camera-masked' | 'camera-viewport' | 'editor') => {
@@ -1792,6 +2019,8 @@ function createEditorScene(
   };
 
   scene.events.on('update', () => {
+    updateTiledBackgroundLayer(scene, tiledBackgroundLayer);
+
     const storeState = useEditorStore.getState();
     const selectedIds = storeState.selectedObjectIds.length > 0
       ? storeState.selectedObjectIds
@@ -1851,6 +2080,11 @@ function createPlaySceneConfig(
       );
     },
     update: function(this: Phaser.Scene) {
+      const tiledBackgroundLayer = this.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+      if (tiledBackgroundLayer) {
+        updateTiledBackgroundLayer(this, tiledBackgroundLayer);
+      }
+
       const runtime = sceneRuntimes.get(sceneId);
       if (runtime && !runtime.isPaused()) {
         runtime.update();
@@ -1926,9 +2160,21 @@ function createPlaySceneContent(
   sceneId: string
 ) {
   // Set background
-  if (sceneData.background?.type === 'color') {
-    scene.cameras.main.setBackgroundColor(sceneData.background.value);
-  }
+  const bgColorValue = getSceneBackgroundBaseColor(sceneData.background);
+  scene.cameras.main.setBackgroundColor(bgColorValue);
+
+  const tiledBackgroundLayer = createTiledBackgroundLayerState(
+    scene,
+    sceneData.background ?? null,
+    canvasWidth,
+    canvasHeight,
+  );
+  updateTiledBackgroundLayer(scene, tiledBackgroundLayer);
+  scene.data.set('tiledBackgroundLayer', tiledBackgroundLayer);
+  scene.events.once('shutdown', () => {
+    clearTiledBackgroundSprites(tiledBackgroundLayer);
+    tiledBackgroundLayer.root.destroy();
+  });
 
   // Create runtime engine with canvas dimensions for coordinate conversion
   const runtime = new RuntimeEngine(scene, canvasWidth, canvasHeight);

@@ -67,6 +67,11 @@ export interface BackgroundConfig {
   type: 'color' | 'image' | 'tiled';
   value: string;
   scrollFactor?: { x: number; y: number };
+  version?: 1;
+  chunkSize?: number;
+  chunks?: Record<string, string>;
+  softChunkLimit?: number;
+  hardChunkLimit?: number;
 }
 
 // GameObject Types

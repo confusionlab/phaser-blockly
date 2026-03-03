@@ -18,6 +18,11 @@ import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle, VectorHandleType } from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CostumeCanvasHeader } from './CostumeCanvasHeader';
+import {
+  getBrushCursorStyle,
+  getBrushPaintColor,
+  getCompositeOperation,
+} from '@/lib/background/brushCore';
 
 const CANVAS_SIZE = 1024;
 const BASE_DISPLAY_SIZE = 480;
@@ -294,14 +299,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const displayScale = BASE_VIEW_SCALE * zoomRef.current;
-    const diameter = Math.max(6, brushSizeRef.current * displayScale);
-    const stroke = tool === 'eraser' ? 'rgba(17,17,17,0.95)' : brushColorRef.current;
-    const fill = tool === 'eraser' ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.12)';
-    const borderWidth = tool === 'eraser' ? 2 : 1.5;
-    overlay.style.width = `${diameter}px`;
-    overlay.style.height = `${diameter}px`;
-    overlay.style.border = `${borderWidth}px solid ${stroke}`;
-    overlay.style.background = fill;
+    const cursorStyle = getBrushCursorStyle(
+      tool,
+      brushColorRef.current,
+      brushSizeRef.current,
+      displayScale,
+    );
+    overlay.style.width = `${cursorStyle.diameter}px`;
+    overlay.style.height = `${cursorStyle.diameter}px`;
+    overlay.style.border = `${cursorStyle.borderWidth}px solid ${cursorStyle.stroke}`;
+    overlay.style.background = cursorStyle.fill;
 
     const pos = brushCursorPosRef.current;
     if (pos) {
@@ -1699,8 +1706,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (isBitmapBrush) {
       const brush = new CompositePencilBrush(fabricCanvas as any);
       brush.width = brushSizeRef.current;
-      brush.color = tool === 'eraser' ? '#000000' : brushColorRef.current;
-      brush.compositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
+      brush.color = getBrushPaintColor(tool, brushColorRef.current);
+      brush.compositeOperation = getCompositeOperation(tool);
       (fabricCanvas as any).freeDrawingBrush = brush;
       fabricCanvas.isDrawingMode = true;
     } else {
