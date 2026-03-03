@@ -1077,7 +1077,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       order: scene ? getNextSiblingOrder(scene, null) : 0,
       layer: undefined,
       componentId,
-      localVariables: [],
     };
 
     set(state => ({

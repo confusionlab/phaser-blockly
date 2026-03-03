@@ -334,9 +334,15 @@ export function BlocklyEditor() {
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
   const currentSceneIdRef = useRef<string | null>(null);
   const currentObjectIdRef = useRef<string | null>(null);
+  const currentComponentIdRef = useRef<string | null>(null);
   const lastLoadedTargetRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
-  const pendingPersistRef = useRef<{ sceneId: string; objectId: string; timeoutId: number } | null>(null);
+  const pendingPersistRef = useRef<{
+    sceneId: string | null;
+    objectId: string | null;
+    componentId: string | null;
+    timeoutId: number;
+  } | null>(null);
   const pendingMessageFieldApplyRef = useRef<((messageId: string) => void) | null>(null);
   const [showAddVariableDialog, setShowAddVariableDialog] = useState(false);
   const [showVariableManager, setShowVariableManager] = useState(false);
@@ -347,8 +353,8 @@ export function BlocklyEditor() {
   const [messageDialogError, setMessageDialogError] = useState<string | null>(null);
   const [messageDialogSelectedId, setMessageDialogSelectedId] = useState<string | null>(null);
 
-  const { selectedSceneId, selectedObjectId, registerCodeUndo } = useEditorStore();
-  const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage } = useProjectStore();
+  const { selectedSceneId, selectedObjectId, selectedComponentId, registerCodeUndo } = useEditorStore();
+  const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage, updateComponent } = useProjectStore();
   const sceneDropdownStamp = project?.scenes
     .map((scene, index) => `${index}:${scene.id}:${scene.name}`)
     .join('|') ?? '';
@@ -360,22 +366,43 @@ export function BlocklyEditor() {
   useEffect(() => {
     currentSceneIdRef.current = selectedSceneId;
     currentObjectIdRef.current = selectedObjectId;
-  }, [selectedSceneId, selectedObjectId]);
+    currentComponentIdRef.current = selectedComponentId;
+  }, [selectedSceneId, selectedObjectId, selectedComponentId]);
 
-  const persistWorkspaceToStore = useCallback((sceneId: string, objectId: string) => {
+  const persistWorkspaceToStore = useCallback((
+    sceneId: string | null,
+    objectId: string | null,
+    componentId: string | null,
+  ) => {
     const workspace = workspaceRef.current;
     if (!workspace) return;
-    if (currentSceneIdRef.current !== sceneId || currentObjectIdRef.current !== objectId) return;
+    if (
+      currentSceneIdRef.current !== sceneId ||
+      currentObjectIdRef.current !== objectId ||
+      currentComponentIdRef.current !== componentId
+    ) {
+      return;
+    }
 
     const state = useProjectStore.getState();
-    const scene = state.project?.scenes.find((s) => s.id === sceneId);
-    const obj = scene?.objects.find((o) => o.id === objectId);
-    if (!scene || !obj) return;
 
     const topBlocks = workspace.getTopBlocks(false);
     const xmlText = topBlocks.length === 0
       ? ''
       : Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(workspace));
+
+    if (componentId && !objectId) {
+      const component = (state.project?.components || []).find((componentItem) => componentItem.id === componentId);
+      if (!component) return;
+      if (component.blocklyXml === xmlText) return;
+      state.updateComponent(componentId, { blocklyXml: xmlText });
+      return;
+    }
+
+    if (!sceneId || !objectId) return;
+    const scene = state.project?.scenes.find((s) => s.id === sceneId);
+    const obj = scene?.objects.find((o) => o.id === objectId);
+    if (!scene || !obj) return;
 
     const currentXml = obj.componentId
       ? (state.project?.components || []).find((component) => component.id === obj.componentId)?.blocklyXml ?? ''
@@ -390,34 +417,53 @@ export function BlocklyEditor() {
     }
   }, []);
 
-  const flushPendingWorkspacePersist = useCallback((sceneId?: string | null, objectId?: string | null) => {
+  const flushPendingWorkspacePersist = useCallback((
+    sceneId?: string | null,
+    objectId?: string | null,
+    componentId?: string | null,
+  ) => {
     const pending = pendingPersistRef.current;
     if (!pending) return;
-    if (sceneId && objectId && (pending.sceneId !== sceneId || pending.objectId !== objectId)) return;
+    if (
+      sceneId !== undefined &&
+      objectId !== undefined &&
+      componentId !== undefined &&
+      (pending.sceneId !== sceneId || pending.objectId !== objectId || pending.componentId !== componentId)
+    ) {
+      return;
+    }
 
     window.clearTimeout(pending.timeoutId);
     pendingPersistRef.current = null;
-    persistWorkspaceToStore(pending.sceneId, pending.objectId);
+    persistWorkspaceToStore(pending.sceneId, pending.objectId, pending.componentId);
   }, [persistWorkspaceToStore]);
 
-  const scheduleWorkspacePersist = useCallback((sceneId: string, objectId: string) => {
+  const scheduleWorkspacePersist = useCallback((
+    sceneId: string | null,
+    objectId: string | null,
+    componentId: string | null,
+  ) => {
     const pending = pendingPersistRef.current;
     if (pending) {
-      if (pending.sceneId === sceneId && pending.objectId === objectId) {
+      if (
+        pending.sceneId === sceneId &&
+        pending.objectId === objectId &&
+        pending.componentId === componentId
+      ) {
         window.clearTimeout(pending.timeoutId);
       } else {
-        flushPendingWorkspacePersist(pending.sceneId, pending.objectId);
+        flushPendingWorkspacePersist(pending.sceneId, pending.objectId, pending.componentId);
       }
     }
 
     const timeoutId = window.setTimeout(() => {
-      persistWorkspaceToStore(sceneId, objectId);
+      persistWorkspaceToStore(sceneId, objectId, componentId);
       if (pendingPersistRef.current?.timeoutId === timeoutId) {
         pendingPersistRef.current = null;
       }
     }, 120);
 
-    pendingPersistRef.current = { sceneId, objectId, timeoutId };
+    pendingPersistRef.current = { sceneId, objectId, componentId, timeoutId };
   }, [flushPendingWorkspacePersist, persistWorkspaceToStore]);
 
   // Register undo/redo handler for global keyboard shortcuts.
@@ -436,10 +482,11 @@ export function BlocklyEditor() {
   useEffect(() => {
     const sceneIdAtRender = selectedSceneId;
     const objectIdAtRender = selectedObjectId;
+    const componentIdAtRender = selectedComponentId;
     return () => {
-      flushPendingWorkspacePersist(sceneIdAtRender, objectIdAtRender);
+      flushPendingWorkspacePersist(sceneIdAtRender, objectIdAtRender, componentIdAtRender);
     };
-  }, [selectedSceneId, selectedObjectId, flushPendingWorkspacePersist]);
+  }, [selectedSceneId, selectedObjectId, selectedComponentId, flushPendingWorkspacePersist]);
 
   useEffect(() => {
     setMessageDialogCallback((mode, selectedMessageId, applySelectedMessageId) => {
@@ -509,7 +556,7 @@ export function BlocklyEditor() {
       // Block search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        if (selectedObjectId) {
+        if (selectedObjectId || selectedComponentId) {
           setShowBlockSearch(true);
         }
         return;
@@ -534,7 +581,7 @@ export function BlocklyEditor() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedObjectId]);
+  }, [selectedObjectId, selectedComponentId]);
 
 
   // Initialize Blockly workspace
@@ -606,36 +653,38 @@ export function BlocklyEditor() {
           event.type === Blockly.Events.BLOCK_MOVE) {
         const sceneId = currentSceneIdRef.current;
         const objectId = currentObjectIdRef.current;
-        if (!workspaceRef.current || !sceneId || !objectId) return;
+        const componentId = currentComponentIdRef.current;
+        if (!workspaceRef.current) return;
+        if (!objectId && !componentId) return;
 
-        scheduleWorkspacePersist(sceneId, objectId);
+        scheduleWorkspacePersist(sceneId, objectId, componentId);
 
         const state = useProjectStore.getState();
-        const scene = state.project?.scenes.find(s => s.id === sceneId);
-        const obj = scene?.objects.find(o => o.id === objectId);
-        if (!scene || !obj) return;
+        const scene = sceneId ? state.project?.scenes.find((s) => s.id === sceneId) : undefined;
+        const obj = scene && objectId ? scene.objects.find((o) => o.id === objectId) : undefined;
+        const selectedComponent = componentId
+          ? (state.project?.components || []).find((component) => component.id === componentId)
+          : undefined;
+        const component = selectedComponent
+          ?? (obj?.componentId
+            ? (state.project?.components || []).find((componentItem) => componentItem.id === obj.componentId)
+            : undefined);
 
         // Validate references on block create/change
         if (event.type === Blockly.Events.BLOCK_CREATE || event.type === Blockly.Events.BLOCK_CHANGE) {
-          const sceneObjectIds = new Set(scene.objects.map(o => o.id));
+          const sceneObjectIds = new Set((scene?.objects || []).map((objectItem) => objectItem.id));
 
           // Get effective sounds
-          let effectiveSounds: Array<{ id: string }> = obj.sounds || [];
-          if (obj.componentId) {
-            const component = (state.project?.components || []).find(c => c.id === obj.componentId);
-            if (component) {
-              effectiveSounds = component.sounds || [];
-            }
-          }
+          const effectiveSounds: Array<{ id: string }> = component?.sounds || obj?.sounds || [];
           const objectSoundIds = new Set(effectiveSounds.map(s => s.id));
 
           // Collect valid variable IDs
           const validVariableIds = new Set<string>();
           (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
-          const componentLocalVariables = obj.componentId
-            ? (state.project?.components || []).find((component) => component.id === obj.componentId)?.localVariables || []
-            : [];
-          const localVariablesForValidation = componentLocalVariables.length > 0 ? componentLocalVariables : (obj.localVariables || []);
+          const componentLocalVariables = component?.localVariables || [];
+          const localVariablesForValidation = componentLocalVariables.length > 0
+            ? componentLocalVariables
+            : (obj?.localVariables || []);
           localVariablesForValidation.forEach(v => validVariableIds.add(v.id));
           const validTypeTokens = new Set((state.project?.components || []).map((component) => `component:${component.id}`));
           const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
@@ -690,21 +739,21 @@ export function BlocklyEditor() {
 
     // Get fresh object data from store
     const state = useProjectStore.getState();
-    const scene = state.project?.scenes.find(s => s.id === selectedSceneId);
-    const obj = scene?.objects.find(o => o.id === selectedObjectId);
+    const scene = selectedSceneId ? state.project?.scenes.find((s) => s.id === selectedSceneId) : undefined;
+    const obj = selectedObjectId ? scene?.objects.find((o) => o.id === selectedObjectId) : undefined;
+    const selectedComponent = selectedComponentId
+      ? (state.project?.components || []).find((component) => component.id === selectedComponentId)
+      : undefined;
+    const component = selectedComponent
+      ?? (obj?.componentId
+        ? (state.project?.components || []).find((componentItem) => componentItem.id === obj.componentId)
+        : undefined);
 
-    // Get effective blocklyXml (from component if it's an instance)
-    let blocklyXml = obj?.blocklyXml || '';
-    let effectiveSounds: Array<{ id: string }> = obj?.sounds || [];
-    if (obj?.componentId) {
-      const component = (state.project?.components || []).find(c => c.id === obj.componentId);
-      if (component) {
-        blocklyXml = component.blocklyXml;
-        effectiveSounds = component.sounds || [];
-      }
-    }
+    // Get effective blocklyXml (from explicitly selected component or from component instance if selected object is one)
+    const blocklyXml = component?.blocklyXml || obj?.blocklyXml || '';
+    const effectiveSounds: Array<{ id: string }> = component?.sounds || obj?.sounds || [];
 
-    const loadTargetKey = `${selectedSceneId ?? ''}:${selectedObjectId ?? ''}`;
+    const loadTargetKey = `${selectedSceneId ?? ''}:${selectedObjectId ?? ''}:${selectedComponentId ?? ''}`;
     const currentTopBlocks = workspaceRef.current.getTopBlocks(false);
     const currentWorkspaceXml = currentTopBlocks.length === 0
       ? ''
@@ -781,17 +830,17 @@ export function BlocklyEditor() {
     }
 
     // Validate blocks for broken references
-    if (scene && workspaceRef.current) {
-      const sceneObjectIds = new Set(scene.objects.map(o => o.id));
+    if (workspaceRef.current) {
+      const sceneObjectIds = new Set((scene?.objects || []).map((objectItem) => objectItem.id));
       const objectSoundIds = new Set(effectiveSounds.map(s => s.id));
 
       // Collect valid variable IDs (global + local)
       const validVariableIds = new Set<string>();
       (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
-      const componentLocalVariables = obj?.componentId
-        ? (state.project?.components || []).find((component) => component.id === obj.componentId)?.localVariables || []
-        : [];
-      const localVariablesForValidation = componentLocalVariables.length > 0 ? componentLocalVariables : (obj?.localVariables || []);
+      const componentLocalVariables = component?.localVariables || [];
+      const localVariablesForValidation = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (obj?.localVariables || []);
       localVariablesForValidation.forEach(v => validVariableIds.add(v.id));
       const validTypeTokens = new Set((state.project?.components || []).map((component) => `component:${component.id}`));
       const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
@@ -822,7 +871,7 @@ export function BlocklyEditor() {
       isLoadingRef.current = false;
     }, 50);
     lastLoadedTargetRef.current = loadTargetKey;
-  }, [selectedObjectId, selectedSceneId, project, flushPendingWorkspacePersist]);
+  }, [selectedObjectId, selectedSceneId, selectedComponentId, project, flushPendingWorkspacePersist]);
 
   // Blockly does not auto-rerender existing dropdown field labels when menu text changes.
   // Refresh scene reference fields so renamed scenes are reflected on already-selected values.
@@ -858,9 +907,15 @@ export function BlocklyEditor() {
 
   // Get current object name for local variable option
   const currentObjectName = (() => {
-    if (!project || !selectedSceneId || !selectedObjectId) return undefined;
-    const scene = project.scenes.find(s => s.id === selectedSceneId);
-    return scene?.objects.find(o => o.id === selectedObjectId)?.name;
+    if (!project) return undefined;
+    if (selectedSceneId && selectedObjectId) {
+      const scene = project.scenes.find((s) => s.id === selectedSceneId);
+      return scene?.objects.find((o) => o.id === selectedObjectId)?.name;
+    }
+    if (selectedComponentId) {
+      return (project.components || []).find((component) => component.id === selectedComponentId)?.name;
+    }
+    return undefined;
   })();
 
   const handleAddVariable = (variable: Variable) => {
@@ -868,6 +923,16 @@ export function BlocklyEditor() {
       addGlobalVariable(variable);
     } else if (selectedSceneId && selectedObjectId) {
       addLocalVariable(selectedSceneId, selectedObjectId, variable);
+    } else if (selectedComponentId) {
+      const component = (project?.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+      if (component) {
+        updateComponent(selectedComponentId, {
+          localVariables: [
+            ...(component.localVariables || []),
+            { ...variable, scope: 'local' },
+          ],
+        });
+      }
     }
     // Refresh the toolbox to show the new variable
     if (workspaceRef.current) {

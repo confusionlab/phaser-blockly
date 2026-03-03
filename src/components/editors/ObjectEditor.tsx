@@ -10,22 +10,38 @@ import { Code, Palette, Volume2 } from 'lucide-react';
 
 export function ObjectEditor() {
   const { project } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectObject, activeObjectTab, setActiveObjectTab } = useEditorStore();
+  const {
+    selectedSceneId,
+    selectedObjectId,
+    selectedComponentId,
+    selectObject,
+    activeObjectTab,
+    setActiveObjectTab,
+  } = useEditorStore();
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
-  const objects = scene?.objects || [];
 
   useEffect(() => {
-    if (objects.length > 0 && !selectedObjectId) {
-      selectObject(objects[0].id);
+    if (selectedComponentId) return;
+
+    const sceneObjects = scene?.objects || [];
+
+    if (sceneObjects.length > 0 && !selectedObjectId) {
+      selectObject(sceneObjects[0].id);
     }
-    if (selectedObjectId && !objects.find(o => o.id === selectedObjectId)) {
-      selectObject(objects.length > 0 ? objects[0].id : null);
+    if (selectedObjectId && !sceneObjects.find((o) => o.id === selectedObjectId)) {
+      selectObject(sceneObjects.length > 0 ? sceneObjects[0].id : null);
     }
-  }, [objects, selectedObjectId, selectObject]);
+  }, [scene, selectedObjectId, selectedComponentId, selectObject]);
+
+  useEffect(() => {
+    if (selectedComponentId && activeObjectTab !== 'code') {
+      setActiveObjectTab('code');
+    }
+  }, [selectedComponentId, activeObjectTab, setActiveObjectTab]);
 
   // Show placeholder when no object is selected
-  if (!selectedObjectId) {
+  if (!selectedObjectId && !selectedComponentId) {
     return (
       <div className="flex flex-col h-full bg-card items-center justify-center text-muted-foreground">
         <Code className="size-12 mb-4 opacity-20" />
@@ -48,11 +64,11 @@ export function ObjectEditor() {
               <Code className="size-4" />
               Code
             </TabsTrigger>
-            <TabsTrigger value="costumes">
+            <TabsTrigger value="costumes" disabled={!selectedObjectId}>
               <Palette className="size-4" />
               Costumes
             </TabsTrigger>
-            <TabsTrigger value="sounds">
+            <TabsTrigger value="sounds" disabled={!selectedObjectId}>
               <Volume2 className="size-4" />
               Sounds
             </TabsTrigger>

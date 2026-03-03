@@ -166,10 +166,13 @@ export function SpriteShelf() {
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
+    selectedComponentId,
     activeObjectTab,
     selectObject,
     selectObjects,
+    selectComponent,
     selectScene,
+    setActiveObjectTab,
     collapsedFolderIdsByScene,
     setCollapsedFoldersForScene,
     clearSceneUiState,
@@ -957,13 +960,12 @@ export function SpriteShelf() {
     handleCloseContextMenu();
   };
 
-  const handleDeleteComponent = () => {
-    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
-    const componentId = contextMenu.object.componentId;
+  const handleDeleteComponentById = (componentId: string) => {
+    if (!project) return;
     if (!componentId) return;
 
     const component = (project.components || []).find((item) => item.id === componentId);
-    const componentName = component?.name || contextMenu.object.name;
+    const componentName = component?.name || 'Component';
     const instanceCount = project.scenes.reduce((count, scene) => {
       return count + scene.objects.filter((obj) => obj.componentId === componentId).length;
     }, 0);
@@ -975,6 +977,16 @@ export function SpriteShelf() {
     if (!confirmed) return;
 
     deleteComponent(componentId);
+    if (selectedComponentId === componentId) {
+      selectComponent(null);
+    }
+  };
+
+  const handleDeleteComponentFromContextMenu = () => {
+    if (!contextMenu || contextMenu.kind !== 'object') return;
+    const componentId = contextMenu.object.componentId;
+    if (!componentId) return;
+    handleDeleteComponentById(componentId);
     handleCloseContextMenu();
   };
 
@@ -1015,6 +1027,28 @@ export function SpriteShelf() {
     if (instance) {
       selectObject(instance.id);
     }
+  };
+
+  const handleComponentLibraryDelete = (componentId: string) => {
+    handleDeleteComponentById(componentId);
+  };
+
+  const handleComponentLibraryEditCode = (componentId: string) => {
+    if (!project) return;
+
+    let sceneId = selectedSceneId;
+    if (!sceneId) {
+      sceneId = project.scenes[0]?.id ?? null;
+    }
+    if (!sceneId) return;
+
+    if (sceneId !== selectedSceneId) {
+      selectScene(sceneId);
+    }
+
+    setActiveObjectTab('code');
+    selectObjects([], null);
+    selectComponent(componentId);
   };
 
   const willDeleteSelection = !!contextMenu
@@ -1428,7 +1462,7 @@ export function SpriteShelf() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={handleDeleteComponent}
+                      onClick={handleDeleteComponentFromContextMenu}
                       className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
                     >
                       <Trash2 className="size-4" />
@@ -1524,6 +1558,8 @@ export function SpriteShelf() {
         open={showComponentLibrary}
         onOpenChange={setShowComponentLibrary}
         onSelect={handleComponentLibrarySelect}
+        onDelete={handleComponentLibraryDelete}
+        onEditCode={handleComponentLibraryEditCode}
       />
 
       <Dialog open={!!folderDeleteTarget} onOpenChange={(open) => !open && handleCancelDeleteFolder()}>

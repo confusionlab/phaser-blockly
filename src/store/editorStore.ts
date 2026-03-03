@@ -44,6 +44,7 @@ interface EditorStore {
   selectedSceneId: string | null;
   selectedObjectId: string | null;
   selectedObjectIds: string[];
+  selectedComponentId: string | null;
 
   // Play state
   isPlaying: boolean;
@@ -85,6 +86,7 @@ interface EditorStore {
   selectScene: (sceneId: string | null, options?: SelectionHistoryOptions) => void;
   selectObject: (objectId: string | null, options?: SelectionHistoryOptions) => void;
   selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
+  selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
 
   startPlaying: () => void;
@@ -134,6 +136,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
   selectedSceneId: null,
   selectedObjectId: null,
   selectedObjectIds: [],
+  selectedComponentId: null,
 
   // Play state
   isPlaying: false,
@@ -183,7 +186,12 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   // Actions
   selectScene: (sceneId, options) => {
-    set({ selectedSceneId: sceneId, selectedObjectId: null, selectedObjectIds: [] });
+    set({
+      selectedSceneId: sceneId,
+      selectedObjectId: null,
+      selectedObjectIds: [],
+      selectedComponentId: null,
+    });
     if (options?.recordHistory !== false) {
       recordHistoryChange({ source: 'selection:scene' });
     } else {
@@ -195,6 +203,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
     set({
       selectedObjectId: objectId,
       selectedObjectIds: objectId ? [objectId] : [],
+      selectedComponentId: null,
     });
     if (options?.recordHistory !== false) {
       recordHistoryChange({ source: 'selection:object' });
@@ -211,9 +220,23 @@ export const useEditorStore = create<EditorStore>((set) => ({
     set({
       selectedObjectId: primary,
       selectedObjectIds: uniqueIds,
+      selectedComponentId: null,
     });
     if (options?.recordHistory !== false) {
       recordHistoryChange({ source: 'selection:objects' });
+    } else {
+      syncHistorySnapshot();
+    }
+  },
+
+  selectComponent: (componentId, options) => {
+    set({
+      selectedComponentId: componentId,
+      selectedObjectId: null,
+      selectedObjectIds: [],
+    });
+    if (options?.recordHistory !== false) {
+      recordHistoryChange({ source: 'selection:component' });
     } else {
       syncHistorySnapshot();
     }
@@ -270,6 +293,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
       selectedSceneId: issue.sceneId,
       selectedObjectId: issue.objectId,
       selectedObjectIds: issue.objectId ? [issue.objectId] : [],
+      selectedComponentId: null,
       activeObjectTab: 'code',
       showPlayValidationDialog: false,
     });
@@ -459,6 +483,7 @@ registerSelectionHistoryBridge(
       selectedSceneId: state.selectedSceneId,
       selectedObjectId: state.selectedObjectId,
       selectedObjectIds: [...state.selectedObjectIds],
+      selectedComponentId: state.selectedComponentId,
     };
   },
   (selection) => {
@@ -466,6 +491,7 @@ registerSelectionHistoryBridge(
       selectedSceneId: selection.selectedSceneId,
       selectedObjectId: selection.selectedObjectId,
       selectedObjectIds: [...selection.selectedObjectIds],
+      selectedComponentId: selection.selectedComponentId ?? null,
     });
   },
 );

@@ -37,8 +37,15 @@ function getTypeLabel(type: VariableType): string {
 }
 
 export function VariableManagerDialog({ open, onOpenChange, onAddNew }: VariableManagerDialogProps) {
-  const { project, removeGlobalVariable, removeLocalVariable, updateGlobalVariable, updateLocalVariable } = useProjectStore();
-  const { selectedSceneId, selectedObjectId } = useEditorStore();
+  const {
+    project,
+    removeGlobalVariable,
+    removeLocalVariable,
+    updateGlobalVariable,
+    updateLocalVariable,
+    updateComponent,
+  } = useProjectStore();
+  const { selectedSceneId, selectedObjectId, selectedComponentId } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
 
@@ -50,11 +57,24 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
   const currentObject = scene?.objects.find(o => o.id === selectedObjectId);
   const component = currentObject?.componentId
     ? (project?.components || []).find((componentItem) => componentItem.id === currentObject.componentId)
-    : null;
+    : (selectedComponentId
+      ? (project?.components || []).find((componentItem) => componentItem.id === selectedComponentId)
+      : null);
+  const editingComponentOnly = !currentObject && !!component;
+  const componentIdForLocal = currentObject?.componentId || selectedComponentId || null;
+  const componentNameForLocal = component?.name || null;
+  const localOwnerLabel = currentObject
+    ? currentObject.name
+    : (componentNameForLocal ? `${componentNameForLocal} (component)` : '');
   const componentLocalVariables = component?.localVariables || [];
   const localVariables = componentLocalVariables.length > 0
     ? componentLocalVariables
     : (currentObject?.localVariables || []);
+
+  const updateComponentLocalVariables = (nextLocalVariables: Variable[]) => {
+    if (!componentIdForLocal) return;
+    updateComponent(componentIdForLocal, { localVariables: nextLocalVariables });
+  };
 
   const handleDeleteGlobal = (varId: string) => {
     if (confirm('Delete this variable? Any blocks using it will stop working.')) {
@@ -63,6 +83,13 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
   };
 
   const handleDeleteLocal = (varId: string) => {
+    if (editingComponentOnly) {
+      if (confirm('Delete this variable? Any blocks using it will stop working.')) {
+        updateComponentLocalVariables(localVariables.filter((v) => v.id !== varId));
+      }
+      return;
+    }
+
     if (selectedSceneId && selectedObjectId) {
       if (confirm('Delete this variable? Any blocks using it will stop working.')) {
         removeLocalVariable(selectedSceneId, selectedObjectId, varId);
@@ -91,7 +118,17 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
 
   const saveRenameLocal = (varId: string) => {
     const trimmed = editName.trim();
-    if (trimmed && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed) && selectedSceneId && selectedObjectId) {
+    if (!trimmed || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
+      setEditingId(null);
+      setEditName('');
+      return;
+    }
+
+    if (editingComponentOnly) {
+      updateComponentLocalVariables(
+        localVariables.map((variable) => (variable.id === varId ? { ...variable, name: trimmed } : variable))
+      );
+    } else if (selectedSceneId && selectedObjectId) {
       updateLocalVariable(selectedSceneId, selectedObjectId, varId, { name: trimmed });
     }
     setEditingId(null);
@@ -206,10 +243,10 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
           </div>
 
           {/* Local Variables */}
-          {currentObject && (
+          {(currentObject || editingComponentOnly) && (
             <div>
               <div className="text-sm font-medium text-muted-foreground mb-2">
-                Local Variables ({currentObject.name})
+                Local Variables ({localOwnerLabel})
               </div>
               {localVariables.length === 0 ? (
                 <div className="text-sm text-muted-foreground italic py-2">No local variables</div>

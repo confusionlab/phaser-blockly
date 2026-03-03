@@ -88,6 +88,7 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
     const project = useProjectStore.getState().project;
     const selectedSceneId = useEditorStore.getState().selectedSceneId;
     const selectedObjectId = useEditorStore.getState().selectedObjectId;
+    const selectedComponentId = useEditorStore.getState().selectedComponentId;
 
     if (project) {
       // Check global variables
@@ -108,6 +109,14 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
           ? componentLocalVariables
           : (obj?.localVariables || []);
         const localVar = localVariables.find(v => v.id === value);
+        if (localVar) {
+          return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
+        }
+      }
+
+      if (selectedComponentId) {
+        const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+        const localVar = (component?.localVariables || []).find((variable) => variable.id === value);
         if (localVar) {
           return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
         }
@@ -318,26 +327,34 @@ function getSoundDropdownOptions(): Array<[string, string]> {
   const project = useProjectStore.getState().project;
   const selectedSceneId = useEditorStore.getState().selectedSceneId;
   const selectedObjectId = useEditorStore.getState().selectedObjectId;
+  const selectedComponentId = useEditorStore.getState().selectedComponentId;
 
-  if (!project || !selectedSceneId || !selectedObjectId) {
-    return [['(no sounds)', '']];
-  }
-
-  const scene = project.scenes.find(s => s.id === selectedSceneId);
-  const object = scene?.objects.find(o => o.id === selectedObjectId);
-  if (!object) {
+  if (!project) {
     return [['(no sounds)', '']];
   }
 
   // Get sounds from the object (or from its component if it's a component instance)
   let sounds: Array<{ id: string; name: string }> = [];
-  if (object.componentId) {
-    const component = project.components?.find(c => c.id === object.componentId);
-    if (component?.sounds) {
-      sounds = component.sounds;
+  if (selectedSceneId && selectedObjectId) {
+    const scene = project.scenes.find(s => s.id === selectedSceneId);
+    const object = scene?.objects.find(o => o.id === selectedObjectId);
+    if (!object) {
+      return [['(no sounds)', '']];
     }
+
+    if (object.componentId) {
+      const component = project.components?.find(c => c.id === object.componentId);
+      if (component?.sounds) {
+        sounds = component.sounds;
+      }
+    } else {
+      sounds = object.sounds || [];
+    }
+  } else if (selectedComponentId) {
+    const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+    sounds = component?.sounds || [];
   } else {
-    sounds = object.sounds || [];
+    return [['(no sounds)', '']];
   }
 
   if (sounds.length === 0) {
@@ -2404,6 +2421,7 @@ function getAllVariables(): Variable[] {
   const project = useProjectStore.getState().project;
   const selectedSceneId = useEditorStore.getState().selectedSceneId;
   const selectedObjectId = useEditorStore.getState().selectedObjectId;
+  const selectedComponentId = useEditorStore.getState().selectedComponentId;
 
   if (!project) return [];
 
@@ -2423,6 +2441,11 @@ function getAllVariables(): Variable[] {
         ? componentLocalVariables
         : (obj.localVariables || []);
       variables.push(...localVariables);
+    }
+  } else if (selectedComponentId) {
+    const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+    if (component?.localVariables) {
+      variables.push(...component.localVariables);
     }
   }
 

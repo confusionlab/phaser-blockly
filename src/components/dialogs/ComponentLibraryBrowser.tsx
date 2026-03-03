@@ -15,12 +15,16 @@ interface ComponentLibraryBrowserProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect?: (componentId: string) => void;
+  onEditCode?: (componentId: string) => void;
+  onDelete?: (componentId: string) => void;
 }
 
 export function ComponentLibraryBrowser({
   open,
   onOpenChange,
   onSelect,
+  onEditCode,
+  onDelete,
 }: ComponentLibraryBrowserProps) {
   const project = useProjectStore((state) => state.project);
   const components = project?.components || [];
@@ -32,6 +36,18 @@ export function ComponentLibraryBrowser({
     if (!selectedComponent) return;
     onSelect?.(selectedComponent.id);
     onOpenChange(false);
+  };
+
+  const handleEditCode = () => {
+    if (!selectedComponent) return;
+    onEditCode?.(selectedComponent.id);
+    onOpenChange(false);
+  };
+
+  const handleDelete = () => {
+    if (!selectedComponent) return;
+    onDelete?.(selectedComponent.id);
+    setSelectedId((current) => (current === selectedComponent.id ? null : current));
   };
 
   return (
@@ -86,6 +102,12 @@ export function ComponentLibraryBrowser({
         <div className="flex justify-end gap-3 pt-4 border-t">
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
+          </Button>
+          <Button variant="outline" onClick={handleEditCode} disabled={!selectedComponent}>
+            Edit Code
+          </Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={!selectedComponent}>
+            Delete
           </Button>
           <Button onClick={handleInsert} disabled={!selectedComponent}>
             Add to Scene
