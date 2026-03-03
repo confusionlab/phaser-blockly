@@ -15,6 +15,29 @@ interface SearchItem {
   categoryColor: string;
 }
 
+type PreplugConfig = {
+  input: string;
+  blockType: string;
+};
+
+const PREPLUG_BLOCKS: Record<string, PreplugConfig> = {
+  event_when_touching_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
+  event_when_touching_direction_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
+  motion_point_towards_value: { input: 'TARGET', blockType: 'target_mouse' },
+  control_clone_object_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
+  control_delete_object: { input: 'OBJECT', blockType: 'object_from_dropdown' },
+  camera_follow_object_value: { input: 'TARGET', blockType: 'object_from_dropdown' },
+  sensing_touching_value: { input: 'TARGET', blockType: 'target_ground' },
+  sensing_touching_direction_value: { input: 'TARGET', blockType: 'target_ground' },
+  sensing_distance_to_value: { input: 'TARGET', blockType: 'target_mouse' },
+  sensing_object_x: { input: 'OBJECT', blockType: 'object_from_dropdown' },
+  sensing_object_y: { input: 'OBJECT', blockType: 'object_from_dropdown' },
+  sensing_object_costume: { input: 'OBJECT', blockType: 'object_from_dropdown' },
+  sensing_is_clone_of: { input: 'OBJECT', blockType: 'object_from_dropdown' },
+  motion_attach_to_block: { input: 'TARGET', blockType: 'object_from_dropdown' },
+  motion_attach_block_to_me: { input: 'TARGET', blockType: 'object_from_dropdown' },
+};
+
 // All available items for search
 const ALL_ITEMS: SearchItem[] = [
   // Commands
@@ -248,6 +271,20 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
           // Load the mutator state for if-else
           const mutationDom = Blockly.utils.xml.textToDom('<mutation else="1"></mutation>');
           (block as Blockly.BlockSvg & { domToMutation?: (dom: Element) => void }).domToMutation?.(mutationDom);
+        }
+
+        // Mirror toolbox preplug defaults for modular value-input blocks.
+        const preplug = PREPLUG_BLOCKS[item.blockType];
+        if (preplug) {
+          const targetInput = block.getInput(preplug.input);
+          if (targetInput?.connection) {
+            const childBlock = workspace.newBlock(preplug.blockType) as Blockly.BlockSvg;
+            childBlock.initSvg();
+            childBlock.render();
+            if (childBlock.outputConnection) {
+              targetInput.connection.connect(childBlock.outputConnection);
+            }
+          }
         }
 
         block.initSvg();
