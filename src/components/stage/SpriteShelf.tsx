@@ -46,7 +46,6 @@ import {
   ChevronDown,
   Component,
   Unlink,
-  Loader2,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -201,7 +200,7 @@ export function SpriteShelf() {
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
   const [showComponentLibrary, setShowComponentLibrary] = useState(false);
-  const [savingToLibrary, setSavingToLibrary] = useState(false);
+  const [, setSavingToLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
@@ -1327,15 +1326,6 @@ export function SpriteShelf() {
           </Button>
           <Button size="icon-sm" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
             <FolderPlus className="size-4" />
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            onClick={() => setShowLibrary(true)}
-            title="Object Library"
-            disabled={savingToLibrary}
-          >
-            {savingToLibrary ? <Loader2 className="size-4 animate-spin" /> : <Library className="size-4" />}
           </Button>
           <Button
             size="icon-sm"
