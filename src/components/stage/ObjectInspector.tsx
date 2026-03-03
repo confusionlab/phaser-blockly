@@ -11,7 +11,7 @@ import {
   ColorPickerSelection,
   ColorPickerHue,
 } from '@/components/ui/color-picker';
-import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink, Component } from 'lucide-react';
+import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink, Component, Paintbrush } from 'lucide-react';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig } from '@/types';
 import {
@@ -243,7 +243,7 @@ function ScrubInput({
 
 export function ObjectInspector() {
   const { project, updateObject, updateScene } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectedObjectIds } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, selectedObjectIds, openBackgroundEditor } = useEditorStore();
   const [activeTab, setActiveTab] = useState<string>('object');
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
@@ -281,6 +281,7 @@ export function ObjectInspector() {
           <SceneProperties
             scene={scene}
             updateScene={updateScene}
+            onOpenBackgroundEditor={openBackgroundEditor}
           />
         </TabsContent>
       </Tabs>
@@ -621,9 +622,10 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
 interface ScenePropertiesProps {
   scene: Scene | undefined;
   updateScene: (sceneId: string, updates: Partial<Scene>) => void;
+  onOpenBackgroundEditor: (sceneId: string) => void;
 }
 
-function SceneProperties({ scene, updateScene }: ScenePropertiesProps) {
+function SceneProperties({ scene, updateScene, onOpenBackgroundEditor }: ScenePropertiesProps) {
   if (!scene) {
     return (
       <div className="text-center text-muted-foreground text-sm py-4">
@@ -645,12 +647,24 @@ function SceneProperties({ scene, updateScene }: ScenePropertiesProps) {
       {/* Background Color */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">Background</span>
-        <ColorSwatch
-          value={scene.background?.value || '#87CEEB'}
-          onChange={(color) => updateScene(scene.id, {
-            background: { type: 'color', value: color }
-          })}
-        />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 px-2 text-xs"
+            onClick={() => onOpenBackgroundEditor(scene.id)}
+            title="Draw background"
+          >
+            <Paintbrush className="size-3.5" />
+            Draw
+          </Button>
+          <ColorSwatch
+            value={scene.background?.value || '#87CEEB'}
+            onChange={(color) => updateScene(scene.id, {
+              background: { type: 'color', value: color }
+            })}
+          />
+        </div>
       </div>
 
       {/* Ground Settings */}

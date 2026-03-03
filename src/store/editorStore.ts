@@ -33,6 +33,8 @@ export type UndoRedoHandler = {
   isTextEditing?: () => boolean;
 };
 
+export type BackgroundEditorShortcutHandler = (event: KeyboardEvent) => boolean;
+
 type SelectionHistoryOptions = {
   recordHistory?: boolean;
 };
@@ -65,6 +67,8 @@ interface EditorStore {
   playValidationIssues: PlayValidationIssue[];
   activeObjectTab: ObjectEditorTab;
   collapsedFolderIdsByScene: Record<string, string[]>;
+  backgroundEditorOpen: boolean;
+  backgroundEditorSceneId: string | null;
 
   // Object picker state
   objectPickerOpen: boolean;
@@ -74,6 +78,8 @@ interface EditorStore {
   // Undo/Redo handlers for different editors
   costumeUndoHandler: UndoRedoHandler | null;
   codeUndoHandler: UndoRedoHandler | null;
+  backgroundUndoHandler: UndoRedoHandler | null;
+  backgroundShortcutHandler: BackgroundEditorShortcutHandler | null;
 
   // Actions
   selectScene: (sceneId: string | null, options?: SelectionHistoryOptions) => void;
@@ -99,6 +105,8 @@ interface EditorStore {
   setFolderCollapsed: (sceneId: string, folderId: string, collapsed: boolean) => void;
   setCollapsedFoldersForScene: (sceneId: string, folderIds: string[]) => void;
   clearSceneUiState: (sceneId: string) => void;
+  openBackgroundEditor: (sceneId: string) => void;
+  closeBackgroundEditor: () => void;
 
   // Object picker actions
   openObjectPicker: (callback: ObjectPickerCallback, excludeId?: string | null) => void;
@@ -113,6 +121,8 @@ interface EditorStore {
   // Undo/Redo registration
   registerCostumeUndo: (handler: UndoRedoHandler | null) => void;
   registerCodeUndo: (handler: UndoRedoHandler | null) => void;
+  registerBackgroundUndo: (handler: UndoRedoHandler | null) => void;
+  registerBackgroundShortcutHandler: (handler: BackgroundEditorShortcutHandler | null) => void;
 
   // Global undo/redo (routes to active editor)
   undo: () => void;
@@ -157,6 +167,8 @@ export const useEditorStore = create<EditorStore>((set) => ({
   playValidationIssues: [],
   activeObjectTab: 'code' as ObjectEditorTab,
   collapsedFolderIdsByScene: {},
+  backgroundEditorOpen: false,
+  backgroundEditorSceneId: null,
 
   // Object picker state
   objectPickerOpen: false,
@@ -166,6 +178,8 @@ export const useEditorStore = create<EditorStore>((set) => ({
   // Undo/Redo handlers
   costumeUndoHandler: null,
   codeUndoHandler: null,
+  backgroundUndoHandler: null,
+  backgroundShortcutHandler: null,
 
   // Actions
   selectScene: (sceneId, options) => {
@@ -314,6 +328,22 @@ export const useEditorStore = create<EditorStore>((set) => ({
     });
   },
 
+  openBackgroundEditor: (sceneId) => {
+    set({
+      backgroundEditorOpen: true,
+      backgroundEditorSceneId: sceneId,
+    });
+  },
+
+  closeBackgroundEditor: () => {
+    set({
+      backgroundEditorOpen: false,
+      backgroundEditorSceneId: null,
+      backgroundUndoHandler: null,
+      backgroundShortcutHandler: null,
+    });
+  },
+
   setActiveObjectTab: (tab) => {
     set({ activeObjectTab: tab });
   },
@@ -353,8 +383,23 @@ export const useEditorStore = create<EditorStore>((set) => ({
     set({ codeUndoHandler: handler });
   },
 
+  registerBackgroundUndo: (handler) => {
+    set({ backgroundUndoHandler: handler });
+  },
+
+  registerBackgroundShortcutHandler: (handler) => {
+    set({ backgroundShortcutHandler: handler });
+  },
+
   undo: () => {
     const state = useEditorStore.getState();
+    if (state.backgroundEditorOpen && state.backgroundUndoHandler) {
+      if (!state.backgroundUndoHandler.canUndo || state.backgroundUndoHandler.canUndo()) {
+        state.backgroundUndoHandler.undo();
+      }
+      return;
+    }
+
     if (state.activeObjectTab === 'costumes' && state.costumeUndoHandler) {
       if (!state.costumeUndoHandler.canUndo || state.costumeUndoHandler.canUndo()) {
         state.costumeUndoHandler.undo();
@@ -378,6 +423,13 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   redo: () => {
     const state = useEditorStore.getState();
+    if (state.backgroundEditorOpen && state.backgroundUndoHandler) {
+      if (!state.backgroundUndoHandler.canRedo || state.backgroundUndoHandler.canRedo()) {
+        state.backgroundUndoHandler.redo();
+      }
+      return;
+    }
+
     if (state.activeObjectTab === 'costumes' && state.costumeUndoHandler) {
       if (!state.costumeUndoHandler.canRedo || state.costumeUndoHandler.canRedo()) {
         state.costumeUndoHandler.redo();

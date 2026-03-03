@@ -9,12 +9,12 @@ import {
   ColorPickerHue,
   ColorPickerSelection,
 } from '@/components/ui/color-picker';
-import { Plus, X } from 'lucide-react';
+import { Paintbrush, Plus, X } from 'lucide-react';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 
 export function SceneTabs() {
   const { project, addScene, removeScene, updateScene } = useProjectStore();
-  const { selectedSceneId, selectScene, clearSceneUiState } = useEditorStore();
+  const { selectedSceneId, selectScene, clearSceneUiState, openBackgroundEditor } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
@@ -163,6 +163,17 @@ export function SceneTabs() {
       {/* Background color picker */}
       <div className="relative flex items-center gap-2">
         <span className="text-xs text-muted-foreground">BG:</span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => selectedSceneId && openBackgroundEditor(selectedSceneId)}
+          disabled={!selectedSceneId}
+          title="Draw background"
+        >
+          <Paintbrush className="size-3.5" />
+          Draw
+        </Button>
         <button
           type="button"
           onClick={() => setShowBgColorPicker(!showBgColorPicker)}

@@ -5,6 +5,7 @@ import { ObjectEditor } from '../editors/ObjectEditor';
 import { StagePanel } from '../stage/StagePanel';
 import { PhaserCanvas } from '../stage/PhaserCanvas';
 import { ObjectPicker } from '../stage/ObjectPicker';
+import { BackgroundCanvasEditor } from '../stage/BackgroundCanvasEditor';
 import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { useProjectStore } from '@/store/projectStore';
@@ -41,6 +42,8 @@ export function EditorLayout() {
     focusPlayValidationIssue,
     activeObjectTab,
     costumeUndoHandler,
+    backgroundEditorOpen,
+    backgroundShortcutHandler,
   } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(60);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
@@ -153,6 +156,26 @@ export function EditorLayout() {
                      target.tagName === 'TEXTAREA' ||
                      target.isContentEditable;
     const isInBlocklyArea = !!target.closest('[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv');
+
+    if (backgroundEditorOpen) {
+      const handled = backgroundShortcutHandler?.(e) ?? false;
+      if (handled) {
+        return;
+      }
+
+      if (
+        e.key === '`' ||
+        e.key === 'Escape' ||
+        e.key === 'Enter' ||
+        e.key === 'Delete' ||
+        e.key === 'Backspace' ||
+        e.metaKey ||
+        e.ctrlKey
+      ) {
+        e.preventDefault();
+      }
+      return;
+    }
 
     // Backtick for fullscreen toggle
     if (e.key === '`' && !isTyping) {
@@ -329,6 +352,8 @@ export function EditorLayout() {
     getPanelFromElement,
     activeObjectTab,
     costumeUndoHandler,
+    backgroundEditorOpen,
+    backgroundShortcutHandler,
   ]);
 
   useEffect(() => {
@@ -370,6 +395,10 @@ export function EditorLayout() {
 
   if (isPlaying) {
     return <StagePanel fullscreen />;
+  }
+
+  if (backgroundEditorOpen) {
+    return <BackgroundCanvasEditor />;
   }
 
   // Fullscreen code editor
