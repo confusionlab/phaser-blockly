@@ -278,13 +278,20 @@ function getLogColor(type: string): string {
 function VariablesTab({ project }: { project: Project | null }) {
   const runtime = getCurrentRuntime();
   const variableNamesById = new Map<string, string>();
+  const componentsById = new Map((project?.components || []).map((component) => [component.id, component]));
 
   for (const variable of project?.globalVariables ?? []) {
     variableNamesById.set(variable.id, variable.name);
   }
   for (const scene of project?.scenes ?? []) {
     for (const object of scene.objects) {
-      for (const variable of object.localVariables ?? []) {
+      const componentLocalVariables = object.componentId
+        ? componentsById.get(object.componentId)?.localVariables || []
+        : [];
+      const localVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (object.localVariables || []);
+      for (const variable of localVariables) {
         variableNamesById.set(variable.id, variable.name);
       }
     }

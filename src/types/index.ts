@@ -23,6 +23,7 @@ export interface ComponentDefinition {
   physics: PhysicsConfig | null;
   collider: ColliderConfig | null;
   sounds: Sound[];
+  localVariables?: Variable[];
 }
 
 export interface ProjectSettings {

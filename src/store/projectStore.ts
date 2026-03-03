@@ -88,7 +88,7 @@ let lastUpdatedAtMs = 0;
 
 type ComponentBackedObjectFields = Pick<
   GameObject,
-  'name' | 'blocklyXml' | 'costumes' | 'currentCostumeIndex' | 'physics' | 'collider' | 'sounds'
+  'name' | 'blocklyXml' | 'costumes' | 'currentCostumeIndex' | 'physics' | 'collider' | 'sounds' | 'localVariables'
 >;
 
 const COMPONENT_SYNC_KEYS: (keyof ComponentBackedObjectFields)[] = [
@@ -99,6 +99,7 @@ const COMPONENT_SYNC_KEYS: (keyof ComponentBackedObjectFields)[] = [
   'physics',
   'collider',
   'sounds',
+  'localVariables',
 ];
 
 function createUpdatedAt(): Date {
@@ -131,6 +132,10 @@ function cloneColliderConfig(collider: GameObject['collider']): GameObject['coll
   return collider ? { ...collider } : null;
 }
 
+function cloneVariableDefinitions(variables: GameObject['localVariables']): GameObject['localVariables'] {
+  return (variables || []).map((variable) => ({ ...variable }));
+}
+
 function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
   return {
     name: obj.name,
@@ -140,6 +145,7 @@ function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefin
     physics: clonePhysicsConfig(obj.physics),
     collider: cloneColliderConfig(obj.collider),
     sounds: cloneSounds(obj.sounds),
+    localVariables: cloneVariableDefinitions(obj.localVariables),
   };
 }
 
@@ -156,7 +162,40 @@ function toComponentBackedObjectFields(component: ComponentDefinition): Componen
     physics: clonePhysicsConfig(component.physics ?? null),
     collider: cloneColliderConfig(component.collider ?? null),
     sounds: cloneSounds(component.sounds || []),
+    localVariables: cloneVariableDefinitions(component.localVariables || []),
   };
+}
+
+function getEffectiveComponentLocalVariables(
+  project: Project,
+  componentId: string,
+  preferredObjectId?: string,
+): GameObject['localVariables'] {
+  const component = (project.components || []).find((componentItem) => componentItem.id === componentId);
+  const componentLocalVariables = component?.localVariables || [];
+  if (componentLocalVariables.length > 0) {
+    return cloneVariableDefinitions(componentLocalVariables);
+  }
+
+  if (preferredObjectId) {
+    for (const scene of project.scenes) {
+      const preferredObject = scene.objects.find((objectItem) => objectItem.id === preferredObjectId);
+      if (preferredObject?.componentId === componentId && (preferredObject.localVariables || []).length > 0) {
+        return cloneVariableDefinitions(preferredObject.localVariables || []);
+      }
+    }
+  }
+
+  for (const scene of project.scenes) {
+    const existingInstance = scene.objects.find(
+      (objectItem) => objectItem.componentId === componentId && (objectItem.localVariables || []).length > 0
+    );
+    if (existingInstance) {
+      return cloneVariableDefinitions(existingInstance.localVariables || []);
+    }
+  }
+
+  return [];
 }
 
 function normalizeProject(project: Project): Project {
@@ -669,6 +708,44 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   addLocalVariable: (sceneId: string, objectId: string, variable: Variable) => {
     set(state => {
       if (!state.project) return state;
+
+      const scene = state.project.scenes.find((s) => s.id === sceneId);
+      const targetObject = scene?.objects.find((o) => o.id === objectId);
+      if (!targetObject) return state;
+
+      if (targetObject.componentId) {
+        const componentId = targetObject.componentId;
+        const component = (state.project.components || []).find((c) => c.id === componentId);
+        if (!component) return state;
+
+        const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
+        if (currentLocalVariables.some((existing) => existing.id === variable.id)) {
+          return state;
+        }
+        const nextLocalVariables: Variable[] = [...currentLocalVariables, { ...variable, scope: 'local' }];
+
+        return {
+          project: {
+            ...state.project,
+            components: (state.project.components || []).map((componentItem) =>
+              componentItem.id === componentId
+                ? { ...componentItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                : componentItem
+            ),
+            scenes: state.project.scenes.map((sceneItem) => ({
+              ...sceneItem,
+              objects: sceneItem.objects.map((objectItem) =>
+                objectItem.componentId === componentId
+                  ? { ...objectItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                  : objectItem
+              ),
+            })),
+            updatedAt: createUpdatedAt(),
+          },
+          isDirty: true,
+        };
+      }
+
       return {
         project: {
           ...state.project,
@@ -695,6 +772,44 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => {
     set(state => {
       if (!state.project) return state;
+
+      const scene = state.project.scenes.find((s) => s.id === sceneId);
+      const targetObject = scene?.objects.find((o) => o.id === objectId);
+      if (!targetObject) return state;
+
+      if (targetObject.componentId) {
+        const componentId = targetObject.componentId;
+        const component = (state.project.components || []).find((c) => c.id === componentId);
+        if (!component) return state;
+
+        const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
+        if (!currentLocalVariables.some((existing) => existing.id === variableId)) {
+          return state;
+        }
+        const nextLocalVariables: Variable[] = currentLocalVariables.filter((existing) => existing.id !== variableId);
+
+        return {
+          project: {
+            ...state.project,
+            components: (state.project.components || []).map((componentItem) =>
+              componentItem.id === componentId
+                ? { ...componentItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                : componentItem
+            ),
+            scenes: state.project.scenes.map((sceneItem) => ({
+              ...sceneItem,
+              objects: sceneItem.objects.map((objectItem) =>
+                objectItem.componentId === componentId
+                  ? { ...objectItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                  : objectItem
+              ),
+            })),
+            updatedAt: createUpdatedAt(),
+          },
+          isDirty: true,
+        };
+      }
+
       return {
         project: {
           ...state.project,
@@ -721,6 +836,46 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   updateLocalVariable: (sceneId: string, objectId: string, variableId: string, updates: Partial<Variable>) => {
     set(state => {
       if (!state.project) return state;
+
+      const scene = state.project.scenes.find((s) => s.id === sceneId);
+      const targetObject = scene?.objects.find((o) => o.id === objectId);
+      if (!targetObject) return state;
+
+      if (targetObject.componentId) {
+        const componentId = targetObject.componentId;
+        const component = (state.project.components || []).find((c) => c.id === componentId);
+        if (!component) return state;
+
+        const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
+        if (!currentLocalVariables.some((existing) => existing.id === variableId)) {
+          return state;
+        }
+        const nextLocalVariables: Variable[] = currentLocalVariables.map((existing) =>
+          existing.id === variableId ? { ...existing, ...updates, scope: 'local' } : existing
+        );
+
+        return {
+          project: {
+            ...state.project,
+            components: (state.project.components || []).map((componentItem) =>
+              componentItem.id === componentId
+                ? { ...componentItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                : componentItem
+            ),
+            scenes: state.project.scenes.map((sceneItem) => ({
+              ...sceneItem,
+              objects: sceneItem.objects.map((objectItem) =>
+                objectItem.componentId === componentId
+                  ? { ...objectItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                  : objectItem
+              ),
+            })),
+            updatedAt: createUpdatedAt(),
+          },
+          isDirty: true,
+        };
+      }
+
       return {
         project: {
           ...state.project,
@@ -894,6 +1049,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (!component) return null;
     const scene = state.project.scenes.find((s) => s.id === sceneId);
     const componentFields = toComponentBackedObjectFields(component);
+    componentFields.localVariables = getEffectiveComponentLocalVariables(state.project, componentId);
 
     const newObject: GameObject = {
       id: crypto.randomUUID(),

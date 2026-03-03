@@ -632,7 +632,11 @@ export function BlocklyEditor() {
           // Collect valid variable IDs
           const validVariableIds = new Set<string>();
           (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
-          (obj.localVariables || []).forEach(v => validVariableIds.add(v.id));
+          const componentLocalVariables = obj.componentId
+            ? (state.project?.components || []).find((component) => component.id === obj.componentId)?.localVariables || []
+            : [];
+          const localVariablesForValidation = componentLocalVariables.length > 0 ? componentLocalVariables : (obj.localVariables || []);
+          localVariablesForValidation.forEach(v => validVariableIds.add(v.id));
           const validTypeTokens = new Set((state.project?.components || []).map((component) => `component:${component.id}`));
           const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
           const sceneNameCounts = new Map<string, number>();
@@ -784,7 +788,11 @@ export function BlocklyEditor() {
       // Collect valid variable IDs (global + local)
       const validVariableIds = new Set<string>();
       (state.project?.globalVariables || []).forEach(v => validVariableIds.add(v.id));
-      (obj?.localVariables || []).forEach(v => validVariableIds.add(v.id));
+      const componentLocalVariables = obj?.componentId
+        ? (state.project?.components || []).find((component) => component.id === obj.componentId)?.localVariables || []
+        : [];
+      const localVariablesForValidation = componentLocalVariables.length > 0 ? componentLocalVariables : (obj?.localVariables || []);
+      localVariablesForValidation.forEach(v => validVariableIds.add(v.id));
       const validTypeTokens = new Set((state.project?.components || []).map((component) => `component:${component.id}`));
       const sceneIds = new Set((state.project?.scenes || []).map((projectScene) => projectScene.id));
       const sceneNameCounts = new Map<string, number>();

@@ -100,7 +100,14 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
       if (selectedSceneId && selectedObjectId) {
         const scene = project.scenes.find(s => s.id === selectedSceneId);
         const obj = scene?.objects.find(o => o.id === selectedObjectId);
-        const localVar = obj?.localVariables?.find(v => v.id === value);
+        const component = obj?.componentId
+          ? (project.components || []).find((componentItem) => componentItem.id === obj.componentId)
+          : null;
+        const componentLocalVariables = component?.localVariables || [];
+        const localVariables = componentLocalVariables.length > 0
+          ? componentLocalVariables
+          : (obj?.localVariables || []);
+        const localVar = localVariables.find(v => v.id === value);
         if (localVar) {
           return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
         }
@@ -2407,8 +2414,15 @@ function getAllVariables(): Variable[] {
   if (selectedSceneId && selectedObjectId) {
     const scene = project.scenes.find(s => s.id === selectedSceneId);
     const obj = scene?.objects.find(o => o.id === selectedObjectId);
-    if (obj?.localVariables) {
-      variables.push(...obj.localVariables);
+    if (obj) {
+      const component = obj.componentId
+        ? (project.components || []).find((componentItem) => componentItem.id === obj.componentId)
+        : null;
+      const componentLocalVariables = component?.localVariables || [];
+      const localVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (obj.localVariables || []);
+      variables.push(...localVariables);
     }
   }
 

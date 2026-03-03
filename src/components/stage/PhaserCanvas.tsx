@@ -2184,6 +2184,8 @@ function createPlaySceneContent(
   // Store runtime for this scene (for pause/resume)
   sceneRuntimes.set(sceneId, runtime);
 
+  const componentsById = new Map(components.map((component) => [component.id, component]));
+
   // Set up variable lookup for typed variables
   runtime.setVariableLookup((varId: string) => {
     // Check global variables
@@ -2198,7 +2200,13 @@ function createPlaySceneContent(
     }
     // Check local variables in all objects
     for (const obj of allObjects) {
-      const localVar = obj.localVariables?.find(v => v.id === varId);
+      const componentLocalVariables = obj.componentId
+        ? componentsById.get(obj.componentId)?.localVariables || []
+        : [];
+      const localVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (obj.localVariables || []);
+      const localVar = localVariables.find(v => v.id === varId);
       if (localVar) {
         return {
           name: localVar.name,

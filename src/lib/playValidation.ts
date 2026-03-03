@@ -189,7 +189,13 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
 
       const soundIds = new Set(sounds.map((sound) => sound.id));
       const variableIds = new Set<string>(project.globalVariables.map((variable) => variable.id));
-      for (const localVariable of object.localVariables || []) {
+      const componentLocalVariables = object.componentId
+        ? componentsById.get(object.componentId)?.localVariables || []
+        : [];
+      const localVariablesForValidation = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (object.localVariables || []);
+      for (const localVariable of localVariablesForValidation) {
         variableIds.add(localVariable.id);
       }
 

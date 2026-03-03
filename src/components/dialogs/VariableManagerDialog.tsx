@@ -48,7 +48,13 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
   // Get local variables for current object
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const currentObject = scene?.objects.find(o => o.id === selectedObjectId);
-  const localVariables = currentObject?.localVariables || [];
+  const component = currentObject?.componentId
+    ? (project?.components || []).find((componentItem) => componentItem.id === currentObject.componentId)
+    : null;
+  const componentLocalVariables = component?.localVariables || [];
+  const localVariables = componentLocalVariables.length > 0
+    ? componentLocalVariables
+    : (currentObject?.localVariables || []);
 
   const handleDeleteGlobal = (varId: string) => {
     if (confirm('Delete this variable? Any blocks using it will stop working.')) {
