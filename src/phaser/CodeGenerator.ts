@@ -215,6 +215,10 @@ export function registerCodeGenerators(): void {
     return 'sprite.nextCostume();\n';
   };
 
+  javascriptGenerator.forBlock['looks_previous_costume'] = function() {
+    return 'sprite.previousCostume();\n';
+  };
+
   javascriptGenerator.forBlock['looks_switch_costume'] = function(block) {
     const costume = javascriptGenerator.valueToCode(block, 'COSTUME', Order.ATOMIC) || '1';
     return `sprite.switchCostume(${costume});\n`;
@@ -256,6 +260,26 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['control_wait_until'] = function(block) {
     const condition = javascriptGenerator.valueToCode(block, 'CONDITION', Order.ATOMIC) || 'false';
     return `while (!(${condition})) { await runtime.wait(0); }\n`;
+  };
+
+  javascriptGenerator.forBlock['control_random_choice'] = function(block) {
+    const branches: string[] = [];
+    let i = 0;
+    while (block.getInput(`DO${i}`)) {
+      branches.push(javascriptGenerator.statementToCode(block, `DO${i}`));
+      i++;
+    }
+
+    if (branches.length === 0) {
+      return '';
+    }
+
+    let code = `switch (Math.floor(Math.random() * ${branches.length})) {\n`;
+    for (let idx = 0; idx < branches.length; idx++) {
+      code += `  case ${idx}:\n${branches[idx]}    break;\n`;
+    }
+    code += '}\n';
+    return code;
   };
 
   javascriptGenerator.forBlock['control_stop'] = function(block) {
@@ -495,6 +519,19 @@ export function registerCodeGenerators(): void {
       return [`runtime.isCloneOf(${obj}, sprite.cloneParentId || sprite.id)`, Order.FUNCTION_CALL];
     }
     return [`runtime.isCloneOf(${obj}, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['sensing_is_clone_of_value'] = function(block) {
+    const obj = javascriptGenerator.valueToCode(block, 'OBJECT', Order.ATOMIC) || 'null';
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetBlock = block.getInputTargetBlock('TARGET');
+
+    if (targetBlock?.type === 'target_myself') {
+      return [`runtime.isCloneOf(${obj}, sprite.cloneParentId || sprite.id)`, Order.FUNCTION_CALL];
+    }
+
+    const targetId = objectExprToId(target);
+    return [`(${targetId} ? runtime.isCloneOf(${obj}, ${targetId}) : false)`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_all_touching_objects'] = function() {

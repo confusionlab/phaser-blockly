@@ -548,6 +548,7 @@ export function getToolboxConfig(): any {
             type: 'controls_if',
             extraState: { hasElse: true },
           },
+          { kind: 'block', type: 'control_random_choice' },
           { kind: 'block', type: 'control_stop' },
           { kind: 'block', type: 'control_switch_scene' },
           { kind: 'block', type: 'control_broadcast' },
@@ -741,6 +742,7 @@ export function getToolboxConfig(): any {
               OPACITY: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
             }
           },
+          { kind: 'block', type: 'looks_previous_costume' },
           { kind: 'block', type: 'looks_next_costume' },
           {
             kind: 'block',
@@ -812,7 +814,6 @@ export function getToolboxConfig(): any {
               FRICTION: { shadow: { type: 'math_number', fields: { NUM: '0.1' } } }
             }
           },
-          { kind: 'block', type: 'physics_collide_bounds' },
           { kind: 'block', type: 'physics_immovable' },
           { kind: 'block', type: 'physics_ground_on' },
           { kind: 'block', type: 'physics_ground_off' },
@@ -823,7 +824,6 @@ export function getToolboxConfig(): any {
               Y: { shadow: { type: 'math_number', fields: { NUM: '500' } } }
             }
           },
-          { kind: 'block', type: 'physics_set_ground_color' },
         ],
       },
       {
@@ -932,11 +932,11 @@ export function getToolboxConfig(): any {
             },
           },
           { kind: 'block', type: 'sensing_touching_object' },
+          { kind: 'block', type: 'sensing_all_touching_objects' },
           { kind: 'block', type: 'object_from_dropdown' },
           { kind: 'block', type: 'target_myself' },
           { kind: 'block', type: 'target_mouse' },
           { kind: 'block', type: 'target_ground' },
-          { kind: 'block', type: 'sensing_all_touching_objects' },
           {
             kind: 'block',
             type: 'sensing_distance_to_value',
@@ -948,10 +948,13 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
-            type: 'sensing_is_clone_of',
+            type: 'sensing_is_clone_of_value',
             inputs: {
               OBJECT: {
                 block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+              TARGET: {
+                block: { kind: 'block', type: 'target_myself' },
               },
             },
           },
@@ -1316,6 +1319,17 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['looks_previous_costume'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('previous costume');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Switch to the previous costume');
+    }
+  };
+
   Blockly.Blocks['looks_switch_costume'] = {
     init: function() {
       this.appendValueInput('COSTUME')
@@ -1340,6 +1354,79 @@ function registerCustomBlocks() {
   };
 
   // Control
+  const clampRandomChoiceBranchCount = (rawCount: number): number => {
+    if (!Number.isFinite(rawCount)) return 2;
+    return Math.max(2, Math.min(10, Math.floor(rawCount)));
+  };
+
+  const syncRandomChoiceInputs = (block: Blockly.Block, requestedCount?: number) => {
+    const count = clampRandomChoiceBranchCount(
+      Number.isFinite(requestedCount as number)
+        ? Number(requestedCount)
+        : Number(block.getFieldValue('COUNT'))
+    );
+
+    if (block.getFieldValue('COUNT') !== String(count)) {
+      block.setFieldValue(String(count), 'COUNT');
+    }
+
+    let existing = 0;
+    while (block.getInput(`DO${existing}`)) {
+      existing++;
+    }
+
+    for (let i = existing; i < count; i++) {
+      const input = block.appendStatementInput(`DO${i}`).setCheck(null);
+      input.appendField(i === 0 ? 'do' : 'or');
+    }
+
+    for (let i = existing - 1; i >= count; i--) {
+      block.removeInput(`DO${i}`, true);
+    }
+  };
+
+  Blockly.Blocks['control_random_choice'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('randomly choose among')
+        .appendField(new Blockly.FieldNumber(2, 2, 10, 1), 'COUNT')
+        .appendField('branches');
+      syncRandomChoiceInputs(this, 2);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Randomly runs one of the branches');
+    },
+    mutationToDom: function() {
+      const mutation = Blockly.utils.xml.createElement('mutation');
+      mutation.setAttribute('count', String(clampRandomChoiceBranchCount(Number(this.getFieldValue('COUNT')))));
+      return mutation;
+    },
+    domToMutation: function(xmlElement: Element) {
+      syncRandomChoiceInputs(this, Number(xmlElement.getAttribute('count')));
+    },
+    saveExtraState: function() {
+      return { count: clampRandomChoiceBranchCount(Number(this.getFieldValue('COUNT'))) };
+    },
+    loadExtraState: function(state: { count?: number }) {
+      syncRandomChoiceInputs(this, Number(state?.count));
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (!event) return;
+      if (event.type !== Blockly.Events.BLOCK_CREATE && event.type !== Blockly.Events.BLOCK_CHANGE) {
+        return;
+      }
+      if (event.type === Blockly.Events.BLOCK_CREATE) {
+        syncRandomChoiceInputs(this);
+        return;
+      }
+      const changeEvent = event as Blockly.Events.BlockChange;
+      if (changeEvent.blockId === this.id && changeEvent.name === 'COUNT') {
+        syncRandomChoiceInputs(this);
+      }
+    },
+  };
+
   Blockly.Blocks['control_wait'] = {
     init: function() {
       this.appendValueInput('SECONDS')
@@ -1653,6 +1740,21 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Boolean');
       this.setColour('#5CB1D6');
       this.setTooltip('Check if an object is a clone of the specified object');
+    }
+  };
+
+  Blockly.Blocks['sensing_is_clone_of_value'] = {
+    init: function() {
+      this.appendValueInput('OBJECT')
+        .setCheck('Object');
+      this.appendDummyInput()
+        .appendField('is clone of');
+      this.appendValueInput('TARGET')
+        .setCheck('Object');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Check if an object is a clone of the target object');
     }
   };
 
