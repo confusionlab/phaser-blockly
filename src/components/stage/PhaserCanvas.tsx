@@ -927,21 +927,30 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         const storedCostumeId = targetContainer.getData('costumeId');
         const storedAssetId = targetContainer.getData('assetId');
 
-        // Check if costume ID or asset content changed
-        const costumeChanged = currentCostume && (
-          currentCostume.id !== storedCostumeId ||
-          currentCostume.assetId !== storedAssetId
+        const hasCurrentCostumeAsset = !!currentCostume?.assetId;
+        const hadStoredCostumeAsset = !!storedAssetId;
+
+        // Update when costume content changes or when switching between placeholder <-> costume
+        const costumeChanged = hasCurrentCostumeAsset !== hadStoredCostumeAsset || (
+          hasCurrentCostumeAsset && (
+            currentCostume.id !== storedCostumeId ||
+            currentCostume.assetId !== storedAssetId
+          )
         );
 
         if (costumeChanged) {
           // Costume changed - update the sprite
           const existingSprite = targetContainer.getByName('sprite') as Phaser.GameObjects.Image | null;
+          const existingPlaceholder = targetContainer.getByName('placeholder') as Phaser.GameObjects.Graphics | null;
 
           // Get the old texture key to remove it
           const oldTextureKey = targetContainer.getData('textureKey') as string | undefined;
 
           if (existingSprite) {
             existingSprite.destroy();
+          }
+          if (existingPlaceholder) {
+            existingPlaceholder.destroy();
           }
 
           // Remove old texture to force reload with new content
@@ -1016,26 +1025,62 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             }
           };
 
-          const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
+          const applyPlaceholderVisual = () => {
+            const graphics = phaserScene.add.graphics();
+            graphics.setName('placeholder');
+            const color = getObjectColor(obj.id);
+            graphics.fillStyle(color, 1);
+            graphics.fillRoundedRect(-32, -32, 64, 64, 8);
+            graphics.lineStyle(2, 0x333333);
+            graphics.strokeRoundedRect(-32, -32, 64, 64, 8);
+            targetContainer.add(graphics);
+            targetContainer.setSize(64, 64);
 
-          // Always load fresh - we removed any existing texture above
-          const img = new Image();
-          img.onload = () => {
-            // Check if container still exists and this is still the expected costume
-            if (!targetContainer.active || !targetContainer.scene) return;
-            if (targetContainer.getData('assetId') !== currentCostume.assetId) return;
-            if (phaserScene.textures.exists(textureKey)) return;
+            const hitRect = targetContainer.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+            if (hitRect) {
+              hitRect.setSize(64, 64);
+              hitRect.setPosition(0, 0);
+              hitRect.removeInteractive();
+              hitRect.setInteractive({ useHandCursor: true });
+              targetContainer.bringToTop(hitRect);
+            }
 
-            phaserScene.textures.addImage(textureKey, img);
-            const sprite = phaserScene.add.image(0, 0, textureKey);
-            updateWithSprite(sprite, targetContainer, currentCostume.bounds);
+            const selRect = targetContainer.getByName('selection') as Phaser.GameObjects.Rectangle | null;
+            if (selRect) {
+              selRect.setSize(72, 72);
+              selRect.setPosition(0, 0);
+              targetContainer.sendToBack(selRect);
+            }
           };
-          img.src = currentCostume.assetId;
 
-          targetContainer.setData('costumeId', currentCostume.id);
-          targetContainer.setData('assetId', currentCostume.assetId);
-          targetContainer.setData('textureKey', textureKey);
-          targetContainer.setData('bounds', currentCostume.bounds);
+          if (!hasCurrentCostumeAsset || !currentCostume) {
+            targetContainer.setData('costumeId', null);
+            targetContainer.setData('assetId', null);
+            targetContainer.setData('textureKey', null);
+            targetContainer.setData('bounds', null);
+            applyPlaceholderVisual();
+          } else {
+            const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
+
+            // Always load fresh - we removed any existing texture above
+            const img = new Image();
+            img.onload = () => {
+              // Check if container still exists and this is still the expected costume
+              if (!targetContainer.active || !targetContainer.scene) return;
+              if (targetContainer.getData('assetId') !== currentCostume.assetId) return;
+              if (phaserScene.textures.exists(textureKey)) return;
+
+              phaserScene.textures.addImage(textureKey, img);
+              const sprite = phaserScene.add.image(0, 0, textureKey);
+              updateWithSprite(sprite, targetContainer, currentCostume.bounds);
+            };
+            img.src = currentCostume.assetId;
+
+            targetContainer.setData('costumeId', currentCostume.id);
+            targetContainer.setData('assetId', currentCostume.assetId);
+            targetContainer.setData('textureKey', textureKey);
+            targetContainer.setData('bounds', currentCostume.bounds);
+          }
         }
       }
 
@@ -2806,6 +2851,7 @@ function createObjectVisual(
   } else {
     // No costume - create colored rectangle as placeholder
     const graphics = scene.add.graphics();
+    graphics.setName('placeholder');
     const color = getObjectColor(obj.id);
 
     graphics.fillStyle(color, 1);

@@ -132,21 +132,42 @@ export const WaveformEditor = memo(({ sound, onTrimChange }: WaveformEditorProps
 
       // Get audio data from the first channel
       const rawData = audioBuffer.getChannelData(0);
-      const samples = 200; // Number of bars to display
-      const blockSize = Math.floor(rawData.length / samples);
+      if (rawData.length === 0) {
+        setWaveformData([]);
+        return;
+      }
+
+      const samples = Math.min(200, rawData.length); // Number of bars to display
+      const blockSize = Math.max(1, Math.floor(rawData.length / samples));
       const filteredData: number[] = [];
 
       for (let i = 0; i < samples; i++) {
-        let sum = 0;
-        for (let j = 0; j < blockSize; j++) {
-          sum += Math.abs(rawData[i * blockSize + j]);
+        const start = i * blockSize;
+        if (start >= rawData.length) {
+          filteredData.push(0);
+          continue;
         }
-        filteredData.push(sum / blockSize);
+        const end = i === samples - 1
+          ? rawData.length
+          : Math.min(rawData.length, start + blockSize);
+        const sampleLength = Math.max(1, end - start);
+        let sum = 0;
+        for (let j = start; j < end; j++) {
+          sum += Math.abs(rawData[j]);
+        }
+        filteredData.push(sum / sampleLength);
       }
 
       // Normalize the data
       const maxVal = Math.max(...filteredData);
-      const normalizedData = filteredData.map((v) => v / maxVal);
+      if (maxVal <= 0 || !Number.isFinite(maxVal)) {
+        setWaveformData(filteredData.map(() => 0));
+        return;
+      }
+
+      const normalizedData = filteredData.map((v) => (
+        Number.isFinite(v) ? v / maxVal : 0
+      ));
       setWaveformData(normalizedData);
     } catch (error) {
       console.error('Failed to generate waveform:', error);

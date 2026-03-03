@@ -7,6 +7,8 @@ import type { GameObject, ComponentDefinition } from '@/types';
 import { Button } from '@/components/ui/button';
 import { X, Crosshair } from 'lucide-react';
 
+const EMPTY_COMPONENTS: ComponentDefinition[] = [];
+
 // Coordinate conversion
 function userToPhaser(userX: number, userY: number, canvasWidth: number, canvasHeight: number) {
   return {
@@ -31,15 +33,19 @@ export function ObjectPicker() {
   } = useEditorStore();
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
+  const components = project?.components || EMPTY_COMPONENTS;
+  const canvasWidth = project?.settings.canvasWidth;
+  const canvasHeight = project?.settings.canvasHeight;
 
   // Get hovered object name for display
   const hoveredObjectData = selectedScene?.objects.find(o => o.id === hoveredObject);
 
   useEffect(() => {
-    if (!objectPickerOpen || !containerRef.current || !project || !selectedScene) return;
-
-    const { canvasWidth, canvasHeight } = project.settings;
+    if (!objectPickerOpen || !containerRef.current || !selectedScene) return;
+    if (canvasWidth == null || canvasHeight == null) return;
+    if (!Number.isFinite(canvasWidth) || !Number.isFinite(canvasHeight)) return;
     const container = containerRef.current;
+    setHoveredObject(null);
 
     // Create Phaser game for picking
     const config: Phaser.Types.Core.GameConfig = {
@@ -57,7 +63,7 @@ export function ObjectPicker() {
           createPickerScene(
             this,
             selectedScene,
-            project.components || [],
+            components,
             canvasWidth,
             canvasHeight,
             objectPickerExcludeId,
@@ -97,7 +103,16 @@ export function ObjectPicker() {
         gameRef.current = null;
       }
     };
-  }, [objectPickerOpen, project?.id, selectedSceneId, closeObjectPicker]);
+  }, [
+    objectPickerOpen,
+    selectedScene,
+    components,
+    canvasWidth,
+    canvasHeight,
+    objectPickerExcludeId,
+    objectPickerCallback,
+    closeObjectPicker,
+  ]);
 
   if (!objectPickerOpen) return null;
 
