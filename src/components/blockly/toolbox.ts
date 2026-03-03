@@ -508,6 +508,45 @@ export function getToolboxConfig(): any {
       },
       {
         kind: 'category',
+        name: 'Control',
+        colour: '#FFBF00',
+        contents: [
+          {
+            kind: 'block',
+            type: 'control_wait',
+            inputs: {
+              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'control_repeat',
+            inputs: {
+              TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
+            }
+          },
+          { kind: 'block', type: 'control_repeat_until' },
+          { kind: 'block', type: 'control_for_each' },
+          { kind: 'block', type: 'control_current_item' },
+          { kind: 'block', type: 'control_wait_until' },
+          { kind: 'block', type: 'controls_if' },
+          {
+            kind: 'block',
+            type: 'controls_if',
+            extraState: { hasElse: true },
+          },
+          { kind: 'block', type: 'control_stop' },
+          { kind: 'block', type: 'control_switch_scene' },
+          { kind: 'block', type: 'control_broadcast' },
+          { kind: 'block', type: 'control_broadcast_wait' },
+          { kind: 'block', type: 'control_clone' },
+          { kind: 'block', type: 'control_clone_object' },
+          { kind: 'block', type: 'control_delete_clone' },
+          { kind: 'block', type: 'control_delete_object' },
+        ],
+      },
+      {
+        kind: 'category',
         name: 'Motion',
         colour: '#4C97FF',
         contents: [
@@ -576,9 +615,6 @@ export function getToolboxConfig(): any {
             }
           },
           { kind: 'block', type: 'motion_point_towards' },
-          { kind: 'block', type: 'motion_my_x' },
-          { kind: 'block', type: 'motion_my_y' },
-          { kind: 'sep', gap: '16' },
           {
             kind: 'block',
             type: 'motion_rotate_tween',
@@ -587,6 +623,11 @@ export function getToolboxConfig(): any {
               SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
+          { kind: 'sep', gap: '16' },
+          { kind: 'block', type: 'motion_my_x' },
+          { kind: 'block', type: 'motion_my_y' },
+          { kind: 'block', type: 'sensing_object_x' },
+          { kind: 'block', type: 'sensing_object_y' },
           { kind: 'sep', gap: '16' },
           { kind: 'block', type: 'motion_attach_to_dropdown' },
           { kind: 'block', type: 'motion_attach_to_block' },
@@ -602,15 +643,8 @@ export function getToolboxConfig(): any {
         contents: [
           { kind: 'block', type: 'looks_show' },
           { kind: 'block', type: 'looks_hide' },
-          { kind: 'block', type: 'looks_next_costume' },
-          {
-            kind: 'block',
-            type: 'looks_switch_costume',
-            inputs: {
-              COSTUME: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
-            }
-          },
-          { kind: 'block', type: 'looks_costume_number' },
+          { kind: 'block', type: 'looks_go_to_front' },
+          { kind: 'block', type: 'looks_go_to_back' },
           {
             kind: 'block',
             type: 'looks_set_size',
@@ -632,8 +666,16 @@ export function getToolboxConfig(): any {
               OPACITY: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
             }
           },
-          { kind: 'block', type: 'looks_go_to_front' },
-          { kind: 'block', type: 'looks_go_to_back' },
+          { kind: 'block', type: 'looks_next_costume' },
+          {
+            kind: 'block',
+            type: 'looks_switch_costume',
+            inputs: {
+              COSTUME: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          { kind: 'block', type: 'looks_costume_number' },
+          { kind: 'block', type: 'sensing_object_costume' },
         ],
       },
       {
@@ -703,65 +745,6 @@ export function getToolboxConfig(): any {
       },
       {
         kind: 'category',
-        name: 'Control',
-        colour: '#FFBF00',
-        contents: [
-          {
-            kind: 'block',
-            type: 'control_wait',
-            inputs: {
-              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
-            }
-          },
-          {
-            kind: 'block',
-            type: 'control_repeat',
-            inputs: {
-              TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
-            }
-          },
-          { kind: 'block', type: 'control_repeat_until' },
-          { kind: 'block', type: 'control_for_each' },
-          { kind: 'block', type: 'control_current_item' },
-          { kind: 'block', type: 'control_wait_until' },
-          { kind: 'block', type: 'controls_if' },
-          {
-            kind: 'block',
-            type: 'controls_if',
-            extraState: { hasElse: true },
-          },
-          { kind: 'block', type: 'control_stop' },
-          { kind: 'block', type: 'control_switch_scene' },
-          { kind: 'block', type: 'control_clone' },
-          { kind: 'block', type: 'control_clone_object' },
-          { kind: 'block', type: 'control_delete_clone' },
-          { kind: 'block', type: 'control_delete_object' },
-          { kind: 'block', type: 'control_broadcast' },
-          { kind: 'block', type: 'control_broadcast_wait' },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Sensing',
-        colour: '#5CB1D6',
-        contents: [
-          { kind: 'block', type: 'sensing_key_pressed' },
-          { kind: 'block', type: 'sensing_mouse_down' },
-          { kind: 'block', type: 'sensing_mouse_x' },
-          { kind: 'block', type: 'sensing_mouse_y' },
-          { kind: 'block', type: 'sensing_touching' },
-          { kind: 'block', type: 'sensing_touching_direction' },
-          { kind: 'block', type: 'sensing_touching_object' },
-          { kind: 'block', type: 'sensing_all_touching_objects' },
-          { kind: 'block', type: 'sensing_is_clone_of' },
-          { kind: 'block', type: 'sensing_distance_to' },
-          { kind: 'block', type: 'sensing_object_x' },
-          { kind: 'block', type: 'sensing_object_y' },
-          { kind: 'block', type: 'sensing_object_costume' },
-        ],
-      },
-      {
-        kind: 'category',
         name: 'Camera',
         colour: '#0fBDA8',
         contents: [
@@ -824,6 +807,23 @@ export function getToolboxConfig(): any {
       },
       {
         kind: 'category',
+        name: 'Sensing',
+        colour: '#5CB1D6',
+        contents: [
+          { kind: 'block', type: 'sensing_key_pressed' },
+          { kind: 'block', type: 'sensing_mouse_down' },
+          { kind: 'block', type: 'sensing_mouse_x' },
+          { kind: 'block', type: 'sensing_mouse_y' },
+          { kind: 'block', type: 'sensing_touching' },
+          { kind: 'block', type: 'sensing_touching_direction' },
+          { kind: 'block', type: 'sensing_touching_object' },
+          { kind: 'block', type: 'sensing_all_touching_objects' },
+          { kind: 'block', type: 'sensing_distance_to' },
+          { kind: 'block', type: 'sensing_is_clone_of' },
+        ],
+      },
+      {
+        kind: 'category',
         name: 'Sound',
         colour: '#CF63CF',
         contents: [
@@ -844,6 +844,34 @@ export function getToolboxConfig(): any {
               DELTA: { shadow: { type: 'math_number', fields: { NUM: '-10' } } }
             }
           },
+        ],
+      },
+      {
+        kind: 'category',
+        name: 'Variables',
+        colour: '#FF8C1A',
+        contents: [
+          {
+            kind: 'button',
+            text: '+ Add Variable',
+            callbackKey: 'ADD_VARIABLE',
+          },
+          { kind: 'sep', gap: '16' },
+          { kind: 'label', text: 'Get Variable' },
+          { kind: 'block', type: 'typed_variable_get' },
+          { kind: 'sep', gap: '8' },
+          { kind: 'label', text: 'Set Variable' },
+          { kind: 'block', type: 'typed_variable_set' },
+          {
+            kind: 'block',
+            type: 'typed_variable_change',
+            inputs: {
+              DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          { kind: 'sep', gap: '8' },
+          { kind: 'label', text: 'Boolean Value' },
+          { kind: 'block', type: 'logic_boolean' },
         ],
       },
       {
@@ -877,34 +905,6 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'logic_operation' },
           { kind: 'block', type: 'logic_negate' },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Variables',
-        colour: '#FF8C1A',
-        contents: [
-          {
-            kind: 'button',
-            text: '+ Add Variable',
-            callbackKey: 'ADD_VARIABLE',
-          },
-          { kind: 'sep', gap: '16' },
-          { kind: 'label', text: 'Get Variable' },
-          { kind: 'block', type: 'typed_variable_get' },
-          { kind: 'sep', gap: '8' },
-          { kind: 'label', text: 'Set Variable' },
-          { kind: 'block', type: 'typed_variable_set' },
-          {
-            kind: 'block',
-            type: 'typed_variable_change',
-            inputs: {
-              DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
-            }
-          },
-          { kind: 'sep', gap: '8' },
-          { kind: 'label', text: 'Boolean Value' },
-          { kind: 'block', type: 'logic_boolean' },
         ],
       },
       {
