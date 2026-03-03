@@ -85,6 +85,7 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
     const project = useProjectStore.getState().project;
     const selectedSceneId = useEditorStore.getState().selectedSceneId;
     const selectedObjectId = useEditorStore.getState().selectedObjectId;
+    const selectedComponentId = useEditorStore.getState().selectedComponentId;
 
     if (project) {
       // Check global variables
@@ -97,7 +98,22 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
       if (selectedSceneId && selectedObjectId) {
         const scene = project.scenes.find(s => s.id === selectedSceneId);
         const obj = scene?.objects.find(o => o.id === selectedObjectId);
-        const localVar = obj?.localVariables?.find(v => v.id === value);
+        const component = obj?.componentId
+          ? (project.components || []).find((componentItem) => componentItem.id === obj.componentId)
+          : null;
+        const componentLocalVariables = component?.localVariables || [];
+        const localVariables = componentLocalVariables.length > 0
+          ? componentLocalVariables
+          : (obj?.localVariables || []);
+        const localVar = localVariables.find(v => v.id === value);
+        if (localVar) {
+          return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
+        }
+      }
+
+      if (selectedComponentId) {
+        const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+        const localVar = (component?.localVariables || []).find((variable) => variable.id === value);
         if (localVar) {
           return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
         }
@@ -279,31 +295,63 @@ function getAllObjectsDropdownOptions(includePicker: boolean = true): Array<[str
   return generateObjectDropdownOptions(undefined, includePicker);
 }
 
+function getComponentTypeDropdownOptions(): Array<[string, string]> {
+  const project = useProjectStore.getState().project;
+  const components = project?.components || [];
+  if (components.length === 0) {
+    return [['(no component types)', '']];
+  }
+
+  const nameCounts = new Map<string, number>();
+  for (const component of components) {
+    nameCounts.set(component.name, (nameCounts.get(component.name) || 0) + 1);
+  }
+
+  const seenCounts = new Map<string, number>();
+  return components.map((component) => {
+    const duplicateCount = nameCounts.get(component.name) || 0;
+    if (duplicateCount <= 1) {
+      return [component.name, `component:${component.id}`] as [string, string];
+    }
+    const nextIndex = (seenCounts.get(component.name) || 0) + 1;
+    seenCounts.set(component.name, nextIndex);
+    return [`${component.name} (${nextIndex})`, `component:${component.id}`] as [string, string];
+  });
+}
+
 // Dynamic dropdown generator for sound selection (from current object's sounds)
 function getSoundDropdownOptions(): Array<[string, string]> {
   const project = useProjectStore.getState().project;
   const selectedSceneId = useEditorStore.getState().selectedSceneId;
   const selectedObjectId = useEditorStore.getState().selectedObjectId;
+  const selectedComponentId = useEditorStore.getState().selectedComponentId;
 
-  if (!project || !selectedSceneId || !selectedObjectId) {
-    return [['(no sounds)', '']];
-  }
-
-  const scene = project.scenes.find(s => s.id === selectedSceneId);
-  const object = scene?.objects.find(o => o.id === selectedObjectId);
-  if (!object) {
+  if (!project) {
     return [['(no sounds)', '']];
   }
 
   // Get sounds from the object (or from its component if it's a component instance)
   let sounds: Array<{ id: string; name: string }> = [];
-  if (object.componentId) {
-    const component = project.components?.find(c => c.id === object.componentId);
-    if (component?.sounds) {
-      sounds = component.sounds;
+  if (selectedSceneId && selectedObjectId) {
+    const scene = project.scenes.find(s => s.id === selectedSceneId);
+    const object = scene?.objects.find(o => o.id === selectedObjectId);
+    if (!object) {
+      return [['(no sounds)', '']];
     }
+
+    if (object.componentId) {
+      const component = project.components?.find(c => c.id === object.componentId);
+      if (component?.sounds) {
+        sounds = component.sounds;
+      }
+    } else {
+      sounds = object.sounds || [];
+    }
+  } else if (selectedComponentId) {
+    const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+    sounds = component?.sounds || [];
   } else {
-    sounds = object.sounds || [];
+    return [['(no sounds)', '']];
   }
 
   if (sounds.length === 0) {
@@ -395,7 +443,7 @@ function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[st
 function getTargetDropdownOptions(
   _includeEdge: boolean = false,
   includeMouse: boolean = false,
-  includeMyClones: boolean = false,
+  includeMyType: boolean = false,
   includeGround: boolean = false
 ): () => Array<[string, string]> {
   return function() {
@@ -406,8 +454,8 @@ function getTargetDropdownOptions(
     if (includeMouse) {
       specialOptions.push(['mouse', 'MOUSE']);
     }
-    if (includeMyClones) {
-      specialOptions.push(['myself (cloned)', 'MY_CLONES']);
+    if (includeMyType) {
+      specialOptions.push(['my type', 'MY_TYPE']);
     }
 
     const objectOptions = getObjectDropdownOptions(true);
@@ -552,23 +600,12 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'control_broadcast_wait' },
           {
             kind: 'block',
-            type: 'control_clone_object_value',
+            type: 'control_spawn_type_at',
             inputs: {
-              TARGET: {
-                block: { kind: 'block', type: 'target_myself' },
-              },
+              X: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
+              Y: { shadow: { type: 'math_number', fields: { NUM: '0' } } }
             },
           },
-          {
-            kind: 'block',
-            type: 'control_clone_object_value',
-            inputs: {
-              TARGET: {
-                block: { kind: 'block', type: 'object_from_dropdown' },
-              },
-            },
-          },
-          { kind: 'block', type: 'control_delete_clone' },
           {
             kind: 'block',
             type: 'control_delete_object',
@@ -930,6 +967,17 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'sensing_touching_object' },
           { kind: 'block', type: 'sensing_all_touching_objects' },
+          { kind: 'block', type: 'sensing_my_type' },
+          {
+            kind: 'block',
+            type: 'sensing_type_of_object',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          { kind: 'block', type: 'sensing_type_literal' },
           { kind: 'block', type: 'object_from_dropdown' },
           { kind: 'block', type: 'target_myself' },
           { kind: 'block', type: 'target_mouse' },
@@ -940,18 +988,6 @@ export function getToolboxConfig(): any {
             inputs: {
               TARGET: {
                 block: { kind: 'block', type: 'target_mouse' },
-              },
-            },
-          },
-          {
-            kind: 'block',
-            type: 'sensing_is_clone_of_value',
-            inputs: {
-              OBJECT: {
-                block: { kind: 'block', type: 'object_from_dropdown' },
-              },
-              TARGET: {
-                block: { kind: 'block', type: 'target_myself' },
               },
             },
           },
@@ -1063,7 +1099,7 @@ function registerCustomBlocks() {
       this.appendStatementInput('NEXT')
         .setCheck(null);
       this.setColour('#FFAB19');
-      this.setTooltip('Runs when this object starts (including clones)');
+      this.setTooltip('Runs when this object starts (including spawned objects)');
     }
   };
 
@@ -1716,12 +1752,46 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['sensing_my_type'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('my type');
+      this.setOutput(true, 'String');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Get this object type token');
+    }
+  };
+
+  Blockly.Blocks['sensing_type_of_object'] = {
+    init: function() {
+      this.appendValueInput('OBJECT')
+        .setCheck('Object');
+      this.appendDummyInput()
+        .appendField("'s type");
+      this.setInputsInline(true);
+      this.setOutput(true, 'String');
+      this.setColour('#5CB1D6');
+      this.setTooltip("Get another object's type token");
+    }
+  };
+
+  Blockly.Blocks['sensing_type_literal'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('type')
+        .appendField(new PreservingFieldDropdown(getComponentTypeDropdownOptions), 'TYPE');
+      this.setOutput(true, 'String');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Component type literal for comparison');
+    }
+  };
+
   Blockly.Blocks['sensing_is_clone_of'] = {
     init: function() {
       this.appendValueInput('OBJECT')
         .setCheck('Object');
       this.appendDummyInput()
-        .appendField('is clone of')
+        .appendField('[deprecated] is clone of')
         .appendField(new Blockly.FieldDropdown(() => {
           const options: [string, string][] = [['myself', 'MYSELF']];
           const project = (window as unknown as { __POCHA_PROJECT__?: { scenes: Array<{ objects: Array<{ id: string; name: string }> }> } }).__POCHA_PROJECT__;
@@ -1733,10 +1803,10 @@ function registerCustomBlocks() {
             }
           }
           return options.length > 0 ? options : [['(no objects)', '']];
-        }), 'TARGET');
+      }), 'TARGET');
       this.setOutput(true, 'Boolean');
       this.setColour('#5CB1D6');
-      this.setTooltip('Check if an object is a clone of the specified object');
+      this.setTooltip('Deprecated: use my type/type of + =');
     }
   };
 
@@ -2289,26 +2359,46 @@ function registerCustomBlocks() {
     }
   };
 
-  Blockly.Blocks['control_clone'] = {
+  Blockly.Blocks['control_spawn_type_at'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('clone myself');
+        .appendField('spawn')
+        .appendField(new PreservingFieldDropdown(getComponentTypeDropdownOptions), 'TYPE')
+        .appendField('at');
+      this.appendValueInput('X')
+        .setCheck('Number')
+        .appendField('x');
+      this.appendValueInput('Y')
+        .setCheck('Number')
+        .appendField('y');
+      this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
-      this.setTooltip('Create a clone of this object');
+      this.setTooltip('Spawn a component type at the specified position');
+    }
+  };
+
+  Blockly.Blocks['control_clone'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('[deprecated] clone myself');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Deprecated: use spawn type at x,y');
     }
   };
 
   Blockly.Blocks['control_clone_object'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('clone')
+        .appendField('[deprecated] clone')
         .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
-      this.setTooltip('Create a clone of the selected object');
+      this.setTooltip('Deprecated: use spawn type at x,y');
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(false));
@@ -2331,10 +2421,10 @@ function registerCustomBlocks() {
   Blockly.Blocks['control_delete_clone'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('delete myself');
+        .appendField('[deprecated] delete clone');
       this.setPreviousStatement(true, null);
       this.setColour('#FFBF00');
-      this.setTooltip('Delete this object');
+      this.setTooltip('Deprecated: use delete object');
     }
   };
 
@@ -2347,7 +2437,7 @@ function registerCustomBlocks() {
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
-      this.setTooltip('Delete the specified object/clone');
+      this.setTooltip('Delete the specified object');
     }
   };
 
@@ -2675,6 +2765,7 @@ function getAllVariables(): Variable[] {
   const project = useProjectStore.getState().project;
   const selectedSceneId = useEditorStore.getState().selectedSceneId;
   const selectedObjectId = useEditorStore.getState().selectedObjectId;
+  const selectedComponentId = useEditorStore.getState().selectedComponentId;
 
   if (!project) return [];
 
@@ -2685,8 +2776,20 @@ function getAllVariables(): Variable[] {
   if (selectedSceneId && selectedObjectId) {
     const scene = project.scenes.find(s => s.id === selectedSceneId);
     const obj = scene?.objects.find(o => o.id === selectedObjectId);
-    if (obj?.localVariables) {
-      variables.push(...obj.localVariables);
+    if (obj) {
+      const component = obj.componentId
+        ? (project.components || []).find((componentItem) => componentItem.id === obj.componentId)
+        : null;
+      const componentLocalVariables = component?.localVariables || [];
+      const localVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (obj.localVariables || []);
+      variables.push(...localVariables);
+    }
+  } else if (selectedComponentId) {
+    const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
+    if (component?.localVariables) {
+      variables.push(...component.localVariables);
     }
   }
 

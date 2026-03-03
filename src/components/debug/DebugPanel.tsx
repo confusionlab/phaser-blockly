@@ -4,6 +4,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
 import { Checkbox } from '@/components/ui/checkbox';
+import { getEffectiveObjectProps } from '@/types';
 import type { Project } from '@/types';
 
 export function DebugPanel() {
@@ -47,28 +48,46 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const selectedObject = selectedScene?.objects.find(o => o.id === selectedObjectId);
+  const components = project?.components || [];
+  const selectedObjectEffectiveProps = selectedObject
+    ? getEffectiveObjectProps(selectedObject, components)
+    : null;
+  const selectedBlocklyXml = selectedObjectEffectiveProps?.blocklyXml || '';
 
   const generatedCode = activeTab === 'code'
     ? (
-      selectedObject?.blocklyXml
-        ? generateCodeForObject(selectedObject.blocklyXml, selectedObject.id)
+      selectedBlocklyXml
+        ? generateCodeForObject(selectedBlocklyXml, selectedObject?.id || '')
         : '// No blocks'
     )
     : '';
 
   // Generate code for all objects in current scene
   const generateAllCode = (): string => {
-    if (!selectedScene) return '// No scene selected';
-
     const allCode: string[] = [];
-    for (const obj of selectedScene.objects) {
-      if (obj.blocklyXml) {
-        allCode.push(`// ========== ${obj.name} (${obj.id}) ==========`);
-        allCode.push(generateCodeForObject(obj.blocklyXml, obj.id));
+    if (selectedScene) {
+      allCode.push(`// ===== Scene Objects: ${selectedScene.name} =====`);
+      for (const obj of selectedScene.objects) {
+        const effectiveProps = getEffectiveObjectProps(obj, components);
+        if (effectiveProps.blocklyXml) {
+          allCode.push(`// ========== ${obj.name} (${obj.id}) ==========`);
+          allCode.push(generateCodeForObject(effectiveProps.blocklyXml, obj.id));
+          allCode.push('');
+        }
+      }
+    }
+
+    const componentsWithCode = components.filter((component) => !!component.blocklyXml);
+    if (componentsWithCode.length > 0) {
+      allCode.push('// ===== Components =====');
+      for (const component of componentsWithCode) {
+        allCode.push(`// ========== ${component.name} (${component.id}) ==========`);
+        allCode.push(generateCodeForObject(component.blocklyXml, component.id));
         allCode.push('');
       }
     }
-    return allCode.length > 0 ? allCode.join('\n') : '// No objects with code';
+
+    return allCode.length > 0 ? allCode.join('\n') : '// No objects or components with code';
   };
 
   const copyAllCode = async () => {
@@ -78,8 +97,8 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
   const formattedXml = activeTab === 'xml'
     ? (
-      selectedObject?.blocklyXml
-        ? formatXml(selectedObject.blocklyXml)
+      selectedBlocklyXml
+        ? formatXml(selectedBlocklyXml)
         : '<!-- No blocks -->'
     )
     : '';
@@ -171,7 +190,7 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
                   <div>Scale: ({selectedObject.scaleX}, {selectedObject.scaleY})</div>
                   <div>Rotation: {selectedObject.rotation}°</div>
                   <div>Visible: {selectedObject.visible ? 'Yes' : 'No'}</div>
-                  <div>Has Blocks: {selectedObject.blocklyXml ? 'Yes' : 'No'}</div>
+                  <div>Has Blocks: {selectedBlocklyXml ? 'Yes' : 'No'}</div>
                 </>
               ) : (
                 <div className="text-gray-500">None selected</div>
@@ -271,13 +290,20 @@ function getLogColor(type: string): string {
 function VariablesTab({ project }: { project: Project | null }) {
   const runtime = getCurrentRuntime();
   const variableNamesById = new Map<string, string>();
+  const componentsById = new Map((project?.components || []).map((component) => [component.id, component]));
 
   for (const variable of project?.globalVariables ?? []) {
     variableNamesById.set(variable.id, variable.name);
   }
   for (const scene of project?.scenes ?? []) {
     for (const object of scene.objects) {
-      for (const variable of object.localVariables ?? []) {
+      const componentLocalVariables = object.componentId
+        ? componentsById.get(object.componentId)?.localVariables || []
+        : [];
+      const localVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (object.localVariables || []);
+      for (const variable of localVariables) {
         variableNamesById.set(variable.id, variable.name);
       }
     }

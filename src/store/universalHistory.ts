@@ -4,6 +4,7 @@ export type SelectionSnapshot = {
   selectedSceneId: string | null;
   selectedObjectId: string | null;
   selectedObjectIds: string[];
+  selectedComponentId: string | null;
 };
 
 type HistoryEntry = {
@@ -67,6 +68,7 @@ function cloneSelection(selection: SelectionSnapshot): SelectionSnapshot {
     selectedSceneId: selection.selectedSceneId,
     selectedObjectId: selection.selectedObjectId,
     selectedObjectIds: [...selection.selectedObjectIds],
+    selectedComponentId: selection.selectedComponentId,
   };
 }
 
@@ -80,6 +82,7 @@ function getSelectionStamp(selection: SelectionSnapshot): string {
     selection.selectedSceneId ?? '',
     selection.selectedObjectId ?? '',
     selection.selectedObjectIds.join(','),
+    selection.selectedComponentId ?? '',
   ].join('|');
 }
 

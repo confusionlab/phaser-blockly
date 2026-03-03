@@ -501,14 +501,23 @@ export function registerCodeGenerators(): void {
     return [asJsString('GROUND'), Order.ATOMIC];
   };
 
-  javascriptGenerator.forBlock['sensing_is_clone_of'] = function(block) {
+  javascriptGenerator.forBlock['sensing_my_type'] = function() {
+    return ['runtime.getMyType(sprite.id)', Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['sensing_type_of_object'] = function(block) {
     const obj = javascriptGenerator.valueToCode(block, 'OBJECT', Order.ATOMIC) || 'null';
-    const targetId = block.getFieldValue('TARGET');
-    if (targetId === 'MYSELF') {
-      // Use original object ID (handles case when sprite is itself a clone)
-      return [`runtime.isCloneOf(${obj}, sprite.cloneParentId || sprite.id)`, Order.FUNCTION_CALL];
-    }
-    return [`runtime.isCloneOf(${obj}, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
+    return [`runtime.getTypeOf(${obj})`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['sensing_type_literal'] = function(block) {
+    const typeToken = block.getFieldValue('TYPE') || '';
+    return [asJsString(typeToken), Order.ATOMIC];
+  };
+
+  javascriptGenerator.forBlock['sensing_is_clone_of'] = function(block) {
+    void block;
+    return ['false /* deprecated: use type reporters */', Order.ATOMIC];
   };
 
   javascriptGenerator.forBlock['sensing_is_clone_of_value'] = function(block) {
@@ -570,19 +579,25 @@ export function registerCodeGenerators(): void {
     return `await runtime.broadcastAndWait(${asJsString(message)});\n`;
   };
 
-  // --- Clone ---
+  // --- Spawn / legacy clone ---
+
+  javascriptGenerator.forBlock['control_spawn_type_at'] = function(block) {
+    const typeToken = block.getFieldValue('TYPE') || '';
+    const x = javascriptGenerator.valueToCode(block, 'X', Order.ATOMIC) || '0';
+    const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '0';
+    if (!typeToken) {
+      return '/* spawn type: type not selected */\n';
+    }
+    return `await runtime.spawnTypeAt(${asJsString(typeToken)}, ${x}, ${y});\n`;
+  };
 
   javascriptGenerator.forBlock['control_clone'] = function() {
-    return 'await runtime.cloneSprite(sprite.id);\n';
+    return '/* deprecated: use spawn type at x,y */\n';
   };
 
   javascriptGenerator.forBlock['control_clone_object'] = function(block) {
-    const targetId = block.getFieldValue('TARGET') || '';
-    // If targetId is empty, skip cloning
-    if (!targetId) {
-      return '/* clone target not set */\n';
-    }
-    return `await runtime.cloneSprite(${asJsString(targetId)});\n`;
+    void block;
+    return '/* deprecated: use spawn type at x,y */\n';
   };
 
   javascriptGenerator.forBlock['control_clone_object_value'] = function(block) {

@@ -2184,6 +2184,8 @@ function createPlaySceneContent(
   // Store runtime for this scene (for pause/resume)
   sceneRuntimes.set(sceneId, runtime);
 
+  const componentsById = new Map(components.map((component) => [component.id, component]));
+
   // Set up variable lookup for typed variables
   runtime.setVariableLookup((varId: string) => {
     // Check global variables
@@ -2198,7 +2200,13 @@ function createPlaySceneContent(
     }
     // Check local variables in all objects
     for (const obj of allObjects) {
-      const localVar = obj.localVariables?.find(v => v.id === varId);
+      const componentLocalVariables = obj.componentId
+        ? componentsById.get(obj.componentId)?.localVariables || []
+        : [];
+      const localVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : (obj.localVariables || []);
+      const localVar = localVariables.find(v => v.id === varId);
       if (localVar) {
         return {
           name: localVar.name,
@@ -2217,6 +2225,23 @@ function createPlaySceneContent(
       sceneData.ground.enabled,
       sceneData.ground.y,
       sceneData.ground.color
+    );
+  }
+
+  // Register component templates so they can be spawned even if no instance exists in scene.
+  for (const component of components) {
+    const registerHandlers = compileBlocklyRegisterFunction(component.blocklyXml, component.id);
+    runtime.registerComponentTemplate(
+      component.id,
+      {
+        name: component.name,
+        costumes: component.costumes || [],
+        currentCostumeIndex: component.currentCostumeIndex || 0,
+        physicsConfig: component.physics || null,
+        colliderConfig: component.collider || null,
+        sounds: component.sounds || [],
+      },
+      registerHandlers,
     );
   }
 
@@ -2369,18 +2394,10 @@ function createPlaySceneContent(
     runtime.saveTemplate(obj.id);
 
     // Generate and execute code for this object
-    const blocklyXml = effectiveProps.blocklyXml;
-    if (blocklyXml) {
+    const registerHandlers = compileBlocklyRegisterFunction(effectiveProps.blocklyXml, obj.id);
+    if (registerHandlers) {
       try {
-        const code = generateCodeForObject(blocklyXml, obj.id);
-        if (code) {
-          const functionBody = `return ${code};`;
-          const execFunction = new Function('runtime', 'spriteId', 'sprite', functionBody);
-          const registerFunc = execFunction(runtime, obj.id, runtimeSprite);
-          if (typeof registerFunc === 'function') {
-            registerFunc(runtime, obj.id, runtimeSprite);
-          }
-        }
+        registerHandlers(runtime, obj.id, runtimeSprite);
       } catch (e) {
         console.error('Error executing code for object', obj.name, e);
       }
@@ -2392,6 +2409,28 @@ function createPlaySceneContent(
 
   // Start the runtime
   runtime.start();
+}
+
+function compileBlocklyRegisterFunction(
+  blocklyXml: string,
+  sourceId: string
+): ((runtime: RuntimeEngine, spriteId: string, sprite: unknown) => void) | null {
+  if (!blocklyXml) return null;
+  const code = generateCodeForObject(blocklyXml, sourceId);
+  if (!code) return null;
+
+  try {
+    const functionBody = `return ${code};`;
+    const execFunction = new Function('runtime', 'spriteId', 'sprite', functionBody);
+    const registerFunc = execFunction(undefined, sourceId, undefined);
+    if (typeof registerFunc === 'function') {
+      return registerFunc as (runtime: RuntimeEngine, spriteId: string, sprite: unknown) => void;
+    }
+  } catch (e) {
+    console.error('Error compiling blockly code for', sourceId, e);
+  }
+
+  return null;
 }
 
 /**

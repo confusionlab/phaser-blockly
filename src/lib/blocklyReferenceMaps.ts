@@ -1,7 +1,7 @@
 export const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
 export const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
 
-export const OBJECT_SPECIAL_VALUES = ['GROUND', 'MOUSE', 'MY_CLONES'] as const;
+export const OBJECT_SPECIAL_VALUES = ['EDGE', 'GROUND', 'MOUSE', 'MY_TYPE', 'MY_CLONES'] as const;
 export const VALID_OBJECT_SPECIAL_VALUES = new Set<string>([...OBJECT_SPECIAL_VALUES, '']);
 
 // Blocks that store object references directly in a field (not value inputs).
@@ -39,4 +39,9 @@ export const MESSAGE_REFERENCE_BLOCKS: Readonly<Record<string, string>> = {
   event_when_receive: 'MESSAGE',
   control_broadcast: 'MESSAGE',
   control_broadcast_wait: 'MESSAGE',
+};
+
+export const TYPE_REFERENCE_BLOCKS: Readonly<Record<string, string>> = {
+  control_spawn_type_at: 'TYPE',
+  sensing_type_literal: 'TYPE',
 };

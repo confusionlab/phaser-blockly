@@ -5,6 +5,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
+import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -45,7 +46,6 @@ import {
   ChevronDown,
   Component,
   Unlink,
-  Loader2,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -157,16 +157,21 @@ export function SpriteShelf() {
     removeScene,
     reorderScenes,
     makeComponent,
+    deleteComponent,
     detachFromComponent,
+    addComponentInstance,
   } = useProjectStore();
   const {
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
+    selectedComponentId,
     activeObjectTab,
     selectObject,
     selectObjects,
+    selectComponent,
     selectScene,
+    setActiveObjectTab,
     collapsedFolderIdsByScene,
     setCollapsedFoldersForScene,
     clearSceneUiState,
@@ -194,7 +199,8 @@ export function SpriteShelf() {
   const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
-  const [savingToLibrary, setSavingToLibrary] = useState(false);
+  const [showComponentLibrary, setShowComponentLibrary] = useState(false);
+  const [, setSavingToLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
@@ -926,14 +932,60 @@ export function SpriteShelf() {
   };
 
   const handleMakeComponent = () => {
-    if (!contextMenu || contextMenu.kind !== 'object') return;
-    makeComponent(selectedSceneId, contextMenu.object.id);
+    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
+
+    const requestedName = contextMenu.object.name.trim();
+    const normalizedRequestedName = requestedName.toLowerCase();
+    const hasDuplicateName = (project.components || []).some(
+      (component) => component.name.trim().toLowerCase() === normalizedRequestedName
+    );
+    if (hasDuplicateName) {
+      window.alert(`A component named "${requestedName}" already exists. Rename the object first.`);
+      return;
+    }
+
+    const created = makeComponent(selectedSceneId, contextMenu.object.id);
+    if (!created) {
+      window.alert('Could not create component. Check that the name is unique.');
+      return;
+    }
+
     handleCloseContextMenu();
   };
 
   const handleDetachFromComponent = () => {
     if (!contextMenu || contextMenu.kind !== 'object') return;
     detachFromComponent(selectedSceneId, contextMenu.object.id);
+    handleCloseContextMenu();
+  };
+
+  const handleDeleteComponentById = (componentId: string) => {
+    if (!project) return;
+    if (!componentId) return;
+
+    const component = (project.components || []).find((item) => item.id === componentId);
+    const componentName = component?.name || 'Component';
+    const instanceCount = project.scenes.reduce((count, scene) => {
+      return count + scene.objects.filter((obj) => obj.componentId === componentId).length;
+    }, 0);
+
+    const confirmed = window.confirm(
+      `Delete component "${componentName}"?\n\n` +
+      `This will detach ${instanceCount} instance${instanceCount === 1 ? '' : 's'} and keep them as standalone objects.`
+    );
+    if (!confirmed) return;
+
+    deleteComponent(componentId);
+    if (selectedComponentId === componentId) {
+      selectComponent(null);
+    }
+  };
+
+  const handleDeleteComponentFromContextMenu = () => {
+    if (!contextMenu || contextMenu.kind !== 'object') return;
+    const componentId = contextMenu.object.componentId;
+    if (!componentId) return;
+    handleDeleteComponentById(componentId);
     handleCloseContextMenu();
   };
 
@@ -967,6 +1019,35 @@ export function SpriteShelf() {
 
       selectObject(newObject.id);
     });
+  };
+
+  const handleComponentLibrarySelect = (componentId: string) => {
+    const instance = addComponentInstance(selectedSceneId, componentId);
+    if (instance) {
+      selectObject(instance.id);
+    }
+  };
+
+  const handleComponentLibraryDelete = (componentId: string) => {
+    handleDeleteComponentById(componentId);
+  };
+
+  const handleComponentLibraryEditCode = (componentId: string) => {
+    if (!project) return;
+
+    let sceneId = selectedSceneId;
+    if (!sceneId) {
+      sceneId = project.scenes[0]?.id ?? null;
+    }
+    if (!sceneId) return;
+
+    if (sceneId !== selectedSceneId) {
+      selectScene(sceneId);
+    }
+
+    setActiveObjectTab('code');
+    selectObjects([], null);
+    selectComponent(componentId);
   };
 
   const willDeleteSelection = !!contextMenu
@@ -1249,11 +1330,10 @@ export function SpriteShelf() {
           <Button
             size="icon-sm"
             variant="ghost"
-            onClick={() => setShowLibrary(true)}
-            title="Object Library"
-            disabled={savingToLibrary}
+            onClick={() => setShowComponentLibrary(true)}
+            title="Component Library"
           >
-            {savingToLibrary ? <Loader2 className="size-4 animate-spin" /> : <Library className="size-4" />}
+            <Component className="size-4" />
           </Button>
         </div>
       </div>
@@ -1359,15 +1439,26 @@ export function SpriteShelf() {
                     Make Component
                   </Button>
                 ) : (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleDetachFromComponent}
-                    className="w-full justify-start rounded-none h-8"
-                  >
-                    <Unlink className="size-4" />
-                    Detach from Component
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDetachFromComponent}
+                      className="w-full justify-start rounded-none h-8"
+                    >
+                      <Unlink className="size-4" />
+                      Detach from Component
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDeleteComponentFromContextMenu}
+                      className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                      Delete Component
+                    </Button>
+                  </>
                 )}
                 <Button
                   variant="ghost"
@@ -1452,6 +1543,13 @@ export function SpriteShelf() {
         open={showLibrary}
         onOpenChange={setShowLibrary}
         onSelect={handleLibrarySelect}
+      />
+      <ComponentLibraryBrowser
+        open={showComponentLibrary}
+        onOpenChange={setShowComponentLibrary}
+        onSelect={handleComponentLibrarySelect}
+        onDelete={handleComponentLibraryDelete}
+        onEditCode={handleComponentLibraryEditCode}
       />
 
       <Dialog open={!!folderDeleteTarget} onOpenChange={(open) => !open && handleCancelDeleteFolder()}>

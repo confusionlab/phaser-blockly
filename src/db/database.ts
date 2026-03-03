@@ -13,6 +13,7 @@ import {
   PICK_FROM_STAGE,
   SCENE_REFERENCE_BLOCKS,
   SOUND_REFERENCE_BLOCKS,
+  TYPE_REFERENCE_BLOCKS,
   VALID_OBJECT_SPECIAL_VALUES,
   VARIABLE_REFERENCE_BLOCKS,
 } from '@/lib/blocklyReferenceMaps';
@@ -934,6 +935,15 @@ function remapIdOrNameReference(
   return idMap.get(value) || nameMap?.get(value) || rawValue;
 }
 
+function remapTypeReference(rawValue: string, maps: ImportReferenceMaps): string {
+  const value = rawValue.trim();
+  if (!value) return rawValue;
+  if (!value.startsWith('component:')) return rawValue;
+  const componentId = value.slice('component:'.length);
+  const remappedComponentId = maps.componentIds.get(componentId);
+  return remappedComponentId ? `component:${remappedComponentId}` : rawValue;
+}
+
 function remapBlocklyXmlReferences(
   blocklyXml: string,
   maps: ImportReferenceMaps,
@@ -1007,6 +1017,11 @@ function remapBlocklyXmlReferences(
           remapIdOrNameReference(value, maps.sceneIds, fallbacks.sceneNameToId)
         );
       }
+
+      const typeFieldName = TYPE_REFERENCE_BLOCKS[blockType];
+      if (typeFieldName) {
+        updateField(typeFieldName, (value) => remapTypeReference(value, maps));
+      }
     }
 
     if (!changed || !xmlDoc.documentElement) {
@@ -1079,6 +1094,7 @@ export async function importProject(jsonString: string): Promise<Project> {
 
     component.costumes = Array.isArray(component.costumes) ? component.costumes : [];
     component.sounds = Array.isArray(component.sounds) ? component.sounds : [];
+    component.localVariables = Array.isArray(component.localVariables) ? component.localVariables : [];
 
     for (const costume of component.costumes) {
       costume.id = crypto.randomUUID();
@@ -1090,6 +1106,18 @@ export async function importProject(jsonString: string): Promise<Project> {
       const newSoundId = crypto.randomUUID();
       rememberIdMapping(soundIdMap, sound.id, newSoundId);
       sound.id = newSoundId;
+    }
+
+    for (const variable of component.localVariables) {
+      const existingVariableId = readValidId(variable.id);
+      const remappedVariableId = existingVariableId ? variableIdMap.get(existingVariableId) : undefined;
+      const newVariableId = remappedVariableId || crypto.randomUUID();
+      if (!remappedVariableId) {
+        rememberIdMapping(variableIdMap, variable.id, newVariableId);
+      }
+      variable.id = newVariableId;
+      variable.scope = 'local';
+      delete variable.objectId;
     }
   }
 
@@ -1126,6 +1154,12 @@ export async function importProject(jsonString: string): Promise<Project> {
       obj.costumes = Array.isArray(obj.costumes) ? obj.costumes : [];
       obj.sounds = Array.isArray(obj.sounds) ? obj.sounds : [];
       obj.localVariables = Array.isArray(obj.localVariables) ? obj.localVariables : [];
+      if (obj.componentId && obj.localVariables.length === 0) {
+        const componentLocalVariables = project.components.find((component) => component.id === obj.componentId)?.localVariables || [];
+        if (componentLocalVariables.length > 0) {
+          obj.localVariables = componentLocalVariables.map((variable) => ({ ...variable }));
+        }
+      }
 
       for (const costume of obj.costumes) {
         costume.id = crypto.randomUUID();
@@ -1140,8 +1174,12 @@ export async function importProject(jsonString: string): Promise<Project> {
       }
 
       for (const variable of obj.localVariables) {
-        const newVariableId = crypto.randomUUID();
-        rememberIdMapping(variableIdMap, variable.id, newVariableId);
+        const existingVariableId = readValidId(variable.id);
+        const remappedVariableId = existingVariableId ? variableIdMap.get(existingVariableId) : undefined;
+        const newVariableId = remappedVariableId || crypto.randomUUID();
+        if (!remappedVariableId) {
+          rememberIdMapping(variableIdMap, variable.id, newVariableId);
+        }
         variable.id = newVariableId;
         variable.objectId = obj.id;
       }
@@ -1180,12 +1218,18 @@ export async function importProject(jsonString: string): Promise<Project> {
       : null;
 
     for (const obj of scene.objects) {
+      const componentLocalVariables = obj.componentId
+        ? project.components.find((component) => component.id === obj.componentId)?.localVariables || []
+        : [];
+      const effectiveLocalVariables = componentLocalVariables.length > 0
+        ? componentLocalVariables
+        : obj.localVariables;
       const localVariableNameToId = createUniqueNameIdMap(
-        obj.localVariables.map((variable) => ({ name: variable.name, id: variable.id }))
+        effectiveLocalVariables.map((variable) => ({ name: variable.name, id: variable.id }))
       );
       const combinedVariableNameToId = createUniqueNameIdMap([
         ...project.globalVariables.map((variable) => ({ name: variable.name, id: variable.id })),
-        ...obj.localVariables.map((variable) => ({ name: variable.name, id: variable.id })),
+        ...effectiveLocalVariables.map((variable) => ({ name: variable.name, id: variable.id })),
       ]);
 
       const effectiveSounds = obj.componentId
@@ -1207,13 +1251,17 @@ export async function importProject(jsonString: string): Promise<Project> {
   }
 
   for (const component of project.components) {
+    const componentVariableNameToId = createUniqueNameIdMap([
+      ...project.globalVariables.map((variable) => ({ name: variable.name, id: variable.id })),
+      ...(component.localVariables || []).map((variable) => ({ name: variable.name, id: variable.id })),
+    ]);
     const componentSoundNameToId = createUniqueNameIdMap(
       component.sounds.map((sound) => ({ name: sound.name, id: sound.id }))
     );
 
     component.blocklyXml = remapBlocklyXmlReferences(component.blocklyXml || '', referenceMaps, {
       objectNameToId: globalObjectNameToId,
-      variableNameToId: globalVariableNameToId,
+      variableNameToId: componentVariableNameToId.size > 0 ? componentVariableNameToId : globalVariableNameToId,
       soundNameToId: componentSoundNameToId,
       messageNameToId: globalMessageNameToId,
       sceneNameToId: globalSceneNameToId,
