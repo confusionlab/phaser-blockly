@@ -563,7 +563,15 @@ export function getToolboxConfig(): any {
             },
           },
           { kind: 'block', type: 'control_delete_clone' },
-          { kind: 'block', type: 'control_delete_object' },
+          {
+            kind: 'block',
+            type: 'control_delete_object',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
         ],
       },
       {
@@ -655,8 +663,24 @@ export function getToolboxConfig(): any {
           { kind: 'sep', gap: '16' },
           { kind: 'block', type: 'motion_my_x' },
           { kind: 'block', type: 'motion_my_y' },
-          { kind: 'block', type: 'sensing_object_x' },
-          { kind: 'block', type: 'sensing_object_y' },
+          {
+            kind: 'block',
+            type: 'sensing_object_x',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'sensing_object_y',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
           { kind: 'sep', gap: '16' },
           {
             kind: 'block',
@@ -718,7 +742,15 @@ export function getToolboxConfig(): any {
             }
           },
           { kind: 'block', type: 'looks_costume_number' },
-          { kind: 'block', type: 'sensing_object_costume' },
+          {
+            kind: 'block',
+            type: 'sensing_object_costume',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
         ],
       },
       {
@@ -897,7 +929,15 @@ export function getToolboxConfig(): any {
               },
             },
           },
-          { kind: 'block', type: 'sensing_is_clone_of' },
+          {
+            kind: 'block',
+            type: 'sensing_is_clone_of',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
         ],
       },
       {
