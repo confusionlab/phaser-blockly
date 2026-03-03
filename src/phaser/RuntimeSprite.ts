@@ -665,11 +665,6 @@ export class RuntimeSprite {
     }
   }
 
-  setCollideWorldBounds(_collide: boolean): void {
-    // Matter.js doesn't have built-in world bounds collision
-    // This is intentionally not implemented per user request
-  }
-
   makeImmovable(): void {
     if (this._stopped) return;
     const body = this.getMatterBody();

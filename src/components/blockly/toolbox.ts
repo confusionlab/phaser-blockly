@@ -2,12 +2,9 @@ import * as Blockly from 'blockly';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { MessageDefinition, Variable, VariableType } from '@/types';
+import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
 
-// Special value for "pick from stage" option
-const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
-// Prefix for "any component instance" option
-const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
 const CREATE_MESSAGE_OPTION = '__CREATE_MESSAGE_OPTION__';
 const RENAME_SELECTED_MESSAGE_OPTION = '__RENAME_SELECTED_MESSAGE_OPTION__';
 
@@ -1921,18 +1918,6 @@ function registerCustomBlocks() {
     }
   };
 
-  Blockly.Blocks['physics_collide_bounds'] = {
-    init: function() {
-      this.appendDummyInput()
-        .appendField(new Blockly.FieldCheckbox('TRUE'), 'ENABLED')
-        .appendField('collide with world bounds');
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#40BF4A');
-      this.setTooltip('Enable/disable world bounds collision');
-    }
-  };
-
   Blockly.Blocks['physics_immovable'] = {
     init: function() {
       this.appendDummyInput()
@@ -1976,18 +1961,6 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
       this.setTooltip('Set the Y position of the ground');
-    }
-  };
-
-  Blockly.Blocks['physics_set_ground_color'] = {
-    init: function() {
-      this.appendDummyInput()
-        .appendField('set ground color to')
-        .appendField(new Blockly.FieldTextInput('#8B4513'), 'COLOR');
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#40BF4A');
-      this.setTooltip('Set the color of the ground (hex color like #8B4513)');
     }
   };
 

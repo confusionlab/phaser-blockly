@@ -15,6 +15,15 @@ import { AddVariableDialog } from '@/components/dialogs/AddVariableDialog';
 import { MessageDialog } from '@/components/dialogs/MessageDialog';
 import { VariableManagerDialog } from '@/components/dialogs/VariableManagerDialog';
 import { BlockSearchModal } from './BlockSearchModal';
+import {
+  COMPONENT_ANY_PREFIX,
+  MESSAGE_REFERENCE_BLOCKS,
+  OBJECT_REFERENCE_BLOCKS,
+  SCENE_REFERENCE_BLOCKS,
+  SOUND_REFERENCE_BLOCKS,
+  VALID_OBJECT_SPECIAL_VALUES,
+  VARIABLE_REFERENCE_BLOCKS,
+} from '@/lib/blocklyReferenceMaps';
 import type { UndoRedoHandler } from '@/store/editorStore';
 import type { Variable } from '@/types';
 
@@ -157,50 +166,6 @@ function registerCrossObjectCopyPaste() {
 // Register once at module load
 registerCrossObjectCopyPaste();
 
-// Block types that have object reference dropdowns
-const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
-  'object_from_dropdown': 'TARGET',
-  'sensing_touching': 'TARGET',
-  'sensing_touching_direction': 'TARGET',
-  'sensing_distance_to': 'TARGET',
-  'sensing_touching_object': 'TARGET',
-  'motion_point_towards': 'TARGET',
-  'camera_follow_object': 'TARGET',
-  'control_clone_object': 'TARGET',
-  'event_when_touching': 'TARGET',
-  'event_when_touching_direction': 'TARGET',
-  'motion_attach_to_dropdown': 'TARGET',
-  'motion_attach_dropdown_to_me': 'TARGET',
-};
-
-// Block types that have sound reference dropdowns
-const SOUND_REFERENCE_BLOCKS: Record<string, string> = {
-  'sound_play': 'SOUND',
-  'sound_play_until_done': 'SOUND',
-};
-
-// Block types that have variable reference dropdowns
-const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
-  'typed_variable_get': 'VAR',
-  'typed_variable_set': 'VAR',
-  'typed_variable_change': 'VAR',
-};
-
-// Block types that have scene reference dropdowns
-const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
-  'control_switch_scene': 'SCENE',
-};
-
-// Block types that have message reference dropdowns
-const MESSAGE_REFERENCE_BLOCKS: Record<string, string> = {
-  'event_when_receive': 'MESSAGE',
-  'control_broadcast': 'MESSAGE',
-  'control_broadcast_wait': 'MESSAGE',
-};
-
-// Special values that are always valid (not object IDs)
-const VALID_SPECIAL_VALUES = new Set(['GROUND', 'MOUSE', 'MY_CLONES', '']);
-
 // Validate all blocks in workspace for broken references
 function validateBlockReferences(
   workspace: Blockly.WorkspaceSvg,
@@ -223,9 +188,9 @@ function validateBlockReferences(
     const objectFieldName = OBJECT_REFERENCE_BLOCKS[blockType];
     if (objectFieldName) {
       const fieldValue = block.getFieldValue(objectFieldName);
-      if (fieldValue && !VALID_SPECIAL_VALUES.has(fieldValue)) {
+      if (fieldValue && !VALID_OBJECT_SPECIAL_VALUES.has(fieldValue)) {
         // Check if it's a component reference (starts with COMPONENT_ANY:)
-        if (fieldValue.startsWith('COMPONENT_ANY:')) {
+        if (fieldValue.startsWith(COMPONENT_ANY_PREFIX)) {
           // Component references are allowed
         } else if (!sceneObjectIds.has(fieldValue)) {
           hasError = true;

@@ -1930,11 +1930,6 @@ export class RuntimeEngine {
     // Matter.js collision detection is set up automatically via world events
   }
 
-  setGroundColor(color: string): void {
-    this._groundColor = color;
-    this.updateGroundVisual();
-  }
-
   getGroundY(): number {
     return this._groundY;
   }

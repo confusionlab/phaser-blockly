@@ -355,11 +355,6 @@ export function registerCodeGenerators(): void {
     return `sprite.setFriction(${friction});\n`;
   };
 
-  javascriptGenerator.forBlock['physics_collide_bounds'] = function(block) {
-    const enabled = block.getFieldValue('ENABLED') === 'TRUE';
-    return `sprite.setCollideWorldBounds(${enabled});\n`;
-  };
-
   javascriptGenerator.forBlock['physics_immovable'] = function() {
     return 'sprite.makeImmovable();\n';
   };
@@ -375,11 +370,6 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['physics_set_ground_y'] = function(block) {
     const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '500';
     return `runtime.setGroundY(${y});\n`;
-  };
-
-  javascriptGenerator.forBlock['physics_set_ground_color'] = function(block) {
-    const color = block.getFieldValue('COLOR') || '#8B4513';
-    return `runtime.setGroundColor(${asJsString(color)});\n`;
   };
 
   // --- Camera ---
