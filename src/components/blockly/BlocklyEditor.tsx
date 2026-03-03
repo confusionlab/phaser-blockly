@@ -541,7 +541,7 @@ export function BlocklyEditor() {
     updateMessage,
   ]);
 
-  // Cmd+K to open block search, Cmd+C/V for cross-object copy/paste
+  // Cmd+K to open block search, Cmd+C for cross-object copy
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Block search
@@ -559,14 +559,6 @@ export function BlocklyEditor() {
         if (selected && selected instanceof Blockly.BlockSvg && !selected.isInFlyout) {
           copyBlockToClipboard(selected);
         }
-      }
-
-      // Cross-object paste (Cmd+V)
-      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && workspaceRef.current) {
-        const copyData = getBlockClipboard();
-        if (!copyData) return;
-        e.preventDefault();
-        pasteBlockFromClipboard(workspaceRef.current, copyData);
       }
     };
 
