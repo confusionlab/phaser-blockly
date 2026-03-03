@@ -1026,11 +1026,14 @@ export class RuntimeEngine {
       message = 'null';
     } else if (value === undefined) {
       message = 'undefined';
+    } else if (value instanceof Error) {
+      // Keep runtime errors readable in the debug console.
+      message = value.stack || `${value.name}: ${value.message}`;
     } else if (typeof value === 'object') {
       // Handle circular references with a custom replacer
       const seen = new WeakSet();
       try {
-        message = JSON.stringify(value, (_key, val) => {
+        const serialized = JSON.stringify(value, (_key, val) => {
           if (typeof val === 'object' && val !== null) {
             // Skip Phaser objects to avoid circular refs
             if (val.constructor?.name?.includes('Scene') ||
@@ -1046,11 +1049,13 @@ export class RuntimeEngine {
           }
           return val;
         }, 2);
+        message = serialized ?? '[Unserializable Object]';
       } catch {
         // Fallback: show constructor name and basic props
         const name = value.constructor?.name || 'Object';
-        const keys = Object.keys(value as object).slice(0, 5);
-        message = `[${name}] {${keys.join(', ')}${keys.length < Object.keys(value as object).length ? '...' : ''}}`;
+        const allKeys = Object.keys(value as object);
+        const previewKeys = allKeys.slice(0, 5);
+        message = `[${name}] {${previewKeys.join(', ')}${previewKeys.length < allKeys.length ? '...' : ''}}`;
       }
     } else {
       message = String(value);

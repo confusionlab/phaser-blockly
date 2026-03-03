@@ -241,9 +241,9 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
             ) : (
               <div className="space-y-1">
                 {userLogs.slice(-100).map((entry, i) => (
-                  <div key={i} className="text-sm text-purple-300 font-mono">
+                  <pre key={i} className="m-0 text-sm text-purple-300 font-mono whitespace-pre-wrap break-words">
                     {entry.message}
-                  </div>
+                  </pre>
                 ))}
               </div>
             )}
