@@ -400,6 +400,15 @@ export class RuntimeSprite {
     debugLog('action', `${this.name}.nextCostume() -> ${this._currentCostumeIndex + 1}`);
   }
 
+  previousCostume(): void {
+    if (this._stopped) return;
+    if (this._costumes.length === 0) return;
+
+    this._currentCostumeIndex = (this._currentCostumeIndex - 1 + this._costumes.length) % this._costumes.length;
+    this._updateCostumeDisplay();
+    debugLog('action', `${this.name}.previousCostume() -> ${this._currentCostumeIndex + 1}`);
+  }
+
   switchCostume(costumeRef: number | string): void {
     if (this._stopped) return;
     if (this._costumes.length === 0) return;
@@ -654,11 +663,6 @@ export class RuntimeSprite {
     } else {
       debugLog('error', `${this.name}.setFriction: No physics body found.`);
     }
-  }
-
-  setCollideWorldBounds(_collide: boolean): void {
-    // Matter.js doesn't have built-in world bounds collision
-    // This is intentionally not implemented per user request
   }
 
   makeImmovable(): void {

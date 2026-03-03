@@ -1,41 +1,16 @@
 import * as Blockly from 'blockly';
 import type { GameObject, Project, Scene } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
+import {
+  COMPONENT_ANY_PREFIX,
+  OBJECT_REFERENCE_BLOCKS,
+  PICK_FROM_STAGE,
+  SCENE_REFERENCE_BLOCKS,
+  SOUND_REFERENCE_BLOCKS,
+  VALID_OBJECT_SPECIAL_VALUES,
+  VARIABLE_REFERENCE_BLOCKS,
+} from '@/lib/blocklyReferenceMaps';
 import '@/components/blockly/toolbox';
-
-const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
-const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
-
-const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
-  sensing_touching: 'TARGET',
-  sensing_touching_direction: 'TARGET',
-  sensing_distance_to: 'TARGET',
-  sensing_touching_object: 'TARGET',
-  motion_point_towards: 'TARGET',
-  camera_follow_object: 'TARGET',
-  control_clone_object: 'TARGET',
-  event_when_touching: 'TARGET',
-  event_when_touching_direction: 'TARGET',
-  motion_attach_to_dropdown: 'TARGET',
-  motion_attach_dropdown_to_me: 'TARGET',
-};
-
-const SOUND_REFERENCE_BLOCKS: Record<string, string> = {
-  sound_play: 'SOUND',
-  sound_play_until_done: 'SOUND',
-};
-
-const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
-  typed_variable_get: 'VAR',
-  typed_variable_set: 'VAR',
-  typed_variable_change: 'VAR',
-};
-
-const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
-  control_switch_scene: 'SCENE',
-};
-
-const VALID_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES']);
 
 export interface PlayValidationIssue {
   id: string;
@@ -99,7 +74,7 @@ function validateBlockElement(
       if (!component || !hasInstanceInScene) {
         pushIssue('Selected component target is missing in this scene.');
       }
-    } else if (!VALID_SPECIAL_VALUES.has(value) && !scene.objects.some((o) => o.id === value)) {
+    } else if (!VALID_OBJECT_SPECIAL_VALUES.has(value) && !scene.objects.some((o) => o.id === value)) {
       pushIssue('Selected object target is missing in this scene.');
     }
   }

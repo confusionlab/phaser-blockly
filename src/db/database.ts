@@ -6,6 +6,16 @@ import type {
   Project,
   ReusableObject,
 } from '../types';
+import {
+  COMPONENT_ANY_PREFIX,
+  MESSAGE_REFERENCE_BLOCKS,
+  OBJECT_REFERENCE_BLOCKS,
+  PICK_FROM_STAGE,
+  SCENE_REFERENCE_BLOCKS,
+  SOUND_REFERENCE_BLOCKS,
+  VALID_OBJECT_SPECIAL_VALUES,
+  VARIABLE_REFERENCE_BLOCKS,
+} from '@/lib/blocklyReferenceMaps';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
@@ -567,12 +577,6 @@ function remapLegacySceneNameRefsInBlocklyXml(
   }
 }
 
-const MESSAGE_REFERENCE_BLOCKS: Record<string, string> = {
-  event_when_receive: 'MESSAGE',
-  control_broadcast: 'MESSAGE',
-  control_broadcast_wait: 'MESSAGE',
-};
-
 function normalizeMessageName(name: unknown): string {
   return typeof name === 'string' ? name.trim() : '';
 }
@@ -839,39 +843,6 @@ export function downloadProject(project: Project): void {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-
-const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
-const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
-const VALID_OBJECT_SPECIAL_VALUES = new Set(['EDGE', 'GROUND', 'MOUSE', 'MY_CLONES', '']);
-
-const OBJECT_REFERENCE_BLOCKS: Record<string, string> = {
-  sensing_touching: 'TARGET',
-  sensing_touching_direction: 'TARGET',
-  sensing_distance_to: 'TARGET',
-  sensing_touching_object: 'TARGET',
-  motion_point_towards: 'TARGET',
-  camera_follow_object: 'TARGET',
-  control_clone_object: 'TARGET',
-  event_when_touching: 'TARGET',
-  event_when_touching_direction: 'TARGET',
-  motion_attach_to_dropdown: 'TARGET',
-  motion_attach_dropdown_to_me: 'TARGET',
-};
-
-const SOUND_REFERENCE_BLOCKS: Record<string, string> = {
-  sound_play: 'SOUND',
-  sound_play_until_done: 'SOUND',
-};
-
-const VARIABLE_REFERENCE_BLOCKS: Record<string, string> = {
-  typed_variable_get: 'VAR',
-  typed_variable_set: 'VAR',
-  typed_variable_change: 'VAR',
-};
-
-const SCENE_REFERENCE_BLOCKS: Record<string, string> = {
-  control_switch_scene: 'SCENE',
-};
 
 interface ImportReferenceMaps {
   objectIds: Map<string, string>;

@@ -2,12 +2,9 @@ import * as Blockly from 'blockly';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { MessageDefinition, Variable, VariableType } from '@/types';
+import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
 
-// Special value for "pick from stage" option
-const PICK_FROM_STAGE = '__PICK_FROM_STAGE__';
-// Prefix for "any component instance" option
-const COMPONENT_ANY_PREFIX = 'COMPONENT_ANY:';
 const CREATE_MESSAGE_OPTION = '__CREATE_MESSAGE_OPTION__';
 const RENAME_SELECTED_MESSAGE_OPTION = '__RENAME_SELECTED_MESSAGE_OPTION__';
 
@@ -396,16 +393,13 @@ function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[st
 
 // Dropdown with special options + objects
 function getTargetDropdownOptions(
-  includeEdge: boolean = false,
+  _includeEdge: boolean = false,
   includeMouse: boolean = false,
   includeMyClones: boolean = false,
   includeGround: boolean = false
 ): () => Array<[string, string]> {
   return function() {
     const specialOptions: Array<[string, string]> = [];
-    if (includeEdge) {
-      specialOptions.push(['edge', 'EDGE']);
-    }
     if (includeGround) {
       specialOptions.push(['ground', 'GROUND']);
     }
@@ -502,8 +496,88 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'event_clicked' },
           { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'event_when_receive' },
-          { kind: 'block', type: 'event_when_touching' },
-          { kind: 'block', type: 'event_when_touching_direction' },
+          {
+            kind: 'block',
+            type: 'event_when_touching_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'event_when_touching_direction_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+        ],
+      },
+      {
+        kind: 'category',
+        name: 'Control',
+        colour: '#FFBF00',
+        contents: [
+          {
+            kind: 'block',
+            type: 'control_wait',
+            inputs: {
+              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'control_repeat',
+            inputs: {
+              TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
+            }
+          },
+          { kind: 'block', type: 'control_repeat_until' },
+          { kind: 'block', type: 'control_for_each' },
+          { kind: 'block', type: 'control_current_item' },
+          { kind: 'block', type: 'control_wait_until' },
+          { kind: 'block', type: 'controls_if' },
+          {
+            kind: 'block',
+            type: 'controls_if',
+            extraState: { hasElse: true },
+          },
+          { kind: 'block', type: 'control_random_choice' },
+          { kind: 'block', type: 'control_stop' },
+          { kind: 'block', type: 'control_switch_scene' },
+          { kind: 'block', type: 'control_broadcast' },
+          { kind: 'block', type: 'control_broadcast_wait' },
+          {
+            kind: 'block',
+            type: 'control_clone_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_myself' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'control_clone_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          { kind: 'block', type: 'control_delete_clone' },
+          {
+            kind: 'block',
+            type: 'control_delete_object',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
         ],
       },
       {
@@ -575,10 +649,15 @@ export function getToolboxConfig(): any {
               DIRECTION: { shadow: { type: 'math_number', fields: { NUM: '90' } } }
             }
           },
-          { kind: 'block', type: 'motion_point_towards' },
-          { kind: 'block', type: 'motion_my_x' },
-          { kind: 'block', type: 'motion_my_y' },
-          { kind: 'sep', gap: '16' },
+          {
+            kind: 'block',
+            type: 'motion_point_towards_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_mouse' },
+              },
+            },
+          },
           {
             kind: 'block',
             type: 'motion_rotate_tween',
@@ -588,10 +667,45 @@ export function getToolboxConfig(): any {
             }
           },
           { kind: 'sep', gap: '16' },
-          { kind: 'block', type: 'motion_attach_to_dropdown' },
-          { kind: 'block', type: 'motion_attach_to_block' },
-          { kind: 'block', type: 'motion_attach_block_to_me' },
-          { kind: 'block', type: 'motion_attach_dropdown_to_me' },
+          { kind: 'block', type: 'motion_my_x' },
+          { kind: 'block', type: 'motion_my_y' },
+          {
+            kind: 'block',
+            type: 'sensing_object_x',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'sensing_object_y',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          { kind: 'sep', gap: '16' },
+          {
+            kind: 'block',
+            type: 'motion_attach_to_block',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'motion_attach_block_to_me',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
           { kind: 'block', type: 'motion_detach' },
         ],
       },
@@ -602,15 +716,8 @@ export function getToolboxConfig(): any {
         contents: [
           { kind: 'block', type: 'looks_show' },
           { kind: 'block', type: 'looks_hide' },
-          { kind: 'block', type: 'looks_next_costume' },
-          {
-            kind: 'block',
-            type: 'looks_switch_costume',
-            inputs: {
-              COSTUME: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
-            }
-          },
-          { kind: 'block', type: 'looks_costume_number' },
+          { kind: 'block', type: 'looks_go_to_front' },
+          { kind: 'block', type: 'looks_go_to_back' },
           {
             kind: 'block',
             type: 'looks_set_size',
@@ -632,8 +739,25 @@ export function getToolboxConfig(): any {
               OPACITY: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
             }
           },
-          { kind: 'block', type: 'looks_go_to_front' },
-          { kind: 'block', type: 'looks_go_to_back' },
+          { kind: 'block', type: 'looks_previous_costume' },
+          { kind: 'block', type: 'looks_next_costume' },
+          {
+            kind: 'block',
+            type: 'looks_switch_costume',
+            inputs: {
+              COSTUME: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          { kind: 'block', type: 'looks_costume_number' },
+          {
+            kind: 'block',
+            type: 'sensing_object_costume',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
         ],
       },
       {
@@ -687,7 +811,6 @@ export function getToolboxConfig(): any {
               FRICTION: { shadow: { type: 'math_number', fields: { NUM: '0.1' } } }
             }
           },
-          { kind: 'block', type: 'physics_collide_bounds' },
           { kind: 'block', type: 'physics_immovable' },
           { kind: 'block', type: 'physics_ground_on' },
           { kind: 'block', type: 'physics_ground_off' },
@@ -698,66 +821,6 @@ export function getToolboxConfig(): any {
               Y: { shadow: { type: 'math_number', fields: { NUM: '500' } } }
             }
           },
-          { kind: 'block', type: 'physics_set_ground_color' },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Control',
-        colour: '#FFBF00',
-        contents: [
-          {
-            kind: 'block',
-            type: 'control_wait',
-            inputs: {
-              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
-            }
-          },
-          {
-            kind: 'block',
-            type: 'control_repeat',
-            inputs: {
-              TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
-            }
-          },
-          { kind: 'block', type: 'control_repeat_until' },
-          { kind: 'block', type: 'control_for_each' },
-          { kind: 'block', type: 'control_current_item' },
-          { kind: 'block', type: 'control_wait_until' },
-          { kind: 'block', type: 'controls_if' },
-          {
-            kind: 'block',
-            type: 'controls_if',
-            extraState: { hasElse: true },
-          },
-          { kind: 'block', type: 'control_stop' },
-          { kind: 'block', type: 'control_switch_scene' },
-          { kind: 'block', type: 'control_clone' },
-          { kind: 'block', type: 'control_clone_object' },
-          { kind: 'block', type: 'control_delete_clone' },
-          { kind: 'block', type: 'control_delete_object' },
-          { kind: 'block', type: 'control_broadcast' },
-          { kind: 'block', type: 'control_broadcast_wait' },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Sensing',
-        colour: '#5CB1D6',
-        contents: [
-          { kind: 'block', type: 'sensing_key_pressed' },
-          { kind: 'block', type: 'sensing_mouse_down' },
-          { kind: 'block', type: 'sensing_mouse_x' },
-          { kind: 'block', type: 'sensing_mouse_y' },
-          { kind: 'block', type: 'sensing_touching' },
-          { kind: 'block', type: 'sensing_touching_direction' },
-          { kind: 'block', type: 'sensing_touching_object' },
-          { kind: 'block', type: 'sensing_all_touching_objects' },
-          { kind: 'block', type: 'sensing_is_clone_of' },
-          { kind: 'block', type: 'sensing_distance_to' },
-          { kind: 'block', type: 'sensing_object_x' },
-          { kind: 'block', type: 'sensing_object_y' },
-          { kind: 'block', type: 'sensing_object_costume' },
         ],
       },
       {
@@ -765,8 +828,24 @@ export function getToolboxConfig(): any {
         name: 'Camera',
         colour: '#0fBDA8',
         contents: [
-          { kind: 'block', type: 'camera_follow_me' },
-          { kind: 'block', type: 'camera_follow_object' },
+          {
+            kind: 'block',
+            type: 'camera_follow_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_myself' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'camera_follow_object_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            },
+          },
           { kind: 'block', type: 'camera_stop_follow' },
           {
             kind: 'block',
@@ -824,6 +903,62 @@ export function getToolboxConfig(): any {
       },
       {
         kind: 'category',
+        name: 'Sensing',
+        colour: '#5CB1D6',
+        contents: [
+          { kind: 'block', type: 'sensing_key_pressed' },
+          { kind: 'block', type: 'sensing_mouse_down' },
+          { kind: 'block', type: 'sensing_mouse_x' },
+          { kind: 'block', type: 'sensing_mouse_y' },
+          {
+            kind: 'block',
+            type: 'sensing_touching_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_ground' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'sensing_touching_direction_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_ground' },
+              },
+            },
+          },
+          { kind: 'block', type: 'sensing_touching_object' },
+          { kind: 'block', type: 'sensing_all_touching_objects' },
+          { kind: 'block', type: 'object_from_dropdown' },
+          { kind: 'block', type: 'target_myself' },
+          { kind: 'block', type: 'target_mouse' },
+          { kind: 'block', type: 'target_ground' },
+          {
+            kind: 'block',
+            type: 'sensing_distance_to_value',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_mouse' },
+              },
+            },
+          },
+          {
+            kind: 'block',
+            type: 'sensing_is_clone_of_value',
+            inputs: {
+              OBJECT: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+              TARGET: {
+                block: { kind: 'block', type: 'target_myself' },
+              },
+            },
+          },
+        ],
+      },
+      {
+        kind: 'category',
         name: 'Sound',
         colour: '#CF63CF',
         contents: [
@@ -844,6 +979,34 @@ export function getToolboxConfig(): any {
               DELTA: { shadow: { type: 'math_number', fields: { NUM: '-10' } } }
             }
           },
+        ],
+      },
+      {
+        kind: 'category',
+        name: 'Variables',
+        colour: '#FF8C1A',
+        contents: [
+          {
+            kind: 'button',
+            text: '+ Add Variable',
+            callbackKey: 'ADD_VARIABLE',
+          },
+          { kind: 'sep', gap: '16' },
+          { kind: 'label', text: 'Get Variable' },
+          { kind: 'block', type: 'typed_variable_get' },
+          { kind: 'sep', gap: '8' },
+          { kind: 'label', text: 'Set Variable' },
+          { kind: 'block', type: 'typed_variable_set' },
+          {
+            kind: 'block',
+            type: 'typed_variable_change',
+            inputs: {
+              DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          { kind: 'sep', gap: '8' },
+          { kind: 'label', text: 'Boolean Value' },
+          { kind: 'block', type: 'logic_boolean' },
         ],
       },
       {
@@ -877,34 +1040,6 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'logic_operation' },
           { kind: 'block', type: 'logic_negate' },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Variables',
-        colour: '#FF8C1A',
-        contents: [
-          {
-            kind: 'button',
-            text: '+ Add Variable',
-            callbackKey: 'ADD_VARIABLE',
-          },
-          { kind: 'sep', gap: '16' },
-          { kind: 'label', text: 'Get Variable' },
-          { kind: 'block', type: 'typed_variable_get' },
-          { kind: 'sep', gap: '8' },
-          { kind: 'label', text: 'Set Variable' },
-          { kind: 'block', type: 'typed_variable_set' },
-          {
-            kind: 'block',
-            type: 'typed_variable_change',
-            inputs: {
-              DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
-            }
-          },
-          { kind: 'sep', gap: '8' },
-          { kind: 'label', text: 'Boolean Value' },
-          { kind: 'block', type: 'logic_boolean' },
         ],
       },
       {
@@ -1181,6 +1316,17 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['looks_previous_costume'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('previous costume');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Switch to the previous costume');
+    }
+  };
+
   Blockly.Blocks['looks_switch_costume'] = {
     init: function() {
       this.appendValueInput('COSTUME')
@@ -1205,6 +1351,79 @@ function registerCustomBlocks() {
   };
 
   // Control
+  const clampRandomChoiceBranchCount = (rawCount: number): number => {
+    if (!Number.isFinite(rawCount)) return 2;
+    return Math.max(2, Math.min(10, Math.floor(rawCount)));
+  };
+
+  const syncRandomChoiceInputs = (block: Blockly.Block, requestedCount?: number) => {
+    const count = clampRandomChoiceBranchCount(
+      Number.isFinite(requestedCount as number)
+        ? Number(requestedCount)
+        : Number(block.getFieldValue('COUNT'))
+    );
+
+    if (block.getFieldValue('COUNT') !== String(count)) {
+      block.setFieldValue(String(count), 'COUNT');
+    }
+
+    let existing = 0;
+    while (block.getInput(`DO${existing}`)) {
+      existing++;
+    }
+
+    for (let i = existing; i < count; i++) {
+      const input = block.appendStatementInput(`DO${i}`).setCheck(null);
+      input.appendField(i === 0 ? 'do' : 'or');
+    }
+
+    for (let i = existing - 1; i >= count; i--) {
+      block.removeInput(`DO${i}`, true);
+    }
+  };
+
+  Blockly.Blocks['control_random_choice'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('randomly choose among')
+        .appendField(new Blockly.FieldNumber(2, 2, 10, 1), 'COUNT')
+        .appendField('branches');
+      syncRandomChoiceInputs(this, 2);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Randomly runs one of the branches');
+    },
+    mutationToDom: function() {
+      const mutation = Blockly.utils.xml.createElement('mutation');
+      mutation.setAttribute('count', String(clampRandomChoiceBranchCount(Number(this.getFieldValue('COUNT')))));
+      return mutation;
+    },
+    domToMutation: function(xmlElement: Element) {
+      syncRandomChoiceInputs(this, Number(xmlElement.getAttribute('count')));
+    },
+    saveExtraState: function() {
+      return { count: clampRandomChoiceBranchCount(Number(this.getFieldValue('COUNT'))) };
+    },
+    loadExtraState: function(state: { count?: number }) {
+      syncRandomChoiceInputs(this, Number(state?.count));
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (!event) return;
+      if (event.type !== Blockly.Events.BLOCK_CREATE && event.type !== Blockly.Events.BLOCK_CHANGE) {
+        return;
+      }
+      if (event.type === Blockly.Events.BLOCK_CREATE) {
+        syncRandomChoiceInputs(this);
+        return;
+      }
+      const changeEvent = event as Blockly.Events.BlockChange;
+      if (changeEvent.blockId === this.id && changeEvent.name === 'COUNT') {
+        syncRandomChoiceInputs(this);
+      }
+    },
+  };
+
   Blockly.Blocks['control_wait'] = {
     init: function() {
       this.appendValueInput('SECONDS')
@@ -1361,6 +1580,20 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['sensing_touching_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('touching');
+      this.appendDummyInput()
+        .appendField('?');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Is this touching the selected target?');
+    }
+  };
+
   Blockly.Blocks['sensing_touching_direction'] = {
     init: function() {
       this.appendDummyInput()
@@ -1374,6 +1607,22 @@ function registerCustomBlocks() {
       this.setTooltip('Is this touching target from a specific direction?');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['sensing_touching_direction_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('touching');
+      this.appendDummyInput()
+        .appendField('from')
+        .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION')
+        .appendField('?');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Is this touching target from a specific direction?');
     }
   };
 
@@ -1402,6 +1651,18 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['sensing_distance_to_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('distance to');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Number');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Distance to target');
+    }
+  };
+
   Blockly.Blocks['sensing_touching_object'] = {
     init: function() {
       this.appendDummyInput()
@@ -1409,6 +1670,49 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Object');
       this.setColour('#5CB1D6');
       this.setTooltip('Returns the object this sprite is touching, or null if not touching anything');
+    }
+  };
+
+  Blockly.Blocks['object_from_dropdown'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('object')
+        .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Pick an object from a dropdown');
+      const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
+      if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['target_mouse'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('mouse');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Mouse pointer target');
+    }
+  };
+
+  Blockly.Blocks['target_myself'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('myself');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Current object target');
+    }
+  };
+
+  Blockly.Blocks['target_ground'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('ground');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Ground target');
     }
   };
 
@@ -1433,6 +1737,21 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Boolean');
       this.setColour('#5CB1D6');
       this.setTooltip('Check if an object is a clone of the specified object');
+    }
+  };
+
+  Blockly.Blocks['sensing_is_clone_of_value'] = {
+    init: function() {
+      this.appendValueInput('OBJECT')
+        .setCheck('Object');
+      this.appendDummyInput()
+        .appendField('is clone of');
+      this.appendValueInput('TARGET')
+        .setCheck('Object');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Check if an object is a clone of the target object');
     }
   };
 
@@ -1599,18 +1918,6 @@ function registerCustomBlocks() {
     }
   };
 
-  Blockly.Blocks['physics_collide_bounds'] = {
-    init: function() {
-      this.appendDummyInput()
-        .appendField(new Blockly.FieldCheckbox('TRUE'), 'ENABLED')
-        .appendField('collide with world bounds');
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#40BF4A');
-      this.setTooltip('Enable/disable world bounds collision');
-    }
-  };
-
   Blockly.Blocks['physics_immovable'] = {
     init: function() {
       this.appendDummyInput()
@@ -1657,18 +1964,6 @@ function registerCustomBlocks() {
     }
   };
 
-  Blockly.Blocks['physics_set_ground_color'] = {
-    init: function() {
-      this.appendDummyInput()
-        .appendField('set ground color to')
-        .appendField(new Blockly.FieldTextInput('#8B4513'), 'COLOR');
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#40BF4A');
-      this.setTooltip('Set the color of the ground (hex color like #8B4513)');
-    }
-  };
-
   // Camera blocks
   Blockly.Blocks['camera_follow_me'] = {
     init: function() {
@@ -1693,6 +1988,19 @@ function registerCustomBlocks() {
       // Add validator for pick from stage (don't exclude current object)
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(false));
+    }
+  };
+
+  Blockly.Blocks['camera_follow_object_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('camera follow');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#0fBDA8');
+      this.setTooltip('Camera follows the specified object');
     }
   };
 
@@ -1919,6 +2227,19 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['event_when_touching_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('when touching');
+      this.setInputsInline(true);
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs when touching target');
+    }
+  };
+
   Blockly.Blocks['event_when_touching_direction'] = {
     init: function() {
       this.appendDummyInput()
@@ -1932,6 +2253,22 @@ function registerCustomBlocks() {
       this.setTooltip('Runs when touching target from a specific direction');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['event_when_touching_direction_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('when touching');
+      this.setInputsInline(true);
+      this.appendDummyInput()
+        .appendField('from')
+        .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs when touching target from a specific direction');
     }
   };
 
@@ -1975,6 +2312,19 @@ function registerCustomBlocks() {
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(false));
+    }
+  };
+
+  Blockly.Blocks['control_clone_object_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('clone');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Create a clone of the specified object');
     }
   };
 
@@ -2051,6 +2401,19 @@ function registerCustomBlocks() {
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
+    }
+  };
+
+  Blockly.Blocks['motion_point_towards_value'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('point towards');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Point towards target');
     }
   };
 
@@ -2510,7 +2873,9 @@ function checkTypeCompatibility(expectedType: VariableType, valueBlock: Blockly.
              blockType === 'sensing_key_pressed' ||
              blockType === 'sensing_mouse_down' ||
              blockType === 'sensing_touching' ||
+             blockType === 'sensing_touching_value' ||
              blockType === 'sensing_touching_direction' ||
+             blockType === 'sensing_touching_direction_value' ||
              blockType === 'sensing_touching_ground' ||
              (blockType === 'typed_variable_get' && getVariableById(valueBlock.getFieldValue('VAR'))?.type === 'boolean');
   }

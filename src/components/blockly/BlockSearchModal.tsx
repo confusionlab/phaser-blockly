@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as Blockly from 'blockly';
+import { getToolboxConfig } from './toolbox';
 
 // Item types: 'block' for Blockly blocks, 'command' for actions
 type ItemType = 'block' | 'command';
@@ -13,110 +14,176 @@ interface SearchItem {
   label: string;
   category: string;
   categoryColor: string;
+  toolboxBlock?: ToolboxBlockConfig;
 }
 
-// All available items for search
-const ALL_ITEMS: SearchItem[] = [
-  // Commands
+type ToolboxBlockInputConfig = {
+  block?: ToolboxBlockConfig;
+  shadow?: {
+    type: string;
+    fields?: Record<string, string>;
+  };
+};
+
+type ToolboxBlockConfig = {
+  kind: 'block';
+  type: string;
+  inputs?: Record<string, ToolboxBlockInputConfig>;
+  fields?: Record<string, string>;
+  extraState?: Record<string, unknown>;
+};
+
+type ToolboxCategoryConfig = {
+  kind: 'category';
+  name: string;
+  colour: string;
+  contents: Array<{ kind: string } & Record<string, unknown>>;
+};
+
+const COMMAND_ITEMS: SearchItem[] = [
   { id: 'cmd_new_variable', type: 'command', commandId: 'NEW_VARIABLE', label: 'New Variable', category: 'Commands', categoryColor: '#666666' },
   { id: 'cmd_manage_variables', type: 'command', commandId: 'MANAGE_VARIABLES', label: 'Manage Variables', category: 'Commands', categoryColor: '#666666' },
-
-  // Events
-  { id: 'event_game_start', type: 'block', blockType: 'event_game_start', label: 'When I start', category: 'Events', categoryColor: '#FFAB19' },
-  { id: 'event_key_pressed', type: 'block', blockType: 'event_key_pressed', label: 'when key pressed', category: 'Events', categoryColor: '#FFAB19' },
-  { id: 'event_clicked', type: 'block', blockType: 'event_clicked', label: 'when this clicked', category: 'Events', categoryColor: '#FFAB19' },
-  { id: 'event_forever', type: 'block', blockType: 'event_forever', label: 'forever', category: 'Events', categoryColor: '#FFAB19' },
-  { id: 'event_when_receive', type: 'block', blockType: 'event_when_receive', label: 'when I receive', category: 'Events', categoryColor: '#FFAB19' },
-  { id: 'event_when_touching', type: 'block', blockType: 'event_when_touching', label: 'when touching', category: 'Events', categoryColor: '#FFAB19' },
-  { id: 'event_when_touching_direction', type: 'block', blockType: 'event_when_touching_direction', label: 'when touching from', category: 'Events', categoryColor: '#FFAB19' },
-
-  // Motion
-  { id: 'motion_move_steps', type: 'block', blockType: 'motion_move_steps', label: 'move steps', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_go_to', type: 'block', blockType: 'motion_go_to', label: 'go to x y', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_set_x', type: 'block', blockType: 'motion_set_x', label: 'set x to', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_set_y', type: 'block', blockType: 'motion_set_y', label: 'set y to', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_change_x', type: 'block', blockType: 'motion_change_x', label: 'change x by', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_change_y', type: 'block', blockType: 'motion_change_y', label: 'change y by', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_point_direction', type: 'block', blockType: 'motion_point_direction', label: 'point in direction', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_point_towards', type: 'block', blockType: 'motion_point_towards', label: 'point towards', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_my_x', type: 'block', blockType: 'motion_my_x', label: 'my x', category: 'Motion', categoryColor: '#4C97FF' },
-  { id: 'motion_my_y', type: 'block', blockType: 'motion_my_y', label: 'my y', category: 'Motion', categoryColor: '#4C97FF' },
-
-  // Looks
-  { id: 'looks_show', type: 'block', blockType: 'looks_show', label: 'show', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_hide', type: 'block', blockType: 'looks_hide', label: 'hide', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_set_size', type: 'block', blockType: 'looks_set_size', label: 'set size to', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_change_size', type: 'block', blockType: 'looks_change_size', label: 'change size by', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_set_opacity', type: 'block', blockType: 'looks_set_opacity', label: 'set opacity to', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_go_to_front', type: 'block', blockType: 'looks_go_to_front', label: 'go to front', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_go_to_back', type: 'block', blockType: 'looks_go_to_back', label: 'go to back', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_next_costume', type: 'block', blockType: 'looks_next_costume', label: 'next costume', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_switch_costume', type: 'block', blockType: 'looks_switch_costume', label: 'switch costume to', category: 'Looks', categoryColor: '#9966FF' },
-  { id: 'looks_costume_number', type: 'block', blockType: 'looks_costume_number', label: 'costume number', category: 'Looks', categoryColor: '#9966FF' },
-
-  // Physics
-  { id: 'physics_enable', type: 'block', blockType: 'physics_enable', label: 'enable physics', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_disable', type: 'block', blockType: 'physics_disable', label: 'disable physics', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_enabled', type: 'block', blockType: 'physics_enabled', label: 'physics enabled?', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_set_velocity', type: 'block', blockType: 'physics_set_velocity', label: 'set velocity x y', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_set_velocity_x', type: 'block', blockType: 'physics_set_velocity_x', label: 'set velocity x to', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_set_velocity_y', type: 'block', blockType: 'physics_set_velocity_y', label: 'set velocity y to', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_set_gravity', type: 'block', blockType: 'physics_set_gravity', label: 'set gravity to', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_set_bounce', type: 'block', blockType: 'physics_set_bounce', label: 'set bounce to', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_set_friction', type: 'block', blockType: 'physics_set_friction', label: 'set friction to', category: 'Physics', categoryColor: '#40BF4A' },
-  { id: 'physics_immovable', type: 'block', blockType: 'physics_immovable', label: 'make immovable', category: 'Physics', categoryColor: '#40BF4A' },
-
-  // Control
-  { id: 'control_wait', type: 'block', blockType: 'control_wait', label: 'wait seconds', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_repeat', type: 'block', blockType: 'control_repeat', label: 'repeat times', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_repeat_until', type: 'block', blockType: 'control_repeat_until', label: 'repeat until', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_wait_until', type: 'block', blockType: 'control_wait_until', label: 'wait until', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'controls_if', type: 'block', blockType: 'controls_if', label: 'if then', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'controls_if_else', type: 'block', blockType: 'controls_if', label: 'if then else', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_stop', type: 'block', blockType: 'control_stop', label: 'stop', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_clone', type: 'block', blockType: 'control_clone', label: 'clone myself', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_clone_object', type: 'block', blockType: 'control_clone_object', label: 'clone object', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_delete_clone', type: 'block', blockType: 'control_delete_clone', label: 'delete myself', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_delete_object', type: 'block', blockType: 'control_delete_object', label: 'delete object', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_broadcast', type: 'block', blockType: 'control_broadcast', label: 'broadcast', category: 'Control', categoryColor: '#FFBF00' },
-  { id: 'control_broadcast_wait', type: 'block', blockType: 'control_broadcast_wait', label: 'broadcast and wait', category: 'Control', categoryColor: '#FFBF00' },
-
-  // Sensing
-  { id: 'sensing_key_pressed', type: 'block', blockType: 'sensing_key_pressed', label: 'key pressed?', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_mouse_down', type: 'block', blockType: 'sensing_mouse_down', label: 'mouse down?', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_mouse_x', type: 'block', blockType: 'sensing_mouse_x', label: 'mouse x', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_mouse_y', type: 'block', blockType: 'sensing_mouse_y', label: 'mouse y', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_touching', type: 'block', blockType: 'sensing_touching', label: 'touching?', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_touching_direction', type: 'block', blockType: 'sensing_touching_direction', label: 'touching from?', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_touching_object', type: 'block', blockType: 'sensing_touching_object', label: "object I'm touching", category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_distance_to', type: 'block', blockType: 'sensing_distance_to', label: 'distance to', category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_object_x', type: 'block', blockType: 'sensing_object_x', label: "object's x", category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_object_y', type: 'block', blockType: 'sensing_object_y', label: "object's y", category: 'Sensing', categoryColor: '#5CB1D6' },
-  { id: 'sensing_object_costume', type: 'block', blockType: 'sensing_object_costume', label: "object's costume #", category: 'Sensing', categoryColor: '#5CB1D6' },
-
-  // Camera
-  { id: 'camera_follow_me', type: 'block', blockType: 'camera_follow_me', label: 'camera follow me', category: 'Camera', categoryColor: '#0fBDA8' },
-  { id: 'camera_follow_object', type: 'block', blockType: 'camera_follow_object', label: 'camera follow object', category: 'Camera', categoryColor: '#0fBDA8' },
-  { id: 'camera_stop_follow', type: 'block', blockType: 'camera_stop_follow', label: 'camera stop following', category: 'Camera', categoryColor: '#0fBDA8' },
-  { id: 'camera_set_follow_offset', type: 'block', blockType: 'camera_set_follow_offset', label: 'set camera offset x y', category: 'Camera', categoryColor: '#0fBDA8' },
-
-  // Operators
-  { id: 'math_arithmetic', type: 'block', blockType: 'math_arithmetic', label: 'math + - * /', category: 'Operators', categoryColor: '#59C059' },
-  { id: 'math_number', type: 'block', blockType: 'math_number', label: 'number', category: 'Operators', categoryColor: '#59C059' },
-  { id: 'logic_compare', type: 'block', blockType: 'logic_compare', label: 'compare = < >', category: 'Operators', categoryColor: '#59C059' },
-  { id: 'logic_operation', type: 'block', blockType: 'logic_operation', label: 'and or', category: 'Operators', categoryColor: '#59C059' },
-  { id: 'logic_negate', type: 'block', blockType: 'logic_negate', label: 'not', category: 'Operators', categoryColor: '#59C059' },
-  { id: 'logic_boolean', type: 'block', blockType: 'logic_boolean', label: 'true false', category: 'Operators', categoryColor: '#59C059' },
-  { id: 'math_random_int', type: 'block', blockType: 'math_random_int', label: 'random number', category: 'Operators', categoryColor: '#59C059' },
-
-  // Variables
-  { id: 'typed_variable_get', type: 'block', blockType: 'typed_variable_get', label: 'get variable', category: 'Variables', categoryColor: '#FF8C1A' },
-  { id: 'typed_variable_set', type: 'block', blockType: 'typed_variable_set', label: 'set variable to', category: 'Variables', categoryColor: '#FF8C1A' },
-  { id: 'typed_variable_change', type: 'block', blockType: 'typed_variable_change', label: 'change variable by', category: 'Variables', categoryColor: '#FF8C1A' },
-
-  // Debug
-  { id: 'debug_console_log', type: 'block', blockType: 'debug_console_log', label: 'console log', category: 'Debug', categoryColor: '#888888' },
 ];
+
+const TYPE_PREFIXES = [
+  'event_',
+  'motion_',
+  'looks_',
+  'physics_',
+  'control_',
+  'camera_',
+  'sensing_',
+  'sound_',
+  'typed_',
+  'math_',
+  'logic_',
+  'debug_',
+];
+
+function getPreplugType(config: ToolboxBlockConfig, inputName: string): string | undefined {
+  return config.inputs?.[inputName]?.block?.type;
+}
+
+function humanizeBlockType(type: string): string {
+  let result = type;
+  for (const prefix of TYPE_PREFIXES) {
+    if (result.startsWith(prefix)) {
+      result = result.slice(prefix.length);
+      break;
+    }
+  }
+  return result.replace(/_/g, ' ').trim();
+}
+
+function getSearchId(config: ToolboxBlockConfig, occurrence: number): string {
+  if (config.type === 'controls_if') {
+    return (config.extraState as { hasElse?: boolean } | undefined)?.hasElse ? 'controls_if_else' : 'controls_if';
+  }
+  if (config.type === 'control_clone_object_value') {
+    return getPreplugType(config, 'TARGET') === 'target_myself' ? 'control_clone' : 'control_clone_object';
+  }
+  if (config.type === 'camera_follow_object_value') {
+    return getPreplugType(config, 'TARGET') === 'target_myself' ? 'camera_follow_me' : 'camera_follow_object';
+  }
+  if (config.type === 'sensing_is_clone_of_value') {
+    return 'sensing_is_clone_of';
+  }
+  return occurrence === 1 ? config.type : `${config.type}_${occurrence}`;
+}
+
+function getSearchLabel(config: ToolboxBlockConfig): string {
+  if (config.type === 'controls_if') {
+    return (config.extraState as { hasElse?: boolean } | undefined)?.hasElse ? 'if then else' : 'if then';
+  }
+  if (config.type === 'control_clone_object_value') {
+    return getPreplugType(config, 'TARGET') === 'target_myself' ? 'clone myself' : 'clone object';
+  }
+  if (config.type === 'camera_follow_object_value') {
+    return getPreplugType(config, 'TARGET') === 'target_myself' ? 'camera follow me' : 'camera follow object';
+  }
+  if (config.type === 'sensing_is_clone_of_value') {
+    return 'is clone of';
+  }
+  if (config.type === 'event_game_start') return 'When I start';
+  if (config.type === 'event_key_pressed') return 'when key pressed';
+  if (config.type === 'event_clicked') return 'when this clicked';
+  if (config.type === 'event_forever') return 'forever';
+  return humanizeBlockType(config.type);
+}
+
+function buildSearchItemsFromToolbox(): SearchItem[] {
+  const toolbox = getToolboxConfig();
+  const categories = (toolbox.contents || []) as ToolboxCategoryConfig[];
+  const items: SearchItem[] = [...COMMAND_ITEMS];
+
+  for (const category of categories) {
+    if (category.kind !== 'category') continue;
+    const typeCounts = new Map<string, number>();
+    for (const content of category.contents || []) {
+      if (content.kind !== 'block') continue;
+      const block = content as unknown as ToolboxBlockConfig;
+      const nextCount = (typeCounts.get(block.type) || 0) + 1;
+      typeCounts.set(block.type, nextCount);
+      items.push({
+        id: getSearchId(block, nextCount),
+        type: 'block',
+        blockType: block.type,
+        label: getSearchLabel(block),
+        category: category.name,
+        categoryColor: category.colour,
+        toolboxBlock: block,
+      });
+    }
+  }
+  return items;
+}
+
+function applyExtraState(block: Blockly.BlockSvg, extraState?: Record<string, unknown>) {
+  if (!extraState) return;
+  const blockWithExtraState = block as Blockly.BlockSvg & { loadExtraState?: (state: Record<string, unknown>) => void };
+  if (blockWithExtraState.loadExtraState) {
+    blockWithExtraState.loadExtraState(extraState);
+    return;
+  }
+  // Fallback for built-ins that still rely on mutation APIs.
+  if (block.type === 'controls_if' && (extraState as { hasElse?: boolean }).hasElse) {
+    const mutationDom = Blockly.utils.xml.textToDom('<mutation else="1"></mutation>');
+    (block as Blockly.BlockSvg & { domToMutation?: (dom: Element) => void }).domToMutation?.(mutationDom);
+  }
+}
+
+function applyToolboxConfigRecursive(
+  workspace: Blockly.WorkspaceSvg,
+  block: Blockly.BlockSvg,
+  config?: ToolboxBlockConfig
+) {
+  if (!config) return;
+  applyExtraState(block, config.extraState);
+
+  if (config.fields) {
+    for (const [fieldName, fieldValue] of Object.entries(config.fields)) {
+      if (block.getField(fieldName)) {
+        block.setFieldValue(String(fieldValue), fieldName);
+      }
+    }
+  }
+
+  if (!config.inputs) return;
+  for (const [inputName, inputConfig] of Object.entries(config.inputs)) {
+    const childConfig = inputConfig?.block;
+    if (!childConfig) continue;
+    const input = block.getInput(inputName);
+    if (!input?.connection) continue;
+
+    const childBlock = workspace.newBlock(childConfig.type) as Blockly.BlockSvg;
+    applyToolboxConfigRecursive(workspace, childBlock, childConfig);
+    childBlock.initSvg();
+    childBlock.render();
+    if (childBlock.outputConnection) {
+      input.connection.connect(childBlock.outputConnection);
+    }
+  }
+}
 
 interface BlockSearchModalProps {
   isOpen: boolean;
@@ -189,15 +256,18 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
   const [selectedIndex, setSelectedIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const allItems = useMemo(() => buildSearchItemsFromToolbox(), []);
 
   // Filter items based on search query
-  const filteredItems = searchQuery.trim()
-    ? ALL_ITEMS.filter(item =>
-        item.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.blockType && item.blockType.toLowerCase().includes(searchQuery.toLowerCase()))
-      )
-    : ALL_ITEMS;
+  const filteredItems = useMemo(() => {
+    if (!searchQuery.trim()) return allItems;
+    const query = searchQuery.toLowerCase();
+    return allItems.filter(item =>
+      item.label.toLowerCase().includes(query) ||
+      item.category.toLowerCase().includes(query) ||
+      (item.blockType && item.blockType.toLowerCase().includes(query))
+    );
+  }, [allItems, searchQuery]);
 
   // Reset state when modal opens
   useEffect(() => {
@@ -239,13 +309,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
       // Add block to workspace
       try {
         const block = workspace.newBlock(item.blockType) as Blockly.BlockSvg;
-
-        // Handle if-else variant
-        if (item.id === 'controls_if_else') {
-          // Load the mutator state for if-else
-          const mutationDom = Blockly.utils.xml.textToDom('<mutation else="1"></mutation>');
-          (block as Blockly.BlockSvg & { domToMutation?: (dom: Element) => void }).domToMutation?.(mutationDom);
-        }
+        applyToolboxConfigRecursive(workspace, block, item.toolboxBlock);
 
         block.initSvg();
         block.render();

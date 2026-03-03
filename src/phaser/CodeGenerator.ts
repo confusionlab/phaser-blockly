@@ -10,6 +10,10 @@ function asJsString(value: string | null | undefined): string {
  * Generated code calls runtime.* methods.
  */
 export function registerCodeGenerators(): void {
+  const objectExprToId = (expr: string): string => {
+    return `((__obj) => (typeof __obj === 'string' ? __obj : __obj?.id))(${expr})`;
+  };
+
   // --- Events ---
 
   // Event handlers receive sprite as parameter so they work correctly for clones
@@ -42,11 +46,26 @@ export function registerCodeGenerators(): void {
     return `runtime.onTouching(spriteId, ${asJsString(target)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
+  javascriptGenerator.forBlock['event_when_touching_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    return `if (${targetId}) runtime.onTouching(spriteId, ${targetId}, async function(sprite) {\n${nextCode}});\n`;
+  };
+
   javascriptGenerator.forBlock['event_when_touching_direction'] = function(block) {
     const target = block.getFieldValue('TARGET');
     const direction = block.getFieldValue('DIRECTION') || 'SIDE';
     const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
     return `runtime.onTouchingDirection(spriteId, ${asJsString(target)}, ${asJsString(direction)}, async function(sprite) {\n${nextCode}});\n`;
+  };
+
+  javascriptGenerator.forBlock['event_when_touching_direction_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    const direction = block.getFieldValue('DIRECTION') || 'SIDE';
+    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    return `if (${targetId}) runtime.onTouchingDirection(spriteId, ${targetId}, ${asJsString(direction)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   // --- Motion ---
@@ -103,6 +122,19 @@ export function registerCodeGenerators(): void {
     return `sprite.pointTowards(runtime.getSprite(${asJsString(target)})?.container.x ?? 0, runtime.getSprite(${asJsString(target)})?.container.y ?? 0);\n`;
   };
 
+  javascriptGenerator.forBlock['motion_point_towards_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    return `{
+  const __target = ${targetId};
+  if (__target === 'MOUSE') {
+    sprite.pointTowards(runtime.getMouseWorldX(), runtime.getMouseWorldY());
+  } else if (__target) {
+    sprite.pointTowards(runtime.getSprite(__target)?.container.x ?? 0, runtime.getSprite(__target)?.container.y ?? 0);
+  }
+}\n`;
+  };
+
   javascriptGenerator.forBlock['motion_my_x'] = function() {
     return ['sprite.getX()', Order.FUNCTION_CALL];
   };
@@ -127,7 +159,8 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['motion_attach_to_block'] = function(block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
-    return `if (${target}) runtime.attachTo(sprite.id, ${target}.id);\n`;
+    const targetId = objectExprToId(target);
+    return `if (${targetId}) runtime.attachTo(sprite.id, ${targetId});\n`;
   };
 
   javascriptGenerator.forBlock['motion_attach_dropdown_to_me'] = function(block) {
@@ -137,7 +170,8 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['motion_attach_block_to_me'] = function(block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
-    return `if (${target}) runtime.attachTo(${target}.id, sprite.id);\n`;
+    const targetId = objectExprToId(target);
+    return `if (${targetId}) runtime.attachTo(${targetId}, sprite.id);\n`;
   };
 
   javascriptGenerator.forBlock['motion_detach'] = function() {
@@ -181,6 +215,10 @@ export function registerCodeGenerators(): void {
     return 'sprite.nextCostume();\n';
   };
 
+  javascriptGenerator.forBlock['looks_previous_costume'] = function() {
+    return 'sprite.previousCostume();\n';
+  };
+
   javascriptGenerator.forBlock['looks_switch_costume'] = function(block) {
     const costume = javascriptGenerator.valueToCode(block, 'COSTUME', Order.ATOMIC) || '1';
     return `sprite.switchCostume(${costume});\n`;
@@ -222,6 +260,26 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['control_wait_until'] = function(block) {
     const condition = javascriptGenerator.valueToCode(block, 'CONDITION', Order.ATOMIC) || 'false';
     return `while (!(${condition})) { await runtime.wait(0); }\n`;
+  };
+
+  javascriptGenerator.forBlock['control_random_choice'] = function(block) {
+    const branches: string[] = [];
+    let i = 0;
+    while (block.getInput(`DO${i}`)) {
+      branches.push(javascriptGenerator.statementToCode(block, `DO${i}`));
+      i++;
+    }
+
+    if (branches.length === 0) {
+      return '';
+    }
+
+    let code = `switch (Math.floor(Math.random() * ${branches.length})) {\n`;
+    for (let idx = 0; idx < branches.length; idx++) {
+      code += `  case ${idx}:\n${branches[idx]}    break;\n`;
+    }
+    code += '}\n';
+    return code;
   };
 
   javascriptGenerator.forBlock['control_stop'] = function(block) {
@@ -297,11 +355,6 @@ export function registerCodeGenerators(): void {
     return `sprite.setFriction(${friction});\n`;
   };
 
-  javascriptGenerator.forBlock['physics_collide_bounds'] = function(block) {
-    const enabled = block.getFieldValue('ENABLED') === 'TRUE';
-    return `sprite.setCollideWorldBounds(${enabled});\n`;
-  };
-
   javascriptGenerator.forBlock['physics_immovable'] = function() {
     return 'sprite.makeImmovable();\n';
   };
@@ -319,11 +372,6 @@ export function registerCodeGenerators(): void {
     return `runtime.setGroundY(${y});\n`;
   };
 
-  javascriptGenerator.forBlock['physics_set_ground_color'] = function(block) {
-    const color = block.getFieldValue('COLOR') || '#8B4513';
-    return `runtime.setGroundColor(${asJsString(color)});\n`;
-  };
-
   // --- Camera ---
 
   javascriptGenerator.forBlock['camera_follow_me'] = function() {
@@ -333,6 +381,12 @@ export function registerCodeGenerators(): void {
   javascriptGenerator.forBlock['camera_follow_object'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
     return `runtime.cameraFollowSprite(${asJsString(targetId)});\n`;
+  };
+
+  javascriptGenerator.forBlock['camera_follow_object_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    return `if (${targetId}) runtime.cameraFollowSprite(${targetId});\n`;
   };
 
   javascriptGenerator.forBlock['camera_stop_follow'] = function() {
@@ -389,10 +443,23 @@ export function registerCodeGenerators(): void {
     return [`runtime.isTouching(sprite.id, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
   };
 
+  javascriptGenerator.forBlock['sensing_touching_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    return [`(${targetId} ? runtime.isTouching(sprite.id, ${targetId}) : false)`, Order.FUNCTION_CALL];
+  };
+
   javascriptGenerator.forBlock['sensing_touching_direction'] = function(block) {
     const targetId = block.getFieldValue('TARGET');
     const direction = block.getFieldValue('DIRECTION') || 'SIDE';
     return [`runtime.isTouchingDirection(sprite.id, ${asJsString(targetId)}, ${asJsString(direction)})`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['sensing_touching_direction_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    const direction = block.getFieldValue('DIRECTION') || 'SIDE';
+    return [`(${targetId} ? runtime.isTouchingDirection(sprite.id, ${targetId}, ${asJsString(direction)}) : false)`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_touching_ground'] = function() {
@@ -404,8 +471,34 @@ export function registerCodeGenerators(): void {
     return [`runtime.distanceTo(sprite.id, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
   };
 
+  javascriptGenerator.forBlock['sensing_distance_to_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    return [`(${targetId} ? runtime.distanceTo(sprite.id, ${targetId}) : 0)`, Order.FUNCTION_CALL];
+  };
+
   javascriptGenerator.forBlock['sensing_touching_object'] = function() {
     return ['runtime.getTouchingObject(sprite.id)', Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['object_from_dropdown'] = function(block) {
+    const target = block.getFieldValue('TARGET') || '';
+    if (!target) {
+      return ['null', Order.ATOMIC];
+    }
+    return [`runtime.getSprite(${asJsString(target)})`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['target_mouse'] = function() {
+    return [asJsString('MOUSE'), Order.ATOMIC];
+  };
+
+  javascriptGenerator.forBlock['target_myself'] = function() {
+    return ['sprite', Order.ATOMIC];
+  };
+
+  javascriptGenerator.forBlock['target_ground'] = function() {
+    return [asJsString('GROUND'), Order.ATOMIC];
   };
 
   javascriptGenerator.forBlock['sensing_is_clone_of'] = function(block) {
@@ -416,6 +509,19 @@ export function registerCodeGenerators(): void {
       return [`runtime.isCloneOf(${obj}, sprite.cloneParentId || sprite.id)`, Order.FUNCTION_CALL];
     }
     return [`runtime.isCloneOf(${obj}, ${asJsString(targetId)})`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['sensing_is_clone_of_value'] = function(block) {
+    const obj = javascriptGenerator.valueToCode(block, 'OBJECT', Order.ATOMIC) || 'null';
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetBlock = block.getInputTargetBlock('TARGET');
+
+    if (targetBlock?.type === 'target_myself') {
+      return [`runtime.isCloneOf(${obj}, sprite.cloneParentId || sprite.id)`, Order.FUNCTION_CALL];
+    }
+
+    const targetId = objectExprToId(target);
+    return [`(${targetId} ? runtime.isCloneOf(${obj}, ${targetId}) : false)`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_all_touching_objects'] = function() {
@@ -477,6 +583,12 @@ export function registerCodeGenerators(): void {
       return '/* clone target not set */\n';
     }
     return `await runtime.cloneSprite(${asJsString(targetId)});\n`;
+  };
+
+  javascriptGenerator.forBlock['control_clone_object_value'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    return `if (${targetId}) await runtime.cloneSprite(${targetId});\n`;
   };
 
   javascriptGenerator.forBlock['control_delete_clone'] = function() {
@@ -603,7 +715,9 @@ const HAT_BLOCKS = [
   'event_forever',
   'event_when_receive',
   'event_when_touching',
+  'event_when_touching_value',
   'event_when_touching_direction',
+  'event_when_touching_direction_value',
 ];
 
 /**
