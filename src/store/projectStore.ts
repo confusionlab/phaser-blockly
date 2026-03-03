@@ -136,6 +136,10 @@ function cloneVariableDefinitions(variables: GameObject['localVariables']): Game
   return (variables || []).map((variable) => ({ ...variable }));
 }
 
+function normalizeComponentName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
   return {
     name: obj.name,
@@ -928,6 +932,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     // Don't convert if already a component instance
     if (obj.componentId) return null;
+
+    // Enforce unique component names (case-insensitive).
+    const requestedName = normalizeComponentName(obj.name || '');
+    if (!requestedName) return null;
+    const hasDuplicateName = (state.project.components || []).some(
+      (component) => normalizeComponentName(component.name) === requestedName
+    );
+    if (hasDuplicateName) return null;
 
     // Create component definition from the object
     const componentId = crypto.randomUUID();

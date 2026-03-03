@@ -158,6 +158,7 @@ export function SpriteShelf() {
     removeScene,
     reorderScenes,
     makeComponent,
+    deleteComponent,
     detachFromComponent,
     addComponentInstance,
   } = useProjectStore();
@@ -929,14 +930,51 @@ export function SpriteShelf() {
   };
 
   const handleMakeComponent = () => {
-    if (!contextMenu || contextMenu.kind !== 'object') return;
-    makeComponent(selectedSceneId, contextMenu.object.id);
+    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
+
+    const requestedName = contextMenu.object.name.trim();
+    const normalizedRequestedName = requestedName.toLowerCase();
+    const hasDuplicateName = (project.components || []).some(
+      (component) => component.name.trim().toLowerCase() === normalizedRequestedName
+    );
+    if (hasDuplicateName) {
+      window.alert(`A component named "${requestedName}" already exists. Rename the object first.`);
+      return;
+    }
+
+    const created = makeComponent(selectedSceneId, contextMenu.object.id);
+    if (!created) {
+      window.alert('Could not create component. Check that the name is unique.');
+      return;
+    }
+
     handleCloseContextMenu();
   };
 
   const handleDetachFromComponent = () => {
     if (!contextMenu || contextMenu.kind !== 'object') return;
     detachFromComponent(selectedSceneId, contextMenu.object.id);
+    handleCloseContextMenu();
+  };
+
+  const handleDeleteComponent = () => {
+    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
+    const componentId = contextMenu.object.componentId;
+    if (!componentId) return;
+
+    const component = (project.components || []).find((item) => item.id === componentId);
+    const componentName = component?.name || contextMenu.object.name;
+    const instanceCount = project.scenes.reduce((count, scene) => {
+      return count + scene.objects.filter((obj) => obj.componentId === componentId).length;
+    }, 0);
+
+    const confirmed = window.confirm(
+      `Delete component "${componentName}"?\n\n` +
+      `This will detach ${instanceCount} instance${instanceCount === 1 ? '' : 's'} and keep them as standalone objects.`
+    );
+    if (!confirmed) return;
+
+    deleteComponent(componentId);
     handleCloseContextMenu();
   };
 
@@ -1377,15 +1415,26 @@ export function SpriteShelf() {
                     Make Component
                   </Button>
                 ) : (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleDetachFromComponent}
-                    className="w-full justify-start rounded-none h-8"
-                  >
-                    <Unlink className="size-4" />
-                    Detach from Component
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDetachFromComponent}
+                      className="w-full justify-start rounded-none h-8"
+                    >
+                      <Unlink className="size-4" />
+                      Detach from Component
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDeleteComponent}
+                      className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                      Delete Component
+                    </Button>
+                  </>
                 )}
                 <Button
                   variant="ghost"
