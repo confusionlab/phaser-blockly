@@ -247,6 +247,10 @@ export function registerCodeGenerators(): void {
     return `while (!(${condition})) {\n${statements}  await runtime.wait(0);\n}\n`;
   };
 
+  javascriptGenerator.forBlock['control_group_block'] = function(block) {
+    return javascriptGenerator.statementToCode(block, 'DO');
+  };
+
   javascriptGenerator.forBlock['control_for_each'] = function(block) {
     const list = javascriptGenerator.valueToCode(block, 'LIST', Order.ATOMIC) || '[]';
     const statements = javascriptGenerator.statementToCode(block, 'DO');
