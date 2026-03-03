@@ -205,11 +205,27 @@ export function CostumeEditor() {
   }, [persistCanvasStateToObject, selectedSceneId, selectedObjectId]);
 
   useEffect(() => {
-    if (!canvasRef.current || costumes.length === 0) return;
+    if (!canvasRef.current) return;
     if (justSavedRef.current) return;
 
     const currentCostume = costumes[currentCostumeIndex];
-    if (!currentCostume) return;
+    if (!currentCostume) {
+      currentCostumeIdRef.current = null;
+      const requestId = ++loadRequestIdRef.current;
+      isLoadingRef.current = true;
+      const fallbackMode: CostumeEditorMode = 'bitmap';
+      setEditorMode(fallbackMode);
+      setActiveTool((prev) => ensureToolForMode(fallbackMode, prev));
+
+      canvasRef.current.loadFromDataURL('').finally(() => {
+        if (loadRequestIdRef.current !== requestId) return;
+        isLoadingRef.current = false;
+        const resolvedMode = canvasRef.current?.getEditorMode() ?? fallbackMode;
+        setEditorMode(resolvedMode);
+        setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
+      });
+      return;
+    }
 
     if (currentCostumeIdRef.current !== currentCostume.id) {
       currentCostumeIdRef.current = currentCostume.id;
@@ -228,7 +244,7 @@ export function CostumeEditor() {
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
-  }, [costumes, currentCostumeIndex]);
+  }, [costumes, currentCostumeIndex, selectedSceneId, selectedObjectId]);
 
   useEffect(() => {
     return () => {
