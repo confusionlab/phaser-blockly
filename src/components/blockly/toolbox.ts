@@ -232,14 +232,15 @@ function updateCollapsedGroupRow(block: Blockly.Block): void {
   const collapsedInput = block.getInput(Blockly.Block.COLLAPSED_INPUT_NAME);
   if (!collapsedInput) return;
 
-  // Clear all existing collapsed-row fields so Blockly's auto summary text
-  // (which can include nested statement previews) is fully replaced.
-  for (let i = collapsedInput.fieldRow.length - 1; i >= 0; i--) {
-    const fieldName = (collapsedInput.fieldRow[i] as Blockly.Field<unknown> & { name?: string }).name;
-    if (fieldName) {
-      collapsedInput.removeField(fieldName, true);
-    }
+  const nameOnly = block.getFieldValue('NAME') || 'group name';
+  const collapsedTextField = collapsedInput.fieldRow.find((field) => {
+    return (field as Blockly.Field<unknown> & { name?: string }).name === Blockly.Block.COLLAPSED_FIELD_NAME;
+  });
+  if (collapsedTextField) {
+    collapsedTextField.setValue(nameOnly);
   }
+
+  collapsedInput.removeField('GROUP_COLLAPSE_TOGGLE', true);
 
   const collapsedToggleField = new Blockly.FieldImage(
     GROUP_BLOCK_COLLAPSED_ICON,
@@ -253,8 +254,7 @@ function updateCollapsedGroupRow(block: Blockly.Block): void {
       syncGroupBlockToggleIcon(sourceBlock);
     }
   );
-  collapsedInput.appendField(collapsedToggleField, 'GROUP_COLLAPSE_TOGGLE');
-  collapsedInput.appendField(block.getFieldValue('NAME') || 'group name', 'GROUP_COLLAPSE_LABEL');
+  collapsedInput.insertFieldAt(0, collapsedToggleField, 'GROUP_COLLAPSE_TOGGLE');
 }
 
 function setGroupBlockCollapsed(block: Blockly.Block, collapsed: boolean): void {
@@ -1601,6 +1601,13 @@ function registerCustomBlocks() {
         syncGroupBlockToggleIcon(this);
         updateCollapsedGroupRow(this);
       }, 0);
+    },
+    toString: function(opt_maxLength?: number) {
+      const name = this.getFieldValue('NAME') || 'group name';
+      if (opt_maxLength && name.length > opt_maxLength) {
+        return `${name.slice(0, Math.max(0, opt_maxLength - 3))}...`;
+      }
+      return name;
     },
     onchange: function(event: Blockly.Events.Abstract) {
       if (!event) return;
