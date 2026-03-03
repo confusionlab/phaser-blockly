@@ -86,6 +86,21 @@ interface ProjectStore {
 
 let lastUpdatedAtMs = 0;
 
+type ComponentBackedObjectFields = Pick<
+  GameObject,
+  'name' | 'blocklyXml' | 'costumes' | 'currentCostumeIndex' | 'physics' | 'collider' | 'sounds'
+>;
+
+const COMPONENT_SYNC_KEYS: (keyof ComponentBackedObjectFields)[] = [
+  'name',
+  'blocklyXml',
+  'costumes',
+  'currentCostumeIndex',
+  'physics',
+  'collider',
+  'sounds',
+];
+
 function createUpdatedAt(): Date {
   const now = Date.now();
   if (now <= lastUpdatedAtMs) {
@@ -94,6 +109,54 @@ function createUpdatedAt(): Date {
     lastUpdatedAtMs = now;
   }
   return new Date(lastUpdatedAtMs);
+}
+
+function cloneCostumes(costumes: GameObject['costumes']): GameObject['costumes'] {
+  return (costumes || []).map((costume) => ({
+    ...costume,
+    bounds: costume.bounds ? { ...costume.bounds } : undefined,
+    vectorDocument: costume.vectorDocument ? { ...costume.vectorDocument } : undefined,
+  }));
+}
+
+function cloneSounds(sounds: GameObject['sounds']): GameObject['sounds'] {
+  return (sounds || []).map((sound) => ({ ...sound }));
+}
+
+function clonePhysicsConfig(physics: GameObject['physics']): GameObject['physics'] {
+  return physics ? { ...physics } : null;
+}
+
+function cloneColliderConfig(collider: GameObject['collider']): GameObject['collider'] {
+  return collider ? { ...collider } : null;
+}
+
+function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
+  return {
+    name: obj.name,
+    blocklyXml: obj.blocklyXml,
+    costumes: cloneCostumes(obj.costumes),
+    currentCostumeIndex: obj.currentCostumeIndex,
+    physics: clonePhysicsConfig(obj.physics),
+    collider: cloneColliderConfig(obj.collider),
+    sounds: cloneSounds(obj.sounds),
+  };
+}
+
+function toComponentBackedObjectFields(component: ComponentDefinition): ComponentBackedObjectFields {
+  const costumes = cloneCostumes(component.costumes || []);
+  const maxCostumeIndex = Math.max(0, costumes.length - 1);
+  const safeCostumeIndex = Math.min(Math.max(component.currentCostumeIndex || 0, 0), maxCostumeIndex);
+
+  return {
+    name: component.name,
+    blocklyXml: component.blocklyXml,
+    costumes,
+    currentCostumeIndex: safeCostumeIndex,
+    physics: clonePhysicsConfig(component.physics ?? null),
+    collider: cloneColliderConfig(component.collider ?? null),
+    sounds: cloneSounds(component.sounds || []),
+  };
 }
 
 function normalizeProject(project: Project): Project {
@@ -365,15 +428,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         ]);
 
         // Shared component properties (sync across all instances of the same component)
-        const componentSyncKeys: (keyof ComponentDefinition & keyof GameObject)[] = [
-          'name',
-          'blocklyXml',
-          'costumes',
-          'currentCostumeIndex',
-          'physics',
-          'collider',
-          'sounds',
-        ];
+        const componentSyncKeys = COMPONENT_SYNC_KEYS as (keyof ComponentDefinition & keyof GameObject)[];
 
         const syncedUpdates: Partial<ComponentDefinition> = {};
         const instanceUpdates: Partial<GameObject> = {};
@@ -723,13 +778,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const componentId = crypto.randomUUID();
     const component: ComponentDefinition = {
       id: componentId,
-      name: obj.name,
-      blocklyXml: obj.blocklyXml,
-      costumes: obj.costumes,
-      currentCostumeIndex: obj.currentCostumeIndex,
-      physics: obj.physics,
-      collider: obj.collider,
-      sounds: obj.sounds,
+      ...toComponentBackedFieldsFromObject(obj),
     };
 
     set(state => ({
@@ -760,18 +809,42 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => {
-    set(state => ({
-      project: state.project
-        ? {
-            ...state.project,
-            components: (state.project.components || []).map(c =>
-              c.id === componentId ? { ...c, ...updates } : c
-            ),
-            updatedAt: createUpdatedAt(),
-          }
-        : null,
-      isDirty: true,
-    }));
+    set(state => {
+      if (!state.project) return state;
+
+      const componentExists = (state.project.components || []).some((component) => component.id === componentId);
+      if (!componentExists) return state;
+
+      const syncedInstanceUpdates: Partial<ComponentBackedObjectFields> = {};
+      for (const key of COMPONENT_SYNC_KEYS) {
+        const value = updates[key];
+        if (value !== undefined) {
+          (syncedInstanceUpdates as Record<string, unknown>)[key] = value;
+        }
+      }
+      const hasSyncedUpdates = Object.keys(syncedInstanceUpdates).length > 0;
+
+      return {
+        project: {
+          ...state.project,
+          components: (state.project.components || []).map((component) =>
+            component.id === componentId ? { ...component, ...updates } : component
+          ),
+          scenes: hasSyncedUpdates
+            ? state.project.scenes.map((scene) => ({
+                ...normalizeSceneLayering({
+                  ...scene,
+                  objects: scene.objects.map((obj) =>
+                    obj.componentId === componentId ? { ...obj, ...syncedInstanceUpdates } : obj
+                  ),
+                }),
+              }))
+            : state.project.scenes,
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
     recordHistoryChange({ source: 'project:update-component', allowMerge: true });
   },
 
@@ -791,12 +864,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                 return {
                   ...obj,
                   componentId: undefined,
-                  blocklyXml: component.blocklyXml,
-                  costumes: component.costumes,
-                  currentCostumeIndex: component.currentCostumeIndex,
-                  physics: component.physics,
-                  collider: component.collider,
-                  sounds: component.sounds,
+                  ...toComponentBackedObjectFields(component),
                 };
               }
             }
@@ -825,10 +893,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const component = (state.project.components || []).find(c => c.id === componentId);
     if (!component) return null;
     const scene = state.project.scenes.find((s) => s.id === sceneId);
+    const componentFields = toComponentBackedObjectFields(component);
 
     const newObject: GameObject = {
       id: crypto.randomUUID(),
-      name: component.name,
+      ...componentFields,
       spriteAssetId: null,
       x: 0,
       y: 0,
@@ -840,13 +909,6 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       order: scene ? getNextSiblingOrder(scene, null) : 0,
       layer: undefined,
       componentId,
-      // These are ignored when componentId is set, but we need them for the type
-      physics: null,
-      collider: null,
-      blocklyXml: '',
-      costumes: [],
-      currentCostumeIndex: 0,
-      sounds: [],
       localVariables: [],
     };
 
@@ -892,12 +954,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
                       ? {
                           ...o,
                           componentId: undefined,
-                          blocklyXml: component.blocklyXml,
-                          costumes: component.costumes,
-                          currentCostumeIndex: component.currentCostumeIndex,
-                          physics: component.physics,
-                          collider: component.collider,
-                          sounds: component.sounds,
+                          ...toComponentBackedObjectFields(component),
                         }
                       : o
                   ),

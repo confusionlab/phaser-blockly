@@ -4,6 +4,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
 import { Checkbox } from '@/components/ui/checkbox';
+import { getEffectiveObjectProps } from '@/types';
 import type { Project } from '@/types';
 
 export function DebugPanel() {
@@ -47,11 +48,16 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const selectedObject = selectedScene?.objects.find(o => o.id === selectedObjectId);
+  const components = project?.components || [];
+  const selectedObjectEffectiveProps = selectedObject
+    ? getEffectiveObjectProps(selectedObject, components)
+    : null;
+  const selectedBlocklyXml = selectedObjectEffectiveProps?.blocklyXml || '';
 
   const generatedCode = activeTab === 'code'
     ? (
-      selectedObject?.blocklyXml
-        ? generateCodeForObject(selectedObject.blocklyXml, selectedObject.id)
+      selectedBlocklyXml
+        ? generateCodeForObject(selectedBlocklyXml, selectedObject?.id || '')
         : '// No blocks'
     )
     : '';
@@ -62,9 +68,10 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
     const allCode: string[] = [];
     for (const obj of selectedScene.objects) {
-      if (obj.blocklyXml) {
+      const effectiveProps = getEffectiveObjectProps(obj, components);
+      if (effectiveProps.blocklyXml) {
         allCode.push(`// ========== ${obj.name} (${obj.id}) ==========`);
-        allCode.push(generateCodeForObject(obj.blocklyXml, obj.id));
+        allCode.push(generateCodeForObject(effectiveProps.blocklyXml, obj.id));
         allCode.push('');
       }
     }
@@ -78,8 +85,8 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
   const formattedXml = activeTab === 'xml'
     ? (
-      selectedObject?.blocklyXml
-        ? formatXml(selectedObject.blocklyXml)
+      selectedBlocklyXml
+        ? formatXml(selectedBlocklyXml)
         : '<!-- No blocks -->'
     )
     : '';
@@ -171,7 +178,7 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
                   <div>Scale: ({selectedObject.scaleX}, {selectedObject.scaleY})</div>
                   <div>Rotation: {selectedObject.rotation}°</div>
                   <div>Visible: {selectedObject.visible ? 'Yes' : 'No'}</div>
-                  <div>Has Blocks: {selectedObject.blocklyXml ? 'Yes' : 'No'}</div>
+                  <div>Has Blocks: {selectedBlocklyXml ? 'Yes' : 'No'}</div>
                 </>
               ) : (
                 <div className="text-gray-500">None selected</div>

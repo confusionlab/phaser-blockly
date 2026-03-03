@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/color-picker';
 import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink, Component, Paintbrush } from 'lucide-react';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
-import { createDefaultColliderConfig } from '@/types';
+import { createDefaultColliderConfig, getEffectiveObjectProps } from '@/types';
 import {
   beginHistoryTransaction,
   endHistoryTransaction,
@@ -301,6 +301,7 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
   const activeDragTransactionsRef = useRef(0);
   const object = objects[0];
   const isMultiSelection = objects.length > 1;
+  const components = useProjectStore((state) => state.project?.components || []);
 
   useEffect(() => {
     return () => {
@@ -472,6 +473,9 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
   };
 
   const anyComponentInstance = objects.some((selectedObj) => !!selectedObj.componentId);
+  const effectiveObjectProps = getEffectiveObjectProps(object, components);
+  const effectivePhysics = effectiveObjectProps.physics;
+  const effectiveCollider = effectiveObjectProps.collider;
   const allVisible = objects.every((selectedObj) => selectedObj.visible);
   const mixedVisible = objects.some((selectedObj) => selectedObj.visible !== allVisible);
   const allFlippedH = objects.every((selectedObj) => selectedObj.scaleX < 0);
@@ -609,9 +613,20 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
       {/* Physics is single-object only */}
       {!isMultiSelection && (
         <>
-          <PhysicsToggle object={object} sceneId={sceneId} updateObject={updateObject} />
-          {object.physics?.enabled && (
-            <PhysicsProperties object={object} sceneId={sceneId} updateObject={updateObject} />
+          <PhysicsToggle
+            object={object}
+            sceneId={sceneId}
+            updateObject={updateObject}
+            physics={effectivePhysics}
+            collider={effectiveCollider}
+          />
+          {effectivePhysics?.enabled && (
+            <PhysicsProperties
+              object={object}
+              sceneId={sceneId}
+              updateObject={updateObject}
+              physics={effectivePhysics}
+            />
           )}
         </>
       )}
@@ -709,8 +724,17 @@ interface FieldProps {
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
 }
 
-function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
-  const hasPhysics = object.physics?.enabled ?? false;
+function PhysicsToggle({
+  object,
+  sceneId,
+  updateObject,
+  physics,
+  collider,
+}: FieldProps & {
+  physics: PhysicsConfig | null;
+  collider: GameObject['collider'];
+}) {
+  const hasPhysics = physics?.enabled ?? false;
 
   const togglePhysics = (checked: boolean) => {
     if (!checked) {
@@ -732,7 +756,7 @@ function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
       };
 
       // If no collider exists, create a default circle collider
-      if (!object.collider || object.collider.type === 'none') {
+      if (!collider || collider.type === 'none') {
         updates.collider = createDefaultColliderConfig('circle');
       }
 
@@ -757,8 +781,12 @@ function PhysicsToggle({ object, sceneId, updateObject }: FieldProps) {
   );
 }
 
-function PhysicsProperties({ object, sceneId, updateObject }: FieldProps) {
-  const physics = object.physics!;
+function PhysicsProperties({
+  object,
+  sceneId,
+  updateObject,
+  physics,
+}: FieldProps & { physics: PhysicsConfig }) {
   const syncedLabelClass = object.componentId ? 'text-purple-600' : 'text-muted-foreground';
 
   const updatePhysics = (updates: Partial<PhysicsConfig>) => {
