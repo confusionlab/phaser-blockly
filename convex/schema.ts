@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 // Project data schema version. Keep aligned with src/db/database.ts.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 6;
 
 // Shared bounds validator
 const boundsValidator = v.object({
@@ -129,5 +129,6 @@ export default defineSchema({
     // Union preserves backwards compatibility with previously written string values.
     schemaVersion: v.union(v.number(), v.string()),
     appVersion: v.optional(v.string()),
+    contentHash: v.optional(v.string()),
   }).index("by_localId", ["localId"]),
 });

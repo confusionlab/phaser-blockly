@@ -30,6 +30,7 @@ interface CloudProjectRecord {
   updatedAt: number;
   schemaVersion: number | string;
   appVersion?: string;
+  contentHash?: string;
   storageId?: Id<'_storage'>;
   dataSizeBytes?: number;
   data?: string;
@@ -43,7 +44,7 @@ type StorageSyncPayload = Omit<ProjectSyncPayload, 'data'> & {
 
 type BeaconSyncPayload = Pick<
   ProjectSyncPayload,
-  'localId' | 'name' | 'data' | 'createdAt' | 'updatedAt' | 'schemaVersion' | 'appVersion'
+  'localId' | 'name' | 'data' | 'createdAt' | 'updatedAt' | 'schemaVersion' | 'appVersion' | 'contentHash'
 >;
 
 function toBeaconSyncPayload(payload: ProjectSyncPayload): BeaconSyncPayload {
@@ -55,6 +56,7 @@ function toBeaconSyncPayload(payload: ProjectSyncPayload): BeaconSyncPayload {
     updatedAt: payload.updatedAt,
     schemaVersion: payload.schemaVersion,
     appVersion: payload.appVersion,
+    contentHash: payload.contentHash,
   };
 }
 
@@ -86,6 +88,52 @@ async function loadProjectDataFromCloud(cloudProject: CloudProjectRecord): Promi
   }
 
   throw new Error(`Cloud project "${cloudProject.localId}" has no sync data`);
+}
+
+function normalizeSchemaVersion(version: number | string): number {
+  if (typeof version === 'number' && Number.isFinite(version) && version >= 1) {
+    return Math.floor(version);
+  }
+  if (typeof version === 'string') {
+    const parsed = Number.parseFloat(version);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.floor(parsed);
+    }
+  }
+  return 1;
+}
+
+function normalizeContentHash(hash: string | undefined): string {
+  return typeof hash === 'string' ? hash.trim().toLowerCase() : '';
+}
+
+function dedupeCloudProjectsByLocalId(projects: CloudProjectRecord[]): CloudProjectRecord[] {
+  const byLocalId = new Map<string, CloudProjectRecord>();
+
+  for (const project of projects) {
+    const existing = byLocalId.get(project.localId);
+    if (!existing) {
+      byLocalId.set(project.localId, project);
+      continue;
+    }
+
+    const existingSchema = normalizeSchemaVersion(existing.schemaVersion);
+    const incomingSchema = normalizeSchemaVersion(project.schemaVersion);
+    const existingHash = normalizeContentHash(existing.contentHash);
+    const incomingHash = normalizeContentHash(project.contentHash);
+
+    const incomingWins =
+      project.updatedAt > existing.updatedAt ||
+      (project.updatedAt === existing.updatedAt &&
+        (incomingSchema > existingSchema ||
+          (incomingSchema === existingSchema && incomingHash > existingHash)));
+
+    if (incomingWins) {
+      byLocalId.set(project.localId, project);
+    }
+  }
+
+  return Array.from(byLocalId.values());
 }
 
 export function useCloudSync(options: CloudSyncOptions = {}) {
@@ -140,7 +188,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   const syncPayloadToCloud = useCallback(
     async (payload: ProjectSyncPayload) => {
-      if (isSyncingRef.current) return;
       try {
         const storagePayload = await toStorageSyncPayload(payload);
         await syncSingleMutation(storagePayload);
@@ -170,6 +217,31 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     }
   }, []);
 
+  const reconcileProjectFromCloud = useCallback(async (localId: string): Promise<boolean> => {
+    if (!cloudProjects) {
+      return false;
+    }
+
+    const candidate = dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]).find(
+      (project) => project.localId === localId,
+    );
+    if (!candidate) {
+      return false;
+    }
+
+    try {
+      const data = await loadProjectDataFromCloud(candidate);
+      await syncProjectFromCloud({
+        ...candidate,
+        data,
+      });
+      return true;
+    } catch (error) {
+      console.error(`[CloudSync] Failed to reconcile local project "${localId}" from cloud:`, error);
+      return false;
+    }
+  }, [cloudProjects]);
+
   // Sync all local projects to cloud
   const syncAllToCloud = useCallback(async () => {
     if (isSyncingRef.current) return;
@@ -186,8 +258,16 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       const storageProjects: StorageSyncPayload[] = [];
 
       for (const localProject of localProjects) {
-        const storageProject = await toStorageSyncPayload(localProject);
-        storageProjects.push(storageProject);
+        try {
+          const storageProject = await toStorageSyncPayload(localProject);
+          storageProjects.push(storageProject);
+        } catch (error) {
+          console.error(`[CloudSync] Failed to prepare "${localProject.localId}" for upload:`, error);
+        }
+      }
+
+      if (storageProjects.length === 0) {
+        return;
       }
 
       const results = await syncMutation({ projects: storageProjects });
@@ -210,13 +290,19 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         const storagePayload = await toStorageSyncPayload(project);
         const result = await syncSingleMutation(storagePayload);
         console.log('[CloudSync] Single sync result:', result);
+
+        if (result.action === 'skipped' && result.reason !== 'already in sync') {
+          await reconcileProjectFromCloud(projectId);
+          return false;
+        }
+
         return true;
       } catch (error) {
         console.error('[CloudSync] Failed to sync project:', error);
         return false;
       }
     },
-    [syncSingleMutation, toStorageSyncPayload],
+    [reconcileProjectFromCloud, syncSingleMutation, toStorageSyncPayload],
   );
 
   const deleteProjectFromCloud = useCallback(
@@ -239,22 +325,33 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
     try {
       const { pruneLocal = false } = options;
-      console.log(`[CloudSync] Syncing ${cloudProjects.length} projects from cloud...`);
+      const normalizedCloudProjects = dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]);
+      console.log(`[CloudSync] Syncing ${normalizedCloudProjects.length} projects from cloud...`);
+
       const results = await Promise.all(
-        cloudProjects.map(async (cloudProject) => {
-          const data = await loadProjectDataFromCloud(cloudProject as CloudProjectRecord);
-          const result = await syncProjectFromCloud({
-            ...cloudProject,
-            data,
-          });
-          return { localId: cloudProject.localId, ...result };
+        normalizedCloudProjects.map(async (cloudProject) => {
+          try {
+            const data = await loadProjectDataFromCloud(cloudProject);
+            const result = await syncProjectFromCloud({
+              ...cloudProject,
+              data,
+            });
+            return { localId: cloudProject.localId, ...result };
+          } catch (error) {
+            console.error(`[CloudSync] Failed cloud->local sync for "${cloudProject.localId}":`, error);
+            return {
+              localId: cloudProject.localId,
+              action: 'skipped' as const,
+              reason: error instanceof Error ? error.message : 'sync from cloud failed',
+            };
+          }
         }),
       );
       console.log('[CloudSync] Sync from cloud results:', results);
 
       if (pruneLocal) {
         const pruneResult = await pruneLocalProjectsNotInCloud(
-          cloudProjects.map((project) => project.localId),
+          normalizedCloudProjects.map((project) => project.localId),
         );
         if (pruneResult.deleted > 0) {
           console.log(`[CloudSync] Pruned ${pruneResult.deleted} local-only projects`);
@@ -280,24 +377,35 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
         const storageProjects: StorageSyncPayload[] = [];
         for (const localProject of localProjects) {
-          const storageProject = await toStorageSyncPayload(localProject);
-          storageProjects.push(storageProject);
+          try {
+            const storageProject = await toStorageSyncPayload(localProject);
+            storageProjects.push(storageProject);
+          } catch (error) {
+            console.error(`[CloudSync] Failed to prepare "${localProject.localId}" for bidirectional sync:`, error);
+          }
+        }
+
+        if (storageProjects.length === 0) {
+          return;
         }
 
         await syncMutation({ projects: storageProjects });
       });
 
       if (cloudProjects) {
+        const normalizedCloudProjects = dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]);
         await runWithRetry(async () => {
-          await Promise.all(
-            cloudProjects.map(async (cloudProject) => {
-              const data = await loadProjectDataFromCloud(cloudProject as CloudProjectRecord);
+          await Promise.all(normalizedCloudProjects.map(async (cloudProject) => {
+            try {
+              const data = await loadProjectDataFromCloud(cloudProject);
               await syncProjectFromCloud({
                 ...cloudProject,
                 data,
               });
-            }),
-          );
+            } catch (error) {
+              console.error(`[CloudSync] Failed to reconcile "${cloudProject.localId}" in bidirectional sync:`, error);
+            }
+          }));
         });
       }
     } catch (error) {

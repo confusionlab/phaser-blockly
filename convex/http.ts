@@ -13,6 +13,7 @@ type BeaconSyncPayload = {
   updatedAt: number;
   schemaVersion?: number | string;
   appVersion?: string;
+  contentHash?: string;
 };
 
 function isBeaconSyncPayload(value: unknown): value is BeaconSyncPayload {
@@ -37,6 +38,10 @@ function isBeaconSyncPayload(value: unknown): value is BeaconSyncPayload {
   }
 
   if (payload.appVersion !== undefined && typeof payload.appVersion !== "string") {
+    return false;
+  }
+
+  if (payload.contentHash !== undefined && typeof payload.contentHash !== "string") {
     return false;
   }
 

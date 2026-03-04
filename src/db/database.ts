@@ -38,6 +38,7 @@ interface ProjectRecordV1 {
 interface ProjectRecord extends ProjectRecordV1 {
   schemaVersion: number;
   appVersion?: string;
+  contentHash?: string;
 }
 
 interface AssetRecord {
@@ -186,14 +187,16 @@ function deserializeProjectFromRecord(record: ProjectRecord): {
 }
 
 function toProjectRecord(project: Project, updatedAt: Date = new Date()): ProjectRecord {
+  const data = serializeProjectData(project);
   return {
     id: project.id,
     name: project.name,
     createdAt: new Date(project.createdAt),
     updatedAt,
-    data: serializeProjectData(project),
+    data,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     appVersion: APP_VERSION,
+    contentHash: computeContentHash(data),
   };
 }
 
@@ -328,21 +331,74 @@ export interface ProjectSyncPayload {
   updatedAt: number;
   schemaVersion: number;
   appVersion: string;
+  contentHash: string;
+}
+
+const FNV64_OFFSET = 0xcbf29ce484222325n;
+const FNV64_PRIME = 0x100000001b3n;
+const FNV64_MASK = 0xffffffffffffffffn;
+
+function computeContentHash(data: string): string {
+  let hash = FNV64_OFFSET;
+  for (let i = 0; i < data.length; i += 1) {
+    hash ^= BigInt(data.charCodeAt(i));
+    hash = (hash * FNV64_PRIME) & FNV64_MASK;
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
+function normalizeContentHash(hash: unknown): string | null {
+  if (typeof hash !== 'string') {
+    return null;
+  }
+
+  const normalized = hash.trim().toLowerCase();
+  return /^[0-9a-f]{16}$/.test(normalized) ? normalized : null;
+}
+
+function chooseIncomingByTieBreak(incomingHash: string | null, existingHash: string | null): boolean {
+  if (!incomingHash || !existingHash) {
+    return false;
+  }
+
+  return incomingHash > existingHash;
+}
+
+async function preserveLocalConflictCopy(existing: ProjectRecord, existingHash: string): Promise<void> {
+  const suffix = existingHash.slice(0, 8);
+  const conflictId = `${existing.id}-conflict-${suffix}`;
+  const alreadyExists = await db.projects.get(conflictId);
+  if (alreadyExists) {
+    return;
+  }
+
+  const timestampLabel = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  await db.projects.put({
+    ...existing,
+    id: conflictId,
+    name: `${existing.name} (Conflict ${timestampLabel})`,
+    createdAt: new Date(existing.createdAt),
+    updatedAt: new Date(),
+    contentHash: existingHash,
+  });
 }
 
 export function createProjectSyncPayload(project: Project): ProjectSyncPayload {
+  const data = serializeProjectData(project);
   return {
     localId: project.id,
     name: project.name,
-    data: serializeProjectData(project),
+    data,
     createdAt: project.createdAt.getTime(),
     updatedAt: project.updatedAt.getTime(),
     schemaVersion: CURRENT_SCHEMA_VERSION,
     appVersion: APP_VERSION,
+    contentHash: computeContentHash(data),
   };
 }
 
 function recordToSyncPayload(record: ProjectRecord): ProjectSyncPayload {
+  const contentHash = normalizeContentHash(record.contentHash) ?? computeContentHash(record.data);
   return {
     localId: record.id,
     name: record.name,
@@ -351,6 +407,7 @@ function recordToSyncPayload(record: ProjectRecord): ProjectSyncPayload {
     updatedAt: record.updatedAt.getTime(),
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
     appVersion: record.appVersion ?? APP_VERSION,
+    contentHash,
   };
 }
 
@@ -376,9 +433,10 @@ export async function getAllProjectsForSync(): Promise<ProjectSyncPayload[]> {
 export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Promise<{ deleted: number }> {
   const cloudIdSet = new Set(cloudLocalIds);
   const localRecords = await db.projects.toArray();
+  const isConflictCopyId = (id: string) => /-conflict-[0-9a-f]{8}$/i.test(id);
   const localOnlyIds = localRecords
     .map((record) => record.id)
-    .filter((localId) => !cloudIdSet.has(localId));
+    .filter((localId) => !cloudIdSet.has(localId) && !isConflictCopyId(localId));
 
   if (localOnlyIds.length === 0) {
     return { deleted: 0 };
@@ -400,6 +458,7 @@ export async function syncProjectFromCloud(cloudProject: {
   updatedAt: number;
   schemaVersion: number | string;
   appVersion?: string;
+  contentHash?: string;
 }): Promise<{ action: 'created' | 'updated' | 'skipped'; reason?: string; migrated?: boolean }> {
   const cloudSchemaVersion = normalizeSchemaVersion(cloudProject.schemaVersion);
 
@@ -437,14 +496,16 @@ export async function syncProjectFromCloud(cloudProject: {
 
   incomingProject = normalizeMessagesInProject(incomingProject);
 
+  const serializedIncomingData = serializeProjectData(incomingProject);
   const incomingRecord: ProjectRecord = {
     id: incomingProject.id,
     name: incomingProject.name,
-    data: serializeProjectData(incomingProject),
+    data: serializedIncomingData,
     createdAt: new Date(cloudProject.createdAt),
     updatedAt: new Date(incomingProject.updatedAt),
     schemaVersion: migrated ? CURRENT_SCHEMA_VERSION : cloudSchemaVersion,
     appVersion: cloudProject.appVersion,
+    contentHash: normalizeContentHash(cloudProject.contentHash) ?? computeContentHash(serializedIncomingData),
   };
 
   const existing = await db.projects.get(cloudProject.localId);
@@ -455,16 +516,55 @@ export async function syncProjectFromCloud(cloudProject: {
   }
 
   const existingSchemaVersion = normalizeSchemaVersion(existing.schemaVersion);
-  const shouldUpdate =
-    incomingRecord.updatedAt.getTime() > existing.updatedAt.getTime() ||
-    incomingRecord.schemaVersion > existingSchemaVersion;
+  if (incomingRecord.schemaVersion < existingSchemaVersion) {
+    return {
+      action: 'skipped',
+      reason: `schema downgrade blocked (incoming v${incomingRecord.schemaVersion}, local v${existingSchemaVersion})`,
+    };
+  }
+
+  const incomingUpdatedAtMs = incomingRecord.updatedAt.getTime();
+  const existingUpdatedAtMs = existing.updatedAt.getTime();
+  let shouldUpdate = false;
+  let reason: string | undefined;
+
+  if (incomingRecord.schemaVersion > existingSchemaVersion) {
+    shouldUpdate = true;
+    reason = 'incoming schema is newer';
+  } else if (incomingUpdatedAtMs > existingUpdatedAtMs) {
+    shouldUpdate = true;
+    reason = 'incoming project is newer';
+  } else if (incomingUpdatedAtMs < existingUpdatedAtMs) {
+    shouldUpdate = false;
+    reason = 'local project is newer';
+  } else {
+    const incomingHash =
+      normalizeContentHash(incomingRecord.contentHash) ?? computeContentHash(incomingRecord.data);
+    const existingHash =
+      normalizeContentHash(existing.contentHash) ?? computeContentHash(existing.data);
+
+    if (incomingHash === existingHash) {
+      shouldUpdate = false;
+      reason = 'same timestamp and identical content';
+    } else {
+      const incomingWins = chooseIncomingByTieBreak(incomingHash, existingHash);
+      shouldUpdate = incomingWins;
+      reason = incomingWins
+        ? 'same timestamp conflict resolved in favor of incoming hash'
+        : 'same timestamp conflict resolved in favor of local hash';
+
+      if (incomingWins) {
+        await preserveLocalConflictCopy(existing, existingHash);
+      }
+    }
+  }
 
   if (!shouldUpdate) {
-    return { action: 'skipped' };
+    return { action: 'skipped', reason };
   }
 
   await db.projects.put(incomingRecord);
-  return { action: 'updated', migrated };
+  return { action: 'updated', migrated, reason };
 }
 
 // Get single project record for sync
