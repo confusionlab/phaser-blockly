@@ -5,7 +5,8 @@
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "concurrently -k \"pnpm --filter @pochacoding/web dev -- --host 127.0.0.1 --port 5173\" \"wait-on tcp:5173 && electron-vite dev\"",
+    "ensure:electron": "node scripts/ensure-electron.mjs",
+    "dev": "pnpm run ensure:electron && concurrently -k \"pnpm --filter @pochacoding/web dev -- --host 127.0.0.1 --port 5173\" \"wait-on tcp:5173 && electron-vite dev\"",
     "build": "VITE_DESKTOP_BUILD=1 pnpm --filter @pochacoding/web build && electron-vite build",
     "pack:mac": "pnpm run build && electron-builder --mac --dir",
     "dist:mac": "pnpm run build && electron-builder --mac dmg zip",
