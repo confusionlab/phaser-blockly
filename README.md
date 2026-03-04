@@ -1,5 +1,26 @@
 # PochaCoding
 
+## Monorepo Layout
+
+- `apps/web`: Vite + React web editor.
+- `apps/desktop`: Electron shell (macOS-first).
+- `packages/assistant-core`: Shared assistant contracts and semantic-op validator.
+- `convex`: Convex backend/actions for cloud sync + LLM turn routing.
+
+## Common Commands
+
+- `pnpm dev:web`: run web app.
+- `pnpm dev:desktop`: run Electron + web dev server.
+- `pnpm dev:all`: run Convex dev + web/desktop pipeline.
+- `pnpm build`: build all workspace packages.
+- `pnpm typecheck`: type-check all workspace packages.
+- `pnpm lint`: lint all workspace packages.
+
+## Desktop Packaging
+
+- macOS unsigned directory package: `pnpm --filter @pochacoding/desktop pack:mac`
+- macOS unsigned `dmg` + `zip`: `pnpm --filter @pochacoding/desktop dist:mac`
+
 ## Blockly LLM Assistant (OpenRouter)
 
 - The Blockly editor includes an assistant panel for natural-language block edits.

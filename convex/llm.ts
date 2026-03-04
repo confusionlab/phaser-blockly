@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { hashFnv1a64, validateSemanticOpsPayload as validateSemanticOpsPayloadShared } from "../packages/assistant-core/src";
 
 type Scalar = string | number | boolean;
 type ActionSpec = {
@@ -116,6 +117,7 @@ const assistantTurnReturnValidator = v.object({
   model: v.string(),
   mode: v.union(v.literal("chat"), v.literal("edit")),
   answer: v.optional(v.string()),
+  errorCode: v.optional(v.string()),
   proposedEdits: v.optional(proposedEditsValidator),
   debugTrace: v.optional(v.any()),
 });
@@ -530,32 +532,14 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
 }
 
 function validateSemanticOpsPayload(value: unknown): ProposedEdits {
-  if (!isRecord(value)) {
-    throw new Error("Payload must be an object");
+  // Keep local parser symbols referenced while transition to assistant-core is in progress.
+  void parseStringArray;
+  void parseSemanticOp;
+  const parsed = validateSemanticOpsPayloadShared(value);
+  if (!parsed.ok) {
+    throw new Error(`Model output validation failed: ${parsed.errors.join("; ")}`);
   }
-  const intentSummaryRaw = getAlias<string>(value, "intentSummary", "intent_summary");
-  const intentSummary = typeof intentSummaryRaw === "string" && intentSummaryRaw.trim()
-    ? intentSummaryRaw.trim()
-    : "No summary provided.";
-  const assumptions = parseStringArray(getAlias<unknown>(value, "assumptions"));
-  const semanticOpsRaw = getAlias<unknown>(value, "semanticOps", "semantic_ops");
-  if (!Array.isArray(semanticOpsRaw)) {
-    throw new Error("semanticOps must be an array");
-  }
-
-  const errors: string[] = [];
-  const semanticOps: SemanticOp[] = [];
-  for (let index = 0; index < semanticOpsRaw.length; index += 1) {
-    const parsed = parseSemanticOp(semanticOpsRaw[index], index, errors);
-    if (parsed) {
-      semanticOps.push(parsed);
-    }
-  }
-  if (errors.length > 0) {
-    throw new Error(`Model output validation failed: ${errors.join("; ")}`);
-  }
-
-  return { intentSummary, assumptions, semanticOps };
+  return parsed.value as ProposedEdits;
 }
 
 function extractResponseText(payload: OpenRouterChatCompletionResponse): string {
@@ -600,6 +584,14 @@ function buildAssistantTurnSystemPrompt(): string {
 function getEnv(name: string): string | undefined {
   const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
   return maybeProcess.process?.env?.[name];
+}
+
+function toErrorCode(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64) || "assistant_turn_error";
 }
 
 function validateAssistantTurnPayload(value: unknown): AssistantTurnPayload {
@@ -1263,6 +1255,11 @@ export const assistantTurn = action({
       role: v.union(v.literal("user"), v.literal("assistant")),
       content: v.string(),
     })),
+    providerMode: v.optional(v.union(v.literal("managed"), v.literal("byok"), v.literal("codex_oauth"))),
+    threadContext: v.optional(v.object({
+      threadId: v.optional(v.string()),
+      scopeKey: v.optional(v.string()),
+    })),
     capabilities: v.any(),
     context: v.any(),
     programRead: v.any(),
@@ -1280,7 +1277,19 @@ export const assistantTurn = action({
         content: truncate(turn.content.trim(), 1800),
       }));
     const projectSnapshot = isRecord(args.projectSnapshot) ? args.projectSnapshot : {};
+    const providerMode = args.providerMode || "managed";
+    const threadContext = isRecord(args.threadContext) ? args.threadContext : {};
     const tools = buildAssistantToolDefinitions();
+    const promptEnvelope = {
+      userIntent: args.userIntent,
+      providerMode,
+      threadContext,
+      chatHistory: recentTurns,
+      context: args.context,
+      programRead: args.programRead,
+      capabilities: args.capabilities,
+    };
+    const promptEnvelopeHash = hashFnv1a64(JSON.stringify(promptEnvelope));
     const messages: Array<Record<string, unknown>> = [
       {
         role: "system",
@@ -1294,6 +1303,8 @@ export const assistantTurn = action({
             context: args.context,
             programRead: args.programRead,
             capabilities: args.capabilities,
+            providerMode,
+            threadContext,
             toolingHint: "Use tools to fetch project entities/properties before finalizing answer.",
           },
           null,
@@ -1315,6 +1326,7 @@ export const assistantTurn = action({
     let lastValidationError: string | null = null;
     const maxOpsPerRequest = getMaxOpsPerRequest(args.capabilities);
     const debugTrace: {
+      promptEnvelopeHash: string;
       maxToolRounds: number;
       modelRounds: number;
       toolCalls: Array<{
@@ -1324,107 +1336,137 @@ export const assistantTurn = action({
         resultPreview: string;
       }>;
       validationErrors: string[];
+      repairAttempts: number;
+      parsedPayloadPreview: string | null;
       finalResponsePreview: string | null;
+      finalVerdict: "chat" | "edit" | "fallback_chat";
+      fallbackReasonCode?: string;
     } = {
+      promptEnvelopeHash,
       maxToolRounds,
       modelRounds: 0,
       toolCalls: [],
       validationErrors: [],
+      repairAttempts: 0,
+      parsedPayloadPreview: null,
       finalResponsePreview: null,
+      finalVerdict: "fallback_chat",
     };
 
-    for (let round = 0; round < maxToolRounds; round += 1) {
-      debugTrace.modelRounds += 1;
-      const payload = await sendOpenRouterChatCompletion({
-        model,
-        apiKey,
-        referer,
-        appName,
-        temperature: 0.2,
-        maxTokens: 1800,
-        responseFormat: {
-          type: "json_object",
-        },
-        tools,
-        toolChoice: "auto",
-        messages,
-      });
-
-      const message = payload.choices?.[0]?.message;
-      const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-      if (toolCalls.length > 0) {
-        messages.push({
-          role: "assistant",
-          content: typeof message?.content === "string" ? message.content : "",
-          tool_calls: toolCalls,
+    try {
+      for (let round = 0; round < maxToolRounds; round += 1) {
+        debugTrace.modelRounds += 1;
+        const payload = await sendOpenRouterChatCompletion({
+          model,
+          apiKey,
+          referer,
+          appName,
+          temperature: 0.2,
+          maxTokens: 1800,
+          responseFormat: {
+            type: "json_object",
+          },
+          tools,
+          toolChoice: "auto",
+          messages,
         });
 
-        for (let index = 0; index < toolCalls.length; index += 1) {
-          const toolCall = toolCalls[index];
-          const toolName = typeof toolCall.function?.name === "string" ? toolCall.function.name : "";
-          const parsedToolArgs = parseToolArguments(toolCall.function?.arguments);
-          const toolResult = executeAssistantTool({
-            toolName,
-            toolArgs: parsedToolArgs,
-            projectSnapshot,
-            capabilities: args.capabilities,
-          });
-          debugTrace.toolCalls.push({
-            round,
-            name: toolName || "unknown_tool",
-            args: parsedToolArgs,
-            resultPreview: truncateText(JSON.stringify(toolResult), 800),
-          });
+        const message = payload.choices?.[0]?.message;
+        const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+        if (toolCalls.length > 0) {
           messages.push({
-            role: "tool",
-            tool_call_id: toolCall.id || `tool_call_${round}_${index}`,
-            name: toolName || "unknown_tool",
-            content: JSON.stringify(toolResult),
+            role: "assistant",
+            content: typeof message?.content === "string" ? message.content : "",
+            tool_calls: toolCalls,
           });
+
+          for (let index = 0; index < toolCalls.length; index += 1) {
+            const toolCall = toolCalls[index];
+            const toolName = typeof toolCall.function?.name === "string" ? toolCall.function.name : "";
+            const parsedToolArgs = parseToolArguments(toolCall.function?.arguments);
+            const toolResult = executeAssistantTool({
+              toolName,
+              toolArgs: parsedToolArgs,
+              projectSnapshot,
+              capabilities: args.capabilities,
+            });
+            debugTrace.toolCalls.push({
+              round,
+              name: toolName || "unknown_tool",
+              args: parsedToolArgs,
+              resultPreview: truncateText(JSON.stringify(toolResult), 800),
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id || `tool_call_${round}_${index}`,
+              name: toolName || "unknown_tool",
+              content: JSON.stringify(toolResult),
+            });
+          }
+          continue;
         }
-        continue;
-      }
 
-      const content = extractResponseText(payload);
-      debugTrace.finalResponsePreview = truncateText(content, 4000);
-      try {
-        const parsed = parseJsonFromResponse(content);
-        const candidateTurn = validateAssistantTurnPayload(parsed);
+        const content = extractResponseText(payload);
+        debugTrace.finalResponsePreview = truncateText(content, 4000);
+        try {
+          const parsed = parseJsonFromResponse(content);
+          debugTrace.parsedPayloadPreview = truncateText(JSON.stringify(parsed), 2000);
+          const candidateTurn = validateAssistantTurnPayload(parsed);
 
-        if (
-          candidateTurn.mode === "edit" &&
-          typeof maxOpsPerRequest === "number" &&
-          candidateTurn.proposedEdits.semanticOps.length > maxOpsPerRequest
-        ) {
-          throw new Error(
-            `Too many semantic ops (${candidateTurn.proposedEdits.semanticOps.length}/${maxOpsPerRequest}).`
-          );
+          if (
+            candidateTurn.mode === "edit" &&
+            typeof maxOpsPerRequest === "number" &&
+            candidateTurn.proposedEdits.semanticOps.length > maxOpsPerRequest
+          ) {
+            throw new Error(
+              `Too many semantic ops (${candidateTurn.proposedEdits.semanticOps.length}/${maxOpsPerRequest}).`
+            );
+          }
+
+          turn = candidateTurn;
+          debugTrace.finalVerdict = candidateTurn.mode;
+          break;
+        } catch (error) {
+          const validationError = error instanceof Error ? error.message : "Unknown validation failure";
+          lastValidationError = validationError;
+          debugTrace.validationErrors.push(validationError);
+          debugTrace.repairAttempts += 1;
+          messages.push({
+            role: "user",
+            content: JSON.stringify(
+              {
+                repair: "Previous response invalid",
+                error: validationError,
+                instruction:
+                  "Return corrected JSON now. If you cannot safely produce a valid edit payload, return mode='chat' with an explanation.",
+              },
+              null,
+              2,
+            ),
+          });
+          continue;
         }
-
-        turn = candidateTurn;
-        break;
-      } catch (error) {
-        const validationError = error instanceof Error ? error.message : "Unknown validation failure";
-        lastValidationError = validationError;
-        debugTrace.validationErrors.push(validationError);
-        messages.push({
-          role: "user",
-          content: JSON.stringify(
-            {
-              repair: "Previous response invalid",
-              error: validationError,
-              instruction:
-                "Return corrected JSON now. If you cannot safely produce a valid edit payload, return mode='chat' with an explanation.",
-            },
-            null,
-            2,
-          ),
-        });
-        continue;
       }
+    } catch (error) {
+      const transportError = error instanceof Error ? error.message : "Unknown assistant transport error";
+      debugTrace.validationErrors.push(`transport:${transportError}`);
+      debugTrace.fallbackReasonCode = "assistant_transport_error";
+      debugTrace.finalVerdict = "fallback_chat";
+      return {
+        provider: "openrouter",
+        model,
+        mode: "chat" as const,
+        answer: `Assistant request failed safely.\n\n${transportError}`,
+        errorCode: "assistant_transport_error",
+        debugTrace,
+      };
     }
 
     if (!turn) {
+      const reason = lastValidationError || "assistant_invalid_payload";
+      const reasonCode = toErrorCode(reason);
+      debugTrace.fallbackReasonCode = reasonCode;
+      debugTrace.finalVerdict = "fallback_chat";
       return {
         provider: "openrouter",
         model,
@@ -1432,11 +1474,13 @@ export const assistantTurn = action({
         answer:
           "I could not produce a valid structured response for this request. Please rephrase or ask in smaller steps."
           + (lastValidationError ? `\n\nValidation issue: ${lastValidationError}` : ""),
+        errorCode: reasonCode,
         debugTrace,
       };
     }
 
     if (turn.mode === "chat") {
+      debugTrace.finalVerdict = "chat";
       return {
         provider: "openrouter",
         model,
@@ -1446,6 +1490,7 @@ export const assistantTurn = action({
       };
     }
 
+    debugTrace.finalVerdict = "edit";
     return {
       provider: "openrouter",
       model,

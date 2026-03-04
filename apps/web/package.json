@@ -1,0 +1,16 @@
+{
+  "name": "@pochacoding/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "VITE_APP_BRANCH=$(git rev-parse --abbrev-ref HEAD) vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "typecheck": "tsc -b --pretty false"
+  }
+}
