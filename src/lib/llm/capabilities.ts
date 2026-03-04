@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import '@/components/blockly/toolbox';
+import { getToolboxRegisteredBlockTypes } from '@/components/blockly/toolbox';
 import { COMPONENT_ANY_PREFIX, OBJECT_SPECIAL_VALUES } from '@/lib/blocklyReferenceMaps';
 import type { BlockCapability, BlocklyCapabilities } from '@/lib/llm/types';
 
@@ -61,6 +62,7 @@ function inspectBlock(type: string, workspace: Blockly.Workspace): BlockCapabili
 }
 
 let cachedCapabilities: BlocklyCapabilities | null = null;
+let cachedLlmExposedCapabilities: BlocklyCapabilities | null = null;
 
 export function getBlocklyCapabilities(): BlocklyCapabilities {
   if (cachedCapabilities) {
@@ -95,4 +97,31 @@ export function getBlocklyCapabilities(): BlocklyCapabilities {
     limits: CAPABILITY_LIMITS,
   };
   return cachedCapabilities;
+}
+
+export function getLlmExposedBlocklyCapabilities(): BlocklyCapabilities {
+  if (cachedLlmExposedCapabilities) {
+    return cachedLlmExposedCapabilities;
+  }
+
+  const allCapabilities = getBlocklyCapabilities();
+  const registeredBlockTypes = new Set(getToolboxRegisteredBlockTypes());
+  const blocks = allCapabilities.blocks.filter((block) => registeredBlockTypes.has(block.type));
+
+  if (blocks.length === 0) {
+    cachedLlmExposedCapabilities = allCapabilities;
+    return cachedLlmExposedCapabilities;
+  }
+
+  const byType: Record<string, BlockCapability> = {};
+  for (const block of blocks) {
+    byType[block.type] = block;
+  }
+
+  cachedLlmExposedCapabilities = {
+    ...allCapabilities,
+    blocks,
+    byType,
+  };
+  return cachedLlmExposedCapabilities;
 }

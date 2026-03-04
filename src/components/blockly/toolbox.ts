@@ -1231,6 +1231,62 @@ export function getToolboxConfig(): any {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function collectBlockTypeFromInputSpec(inputSpec: unknown, collected: Set<string>): void {
+  if (!isRecord(inputSpec)) return;
+
+  for (const key of ['block', 'shadow']) {
+    const maybeNested = inputSpec[key];
+    if (!isRecord(maybeNested)) continue;
+
+    const nestedType = maybeNested.type;
+    if (typeof nestedType === 'string' && nestedType.trim()) {
+      collected.add(nestedType);
+    }
+
+    const nestedInputs = maybeNested.inputs;
+    if (!isRecord(nestedInputs)) continue;
+    for (const nestedInputSpec of Object.values(nestedInputs)) {
+      collectBlockTypeFromInputSpec(nestedInputSpec, collected);
+    }
+  }
+}
+
+function collectToolboxBlockTypes(item: unknown, collected: Set<string>): void {
+  if (!isRecord(item)) return;
+
+  if (item.kind === 'block') {
+    const blockType = item.type;
+    if (typeof blockType === 'string' && blockType.trim()) {
+      collected.add(blockType);
+    }
+
+    const inputs = item.inputs;
+    if (isRecord(inputs)) {
+      for (const inputSpec of Object.values(inputs)) {
+        collectBlockTypeFromInputSpec(inputSpec, collected);
+      }
+    }
+  }
+
+  const contents = item.contents;
+  if (Array.isArray(contents)) {
+    for (const child of contents) {
+      collectToolboxBlockTypes(child, collected);
+    }
+  }
+}
+
+export function getToolboxRegisteredBlockTypes(): string[] {
+  const toolbox = getToolboxConfig();
+  const collected = new Set<string>();
+  collectToolboxBlockTypes(toolbox, collected);
+  return Array.from(collected).sort((a, b) => a.localeCompare(b));
+}
+
 function registerCustomBlocks() {
   // Events
   Blockly.Blocks['event_game_start'] = {

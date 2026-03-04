@@ -1,5 +1,5 @@
 import { buildProgramContext, getScopeLabel, readProgramSummary } from '@/lib/llm/context';
-import { getBlocklyCapabilities } from '@/lib/llm/capabilities';
+import { getBlocklyCapabilities, getLlmExposedBlocklyCapabilities } from '@/lib/llm/capabilities';
 import { buildCandidateFromSemanticOps } from '@/lib/llm/compiler';
 import { validateCandidate } from '@/lib/llm/validation';
 import type { OrchestratedCandidate, OrchestratorArgs } from '@/lib/llm/types';
@@ -7,12 +7,13 @@ import type { OrchestratedCandidate, OrchestratorArgs } from '@/lib/llm/types';
 export async function runLlmBlocklyOrchestration(args: OrchestratorArgs): Promise<OrchestratedCandidate> {
   const requestStartedAt = new Date().toISOString();
   const capabilities = getBlocklyCapabilities();
+  const llmCapabilities = getLlmExposedBlocklyCapabilities();
   const context = buildProgramContext(args.project, args.scope);
   const programRead = readProgramSummary(context);
 
   const proposedEdits = await args.provider.proposeEdits({
     userIntent: args.userIntent,
-    capabilities,
+    capabilities: llmCapabilities,
     context,
     programRead,
   });
