@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import codexTurnOutputSchema from './codexTurnOutput.schema.json';
 import type {
   CodexAssistantTurnRequest,
   CodexAssistantTurnResponse,
@@ -113,6 +114,45 @@ function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function validateCodexOutputSchema(schema: unknown): string[] {
+  const errors: string[] = [];
+  if (!isRecord(schema)) {
+    return ['schema must be an object'];
+  }
+
+  const propertiesValue = schema.properties;
+  if (!isRecord(propertiesValue)) {
+    errors.push('schema.properties must be an object');
+    return errors;
+  }
+  const propertyKeys = Object.keys(propertiesValue);
+  if (propertyKeys.length === 0) {
+    errors.push('schema.properties must declare at least one key');
+  }
+
+  const requiredValue = schema.required;
+  if (!Array.isArray(requiredValue)) {
+    errors.push('schema.required must be an array');
+    return errors;
+  }
+  const requiredKeys = requiredValue.filter((value): value is string => typeof value === 'string');
+  if (requiredKeys.length !== requiredValue.length) {
+    errors.push('schema.required must contain only strings');
+    return errors;
+  }
+
+  const requiredSet = new Set(requiredKeys);
+  const missingRequired = propertyKeys.filter((key) => !requiredSet.has(key));
+  if (missingRequired.length > 0) {
+    errors.push(`schema.required is missing property keys: ${missingRequired.join(', ')}`);
+  }
+  const unknownRequired = requiredKeys.filter((key) => !Object.prototype.hasOwnProperty.call(propertiesValue, key));
+  if (unknownRequired.length > 0) {
+    errors.push(`schema.required has unknown keys: ${unknownRequired.join(', ')}`);
+  }
+  return errors;
+}
+
 function canExecuteCodexBinary(candidate: string): boolean {
   try {
     const result = spawnSync(candidate, ['--version'], {
@@ -151,24 +191,11 @@ function resolveCodexExecutable(): string {
   return 'codex';
 }
 
-const CODEX_TURN_OUTPUT_SCHEMA = {
-  $schema: 'https://json-schema.org/draft/2020-12/schema',
-  type: 'object',
-  properties: {
-    mode: {
-      type: 'string',
-      enum: ['chat', 'edit'],
-    },
-    answer: {
-      type: 'string',
-    },
-    proposedEditsJson: {
-      type: 'string',
-    },
-  },
-  required: ['mode'],
-  additionalProperties: false,
-};
+const CODEX_TURN_OUTPUT_SCHEMA = codexTurnOutputSchema as Record<string, unknown>;
+const codexSchemaErrors = validateCodexOutputSchema(CODEX_TURN_OUTPUT_SCHEMA);
+if (codexSchemaErrors.length > 0) {
+  throw new Error(`Invalid codex output schema: ${codexSchemaErrors.join('; ')}`);
+}
 
 function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
   const envelope = {
@@ -184,6 +211,8 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
       'Use capabilities as strict source of truth for available blocks/actions.',
       'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
       'When mode=edit, proposedEditsJson must be valid JSON and include semanticOps.',
+      'When mode=chat, put your response in answer and set proposedEditsJson=null.',
+      'When mode=edit, set answer=null and put JSON string in proposedEditsJson.',
       'Do not include markdown fences in any field.',
     ],
     userIntent: args.userIntent,
