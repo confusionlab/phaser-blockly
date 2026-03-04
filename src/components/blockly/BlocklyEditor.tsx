@@ -7,6 +7,7 @@ import {
   getToolboxConfig,
   registerTypedVariablesCategory,
   setAddVariableCallback,
+  setManageVariablesCallback,
   setMessageDialogCallback,
   setTypedVariableLoading,
   updateVariableBlockAppearance,
@@ -194,8 +195,15 @@ function validateBlockReferences(
   sceneNameCounts: Map<string, number>,
   messageIds: Set<string>,
   messageNameCounts: Map<string, number>,
+  originalColoursByBlockId: Map<string, string>,
 ) {
   const allBlocks = workspace.getAllBlocks(false);
+  const activeBlockIds = new Set(allBlocks.map((block) => block.id));
+  for (const blockId of Array.from(originalColoursByBlockId.keys())) {
+    if (!activeBlockIds.has(blockId)) {
+      originalColoursByBlockId.delete(blockId);
+    }
+  }
 
   const isTypeReporterBlock = (block: Blockly.Block | null): boolean => {
     if (!block) return false;
@@ -304,17 +312,16 @@ function validateBlockReferences(
     // Apply visual feedback
     if (hasError) {
       block.setWarningText(errors.join('\n'));
-      // Store original color if not already stored
-      if (!block.data) {
-        block.data = block.getColour();
+      if (!originalColoursByBlockId.has(block.id)) {
+        originalColoursByBlockId.set(block.id, String(block.getColour()));
       }
       block.setColour('#CC0000'); // Red for error
     } else {
       block.setWarningText(null);
-      // Restore original color if it was stored
-      if (block.data) {
-        block.setColour(block.data);
-        block.data = null;
+      const originalColour = originalColoursByBlockId.get(block.id);
+      if (originalColour) {
+        block.setColour(originalColour);
+        originalColoursByBlockId.delete(block.id);
       }
     }
   }
@@ -326,6 +333,7 @@ export function BlocklyEditor() {
   const currentSceneIdRef = useRef<string | null>(null);
   const currentObjectIdRef = useRef<string | null>(null);
   const currentComponentIdRef = useRef<string | null>(null);
+  const validationOriginalColoursRef = useRef<Map<string, string>>(new Map());
   const lastLoadedTargetRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const pendingPersistRef = useRef<{
@@ -602,6 +610,7 @@ export function BlocklyEditor() {
 
     // Set up callback for "Add Variable" button
     setAddVariableCallback(() => setShowAddVariableDialog(true));
+    setManageVariablesCallback(() => setShowVariableManager(true));
 
     // Save on changes and validate references
     workspaceRef.current.addChangeListener((event) => {
@@ -691,6 +700,7 @@ export function BlocklyEditor() {
             sceneNameCounts,
             messageIds,
             messageNameCounts,
+            validationOriginalColoursRef.current,
           );
         }
       }
@@ -711,6 +721,8 @@ export function BlocklyEditor() {
         workspaceRef.current.dispose();
         workspaceRef.current = null;
       }
+      setAddVariableCallback(null);
+      setManageVariablesCallback(null);
     };
   }, [flushPendingWorkspacePersist, scheduleWorkspacePersist]);
 
@@ -847,6 +859,7 @@ export function BlocklyEditor() {
         sceneNameCounts,
         messageIds,
         messageNameCounts,
+        validationOriginalColoursRef.current,
       );
     }
 

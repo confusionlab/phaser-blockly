@@ -232,7 +232,7 @@ function updateCollapsedGroupRow(block: Blockly.Block): void {
   const collapsedInput = block.getInput(Blockly.Block.COLLAPSED_INPUT_NAME);
   if (!collapsedInput) return;
 
-  const nameOnly = block.getFieldValue('NAME') || 'group name';
+  const nameOnly = block.getFieldValue('NAME') || 'group';
   const collapsedTextField = collapsedInput.fieldRow.find((field) => {
     return (field as Blockly.Field<unknown> & { name?: string }).name === Blockly.Block.COLLAPSED_FIELD_NAME;
   });
@@ -633,7 +633,7 @@ export function getToolboxConfig(): any {
       },
       {
         kind: 'category',
-        name: 'Control',
+        name: 'Actions',
         colour: '#FFBF00',
         contents: [
           { kind: 'block', type: 'control_group_block' },
@@ -1047,10 +1047,6 @@ export function getToolboxConfig(): any {
             },
           },
           { kind: 'block', type: 'sensing_type_literal' },
-          { kind: 'block', type: 'object_from_dropdown' },
-          { kind: 'block', type: 'target_myself' },
-          { kind: 'block', type: 'target_mouse' },
-          { kind: 'block', type: 'target_ground' },
           {
             kind: 'block',
             type: 'sensing_distance_to_value',
@@ -1060,6 +1056,17 @@ export function getToolboxConfig(): any {
               },
             },
           },
+        ],
+      },
+      {
+        kind: 'category',
+        name: 'Targets',
+        colour: '#5CB1D6',
+        contents: [
+          { kind: 'block', type: 'object_from_dropdown' },
+          { kind: 'block', type: 'target_myself' },
+          { kind: 'block', type: 'target_mouse' },
+          { kind: 'block', type: 'target_ground' },
         ],
       },
       {
@@ -1095,6 +1102,11 @@ export function getToolboxConfig(): any {
             kind: 'button',
             text: '+ Add Variable',
             callbackKey: 'ADD_VARIABLE',
+          },
+          {
+            kind: 'button',
+            text: 'Manage Variables',
+            callbackKey: 'MANAGE_VARIABLES',
           },
           { kind: 'sep', gap: '16' },
           { kind: 'label', text: 'Get Variable' },
@@ -1237,7 +1249,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('🔑 when')
         .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
-        .appendField('pressed');
+        .appendField('is pressed');
       this.appendStatementInput('NEXT')
         .setCheck(null);
       this.setColour('#FFAB19');
@@ -1248,7 +1260,7 @@ function registerCustomBlocks() {
   Blockly.Blocks['event_clicked'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('🖱️ when this clicked');
+        .appendField('🖱️ when this is clicked');
       this.appendStatementInput('NEXT')
         .setCheck(null);
       this.setColour('#FFAB19');
@@ -1667,8 +1679,8 @@ function registerCustomBlocks() {
 
       this.appendDummyInput()
         .appendField(toggleField, 'TOGGLE')
-        .appendField('group block')
-        .appendField(new Blockly.FieldTextInput('group name'), 'NAME');
+        .appendField('group (visual only)')
+        .appendField(new Blockly.FieldTextInput('group'), 'NAME');
       this.appendStatementInput('DO')
         .setCheck(null);
       this.setPreviousStatement(true, null);
@@ -1681,7 +1693,7 @@ function registerCustomBlocks() {
       }, 0);
     },
     toString: function(opt_maxLength?: number) {
-      const name = this.getFieldValue('NAME') || 'group name';
+      const name = this.getFieldValue('NAME') || 'group';
       if (opt_maxLength && name.length > opt_maxLength) {
         return `${name.slice(0, Math.max(0, opt_maxLength - 3))}...`;
       }
@@ -1952,7 +1964,7 @@ function registerCustomBlocks() {
   Blockly.Blocks['target_mouse'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('mouse');
+        .appendField('mouse pointer');
       this.setOutput(true, 'Object');
       this.setColour('#5CB1D6');
       this.setTooltip('Mouse pointer target');
@@ -1972,10 +1984,10 @@ function registerCustomBlocks() {
   Blockly.Blocks['target_ground'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('ground');
+        .appendField('ground collider');
       this.setOutput(true, 'Object');
       this.setColour('#5CB1D6');
-      this.setTooltip('Ground target');
+      this.setTooltip('Ground collision target');
     }
   };
 
@@ -2229,7 +2241,7 @@ function registerCustomBlocks() {
   Blockly.Blocks['physics_ground_on'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('turn ground on');
+        .appendField('enable ground collision');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
@@ -2240,7 +2252,7 @@ function registerCustomBlocks() {
   Blockly.Blocks['physics_ground_off'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('turn ground off');
+        .appendField('disable ground collision');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
@@ -2574,15 +2586,16 @@ function registerCustomBlocks() {
   Blockly.Blocks['control_switch_scene'] = {
     init: function() {
       this.appendDummyInput()
+        .appendField('switch scene')
+        .appendField(new PreservingSceneFieldDropdown(getSceneDropdownOptions), 'SCENE')
+        .appendField('mode')
         .appendField(new Blockly.FieldDropdown([
-          ['go to', 'RESUME'],
+          ['resume', 'RESUME'],
           ['restart', 'RESTART'],
-        ]), 'MODE')
-        .appendField('scene')
-        .appendField(new PreservingSceneFieldDropdown(getSceneDropdownOptions), 'SCENE');
+        ]), 'MODE');
       this.setPreviousStatement(true, null);
       this.setColour('#FFBF00');
-      this.setTooltip('Switch to another scene (go to = resume where you left off, restart = start fresh)');
+      this.setTooltip('Switch to another scene (resume = continue where you left off, restart = start fresh)');
     }
   };
 
@@ -3248,6 +3261,39 @@ export function updateVariableBlockAppearance(block: Blockly.Block, force: boole
   setVariableOutputShape(block, variable);
 }
 
+function getTypedVariableOutputCheck(block: Blockly.Block): string | null {
+  const variable = getVariableById(block.getFieldValue('VAR'));
+  if (!variable) return null;
+  if (variable.type === 'boolean') return 'Boolean';
+  if (variable.type === 'string') return 'String';
+  return 'Number';
+}
+
+function getOutputChecks(block: Blockly.Block): string[] | null {
+  if (block.type === 'typed_variable_get') {
+    const typedCheck = getTypedVariableOutputCheck(block);
+    return typedCheck ? [typedCheck] : null;
+  }
+  const checks = block.outputConnection?.getCheck();
+  return checks && checks.length > 0 ? checks : null;
+}
+
+function isBlockCompatibleWithExpectedType(expectedType: VariableType, valueBlock: Blockly.Block): boolean {
+  const outputChecks = getOutputChecks(valueBlock);
+  if (!outputChecks) {
+    // Unknown/any output type: don't block the user with a false warning.
+    return true;
+  }
+
+  if (expectedType === 'integer' || expectedType === 'float') {
+    return outputChecks.includes('Number');
+  }
+  if (expectedType === 'boolean') {
+    return outputChecks.includes('Boolean');
+  }
+  return outputChecks.includes('String');
+}
+
 // Validate type for variable set block
 function validateVariableType(block: Blockly.Block) {
   const varId = block.getFieldValue('VAR');
@@ -3274,10 +3320,7 @@ function validateNumericInput(block: Blockly.Block) {
   const valueBlock = block.getInputTargetBlock('DELTA');
   if (!valueBlock) return;
 
-  const outputType = valueBlock.outputConnection?.getCheck();
-  const isNumeric = !outputType || outputType.includes('Number') ||
-                    valueBlock.type === 'math_number' ||
-                    valueBlock.type === 'typed_variable_get';
+  const isNumeric = isBlockCompatibleWithExpectedType('float', valueBlock);
 
   if (!isNumeric) {
     block.setWarningText('Expected a number');
@@ -3290,48 +3333,19 @@ function validateNumericInput(block: Blockly.Block) {
 
 // Check if a block's output is compatible with expected type
 function checkTypeCompatibility(expectedType: VariableType, valueBlock: Blockly.Block): boolean {
-  const blockType = valueBlock.type;
-
-  switch (expectedType) {
-    case 'string':
-      return blockType === 'text' ||
-             blockType === 'operator_join' ||
-             blockType === 'operator_letter_of' ||
-             (blockType === 'typed_variable_get' && getVariableById(valueBlock.getFieldValue('VAR'))?.type === 'string');
-    case 'integer':
-    case 'float':
-      return blockType === 'math_number' ||
-             blockType === 'math_arithmetic' ||
-             blockType === 'math_random_int' ||
-             blockType === 'sensing_timer' ||
-             blockType === 'operator_length' ||
-             blockType === 'operator_mod' ||
-             blockType === 'operator_round' ||
-             blockType === 'operator_mathop' ||
-             (blockType === 'typed_variable_get' && ['integer', 'float'].includes(getVariableById(valueBlock.getFieldValue('VAR'))?.type || ''));
-    case 'boolean':
-      return blockType === 'logic_boolean' ||
-             blockType === 'logic_compare' ||
-             blockType === 'logic_operation' ||
-             blockType === 'logic_negate' ||
-             blockType === 'operator_contains' ||
-             blockType === 'sensing_key_pressed' ||
-             blockType === 'sensing_mouse_down' ||
-             blockType === 'sensing_touching' ||
-             blockType === 'sensing_touching_value' ||
-             blockType === 'sensing_touching_direction' ||
-             blockType === 'sensing_touching_direction_value' ||
-             blockType === 'sensing_touching_ground' ||
-             (blockType === 'typed_variable_get' && getVariableById(valueBlock.getFieldValue('VAR'))?.type === 'boolean');
-  }
-  return true; // Allow if we can't determine
+  return isBlockCompatibleWithExpectedType(expectedType, valueBlock);
 }
 
-// Callback for "Add Variable" button - set externally by BlocklyEditor
+// Callbacks for variable category actions - set externally by BlocklyEditor
 let addVariableCallback: (() => void) | null = null;
+let manageVariablesCallback: (() => void) | null = null;
 
 export function setAddVariableCallback(callback: (() => void) | null) {
   addVariableCallback = callback;
+}
+
+export function setManageVariablesCallback(callback: (() => void) | null) {
+  manageVariablesCallback = callback;
 }
 
 export function setMessageDialogCallback(callback: MessageDialogCallback | null) {
@@ -3340,10 +3354,15 @@ export function setMessageDialogCallback(callback: MessageDialogCallback | null)
 
 // Register button callbacks for the Variables category
 export function registerTypedVariablesCategory(workspace: Blockly.WorkspaceSvg) {
-  // Register the "Add Variable" button callback
   workspace.registerButtonCallback('ADD_VARIABLE', () => {
     if (addVariableCallback) {
       addVariableCallback();
+    }
+  });
+
+  workspace.registerButtonCallback('MANAGE_VARIABLES', () => {
+    if (manageVariablesCallback) {
+      manageVariablesCallback();
     }
   });
 }
