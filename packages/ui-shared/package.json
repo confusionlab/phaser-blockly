@@ -1,0 +1,12 @@
+{
+  "name": "@pochacoding/ui-shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'No build step yet'",
+    "lint": "echo 'No lint step yet'",
+    "typecheck": "echo 'No typecheck step yet'",
+    "test": "echo 'No tests yet'"
+  }
+}

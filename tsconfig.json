@@ -1,13 +1,9 @@
 {
   "files": [],
   "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
-  ],
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
+    { "path": "./apps/web" },
+    { "path": "./apps/desktop" },
+    { "path": "./packages/assistant-core" },
+    { "path": "./packages/ui-shared" }
+  ]
 }

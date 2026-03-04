@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { hashFnv1a64, validateSemanticOpsPayload as validateSemanticOpsPayloadShared } from "../packages/assistant-core/src";
 
 type Scalar = string | number | boolean;
 type ActionSpec = {
@@ -104,6 +105,16 @@ type ChatHistoryTurn = {
   role: "user" | "assistant";
   content: string;
 };
+type ProviderMode = "managed" | "byok" | "codex_oauth";
+type ProviderTransport = "openrouter" | "openai";
+type ResolvedProviderConfig = {
+  provider: "openrouter" | "openai";
+  transport: ProviderTransport;
+  apiKey: string;
+  model: string;
+  referer?: string;
+  appName: string;
+};
 
 const proposedEditsValidator = v.object({
   intentSummary: v.string(),
@@ -116,6 +127,7 @@ const assistantTurnReturnValidator = v.object({
   model: v.string(),
   mode: v.union(v.literal("chat"), v.literal("edit")),
   answer: v.optional(v.string()),
+  errorCode: v.optional(v.string()),
   proposedEdits: v.optional(proposedEditsValidator),
   debugTrace: v.optional(v.any()),
 });
@@ -530,32 +542,14 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
 }
 
 function validateSemanticOpsPayload(value: unknown): ProposedEdits {
-  if (!isRecord(value)) {
-    throw new Error("Payload must be an object");
+  // Keep local parser symbols referenced while transition to assistant-core is in progress.
+  void parseStringArray;
+  void parseSemanticOp;
+  const parsed = validateSemanticOpsPayloadShared(value);
+  if (!parsed.ok) {
+    throw new Error(`Model output validation failed: ${parsed.errors.join("; ")}`);
   }
-  const intentSummaryRaw = getAlias<string>(value, "intentSummary", "intent_summary");
-  const intentSummary = typeof intentSummaryRaw === "string" && intentSummaryRaw.trim()
-    ? intentSummaryRaw.trim()
-    : "No summary provided.";
-  const assumptions = parseStringArray(getAlias<unknown>(value, "assumptions"));
-  const semanticOpsRaw = getAlias<unknown>(value, "semanticOps", "semantic_ops");
-  if (!Array.isArray(semanticOpsRaw)) {
-    throw new Error("semanticOps must be an array");
-  }
-
-  const errors: string[] = [];
-  const semanticOps: SemanticOp[] = [];
-  for (let index = 0; index < semanticOpsRaw.length; index += 1) {
-    const parsed = parseSemanticOp(semanticOpsRaw[index], index, errors);
-    if (parsed) {
-      semanticOps.push(parsed);
-    }
-  }
-  if (errors.length > 0) {
-    throw new Error(`Model output validation failed: ${errors.join("; ")}`);
-  }
-
-  return { intentSummary, assumptions, semanticOps };
+  return parsed.value as ProposedEdits;
 }
 
 function extractResponseText(payload: OpenRouterChatCompletionResponse): string {
@@ -602,6 +596,14 @@ function getEnv(name: string): string | undefined {
   return maybeProcess.process?.env?.[name];
 }
 
+function toErrorCode(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64) || "assistant_turn_error";
+}
+
 function validateAssistantTurnPayload(value: unknown): AssistantTurnPayload {
   if (!isRecord(value)) {
     throw new Error("Assistant turn payload must be an object");
@@ -634,21 +636,139 @@ function validateAssistantTurnPayload(value: unknown): AssistantTurnPayload {
   throw new Error('Assistant turn mode must be "chat" or "edit"');
 }
 
-function getOpenRouterConfig() {
-  const apiKey = getEnv("OPENROUTER_API_KEY");
-  if (!apiKey || !apiKey.trim()) {
-    throw new Error("Missing OPENROUTER_API_KEY in Convex environment.");
-  }
-
+function getOpenRouterDefaults() {
   const model = (getEnv("OPENROUTER_MODEL") || "openai/gpt-5.3-codex").trim();
   const referer = getEnv("OPENROUTER_REFERER")?.trim();
   const appName = (getEnv("OPENROUTER_APP_NAME") || "PochaCoding").trim();
 
   return {
-    apiKey: apiKey.trim(),
     model,
     referer,
     appName,
+  };
+}
+
+function getOpenAIDefaults() {
+  const model = (getEnv("OPENAI_OAUTH_MODEL") || "gpt-5").trim();
+  const appName = (getEnv("OPENAI_OAUTH_APP_NAME") || "PochaCoding").trim();
+  return {
+    model,
+    appName,
+  };
+}
+
+function getManagedOpenRouterApiKey(): string {
+  const apiKey = getEnv("OPENROUTER_API_KEY");
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error("Missing OPENROUTER_API_KEY in Convex environment.");
+  }
+  return apiKey.trim();
+}
+
+function normalizeBearerToken(value: string): string {
+  return value.replace(/^bearer\s+/i, "").trim();
+}
+
+function extractCodexToken(raw: string): string {
+  const trimmed = normalizeBearerToken(raw.trim());
+  if (!trimmed) return "";
+  const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || trimmed.startsWith("pochacoding://");
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (isRecord(parsed)) {
+        const keys = ["access_token", "token", "id_token", "authToken"];
+        for (const key of keys) {
+          const candidate = parsed[key];
+          if (typeof candidate === "string" && candidate.trim()) {
+            return normalizeBearerToken(candidate);
+          }
+        }
+      }
+      return "";
+    } catch {
+      // fall through to URL/raw parsing
+    }
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+    const hashParams = new URLSearchParams(hash);
+    const tokenCandidate =
+      url.searchParams.get("access_token")
+      || hashParams.get("access_token")
+      || url.searchParams.get("token")
+      || hashParams.get("token")
+      || url.searchParams.get("id_token")
+      || hashParams.get("id_token");
+    if (typeof tokenCandidate === "string" && tokenCandidate.trim()) {
+      return normalizeBearerToken(tokenCandidate);
+    }
+    return "";
+  } catch {
+    if (looksLikeUrl) {
+      return "";
+    }
+    // treat as raw token
+  }
+
+  return trimmed;
+}
+
+function resolveProviderConfig(args: {
+  providerMode: ProviderMode;
+  providerCredentials?: unknown;
+}): ResolvedProviderConfig {
+  const credentials = isRecord(args.providerCredentials) ? args.providerCredentials : {};
+
+  if (args.providerMode === "managed") {
+    const defaults = getOpenRouterDefaults();
+    return {
+      provider: "openrouter",
+      transport: "openrouter",
+      apiKey: getManagedOpenRouterApiKey(),
+      model: defaults.model,
+      referer: defaults.referer,
+      appName: defaults.appName,
+    };
+  }
+
+  if (args.providerMode === "byok") {
+    const byokKey =
+      typeof credentials.openRouterApiKey === "string"
+        ? credentials.openRouterApiKey.trim()
+        : "";
+    if (!byokKey) {
+      throw new Error("byok_missing_openrouter_key");
+    }
+    const defaults = getOpenRouterDefaults();
+    return {
+      provider: "openrouter",
+      transport: "openrouter",
+      apiKey: byokKey,
+      model: defaults.model,
+      referer: defaults.referer,
+      appName: defaults.appName,
+    };
+  }
+
+  const codexRaw =
+    typeof credentials.codexToken === "string"
+      ? credentials.codexToken
+      : "";
+  const codexToken = extractCodexToken(codexRaw);
+  if (!codexToken) {
+    throw new Error("codex_oauth_missing_token");
+  }
+  const defaults = getOpenAIDefaults();
+  return {
+    provider: "openai",
+    transport: "openai",
+    apiKey: codexToken,
+    model: defaults.model,
+    appName: defaults.appName,
   };
 }
 
@@ -689,6 +809,109 @@ async function sendOpenRouterChatCompletion(args: {
   }
 
   return (await response.json()) as OpenRouterChatCompletionResponse;
+}
+
+async function sendOpenAIChatCompletion(args: {
+  model: string;
+  apiKey: string;
+  appName: string;
+  temperature: number;
+  maxTokens: number;
+  messages: Array<Record<string, unknown>>;
+  responseFormat?: { type: "json_object" };
+  tools?: Array<Record<string, unknown>>;
+  toolChoice?: "auto" | "none";
+}): Promise<OpenRouterChatCompletionResponse> {
+  const basePayload = {
+    model: args.model,
+    temperature: args.temperature,
+    ...(args.responseFormat ? { response_format: args.responseFormat } : {}),
+    ...(args.tools ? { tools: args.tools } : {}),
+    ...(args.toolChoice ? { tool_choice: args.toolChoice } : {}),
+    messages: args.messages,
+  };
+  const headers = {
+    Authorization: `Bearer ${args.apiKey}`,
+    "Content-Type": "application/json",
+    "X-Title": args.appName,
+  };
+  const endpoint = "https://api.openai.com/v1/chat/completions";
+
+  let response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      ...basePayload,
+      max_completion_tokens: args.maxTokens,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    const normalizedError = errorBody.toLowerCase();
+    const shouldRetryWithLegacyMaxTokens =
+      response.status === 400
+      && (normalizedError.includes("max_completion_tokens")
+        || normalizedError.includes("unknown parameter")
+        || normalizedError.includes("unrecognized request argument"));
+
+    if (shouldRetryWithLegacyMaxTokens) {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          ...basePayload,
+          max_tokens: args.maxTokens,
+        }),
+      });
+      if (!response.ok) {
+        const retryErrorBody = await response.text().catch(() => "");
+        throw new Error(`OpenAI request failed (${response.status}): ${truncate(retryErrorBody, 280)}`);
+      }
+      return (await response.json()) as OpenRouterChatCompletionResponse;
+    }
+
+    throw new Error(`OpenAI request failed (${response.status}): ${truncate(errorBody, 280)}`);
+  }
+
+  return (await response.json()) as OpenRouterChatCompletionResponse;
+}
+
+async function sendProviderChatCompletion(args: {
+  providerConfig: ResolvedProviderConfig;
+  temperature: number;
+  maxTokens: number;
+  messages: Array<Record<string, unknown>>;
+  responseFormat?: { type: "json_object" };
+  tools?: Array<Record<string, unknown>>;
+  toolChoice?: "auto" | "none";
+}): Promise<OpenRouterChatCompletionResponse> {
+  if (args.providerConfig.transport === "openrouter") {
+    return sendOpenRouterChatCompletion({
+      model: args.providerConfig.model,
+      apiKey: args.providerConfig.apiKey,
+      referer: args.providerConfig.referer,
+      appName: args.providerConfig.appName,
+      temperature: args.temperature,
+      maxTokens: args.maxTokens,
+      responseFormat: args.responseFormat,
+      tools: args.tools,
+      toolChoice: args.toolChoice,
+      messages: args.messages,
+    });
+  }
+
+  return sendOpenAIChatCompletion({
+    model: args.providerConfig.model,
+    apiKey: args.providerConfig.apiKey,
+    appName: args.providerConfig.appName,
+    temperature: args.temperature,
+    maxTokens: args.maxTokens,
+    responseFormat: args.responseFormat,
+    tools: args.tools,
+    toolChoice: args.toolChoice,
+    messages: args.messages,
+  });
 }
 
 function parseToolArguments(raw: string | undefined): Record<string, unknown> {
@@ -1263,6 +1486,15 @@ export const assistantTurn = action({
       role: v.union(v.literal("user"), v.literal("assistant")),
       content: v.string(),
     })),
+    providerMode: v.optional(v.union(v.literal("managed"), v.literal("byok"), v.literal("codex_oauth"))),
+    providerCredentials: v.optional(v.object({
+      openRouterApiKey: v.optional(v.string()),
+      codexToken: v.optional(v.string()),
+    })),
+    threadContext: v.optional(v.object({
+      threadId: v.optional(v.string()),
+      scopeKey: v.optional(v.string()),
+    })),
     capabilities: v.any(),
     context: v.any(),
     programRead: v.any(),
@@ -1270,8 +1502,6 @@ export const assistantTurn = action({
   },
   returns: assistantTurnReturnValidator,
   handler: async (_ctx, args) => {
-    const { apiKey, model, referer, appName } = getOpenRouterConfig();
-
     const recentTurns = args.chatHistory
       .filter((turn) => (turn.role === "user" || turn.role === "assistant") && !!turn.content.trim())
       .slice(-16)
@@ -1280,7 +1510,54 @@ export const assistantTurn = action({
         content: truncate(turn.content.trim(), 1800),
       }));
     const projectSnapshot = isRecord(args.projectSnapshot) ? args.projectSnapshot : {};
+    const providerMode = (args.providerMode || "managed") as ProviderMode;
+    const threadContext = isRecord(args.threadContext) ? args.threadContext : {};
     const tools = buildAssistantToolDefinitions();
+    let providerConfig: ResolvedProviderConfig;
+    try {
+      providerConfig = resolveProviderConfig({
+        providerMode,
+        providerCredentials: args.providerCredentials,
+      });
+    } catch (error) {
+      const configError = error instanceof Error ? error.message : "provider_configuration_error";
+      const errorCode = toErrorCode(configError);
+      return {
+        provider: providerMode === "codex_oauth" ? "openai" : "openrouter",
+        model: providerMode === "codex_oauth" ? getOpenAIDefaults().model : getOpenRouterDefaults().model,
+        mode: "chat" as const,
+        answer:
+          providerMode === "codex_oauth"
+            ? "Codex mode is not authenticated. Use the desktop app's Login with ChatGPT flow and try again."
+            : "Provider configuration is incomplete. Check assistant provider settings and try again.",
+        errorCode,
+        debugTrace: {
+          promptEnvelopeHash: hashFnv1a64(JSON.stringify({ providerMode, configError })),
+          maxToolRounds: 0,
+          modelRounds: 0,
+          toolCalls: [],
+          validationErrors: [`provider:${configError}`],
+          repairAttempts: 0,
+          parsedPayloadPreview: null,
+          finalResponsePreview: null,
+          finalVerdict: "fallback_chat" as const,
+          fallbackReasonCode: errorCode,
+        },
+      };
+    }
+
+    const promptEnvelope = {
+      userIntent: args.userIntent,
+      providerMode,
+      provider: providerConfig.provider,
+      providerModel: providerConfig.model,
+      threadContext,
+      chatHistory: recentTurns,
+      context: args.context,
+      programRead: args.programRead,
+      capabilities: args.capabilities,
+    };
+    const promptEnvelopeHash = hashFnv1a64(JSON.stringify(promptEnvelope));
     const messages: Array<Record<string, unknown>> = [
       {
         role: "system",
@@ -1294,6 +1571,8 @@ export const assistantTurn = action({
             context: args.context,
             programRead: args.programRead,
             capabilities: args.capabilities,
+            providerMode,
+            threadContext,
             toolingHint: "Use tools to fetch project entities/properties before finalizing answer.",
           },
           null,
@@ -1315,6 +1594,7 @@ export const assistantTurn = action({
     let lastValidationError: string | null = null;
     const maxOpsPerRequest = getMaxOpsPerRequest(args.capabilities);
     const debugTrace: {
+      promptEnvelopeHash: string;
       maxToolRounds: number;
       modelRounds: number;
       toolCalls: Array<{
@@ -1324,131 +1604,174 @@ export const assistantTurn = action({
         resultPreview: string;
       }>;
       validationErrors: string[];
+      repairAttempts: number;
+      parsedPayloadPreview: string | null;
       finalResponsePreview: string | null;
+      finalVerdict: "chat" | "edit" | "fallback_chat";
+      fallbackReasonCode?: string;
     } = {
+      promptEnvelopeHash,
       maxToolRounds,
       modelRounds: 0,
       toolCalls: [],
       validationErrors: [],
+      repairAttempts: 0,
+      parsedPayloadPreview: null,
       finalResponsePreview: null,
+      finalVerdict: "fallback_chat",
     };
 
-    for (let round = 0; round < maxToolRounds; round += 1) {
-      debugTrace.modelRounds += 1;
-      const payload = await sendOpenRouterChatCompletion({
-        model,
-        apiKey,
-        referer,
-        appName,
-        temperature: 0.2,
-        maxTokens: 1800,
-        responseFormat: {
-          type: "json_object",
-        },
-        tools,
-        toolChoice: "auto",
-        messages,
-      });
-
-      const message = payload.choices?.[0]?.message;
-      const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-      if (toolCalls.length > 0) {
-        messages.push({
-          role: "assistant",
-          content: typeof message?.content === "string" ? message.content : "",
-          tool_calls: toolCalls,
+    try {
+      for (let round = 0; round < maxToolRounds; round += 1) {
+        debugTrace.modelRounds += 1;
+        const payload = await sendProviderChatCompletion({
+          providerConfig,
+          temperature: 0.2,
+          maxTokens: 1800,
+          responseFormat: {
+            type: "json_object",
+          },
+          tools,
+          toolChoice: "auto",
+          messages,
         });
 
-        for (let index = 0; index < toolCalls.length; index += 1) {
-          const toolCall = toolCalls[index];
-          const toolName = typeof toolCall.function?.name === "string" ? toolCall.function.name : "";
-          const parsedToolArgs = parseToolArguments(toolCall.function?.arguments);
-          const toolResult = executeAssistantTool({
-            toolName,
-            toolArgs: parsedToolArgs,
-            projectSnapshot,
-            capabilities: args.capabilities,
-          });
-          debugTrace.toolCalls.push({
-            round,
-            name: toolName || "unknown_tool",
-            args: parsedToolArgs,
-            resultPreview: truncateText(JSON.stringify(toolResult), 800),
-          });
+        const message = payload.choices?.[0]?.message;
+        const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+        if (toolCalls.length > 0) {
           messages.push({
-            role: "tool",
-            tool_call_id: toolCall.id || `tool_call_${round}_${index}`,
-            name: toolName || "unknown_tool",
-            content: JSON.stringify(toolResult),
+            role: "assistant",
+            content: typeof message?.content === "string" ? message.content : "",
+            tool_calls: toolCalls,
           });
+
+          for (let index = 0; index < toolCalls.length; index += 1) {
+            const toolCall = toolCalls[index];
+            const toolName = typeof toolCall.function?.name === "string" ? toolCall.function.name : "";
+            const parsedToolArgs = parseToolArguments(toolCall.function?.arguments);
+            const toolCallId = typeof toolCall.id === "string" && toolCall.id.trim()
+              ? toolCall.id
+              : "";
+            if (providerConfig.transport === "openai" && !toolCallId) {
+              throw new Error("openai_missing_tool_call_id");
+            }
+            const toolResult = executeAssistantTool({
+              toolName,
+              toolArgs: parsedToolArgs,
+              projectSnapshot,
+              capabilities: args.capabilities,
+            });
+            debugTrace.toolCalls.push({
+              round,
+              name: toolName || "unknown_tool",
+              args: parsedToolArgs,
+              resultPreview: truncateText(JSON.stringify(toolResult), 800),
+            });
+            const toolMessageBase = {
+              role: "tool" as const,
+              tool_call_id: toolCallId || `tool_call_${round}_${index}`,
+              content: JSON.stringify(toolResult),
+            };
+            messages.push(
+              providerConfig.transport === "openrouter"
+                ? {
+                  ...toolMessageBase,
+                  name: toolName || "unknown_tool",
+                }
+                : toolMessageBase
+            );
+          }
+          continue;
         }
-        continue;
-      }
 
-      const content = extractResponseText(payload);
-      debugTrace.finalResponsePreview = truncateText(content, 4000);
-      try {
-        const parsed = parseJsonFromResponse(content);
-        const candidateTurn = validateAssistantTurnPayload(parsed);
+        const content = extractResponseText(payload);
+        debugTrace.finalResponsePreview = truncateText(content, 4000);
+        try {
+          const parsed = parseJsonFromResponse(content);
+          debugTrace.parsedPayloadPreview = truncateText(JSON.stringify(parsed), 2000);
+          const candidateTurn = validateAssistantTurnPayload(parsed);
 
-        if (
-          candidateTurn.mode === "edit" &&
-          typeof maxOpsPerRequest === "number" &&
-          candidateTurn.proposedEdits.semanticOps.length > maxOpsPerRequest
-        ) {
-          throw new Error(
-            `Too many semantic ops (${candidateTurn.proposedEdits.semanticOps.length}/${maxOpsPerRequest}).`
-          );
+          if (
+            candidateTurn.mode === "edit" &&
+            typeof maxOpsPerRequest === "number" &&
+            candidateTurn.proposedEdits.semanticOps.length > maxOpsPerRequest
+          ) {
+            throw new Error(
+              `Too many semantic ops (${candidateTurn.proposedEdits.semanticOps.length}/${maxOpsPerRequest}).`
+            );
+          }
+
+          turn = candidateTurn;
+          debugTrace.finalVerdict = candidateTurn.mode;
+          break;
+        } catch (error) {
+          const validationError = error instanceof Error ? error.message : "Unknown validation failure";
+          lastValidationError = validationError;
+          debugTrace.validationErrors.push(validationError);
+          debugTrace.repairAttempts += 1;
+          messages.push({
+            role: "user",
+            content: JSON.stringify(
+              {
+                repair: "Previous response invalid",
+                error: validationError,
+                instruction:
+                  "Return corrected JSON now. If you cannot safely produce a valid edit payload, return mode='chat' with an explanation.",
+              },
+              null,
+              2,
+            ),
+          });
+          continue;
         }
-
-        turn = candidateTurn;
-        break;
-      } catch (error) {
-        const validationError = error instanceof Error ? error.message : "Unknown validation failure";
-        lastValidationError = validationError;
-        debugTrace.validationErrors.push(validationError);
-        messages.push({
-          role: "user",
-          content: JSON.stringify(
-            {
-              repair: "Previous response invalid",
-              error: validationError,
-              instruction:
-                "Return corrected JSON now. If you cannot safely produce a valid edit payload, return mode='chat' with an explanation.",
-            },
-            null,
-            2,
-          ),
-        });
-        continue;
       }
+    } catch (error) {
+      const transportError = error instanceof Error ? error.message : "Unknown assistant transport error";
+      debugTrace.validationErrors.push(`transport:${transportError}`);
+      debugTrace.fallbackReasonCode = "assistant_transport_error";
+      debugTrace.finalVerdict = "fallback_chat";
+      return {
+        provider: providerConfig.provider,
+        model: providerConfig.model,
+        mode: "chat" as const,
+        answer: `Assistant request failed safely.\n\n${transportError}`,
+        errorCode: "assistant_transport_error",
+        debugTrace,
+      };
     }
 
     if (!turn) {
+      const reason = lastValidationError || "assistant_invalid_payload";
+      const reasonCode = toErrorCode(reason);
+      debugTrace.fallbackReasonCode = reasonCode;
+      debugTrace.finalVerdict = "fallback_chat";
       return {
-        provider: "openrouter",
-        model,
+        provider: providerConfig.provider,
+        model: providerConfig.model,
         mode: "chat" as const,
         answer:
           "I could not produce a valid structured response for this request. Please rephrase or ask in smaller steps."
           + (lastValidationError ? `\n\nValidation issue: ${lastValidationError}` : ""),
+        errorCode: reasonCode,
         debugTrace,
       };
     }
 
     if (turn.mode === "chat") {
+      debugTrace.finalVerdict = "chat";
       return {
-        provider: "openrouter",
-        model,
+        provider: providerConfig.provider,
+        model: providerConfig.model,
         mode: "chat" as const,
         answer: turn.answer,
         debugTrace,
       };
     }
 
+    debugTrace.finalVerdict = "edit";
     return {
-      provider: "openrouter",
-      model,
+      provider: providerConfig.provider,
+      model: providerConfig.model,
       mode: "edit" as const,
       proposedEdits: {
         intentSummary: turn.proposedEdits.intentSummary,

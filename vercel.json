@@ -1,11 +1,11 @@
 {
-  "routes": [
+  "framework": "vite",
+  "buildCommand": "pnpm --filter @pochacoding/web build",
+  "outputDirectory": "apps/web/dist",
+  "rewrites": [
     {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/.*",
-      "dest": "/index.html"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }

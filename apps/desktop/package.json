@@ -1,0 +1,55 @@
+{
+  "name": "@pochacoding/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "ensure:electron": "node scripts/ensure-electron.mjs",
+    "dev": "pnpm run ensure:electron && concurrently -k \"pnpm --filter @pochacoding/web dev -- --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on tcp:5173 && electron-vite dev\"",
+    "build": "pnpm run test && VITE_DESKTOP_BUILD=1 pnpm --filter @pochacoding/web build && electron-vite build",
+    "pack:mac": "pnpm run build && electron-builder --mac --dir",
+    "dist:mac": "pnpm run build && electron-builder --mac dmg zip",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/validate-codex-output-schema.mjs",
+    "test:codex-smoke": "CODEX_SMOKE=1 node scripts/validate-codex-output-schema.mjs",
+    "test:codex-turn": "node scripts/test-codex-assistant-turn.mjs"
+  },
+  "dependencies": {
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^4.0.0",
+    "wait-on": "^8.0.4"
+  },
+  "build": {
+    "appId": "com.kihaahn.pochacoding",
+    "productName": "PochaCoding",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist-desktop",
+        "to": "web-dist"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    }
+  }
+}
