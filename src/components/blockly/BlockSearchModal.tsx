@@ -19,10 +19,12 @@ interface SearchItem {
 
 type ToolboxBlockInputConfig = {
   block?: ToolboxBlockConfig;
-  shadow?: {
-    type: string;
-    fields?: Record<string, string>;
-  };
+  shadow?: ToolboxShadowConfig;
+};
+
+type ToolboxShadowConfig = {
+  type: string;
+  fields?: Record<string, string>;
 };
 
 type ToolboxBlockConfig = {
@@ -104,10 +106,14 @@ function getSearchLabel(config: ToolboxBlockConfig): string {
   if (config.type === 'sensing_is_clone_of_value') {
     return 'is clone of';
   }
-  if (config.type === 'event_game_start') return 'When I start';
-  if (config.type === 'event_key_pressed') return 'when key pressed';
-  if (config.type === 'event_clicked') return 'when this clicked';
+  if (config.type === 'event_game_start') return 'when I start';
+  if (config.type === 'event_key_pressed') return 'when [key] is pressed';
+  if (config.type === 'event_clicked') return 'when this is clicked';
   if (config.type === 'event_forever') return 'forever';
+  if (config.type === 'object_from_dropdown') return 'object';
+  if (config.type === 'target_myself') return 'myself';
+  if (config.type === 'target_mouse') return 'mouse pointer';
+  if (config.type === 'target_ground') return 'ground';
   return humanizeBlockType(config.type);
 }
 
@@ -152,6 +158,36 @@ function applyExtraState(block: Blockly.BlockSvg, extraState?: Record<string, un
   }
 }
 
+function applyBlockFields(block: Blockly.BlockSvg, fields?: Record<string, string>) {
+  if (!fields) return;
+  for (const [fieldName, fieldValue] of Object.entries(fields)) {
+    if (block.getField(fieldName)) {
+      block.setFieldValue(String(fieldValue), fieldName);
+    }
+  }
+}
+
+function createConfiguredChildBlock(
+  workspace: Blockly.WorkspaceSvg,
+  config: ToolboxBlockConfig | ToolboxShadowConfig,
+  isShadow: boolean,
+): Blockly.BlockSvg {
+  const childBlock = workspace.newBlock(config.type) as Blockly.BlockSvg;
+  if (isShadow) {
+    childBlock.setShadow(true);
+  }
+  if ('extraState' in config) {
+    applyExtraState(childBlock, config.extraState);
+  }
+  applyBlockFields(childBlock, config.fields);
+  if ('inputs' in config) {
+    applyToolboxConfigRecursive(workspace, childBlock, config);
+  }
+  childBlock.initSvg();
+  childBlock.render();
+  return childBlock;
+}
+
 function applyToolboxConfigRecursive(
   workspace: Blockly.WorkspaceSvg,
   block: Blockly.BlockSvg,
@@ -159,26 +195,19 @@ function applyToolboxConfigRecursive(
 ) {
   if (!config) return;
   applyExtraState(block, config.extraState);
-
-  if (config.fields) {
-    for (const [fieldName, fieldValue] of Object.entries(config.fields)) {
-      if (block.getField(fieldName)) {
-        block.setFieldValue(String(fieldValue), fieldName);
-      }
-    }
-  }
+  applyBlockFields(block, config.fields);
 
   if (!config.inputs) return;
   for (const [inputName, inputConfig] of Object.entries(config.inputs)) {
-    const childConfig = inputConfig?.block;
-    if (!childConfig) continue;
     const input = block.getInput(inputName);
     if (!input?.connection) continue;
+    const childConfig = inputConfig?.block;
+    const shadowConfig = inputConfig?.shadow;
+    if (!childConfig && !shadowConfig) continue;
 
-    const childBlock = workspace.newBlock(childConfig.type) as Blockly.BlockSvg;
-    applyToolboxConfigRecursive(workspace, childBlock, childConfig);
-    childBlock.initSvg();
-    childBlock.render();
+    const childBlock = childConfig
+      ? createConfiguredChildBlock(workspace, childConfig, false)
+      : createConfiguredChildBlock(workspace, shadowConfig as ToolboxShadowConfig, true);
     if (childBlock.outputConnection) {
       input.connection.connect(childBlock.outputConnection);
     }
