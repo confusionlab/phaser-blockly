@@ -117,6 +117,7 @@ const assistantTurnReturnValidator = v.object({
   mode: v.union(v.literal("chat"), v.literal("edit")),
   answer: v.optional(v.string()),
   proposedEdits: v.optional(proposedEditsValidator),
+  debugTrace: v.optional(v.any()),
 });
 
 function truncate(text: string, maxLength = 700): string {
@@ -724,6 +725,15 @@ function truncateText(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength)}...`;
 }
 
+function getMaxOpsPerRequest(capabilities: unknown): number | null {
+  if (!isRecord(capabilities)) return null;
+  const limits = getAlias<unknown>(capabilities, "limits");
+  if (!isRecord(limits)) return null;
+  const maxOps = getAlias<unknown>(limits, "maxOpsPerRequest", "max_ops_per_request");
+  if (typeof maxOps !== "number" || !Number.isFinite(maxOps) || maxOps <= 0) return null;
+  return Math.floor(maxOps);
+}
+
 function buildAssistantToolDefinitions(): Array<Record<string, unknown>> {
   return [
     {
@@ -1302,8 +1312,29 @@ export const assistantTurn = action({
 
     const maxToolRounds = 8;
     let turn: AssistantTurnPayload | null = null;
+    let lastValidationError: string | null = null;
+    const maxOpsPerRequest = getMaxOpsPerRequest(args.capabilities);
+    const debugTrace: {
+      maxToolRounds: number;
+      modelRounds: number;
+      toolCalls: Array<{
+        round: number;
+        name: string;
+        args: Record<string, unknown>;
+        resultPreview: string;
+      }>;
+      validationErrors: string[];
+      finalResponsePreview: string | null;
+    } = {
+      maxToolRounds,
+      modelRounds: 0,
+      toolCalls: [],
+      validationErrors: [],
+      finalResponsePreview: null,
+    };
 
     for (let round = 0; round < maxToolRounds; round += 1) {
+      debugTrace.modelRounds += 1;
       const payload = await sendOpenRouterChatCompletion({
         model,
         apiKey,
@@ -1338,6 +1369,12 @@ export const assistantTurn = action({
             projectSnapshot,
             capabilities: args.capabilities,
           });
+          debugTrace.toolCalls.push({
+            round,
+            name: toolName || "unknown_tool",
+            args: parsedToolArgs,
+            resultPreview: truncateText(JSON.stringify(toolResult), 800),
+          });
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id || `tool_call_${round}_${index}`,
@@ -1349,13 +1386,54 @@ export const assistantTurn = action({
       }
 
       const content = extractResponseText(payload);
-      const parsed = parseJsonFromResponse(content);
-      turn = validateAssistantTurnPayload(parsed);
-      break;
+      debugTrace.finalResponsePreview = truncateText(content, 4000);
+      try {
+        const parsed = parseJsonFromResponse(content);
+        const candidateTurn = validateAssistantTurnPayload(parsed);
+
+        if (
+          candidateTurn.mode === "edit" &&
+          typeof maxOpsPerRequest === "number" &&
+          candidateTurn.proposedEdits.semanticOps.length > maxOpsPerRequest
+        ) {
+          throw new Error(
+            `Too many semantic ops (${candidateTurn.proposedEdits.semanticOps.length}/${maxOpsPerRequest}).`
+          );
+        }
+
+        turn = candidateTurn;
+        break;
+      } catch (error) {
+        const validationError = error instanceof Error ? error.message : "Unknown validation failure";
+        lastValidationError = validationError;
+        debugTrace.validationErrors.push(validationError);
+        messages.push({
+          role: "user",
+          content: JSON.stringify(
+            {
+              repair: "Previous response invalid",
+              error: validationError,
+              instruction:
+                "Return corrected JSON now. If you cannot safely produce a valid edit payload, return mode='chat' with an explanation.",
+            },
+            null,
+            2,
+          ),
+        });
+        continue;
+      }
     }
 
     if (!turn) {
-      throw new Error("Assistant did not reach a final response after tool calls.");
+      return {
+        provider: "openrouter",
+        model,
+        mode: "chat" as const,
+        answer:
+          "I could not produce a valid structured response for this request. Please rephrase or ask in smaller steps."
+          + (lastValidationError ? `\n\nValidation issue: ${lastValidationError}` : ""),
+        debugTrace,
+      };
     }
 
     if (turn.mode === "chat") {
@@ -1364,6 +1442,7 @@ export const assistantTurn = action({
         model,
         mode: "chat" as const,
         answer: turn.answer,
+        debugTrace,
       };
     }
 
@@ -1376,6 +1455,7 @@ export const assistantTurn = action({
         assumptions: turn.proposedEdits.assumptions,
         semanticOps: turn.proposedEdits.semanticOps,
       },
+      debugTrace,
     };
   },
 });

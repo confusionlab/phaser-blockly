@@ -28,6 +28,15 @@ type ChatMessage = {
   createdAt: string;
   meta?: string;
 };
+type CandidateDebugInfo = {
+  userIntent: string;
+  modelProvider: string;
+  modelName: string;
+  modelLatency: string;
+  compileLatency: string;
+  trace: unknown;
+  intentMismatchWarning: string | null;
+};
 
 const CHAT_HISTORY_VERSION = 1;
 const MAX_CHAT_MESSAGES = 50;
@@ -131,6 +140,25 @@ function formatDuration(startIso: string, endIso: string): string {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
+function detectIntentMismatchWarning(userIntent: string, candidate: OrchestratedCandidate): string | null {
+  const lower = userIntent.toLowerCase();
+  const asksToAdd = /\b(add|create|insert|new)\b/.test(lower);
+  const asksToRemove = /\b(remove|delete)\b/.test(lower);
+  const asksToChange = /\b(change|set|update|edit|modify)\b/.test(lower);
+
+  const diff = candidate.build.diff;
+  if (asksToAdd && diff.addedBlockCount === 0) {
+    return 'Intent looks additive, but no blocks were added.';
+  }
+  if (asksToRemove && diff.removedBlockCount === 0) {
+    return 'Intent looks destructive, but no blocks were removed.';
+  }
+  if (asksToChange && diff.changedFieldCount === 0 && diff.changedConnectionCount === 0 && diff.addedBlockCount === 0) {
+    return 'Intent looks like a change request, but diff appears empty.';
+  }
+  return null;
+}
+
 export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -140,6 +168,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [allowComponentPropagation, setAllowComponentPropagation] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [candidateDebugInfo, setCandidateDebugInfo] = useState<CandidateDebugInfo | null>(null);
 
   const { project, addMessage, addGlobalVariable, addLocalVariable, updateObject, updateComponent } = useProjectStore();
   const { undo } = useEditorStore();
@@ -273,6 +302,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           createdAt: turnCompletedAt,
           meta: `Provider: convex:${turn.provider}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
         });
+        setCandidateDebugInfo(null);
         setStatus('idle');
         return;
       }
@@ -297,6 +327,18 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       setCandidate(result);
       setStatus('ready');
       setAllowComponentPropagation(false);
+      const modelLatency = formatDuration(startedAt, turnCompletedAt);
+      const compileLatency = formatDuration(result.requestStartedAt, result.requestCompletedAt);
+      const intentMismatchWarning = detectIntentMismatchWarning(userIntent, result);
+      setCandidateDebugInfo({
+        userIntent,
+        modelProvider: turn.provider,
+        modelName: turn.model,
+        modelLatency,
+        compileLatency,
+        trace: turn.debugTrace ?? null,
+        intentMismatchWarning,
+      });
       if (!result.validation.pass) {
         setStatusMessage(`Generated a candidate, but validation failed with ${result.validation.errors.length} issue(s).`);
         appendChatMessage({
@@ -307,13 +349,13 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           meta: `Provider: ${result.providerName}/${result.model} · Latency: ${formatDuration(result.requestStartedAt, result.requestCompletedAt)}`,
         });
       } else {
-        setStatusMessage('Candidate is ready to apply.');
+        setStatusMessage(intentMismatchWarning ? `Candidate is ready to apply. Warning: ${intentMismatchWarning}` : 'Candidate is ready to apply.');
         appendChatMessage({
           id: makeMessageId(),
           role: 'assistant',
           content: `${result.proposedEdits.intentSummary}\n\n${result.build.diff.summaryLines.join('\n')}`,
           createdAt: new Date().toISOString(),
-          meta: `Provider: ${result.providerName}/${result.model} · Latency: ${formatDuration(result.requestStartedAt, result.requestCompletedAt)}`,
+          meta: `Provider: convex:${turn.provider}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
         });
       }
     } catch (error) {
@@ -362,6 +404,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     setStatusMessage('Candidate discarded.');
     setErrorMessage(null);
     setAllowComponentPropagation(false);
+    setCandidateDebugInfo(null);
   };
 
   const clearChat = () => {
@@ -470,9 +513,16 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               </div>
 
               <div className="text-muted-foreground">
-                Provider: {candidate.providerName}/{candidate.model} · Latency:{' '}
-                {formatDuration(candidate.requestStartedAt, candidate.requestCompletedAt)}
+                Provider: convex:{candidateDebugInfo?.modelProvider || candidate.providerName}/{candidateDebugInfo?.modelName || candidate.model}
+                {' '}· Model latency: {candidateDebugInfo?.modelLatency || '-'}
+                {' '}· Compile/validate: {candidateDebugInfo?.compileLatency || formatDuration(candidate.requestStartedAt, candidate.requestCompletedAt)}
               </div>
+
+              {candidateDebugInfo?.intentMismatchWarning ? (
+                <p className="text-amber-600">
+                  Intent mismatch warning: {candidateDebugInfo.intentMismatchWarning}
+                </p>
+              ) : null}
 
               <div>
                 <p className="font-medium">Validation</p>
@@ -514,6 +564,25 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               >
                 Apply
               </Button>
+
+              <details className="rounded border p-2 bg-muted/30">
+                <summary className="cursor-pointer font-medium">Debug Trace</summary>
+                <div className="mt-2 space-y-2">
+                  <div className="text-muted-foreground">User intent: {candidateDebugInfo?.userIntent || '(unknown)'}</div>
+                  <div>
+                    <p className="font-medium">Semantic ops</p>
+                    <pre className="max-h-44 overflow-auto rounded bg-background p-2 text-[11px]">
+                      {JSON.stringify(candidate.proposedEdits.semanticOps, null, 2)}
+                    </pre>
+                  </div>
+                  <div>
+                    <p className="font-medium">Assistant turn trace</p>
+                    <pre className="max-h-64 overflow-auto rounded bg-background p-2 text-[11px]">
+                      {JSON.stringify(candidateDebugInfo?.trace ?? null, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              </details>
             </div>
           ) : null}
         </div>
