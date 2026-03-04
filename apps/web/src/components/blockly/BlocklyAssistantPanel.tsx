@@ -394,33 +394,50 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       const capabilities = getLlmExposedBlocklyCapabilities();
       const context = buildProgramContext(project, scope);
       const programRead = readProgramSummary(context);
-      const projectSnapshot = buildProjectSnapshot(project);
-      const desktopCredentials =
-        typeof window !== 'undefined' && window.desktopAssistant && providerMode !== 'managed'
-          ? await window.desktopAssistant.provider.getCredentials()
-          : undefined;
-      const providerCredentials: ProviderCredentials | undefined = desktopCredentials
-        ? providerMode === 'byok'
-          ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
-          : providerMode === 'codex_oauth'
-            ? { codexToken: desktopCredentials.codexToken || undefined }
-            : undefined
-        : undefined;
-      const turn = await assistantTurnAction({
-        userIntent,
-        chatHistory: historyForTurn,
-        providerMode,
-        providerCredentials,
-        threadContext: {
-          threadId,
-          scopeKey,
-        },
-        capabilities,
-        context,
-        programRead,
-        projectSnapshot,
-      });
+      const threadContext = {
+        threadId,
+        scopeKey,
+      };
+
+      const turn = await (providerMode === 'codex_oauth'
+        ? (() => {
+            if (typeof window === 'undefined' || !window.desktopAssistant) {
+              throw new Error('Codex mode requires the desktop app runtime.');
+            }
+            return window.desktopAssistant.provider.assistantTurn({
+              userIntent,
+              chatHistory: historyForTurn,
+              capabilities,
+              context,
+              programRead,
+              threadContext,
+            });
+          })()
+        : (() => {
+            const projectSnapshot = buildProjectSnapshot(project);
+            return (async () => {
+              const desktopCredentials =
+                typeof window !== 'undefined' && window.desktopAssistant && providerMode === 'byok'
+                  ? await window.desktopAssistant.provider.getCredentials()
+                  : undefined;
+              const providerCredentials: ProviderCredentials | undefined = desktopCredentials
+                ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
+                : undefined;
+              return assistantTurnAction({
+                userIntent,
+                chatHistory: historyForTurn,
+                providerMode,
+                providerCredentials,
+                threadContext,
+                capabilities,
+                context,
+                programRead,
+                projectSnapshot,
+              });
+            })();
+          })());
       const turnCompletedAt = new Date().toISOString();
+      const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
 
       if (turn.mode === 'chat') {
         const chatAnswer = (turn.answer || '').trim();
@@ -431,7 +448,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           role: 'assistant',
           content: chatAnswer,
           createdAt: turnCompletedAt,
-          meta: `Provider mode: ${providerMode} · Provider: convex:${turn.provider}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
+          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
         });
         await appendAssistantTurn({
           threadId,
@@ -493,7 +510,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           role: 'assistant',
           content: `I generated a candidate, but blocked auto-apply because intent and diff do not match.\n\n${intentMismatchWarning}`,
           createdAt: new Date().toISOString(),
-          meta: `Provider mode: ${providerMode} · Provider: convex:${turn.provider}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
         });
       } else {
         setStatusMessage('Candidate is ready to apply.');
@@ -501,7 +518,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           role: 'assistant',
           content: `${result.proposedEdits.intentSummary}\n\n${result.build.diff.summaryLines.join('\n')}`,
           createdAt: new Date().toISOString(),
-          meta: `Provider mode: ${providerMode} · Provider: convex:${turn.provider}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
         });
       }
       await appendAssistantTurn({

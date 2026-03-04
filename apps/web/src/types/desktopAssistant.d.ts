@@ -24,6 +24,34 @@ export interface DesktopProviderEvent {
   message?: string | null;
 }
 
+export interface DesktopCodexAssistantTurnRequest {
+  userIntent: string;
+  chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+  capabilities: unknown;
+  context: unknown;
+  programRead: unknown;
+  threadContext?: {
+    threadId?: string;
+    scopeKey?: string;
+  };
+}
+
+export type DesktopCodexAssistantTurnResponse =
+  | {
+      provider: string;
+      model: string;
+      mode: 'chat';
+      answer: string;
+      debugTrace?: unknown;
+    }
+  | {
+      provider: string;
+      model: string;
+      mode: 'edit';
+      proposedEdits: unknown;
+      debugTrace?: unknown;
+    };
+
 export interface DesktopAssistantApi {
   provider: {
     status: () => Promise<DesktopProviderStatus>;
@@ -31,6 +59,7 @@ export interface DesktopAssistantApi {
     setByokKey: (key: string) => Promise<DesktopProviderStatus>;
     loginCodex: () => Promise<DesktopProviderStatus>;
     logoutCodex: () => Promise<DesktopProviderStatus>;
+    assistantTurn: (request: DesktopCodexAssistantTurnRequest) => Promise<DesktopCodexAssistantTurnResponse>;
     getCredentials: () => Promise<DesktopProviderCredentials>;
   };
   onProviderEvent: (listener: (payload: DesktopProviderEvent) => void) => () => void;

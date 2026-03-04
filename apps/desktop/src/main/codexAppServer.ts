@@ -1,8 +1,15 @@
 import { shell } from 'electron';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
-import type { CodexAuthMethod, ProviderEventPayload } from '../shared/provider';
+import type {
+  CodexAssistantTurnRequest,
+  CodexAssistantTurnResponse,
+  CodexAuthMethod,
+  ProviderEventPayload,
+} from '../shared/provider';
 
 type JsonRpcId = number | string;
 
@@ -144,6 +151,56 @@ function resolveCodexExecutable(): string {
   return 'codex';
 }
 
+const CODEX_TURN_OUTPUT_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: {
+    mode: {
+      type: 'string',
+      enum: ['chat', 'edit'],
+    },
+    answer: {
+      type: 'string',
+    },
+    proposedEditsJson: {
+      type: 'string',
+    },
+  },
+  required: ['mode'],
+  additionalProperties: false,
+};
+
+function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
+  const envelope = {
+    task: 'Classify and handle Blockly assistant turn',
+    outputContract: {
+      mode: 'chat|edit',
+      chat: 'Provide answer',
+      edit: 'Provide proposedEditsJson stringified JSON with intentSummary, assumptions[], semanticOps[]',
+    },
+    rules: [
+      'If the user is asking a question or clarification, choose mode=chat.',
+      'If the user is asking for Blockly changes, choose mode=edit.',
+      'Use capabilities as strict source of truth for available blocks/actions.',
+      'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
+      'When mode=edit, proposedEditsJson must be valid JSON and include semanticOps.',
+      'Do not include markdown fences in any field.',
+    ],
+    userIntent: args.userIntent,
+    chatHistory: args.chatHistory.slice(-16),
+    context: args.context,
+    programRead: args.programRead,
+    capabilities: args.capabilities,
+    threadContext: args.threadContext ?? null,
+  };
+
+  return [
+    'You are PochaCoding Blockly assistant.',
+    'Return a JSON object matching the output schema.',
+    JSON.stringify(envelope, null, 2),
+  ].join('\n\n');
+}
+
 export class CodexAppServerClient {
   private process: ChildProcessWithoutNullStreams | null = null;
   private startPromise: Promise<void> | null = null;
@@ -231,6 +288,68 @@ export class CodexAppServerClient {
     } catch {
       return null;
     }
+  }
+
+  async runAssistantTurn(args: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> {
+    await this.ensureStarted();
+    const prompt = buildCodexAssistantPrompt(args);
+    const { output, stderr, exitCode } = await this.runCodexExecWithSchema(prompt);
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch (error) {
+      throw new Error(`Codex returned non-JSON output: ${toErrorMessage(error)}\n${output}`);
+    }
+
+    if (!isRecord(parsed)) {
+      throw new Error('Codex returned invalid assistant payload (not an object).');
+    }
+
+    const mode = parsed.mode;
+    if (mode === 'chat') {
+      const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
+      if (!answer) {
+        throw new Error('Codex returned chat mode without a non-empty answer.');
+      }
+      return {
+        provider: 'codex',
+        model: 'gpt-5.3-codex',
+        mode: 'chat',
+        answer,
+        debugTrace: {
+          transport: 'codex-exec',
+          exitCode,
+          stderrTail: stderr.slice(-1200),
+        },
+      };
+    }
+
+    if (mode === 'edit') {
+      const proposedEditsRaw = typeof parsed.proposedEditsJson === 'string' ? parsed.proposedEditsJson.trim() : '';
+      if (!proposedEditsRaw) {
+        throw new Error('Codex returned edit mode without proposedEditsJson.');
+      }
+      let proposedEdits: unknown;
+      try {
+        proposedEdits = JSON.parse(proposedEditsRaw);
+      } catch (error) {
+        throw new Error(`Codex returned invalid proposedEditsJson: ${toErrorMessage(error)}`);
+      }
+      return {
+        provider: 'codex',
+        model: 'gpt-5.3-codex',
+        mode: 'edit',
+        proposedEdits,
+        debugTrace: {
+          transport: 'codex-exec',
+          exitCode,
+          stderrTail: stderr.slice(-1200),
+        },
+      };
+    }
+
+    throw new Error('Codex returned unsupported mode.');
   }
 
   async loginWithChatGpt(): Promise<void> {
@@ -356,6 +475,89 @@ export class CodexAppServerClient {
     });
     this.initialized = true;
     this.statusMessage = 'Codex app server is ready.';
+  }
+
+  private async runCodexExecWithSchema(prompt: string): Promise<{
+    output: string;
+    stderr: string;
+    exitCode: number;
+  }> {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pochacoding-codex-turn-'));
+    const schemaPath = path.join(tempDir, 'schema.json');
+    const outputPath = path.join(tempDir, 'out.json');
+
+    await fs.writeFile(schemaPath, JSON.stringify(CODEX_TURN_OUTPUT_SCHEMA), 'utf8');
+
+    const args = [
+      'exec',
+      '--skip-git-repo-check',
+      '--sandbox',
+      'read-only',
+      '-c',
+      'ask_for_approval=never',
+      '--output-schema',
+      schemaPath,
+      '--output-last-message',
+      outputPath,
+      '--cd',
+      process.cwd(),
+      '-',
+    ];
+
+    const child = spawn(this.codexExecutable, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string | Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    let stdout = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string | Buffer) => {
+      stdout += chunk.toString();
+    });
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill('SIGTERM');
+      }, 90000);
+
+      child.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        resolve(code ?? -1);
+      });
+
+      child.stdin.end(prompt, 'utf8');
+    });
+
+    let output = '';
+    try {
+      output = await fs.readFile(outputPath, 'utf8');
+    } catch {
+      output = '';
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+
+    const normalizedOutput = output.trim();
+    if (exitCode !== 0 || !normalizedOutput) {
+      const detail = stderr || stdout || 'No output from codex exec.';
+      throw new Error(`Codex exec failed (exit ${exitCode}): ${detail.slice(-2400)}`);
+    }
+
+    return {
+      output: normalizedOutput,
+      stderr,
+      exitCode,
+    };
   }
 
   private async request<T>(method: string, params?: unknown): Promise<T> {

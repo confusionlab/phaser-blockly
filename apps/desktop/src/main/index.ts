@@ -4,7 +4,12 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CodexAppServerClient } from './codexAppServer';
-import type { AssistantProviderMode, ProviderCredentials, ProviderStatus } from '../shared/provider';
+import type {
+  AssistantProviderMode,
+  CodexAssistantTurnRequest,
+  ProviderCredentials,
+  ProviderStatus,
+} from '../shared/provider';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const KEYCHAIN_SERVICE = 'PochaCodingAssistant';
@@ -229,6 +234,10 @@ function setupIpcHandlers(): void {
   ipcMain.handle('assistant:provider:logout-codex', async () => {
     await codexClient.logout();
     return getProviderStatus();
+  });
+
+  ipcMain.handle('assistant:provider:assistant-turn', async (_event, request: CodexAssistantTurnRequest) => {
+    return codexClient.runAssistantTurn(request);
   });
 }
 

@@ -23,3 +23,31 @@ export interface ProviderEventPayload {
   success?: boolean;
   message?: string | null;
 }
+
+export interface CodexAssistantTurnRequest {
+  userIntent: string;
+  chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
+  capabilities: unknown;
+  context: unknown;
+  programRead: unknown;
+  threadContext?: {
+    threadId?: string;
+    scopeKey?: string;
+  };
+}
+
+export type CodexAssistantTurnResponse =
+  | {
+      provider: string;
+      model: string;
+      mode: 'chat';
+      answer: string;
+      debugTrace?: unknown;
+    }
+  | {
+      provider: string;
+      model: string;
+      mode: 'edit';
+      proposedEdits: unknown;
+      debugTrace?: unknown;
+    };

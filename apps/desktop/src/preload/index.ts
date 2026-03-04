@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AssistantProviderMode,
+  CodexAssistantTurnRequest,
+  CodexAssistantTurnResponse,
   ProviderEventPayload,
   ProviderCredentials,
   ProviderStatus,
@@ -24,6 +26,9 @@ const assistantDesktopApi = {
     },
     logoutCodex: async (): Promise<ProviderStatus> => {
       return ipcRenderer.invoke('assistant:provider:logout-codex');
+    },
+    assistantTurn: async (request: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> => {
+      return ipcRenderer.invoke('assistant:provider:assistant-turn', request);
     },
     getCredentials: async (): Promise<ProviderCredentials> => {
       return ipcRenderer.invoke('assistant:provider:get-credentials');
