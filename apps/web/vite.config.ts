@@ -7,10 +7,15 @@ import path from 'path'
 const packageJson = JSON.parse(
   readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
 ) as { version: string }
+const isDesktopBuild = process.env.VITE_DESKTOP_BUILD === '1'
 
 // https://vite.dev/config/
 export default defineConfig({
   envDir: path.resolve(__dirname, '../../'),
+  base: isDesktopBuild ? './' : '/',
+  build: {
+    outDir: isDesktopBuild ? 'dist-desktop' : 'dist',
+  },
   plugins: [react(), tailwindcss()],
   define: {
     __APP_VERSION__: JSON.stringify(packageJson.version),

@@ -183,13 +183,23 @@ function getProdWebEntry(): string {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'web-dist', 'index.html');
   }
+  const desktopDist = path.resolve(__dirname, '../../../web/dist-desktop/index.html');
+  if (existsSync(desktopDist)) {
+    return desktopDist;
+  }
   return path.resolve(__dirname, '../../../web/dist/index.html');
 }
 
 function createMainWindow(): BrowserWindow {
-  const preloadJsPath = path.join(__dirname, '../preload/index.js');
-  const preloadMjsPath = path.join(__dirname, '../preload/index.mjs');
-  const preloadPath = existsSync(preloadJsPath) ? preloadJsPath : preloadMjsPath;
+  const preloadCandidates = [
+    path.join(__dirname, '../preload/index.cjs'),
+    path.join(__dirname, '../preload/index.js'),
+    path.join(__dirname, '../preload/index.mjs'),
+  ];
+  const preloadPath = preloadCandidates.find((candidate) => existsSync(candidate));
+  if (!preloadPath) {
+    throw new Error(`Preload bundle not found. Tried: ${preloadCandidates.join(', ')}`);
+  }
 
   const window = new BrowserWindow({
     width: 1440,

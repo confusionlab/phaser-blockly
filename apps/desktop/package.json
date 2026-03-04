@@ -6,7 +6,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "concurrently -k \"pnpm --filter @pochacoding/web dev -- --host 127.0.0.1 --port 5173\" \"wait-on tcp:5173 && electron-vite dev\"",
-    "build": "pnpm --filter @pochacoding/web build && electron-vite build",
+    "build": "VITE_DESKTOP_BUILD=1 pnpm --filter @pochacoding/web build && electron-vite build",
     "pack:mac": "pnpm run build && electron-builder --mac --dir",
     "dist:mac": "pnpm run build && electron-builder --mac dmg zip",
     "lint": "eslint .",
@@ -34,7 +34,7 @@
     ],
     "extraResources": [
       {
-        "from": "../web/dist",
+        "from": "../web/dist-desktop",
         "to": "web-dist"
       }
     ],
