@@ -7,11 +7,11 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
   globalIgnores([
-    'dist',
-    'playwright-report',
-    'test-results',
-    'convex/_generated',
-    'scripts',
+    '**/dist/**',
+    '**/playwright-report/**',
+    '**/test-results/**',
+    'convex/_generated/**',
+    'scripts/**',
   ]),
   {
     files: ['**/*.{ts,tsx}'],
