@@ -626,22 +626,48 @@ function validateAssistantTurnPayload(value: unknown): AssistantTurnPayload {
   throw new Error('Assistant turn mode must be "chat" or "edit"');
 }
 
-function getOpenRouterConfig() {
-  const apiKey = getEnv("OPENROUTER_API_KEY");
-  if (!apiKey || !apiKey.trim()) {
-    throw new Error("Missing OPENROUTER_API_KEY in Convex environment.");
-  }
-
+function getOpenRouterDefaults() {
   const model = (getEnv("OPENROUTER_MODEL") || "openai/gpt-5.3-codex").trim();
   const referer = getEnv("OPENROUTER_REFERER")?.trim();
   const appName = (getEnv("OPENROUTER_APP_NAME") || "PochaCoding").trim();
 
   return {
-    apiKey: apiKey.trim(),
     model,
     referer,
     appName,
   };
+}
+
+function getManagedOpenRouterApiKey(): string {
+  const apiKey = getEnv("OPENROUTER_API_KEY");
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error("Missing OPENROUTER_API_KEY in Convex environment.");
+  }
+  return apiKey.trim();
+}
+
+function resolveProviderApiKey(args: {
+  providerMode: "managed" | "byok" | "codex_oauth";
+  providerCredentials?: unknown;
+}): string {
+  if (args.providerMode === "managed") {
+    return getManagedOpenRouterApiKey();
+  }
+
+  const credentials = isRecord(args.providerCredentials) ? args.providerCredentials : {};
+  if (args.providerMode === "byok") {
+    const byokKey =
+      typeof credentials.openRouterApiKey === "string"
+        ? credentials.openRouterApiKey.trim()
+        : "";
+    if (!byokKey) {
+      throw new Error("byok_missing_openrouter_key");
+    }
+    return byokKey;
+  }
+
+  // ChatGPT/Codex OAuth token transport is not implemented server-side yet.
+  throw new Error("codex_oauth_unavailable");
 }
 
 async function sendOpenRouterChatCompletion(args: {
@@ -1256,6 +1282,10 @@ export const assistantTurn = action({
       content: v.string(),
     })),
     providerMode: v.optional(v.union(v.literal("managed"), v.literal("byok"), v.literal("codex_oauth"))),
+    providerCredentials: v.optional(v.object({
+      openRouterApiKey: v.optional(v.string()),
+      codexToken: v.optional(v.string()),
+    })),
     threadContext: v.optional(v.object({
       threadId: v.optional(v.string()),
       scopeKey: v.optional(v.string()),
@@ -1267,8 +1297,6 @@ export const assistantTurn = action({
   },
   returns: assistantTurnReturnValidator,
   handler: async (_ctx, args) => {
-    const { apiKey, model, referer, appName } = getOpenRouterConfig();
-
     const recentTurns = args.chatHistory
       .filter((turn) => (turn.role === "user" || turn.role === "assistant") && !!turn.content.trim())
       .slice(-16)
@@ -1278,6 +1306,7 @@ export const assistantTurn = action({
       }));
     const projectSnapshot = isRecord(args.projectSnapshot) ? args.projectSnapshot : {};
     const providerMode = args.providerMode || "managed";
+    const { model, referer, appName } = getOpenRouterDefaults();
     const threadContext = isRecord(args.threadContext) ? args.threadContext : {};
     const tools = buildAssistantToolDefinitions();
     const promptEnvelope = {
@@ -1352,6 +1381,31 @@ export const assistantTurn = action({
       finalResponsePreview: null,
       finalVerdict: "fallback_chat",
     };
+
+    let apiKey: string;
+    try {
+      apiKey = resolveProviderApiKey({
+        providerMode,
+        providerCredentials: args.providerCredentials,
+      });
+    } catch (error) {
+      const configError = error instanceof Error ? error.message : "provider_configuration_error";
+      const errorCode = toErrorCode(configError);
+      debugTrace.validationErrors.push(`provider:${configError}`);
+      debugTrace.fallbackReasonCode = errorCode;
+      debugTrace.finalVerdict = "fallback_chat";
+      return {
+        provider: "openrouter",
+        model,
+        mode: "chat" as const,
+        answer:
+          providerMode === "codex_oauth"
+            ? "Codex OAuth mode is not available on this runtime yet. Switch to Managed credits or BYO key."
+            : "Provider configuration is incomplete. Check assistant provider settings and try again.",
+        errorCode,
+        debugTrace,
+      };
+    }
 
     try {
       for (let round = 0; round < maxToolRounds; round += 1) {

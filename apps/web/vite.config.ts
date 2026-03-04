@@ -10,6 +10,7 @@ const packageJson = JSON.parse(
 
 // https://vite.dev/config/
 export default defineConfig({
+  envDir: path.resolve(__dirname, '../../'),
   plugins: [react(), tailwindcss()],
   define: {
     __APP_VERSION__: JSON.stringify(packageJson.version),

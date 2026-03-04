@@ -4,9 +4,10 @@ import { BrowserRouter, HashRouter } from 'react-router-dom'
 import { ConvexProvider, ConvexReactClient } from 'convex/react'
 import './index.css'
 import App from './App.tsx'
+import { getConvexCloudUrl } from '@/lib/convexEnv'
 
 const rootElement = document.getElementById('root')
-const convexUrl = import.meta.env.VITE_CONVEX_URL
+const convexUrl = getConvexCloudUrl()
 const appBranch = import.meta.env.VITE_APP_BRANCH
 
 if (appBranch) {
@@ -21,12 +22,13 @@ if (!convexUrl) {
   createRoot(rootElement).render(
     <StrictMode>
       <div style={{ padding: '24px', fontFamily: 'system-ui, sans-serif' }}>
-        Missing `VITE_CONVEX_URL`. Set it in your Vercel Preview environment variables.
+        Missing Convex URL. Set `VITE_CONVEX_URL_DEV` for development and `VITE_CONVEX_URL_PROD` for production
+        (or fallback `VITE_CONVEX_URL`).
       </div>
     </StrictMode>,
   )
   throw new Error(
-    'Missing VITE_CONVEX_URL. Add it to Vercel Project Settings -> Environment Variables for Preview.',
+    'Missing Convex URL. Configure VITE_CONVEX_URL_DEV / VITE_CONVEX_URL_PROD (or VITE_CONVEX_URL).',
   )
 }
 

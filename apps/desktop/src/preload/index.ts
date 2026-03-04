@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AssistantProviderMode, OAuthCallbackPayload, ProviderStatus } from '../shared/provider';
+import type {
+  AssistantProviderMode,
+  OAuthCallbackPayload,
+  ProviderCredentials,
+  ProviderStatus,
+} from '../shared/provider';
 
 type OAuthListener = (payload: OAuthCallbackPayload) => void;
 
@@ -19,6 +24,9 @@ const assistantDesktopApi = {
     },
     logoutCodex: async (): Promise<ProviderStatus> => {
       return ipcRenderer.invoke('assistant:provider:logout-codex');
+    },
+    getCredentials: async (): Promise<ProviderCredentials> => {
+      return ipcRenderer.invoke('assistant:provider:get-credentials');
     },
   },
   onOAuthCallback: (listener: OAuthListener): (() => void) => {

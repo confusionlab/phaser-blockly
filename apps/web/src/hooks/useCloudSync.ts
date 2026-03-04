@@ -10,6 +10,7 @@ import {
   syncProjectFromCloud,
   type ProjectSyncPayload,
 } from '@/db/database';
+import { getConvexCloudUrl, getConvexSiteUrl } from '@/lib/convexEnv';
 import type { Project } from '@/types';
 
 interface CloudSyncOptions {
@@ -61,12 +62,12 @@ function toBeaconSyncPayload(payload: ProjectSyncPayload): BeaconSyncPayload {
 }
 
 function getSyncBeaconUrl(): string | null {
-  const siteUrl = import.meta.env.VITE_CONVEX_SITE_URL;
+  const siteUrl = getConvexSiteUrl();
   if (siteUrl) {
     return `${siteUrl.replace(/\/$/, '')}/sync-beacon`;
   }
 
-  const cloudUrl = import.meta.env.VITE_CONVEX_URL;
+  const cloudUrl = getConvexCloudUrl();
   if (!cloudUrl) {
     return null;
   }

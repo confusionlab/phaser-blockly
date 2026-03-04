@@ -16,6 +16,14 @@
 - `pnpm typecheck`: type-check all workspace packages.
 - `pnpm lint`: lint all workspace packages.
 
+## Convex Env Separation (Dev vs Prod)
+
+- `apps/web` now resolves env from the repo root (`envDir` points to `../../`).
+- Use mode-specific env vars to avoid accidentally using prod backend in local dev:
+  - `VITE_CONVEX_URL_DEV` / `VITE_CONVEX_SITE_URL_DEV` for development.
+  - `VITE_CONVEX_URL_PROD` / `VITE_CONVEX_SITE_URL_PROD` for production builds.
+- Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` if mode-specific values are missing.
+
 ## Desktop Packaging
 
 - macOS unsigned directory package: `pnpm --filter @pochacoding/desktop pack:mac`

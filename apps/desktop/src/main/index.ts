@@ -1,8 +1,9 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { AssistantProviderMode, ProviderStatus } from '../shared/provider';
+import type { AssistantProviderMode, ProviderCredentials, ProviderStatus } from '../shared/provider';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const KEYCHAIN_SERVICE = 'PochaCodingAssistant';
@@ -113,7 +114,18 @@ async function getProviderStatus(): Promise<ProviderStatus> {
     mode,
     hasByokKey: !!byok,
     hasCodexToken: !!codex,
-    codexAvailable: true,
+    codexAvailable: false,
+  };
+}
+
+async function getProviderCredentials(): Promise<ProviderCredentials> {
+  const [openRouterApiKey, codexToken] = await Promise.all([
+    getSecret(BYOK_ACCOUNT),
+    getSecret(CODEX_ACCOUNT),
+  ]);
+  return {
+    openRouterApiKey,
+    codexToken,
   };
 }
 
@@ -125,13 +137,17 @@ function getProdWebEntry(): string {
 }
 
 function createMainWindow(): BrowserWindow {
+  const preloadJsPath = path.join(__dirname, '../preload/index.js');
+  const preloadMjsPath = path.join(__dirname, '../preload/index.mjs');
+  const preloadPath = existsSync(preloadJsPath) ? preloadJsPath : preloadMjsPath;
+
   const window = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 1100,
     minHeight: 700,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -164,6 +180,10 @@ function setupOAuthDeepLink(): void {
 function setupIpcHandlers(): void {
   ipcMain.handle('assistant:provider:get-status', async () => {
     return getProviderStatus();
+  });
+
+  ipcMain.handle('assistant:provider:get-credentials', async () => {
+    return getProviderCredentials();
   });
 
   ipcMain.handle('assistant:provider:set-mode', async (_event, mode: AssistantProviderMode) => {

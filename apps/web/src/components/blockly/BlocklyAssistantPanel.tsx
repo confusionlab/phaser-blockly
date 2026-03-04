@@ -47,6 +47,10 @@ type CandidateDebugInfo = {
   trace: unknown;
   intentMismatchWarning: string | null;
 };
+type ProviderCredentials = {
+  openRouterApiKey?: string;
+  codexToken?: string;
+};
 
 const MAX_CHAT_MESSAGES = 50;
 
@@ -237,11 +241,30 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             hasCodexToken: status.hasCodexToken,
             codexAvailable: status.codexAvailable,
           });
-          if (status.mode !== persistedMode) {
-            setProviderMode(status.mode);
-            await setAssistantThreadProviderMode(thread.id, status.mode);
+          const shouldForceManaged = persistedMode === 'codex_oauth' && !status.codexAvailable;
+          const preferredMode = shouldForceManaged ? 'managed' : persistedMode;
+          if (preferredMode !== persistedMode) {
+            await setAssistantThreadProviderMode(thread.id, preferredMode);
+          }
+
+          if (status.mode !== preferredMode) {
+            const syncedStatus = await window.desktopAssistant.provider.setMode(preferredMode);
+            if (cancelled) return;
+            setProviderStatus({
+              hasByokKey: syncedStatus.hasByokKey,
+              hasCodexToken: syncedStatus.hasCodexToken,
+              codexAvailable: syncedStatus.codexAvailable,
+            });
+            setProviderMode(syncedStatus.mode);
+            await setAssistantThreadProviderMode(thread.id, syncedStatus.mode);
+          } else {
+            setProviderMode(preferredMode);
           }
         } else {
+          if (persistedMode !== 'managed') {
+            setProviderMode('managed');
+            await setAssistantThreadProviderMode(thread.id, 'managed');
+          }
           setProviderStatus({
             hasByokKey: false,
             hasCodexToken: false,
@@ -313,6 +336,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       setErrorMessage('Codex mode selected but no token is configured.');
       return;
     }
+    if (providerMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
+      setStatus('error');
+      setErrorMessage('Codex mode is not available in this runtime yet.');
+      return;
+    }
 
     setStatus('loading');
     setErrorMessage(null);
@@ -321,10 +349,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     setCandidateDebugInfo(null);
     const userIntent = prompt.trim();
     const startedAt = new Date().toISOString();
-    const historyForTurn = [
-      ...chatMessages.map((message) => ({ role: message.role, content: message.content })),
-      { role: 'user' as const, content: userIntent },
-    ];
+    const historyForTurn = chatMessages.map((message) => ({ role: message.role, content: message.content }));
     await appendChatMessage({
       role: 'user',
       content: userIntent,
@@ -337,10 +362,21 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       const context = buildProgramContext(project, scope);
       const programRead = readProgramSummary(context);
       const projectSnapshot = buildProjectSnapshot(project);
+      const desktopCredentials =
+        typeof window !== 'undefined' && window.desktopAssistant && providerMode !== 'managed'
+          ? await window.desktopAssistant.provider.getCredentials()
+          : undefined;
+      const providerCredentials: ProviderCredentials | undefined = desktopCredentials
+        ? {
+            openRouterApiKey: desktopCredentials.openRouterApiKey || undefined,
+            codexToken: desktopCredentials.codexToken || undefined,
+          }
+        : undefined;
       const turn = await assistantTurnAction({
         userIntent,
         chatHistory: historyForTurn,
         providerMode,
+        providerCredentials,
         threadContext: {
           threadId,
           scopeKey,
@@ -514,6 +550,10 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
   const updateProviderMode = async (nextMode: AssistantProviderMode) => {
     if (!threadId) return;
+    if (nextMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
+      setErrorMessage('Codex mode is currently unavailable in this runtime.');
+      return;
+    }
     setProviderMode(nextMode);
     await setAssistantThreadProviderMode(threadId, nextMode);
     if (typeof window !== 'undefined' && window.desktopAssistant) {
@@ -582,7 +622,9 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             >
               <option value="managed">Managed credits</option>
               <option value="byok">BYO key</option>
-              <option value="codex_oauth">Codex / ChatGPT login</option>
+              <option value="codex_oauth" disabled={providerStatus?.codexAvailable === false}>
+                Codex / ChatGPT login
+              </option>
             </select>
             {(providerMode === 'byok' || providerMode === 'codex_oauth') ? (
               <div className="flex items-center gap-2">

@@ -7,6 +7,11 @@ export interface DesktopProviderStatus {
   codexAvailable: boolean;
 }
 
+export interface DesktopProviderCredentials {
+  openRouterApiKey: string | null;
+  codexToken: string | null;
+}
+
 export interface DesktopAssistantApi {
   provider: {
     status: () => Promise<DesktopProviderStatus>;
@@ -14,6 +19,7 @@ export interface DesktopAssistantApi {
     setByokKey: (key: string) => Promise<DesktopProviderStatus>;
     setCodexToken: (token: string) => Promise<DesktopProviderStatus>;
     logoutCodex: () => Promise<DesktopProviderStatus>;
+    getCredentials: () => Promise<DesktopProviderCredentials>;
   };
   onOAuthCallback: (listener: (payload: { url: string }) => void) => () => void;
 }

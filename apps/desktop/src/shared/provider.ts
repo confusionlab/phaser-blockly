@@ -7,6 +7,11 @@ export interface ProviderStatus {
   codexAvailable: boolean;
 }
 
+export interface ProviderCredentials {
+  openRouterApiKey: string | null;
+  codexToken: string | null;
+}
+
 export interface OAuthCallbackPayload {
   url: string;
 }
