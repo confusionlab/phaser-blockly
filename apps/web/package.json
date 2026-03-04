@@ -12,5 +12,8 @@
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",
     "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "^0.12.15"
   }
 }

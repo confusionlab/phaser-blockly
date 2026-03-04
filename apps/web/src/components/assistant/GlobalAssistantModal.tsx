@@ -1,0 +1,844 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  AssistantRuntimeProvider,
+  ComposerPrimitive,
+  MessagePrimitive,
+  ThreadPrimitive,
+  useLocalRuntime,
+  type ChatModelAdapter,
+} from '@assistant-ui/react';
+import { Bot, Loader2, Sparkles, X } from 'lucide-react';
+import { useAction } from 'convex/react';
+import { Button } from '@/components/ui/button';
+import { api } from '@convex-generated/api';
+import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
+import {
+  appendAssistantMessage,
+  appendAssistantTurn,
+  clearAssistantThreadMessages,
+  ensureAssistantThread,
+  getAssistantThreadProviderMode,
+  listAssistantMessages,
+  setAssistantThreadProviderMode,
+  type AssistantProviderMode,
+} from '@/db/assistantChatDb';
+import {
+  applyOrchestratedCandidate,
+  buildProgramContext,
+  getLlmExposedBlocklyCapabilities,
+  readProgramSummary,
+  runLlmBlocklyOrchestration,
+  validateSemanticOpsPayload,
+} from '@/lib/llm';
+import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate } from '@/lib/llm';
+import type { Project } from '@/types';
+
+type ProviderCredentials = {
+  openRouterApiKey?: string;
+};
+
+type ProviderStatusSnapshot = {
+  hasByokKey: boolean;
+  hasCodexToken: boolean;
+  codexAvailable: boolean;
+  codexAuthMethod: 'chatgpt' | 'api_key' | 'unknown' | null;
+  codexEmail: string | null;
+  codexPlanType: string | null;
+  codexLoginInProgress: boolean;
+  codexStatusMessage: string | null;
+};
+
+type CandidateDebugInfo = {
+  userIntent: string;
+  modelProvider: string;
+  modelName: string;
+  modelLatency: string;
+  compileLatency: string;
+  trace: unknown;
+  intentMismatchWarning: string | null;
+};
+
+type PersistedChatMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
+  hasByokKey: false,
+  hasCodexToken: false,
+  codexAvailable: false,
+  codexAuthMethod: null,
+  codexEmail: null,
+  codexPlanType: null,
+  codexLoginInProgress: false,
+  codexStatusMessage: null,
+};
+
+function buildProjectSnapshot(project: Project) {
+  return {
+    id: project.id,
+    name: project.name,
+    scenes: project.scenes.map((scene) => ({
+      id: scene.id,
+      name: scene.name,
+      order: scene.order,
+      ground: scene.ground
+        ? {
+            enabled: scene.ground.enabled,
+            y: scene.ground.y,
+            color: scene.ground.color,
+          }
+        : null,
+      cameraConfig: scene.cameraConfig
+        ? {
+            followTarget: scene.cameraConfig.followTarget,
+            bounds: scene.cameraConfig.bounds,
+            zoom: scene.cameraConfig.zoom,
+          }
+        : null,
+      objects: scene.objects.map((object) => ({
+        id: object.id,
+        name: object.name,
+        componentId: object.componentId || null,
+        x: object.x,
+        y: object.y,
+        scaleX: object.scaleX,
+        scaleY: object.scaleY,
+        rotation: object.rotation,
+        visible: object.visible,
+        physics: object.physics,
+        collider: object.collider,
+        blocklyXml: object.blocklyXml || '',
+        localVariables: (object.localVariables || []).map((variable) => ({
+          id: variable.id,
+          name: variable.name,
+          type: variable.type,
+          scope: variable.scope,
+          defaultValue: variable.defaultValue,
+        })),
+        sounds: (object.sounds || []).map((sound) => ({
+          id: sound.id,
+          name: sound.name,
+        })),
+      })),
+    })),
+    components: (project.components || []).map((component) => ({
+      id: component.id,
+      name: component.name,
+      physics: component.physics,
+      collider: component.collider,
+      blocklyXml: component.blocklyXml || '',
+      localVariables: (component.localVariables || []).map((variable) => ({
+        id: variable.id,
+        name: variable.name,
+        type: variable.type,
+        scope: variable.scope,
+        defaultValue: variable.defaultValue,
+      })),
+      sounds: (component.sounds || []).map((sound) => ({
+        id: sound.id,
+        name: sound.name,
+      })),
+    })),
+    messages: (project.messages || []).map((message) => ({
+      id: message.id,
+      name: message.name,
+    })),
+    globalVariables: (project.globalVariables || []).map((variable) => ({
+      id: variable.id,
+      name: variable.name,
+      type: variable.type,
+      scope: variable.scope,
+      defaultValue: variable.defaultValue,
+    })),
+  };
+}
+
+function getScopeStorageKey(scope: BlocklyEditScope | null): string | null {
+  if (!scope) return null;
+  if (scope.scope === 'component') {
+    return `component:${scope.componentId}`;
+  }
+  return `object:${scope.sceneId}:${scope.objectId}`;
+}
+
+function formatDuration(startIso: string, endIso: string): string {
+  const durationMs = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (!Number.isFinite(durationMs) || durationMs < 0) return '-';
+  if (durationMs < 1000) return `${durationMs}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function detectIntentMismatchWarning(userIntent: string, candidate: OrchestratedCandidate): string | null {
+  const lower = userIntent.toLowerCase();
+  const asksToAdd = /\b(add|create|insert|new)\b/.test(lower);
+  const asksToRemove = /\b(remove|delete)\b/.test(lower);
+  const asksToChange = /\b(change|set|update|edit|modify)\b/.test(lower);
+  const asksForJump = /\bjump\b/.test(lower) && /\bspace\b/.test(lower);
+
+  const diff = candidate.build.diff;
+  if (asksToAdd && diff.addedBlockCount === 0) {
+    return 'Intent looks additive, but no blocks were added.';
+  }
+  if (asksToRemove && diff.removedBlockCount === 0) {
+    return 'Intent looks destructive, but no blocks were removed.';
+  }
+  if (asksToChange && diff.changedFieldCount === 0 && diff.changedConnectionCount === 0 && diff.addedBlockCount === 0) {
+    return 'Intent looks like a change request, but diff appears empty.';
+  }
+  if (asksForJump && diff.addedBlockCount === 0 && diff.changedConnectionCount === 0) {
+    return 'Jump intent detected, but no event/action structure was added.';
+  }
+  return null;
+}
+
+function mapProviderStatus(status: {
+  hasByokKey: boolean;
+  hasCodexToken: boolean;
+  codexAvailable: boolean;
+  codexAuthMethod?: 'chatgpt' | 'api_key' | 'unknown' | null;
+  codexEmail?: string | null;
+  codexPlanType?: string | null;
+  codexLoginInProgress?: boolean;
+  codexStatusMessage?: string | null;
+}): ProviderStatusSnapshot {
+  return {
+    hasByokKey: status.hasByokKey,
+    hasCodexToken: status.hasCodexToken,
+    codexAvailable: status.codexAvailable,
+    codexAuthMethod: status.codexAuthMethod ?? null,
+    codexEmail: status.codexEmail ?? null,
+    codexPlanType: status.codexPlanType ?? null,
+    codexLoginInProgress: status.codexLoginInProgress ?? false,
+    codexStatusMessage: status.codexStatusMessage ?? null,
+  };
+}
+
+function extractMessageText(message: { content?: unknown }): string {
+  const content = Array.isArray(message.content) ? message.content : [];
+  const textParts = content
+    .map((part) => {
+      if (!part || typeof part !== 'object') return '';
+      const typedPart = part as { type?: string; text?: string };
+      if ((typedPart.type === 'text' || typedPart.type === 'reasoning') && typeof typedPart.text === 'string') {
+        return typedPart.text;
+      }
+      return '';
+    })
+    .filter((value) => value.trim().length > 0);
+  return textParts.join('\n').trim();
+}
+
+function UserMessage() {
+  return (
+    <MessagePrimitive.Root className="mb-3 flex justify-end">
+      <div className="max-w-[75%] rounded-2xl bg-primary/15 px-3 py-2 text-sm">
+        <MessagePrimitive.Parts />
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
+
+function AssistantMessage() {
+  return (
+    <MessagePrimitive.Root className="mb-3 flex justify-start">
+      <div className="max-w-[80%] rounded-2xl border bg-background px-3 py-2 text-sm">
+        <MessagePrimitive.Parts />
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
+
+export function GlobalAssistantModal() {
+  const [open, setOpen] = useState(false);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [scopeKey, setScopeKey] = useState<string | null>(null);
+  const [providerMode, setProviderMode] = useState<AssistantProviderMode>('managed');
+  const [providerStatus, setProviderStatus] = useState<ProviderStatusSnapshot>(DEFAULT_PROVIDER_STATUS);
+  const [providerSecretInput, setProviderSecretInput] = useState('');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [persistedMessages, setPersistedMessages] = useState<PersistedChatMessage[]>([]);
+  const [candidate, setCandidate] = useState<OrchestratedCandidate | null>(null);
+  const [candidateDebugInfo, setCandidateDebugInfo] = useState<CandidateDebugInfo | null>(null);
+
+  const {
+    project,
+    addMessage,
+    addGlobalVariable,
+    addLocalVariable,
+    updateObject,
+    updateComponent,
+  } = useProjectStore();
+
+  const { selectedSceneId, selectedObjectId, selectedComponentId, undo } = useEditorStore();
+  const assistantTurnAction = useAction(api.llm.assistantTurn);
+
+  const assistantScope: BlocklyEditScope | null = useMemo(() => {
+    if (!project) return null;
+    if (selectedComponentId) {
+      return {
+        scope: 'component',
+        componentId: selectedComponentId,
+        selectedSceneId,
+      };
+    }
+    if (selectedSceneId && selectedObjectId) {
+      const scene = project.scenes.find((sceneItem) => sceneItem.id === selectedSceneId);
+      const object = scene?.objects.find((objectItem) => objectItem.id === selectedObjectId);
+      return {
+        scope: 'object',
+        sceneId: selectedSceneId,
+        objectId: selectedObjectId,
+        componentId: object?.componentId,
+      };
+    }
+    return null;
+  }, [project, selectedComponentId, selectedObjectId, selectedSceneId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!project || !assistantScope) {
+      setThreadId(null);
+      setScopeKey(null);
+      setPersistedMessages([]);
+      return;
+    }
+
+    const nextScopeKey = getScopeStorageKey(assistantScope);
+    setScopeKey(nextScopeKey);
+
+    if (!nextScopeKey) {
+      setThreadId(null);
+      setPersistedMessages([]);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const thread = await ensureAssistantThread(project.id, nextScopeKey);
+        if (cancelled) return;
+        setThreadId(thread.id);
+
+        const mode = await getAssistantThreadProviderMode(thread.id);
+        if (cancelled) return;
+        setProviderMode(mode);
+
+        const messages = await listAssistantMessages(thread.id);
+        if (cancelled) return;
+        setPersistedMessages(
+          messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        );
+
+        if (typeof window !== 'undefined' && window.desktopAssistant) {
+          const status = await window.desktopAssistant.provider.status();
+          if (cancelled) return;
+          setProviderStatus(mapProviderStatus(status));
+        } else {
+          setProviderStatus(DEFAULT_PROVIDER_STATUS);
+        }
+      } catch {
+        if (cancelled) return;
+        setThreadId(null);
+        setScopeKey(null);
+        setPersistedMessages([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [assistantScope, project]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.desktopAssistant) return;
+    const desktopAssistant = window.desktopAssistant;
+    return desktopAssistant.onProviderEvent((event) => {
+      if (event.message) {
+        setStatusMessage(event.message);
+      }
+      void desktopAssistant.provider.status()
+        .then((status) => {
+          setProviderStatus(mapProviderStatus(status));
+        })
+        .catch(() => {
+          setProviderStatus(DEFAULT_PROVIDER_STATUS);
+        });
+    });
+  }, []);
+
+  const adapter = useMemo<ChatModelAdapter>(() => ({
+    run: async (options) => {
+      if (!project) {
+        throw new Error('Open a project first.');
+      }
+      if (!assistantScope) {
+        throw new Error('Select an object or component first.');
+      }
+      if (!threadId || !scopeKey) {
+        throw new Error('Assistant thread is not ready yet.');
+      }
+      if (providerMode === 'byok' && !providerStatus.hasByokKey) {
+        throw new Error('BYOK mode selected but no key is configured.');
+      }
+      if (providerMode === 'codex_oauth' && !providerStatus.hasCodexToken) {
+        throw new Error('Codex mode selected but not signed in. Click Login with ChatGPT.');
+      }
+      if (providerMode === 'codex_oauth' && !providerStatus.codexAvailable) {
+        throw new Error(providerStatus.codexStatusMessage || 'Codex mode is unavailable.');
+      }
+
+      setErrorMessage(null);
+      setStatusMessage(null);
+      setCandidate(null);
+      setCandidateDebugInfo(null);
+
+      const messages = options.messages.filter((message) => message.role === 'user' || message.role === 'assistant');
+      const historyForTurn = messages
+        .map((message) => ({
+          role: message.role,
+          content: extractMessageText(message),
+        }))
+        .filter((message) => message.content.length > 0) as Array<{ role: 'user' | 'assistant'; content: string }>;
+
+      const userIntent = [...historyForTurn].reverse().find((message) => message.role === 'user')?.content?.trim();
+      if (!userIntent) {
+        throw new Error('Failed to extract your prompt from chat state.');
+      }
+
+      const startedAt = new Date().toISOString();
+      await appendAssistantMessage({
+        threadId,
+        role: 'user',
+        content: userIntent,
+        createdAt: new Date().toISOString(),
+      });
+
+      const capabilities = getLlmExposedBlocklyCapabilities();
+      const context = buildProgramContext(project, assistantScope);
+      const programRead = readProgramSummary(context);
+      const threadContext = { threadId, scopeKey };
+
+      const turn = await (providerMode === 'codex_oauth'
+        ? (() => {
+            if (typeof window === 'undefined' || !window.desktopAssistant) {
+              throw new Error('Codex mode requires desktop app runtime.');
+            }
+            return window.desktopAssistant.provider.assistantTurn({
+              userIntent,
+              chatHistory: historyForTurn,
+              capabilities,
+              context,
+              programRead,
+              threadContext,
+            });
+          })()
+        : (() => {
+            const projectSnapshot = buildProjectSnapshot(project);
+            return (async () => {
+              const desktopCredentials =
+                typeof window !== 'undefined' && window.desktopAssistant && providerMode === 'byok'
+                  ? await window.desktopAssistant.provider.getCredentials()
+                  : undefined;
+              const providerCredentials: ProviderCredentials | undefined = desktopCredentials
+                ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
+                : undefined;
+              return assistantTurnAction({
+                userIntent,
+                chatHistory: historyForTurn,
+                providerMode,
+                providerCredentials,
+                threadContext,
+                capabilities,
+                context,
+                programRead,
+                projectSnapshot,
+              });
+            })();
+          })());
+
+      const turnCompletedAt = new Date().toISOString();
+      const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
+
+      if (turn.mode === 'chat') {
+        const chatAnswer = (turn.answer || '').trim();
+        if (!chatAnswer) {
+          throw new Error('Assistant returned an empty response.');
+        }
+
+        await appendAssistantMessage({
+          threadId,
+          role: 'assistant',
+          content: chatAnswer,
+          createdAt: turnCompletedAt,
+          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
+        });
+        await appendAssistantTurn({
+          threadId,
+          userIntent,
+          mode: 'chat',
+          provider: turn.provider,
+          model: turn.model,
+          debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
+          createdAt: turnCompletedAt,
+        });
+
+        return {
+          content: [{ type: 'text', text: chatAnswer }],
+        };
+      }
+
+      const parsedProposedEdits = validateSemanticOpsPayload(turn.proposedEdits);
+      if (!parsedProposedEdits.ok) {
+        throw new Error(`Server response validation failed: ${parsedProposedEdits.errors.join('; ')}`);
+      }
+      const proposedEdits = parsedProposedEdits.value;
+      const convexProvider: LLMProvider = {
+        name: `convex:${turn.provider}`,
+        model: turn.model,
+        proposeEdits: async () => proposedEdits,
+      };
+
+      const result = await runLlmBlocklyOrchestration({
+        project,
+        scope: assistantScope,
+        userIntent,
+        provider: convexProvider,
+      });
+
+      setCandidate(result);
+      const modelLatency = formatDuration(startedAt, turnCompletedAt);
+      const compileLatency = formatDuration(result.requestStartedAt, result.requestCompletedAt);
+      const intentMismatchWarning = detectIntentMismatchWarning(userIntent, result);
+
+      setCandidateDebugInfo({
+        userIntent,
+        modelProvider: turn.provider,
+        modelName: turn.model,
+        modelLatency,
+        compileLatency,
+        trace: turn.debugTrace ?? null,
+        intentMismatchWarning,
+      });
+
+      let assistantText = `${result.proposedEdits.intentSummary}\n\n${result.build.diff.summaryLines.join('\n')}`;
+      if (!result.validation.pass) {
+        assistantText = `I proposed edits, but validation failed with ${result.validation.errors.length} issue(s). Review the validation panel before applying.`;
+      } else if (intentMismatchWarning) {
+        assistantText = `I generated a candidate, but blocked auto-apply because intent and diff do not match.\n\n${intentMismatchWarning}`;
+      }
+
+      await appendAssistantMessage({
+        threadId,
+        role: 'assistant',
+        content: assistantText,
+        createdAt: new Date().toISOString(),
+        meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+      });
+      await appendAssistantTurn({
+        threadId,
+        userIntent,
+        mode: 'edit',
+        provider: turn.provider,
+        model: turn.model,
+        debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
+        createdAt: new Date().toISOString(),
+      });
+
+      return {
+        content: [{ type: 'text', text: assistantText }],
+      };
+    },
+  }), [assistantScope, assistantTurnAction, project, providerMode, providerStatus, scopeKey, threadId]);
+
+  const initialMessages = useMemo(
+    () => persistedMessages.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+    [persistedMessages],
+  );
+
+  const runtime = useLocalRuntime(adapter, {
+    initialMessages,
+  });
+
+  const canApply = !!candidate && candidate.validation.pass && !candidateDebugInfo?.intentMismatchWarning;
+
+  const clearChat = () => {
+    if (!threadId) return;
+    void clearAssistantThreadMessages(threadId)
+      .then(() => {
+        setPersistedMessages([]);
+      })
+      .catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to clear chat history.');
+      });
+  };
+
+  const applyCandidate = () => {
+    if (!candidate || !project) return;
+    if (!candidate.validation.pass) {
+      setErrorMessage('Candidate is not valid yet.');
+      return;
+    }
+    if (candidateDebugInfo?.intentMismatchWarning) {
+      setErrorMessage(`Apply blocked: ${candidateDebugInfo.intentMismatchWarning}`);
+      return;
+    }
+
+    const result = applyOrchestratedCandidate({
+      orchestrated: candidate,
+      bindings: {
+        getProject: () => useProjectStore.getState().project,
+        addMessage,
+        addGlobalVariable,
+        addLocalVariable,
+        updateObject,
+        updateComponent,
+      },
+    });
+
+    setStatusMessage(`${result.message} Added ${result.createdMessageCount} message(s) and ${result.createdVariableCount} variable(s).`);
+    setErrorMessage(null);
+  };
+
+  const rollback = () => {
+    undo();
+    setStatusMessage('Undid last change. If apply was the most recent edit, it has been rolled back.');
+  };
+
+  const updateProviderMode = async (nextMode: AssistantProviderMode) => {
+    if (!threadId) return;
+    if (nextMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
+      setErrorMessage(providerStatus.codexStatusMessage || 'Codex mode is unavailable in this runtime.');
+      return;
+    }
+
+    try {
+      setProviderMode(nextMode);
+      await setAssistantThreadProviderMode(threadId, nextMode);
+      if (typeof window !== 'undefined' && window.desktopAssistant) {
+        const status = await window.desktopAssistant.provider.setMode(nextMode);
+        setProviderStatus(mapProviderStatus(status));
+        setProviderMode(status.mode);
+        await setAssistantThreadProviderMode(threadId, status.mode);
+      }
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to switch provider mode.');
+    }
+  };
+
+  const saveByokSecret = async () => {
+    if (typeof window === 'undefined' || !window.desktopAssistant) {
+      setErrorMessage('Provider secrets can only be configured in desktop app.');
+      return;
+    }
+    if (!providerSecretInput.trim()) {
+      setErrorMessage('Enter an OpenRouter key first.');
+      return;
+    }
+
+    try {
+      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim());
+      setProviderStatus(mapProviderStatus(status));
+      setProviderSecretInput('');
+      setStatusMessage('Credential saved to OS keychain.');
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to save credential.');
+    }
+  };
+
+  const loginCodexProvider = async () => {
+    if (typeof window === 'undefined' || !window.desktopAssistant) {
+      setErrorMessage('Codex login is only available in desktop app.');
+      return;
+    }
+
+    try {
+      setStatusMessage('Opening ChatGPT login in browser...');
+      const status = await window.desktopAssistant.provider.loginCodex();
+      setProviderStatus(mapProviderStatus(status));
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to start ChatGPT login.');
+    }
+  };
+
+  const logoutCodexProvider = async () => {
+    if (typeof window === 'undefined' || !window.desktopAssistant) {
+      setErrorMessage('Codex logout is only available in desktop app.');
+      return;
+    }
+
+    try {
+      const status = await window.desktopAssistant.provider.logoutCodex();
+      setProviderStatus(mapProviderStatus(status));
+      setStatusMessage('Logged out from ChatGPT.');
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to log out from ChatGPT.');
+    }
+  };
+
+  return (
+    <>
+      <Button
+        className="fixed bottom-5 right-5 z-[100100] rounded-full px-4 py-2 shadow-xl"
+        onClick={() => setOpen(true)}
+        title="Open assistant"
+      >
+        <Bot className="size-4" />
+        Assistant
+      </Button>
+
+      {open ? (
+        <div className="fixed inset-3 z-[100200] rounded-2xl border bg-card shadow-2xl">
+          <div className="flex h-full flex-col">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Sparkles className="size-4" />
+                Assistant
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            <div className="flex flex-1 min-h-0">
+              <div className="w-[320px] border-r p-3 space-y-3 overflow-y-auto">
+                <div className="space-y-2 rounded-md border bg-background p-2">
+                  <div className="text-[11px] text-muted-foreground">Provider mode</div>
+                  <select
+                    value={providerMode}
+                    onChange={(event) => {
+                      void updateProviderMode(event.target.value as AssistantProviderMode);
+                    }}
+                    className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
+                  >
+                    <option value="managed">Managed credits</option>
+                    <option value="byok">BYO key</option>
+                    <option value="codex_oauth" disabled={providerStatus.codexAvailable === false}>
+                      Codex / ChatGPT login
+                    </option>
+                  </select>
+
+                  {providerMode === 'byok' ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={providerSecretInput}
+                        onChange={(event) => setProviderSecretInput(event.target.value)}
+                        placeholder="Paste OpenRouter key"
+                        className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
+                      />
+                      <Button size="sm" variant="secondary" onClick={() => void saveByokSecret()}>
+                        Save
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {providerMode === 'codex_oauth' ? (
+                    <div className="space-y-2">
+                      {!providerStatus.hasCodexToken ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => void loginCodexProvider()}
+                          disabled={providerStatus.codexLoginInProgress || providerStatus.codexAvailable === false}
+                        >
+                          {providerStatus.codexLoginInProgress ? 'Waiting for login...' : 'Login with ChatGPT'}
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="secondary" onClick={() => void logoutCodexProvider()}>
+                          Logout ChatGPT
+                        </Button>
+                      )}
+
+                      <div className="text-[11px] text-muted-foreground">
+                        Auth: {providerStatus.codexAuthMethod || 'none'}
+                        {providerStatus.codexEmail ? ` · ${providerStatus.codexEmail}` : ''}
+                        {providerStatus.codexPlanType ? ` · plan: ${providerStatus.codexPlanType}` : ''}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2 rounded-md border bg-background p-2 text-xs">
+                  <div className="font-medium">Scope</div>
+                  <div className="text-muted-foreground">
+                    {assistantScope
+                      ? assistantScope.scope === 'component'
+                        ? `Component: ${assistantScope.componentId}`
+                        : `Object: ${assistantScope.objectId}`
+                      : 'Select an object or component first.'}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" onClick={applyCandidate} disabled={!canApply}>
+                    Apply Candidate
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={rollback}>
+                    Rollback
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={clearChat}>
+                    Clear chat
+                  </Button>
+                </div>
+
+                {candidateDebugInfo?.intentMismatchWarning ? (
+                  <p className="text-xs text-amber-600">
+                    Intent mismatch blocked apply: {candidateDebugInfo.intentMismatchWarning}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="flex-1 min-w-0 p-3">
+                <AssistantRuntimeProvider runtime={runtime}>
+                  <ThreadPrimitive.Root className="flex h-full flex-col rounded-xl border bg-background">
+                    <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-3">
+                      <ThreadPrimitive.Messages
+                        components={{
+                          Message: AssistantMessage,
+                          UserMessage,
+                          AssistantMessage,
+                        }}
+                      />
+                    </ThreadPrimitive.Viewport>
+
+                    <ComposerPrimitive.Root className="border-t p-3">
+                      <div className="flex items-end gap-2">
+                        <ComposerPrimitive.Input
+                          className="max-h-36 min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          placeholder="Ask anything or request edits..."
+                        />
+                        <ComposerPrimitive.Send className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-primary-foreground hover:opacity-90">
+                          Send
+                        </ComposerPrimitive.Send>
+                      </div>
+                    </ComposerPrimitive.Root>
+                  </ThreadPrimitive.Root>
+                </AssistantRuntimeProvider>
+              </div>
+            </div>
+
+            {errorMessage ? <p className="px-4 pb-2 text-xs text-red-600 whitespace-pre-wrap">{errorMessage}</p> : null}
+            {statusMessage ? (
+              <p className="px-4 pb-3 text-xs text-muted-foreground whitespace-pre-wrap flex items-center gap-2">
+                {statusMessage}
+                {statusMessage.toLowerCase().includes('waiting') ? <Loader2 className="size-3 animate-spin" /> : null}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}

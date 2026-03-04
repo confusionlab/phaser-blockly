@@ -16,7 +16,6 @@ import { AddVariableDialog } from '@/components/dialogs/AddVariableDialog';
 import { MessageDialog } from '@/components/dialogs/MessageDialog';
 import { VariableManagerDialog } from '@/components/dialogs/VariableManagerDialog';
 import { BlockSearchModal } from './BlockSearchModal';
-import { BlocklyAssistantPanel } from './BlocklyAssistantPanel';
 import {
   COMPONENT_ANY_PREFIX,
   MESSAGE_REFERENCE_BLOCKS,
@@ -28,7 +27,6 @@ import {
 } from '@/lib/blocklyReferenceMaps';
 import type { UndoRedoHandler } from '@/store/editorStore';
 import type { Variable } from '@/types';
-import type { BlocklyEditScope } from '@/lib/llm';
 
 // Register continuous toolbox plugin once at module load
 registerContinuousToolbox();
@@ -911,28 +909,6 @@ export function BlocklyEditor() {
     return undefined;
   })();
 
-  const assistantScope: BlocklyEditScope | null = (() => {
-    if (!project) return null;
-    if (selectedComponentId) {
-      return {
-        scope: 'component',
-        componentId: selectedComponentId,
-        selectedSceneId,
-      };
-    }
-    if (selectedSceneId && selectedObjectId) {
-      const scene = project.scenes.find((sceneItem) => sceneItem.id === selectedSceneId);
-      const object = scene?.objects.find((objectItem) => objectItem.id === selectedObjectId);
-      return {
-        scope: 'object',
-        sceneId: selectedSceneId,
-        objectId: selectedObjectId,
-        componentId: object?.componentId,
-      };
-    }
-    return null;
-  })();
-
   const handleAddVariable = (variable: Variable) => {
     if (variable.scope === 'global') {
       addGlobalVariable(variable);
@@ -959,7 +935,6 @@ export function BlocklyEditor() {
     <>
       <div className="relative h-full w-full">
         <div ref={containerRef} className="h-full w-full" data-blockly-editor="true" />
-        <BlocklyAssistantPanel scope={assistantScope} />
       </div>
       <AddVariableDialog
         open={showAddVariableDialog}
