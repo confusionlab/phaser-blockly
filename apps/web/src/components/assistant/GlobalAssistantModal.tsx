@@ -300,14 +300,14 @@ export function GlobalAssistantModal() {
   useEffect(() => {
     let cancelled = false;
 
-    if (!project || !assistantScope) {
+    if (!project) {
       setThreadId(null);
       setScopeKey(null);
       setPersistedMessages([]);
       return;
     }
 
-    const nextScopeKey = getScopeStorageKey(assistantScope);
+    const nextScopeKey = assistantScope ? getScopeStorageKey(assistantScope) : `project:${project.id}`;
     setScopeKey(nextScopeKey);
 
     if (!nextScopeKey) {
@@ -334,14 +334,6 @@ export function GlobalAssistantModal() {
             content: message.content,
           })),
         );
-
-        if (typeof window !== 'undefined' && window.desktopAssistant) {
-          const status = await window.desktopAssistant.provider.status();
-          if (cancelled) return;
-          setProviderStatus(mapProviderStatus(status));
-        } else {
-          setProviderStatus(DEFAULT_PROVIDER_STATUS);
-        }
       } catch {
         if (cancelled) return;
         setThreadId(null);
@@ -358,6 +350,14 @@ export function GlobalAssistantModal() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.desktopAssistant) return;
     const desktopAssistant = window.desktopAssistant;
+    void desktopAssistant.provider.status()
+      .then((status) => {
+        setProviderStatus(mapProviderStatus(status));
+      })
+      .catch(() => {
+        setProviderStatus(DEFAULT_PROVIDER_STATUS);
+      });
+
     return desktopAssistant.onProviderEvent((event) => {
       if (event.message) {
         setStatusMessage(event.message);
@@ -376,9 +376,6 @@ export function GlobalAssistantModal() {
     run: async (options) => {
       if (!project) {
         throw new Error('Open a project first.');
-      }
-      if (!assistantScope) {
-        throw new Error('Select an object or component first.');
       }
       if (!threadId || !scopeKey) {
         throw new Error('Assistant thread is not ready yet.');
@@ -420,8 +417,24 @@ export function GlobalAssistantModal() {
       });
 
       const capabilities = getLlmExposedBlocklyCapabilities();
-      const context = buildProgramContext(project, assistantScope);
-      const programRead = readProgramSummary(context);
+      let context: unknown;
+      let programRead: unknown;
+      if (assistantScope) {
+        const scopedContext = buildProgramContext(project, assistantScope);
+        context = scopedContext;
+        programRead = readProgramSummary(scopedContext);
+      } else {
+        context = {
+          scope: { scope: 'project' },
+          summary: 'No object/component selected. Global chat mode.',
+          scenes: project.scenes.map((scene) => ({ id: scene.id, name: scene.name })),
+        };
+        programRead = {
+          summary: 'No scoped Blockly target selected.',
+          eventFlows: [],
+          warnings: ['Select an object/component to generate direct Blockly edits.'],
+        };
+      }
       const threadContext = { threadId, scopeKey };
 
       const turn = await (providerMode === 'codex_oauth'
@@ -498,6 +511,20 @@ export function GlobalAssistantModal() {
         throw new Error(`Server response validation failed: ${parsedProposedEdits.errors.join('; ')}`);
       }
       const proposedEdits = parsedProposedEdits.value;
+      if (!assistantScope) {
+        const assistantText =
+          'I can still chat without a selected object, but applying Blockly edits needs scope. Select an object/component, then ask again.';
+        await appendAssistantMessage({
+          threadId,
+          role: 'assistant',
+          content: assistantText,
+          createdAt: new Date().toISOString(),
+        });
+        return {
+          content: [{ type: 'text', text: assistantText }],
+        };
+      }
+
       const convexProvider: LLMProvider = {
         name: `convex:${turn.provider}`,
         model: turn.model,
@@ -615,10 +642,6 @@ export function GlobalAssistantModal() {
 
   const updateProviderMode = async (nextMode: AssistantProviderMode) => {
     if (!threadId) return;
-    if (nextMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
-      setErrorMessage(providerStatus.codexStatusMessage || 'Codex mode is unavailable in this runtime.');
-      return;
-    }
 
     try {
       setProviderMode(nextMode);
@@ -725,7 +748,7 @@ export function GlobalAssistantModal() {
                   >
                     <option value="managed">Managed credits</option>
                     <option value="byok">BYO key</option>
-                    <option value="codex_oauth" disabled={providerStatus.codexAvailable === false}>
+                    <option value="codex_oauth">
                       Codex / ChatGPT login
                     </option>
                   </select>
@@ -751,7 +774,7 @@ export function GlobalAssistantModal() {
                           size="sm"
                           variant="secondary"
                           onClick={() => void loginCodexProvider()}
-                          disabled={providerStatus.codexLoginInProgress || providerStatus.codexAvailable === false}
+                          disabled={providerStatus.codexLoginInProgress}
                         >
                           {providerStatus.codexLoginInProgress ? 'Waiting for login...' : 'Login with ChatGPT'}
                         </Button>
@@ -777,7 +800,7 @@ export function GlobalAssistantModal() {
                       ? assistantScope.scope === 'component'
                         ? `Component: ${assistantScope.componentId}`
                         : `Object: ${assistantScope.objectId}`
-                      : 'Select an object or component first.'}
+                      : 'Project-wide chat mode (no object selected). Select an object/component to target edits.'}
                   </div>
                 </div>
 
