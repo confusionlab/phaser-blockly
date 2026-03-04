@@ -1,4 +1,4 @@
-export { getBlocklyCapabilities } from '@/lib/llm/capabilities';
+export { getBlocklyCapabilities, getLlmExposedBlocklyCapabilities } from '@/lib/llm/capabilities';
 export { buildProgramContext, readProgramSummary } from '@/lib/llm/context';
 export { runLlmBlocklyOrchestration } from '@/lib/llm/orchestrator';
 export { applyOrchestratedCandidate } from '@/lib/llm/apply';

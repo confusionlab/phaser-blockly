@@ -73,6 +73,16 @@ type ProposedEdits = {
   semanticOps: SemanticOp[];
 };
 
+type AssistantTurnPayload =
+  | {
+      mode: "chat";
+      answer: string;
+    }
+  | {
+      mode: "edit";
+      proposedEdits: ProposedEdits;
+    };
+
 type OpenRouterChatCompletionResponse = {
   choices?: Array<{
     message?: {
@@ -81,14 +91,23 @@ type OpenRouterChatCompletionResponse = {
   }>;
 };
 
-const proposedEditsReturnValidator = v.object({
+type ChatHistoryTurn = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+const proposedEditsValidator = v.object({
+  intentSummary: v.string(),
+  assumptions: v.array(v.string()),
+  semanticOps: v.array(v.any()),
+});
+
+const assistantTurnReturnValidator = v.object({
   provider: v.string(),
   model: v.string(),
-  proposedEdits: v.object({
-    intentSummary: v.string(),
-    assumptions: v.array(v.string()),
-    semanticOps: v.array(v.any()),
-  }),
+  mode: v.union(v.literal("chat"), v.literal("edit")),
+  answer: v.optional(v.string()),
+  proposedEdits: v.optional(proposedEditsValidator),
 });
 
 function truncate(text: string, maxLength = 700): string {
@@ -551,27 +570,17 @@ function parseJsonFromResponse(content: string): unknown {
   return JSON.parse(rawJson);
 }
 
-function buildSystemPrompt(): string {
+function buildAssistantTurnSystemPrompt(): string {
   return [
-    "You are a Blockly coding planner.",
-    "Return ONLY JSON with shape:",
-    '{ "intentSummary": string, "assumptions": string[], "semanticOps": SemanticOp[] }',
-    "Allowed semantic op objects:",
-    '- { "op":"create_event_flow", "event":string, "fields"?:Record<string,string|number|boolean>, "actions"?:ActionSpec[] }',
-    '- { "op":"append_actions", "flowSelector":{"eventBlockId"?:string,"eventType"?:string,"eventFieldEquals"?:Record<string,string>,"index"?:number}, "actions":ActionSpec[] }',
-    '- { "op":"replace_action", "targetBlockId":string, "action":ActionSpec }',
-    '- { "op":"set_block_field", "targetBlockId":string, "field":string, "value":string|number|boolean }',
-    '- { "op":"ensure_variable", "scope":"global"|"local", "name":string, "variableType":"string"|"integer"|"float"|"boolean", "defaultValue"?:string|number|boolean }',
-    '- { "op":"ensure_message", "name":string }',
-    '- { "op":"retarget_reference", "referenceKind":"object"|"scene"|"sound"|"message"|"variable"|"type", "from":string, "to":string }',
-    '- { "op":"delete_subtree", "targetBlockId":string }',
-    "ActionSpec format:",
-    '{ "action": string, "fields"?: Record<string,scalar>, "inputs"?: Record<string, scalar|InputBlockSpec>, "statements"?: Record<string, ActionSpec[]> }',
-    "InputBlockSpec format:",
-    '{ "block": string, "fields"?: Record<string,scalar>, "inputs"?: Record<string, scalar|InputBlockSpec>, "statements"?: Record<string, ActionSpec[]> }',
-    "Rules:",
-    "- Use existing block IDs only when modifying existing blocks.",
-    "- Prefer create_event_flow + append_actions for additive changes.",
+    "You are a Blockly assistant.",
+    "Decide whether the user needs a conversational answer or a block-edit proposal.",
+    "Return ONLY JSON in one of these shapes:",
+    '{ "mode":"chat", "answer": string }',
+    '{ "mode":"edit", "proposedEdits": { "intentSummary": string, "assumptions": string[], "semanticOps": SemanticOp[] } }',
+    "Use chat mode for questions/explanations/clarifications.",
+    "Use edit mode only when the user asks to create/change/remove/fix program behavior.",
+    "Edit mode semantic op schema and rules:",
+    '- create_event_flow / append_actions / replace_action / set_block_field / ensure_variable / ensure_message / retarget_reference / delete_subtree',
     "- Only use block types/field names present in capabilities/context.",
     "- Never emit explanatory text outside JSON.",
   ].join("\n");
@@ -582,97 +591,171 @@ function getEnv(name: string): string | undefined {
   return maybeProcess.process?.env?.[name];
 }
 
-export const proposeEdits = action({
+function validateAssistantTurnPayload(value: unknown): AssistantTurnPayload {
+  if (!isRecord(value)) {
+    throw new Error("Assistant turn payload must be an object");
+  }
+
+  const mode = getAlias<string>(value, "mode");
+  if (mode === "chat") {
+    const answerRaw = getAlias<string>(value, "answer", "chatAnswer", "chat_answer");
+    if (typeof answerRaw !== "string" || !answerRaw.trim()) {
+      throw new Error("Assistant chat mode requires non-empty answer");
+    }
+    return {
+      mode: "chat",
+      answer: answerRaw.trim(),
+    };
+  }
+
+  if (mode === "edit") {
+    const proposedEditsRaw = getAlias<unknown>(value, "proposedEdits", "proposed_edits");
+    if (proposedEditsRaw === undefined) {
+      throw new Error("Assistant edit mode requires proposedEdits object");
+    }
+    const proposedEdits = validateSemanticOpsPayload(proposedEditsRaw);
+    return {
+      mode: "edit",
+      proposedEdits,
+    };
+  }
+
+  throw new Error('Assistant turn mode must be "chat" or "edit"');
+}
+
+function getOpenRouterConfig() {
+  const apiKey = getEnv("OPENROUTER_API_KEY");
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error("Missing OPENROUTER_API_KEY in Convex environment.");
+  }
+
+  const model = (getEnv("OPENROUTER_MODEL") || "openai/gpt-5.3-codex").trim();
+  const referer = getEnv("OPENROUTER_REFERER")?.trim();
+  const appName = (getEnv("OPENROUTER_APP_NAME") || "PochaCoding").trim();
+
+  return {
+    apiKey: apiKey.trim(),
+    model,
+    referer,
+    appName,
+  };
+}
+
+async function sendOpenRouterChatCompletion(args: {
+  model: string;
+  apiKey: string;
+  referer?: string;
+  appName: string;
+  temperature: number;
+  maxTokens: number;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  responseFormat?: { type: "json_object" };
+}): Promise<OpenRouterChatCompletionResponse> {
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${args.apiKey}`,
+      "Content-Type": "application/json",
+      ...(args.referer ? { "HTTP-Referer": args.referer } : {}),
+      "X-Title": args.appName,
+    },
+    body: JSON.stringify({
+      model: args.model,
+      temperature: args.temperature,
+      max_tokens: args.maxTokens,
+      ...(args.responseFormat ? { response_format: args.responseFormat } : {}),
+      messages: args.messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`OpenRouter request failed (${response.status}): ${truncate(errorBody, 280)}`);
+  }
+
+  return (await response.json()) as OpenRouterChatCompletionResponse;
+}
+
+export const assistantTurn = action({
   args: {
     userIntent: v.string(),
+    chatHistory: v.array(v.object({
+      role: v.union(v.literal("user"), v.literal("assistant")),
+      content: v.string(),
+    })),
     capabilities: v.any(),
     context: v.any(),
     programRead: v.any(),
   },
-  returns: proposedEditsReturnValidator,
+  returns: assistantTurnReturnValidator,
   handler: async (_ctx, args) => {
-    const apiKey = getEnv("OPENROUTER_API_KEY");
-    if (!apiKey || !apiKey.trim()) {
-      throw new Error("Missing OPENROUTER_API_KEY in Convex environment.");
-    }
+    const { apiKey, model, referer, appName } = getOpenRouterConfig();
 
-    const model = (getEnv("OPENROUTER_MODEL") || "openai/gpt-5.3-codex").trim();
-    const referer = getEnv("OPENROUTER_REFERER")?.trim();
-    const appName = (getEnv("OPENROUTER_APP_NAME") || "PochaCoding").trim();
+    const recentTurns = args.chatHistory
+      .filter((turn) => (turn.role === "user" || turn.role === "assistant") && !!turn.content.trim())
+      .slice(-16)
+      .map((turn): ChatHistoryTurn => ({
+        role: turn.role,
+        content: truncate(turn.content.trim(), 1800),
+      }));
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey.trim()}`,
-        "Content-Type": "application/json",
-        ...(referer ? { "HTTP-Referer": referer } : {}),
-        "X-Title": appName,
+    const payload = await sendOpenRouterChatCompletion({
+      model,
+      apiKey,
+      referer,
+      appName,
+      temperature: 0.2,
+      maxTokens: 1800,
+      responseFormat: {
+        type: "json_object",
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        max_tokens: 1800,
-        response_format: {
-          type: "json_object",
+      messages: [
+        {
+          role: "system",
+          content: buildAssistantTurnSystemPrompt(),
         },
-        messages: [
-          {
-            role: "system",
-            content: buildSystemPrompt(),
-          },
-          {
-            role: "user",
-            content: JSON.stringify(
-              {
-                task: "Propose semantic ops for Blockly edit request",
-                userIntent: args.userIntent,
-                context: args.context,
-                programRead: args.programRead,
-                capabilities: args.capabilities,
-                outputReminder: {
-                  format: "JSON only",
-                  rootKeys: ["intentSummary", "assumptions", "semanticOps"],
-                },
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      }),
+        {
+          role: "user",
+          content: JSON.stringify(
+            {
+              task: "Classify and handle Blockly assistant turn",
+              context: args.context,
+              programRead: args.programRead,
+              capabilities: args.capabilities,
+            },
+            null,
+            2,
+          ),
+        },
+        ...recentTurns,
+        {
+          role: "user",
+          content: args.userIntent,
+        },
+      ],
     });
 
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      throw new Error(`OpenRouter request failed (${response.status}): ${truncate(errorBody, 280)}`);
-    }
-
-    const payload = (await response.json()) as OpenRouterChatCompletionResponse;
     const content = extractResponseText(payload);
     const parsed = parseJsonFromResponse(content);
-    const proposedEdits = validateSemanticOpsPayload(parsed);
+    const turn = validateAssistantTurnPayload(parsed);
 
-    let maxOpsRaw: number | undefined;
-    if (isRecord(args.capabilities)) {
-      const limitsCandidate = getAlias<unknown>(args.capabilities, "limits");
-      if (isRecord(limitsCandidate)) {
-        const maxOpsCandidate = getAlias<unknown>(limitsCandidate, "maxOpsPerRequest", "max_ops_per_request");
-        if (typeof maxOpsCandidate === "number") {
-          maxOpsRaw = maxOpsCandidate;
-        }
-      }
-    }
-    if (typeof maxOpsRaw === "number" && proposedEdits.semanticOps.length > maxOpsRaw) {
-      throw new Error(`Model proposed too many operations (${proposedEdits.semanticOps.length}/${maxOpsRaw}).`);
+    if (turn.mode === "chat") {
+      return {
+        provider: "openrouter",
+        model,
+        mode: "chat" as const,
+        answer: turn.answer,
+      };
     }
 
     return {
       provider: "openrouter",
       model,
+      mode: "edit" as const,
       proposedEdits: {
-        intentSummary: proposedEdits.intentSummary,
-        assumptions: proposedEdits.assumptions,
-        semanticOps: proposedEdits.semanticOps,
+        intentSummary: turn.proposedEdits.intentSummary,
+        assumptions: turn.proposedEdits.assumptions,
+        semanticOps: turn.proposedEdits.semanticOps,
       },
     };
   },

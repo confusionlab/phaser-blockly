@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bot, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAction } from 'convex/react';
@@ -7,6 +7,9 @@ import { useEditorStore } from '@/store/editorStore';
 import { api } from '../../../convex/_generated/api';
 import {
   applyOrchestratedCandidate,
+  buildProgramContext,
+  getLlmExposedBlocklyCapabilities,
+  readProgramSummary,
   runLlmBlocklyOrchestration,
   validateSemanticOpsPayload,
 } from '@/lib/llm';
@@ -17,6 +20,28 @@ type BlocklyAssistantPanelProps = {
 };
 
 type RequestState = 'idle' | 'loading' | 'ready' | 'error';
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+  meta?: string;
+};
+
+const CHAT_HISTORY_VERSION = 1;
+const MAX_CHAT_MESSAGES = 50;
+
+function getScopeStorageKey(scope: BlocklyEditScope | null): string | null {
+  if (!scope) return null;
+  if (scope.scope === 'component') {
+    return `component:${scope.componentId}`;
+  }
+  return `object:${scope.sceneId}:${scope.objectId}`;
+}
+
+function makeMessageId(): string {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function formatDuration(startIso: string, endIso: string): string {
   const durationMs = new Date(endIso).getTime() - new Date(startIso).getTime();
@@ -33,10 +58,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const [candidate, setCandidate] = useState<OrchestratedCandidate | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [allowComponentPropagation, setAllowComponentPropagation] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const { project, addMessage, addGlobalVariable, addLocalVariable, updateObject, updateComponent } = useProjectStore();
   const { undo } = useEditorStore();
-  const proposeEditsAction = useAction(api.llm.proposeEdits);
+  const assistantTurnAction = useAction(api.llm.assistantTurn);
 
   const canApply = !!candidate && candidate.validation.pass;
   const validationErrors = candidate?.validation.errors || [];
@@ -46,8 +72,67 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     () => !!candidate?.context.isComponentInstanceSelection,
     [candidate?.context.isComponentInstanceSelection],
   );
+  const chatStorageKey = useMemo(() => {
+    if (!project) return null;
+    const scopeKey = getScopeStorageKey(scope);
+    if (!scopeKey) return null;
+    return `pochacoding:blockly-assistant-chat:v${CHAT_HISTORY_VERSION}:${project.id}:${scopeKey}`;
+  }, [project, scope]);
 
-  const runProposal = async () => {
+  useEffect(() => {
+    if (!chatStorageKey || typeof window === 'undefined') {
+      setChatMessages([]);
+      return;
+    }
+
+    const raw = window.sessionStorage.getItem(chatStorageKey);
+    if (!raw) {
+      setChatMessages([]);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as { messages?: unknown };
+      if (!Array.isArray(parsed.messages)) {
+        setChatMessages([]);
+        return;
+      }
+      const safeMessages = parsed.messages
+        .filter((msg): msg is ChatMessage => {
+          return (
+            typeof msg === 'object' &&
+            msg !== null &&
+            'id' in msg &&
+            'role' in msg &&
+            'content' in msg &&
+            'createdAt' in msg &&
+            typeof (msg as ChatMessage).id === 'string' &&
+            ((msg as ChatMessage).role === 'user' || (msg as ChatMessage).role === 'assistant') &&
+            typeof (msg as ChatMessage).content === 'string' &&
+            typeof (msg as ChatMessage).createdAt === 'string'
+          );
+        })
+        .slice(-MAX_CHAT_MESSAGES);
+      setChatMessages(safeMessages);
+    } catch {
+      setChatMessages([]);
+    }
+  }, [chatStorageKey]);
+
+  useEffect(() => {
+    if (!chatStorageKey || typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(chatStorageKey, JSON.stringify({ version: CHAT_HISTORY_VERSION, messages: chatMessages }));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [chatMessages, chatStorageKey]);
+
+  const appendChatMessage = (message: ChatMessage) => {
+    setChatMessages((prev) => [...prev, message].slice(-MAX_CHAT_MESSAGES));
+  };
+
+  const runAssistantTurn = async () => {
     if (!project) {
       setStatus('error');
       setErrorMessage('Open a project first.');
@@ -60,48 +145,93 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     }
     if (!prompt.trim()) {
       setStatus('error');
-      setErrorMessage('Enter an instruction first.');
+      setErrorMessage('Enter a message first.');
       return;
     }
 
     setStatus('loading');
     setErrorMessage(null);
     setStatusMessage(null);
-    setAllowComponentPropagation(false);
+    const userIntent = prompt.trim();
+    const startedAt = new Date().toISOString();
+    appendChatMessage({
+      id: makeMessageId(),
+      role: 'user',
+      content: userIntent,
+      createdAt: new Date().toISOString(),
+    });
+    setPrompt('');
 
     try {
+      const capabilities = getLlmExposedBlocklyCapabilities();
+      const context = buildProgramContext(project, scope);
+      const programRead = readProgramSummary(context);
+      const turn = await assistantTurnAction({
+        userIntent,
+        chatHistory: chatMessages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        capabilities,
+        context,
+        programRead,
+      });
+      const turnCompletedAt = new Date().toISOString();
+
+      if (turn.mode === 'chat') {
+        const chatAnswer = (turn.answer || '').trim();
+        if (!chatAnswer) {
+          throw new Error('Assistant returned an empty chat response.');
+        }
+        appendChatMessage({
+          id: makeMessageId(),
+          role: 'assistant',
+          content: chatAnswer,
+          createdAt: turnCompletedAt,
+          meta: `Provider: convex:${turn.provider}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
+        });
+        setStatus('idle');
+        return;
+      }
+
+      const parsedProposedEdits = validateSemanticOpsPayload(turn.proposedEdits);
+      if (!parsedProposedEdits.ok) {
+        throw new Error(`Server response validation failed: ${parsedProposedEdits.errors.join('; ')}`);
+      }
+      const proposedEdits = parsedProposedEdits.value;
       const convexProvider: LLMProvider = {
-        name: 'convex:openrouter',
-        model: 'server-managed',
-        proposeEdits: async (providerArgs) => {
-          const response = await proposeEditsAction({
-            userIntent: providerArgs.userIntent,
-            capabilities: providerArgs.capabilities,
-            context: providerArgs.context,
-            programRead: providerArgs.programRead,
-          });
-          convexProvider.name = `convex:${response.provider}`;
-          convexProvider.model = response.model;
-          const parsed = validateSemanticOpsPayload(response.proposedEdits);
-          if (!parsed.ok) {
-            throw new Error(`Server response validation failed: ${parsed.errors.join('; ')}`);
-          }
-          return parsed.value;
-        },
+        name: `convex:${turn.provider}`,
+        model: turn.model,
+        proposeEdits: async () => proposedEdits,
       };
 
       const result = await runLlmBlocklyOrchestration({
         project,
         scope,
-        userIntent: prompt.trim(),
+        userIntent,
         provider: convexProvider,
       });
       setCandidate(result);
       setStatus('ready');
+      setAllowComponentPropagation(false);
       if (!result.validation.pass) {
         setStatusMessage(`Generated a candidate, but validation failed with ${result.validation.errors.length} issue(s).`);
+        appendChatMessage({
+          id: makeMessageId(),
+          role: 'assistant',
+          content: `I proposed edits, but validation failed with ${result.validation.errors.length} issue(s). Review the validation panel before applying.`,
+          createdAt: new Date().toISOString(),
+          meta: `Provider: ${result.providerName}/${result.model} · Latency: ${formatDuration(result.requestStartedAt, result.requestCompletedAt)}`,
+        });
       } else {
         setStatusMessage('Candidate is ready to apply.');
+        appendChatMessage({
+          id: makeMessageId(),
+          role: 'assistant',
+          content: `${result.proposedEdits.intentSummary}\n\n${result.build.diff.summaryLines.join('\n')}`,
+          createdAt: new Date().toISOString(),
+          meta: `Provider: ${result.providerName}/${result.model} · Latency: ${formatDuration(result.requestStartedAt, result.requestCompletedAt)}`,
+        });
       }
     } catch (error) {
       setStatus('error');
@@ -151,6 +281,10 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     setAllowComponentPropagation(false);
   };
 
+  const clearChat = () => {
+    setChatMessages([]);
+  };
+
   return (
     <div className="absolute top-3 right-3 z-30 w-[360px] max-w-[calc(100%-24px)]">
       {!open ? (
@@ -173,27 +307,58 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Close</Button>
           </div>
 
+          <div className="h-44 overflow-y-auto rounded-md border bg-background p-2 space-y-2">
+            {chatMessages.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Ask questions about blocks or request edits. This chat is persisted for this browser session.
+              </p>
+            ) : (
+              chatMessages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`rounded-md px-2 py-1 text-xs whitespace-pre-wrap ${
+                    message.role === 'user'
+                      ? 'bg-primary/10 border border-primary/20'
+                      : 'bg-muted'
+                  }`}
+                >
+                  <div className="font-medium mb-1">{message.role === 'user' ? 'You' : 'Assistant'}</div>
+                  <div>{message.content}</div>
+                  {message.meta ? (
+                    <div className="mt-1 text-[11px] text-muted-foreground">{message.meta}</div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            placeholder='e.g. "When game starts, move right 10 and play jump sound"'
-            className="w-full h-24 resize-y rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder='Ask or request edits. Intent is detected automatically.'
+            className="w-full h-20 resize-y rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
 
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              onClick={() => void runProposal()}
+              onClick={() => void runAssistantTurn()}
               disabled={status === 'loading' || !scope || !project}
             >
               {status === 'loading' ? <Loader2 className="size-4 animate-spin" /> : null}
-              {candidate ? 'Regenerate' : 'Propose'}
+              Send
             </Button>
             {candidate ? (
               <Button size="sm" variant="secondary" onClick={cancelCandidate}>
                 Cancel
               </Button>
             ) : null}
+            <Button size="sm" variant="ghost" onClick={clearChat}>
+              Clear chat
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={rollback}>
               <RotateCcw className="size-4" />
               Rollback
