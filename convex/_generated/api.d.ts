@@ -10,6 +10,7 @@
 
 import type * as costumeLibrary from "../costumeLibrary.js";
 import type * as http from "../http.js";
+import type * as llm from "../llm.js";
 import type * as objectLibrary from "../objectLibrary.js";
 import type * as projects from "../projects.js";
 import type * as soundLibrary from "../soundLibrary.js";
@@ -23,6 +24,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   costumeLibrary: typeof costumeLibrary;
   http: typeof http;
+  llm: typeof llm;
   objectLibrary: typeof objectLibrary;
   projects: typeof projects;
   soundLibrary: typeof soundLibrary;
