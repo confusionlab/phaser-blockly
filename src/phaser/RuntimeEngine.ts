@@ -163,6 +163,7 @@ export class RuntimeEngine {
   private _isRunning: boolean = false;
   private _hasStarted: boolean = false;
   private pressedKeys: Set<string> = new Set();
+  private queuedKeyPresses: string[] = [];
   private inputListenersAttached: boolean = false;
   private keydownListener: ((event: KeyboardEvent) => void) | null = null;
   private keyupListener: ((event: KeyboardEvent) => void) | null = null;
@@ -197,6 +198,8 @@ export class RuntimeEngine {
 
   // Collision tracking to prevent duplicate events per frame
   private _touchingPairs: Set<string> = new Set();
+  // Track active ground contacts per sprite; supports multi-part bodies reliably.
+  private _groundTouchCounts: Map<string, number> = new Map();
 
   constructor(scene: Phaser.Scene, canvasWidth: number = 800, canvasHeight: number = 600) {
     this.scene = scene;
@@ -247,8 +250,8 @@ export class RuntimeEngine {
       }
       const key = this.normalizeKey(event.code);
       this.pressedKeys.add(key);
+      this.queuedKeyPresses.push(key);
       debugLog('event', `Key down: ${event.code} -> ${key}`);
-      this.triggerKeyPressed(key);
     };
 
     this.keyupListener = (event: KeyboardEvent) => {
@@ -619,6 +622,14 @@ export class RuntimeEngine {
 
     this.frameCount++;
 
+    // Run key-press event hats on the runtime frame for stable physics/collision state reads.
+    if (this.queuedKeyPresses.length > 0) {
+      const pending = this.queuedKeyPresses.splice(0);
+      for (const key of pending) {
+        this.triggerKeyPressed(key);
+      }
+    }
+
     // Update attached children to follow their parents
     this.updateAttachments();
 
@@ -675,13 +686,6 @@ export class RuntimeEngine {
     // Clear touching pairs from previous frame
     this._touchingPairs.clear();
 
-    // Clear ground touching flags at end of frame for all sprites
-    // Ground flags are set by collision callbacks during physics step.
-    for (const sprite of this.sprites.values()) {
-      // Clear ground touching flags - they will be set again by collision callbacks next physics step
-      sprite.setTouchingGround(false);
-    }
-
     // Process message queue
     this.processMessages();
   }
@@ -696,16 +700,25 @@ export class RuntimeEngine {
     // We just need to listen for collision events for "when touching" handlers
 
     // Helper to find sprite IDs from collision bodies
+    const bodyMatches = (spriteBody: MatterJS.BodyType | undefined, collisionBody: MatterJS.BodyType) => {
+      if (!spriteBody) return false;
+      return (
+        spriteBody === collisionBody ||
+        spriteBody.parent === collisionBody ||
+        collisionBody.parent === spriteBody
+      );
+    };
+
     const findSpriteIds = (bodyA: MatterJS.BodyType, bodyB: MatterJS.BodyType) => {
       let spriteIdA: string | null = null;
       let spriteIdB: string | null = null;
 
       for (const sprite of this.sprites.values()) {
         const spriteBody = (sprite.container as unknown as { body?: MatterJS.BodyType }).body;
-        if (spriteBody === bodyA || spriteBody?.parent === bodyA) {
+        if (bodyMatches(spriteBody, bodyA)) {
           spriteIdA = sprite.id;
         }
-        if (spriteBody === bodyB || spriteBody?.parent === bodyB) {
+        if (bodyMatches(spriteBody, bodyB)) {
           spriteIdB = sprite.id;
         }
       }
@@ -730,6 +743,8 @@ export class RuntimeEngine {
         if (isGroundA || isGroundB) {
           const spriteId = isGroundA ? spriteIdB : spriteIdA;
           if (spriteId) {
+            const next = (this._groundTouchCounts.get(spriteId) ?? 0) + 1;
+            this._groundTouchCounts.set(spriteId, next);
             this.handleGroundCollision(spriteId, true);
           }
         }
@@ -754,6 +769,37 @@ export class RuntimeEngine {
           if (spriteId) {
             this.handleGroundCollision(spriteId, false);
           }
+        }
+      }
+    });
+
+    // Listen for collision END events to clear ground touch state when contact is released
+    this.scene.matter.world.on('collisionend', (event: Phaser.Physics.Matter.Events.CollisionEndEvent) => {
+      for (const pair of event.pairs) {
+        const bodyA = pair.bodyA;
+        const bodyB = pair.bodyB;
+        const isGroundA = bodyA === this._groundBody || bodyA.label === 'ground';
+        const isGroundB = bodyB === this._groundBody || bodyB.label === 'ground';
+        if (!isGroundA && !isGroundB) {
+          continue;
+        }
+
+        const { spriteIdA, spriteIdB } = findSpriteIds(bodyA, bodyB);
+        const spriteId = isGroundA ? spriteIdB : spriteIdA;
+        if (!spriteId) {
+          continue;
+        }
+
+        const current = this._groundTouchCounts.get(spriteId) ?? 0;
+        const next = Math.max(0, current - 1);
+        if (next === 0) {
+          this._groundTouchCounts.delete(spriteId);
+          const sprite = this.sprites.get(spriteId);
+          if (sprite) {
+            sprite.setTouchingGround(false);
+          }
+        } else {
+          this._groundTouchCounts.set(spriteId, next);
         }
       }
     });
@@ -1069,10 +1115,13 @@ export class RuntimeEngine {
 
   stopAll(): void {
     this._isRunning = false;
+    this.queuedKeyPresses = [];
+    this._groundTouchCounts.clear();
     this.activeForeverLoops.clear();
     this.pendingForeverHandlers.clear();
     for (const sprite of this.sprites.values()) {
       sprite.stop();
+      sprite.setTouchingGround(false);
     }
   }
 
@@ -1105,11 +1154,12 @@ export class RuntimeEngine {
       if (this.keyupListener) {
         keyboard.off('keyup', this.keyupListener);
       }
-      this.keydownListener = null;
-      this.keyupListener = null;
-      this.inputListenersAttached = false;
     }
+    this.keydownListener = null;
+    this.keyupListener = null;
+    this.inputListenersAttached = false;
     this.pressedKeys.clear();
+    this.queuedKeyPresses = [];
 
     // Remove physics listeners
     this.scene.matter?.world?.off('beforeupdate', this.applyCustomGravity);
@@ -1127,7 +1177,11 @@ export class RuntimeEngine {
 
   stopSprite(spriteId: string): void {
     const sprite = this.sprites.get(spriteId);
-    if (sprite) sprite.stop();
+    if (sprite) {
+      sprite.stop();
+      sprite.setTouchingGround(false);
+    }
+    this._groundTouchCounts.delete(spriteId);
     this.activeForeverLoops.set(spriteId, false);
     this.pendingForeverHandlers.delete(spriteId);
   }
@@ -1543,6 +1597,7 @@ export class RuntimeEngine {
       this.localVariables.delete(spriteId);
       this.activeForeverLoops.delete(spriteId);
       this.pendingForeverHandlers.delete(spriteId);
+      this._groundTouchCounts.delete(spriteId);
     }
   }
 
@@ -1554,6 +1609,7 @@ export class RuntimeEngine {
     this.localVariables.delete(obj.id);
     this.activeForeverLoops.delete(obj.id);
     this.pendingForeverHandlers.delete(obj.id);
+    this._groundTouchCounts.delete(obj.id);
   }
 
   private getObjectColor(id: string): number {
@@ -2111,6 +2167,12 @@ export class RuntimeEngine {
   }
 
   private updateGroundBody(): void {
+    // Ground is being rebuilt; previous contacts are no longer valid.
+    this._groundTouchCounts.clear();
+    for (const sprite of this.sprites.values()) {
+      sprite.setTouchingGround(false);
+    }
+
     // Remove old ground body if it exists
     if (this._groundBody) {
       this.scene.matter.world.remove(this._groundBody);
