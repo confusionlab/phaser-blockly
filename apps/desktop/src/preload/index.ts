@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AssistantProviderMode,
-  OAuthCallbackPayload,
+  ProviderEventPayload,
   ProviderCredentials,
   ProviderStatus,
 } from '../shared/provider';
 
-type OAuthListener = (payload: OAuthCallbackPayload) => void;
+type ProviderEventListener = (payload: ProviderEventPayload) => void;
 
 const assistantDesktopApi = {
   provider: {
@@ -19,8 +19,8 @@ const assistantDesktopApi = {
     setByokKey: async (key: string): Promise<ProviderStatus> => {
       return ipcRenderer.invoke('assistant:provider:set-byok-key', key);
     },
-    setCodexToken: async (token: string): Promise<ProviderStatus> => {
-      return ipcRenderer.invoke('assistant:provider:set-codex-token', token);
+    loginCodex: async (): Promise<ProviderStatus> => {
+      return ipcRenderer.invoke('assistant:provider:login-codex');
     },
     logoutCodex: async (): Promise<ProviderStatus> => {
       return ipcRenderer.invoke('assistant:provider:logout-codex');
@@ -29,11 +29,11 @@ const assistantDesktopApi = {
       return ipcRenderer.invoke('assistant:provider:get-credentials');
     },
   },
-  onOAuthCallback: (listener: OAuthListener): (() => void) => {
-    const wrapped = (_event: Electron.IpcRendererEvent, payload: OAuthCallbackPayload) => listener(payload);
-    ipcRenderer.on('assistant:oauth-callback', wrapped);
+  onProviderEvent: (listener: ProviderEventListener): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: ProviderEventPayload) => listener(payload);
+    ipcRenderer.on('assistant:provider:event', wrapped);
     return () => {
-      ipcRenderer.removeListener('assistant:oauth-callback', wrapped);
+      ipcRenderer.removeListener('assistant:provider:event', wrapped);
     };
   },
 };

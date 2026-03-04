@@ -51,8 +51,28 @@ type ProviderCredentials = {
   openRouterApiKey?: string;
   codexToken?: string;
 };
+type ProviderStatusSnapshot = {
+  hasByokKey: boolean;
+  hasCodexToken: boolean;
+  codexAvailable: boolean;
+  codexAuthMethod: 'chatgpt' | 'api_key' | 'unknown' | null;
+  codexEmail: string | null;
+  codexPlanType: string | null;
+  codexLoginInProgress: boolean;
+  codexStatusMessage: string | null;
+};
 
 const MAX_CHAT_MESSAGES = 50;
+const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
+  hasByokKey: false,
+  hasCodexToken: false,
+  codexAvailable: false,
+  codexAuthMethod: null,
+  codexEmail: null,
+  codexPlanType: null,
+  codexLoginInProgress: false,
+  codexStatusMessage: null,
+};
 
 function buildProjectSnapshot(project: Project) {
   return {
@@ -172,6 +192,28 @@ function detectIntentMismatchWarning(userIntent: string, candidate: Orchestrated
   return null;
 }
 
+function mapProviderStatus(status: {
+  hasByokKey: boolean;
+  hasCodexToken: boolean;
+  codexAvailable: boolean;
+  codexAuthMethod?: 'chatgpt' | 'api_key' | 'unknown' | null;
+  codexEmail?: string | null;
+  codexPlanType?: string | null;
+  codexLoginInProgress?: boolean;
+  codexStatusMessage?: string | null;
+}): ProviderStatusSnapshot {
+  return {
+    hasByokKey: status.hasByokKey,
+    hasCodexToken: status.hasCodexToken,
+    codexAvailable: status.codexAvailable,
+    codexAuthMethod: status.codexAuthMethod ?? null,
+    codexEmail: status.codexEmail ?? null,
+    codexPlanType: status.codexPlanType ?? null,
+    codexLoginInProgress: status.codexLoginInProgress ?? false,
+    codexStatusMessage: status.codexStatusMessage ?? null,
+  };
+}
+
 export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -184,11 +226,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const [candidateDebugInfo, setCandidateDebugInfo] = useState<CandidateDebugInfo | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [providerMode, setProviderMode] = useState<AssistantProviderMode>('managed');
-  const [providerStatus, setProviderStatus] = useState<{
-    hasByokKey: boolean;
-    hasCodexToken: boolean;
-    codexAvailable: boolean;
-  } | null>(null);
+  const [providerStatus, setProviderStatus] = useState<ProviderStatusSnapshot | null>(null);
   const [providerSecretInput, setProviderSecretInput] = useState('');
 
   const { project, addMessage, addGlobalVariable, addLocalVariable, updateObject, updateComponent } = useProjectStore();
@@ -236,11 +274,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         if (typeof window !== 'undefined' && window.desktopAssistant) {
           const status = await window.desktopAssistant.provider.status();
           if (cancelled) return;
-          setProviderStatus({
-            hasByokKey: status.hasByokKey,
-            hasCodexToken: status.hasCodexToken,
-            codexAvailable: status.codexAvailable,
-          });
+          setProviderStatus(mapProviderStatus(status));
           const shouldForceManaged = persistedMode === 'codex_oauth' && !status.codexAvailable;
           const preferredMode = shouldForceManaged ? 'managed' : persistedMode;
           if (preferredMode !== persistedMode) {
@@ -250,11 +284,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           if (status.mode !== preferredMode) {
             const syncedStatus = await window.desktopAssistant.provider.setMode(preferredMode);
             if (cancelled) return;
-            setProviderStatus({
-              hasByokKey: syncedStatus.hasByokKey,
-              hasCodexToken: syncedStatus.hasCodexToken,
-              codexAvailable: syncedStatus.codexAvailable,
-            });
+            setProviderStatus(mapProviderStatus(syncedStatus));
             setProviderMode(syncedStatus.mode);
             await setAssistantThreadProviderMode(thread.id, syncedStatus.mode);
           } else {
@@ -265,11 +295,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             setProviderMode('managed');
             await setAssistantThreadProviderMode(thread.id, 'managed');
           }
-          setProviderStatus({
-            hasByokKey: false,
-            hasCodexToken: false,
-            codexAvailable: false,
-          });
+          setProviderStatus(DEFAULT_PROVIDER_STATUS);
         }
       } catch {
         if (cancelled) return;
@@ -285,13 +311,20 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.desktopAssistant) return;
-    return window.desktopAssistant.onOAuthCallback(({ url }) => {
-      if (providerMode === 'codex_oauth') {
-        setProviderSecretInput(url);
-        setStatusMessage('Received OAuth callback URL. Save to store token payload.');
+    const desktopAssistant = window.desktopAssistant;
+    return desktopAssistant.onProviderEvent((event) => {
+      if (event.message) {
+        setStatusMessage(event.message);
       }
+      void desktopAssistant.provider.status()
+        .then((status) => {
+          setProviderStatus(mapProviderStatus(status));
+        })
+        .catch(() => {
+          setProviderStatus(DEFAULT_PROVIDER_STATUS);
+        });
     });
-  }, [providerMode]);
+  }, []);
 
   const appendChatMessage = async (message: Omit<ChatMessage, 'id'>) => {
     if (!threadId) return;
@@ -333,12 +366,12 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     }
     if (providerMode === 'codex_oauth' && !(providerStatus?.hasCodexToken || false)) {
       setStatus('error');
-      setErrorMessage('Codex mode selected but no token is configured.');
+      setErrorMessage('Codex mode selected but not signed in. Click Login with ChatGPT.');
       return;
     }
     if (providerMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
       setStatus('error');
-      setErrorMessage('Codex mode is not available in this runtime yet.');
+      setErrorMessage(providerStatus.codexStatusMessage || 'Codex mode is not available in this runtime yet.');
       return;
     }
 
@@ -557,7 +590,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     if (!threadId) return;
     const previousMode = providerMode;
     if (nextMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
-      setErrorMessage('Codex mode is currently unavailable in this runtime.');
+      setErrorMessage(providerStatus.codexStatusMessage || 'Codex mode is currently unavailable in this runtime.');
       return;
     }
     try {
@@ -565,11 +598,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       await setAssistantThreadProviderMode(threadId, nextMode);
       if (typeof window !== 'undefined' && window.desktopAssistant) {
         const status = await window.desktopAssistant.provider.setMode(nextMode);
-        setProviderStatus({
-          hasByokKey: status.hasByokKey,
-          hasCodexToken: status.hasCodexToken,
-          codexAvailable: status.codexAvailable,
-        });
+        setProviderStatus(mapProviderStatus(status));
         setProviderMode(status.mode);
         await setAssistantThreadProviderMode(threadId, status.mode);
       }
@@ -581,29 +610,57 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     }
   };
 
-  const saveProviderSecret = async () => {
+  const saveByokSecret = async () => {
     if (typeof window === 'undefined' || !window.desktopAssistant) {
       setErrorMessage('Provider secrets can only be configured in the desktop app.');
       return;
     }
+    if (providerMode !== 'byok') {
+      setErrorMessage('BYOK secret save is only available in BYOK mode.');
+      return;
+    }
     if (!providerSecretInput.trim()) {
-      setErrorMessage('Enter a token/key first.');
+      setErrorMessage('Enter an OpenRouter key first.');
       return;
     }
     try {
-      const status = providerMode === 'codex_oauth'
-        ? await window.desktopAssistant.provider.setCodexToken(providerSecretInput.trim())
-        : await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim());
-      setProviderStatus({
-        hasByokKey: status.hasByokKey,
-        hasCodexToken: status.hasCodexToken,
-        codexAvailable: status.codexAvailable,
-      });
+      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim());
+      setProviderStatus(mapProviderStatus(status));
       setProviderSecretInput('');
       setStatusMessage('Credential saved to OS keychain.');
       setErrorMessage(null);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to save credential.');
+    }
+  };
+
+  const loginCodexProvider = async () => {
+    if (typeof window === 'undefined' || !window.desktopAssistant) {
+      setErrorMessage('Codex login is only available in the desktop app.');
+      return;
+    }
+    try {
+      setStatusMessage('Opening ChatGPT login in browser...');
+      const status = await window.desktopAssistant.provider.loginCodex();
+      setProviderStatus(mapProviderStatus(status));
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to start ChatGPT login.');
+    }
+  };
+
+  const logoutCodexProvider = async () => {
+    if (typeof window === 'undefined' || !window.desktopAssistant) {
+      setErrorMessage('Codex logout is only available in the desktop app.');
+      return;
+    }
+    try {
+      const status = await window.desktopAssistant.provider.logoutCodex();
+      setProviderStatus(mapProviderStatus(status));
+      setStatusMessage('Logged out from ChatGPT.');
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to log out from ChatGPT.');
     }
   };
 
@@ -644,17 +701,47 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
                 Codex / ChatGPT login
               </option>
             </select>
-            {(providerMode === 'byok' || providerMode === 'codex_oauth') ? (
+            {providerMode === 'byok' ? (
               <div className="flex items-center gap-2">
                 <input
                   value={providerSecretInput}
                   onChange={(event) => setProviderSecretInput(event.target.value)}
-                  placeholder={providerMode === 'codex_oauth' ? 'Paste Codex token or callback URL' : 'Paste OpenRouter key'}
+                  placeholder="Paste OpenRouter key"
                   className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
                 />
-                <Button size="sm" variant="secondary" onClick={() => void saveProviderSecret()}>
+                <Button size="sm" variant="secondary" onClick={() => void saveByokSecret()}>
                   Save
                 </Button>
+              </div>
+            ) : null}
+            {providerMode === 'codex_oauth' ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  {!providerStatus?.hasCodexToken ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void loginCodexProvider()}
+                      disabled={providerStatus?.codexLoginInProgress || providerStatus?.codexAvailable === false}
+                    >
+                      {providerStatus?.codexLoginInProgress ? 'Waiting for login...' : 'Login with ChatGPT'}
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="secondary" onClick={() => void logoutCodexProvider()}>
+                      Logout ChatGPT
+                    </Button>
+                  )}
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Auth: {providerStatus?.codexAuthMethod || 'none'}
+                  {providerStatus?.codexEmail ? ` · ${providerStatus.codexEmail}` : ''}
+                  {providerStatus?.codexPlanType ? ` · plan: ${providerStatus.codexPlanType}` : ''}
+                </div>
+                {providerStatus?.codexStatusMessage ? (
+                  <div className="text-[11px] text-muted-foreground whitespace-pre-wrap">
+                    {providerStatus.codexStatusMessage}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             <div className="text-[11px] text-muted-foreground">

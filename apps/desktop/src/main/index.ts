@@ -3,16 +3,17 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { CodexAppServerClient } from './codexAppServer';
 import type { AssistantProviderMode, ProviderCredentials, ProviderStatus } from '../shared/provider';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const KEYCHAIN_SERVICE = 'PochaCodingAssistant';
 const BYOK_ACCOUNT = 'openrouter-byok';
-const CODEX_ACCOUNT = 'codex-oauth-token';
 const PROVIDER_MODE_FILE = 'assistant-provider-mode.json';
 const FALLBACK_SECRET_FILE = 'assistant-secrets.json';
 
 let mainWindow: BrowserWindow | null = null;
+
 type KeytarClient = {
   getPassword: (service: string, account: string) => Promise<string | null>;
   setPassword: (service: string, account: string, password: string) => Promise<void>;
@@ -20,6 +21,17 @@ type KeytarClient = {
 };
 
 let keytarClient: KeytarClient | null | undefined;
+
+const codexClient = new CodexAppServerClient(
+  {
+    name: 'pochacoding-desktop',
+    title: 'PochaCoding',
+    version: app.getVersion(),
+  },
+  (event) => {
+    mainWindow?.webContents.send('assistant:provider:event', event);
+  },
+);
 
 async function getKeytarClient() {
   if (keytarClient !== undefined) return keytarClient;
@@ -108,70 +120,27 @@ async function writeProviderMode(mode: AssistantProviderMode): Promise<void> {
 
 async function getProviderStatus(): Promise<ProviderStatus> {
   const mode = await readProviderMode();
-  const byok = await getSecret(BYOK_ACCOUNT);
-  const codex = await getSecret(CODEX_ACCOUNT);
+  const [byok, codexStatus] = await Promise.all([
+    getSecret(BYOK_ACCOUNT),
+    codexClient.getStatus(),
+  ]);
   return {
     mode,
     hasByokKey: !!byok,
-    hasCodexToken: !!codex,
-    codexAvailable: true,
+    hasCodexToken: codexStatus.hasToken,
+    codexAvailable: codexStatus.available,
+    codexAuthMethod: codexStatus.authMethod,
+    codexEmail: codexStatus.email,
+    codexPlanType: codexStatus.planType,
+    codexLoginInProgress: codexStatus.loginInProgress,
+    codexStatusMessage: codexStatus.statusMessage,
   };
-}
-
-function normalizeBearerToken(value: string): string {
-  return value.replace(/^bearer\s+/i, '').trim();
-}
-
-function extractCodexToken(raw: string): string {
-  const trimmed = normalizeBearerToken(raw.trim());
-  if (!trimmed) return '';
-  const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || trimmed.startsWith('pochacoding://');
-
-  if (trimmed.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      const candidates = ['access_token', 'token', 'id_token', 'authToken'];
-      for (const key of candidates) {
-        const value = parsed[key];
-        if (typeof value === 'string' && value.trim()) {
-          return normalizeBearerToken(value);
-        }
-      }
-      return '';
-    } catch {
-      // fall through to URL/raw token parsing
-    }
-  }
-
-  try {
-    const url = new URL(trimmed);
-    const hash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;
-    const hashParams = new URLSearchParams(hash);
-    const tokenCandidate =
-      url.searchParams.get('access_token')
-      || hashParams.get('access_token')
-      || url.searchParams.get('token')
-      || hashParams.get('token')
-      || url.searchParams.get('id_token')
-      || hashParams.get('id_token');
-    if (typeof tokenCandidate === 'string' && tokenCandidate.trim()) {
-      return normalizeBearerToken(tokenCandidate);
-    }
-    return '';
-  } catch {
-    if (looksLikeUrl) {
-      return '';
-    }
-    // treat as raw token
-  }
-
-  return trimmed;
 }
 
 async function getProviderCredentials(): Promise<ProviderCredentials> {
   const [openRouterApiKey, codexToken] = await Promise.all([
     getSecret(BYOK_ACCOUNT),
-    getSecret(CODEX_ACCOUNT),
+    codexClient.getAuthToken(),
   ]);
   return {
     openRouterApiKey,
@@ -226,17 +195,6 @@ function createMainWindow(): BrowserWindow {
   return window;
 }
 
-function setupOAuthDeepLink(): void {
-  if (!app.isDefaultProtocolClient('pochacoding')) {
-    app.setAsDefaultProtocolClient('pochacoding');
-  }
-
-  app.on('open-url', (event, url) => {
-    event.preventDefault();
-    mainWindow?.webContents.send('assistant:oauth-callback', { url });
-  });
-}
-
 function setupIpcHandlers(): void {
   ipcMain.handle('assistant:provider:get-status', async () => {
     return getProviderStatus();
@@ -263,27 +221,18 @@ function setupIpcHandlers(): void {
     return getProviderStatus();
   });
 
-  ipcMain.handle('assistant:provider:set-codex-token', async (_event, token: string) => {
-    if (!token.trim()) {
-      await deleteSecret(CODEX_ACCOUNT);
-    } else {
-      const normalized = extractCodexToken(token);
-      if (!normalized) {
-        throw new Error('No usable token found in provided Codex OAuth input.');
-      }
-      await setSecret(CODEX_ACCOUNT, normalized);
-    }
+  ipcMain.handle('assistant:provider:login-codex', async () => {
+    await codexClient.loginWithChatGpt();
     return getProviderStatus();
   });
 
   ipcMain.handle('assistant:provider:logout-codex', async () => {
-    await deleteSecret(CODEX_ACCOUNT);
+    await codexClient.logout();
     return getProviderStatus();
   });
 }
 
 app.whenReady().then(() => {
-  setupOAuthDeepLink();
   setupIpcHandlers();
   mainWindow = createMainWindow();
 
@@ -292,6 +241,10 @@ app.whenReady().then(() => {
       mainWindow = createMainWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  codexClient.dispose();
 });
 
 app.on('window-all-closed', () => {

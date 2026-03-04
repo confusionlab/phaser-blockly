@@ -1528,7 +1528,7 @@ export const assistantTurn = action({
         mode: "chat" as const,
         answer:
           providerMode === "codex_oauth"
-            ? "Codex OAuth mode is missing a valid token. Paste an OAuth token or callback URL and save."
+            ? "Codex mode is not authenticated. Use the desktop app's Login with ChatGPT flow and try again."
             : "Provider configuration is incomplete. Check assistant provider settings and try again.",
         errorCode,
         debugTrace: {
