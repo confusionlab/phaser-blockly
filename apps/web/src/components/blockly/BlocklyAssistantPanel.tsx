@@ -367,10 +367,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           ? await window.desktopAssistant.provider.getCredentials()
           : undefined;
       const providerCredentials: ProviderCredentials | undefined = desktopCredentials
-        ? {
-            openRouterApiKey: desktopCredentials.openRouterApiKey || undefined,
-            codexToken: desktopCredentials.codexToken || undefined,
-          }
+        ? providerMode === 'byok'
+          ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
+          : providerMode === 'codex_oauth'
+            ? { codexToken: desktopCredentials.codexToken || undefined }
+            : undefined
         : undefined;
       const turn = await assistantTurnAction({
         userIntent,
@@ -543,28 +544,40 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
   const clearChat = () => {
     if (!threadId) return;
-    void clearAssistantThreadMessages(threadId).then(() => {
-      setChatMessages([]);
-    });
+    void clearAssistantThreadMessages(threadId)
+      .then(() => {
+        setChatMessages([]);
+      })
+      .catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to clear chat history.');
+      });
   };
 
   const updateProviderMode = async (nextMode: AssistantProviderMode) => {
     if (!threadId) return;
+    const previousMode = providerMode;
     if (nextMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
       setErrorMessage('Codex mode is currently unavailable in this runtime.');
       return;
     }
-    setProviderMode(nextMode);
-    await setAssistantThreadProviderMode(threadId, nextMode);
-    if (typeof window !== 'undefined' && window.desktopAssistant) {
-      const status = await window.desktopAssistant.provider.setMode(nextMode);
-      setProviderStatus({
-        hasByokKey: status.hasByokKey,
-        hasCodexToken: status.hasCodexToken,
-        codexAvailable: status.codexAvailable,
-      });
-      setProviderMode(status.mode);
-      await setAssistantThreadProviderMode(threadId, status.mode);
+    try {
+      setProviderMode(nextMode);
+      await setAssistantThreadProviderMode(threadId, nextMode);
+      if (typeof window !== 'undefined' && window.desktopAssistant) {
+        const status = await window.desktopAssistant.provider.setMode(nextMode);
+        setProviderStatus({
+          hasByokKey: status.hasByokKey,
+          hasCodexToken: status.hasCodexToken,
+          codexAvailable: status.codexAvailable,
+        });
+        setProviderMode(status.mode);
+        await setAssistantThreadProviderMode(threadId, status.mode);
+      }
+      setErrorMessage(null);
+    } catch (error) {
+      setProviderMode(previousMode);
+      void setAssistantThreadProviderMode(threadId, previousMode);
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to switch provider mode.');
     }
   };
 

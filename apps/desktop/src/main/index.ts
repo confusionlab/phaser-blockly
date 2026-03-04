@@ -125,6 +125,7 @@ function normalizeBearerToken(value: string): string {
 function extractCodexToken(raw: string): string {
   const trimmed = normalizeBearerToken(raw.trim());
   if (!trimmed) return '';
+  const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || trimmed.startsWith('pochacoding://');
 
   if (trimmed.startsWith('{')) {
     try {
@@ -136,6 +137,7 @@ function extractCodexToken(raw: string): string {
           return normalizeBearerToken(value);
         }
       }
+      return '';
     } catch {
       // fall through to URL/raw token parsing
     }
@@ -155,7 +157,11 @@ function extractCodexToken(raw: string): string {
     if (typeof tokenCandidate === 'string' && tokenCandidate.trim()) {
       return normalizeBearerToken(tokenCandidate);
     }
+    return '';
   } catch {
+    if (looksLikeUrl) {
+      return '';
+    }
     // treat as raw token
   }
 

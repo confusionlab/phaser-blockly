@@ -672,6 +672,7 @@ function normalizeBearerToken(value: string): string {
 function extractCodexToken(raw: string): string {
   const trimmed = normalizeBearerToken(raw.trim());
   if (!trimmed) return "";
+  const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || trimmed.startsWith("pochacoding://");
 
   if (trimmed.startsWith("{")) {
     try {
@@ -685,6 +686,7 @@ function extractCodexToken(raw: string): string {
           }
         }
       }
+      return "";
     } catch {
       // fall through to URL/raw parsing
     }
@@ -704,7 +706,11 @@ function extractCodexToken(raw: string): string {
     if (typeof tokenCandidate === "string" && tokenCandidate.trim()) {
       return normalizeBearerToken(tokenCandidate);
     }
+    return "";
   } catch {
+    if (looksLikeUrl) {
+      return "";
+    }
     // treat as raw token
   }
 
@@ -816,26 +822,55 @@ async function sendOpenAIChatCompletion(args: {
   tools?: Array<Record<string, unknown>>;
   toolChoice?: "auto" | "none";
 }): Promise<OpenRouterChatCompletionResponse> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const basePayload = {
+    model: args.model,
+    temperature: args.temperature,
+    ...(args.responseFormat ? { response_format: args.responseFormat } : {}),
+    ...(args.tools ? { tools: args.tools } : {}),
+    ...(args.toolChoice ? { tool_choice: args.toolChoice } : {}),
+    messages: args.messages,
+  };
+  const headers = {
+    Authorization: `Bearer ${args.apiKey}`,
+    "Content-Type": "application/json",
+    "X-Title": args.appName,
+  };
+  const endpoint = "https://api.openai.com/v1/chat/completions";
+
+  let response = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${args.apiKey}`,
-      "Content-Type": "application/json",
-      "X-Title": args.appName,
-    },
+    headers,
     body: JSON.stringify({
-      model: args.model,
-      temperature: args.temperature,
-      max_tokens: args.maxTokens,
-      ...(args.responseFormat ? { response_format: args.responseFormat } : {}),
-      ...(args.tools ? { tools: args.tools } : {}),
-      ...(args.toolChoice ? { tool_choice: args.toolChoice } : {}),
-      messages: args.messages,
+      ...basePayload,
+      max_completion_tokens: args.maxTokens,
     }),
   });
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
+    const normalizedError = errorBody.toLowerCase();
+    const shouldRetryWithLegacyMaxTokens =
+      response.status === 400
+      && (normalizedError.includes("max_completion_tokens")
+        || normalizedError.includes("unknown parameter")
+        || normalizedError.includes("unrecognized request argument"));
+
+    if (shouldRetryWithLegacyMaxTokens) {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          ...basePayload,
+          max_tokens: args.maxTokens,
+        }),
+      });
+      if (!response.ok) {
+        const retryErrorBody = await response.text().catch(() => "");
+        throw new Error(`OpenAI request failed (${response.status}): ${truncate(retryErrorBody, 280)}`);
+      }
+      return (await response.json()) as OpenRouterChatCompletionResponse;
+    }
+
     throw new Error(`OpenAI request failed (${response.status}): ${truncate(errorBody, 280)}`);
   }
 
@@ -1614,6 +1649,12 @@ export const assistantTurn = action({
             const toolCall = toolCalls[index];
             const toolName = typeof toolCall.function?.name === "string" ? toolCall.function.name : "";
             const parsedToolArgs = parseToolArguments(toolCall.function?.arguments);
+            const toolCallId = typeof toolCall.id === "string" && toolCall.id.trim()
+              ? toolCall.id
+              : "";
+            if (providerConfig.transport === "openai" && !toolCallId) {
+              throw new Error("openai_missing_tool_call_id");
+            }
             const toolResult = executeAssistantTool({
               toolName,
               toolArgs: parsedToolArgs,
@@ -1626,12 +1667,19 @@ export const assistantTurn = action({
               args: parsedToolArgs,
               resultPreview: truncateText(JSON.stringify(toolResult), 800),
             });
-            messages.push({
-              role: "tool",
-              tool_call_id: toolCall.id || `tool_call_${round}_${index}`,
-              name: toolName || "unknown_tool",
+            const toolMessageBase = {
+              role: "tool" as const,
+              tool_call_id: toolCallId || `tool_call_${round}_${index}`,
               content: JSON.stringify(toolResult),
-            });
+            };
+            messages.push(
+              providerConfig.transport === "openrouter"
+                ? {
+                  ...toolMessageBase,
+                  name: toolName || "unknown_tool",
+                }
+                : toolMessageBase
+            );
           }
           continue;
         }
