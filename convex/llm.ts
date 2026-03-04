@@ -105,6 +105,16 @@ type ChatHistoryTurn = {
   role: "user" | "assistant";
   content: string;
 };
+type ProviderMode = "managed" | "byok" | "codex_oauth";
+type ProviderTransport = "openrouter" | "openai";
+type ResolvedProviderConfig = {
+  provider: "openrouter" | "openai";
+  transport: ProviderTransport;
+  apiKey: string;
+  model: string;
+  referer?: string;
+  appName: string;
+};
 
 const proposedEditsValidator = v.object({
   intentSummary: v.string(),
@@ -638,6 +648,15 @@ function getOpenRouterDefaults() {
   };
 }
 
+function getOpenAIDefaults() {
+  const model = (getEnv("OPENAI_OAUTH_MODEL") || "gpt-5").trim();
+  const appName = (getEnv("OPENAI_OAUTH_APP_NAME") || "PochaCoding").trim();
+  return {
+    model,
+    appName,
+  };
+}
+
 function getManagedOpenRouterApiKey(): string {
   const apiKey = getEnv("OPENROUTER_API_KEY");
   if (!apiKey || !apiKey.trim()) {
@@ -646,15 +665,70 @@ function getManagedOpenRouterApiKey(): string {
   return apiKey.trim();
 }
 
-function resolveProviderApiKey(args: {
-  providerMode: "managed" | "byok" | "codex_oauth";
-  providerCredentials?: unknown;
-}): string {
-  if (args.providerMode === "managed") {
-    return getManagedOpenRouterApiKey();
+function normalizeBearerToken(value: string): string {
+  return value.replace(/^bearer\s+/i, "").trim();
+}
+
+function extractCodexToken(raw: string): string {
+  const trimmed = normalizeBearerToken(raw.trim());
+  if (!trimmed) return "";
+
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (isRecord(parsed)) {
+        const keys = ["access_token", "token", "id_token", "authToken"];
+        for (const key of keys) {
+          const candidate = parsed[key];
+          if (typeof candidate === "string" && candidate.trim()) {
+            return normalizeBearerToken(candidate);
+          }
+        }
+      }
+    } catch {
+      // fall through to URL/raw parsing
+    }
   }
 
+  try {
+    const url = new URL(trimmed);
+    const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+    const hashParams = new URLSearchParams(hash);
+    const tokenCandidate =
+      url.searchParams.get("access_token")
+      || hashParams.get("access_token")
+      || url.searchParams.get("token")
+      || hashParams.get("token")
+      || url.searchParams.get("id_token")
+      || hashParams.get("id_token");
+    if (typeof tokenCandidate === "string" && tokenCandidate.trim()) {
+      return normalizeBearerToken(tokenCandidate);
+    }
+  } catch {
+    // treat as raw token
+  }
+
+  return trimmed;
+}
+
+function resolveProviderConfig(args: {
+  providerMode: ProviderMode;
+  providerCredentials?: unknown;
+}): ResolvedProviderConfig {
   const credentials = isRecord(args.providerCredentials) ? args.providerCredentials : {};
+
+  if (args.providerMode === "managed") {
+    const defaults = getOpenRouterDefaults();
+    return {
+      provider: "openrouter",
+      transport: "openrouter",
+      apiKey: getManagedOpenRouterApiKey(),
+      model: defaults.model,
+      referer: defaults.referer,
+      appName: defaults.appName,
+    };
+  }
+
   if (args.providerMode === "byok") {
     const byokKey =
       typeof credentials.openRouterApiKey === "string"
@@ -663,11 +737,33 @@ function resolveProviderApiKey(args: {
     if (!byokKey) {
       throw new Error("byok_missing_openrouter_key");
     }
-    return byokKey;
+    const defaults = getOpenRouterDefaults();
+    return {
+      provider: "openrouter",
+      transport: "openrouter",
+      apiKey: byokKey,
+      model: defaults.model,
+      referer: defaults.referer,
+      appName: defaults.appName,
+    };
   }
 
-  // ChatGPT/Codex OAuth token transport is not implemented server-side yet.
-  throw new Error("codex_oauth_unavailable");
+  const codexRaw =
+    typeof credentials.codexToken === "string"
+      ? credentials.codexToken
+      : "";
+  const codexToken = extractCodexToken(codexRaw);
+  if (!codexToken) {
+    throw new Error("codex_oauth_missing_token");
+  }
+  const defaults = getOpenAIDefaults();
+  return {
+    provider: "openai",
+    transport: "openai",
+    apiKey: codexToken,
+    model: defaults.model,
+    appName: defaults.appName,
+  };
 }
 
 async function sendOpenRouterChatCompletion(args: {
@@ -707,6 +803,80 @@ async function sendOpenRouterChatCompletion(args: {
   }
 
   return (await response.json()) as OpenRouterChatCompletionResponse;
+}
+
+async function sendOpenAIChatCompletion(args: {
+  model: string;
+  apiKey: string;
+  appName: string;
+  temperature: number;
+  maxTokens: number;
+  messages: Array<Record<string, unknown>>;
+  responseFormat?: { type: "json_object" };
+  tools?: Array<Record<string, unknown>>;
+  toolChoice?: "auto" | "none";
+}): Promise<OpenRouterChatCompletionResponse> {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${args.apiKey}`,
+      "Content-Type": "application/json",
+      "X-Title": args.appName,
+    },
+    body: JSON.stringify({
+      model: args.model,
+      temperature: args.temperature,
+      max_tokens: args.maxTokens,
+      ...(args.responseFormat ? { response_format: args.responseFormat } : {}),
+      ...(args.tools ? { tools: args.tools } : {}),
+      ...(args.toolChoice ? { tool_choice: args.toolChoice } : {}),
+      messages: args.messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`OpenAI request failed (${response.status}): ${truncate(errorBody, 280)}`);
+  }
+
+  return (await response.json()) as OpenRouterChatCompletionResponse;
+}
+
+async function sendProviderChatCompletion(args: {
+  providerConfig: ResolvedProviderConfig;
+  temperature: number;
+  maxTokens: number;
+  messages: Array<Record<string, unknown>>;
+  responseFormat?: { type: "json_object" };
+  tools?: Array<Record<string, unknown>>;
+  toolChoice?: "auto" | "none";
+}): Promise<OpenRouterChatCompletionResponse> {
+  if (args.providerConfig.transport === "openrouter") {
+    return sendOpenRouterChatCompletion({
+      model: args.providerConfig.model,
+      apiKey: args.providerConfig.apiKey,
+      referer: args.providerConfig.referer,
+      appName: args.providerConfig.appName,
+      temperature: args.temperature,
+      maxTokens: args.maxTokens,
+      responseFormat: args.responseFormat,
+      tools: args.tools,
+      toolChoice: args.toolChoice,
+      messages: args.messages,
+    });
+  }
+
+  return sendOpenAIChatCompletion({
+    model: args.providerConfig.model,
+    apiKey: args.providerConfig.apiKey,
+    appName: args.providerConfig.appName,
+    temperature: args.temperature,
+    maxTokens: args.maxTokens,
+    responseFormat: args.responseFormat,
+    tools: args.tools,
+    toolChoice: args.toolChoice,
+    messages: args.messages,
+  });
 }
 
 function parseToolArguments(raw: string | undefined): Record<string, unknown> {
@@ -1305,13 +1475,47 @@ export const assistantTurn = action({
         content: truncate(turn.content.trim(), 1800),
       }));
     const projectSnapshot = isRecord(args.projectSnapshot) ? args.projectSnapshot : {};
-    const providerMode = args.providerMode || "managed";
-    const { model, referer, appName } = getOpenRouterDefaults();
+    const providerMode = (args.providerMode || "managed") as ProviderMode;
     const threadContext = isRecord(args.threadContext) ? args.threadContext : {};
     const tools = buildAssistantToolDefinitions();
+    let providerConfig: ResolvedProviderConfig;
+    try {
+      providerConfig = resolveProviderConfig({
+        providerMode,
+        providerCredentials: args.providerCredentials,
+      });
+    } catch (error) {
+      const configError = error instanceof Error ? error.message : "provider_configuration_error";
+      const errorCode = toErrorCode(configError);
+      return {
+        provider: providerMode === "codex_oauth" ? "openai" : "openrouter",
+        model: providerMode === "codex_oauth" ? getOpenAIDefaults().model : getOpenRouterDefaults().model,
+        mode: "chat" as const,
+        answer:
+          providerMode === "codex_oauth"
+            ? "Codex OAuth mode is missing a valid token. Paste an OAuth token or callback URL and save."
+            : "Provider configuration is incomplete. Check assistant provider settings and try again.",
+        errorCode,
+        debugTrace: {
+          promptEnvelopeHash: hashFnv1a64(JSON.stringify({ providerMode, configError })),
+          maxToolRounds: 0,
+          modelRounds: 0,
+          toolCalls: [],
+          validationErrors: [`provider:${configError}`],
+          repairAttempts: 0,
+          parsedPayloadPreview: null,
+          finalResponsePreview: null,
+          finalVerdict: "fallback_chat" as const,
+          fallbackReasonCode: errorCode,
+        },
+      };
+    }
+
     const promptEnvelope = {
       userIntent: args.userIntent,
       providerMode,
+      provider: providerConfig.provider,
+      providerModel: providerConfig.model,
       threadContext,
       chatHistory: recentTurns,
       context: args.context,
@@ -1382,39 +1586,11 @@ export const assistantTurn = action({
       finalVerdict: "fallback_chat",
     };
 
-    let apiKey: string;
-    try {
-      apiKey = resolveProviderApiKey({
-        providerMode,
-        providerCredentials: args.providerCredentials,
-      });
-    } catch (error) {
-      const configError = error instanceof Error ? error.message : "provider_configuration_error";
-      const errorCode = toErrorCode(configError);
-      debugTrace.validationErrors.push(`provider:${configError}`);
-      debugTrace.fallbackReasonCode = errorCode;
-      debugTrace.finalVerdict = "fallback_chat";
-      return {
-        provider: "openrouter",
-        model,
-        mode: "chat" as const,
-        answer:
-          providerMode === "codex_oauth"
-            ? "Codex OAuth mode is not available on this runtime yet. Switch to Managed credits or BYO key."
-            : "Provider configuration is incomplete. Check assistant provider settings and try again.",
-        errorCode,
-        debugTrace,
-      };
-    }
-
     try {
       for (let round = 0; round < maxToolRounds; round += 1) {
         debugTrace.modelRounds += 1;
-        const payload = await sendOpenRouterChatCompletion({
-          model,
-          apiKey,
-          referer,
-          appName,
+        const payload = await sendProviderChatCompletion({
+          providerConfig,
           temperature: 0.2,
           maxTokens: 1800,
           responseFormat: {
@@ -1507,8 +1683,8 @@ export const assistantTurn = action({
       debugTrace.fallbackReasonCode = "assistant_transport_error";
       debugTrace.finalVerdict = "fallback_chat";
       return {
-        provider: "openrouter",
-        model,
+        provider: providerConfig.provider,
+        model: providerConfig.model,
         mode: "chat" as const,
         answer: `Assistant request failed safely.\n\n${transportError}`,
         errorCode: "assistant_transport_error",
@@ -1522,8 +1698,8 @@ export const assistantTurn = action({
       debugTrace.fallbackReasonCode = reasonCode;
       debugTrace.finalVerdict = "fallback_chat";
       return {
-        provider: "openrouter",
-        model,
+        provider: providerConfig.provider,
+        model: providerConfig.model,
         mode: "chat" as const,
         answer:
           "I could not produce a valid structured response for this request. Please rephrase or ask in smaller steps."
@@ -1536,8 +1712,8 @@ export const assistantTurn = action({
     if (turn.mode === "chat") {
       debugTrace.finalVerdict = "chat";
       return {
-        provider: "openrouter",
-        model,
+        provider: providerConfig.provider,
+        model: providerConfig.model,
         mode: "chat" as const,
         answer: turn.answer,
         debugTrace,
@@ -1546,8 +1722,8 @@ export const assistantTurn = action({
 
     debugTrace.finalVerdict = "edit";
     return {
-      provider: "openrouter",
-      model,
+      provider: providerConfig.provider,
+      model: providerConfig.model,
       mode: "edit" as const,
       proposedEdits: {
         intentSummary: turn.proposedEdits.intentSummary,

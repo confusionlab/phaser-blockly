@@ -577,16 +577,21 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       setErrorMessage('Enter a token/key first.');
       return;
     }
-    const status = providerMode === 'codex_oauth'
-      ? await window.desktopAssistant.provider.setCodexToken(providerSecretInput.trim())
-      : await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim());
-    setProviderStatus({
-      hasByokKey: status.hasByokKey,
-      hasCodexToken: status.hasCodexToken,
-      codexAvailable: status.codexAvailable,
-    });
-    setProviderSecretInput('');
-    setStatusMessage('Credential saved to OS keychain.');
+    try {
+      const status = providerMode === 'codex_oauth'
+        ? await window.desktopAssistant.provider.setCodexToken(providerSecretInput.trim())
+        : await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim());
+      setProviderStatus({
+        hasByokKey: status.hasByokKey,
+        hasCodexToken: status.hasCodexToken,
+        codexAvailable: status.codexAvailable,
+      });
+      setProviderSecretInput('');
+      setStatusMessage('Credential saved to OS keychain.');
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to save credential.');
+    }
   };
 
   return (
@@ -631,7 +636,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
                 <input
                   value={providerSecretInput}
                   onChange={(event) => setProviderSecretInput(event.target.value)}
-                  placeholder={providerMode === 'codex_oauth' ? 'Paste Codex token' : 'Paste OpenRouter key'}
+                  placeholder={providerMode === 'codex_oauth' ? 'Paste Codex token or callback URL' : 'Paste OpenRouter key'}
                   className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
                 />
                 <Button size="sm" variant="secondary" onClick={() => void saveProviderSecret()}>

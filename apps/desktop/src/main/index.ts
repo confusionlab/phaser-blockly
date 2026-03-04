@@ -114,8 +114,52 @@ async function getProviderStatus(): Promise<ProviderStatus> {
     mode,
     hasByokKey: !!byok,
     hasCodexToken: !!codex,
-    codexAvailable: false,
+    codexAvailable: true,
   };
+}
+
+function normalizeBearerToken(value: string): string {
+  return value.replace(/^bearer\s+/i, '').trim();
+}
+
+function extractCodexToken(raw: string): string {
+  const trimmed = normalizeBearerToken(raw.trim());
+  if (!trimmed) return '';
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      const candidates = ['access_token', 'token', 'id_token', 'authToken'];
+      for (const key of candidates) {
+        const value = parsed[key];
+        if (typeof value === 'string' && value.trim()) {
+          return normalizeBearerToken(value);
+        }
+      }
+    } catch {
+      // fall through to URL/raw token parsing
+    }
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const hash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;
+    const hashParams = new URLSearchParams(hash);
+    const tokenCandidate =
+      url.searchParams.get('access_token')
+      || hashParams.get('access_token')
+      || url.searchParams.get('token')
+      || hashParams.get('token')
+      || url.searchParams.get('id_token')
+      || hashParams.get('id_token');
+    if (typeof tokenCandidate === 'string' && tokenCandidate.trim()) {
+      return normalizeBearerToken(tokenCandidate);
+    }
+  } catch {
+    // treat as raw token
+  }
+
+  return trimmed;
 }
 
 async function getProviderCredentials(): Promise<ProviderCredentials> {
@@ -207,7 +251,11 @@ function setupIpcHandlers(): void {
     if (!token.trim()) {
       await deleteSecret(CODEX_ACCOUNT);
     } else {
-      await setSecret(CODEX_ACCOUNT, token.trim());
+      const normalized = extractCodexToken(token);
+      if (!normalized) {
+        throw new Error('No usable token found in provided Codex OAuth input.');
+      }
+      await setSecret(CODEX_ACCOUNT, normalized);
     }
     return getProviderStatus();
   });
