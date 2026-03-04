@@ -86,7 +86,16 @@ type AssistantTurnPayload =
 type OpenRouterChatCompletionResponse = {
   choices?: Array<{
     message?: {
+      role?: string;
       content?: string | Array<{ type?: string; text?: string }>;
+      tool_calls?: Array<{
+        id?: string;
+        type?: string;
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }>;
     };
   }>;
 };
@@ -579,6 +588,7 @@ function buildAssistantTurnSystemPrompt(): string {
     '{ "mode":"edit", "proposedEdits": { "intentSummary": string, "assumptions": string[], "semanticOps": SemanticOp[] } }',
     "Use chat mode for questions/explanations/clarifications.",
     "Use edit mode only when the user asks to create/change/remove/fix program behavior.",
+    "When project details are needed (scenes, objects, properties, physics, components, block capabilities), call tools instead of guessing.",
     "Edit mode semantic op schema and rules:",
     '- create_event_flow / append_actions / replace_action / set_block_field / ensure_variable / ensure_message / retarget_reference / delete_subtree',
     "- Only use block types/field names present in capabilities/context.",
@@ -648,8 +658,10 @@ async function sendOpenRouterChatCompletion(args: {
   appName: string;
   temperature: number;
   maxTokens: number;
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  messages: Array<Record<string, unknown>>;
   responseFormat?: { type: "json_object" };
+  tools?: Array<Record<string, unknown>>;
+  toolChoice?: "auto" | "none";
 }): Promise<OpenRouterChatCompletionResponse> {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -664,6 +676,8 @@ async function sendOpenRouterChatCompletion(args: {
       temperature: args.temperature,
       max_tokens: args.maxTokens,
       ...(args.responseFormat ? { response_format: args.responseFormat } : {}),
+      ...(args.tools ? { tools: args.tools } : {}),
+      ...(args.toolChoice ? { tool_choice: args.toolChoice } : {}),
       messages: args.messages,
     }),
   });
@@ -676,6 +690,562 @@ async function sendOpenRouterChatCompletion(args: {
   return (await response.json()) as OpenRouterChatCompletionResponse;
 }
 
+function parseToolArguments(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function toBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  return fallback;
+}
+
+function toNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function toBoundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const numeric = Math.floor(toNumber(value, fallback));
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}...`;
+}
+
+function buildAssistantToolDefinitions(): Array<Record<string, unknown>> {
+  return [
+    {
+      type: "function",
+      function: {
+        name: "list_scenes",
+        description: "List scenes in the current project.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_scene",
+        description: "Get scene details and optionally scene objects.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            sceneId: { type: "string" },
+            includeObjects: { type: "boolean" },
+            includeObjectDetails: { type: "boolean" },
+          },
+          required: ["sceneId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_scene_objects",
+        description: "List objects in a scene with key properties.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            sceneId: { type: "string" },
+          },
+          required: ["sceneId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_object",
+        description: "Get object details including effective physics/collider and optional Blockly XML.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            objectId: { type: "string" },
+            includeBlockly: { type: "boolean" },
+          },
+          required: ["objectId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_components",
+        description: "List component definitions and instance counts.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_component",
+        description: "Get component details and optional Blockly XML.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            componentId: { type: "string" },
+            includeBlockly: { type: "boolean" },
+          },
+          required: ["componentId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_messages",
+        description: "List broadcast messages.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_global_variables",
+        description: "List global variables and their types/defaults.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "search_blocks",
+        description: "Search available block capabilities by type/fields/inputs.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            query: { type: "string" },
+            limit: { type: "number" },
+          },
+          required: ["query"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_block_type",
+        description: "Get full capability details for one block type.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            blockType: { type: "string" },
+          },
+          required: ["blockType"],
+        },
+      },
+    },
+  ];
+}
+
+function buildSnapshotIndexes(projectSnapshot: Record<string, unknown>) {
+  const scenes = Array.isArray(projectSnapshot.scenes) ? projectSnapshot.scenes.filter(isRecord) : [];
+  const components = Array.isArray(projectSnapshot.components) ? projectSnapshot.components.filter(isRecord) : [];
+  const messages = Array.isArray(projectSnapshot.messages) ? projectSnapshot.messages.filter(isRecord) : [];
+  const globalVariables = Array.isArray(projectSnapshot.globalVariables)
+    ? projectSnapshot.globalVariables.filter(isRecord)
+    : [];
+
+  const scenesById = new Map<string, Record<string, unknown>>();
+  const componentsById = new Map<string, Record<string, unknown>>();
+  const objectsById = new Map<string, Record<string, unknown>>();
+  const objectSceneMeta = new Map<string, { sceneId: string; sceneName: string }>();
+  const componentInstanceCounts = new Map<string, number>();
+
+  for (const component of components) {
+    const id = typeof component.id === "string" ? component.id : "";
+    if (!id) continue;
+    componentsById.set(id, component);
+  }
+
+  for (const scene of scenes) {
+    const sceneId = typeof scene.id === "string" ? scene.id : "";
+    if (!sceneId) continue;
+    scenesById.set(sceneId, scene);
+    const sceneName = typeof scene.name === "string" ? scene.name : sceneId;
+
+    const objects = Array.isArray(scene.objects) ? scene.objects.filter(isRecord) : [];
+    for (const object of objects) {
+      const objectId = typeof object.id === "string" ? object.id : "";
+      if (!objectId) continue;
+      objectsById.set(objectId, object);
+      objectSceneMeta.set(objectId, { sceneId, sceneName });
+      const componentId = typeof object.componentId === "string" ? object.componentId : "";
+      if (componentId) {
+        componentInstanceCounts.set(componentId, (componentInstanceCounts.get(componentId) || 0) + 1);
+      }
+    }
+  }
+
+  return {
+    scenes,
+    components,
+    messages,
+    globalVariables,
+    scenesById,
+    componentsById,
+    objectsById,
+    objectSceneMeta,
+    componentInstanceCounts,
+  };
+}
+
+function executeAssistantTool(args: {
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  projectSnapshot: Record<string, unknown>;
+  capabilities: unknown;
+}): Record<string, unknown> {
+  const { toolName, toolArgs, projectSnapshot, capabilities } = args;
+  const indexes = buildSnapshotIndexes(projectSnapshot);
+
+  switch (toolName) {
+    case "list_scenes": {
+      return {
+        scenes: indexes.scenes.map((scene) => {
+          const objects = Array.isArray(scene.objects) ? scene.objects.filter(isRecord) : [];
+          return {
+            id: typeof scene.id === "string" ? scene.id : "",
+            name: typeof scene.name === "string" ? scene.name : "",
+            order: typeof scene.order === "number" ? scene.order : null,
+            objectCount: objects.length,
+            hasGround: !!scene.ground,
+          };
+        }),
+      };
+    }
+    case "get_scene": {
+      const sceneId = typeof toolArgs.sceneId === "string" ? toolArgs.sceneId : "";
+      const includeObjects = toBoolean(toolArgs.includeObjects, true);
+      const includeObjectDetails = toBoolean(toolArgs.includeObjectDetails, false);
+      const scene = indexes.scenesById.get(sceneId);
+      if (!scene) {
+        return {
+          error: `Scene not found: ${sceneId}`,
+          availableSceneIds: Array.from(indexes.scenesById.keys()),
+        };
+      }
+
+      const objects = Array.isArray(scene.objects) ? scene.objects.filter(isRecord) : [];
+      return {
+        scene: {
+          id: typeof scene.id === "string" ? scene.id : "",
+          name: typeof scene.name === "string" ? scene.name : "",
+          order: typeof scene.order === "number" ? scene.order : null,
+          ground: isRecord(scene.ground) ? scene.ground : null,
+          cameraConfig: isRecord(scene.cameraConfig) ? scene.cameraConfig : null,
+          objects: includeObjects
+            ? objects.map((object) => {
+                const componentId = typeof object.componentId === "string" ? object.componentId : null;
+                const component = componentId ? indexes.componentsById.get(componentId) : null;
+                const base = {
+                  id: typeof object.id === "string" ? object.id : "",
+                  name: typeof object.name === "string" ? object.name : "",
+                  componentId,
+                };
+                if (!includeObjectDetails) {
+                  return base;
+                }
+                return {
+                  ...base,
+                  x: typeof object.x === "number" ? object.x : null,
+                  y: typeof object.y === "number" ? object.y : null,
+                  visible: typeof object.visible === "boolean" ? object.visible : null,
+                  rotation: typeof object.rotation === "number" ? object.rotation : null,
+                  physics: (isRecord(component?.physics) ? component.physics : object.physics) || null,
+                  collider: (isRecord(component?.collider) ? component.collider : object.collider) || null,
+                };
+              })
+            : [],
+        },
+      };
+    }
+    case "list_scene_objects": {
+      const sceneId = typeof toolArgs.sceneId === "string" ? toolArgs.sceneId : "";
+      const scene = indexes.scenesById.get(sceneId);
+      if (!scene) {
+        return {
+          error: `Scene not found: ${sceneId}`,
+          availableSceneIds: Array.from(indexes.scenesById.keys()),
+        };
+      }
+      const objects = Array.isArray(scene.objects) ? scene.objects.filter(isRecord) : [];
+      return {
+        sceneId,
+        objects: objects.map((object) => {
+          const componentId = typeof object.componentId === "string" ? object.componentId : null;
+          const component = componentId ? indexes.componentsById.get(componentId) : null;
+          return {
+            id: typeof object.id === "string" ? object.id : "",
+            name: typeof object.name === "string" ? object.name : "",
+            componentId,
+            componentName: component && typeof component.name === "string" ? component.name : null,
+            x: typeof object.x === "number" ? object.x : null,
+            y: typeof object.y === "number" ? object.y : null,
+            visible: typeof object.visible === "boolean" ? object.visible : null,
+            hasPhysics: !!((component && component.physics) || object.physics),
+          };
+        }),
+      };
+    }
+    case "get_object": {
+      const objectId = typeof toolArgs.objectId === "string" ? toolArgs.objectId : "";
+      const includeBlockly = toBoolean(toolArgs.includeBlockly, false);
+      const object = indexes.objectsById.get(objectId);
+      if (!object) {
+        return {
+          error: `Object not found: ${objectId}`,
+          availableObjectIds: Array.from(indexes.objectsById.keys()).slice(0, 120),
+        };
+      }
+      const meta = indexes.objectSceneMeta.get(objectId) || { sceneId: "", sceneName: "" };
+      const componentId = typeof object.componentId === "string" ? object.componentId : null;
+      const component = componentId ? indexes.componentsById.get(componentId) : null;
+      const effectivePhysics = (component && component.physics) || object.physics || null;
+      const effectiveCollider = (component && component.collider) || object.collider || null;
+      const effectiveLocalVariables = (component && component.localVariables) || object.localVariables || [];
+      const effectiveSounds = (component && component.sounds) || object.sounds || [];
+      const effectiveBlocklyXml = typeof (component && component.blocklyXml) === "string"
+        ? String(component?.blocklyXml || "")
+        : (typeof object.blocklyXml === "string" ? object.blocklyXml : "");
+      const blocklyXml = includeBlockly ? truncateText(effectiveBlocklyXml, 12000) : undefined;
+      const localVariables = Array.isArray(effectiveLocalVariables)
+        ? effectiveLocalVariables.filter(isRecord).map((item) => ({
+            id: typeof item.id === "string" ? item.id : "",
+            name: typeof item.name === "string" ? item.name : "",
+            type: typeof item.type === "string" ? item.type : "",
+          }))
+        : [];
+      const sounds = Array.isArray(effectiveSounds)
+        ? effectiveSounds.filter(isRecord).map((item) => ({
+            id: typeof item.id === "string" ? item.id : "",
+            name: typeof item.name === "string" ? item.name : "",
+          }))
+        : [];
+      return {
+        object: {
+          id: typeof object.id === "string" ? object.id : "",
+          name: typeof object.name === "string" ? object.name : "",
+          sceneId: meta.sceneId,
+          sceneName: meta.sceneName,
+          componentId,
+          componentName: component && typeof component.name === "string" ? component.name : null,
+          x: typeof object.x === "number" ? object.x : null,
+          y: typeof object.y === "number" ? object.y : null,
+          visible: typeof object.visible === "boolean" ? object.visible : null,
+          rotation: typeof object.rotation === "number" ? object.rotation : null,
+          scaleX: typeof object.scaleX === "number" ? object.scaleX : null,
+          scaleY: typeof object.scaleY === "number" ? object.scaleY : null,
+          physics: isRecord(effectivePhysics) ? effectivePhysics : null,
+          collider: isRecord(effectiveCollider) ? effectiveCollider : null,
+          localVariables,
+          sounds,
+          blocklyXml,
+          blocklyXmlLength: effectiveBlocklyXml.length,
+        },
+      };
+    }
+    case "list_components": {
+      return {
+        components: indexes.components.map((component) => {
+          const componentId = typeof component.id === "string" ? component.id : "";
+          const localVariables = Array.isArray(component.localVariables) ? component.localVariables : [];
+          const sounds = Array.isArray(component.sounds) ? component.sounds : [];
+          return {
+            id: componentId,
+            name: typeof component.name === "string" ? component.name : "",
+            instanceCount: indexes.componentInstanceCounts.get(componentId) || 0,
+            hasPhysics: !!component.physics,
+            localVariableCount: localVariables.length,
+            soundCount: sounds.length,
+          };
+        }),
+      };
+    }
+    case "get_component": {
+      const componentId = typeof toolArgs.componentId === "string" ? toolArgs.componentId : "";
+      const includeBlockly = toBoolean(toolArgs.includeBlockly, false);
+      const component = indexes.componentsById.get(componentId);
+      if (!component) {
+        return {
+          error: `Component not found: ${componentId}`,
+          availableComponentIds: Array.from(indexes.componentsById.keys()),
+        };
+      }
+      const localVariables = Array.isArray(component.localVariables)
+        ? component.localVariables.filter(isRecord).map((item) => ({
+            id: typeof item.id === "string" ? item.id : "",
+            name: typeof item.name === "string" ? item.name : "",
+            type: typeof item.type === "string" ? item.type : "",
+          }))
+        : [];
+      const sounds = Array.isArray(component.sounds)
+        ? component.sounds.filter(isRecord).map((item) => ({
+            id: typeof item.id === "string" ? item.id : "",
+            name: typeof item.name === "string" ? item.name : "",
+          }))
+        : [];
+      const componentBlocklyXml = typeof component.blocklyXml === "string" ? component.blocklyXml : "";
+      return {
+        component: {
+          id: typeof component.id === "string" ? component.id : "",
+          name: typeof component.name === "string" ? component.name : "",
+          instanceCount: indexes.componentInstanceCounts.get(componentId) || 0,
+          physics: isRecord(component.physics) ? component.physics : null,
+          collider: isRecord(component.collider) ? component.collider : null,
+          localVariables,
+          sounds,
+          blocklyXml: includeBlockly ? truncateText(componentBlocklyXml, 12000) : undefined,
+          blocklyXmlLength: componentBlocklyXml.length,
+        },
+      };
+    }
+    case "list_messages": {
+      return {
+        messages: indexes.messages.map((message) => ({
+          id: typeof message.id === "string" ? message.id : "",
+          name: typeof message.name === "string" ? message.name : "",
+        })),
+      };
+    }
+    case "list_global_variables": {
+      return {
+        globalVariables: indexes.globalVariables.map((variable) => ({
+          id: typeof variable.id === "string" ? variable.id : "",
+          name: typeof variable.name === "string" ? variable.name : "",
+          type: typeof variable.type === "string" ? variable.type : "",
+          defaultValue: variable.defaultValue ?? null,
+        })),
+      };
+    }
+    case "search_blocks": {
+      const query = typeof toolArgs.query === "string" ? toolArgs.query.trim().toLowerCase() : "";
+      const limit = toBoundedInteger(toolArgs.limit, 10, 1, 30);
+      const capabilityBlocks =
+        isRecord(capabilities) && Array.isArray(capabilities.blocks)
+          ? capabilities.blocks.filter(isRecord)
+          : [];
+
+      const scored = capabilityBlocks
+        .map((block) => {
+          const blockType = typeof block.type === "string" ? block.type : "";
+          const fields = Array.isArray(block.fields) ? block.fields.filter(isRecord) : [];
+          const inputs = Array.isArray(block.inputs) ? block.inputs.filter(isRecord) : [];
+          const haystack = [
+            blockType,
+            ...fields.flatMap((field) => [
+              typeof field.name === "string" ? field.name : "",
+              typeof field.kind === "string" ? field.kind : "",
+            ]),
+            ...inputs.flatMap((input) => [
+              typeof input.name === "string" ? input.name : "",
+              ...(Array.isArray(input.checks) ? input.checks.filter((check): check is string => typeof check === "string") : []),
+            ]),
+          ]
+            .join(" ")
+            .toLowerCase();
+
+          const score = query
+            ? (haystack.includes(query) ? 1 : 0)
+            : 1;
+
+          return {
+            score,
+            blockType,
+            fields,
+            inputs,
+          };
+        })
+        .filter((entry) => entry.score > 0)
+        .slice(0, limit)
+        .map((entry) => ({
+          type: entry.blockType,
+          fields: entry.fields.slice(0, 8).map((field) => ({
+            name: typeof field.name === "string" ? field.name : "",
+            kind: typeof field.kind === "string" ? field.kind : "",
+          })),
+          inputs: entry.inputs.slice(0, 8).map((input) => ({
+            name: typeof input.name === "string" ? input.name : "",
+            kind: typeof input.kind === "string" ? input.kind : "",
+            checks: Array.isArray(input.checks)
+              ? input.checks.filter((check): check is string => typeof check === "string")
+              : [],
+          })),
+        }));
+
+      return {
+        query,
+        matches: scored,
+      };
+    }
+    case "get_block_type": {
+      const blockType = typeof toolArgs.blockType === "string" ? toolArgs.blockType : "";
+      const byType =
+        isRecord(capabilities) && isRecord(capabilities.byType)
+          ? capabilities.byType
+          : {};
+      const entry = isRecord(byType) && isRecord(byType[blockType])
+        ? byType[blockType]
+        : null;
+      if (!entry) {
+        const blockTypes =
+          isRecord(capabilities) && Array.isArray(capabilities.blocks)
+            ? capabilities.blocks
+              .filter(isRecord)
+              .map((block) => (typeof block.type === "string" ? block.type : ""))
+              .filter((value) => value.length > 0)
+              .slice(0, 200)
+            : [];
+        return {
+          error: `Unknown block type: ${blockType}`,
+          availableBlockTypesSample: blockTypes,
+        };
+      }
+      return {
+        block: entry,
+      };
+    }
+    default:
+      return {
+        error: `Unknown tool: ${toolName}`,
+      };
+  }
+}
+
 export const assistantTurn = action({
   args: {
     userIntent: v.string(),
@@ -686,6 +1256,7 @@ export const assistantTurn = action({
     capabilities: v.any(),
     context: v.any(),
     programRead: v.any(),
+    projectSnapshot: v.any(),
   },
   returns: assistantTurnReturnValidator,
   handler: async (_ctx, args) => {
@@ -698,46 +1269,94 @@ export const assistantTurn = action({
         role: turn.role,
         content: truncate(turn.content.trim(), 1800),
       }));
-
-    const payload = await sendOpenRouterChatCompletion({
-      model,
-      apiKey,
-      referer,
-      appName,
-      temperature: 0.2,
-      maxTokens: 1800,
-      responseFormat: {
-        type: "json_object",
+    const projectSnapshot = isRecord(args.projectSnapshot) ? args.projectSnapshot : {};
+    const tools = buildAssistantToolDefinitions();
+    const messages: Array<Record<string, unknown>> = [
+      {
+        role: "system",
+        content: buildAssistantTurnSystemPrompt(),
       },
-      messages: [
-        {
-          role: "system",
-          content: buildAssistantTurnSystemPrompt(),
-        },
-        {
-          role: "user",
-          content: JSON.stringify(
-            {
-              task: "Classify and handle Blockly assistant turn",
-              context: args.context,
-              programRead: args.programRead,
-              capabilities: args.capabilities,
-            },
-            null,
-            2,
-          ),
-        },
-        ...recentTurns,
-        {
-          role: "user",
-          content: args.userIntent,
-        },
-      ],
-    });
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            task: "Classify and handle Blockly assistant turn",
+            context: args.context,
+            programRead: args.programRead,
+            capabilities: args.capabilities,
+            toolingHint: "Use tools to fetch project entities/properties before finalizing answer.",
+          },
+          null,
+          2,
+        ),
+      },
+      ...recentTurns.map((turn) => ({
+        role: turn.role,
+        content: turn.content,
+      })),
+      {
+        role: "user",
+        content: args.userIntent,
+      },
+    ];
 
-    const content = extractResponseText(payload);
-    const parsed = parseJsonFromResponse(content);
-    const turn = validateAssistantTurnPayload(parsed);
+    const maxToolRounds = 8;
+    let turn: AssistantTurnPayload | null = null;
+
+    for (let round = 0; round < maxToolRounds; round += 1) {
+      const payload = await sendOpenRouterChatCompletion({
+        model,
+        apiKey,
+        referer,
+        appName,
+        temperature: 0.2,
+        maxTokens: 1800,
+        responseFormat: {
+          type: "json_object",
+        },
+        tools,
+        toolChoice: "auto",
+        messages,
+      });
+
+      const message = payload.choices?.[0]?.message;
+      const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+      if (toolCalls.length > 0) {
+        messages.push({
+          role: "assistant",
+          content: typeof message?.content === "string" ? message.content : "",
+          tool_calls: toolCalls,
+        });
+
+        for (let index = 0; index < toolCalls.length; index += 1) {
+          const toolCall = toolCalls[index];
+          const toolName = typeof toolCall.function?.name === "string" ? toolCall.function.name : "";
+          const parsedToolArgs = parseToolArguments(toolCall.function?.arguments);
+          const toolResult = executeAssistantTool({
+            toolName,
+            toolArgs: parsedToolArgs,
+            projectSnapshot,
+            capabilities: args.capabilities,
+          });
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id || `tool_call_${round}_${index}`,
+            name: toolName || "unknown_tool",
+            content: JSON.stringify(toolResult),
+          });
+        }
+        continue;
+      }
+
+      const content = extractResponseText(payload);
+      const parsed = parseJsonFromResponse(content);
+      turn = validateAssistantTurnPayload(parsed);
+      break;
+    }
+
+    if (!turn) {
+      throw new Error("Assistant did not reach a final response after tool calls.");
+    }
 
     if (turn.mode === "chat") {
       return {
