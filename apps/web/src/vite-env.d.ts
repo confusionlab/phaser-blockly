@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_CONVEX_SITE_URL_DEV?: string;
   readonly VITE_CONVEX_SITE_URL_PROD?: string;
   readonly VITE_APP_BRANCH?: string;
+  readonly VITE_E2E_AUTH_BYPASS?: string;
+  readonly VITE_E2E_AUTH_BYPASS_USER_ID?: string;
 }
 
 interface ImportMeta {

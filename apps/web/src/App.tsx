@@ -9,6 +9,8 @@ import { BillingPage } from './components/billing/BillingPage';
 import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
 
+const E2E_AUTH_BYPASS = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
+
 function resetSessionStateForAccountBoundary() {
   useProjectStore.getState().closeProject();
   useEditorStore.setState({
@@ -61,9 +63,11 @@ function AuthenticatedShell() {
 
   return (
     <>
-      <div className="fixed right-4 top-3 z-[100300]">
-        <UserButton />
-      </div>
+      {user ? (
+        <div className="fixed right-4 top-3 z-[100300]">
+          <UserButton />
+        </div>
+      ) : null}
       <Routes>
         <Route path="/" element={<EditorLayout />} />
         <Route path="/project/:projectId" element={<EditorLayout />} />
@@ -76,6 +80,10 @@ function AuthenticatedShell() {
 }
 
 function App() {
+  if (E2E_AUTH_BYPASS) {
+    return <AuthenticatedShell />;
+  }
+
   return (
     <>
       <AuthLoading>

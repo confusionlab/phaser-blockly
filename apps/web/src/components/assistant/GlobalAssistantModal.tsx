@@ -254,6 +254,7 @@ function AssistantMessage() {
 
 export function GlobalAssistantModal() {
   const { userId } = useAuth();
+  const runtimeUserId = userId ?? (import.meta.env.VITE_E2E_AUTH_BYPASS_USER_ID?.trim() || null);
   const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
   const [open, setOpen] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -361,12 +362,12 @@ export function GlobalAssistantModal() {
   }, [assistantScope, isDesktopRuntime, project]);
 
   useEffect(() => {
-    if (!isDesktopRuntime || !userId || !window.desktopAssistant) {
+    if (!isDesktopRuntime || !runtimeUserId || !window.desktopAssistant) {
       setProviderStatus(DEFAULT_PROVIDER_STATUS);
       return;
     }
     const desktopAssistant = window.desktopAssistant;
-    void desktopAssistant.provider.status(userId)
+    void desktopAssistant.provider.status(runtimeUserId)
       .then((status) => {
         setProviderStatus(mapProviderStatus(status));
       })
@@ -378,7 +379,7 @@ export function GlobalAssistantModal() {
       if (event.message) {
         setStatusMessage(event.message);
       }
-      void desktopAssistant.provider.status(userId)
+      void desktopAssistant.provider.status(runtimeUserId)
         .then((status) => {
           setProviderStatus(mapProviderStatus(status));
         })
@@ -386,7 +387,7 @@ export function GlobalAssistantModal() {
           setProviderStatus(DEFAULT_PROVIDER_STATUS);
         });
     });
-  }, [isDesktopRuntime, userId]);
+  }, [isDesktopRuntime, runtimeUserId]);
 
   const adapter = useMemo<ChatModelAdapter>(() => ({
     run: async (options) => {
@@ -464,7 +465,7 @@ export function GlobalAssistantModal() {
             if (!isDesktopRuntime || !window.desktopAssistant) {
               throw new Error('Codex mode requires desktop app runtime.');
             }
-            if (!userId) {
+            if (!runtimeUserId) {
               throw new Error('Missing signed-in user context for desktop provider.');
             }
             return window.desktopAssistant.provider.assistantTurn({
@@ -474,14 +475,14 @@ export function GlobalAssistantModal() {
               context,
               programRead,
               threadContext,
-            }, userId);
+            }, runtimeUserId);
           })()
         : (() => {
             const projectSnapshot = buildProjectSnapshot(project);
             return (async () => {
               const desktopCredentials =
-                isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && userId
-                  ? await window.desktopAssistant.provider.getCredentials(userId)
+                isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && runtimeUserId
+                  ? await window.desktopAssistant.provider.getCredentials(runtimeUserId)
                   : undefined;
               const providerCredentials: ProviderCredentials | undefined = desktopCredentials
                 ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
@@ -609,7 +610,7 @@ export function GlobalAssistantModal() {
         content: [{ type: 'text', text: assistantText }],
       };
     },
-  }), [assistantScope, assistantTurnAction, isDesktopRuntime, managedCreditsBlocked, project, providerMode, providerStatus, scopeKey, threadId, userId]);
+  }), [assistantScope, assistantTurnAction, isDesktopRuntime, managedCreditsBlocked, project, providerMode, providerStatus, runtimeUserId, scopeKey, threadId]);
 
   const initialMessages = useMemo(
     () => persistedMessages.map((message) => ({
@@ -679,10 +680,10 @@ export function GlobalAssistantModal() {
       setProviderMode(nextMode);
       await setAssistantThreadProviderMode(threadId, nextMode);
       if (isDesktopRuntime && window.desktopAssistant) {
-        if (!userId) {
+        if (!runtimeUserId) {
           throw new Error('Missing signed-in user context for desktop provider.');
         }
-        const status = await window.desktopAssistant.provider.setMode(nextMode, userId);
+        const status = await window.desktopAssistant.provider.setMode(nextMode, runtimeUserId);
         setProviderStatus(mapProviderStatus(status));
         setProviderMode(status.mode);
         await setAssistantThreadProviderMode(threadId, status.mode);
@@ -698,7 +699,7 @@ export function GlobalAssistantModal() {
       setErrorMessage('Provider secrets can only be configured in desktop app.');
       return;
     }
-    if (!userId) {
+    if (!runtimeUserId) {
       setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
@@ -708,7 +709,7 @@ export function GlobalAssistantModal() {
     }
 
     try {
-      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim(), userId);
+      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim(), runtimeUserId);
       setProviderStatus(mapProviderStatus(status));
       setProviderSecretInput('');
       setStatusMessage('Credential saved to OS keychain.');
@@ -723,14 +724,14 @@ export function GlobalAssistantModal() {
       setErrorMessage('Codex login is only available in desktop app.');
       return;
     }
-    if (!userId) {
+    if (!runtimeUserId) {
       setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
 
     try {
       setStatusMessage('Opening ChatGPT login in browser...');
-      const status = await window.desktopAssistant.provider.loginCodex(userId);
+      const status = await window.desktopAssistant.provider.loginCodex(runtimeUserId);
       setProviderStatus(mapProviderStatus(status));
       setErrorMessage(null);
     } catch (error) {
@@ -743,13 +744,13 @@ export function GlobalAssistantModal() {
       setErrorMessage('Codex logout is only available in desktop app.');
       return;
     }
-    if (!userId) {
+    if (!runtimeUserId) {
       setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
 
     try {
-      const status = await window.desktopAssistant.provider.logoutCodex(userId);
+      const status = await window.desktopAssistant.provider.logoutCodex(runtimeUserId);
       setProviderStatus(mapProviderStatus(status));
       setStatusMessage('Logged out from ChatGPT.');
       setErrorMessage(null);
