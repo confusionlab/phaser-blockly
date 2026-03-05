@@ -10,7 +10,7 @@ import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { CURRENT_SCHEMA_VERSION, loadProject, migrateAllLocalProjects } from '@/db/database';
+import { CURRENT_SCHEMA_VERSION, createAutoCheckpoint, loadProject, migrateAllLocalProjects } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
@@ -49,8 +49,11 @@ export function EditorLayout() {
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
   const hoveredPanelRef = useRef<HoveredPanel>(null);
   const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const isBlockingCloudSyncRef = useRef(false);
+  const activeProjectId = project?.id ?? null;
 
   // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
   const { syncProjectToCloud } = useCloudSync({
@@ -69,6 +72,48 @@ export function EditorLayout() {
 
     return () => window.clearTimeout(timeout);
   }, [project, isDirty, saveCurrentProject]);
+
+  useEffect(() => {
+    isBlockingCloudSyncRef.current = isBlockingCloudSync;
+  }, [isBlockingCloudSync]);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+
+    const intervalId = window.setInterval(() => {
+      const latestProject = useProjectStore.getState().project;
+      if (!latestProject) return;
+      void createAutoCheckpoint(latestProject);
+    }, 2 * 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!project || isBlockingCloudSyncRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = 'Please wait, Uploading/Syncing to Cloud.';
+
+      setIsBlockingCloudSync(true);
+      void (async () => {
+        try {
+          await saveCurrentProject();
+          await syncProjectToCloud(project.id);
+        } catch (error) {
+          console.error('[CloudSync] Failed to sync before unload:', error);
+        } finally {
+          setIsBlockingCloudSync(false);
+        }
+      })();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [project, saveCurrentProject, syncProjectToCloud]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {
@@ -212,17 +257,6 @@ export function EditorLayout() {
       }
     }
 
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-      e.preventDefault();
-      if (project) {
-        void (async () => {
-          await saveCurrentProject();
-          await syncProjectToCloud(project.id);
-        })();
-      }
-      return;
-    }
-
     // Undo: Cmd+Z or Ctrl+Z
     if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
       if (isTyping && !isInBlocklyArea) {
@@ -337,8 +371,6 @@ export function EditorLayout() {
   }, [
     isPlaying,
     project,
-    saveCurrentProject,
-    syncProjectToCloud,
     stopPlaying,
     fullscreenPanel,
     undo,
@@ -493,6 +525,14 @@ export function EditorLayout() {
 
       {/* Object picker overlay */}
       <ObjectPicker />
+
+      {isBlockingCloudSync && (
+        <div className="fixed inset-0 z-[100002] bg-black/45 flex items-center justify-center">
+          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
+            Please wait, Uploading/Syncing to Cloud.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

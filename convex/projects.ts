@@ -58,6 +58,54 @@ const syncPayloadValidator = v.object({
   contentHash: v.optional(v.string()),
 });
 
+const revisionReasonValidator = v.union(
+  v.literal("manual_checkpoint"),
+  v.literal("auto_checkpoint"),
+  v.literal("import"),
+  v.literal("restore"),
+  v.literal("edit_revision"),
+);
+
+const revisionSyncPayloadValidator = v.object({
+  localProjectId: v.string(),
+  revisionId: v.string(),
+  parentRevisionId: v.optional(v.string()),
+  kind: v.union(v.literal("snapshot"), v.literal("delta")),
+  baseRevisionId: v.string(),
+  storageId: v.optional(v.id("_storage")),
+  // Kept optional for backward compatibility with inline payload clients.
+  data: v.optional(v.string()),
+  dataSizeBytes: v.optional(v.number()),
+  contentHash: v.optional(v.string()),
+  createdAt: v.number(),
+  schemaVersion: v.optional(schemaVersionValidator),
+  appVersion: v.optional(v.string()),
+  reason: revisionReasonValidator,
+  checkpointName: v.optional(v.string()),
+  isCheckpoint: v.boolean(),
+  restoredFromRevisionId: v.optional(v.string()),
+});
+
+const revisionSummaryValidator = v.object({
+  projectLocalId: v.string(),
+  revisionId: v.string(),
+  parentRevisionId: v.optional(v.string()),
+  kind: v.union(v.literal("snapshot"), v.literal("delta")),
+  baseRevisionId: v.string(),
+  storageId: v.optional(v.id("_storage")),
+  dataSizeBytes: v.optional(v.number()),
+  contentHash: v.string(),
+  createdAt: v.number(),
+  schemaVersion: v.number(),
+  appVersion: v.optional(v.string()),
+  reason: revisionReasonValidator,
+  checkpointName: v.optional(v.string()),
+  isCheckpoint: v.boolean(),
+  restoredFromRevisionId: v.optional(v.string()),
+  data: v.optional(v.string()),
+  dataUrl: v.union(v.string(), v.null()),
+});
+
 type StoredProject = {
   _id: Id<"projects">;
   localId: string;
@@ -83,6 +131,45 @@ type SyncPayload = {
   schemaVersion?: number | string;
   appVersion?: string;
   contentHash?: string;
+};
+
+type StoredProjectRevision = {
+  _id: Id<"projectRevisions">;
+  projectLocalId: string;
+  revisionId: string;
+  parentRevisionId?: string;
+  kind: "snapshot" | "delta";
+  baseRevisionId: string;
+  storageId?: Id<"_storage">;
+  data?: string;
+  dataSizeBytes?: number;
+  contentHash: string;
+  createdAt: number;
+  schemaVersion: number | string;
+  appVersion?: string;
+  reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
+  checkpointName?: string;
+  isCheckpoint: boolean;
+  restoredFromRevisionId?: string;
+};
+
+type RevisionSyncPayload = {
+  localProjectId: string;
+  revisionId: string;
+  parentRevisionId?: string;
+  kind: "snapshot" | "delta";
+  baseRevisionId: string;
+  storageId?: Id<"_storage">;
+  data?: string;
+  dataSizeBytes?: number;
+  contentHash?: string;
+  createdAt: number;
+  schemaVersion?: number | string;
+  appVersion?: string;
+  reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
+  checkpointName?: string;
+  isCheckpoint: boolean;
+  restoredFromRevisionId?: string;
 };
 
 const FNV64_OFFSET = 0xcbf29ce484222325n;
@@ -166,6 +253,13 @@ async function listProjectsByLocalId(ctx: any, localId: string): Promise<StoredP
     .query("projects")
     .withIndex("by_localId", (q: any) => q.eq("localId", localId))
     .collect()) as StoredProject[];
+}
+
+async function listRevisionsByProjectLocalId(ctx: any, projectLocalId: string): Promise<StoredProjectRevision[]> {
+  return (await ctx.db
+    .query("projectRevisions")
+    .withIndex("by_projectLocalId_createdAt", (q: any) => q.eq("projectLocalId", projectLocalId))
+    .collect()) as StoredProjectRevision[];
 }
 
 async function cleanupDuplicateProjects(
@@ -272,6 +366,160 @@ async function toFull(ctx: any, project: StoredProject) {
   }
 
   return result;
+}
+
+async function toRevisionFull(ctx: any, revision: StoredProjectRevision) {
+  const result: {
+    projectLocalId: string;
+    revisionId: string;
+    parentRevisionId?: string;
+    kind: "snapshot" | "delta";
+    baseRevisionId: string;
+    storageId?: Id<"_storage">;
+    dataSizeBytes?: number;
+    contentHash: string;
+    createdAt: number;
+    schemaVersion: number;
+    appVersion?: string;
+    reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
+    checkpointName?: string;
+    isCheckpoint: boolean;
+    restoredFromRevisionId?: string;
+    data?: string;
+    dataUrl: string | null;
+  } = {
+    projectLocalId: revision.projectLocalId,
+    revisionId: revision.revisionId,
+    parentRevisionId: revision.parentRevisionId,
+    kind: revision.kind,
+    baseRevisionId: revision.baseRevisionId,
+    contentHash: revision.contentHash,
+    createdAt: revision.createdAt,
+    schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
+    reason: revision.reason,
+    isCheckpoint: revision.isCheckpoint,
+    dataUrl: revision.storageId ? await ctx.storage.getUrl(revision.storageId) : null,
+  };
+
+  if (revision.storageId !== undefined) {
+    result.storageId = revision.storageId;
+  }
+  if (revision.dataSizeBytes !== undefined) {
+    result.dataSizeBytes = revision.dataSizeBytes;
+  }
+  if (revision.appVersion !== undefined) {
+    result.appVersion = revision.appVersion;
+  }
+  if (revision.checkpointName !== undefined) {
+    result.checkpointName = revision.checkpointName;
+  }
+  if (revision.restoredFromRevisionId !== undefined) {
+    result.restoredFromRevisionId = revision.restoredFromRevisionId;
+  }
+  if (revision.data !== undefined) {
+    result.data = revision.data;
+  }
+
+  return result;
+}
+
+function toRevisionDocument(payload: RevisionSyncPayload) {
+  const contentHash =
+    normalizeContentHash(payload.contentHash) ??
+    (typeof payload.data === "string" ? computeContentHash(payload.data) : "0000000000000000");
+  const base: {
+    projectLocalId: string;
+    revisionId: string;
+    parentRevisionId?: string;
+    kind: "snapshot" | "delta";
+    baseRevisionId: string;
+    dataSizeBytes?: number;
+    contentHash: string;
+    createdAt: number;
+    schemaVersion: number;
+    appVersion?: string;
+    reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
+    checkpointName?: string;
+    isCheckpoint: boolean;
+    restoredFromRevisionId?: string;
+  } = {
+    projectLocalId: payload.localProjectId,
+    revisionId: payload.revisionId,
+    parentRevisionId: payload.parentRevisionId,
+    kind: payload.kind,
+    baseRevisionId: payload.baseRevisionId,
+    contentHash,
+    createdAt: payload.createdAt,
+    schemaVersion: normalizeSchemaVersion(payload.schemaVersion),
+    reason: payload.reason,
+    checkpointName: payload.checkpointName,
+    isCheckpoint: payload.isCheckpoint,
+    restoredFromRevisionId: payload.restoredFromRevisionId,
+  };
+
+  if (payload.dataSizeBytes !== undefined) {
+    base.dataSizeBytes = payload.dataSizeBytes;
+  }
+  if (payload.appVersion !== undefined) {
+    base.appVersion = payload.appVersion;
+  }
+
+  if (payload.storageId) {
+    return {
+      ...base,
+      storageId: payload.storageId,
+    };
+  }
+
+  if (payload.data !== undefined) {
+    return {
+      ...base,
+      data: payload.data,
+    };
+  }
+
+  throw new Error("Revision sync payload must include either storageId or data");
+}
+
+async function upsertProjectRevision(ctx: any, payload: RevisionSyncPayload) {
+  const existing = (await ctx.db
+    .query("projectRevisions")
+    .withIndex("by_projectLocalId_revisionId", (q: any) =>
+      q.eq("projectLocalId", payload.localProjectId).eq("revisionId", payload.revisionId),
+    )
+    .first()) as StoredProjectRevision | null;
+
+  const nextDocument = toRevisionDocument(payload);
+
+  if (!existing) {
+    await ctx.db.insert("projectRevisions", nextDocument);
+    return { action: "created" as const };
+  }
+
+  const shouldUpdate =
+    nextDocument.createdAt > existing.createdAt ||
+    (nextDocument.createdAt === existing.createdAt &&
+      (nextDocument.contentHash !== existing.contentHash ||
+        nextDocument.checkpointName !== existing.checkpointName ||
+        nextDocument.reason !== existing.reason ||
+        nextDocument.isCheckpoint !== existing.isCheckpoint));
+
+  if (!shouldUpdate) {
+    const uploadedStorageId =
+      payload.storageId && payload.storageId !== existing.storageId ? payload.storageId : undefined;
+    await cleanupStorage(ctx, uploadedStorageId);
+    return { action: "skipped" as const };
+  }
+
+  const staleStorageId = payload.storageId
+    ? existing.storageId && existing.storageId !== payload.storageId
+      ? existing.storageId
+      : undefined
+    : existing.storageId;
+
+  await ctx.db.replace(existing._id, nextDocument);
+  await cleanupStorage(ctx, staleStorageId);
+  return { action: "updated" as const };
 }
 
 function toProjectDocument(
@@ -508,6 +756,35 @@ export const syncBatch = mutation({
   },
 });
 
+export const syncRevisions = mutation({
+  args: {
+    revisions: v.array(revisionSyncPayloadValidator),
+  },
+  returns: v.object({
+    created: v.number(),
+    updated: v.number(),
+    skipped: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    for (const revision of args.revisions as RevisionSyncPayload[]) {
+      const result = await upsertProjectRevision(ctx, revision);
+      if (result.action === "created") {
+        created += 1;
+      } else if (result.action === "updated") {
+        updated += 1;
+      } else {
+        skipped += 1;
+      }
+    }
+
+    return { created, updated, skipped };
+  },
+});
+
 // Internal mutation for sync beacons
 export const syncBeacon = internalMutation({
   args: syncPayloadValidator,
@@ -540,6 +817,19 @@ export const remove = mutation({
       await cleanupStorage(ctx, storageId);
     }
 
+    const revisions = await listRevisionsByProjectLocalId(ctx, args.localId);
+    const revisionStorageIds = new Set<Id<"_storage">>();
+    for (const revision of revisions) {
+      if (revision.storageId) {
+        revisionStorageIds.add(revision.storageId);
+      }
+      await ctx.db.delete(revision._id);
+    }
+
+    for (const storageId of revisionStorageIds) {
+      await cleanupStorage(ctx, storageId);
+    }
+
     return { deleted: true };
   },
 });
@@ -552,5 +842,85 @@ export const listFull = query({
     const projects = (await ctx.db.query("projects").collect()) as StoredProject[];
     const canonicalProjects = pickCanonicalProjectsByLocalId(projects);
     return await Promise.all(canonicalProjects.map((project) => toFull(ctx, project)));
+  },
+});
+
+export const listRevisions = query({
+  args: {
+    localId: v.string(),
+  },
+  returns: v.array(revisionSummaryValidator),
+  handler: async (ctx, args) => {
+    const revisions = await listRevisionsByProjectLocalId(ctx, args.localId);
+    const sorted = revisions.slice().sort((a, b) => b.createdAt - a.createdAt);
+    return await Promise.all(sorted.map((revision) => toRevisionFull(ctx, revision)));
+  },
+});
+
+export const listRevisionsForSync = mutation({
+  args: {
+    localId: v.string(),
+  },
+  returns: v.array(revisionSummaryValidator),
+  handler: async (ctx, args) => {
+    const revisions = await listRevisionsByProjectLocalId(ctx, args.localId);
+    const sorted = revisions.slice().sort((a, b) => b.createdAt - a.createdAt);
+    return await Promise.all(sorted.map((revision) => toRevisionFull(ctx, revision)));
+  },
+});
+
+export const renameCheckpoint = mutation({
+  args: {
+    localId: v.string(),
+    revisionId: v.string(),
+    checkpointName: v.string(),
+  },
+  returns: v.object({ updated: v.boolean() }),
+  handler: async (ctx, args) => {
+    const revision = (await ctx.db
+      .query("projectRevisions")
+      .withIndex("by_projectLocalId_revisionId", (q: any) =>
+        q.eq("projectLocalId", args.localId).eq("revisionId", args.revisionId),
+      )
+      .first()) as StoredProjectRevision | null;
+
+    if (!revision || !revision.isCheckpoint) {
+      return { updated: false };
+    }
+
+    const normalizedName = args.checkpointName.trim().slice(0, 80);
+    if (!normalizedName) {
+      return { updated: false };
+    }
+
+    await ctx.db.patch(revision._id, {
+      checkpointName: normalizedName,
+    });
+    return { updated: true };
+  },
+});
+
+export const deleteRevision = mutation({
+  args: {
+    localId: v.string(),
+    revisionId: v.string(),
+  },
+  returns: v.object({ deleted: v.boolean() }),
+  handler: async (ctx, args) => {
+    const revision = (await ctx.db
+      .query("projectRevisions")
+      .withIndex("by_projectLocalId_revisionId", (q: any) =>
+        q.eq("projectLocalId", args.localId).eq("revisionId", args.revisionId),
+      )
+      .first()) as StoredProjectRevision | null;
+    if (!revision) {
+      return { deleted: false };
+    }
+
+    if (revision.storageId) {
+      await cleanupStorage(ctx, revision.storageId);
+    }
+    await ctx.db.delete(revision._id);
+    return { deleted: true };
   },
 });

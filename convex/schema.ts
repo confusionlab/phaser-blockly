@@ -131,4 +131,34 @@ export default defineSchema({
     appVersion: v.optional(v.string()),
     contentHash: v.optional(v.string()),
   }).index("by_localId", ["localId"]),
+
+  // Project revision history - cloud-synced checkpoint/revision storage
+  projectRevisions: defineTable({
+    projectLocalId: v.string(),
+    revisionId: v.string(),
+    parentRevisionId: v.optional(v.string()),
+    kind: v.union(v.literal("snapshot"), v.literal("delta")),
+    baseRevisionId: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    data: v.optional(v.string()),
+    dataSizeBytes: v.optional(v.number()),
+    contentHash: v.string(),
+    createdAt: v.number(),
+    schemaVersion: v.union(v.number(), v.string()),
+    appVersion: v.optional(v.string()),
+    reason: v.union(
+      v.literal("manual_checkpoint"),
+      v.literal("auto_checkpoint"),
+      v.literal("import"),
+      v.literal("restore"),
+      v.literal("edit_revision"),
+    ),
+    checkpointName: v.optional(v.string()),
+    isCheckpoint: v.boolean(),
+    restoredFromRevisionId: v.optional(v.string()),
+  })
+    .index("by_projectLocalId_createdAt", ["projectLocalId", "createdAt"])
+    .index("by_projectLocalId_isCheckpoint_createdAt", ["projectLocalId", "isCheckpoint", "createdAt"])
+    .index("by_projectLocalId_revisionId", ["projectLocalId", "revisionId"])
+    .index("by_projectLocalId_contentHash", ["projectLocalId", "contentHash"]),
 });
