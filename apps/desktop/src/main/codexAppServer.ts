@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import codexTurnOutputSchema from './codexTurnOutput.schema.json';
+import { runUnifiedAssistantTurn } from '../../../../packages/assistant-core/src';
 import { validateSemanticOpsPayload } from '../../../../packages/assistant-core/src/semanticOps';
 import type {
   CodexAssistantTurnRequest,
@@ -494,6 +495,23 @@ export class CodexAppServerClient {
 
   async runAssistantTurn(args: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> {
     await this.ensureStarted();
+    const authToken = await this.getAuthToken();
+    if (authToken) {
+      return runUnifiedAssistantTurn({
+        userIntent: args.userIntent,
+        chatHistory: args.chatHistory,
+        providerMode: 'codex_oauth',
+        providerCredentials: {
+          codexToken: authToken,
+        },
+        threadContext: args.threadContext,
+        capabilities: args.capabilities,
+        context: args.context,
+        programRead: args.programRead,
+        projectSnapshot: args.projectSnapshot || {},
+      });
+    }
+
     const prompt = buildCodexAssistantPrompt(args);
     const { output, stderr, exitCode } = await this.runCodexExecWithSchema(prompt);
 

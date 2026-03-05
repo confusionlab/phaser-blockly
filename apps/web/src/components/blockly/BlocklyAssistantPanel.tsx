@@ -319,36 +319,46 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         scopeKey,
       };
 
-      const turn = await (() => {
-        const projectSnapshot = buildAssistantProjectSnapshot(project);
-        return (async () => {
-          const desktopCredentials =
-            typeof window !== 'undefined'
-            && window.desktopAssistant
-            && (providerMode === 'byok' || providerMode === 'codex_oauth')
-              ? await window.desktopAssistant.provider.getCredentials()
-              : undefined;
-          const providerCredentials: ProviderCredentials | undefined = desktopCredentials
-            ? {
-                ...(providerMode === 'byok' ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined } : {}),
-                ...(providerMode === 'codex_oauth' ? { codexToken: desktopCredentials.codexToken || undefined } : {}),
-              }
-            : undefined;
-          return assistantTurnAction({
-            userIntent,
-            chatHistory: historyForTurn,
-            providerMode,
-            providerCredentials,
-            threadContext,
-            capabilities,
-            context,
-            programRead,
-            projectSnapshot,
-          });
-        })();
-      })();
+      const projectSnapshot = buildAssistantProjectSnapshot(project);
+      const turn = await (providerMode === 'codex_oauth'
+        ? (() => {
+            if (typeof window === 'undefined' || !window.desktopAssistant) {
+              throw new Error('Codex mode requires the desktop app runtime.');
+            }
+            return window.desktopAssistant.provider.assistantTurn({
+              userIntent,
+              chatHistory: historyForTurn,
+              capabilities,
+              context,
+              programRead,
+              projectSnapshot,
+              threadContext,
+            });
+          })()
+        : (() => {
+            return (async () => {
+              const desktopCredentials =
+                typeof window !== 'undefined' && window.desktopAssistant && providerMode === 'byok'
+                  ? await window.desktopAssistant.provider.getCredentials()
+                  : undefined;
+              const providerCredentials: ProviderCredentials | undefined = desktopCredentials
+                ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
+                : undefined;
+              return assistantTurnAction({
+                userIntent,
+                chatHistory: historyForTurn,
+                providerMode,
+                providerCredentials,
+                threadContext,
+                capabilities,
+                context,
+                programRead,
+                projectSnapshot,
+              });
+            })();
+          })());
       const turnCompletedAt = new Date().toISOString();
-      const turnProviderLabel = `convex:${turn.provider}`;
+      const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
 
       if (turn.mode === 'chat') {
         const chatAnswer = (turn.answer || '').trim();
