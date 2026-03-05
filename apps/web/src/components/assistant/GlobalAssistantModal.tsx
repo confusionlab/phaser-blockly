@@ -37,6 +37,7 @@ import {
   validateSemanticOpsPayload,
 } from '@/lib/llm';
 import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate, ProjectOp } from '@/lib/llm';
+import { buildAgentActivityLines, buildModelEditOverviewLines } from '@/lib/llm/traceSummary';
 
 type ProviderCredentials = {
   openRouterApiKey?: string;
@@ -450,11 +451,15 @@ export function GlobalAssistantModal() {
           if (!chatAnswer) {
             throw new Error('Assistant returned an empty response.');
           }
+          const activityLines = buildAgentActivityLines(turn.debugTrace);
+          const chatAnswerWithActivity = activityLines.length > 0
+            ? [chatAnswer, '', ...activityLines].join('\n')
+            : chatAnswer;
 
           await appendAssistantMessage({
             threadId,
             role: 'assistant',
-            content: chatAnswer,
+            content: chatAnswerWithActivity,
             createdAt: turnCompletedAt,
             meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
           });
@@ -469,7 +474,7 @@ export function GlobalAssistantModal() {
           });
 
           return {
-            content: [{ type: 'text', text: chatAnswer }],
+            content: [{ type: 'text', text: chatAnswerWithActivity }],
           };
         }
 
@@ -556,9 +561,11 @@ export function GlobalAssistantModal() {
           intentMismatchWarning,
         });
 
-        const responseLines: string[] = [proposedEdits.intentSummary];
+        const responseLines: string[] = [];
+        const modelEditOverview = buildModelEditOverviewLines(proposedEdits);
+        responseLines.push(...modelEditOverview);
         if (semanticCandidate) {
-          responseLines.push('', ...semanticCandidate.build.diff.summaryLines);
+          responseLines.push('', 'Compiled diff summary:', ...semanticCandidate.build.diff.summaryLines);
           if (!semanticCandidate.validation.pass) {
             responseLines.push(
               '',
@@ -575,11 +582,16 @@ export function GlobalAssistantModal() {
         }
 
         if (nextProjectOpsCandidate) {
-          responseLines.push('', 'Project ops:', ...nextProjectOpsCandidate.summaryLines);
+          responseLines.push('', 'Resolved project-op plan:', ...nextProjectOpsCandidate.summaryLines);
         }
 
         if (!semanticCandidate && !nextProjectOpsCandidate) {
           responseLines.push('', 'No executable edits were returned.');
+        }
+
+        const activityLines = buildAgentActivityLines(turn.debugTrace);
+        if (activityLines.length > 0) {
+          responseLines.push('', ...activityLines);
         }
         const assistantText = responseLines.join('\n');
 

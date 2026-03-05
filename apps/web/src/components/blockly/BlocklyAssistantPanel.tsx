@@ -17,6 +17,7 @@ import {
   validateSemanticOpsPayload,
 } from '@/lib/llm';
 import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate } from '@/lib/llm';
+import { buildAgentActivityLines, buildModelEditOverviewLines } from '@/lib/llm/traceSummary';
 import {
   appendAssistantMessage,
   appendAssistantTurn,
@@ -396,9 +397,13 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         if (!chatAnswer) {
           throw new Error('Assistant returned an empty chat response.');
         }
+        const activityLines = buildAgentActivityLines(turn.debugTrace);
+        const chatAnswerWithActivity = activityLines.length > 0
+          ? [chatAnswer, '', ...activityLines].join('\n')
+          : chatAnswer;
         await appendChatMessage({
           role: 'assistant',
-          content: chatAnswer,
+          content: chatAnswerWithActivity,
           createdAt: turnCompletedAt,
           meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
         });
@@ -494,9 +499,19 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         });
       } else {
         setStatusMessage('Candidate is ready to apply.');
+        const responseLines: string[] = [
+          ...buildModelEditOverviewLines(result.proposedEdits),
+          '',
+          'Compiled diff summary:',
+          ...result.build.diff.summaryLines,
+        ];
+        const activityLines = buildAgentActivityLines(turn.debugTrace);
+        if (activityLines.length > 0) {
+          responseLines.push('', ...activityLines);
+        }
         await appendChatMessage({
           role: 'assistant',
-          content: `${result.proposedEdits.intentSummary}\n\n${result.build.diff.summaryLines.join('\n')}`,
+          content: responseLines.join('\n'),
           createdAt: new Date().toISOString(),
           meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
         });
