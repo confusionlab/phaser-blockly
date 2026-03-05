@@ -30,3 +30,16 @@ test-results
 *.sw?
 .vercel
 platform/unified.config.json
+
+# iOS / Xcode (Capacitor)
+apps/web/ios/App/Pods/
+apps/web/ios/App/build/
+apps/web/ios/App/DerivedData/
+apps/web/ios/App/.symlinks/
+apps/web/ios/App/App/public/
+apps/web/ios/capacitor-cordova-ios-plugins/
+**/*.xcworkspace/xcuserdata/
+**/*.xcodeproj/xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint

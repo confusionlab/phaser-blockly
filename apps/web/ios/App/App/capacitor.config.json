@@ -1,0 +1,6 @@
+{
+	"appId": "com.pochacoding.app",
+	"appName": "PochaCoding",
+	"webDir": "dist",
+	"packageClassList": []
+}
