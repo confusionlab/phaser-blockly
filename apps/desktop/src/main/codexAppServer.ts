@@ -1,8 +1,12 @@
 import { shell } from 'electron';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import codexTurnOutputSchema from './codexTurnOutput.schema.json';
 import { runUnifiedAssistantTurn } from '../../../../packages/assistant-core/src';
+import { validateSemanticOpsPayload } from '../../../../packages/assistant-core/src/semanticOps';
 import type {
   CodexAssistantTurnRequest,
   CodexAssistantTurnResponse,
@@ -112,9 +116,17 @@ function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function stripAnsi(value: string): string {
+  return value.replace(/\u001B\[[0-9;]*[A-Za-z]/g, '');
+}
+
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function normalizeTraceLine(value: string): string {
+  return truncateText(stripAnsi(value).replace(/\s+/g, ' ').trim(), 320);
 }
 
 function previewValue(value: unknown, maxChars: number): string | null {
@@ -125,6 +137,45 @@ function previewValue(value: unknown, maxChars: number): string | null {
   } catch {
     return null;
   }
+}
+
+function validateCodexOutputSchema(schema: unknown): string[] {
+  const errors: string[] = [];
+  if (!isRecord(schema)) {
+    return ['schema must be an object'];
+  }
+
+  const propertiesValue = schema.properties;
+  if (!isRecord(propertiesValue)) {
+    errors.push('schema.properties must be an object');
+    return errors;
+  }
+  const propertyKeys = Object.keys(propertiesValue);
+  if (propertyKeys.length === 0) {
+    errors.push('schema.properties must declare at least one key');
+  }
+
+  const requiredValue = schema.required;
+  if (!Array.isArray(requiredValue)) {
+    errors.push('schema.required must be an array');
+    return errors;
+  }
+  const requiredKeys = requiredValue.filter((value): value is string => typeof value === 'string');
+  if (requiredKeys.length !== requiredValue.length) {
+    errors.push('schema.required must contain only strings');
+    return errors;
+  }
+
+  const requiredSet = new Set(requiredKeys);
+  const missingRequired = propertyKeys.filter((key) => !requiredSet.has(key));
+  if (missingRequired.length > 0) {
+    errors.push(`schema.required is missing property keys: ${missingRequired.join(', ')}`);
+  }
+  const unknownRequired = requiredKeys.filter((key) => !Object.prototype.hasOwnProperty.call(propertiesValue, key));
+  if (unknownRequired.length > 0) {
+    errors.push(`schema.required has unknown keys: ${unknownRequired.join(', ')}`);
+  }
+  return errors;
 }
 
 function canExecuteCodexBinary(candidate: string): boolean {
@@ -163,6 +214,245 @@ function resolveCodexExecutable(): string {
     return 'codex';
   }
   return 'codex';
+}
+
+const CODEX_TURN_OUTPUT_SCHEMA = codexTurnOutputSchema as Record<string, unknown>;
+const codexSchemaErrors = validateCodexOutputSchema(CODEX_TURN_OUTPUT_SCHEMA);
+if (codexSchemaErrors.length > 0) {
+  throw new Error(`Invalid codex output schema: ${codexSchemaErrors.join('; ')}`);
+}
+
+function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
+  const envelope = {
+    task: 'Classify and handle Blockly assistant turn',
+    outputContract: {
+      mode: 'chat|edit',
+      chat: 'Provide answer',
+      edit: 'Provide proposedEditsJson stringified JSON with intentSummary, assumptions[], semanticOps[], projectOps[]',
+    },
+    rules: [
+      'If the user is asking a question or clarification, choose mode=chat.',
+      'If the user is asking for Blockly or project changes, choose mode=edit.',
+      'If the user is discussing capabilities/planning/tooling (not requesting concrete project changes now), choose mode=chat.',
+      'Use capabilities as strict source of truth for available blocks/actions.',
+      'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
+      'If the user explicitly asks for a specific op payload or says to "return edit mode" with named fields, preserve those provided values verbatim unless they are empty.',
+      'For synthetic/schema-driven edit requests, do not replace provided field values with grounded ids and do not ask follow-up questions just because the literal values are not present in project context.',
+      'When mode=edit, proposedEditsJson must be valid JSON and include BOTH semanticOps and projectOps arrays.',
+      'Put Blockly code operations ONLY in semanticOps. Put scene/object/costume/project operations ONLY in projectOps.',
+      'Never output placeholder/template operations. Do not emit empty strings for required IDs/names.',
+      'If required scene/object/costume references are not available, choose mode=chat and ask a concise follow-up unless the user already supplied the literal values to emit.',
+      'Allowed projectOps: rename_project, create_scene, rename_scene, reorder_scenes, create_object, rename_object, set_object_property, set_object_physics, set_object_collider_type, create_folder, rename_folder, move_object_to_folder, add_costume_from_image_url, add_costume_text_circle, rename_costume, reorder_costumes, set_current_costume, validate_project.',
+      'When mode=chat, put your response in answer and set proposedEditsJson=null.',
+      'When mode=edit, set answer=null and put JSON string in proposedEditsJson.',
+      'Do not include markdown fences in any field.',
+    ],
+    userIntent: args.userIntent,
+    chatHistory: args.chatHistory.slice(-16),
+    context: args.context,
+    programRead: args.programRead,
+    capabilities: args.capabilities,
+    threadContext: args.threadContext ?? null,
+  };
+
+  return [
+    'You are PochaCoding Blockly assistant.',
+    'Return a JSON object matching the output schema.',
+    JSON.stringify(envelope, null, 2),
+  ].join('\n\n');
+}
+
+function shouldFallbackToCodexExecFromUnifiedTurn(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.mode !== 'chat') return false;
+
+  const errorCode = typeof value.errorCode === 'string' ? value.errorCode : '';
+  if (errorCode !== 'assistant_transport_error') {
+    return false;
+  }
+
+  const answer = typeof value.answer === 'string' ? value.answer.toLowerCase() : '';
+  if (answer.includes('missing scopes: model.request') || answer.includes('missing scopes: api.responses.write') || answer.includes('insufficient permissions')) {
+    return true;
+  }
+
+  if (isRecord(value.debugTrace) && Array.isArray(value.debugTrace.validationErrors)) {
+    const joined = value.debugTrace.validationErrors
+      .map((entry) => (typeof entry === 'string' ? entry.toLowerCase() : ''))
+      .join('\n');
+    if (joined.includes('model.request') || joined.includes('api.responses.write') || joined.includes('insufficient permissions')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+const PROJECT_OPS = new Set([
+  'rename_project',
+  'create_scene',
+  'rename_scene',
+  'reorder_scenes',
+  'create_object',
+  'rename_object',
+  'set_object_property',
+  'set_object_physics',
+  'set_object_collider_type',
+  'create_folder',
+  'rename_folder',
+  'move_object_to_folder',
+  'add_costume_from_image_url',
+  'add_costume_text_circle',
+  'rename_costume',
+  'reorder_costumes',
+  'set_current_costume',
+  'validate_project',
+]);
+
+const PROJECT_OP_ALIASES: Record<string, string> = {
+  add_svg_text_costume: 'add_costume_text_circle',
+  add_text_costume: 'add_costume_text_circle',
+  create_text_costume: 'add_costume_text_circle',
+  add_image_costume: 'add_costume_from_image_url',
+  add_costume_from_image: 'add_costume_from_image_url',
+  import_image_costume: 'add_costume_from_image_url',
+  set_physics: 'set_object_physics',
+  set_collider_type: 'set_object_collider_type',
+};
+
+function normalizeProjectOpName(op: string): string {
+  const trimmed = op.trim();
+  if (!trimmed) return trimmed;
+  return PROJECT_OP_ALIASES[trimmed] ?? trimmed;
+}
+
+function normalizeProjectOpFields(value: Record<string, unknown>): Record<string, unknown> {
+  const opName = typeof value.op === 'string' ? normalizeProjectOpName(value.op) : '';
+  const next: Record<string, unknown> = {
+    ...value,
+    ...(opName ? { op: opName } : {}),
+  };
+
+  if (opName === 'add_costume_text_circle') {
+    if (typeof next.text !== 'string' || !next.text.trim()) {
+      const aliasText = [next.svgText, next.svg_text, next.label, next.content].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasText) {
+        next.text = aliasText;
+      }
+    }
+  }
+
+  if (opName === 'add_costume_from_image_url') {
+    if (typeof next.imageUrl !== 'string' || !next.imageUrl.trim()) {
+      const aliasUrl = [next.url, next.image, next.src].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasUrl) {
+        next.imageUrl = aliasUrl;
+      }
+    }
+  }
+
+  if (opName === 'set_object_collider_type') {
+    if (typeof next.colliderType !== 'string' || !next.colliderType.trim()) {
+      const aliasType = [next.type, next.collider].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasType) {
+        next.colliderType = aliasType;
+      }
+    }
+  }
+
+  return next;
+}
+
+function normalizeProposedEditsShape(raw: unknown): {
+  value: unknown;
+  movedProjectOpsFromSemantic: number;
+  renamedProjectOps: number;
+} {
+  if (!isRecord(raw)) {
+    return {
+      value: raw,
+      movedProjectOpsFromSemantic: 0,
+      renamedProjectOps: 0,
+    };
+  }
+
+  const semanticRaw = Array.isArray(raw.semanticOps) ? raw.semanticOps : [];
+  const projectRaw = Array.isArray(raw.projectOps) ? raw.projectOps : [];
+
+  let movedProjectOpsFromSemantic = 0;
+  let renamedProjectOps = 0;
+
+  const normalizedSemantic: unknown[] = [];
+  const normalizedProject: unknown[] = [];
+
+  for (const entry of semanticRaw) {
+    if (!isRecord(entry) || typeof entry.op !== 'string') {
+      normalizedSemantic.push(entry);
+      continue;
+    }
+    const normalizedName = normalizeProjectOpName(entry.op);
+    if (normalizedName !== entry.op) {
+      renamedProjectOps += 1;
+    }
+    if (PROJECT_OPS.has(normalizedName)) {
+      movedProjectOpsFromSemantic += 1;
+      normalizedProject.push(normalizeProjectOpFields(entry));
+      continue;
+    }
+    normalizedSemantic.push(entry);
+  }
+
+  for (const entry of projectRaw) {
+    if (!isRecord(entry) || typeof entry.op !== 'string') {
+      normalizedProject.push(entry);
+      continue;
+    }
+    const normalizedName = normalizeProjectOpName(entry.op);
+    if (normalizedName !== entry.op) {
+      renamedProjectOps += 1;
+    }
+    normalizedProject.push(normalizeProjectOpFields(entry));
+  }
+
+  return {
+    value: {
+      ...raw,
+      semanticOps: normalizedSemantic,
+      projectOps: normalizedProject,
+    },
+    movedProjectOpsFromSemantic,
+    renamedProjectOps,
+  };
+}
+
+function buildInvalidEditFallback(args: {
+  reason: string;
+  exitCode: number;
+  stderr: string;
+  validationErrors?: string[];
+}): CodexAssistantTurnResponse {
+  const details = args.validationErrors && args.validationErrors.length > 0
+    ? `\n\nValidation: ${args.validationErrors.slice(0, 4).join('; ')}${args.validationErrors.length > 4 ? '; ...' : ''}`
+    : '';
+  return {
+    provider: 'codex',
+    model: 'gpt-5.3-codex',
+    mode: 'chat',
+    answer: `I couldn't apply executable edits this turn because the edit payload was invalid (${args.reason}). Please retry with concrete scene/object names or IDs.${details}`,
+    debugTrace: {
+      transport: 'codex-exec',
+      exitCode: args.exitCode,
+      stderrTail: args.stderr.slice(-1200),
+      fallbackReason: args.reason,
+      validationErrors: args.validationErrors ?? [],
+    },
+  };
 }
 
 type TurnEventEmitter = (payload: Omit<ProviderEventPayload, 'threadId' | 'scopeKey' | 'turnId' | 'sequence' | 'timestamp'>) => void;
@@ -375,35 +665,75 @@ export class CodexAppServerClient {
     try {
       await this.ensureStarted();
       const authToken = await this.getAuthToken();
-      if (!authToken) {
-        throw new Error('codex_oauth_missing_token');
+      if (authToken) {
+        emitTurnEvent({
+          type: 'assistant-turn-progress',
+          phase: 'transport',
+          message: 'Trying shared assistant-core Codex OAuth transport.',
+        });
+        const unifiedTurn = await runUnifiedAssistantTurn({
+          userIntent: args.userIntent,
+          chatHistory: args.chatHistory,
+          providerMode: 'codex_oauth',
+          providerCredentials: {
+            codexToken: authToken,
+          },
+          threadContext: args.threadContext,
+          capabilities: args.capabilities,
+          context: args.context,
+          programRead: args.programRead,
+          projectSnapshot: args.projectSnapshot || {},
+        });
+        if (!shouldFallbackToCodexExecFromUnifiedTurn(unifiedTurn)) {
+          emitTraceDetails(emitTurnEvent, unifiedTurn.debugTrace);
+          emitTurnEvent({
+            type: 'assistant-turn-completed',
+            phase: 'complete',
+            message: `Assistant turn completed in ${unifiedTurn.mode} mode.`,
+          });
+          return unifiedTurn;
+        }
+
+        emitTurnEvent({
+          type: 'assistant-turn-progress',
+          phase: 'fallback',
+          message: 'Shared transport requested fallback to native Codex exec.',
+        });
+
+        try {
+          const fallbackTurn = await this.runAssistantTurnViaCodexExec(args, emitTurnEvent);
+          emitTurnEvent({
+            type: 'assistant-turn-completed',
+            phase: 'complete',
+            message: `Assistant turn completed in ${fallbackTurn.mode} mode.`,
+          });
+          return fallbackTurn;
+        } catch (fallbackError) {
+          const fallbackMessage = toErrorMessage(fallbackError);
+          if (isRecord(unifiedTurn) && isRecord(unifiedTurn.debugTrace) && Array.isArray(unifiedTurn.debugTrace.validationErrors)) {
+            unifiedTurn.debugTrace.validationErrors = [
+              ...unifiedTurn.debugTrace.validationErrors,
+              `codex_exec_fallback_error:${fallbackMessage}`,
+            ];
+          }
+          emitTraceDetails(emitTurnEvent, unifiedTurn.debugTrace);
+          emitTurnEvent({
+            type: 'assistant-turn-completed',
+            phase: 'complete',
+            message: `Assistant turn completed in ${unifiedTurn.mode} mode after fallback error.`,
+            detail: fallbackMessage,
+          });
+          return unifiedTurn as CodexAssistantTurnResponse;
+        }
       }
 
-      emitTurnEvent({
-        type: 'assistant-turn-progress',
-        phase: 'transport',
-        message: 'Running shared assistant-core Codex OAuth transport.',
-      });
-      const unifiedTurn = await runUnifiedAssistantTurn({
-        userIntent: args.userIntent,
-        chatHistory: args.chatHistory,
-        providerMode: 'codex_oauth',
-        providerCredentials: {
-          codexToken: authToken,
-        },
-        threadContext: args.threadContext,
-        capabilities: args.capabilities,
-        context: args.context,
-        programRead: args.programRead,
-        projectSnapshot: args.projectSnapshot || {},
-      });
-      emitTraceDetails(emitTurnEvent, unifiedTurn.debugTrace);
+      const execTurn = await this.runAssistantTurnViaCodexExec(args, emitTurnEvent);
       emitTurnEvent({
         type: 'assistant-turn-completed',
         phase: 'complete',
-        message: `Assistant turn completed in ${unifiedTurn.mode} mode.`,
+        message: `Assistant turn completed in ${execTurn.mode} mode.`,
       });
-      return unifiedTurn;
+      return execTurn;
     } catch (error) {
       emitTurnEvent({
         type: 'assistant-turn-error',
@@ -412,6 +742,142 @@ export class CodexAppServerClient {
       });
       throw error;
     }
+  }
+
+  private async runAssistantTurnViaCodexExec(
+    args: CodexAssistantTurnRequest,
+    emitTurnEvent?: TurnEventEmitter,
+  ): Promise<CodexAssistantTurnResponse> {
+    const prompt = buildCodexAssistantPrompt(args);
+    emitTurnEvent?.({
+      type: 'assistant-turn-progress',
+      phase: 'transport',
+      message: 'Launching native Codex exec transport.',
+    });
+    const { output, stderr, exitCode } = await this.runCodexExecWithSchema(prompt, (line: string) => {
+      emitTurnEvent?.({
+        type: 'assistant-turn-progress',
+        phase: 'stderr',
+        message: line,
+      });
+    });
+    emitTurnEvent?.({
+      type: 'assistant-turn-progress',
+      phase: 'transport',
+      message: `Codex exec exited with code ${exitCode}.`,
+    });
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch (error) {
+      throw new Error(`Codex returned non-JSON output: ${toErrorMessage(error)}\n${output}`);
+    }
+
+    if (!isRecord(parsed)) {
+      throw new Error('Codex returned invalid assistant payload (not an object).');
+    }
+
+    const mode = parsed.mode;
+    if (mode === 'chat') {
+      const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
+      if (!answer) {
+        throw new Error('Codex returned chat mode without a non-empty answer.');
+      }
+      const response: CodexAssistantTurnResponse = {
+        provider: 'codex',
+        model: 'gpt-5.3-codex',
+        mode: 'chat',
+        answer,
+        debugTrace: {
+          transport: 'codex-exec',
+          exitCode,
+          stderrTail: stderr.slice(-1200),
+        },
+      };
+      emitTraceDetails(emitTurnEvent ?? (() => undefined), response.debugTrace);
+      return response;
+    }
+
+    if (mode === 'edit') {
+      const proposedEditsRaw = typeof parsed.proposedEditsJson === 'string' ? parsed.proposedEditsJson.trim() : '';
+      if (!proposedEditsRaw) {
+        const fallback = buildInvalidEditFallback({
+          reason: 'missing_proposedEditsJson',
+          exitCode,
+          stderr,
+        });
+        emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+        return fallback;
+      }
+      let proposedEdits: unknown;
+      try {
+        proposedEdits = JSON.parse(proposedEditsRaw);
+      } catch (error) {
+        const fallback = buildInvalidEditFallback({
+          reason: `invalid_proposedEditsJson:${toErrorMessage(error)}`,
+          exitCode,
+          stderr,
+        });
+        emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+        return fallback;
+      }
+      const normalized = normalizeProposedEditsShape(proposedEdits);
+      if (normalized.movedProjectOpsFromSemantic > 0 || normalized.renamedProjectOps > 0) {
+        emitTurnEvent?.({
+          type: 'assistant-turn-progress',
+          phase: 'normalization',
+          message: `Normalized edit payload (${normalized.movedProjectOpsFromSemantic} moved project op(s), ${normalized.renamedProjectOps} renamed op(s)).`,
+        });
+      } else {
+        emitTurnEvent?.({
+          type: 'assistant-turn-progress',
+          phase: 'normalization',
+          message: 'Parsed edit payload JSON.',
+        });
+      }
+      const validated = validateSemanticOpsPayload(normalized.value);
+      if (!validated.ok) {
+        validated.errors.forEach((entry) => {
+          emitTurnEvent?.({
+            type: 'assistant-turn-progress',
+            phase: 'validation',
+            message: `Validation: ${entry}`,
+          });
+        });
+        const fallback = buildInvalidEditFallback({
+          reason: 'schema_validation_failed',
+          exitCode,
+          stderr,
+          validationErrors: validated.errors,
+        });
+        emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+        return fallback;
+      }
+      const response: CodexAssistantTurnResponse = {
+        provider: 'codex',
+        model: 'gpt-5.3-codex',
+        mode: 'edit',
+        proposedEdits: validated.value,
+        debugTrace: {
+          transport: 'codex-exec',
+          exitCode,
+          stderrTail: stderr.slice(-1200),
+          movedProjectOpsFromSemantic: normalized.movedProjectOpsFromSemantic,
+          renamedProjectOps: normalized.renamedProjectOps,
+        },
+      };
+      emitTraceDetails(emitTurnEvent ?? (() => undefined), response.debugTrace);
+      return response;
+    }
+
+    const fallback = buildInvalidEditFallback({
+      reason: 'unsupported_mode',
+      exitCode,
+      stderr,
+    });
+    emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+    return fallback;
   }
 
   async loginWithChatGpt(): Promise<void> {
@@ -537,6 +1003,100 @@ export class CodexAppServerClient {
     });
     this.initialized = true;
     this.statusMessage = 'Codex app server is ready.';
+  }
+
+  private async runCodexExecWithSchema(
+    prompt: string,
+    onProgress?: (line: string) => void,
+  ): Promise<{
+    output: string;
+    stderr: string;
+    exitCode: number;
+  }> {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pochacoding-codex-turn-'));
+    const schemaPath = path.join(tempDir, 'schema.json');
+    const outputPath = path.join(tempDir, 'out.json');
+
+    await fs.writeFile(schemaPath, JSON.stringify(CODEX_TURN_OUTPUT_SCHEMA), 'utf8');
+
+    const args = [
+      'exec',
+      '--skip-git-repo-check',
+      '--sandbox',
+      'read-only',
+      '-c',
+      'ask_for_approval=never',
+      '--output-schema',
+      schemaPath,
+      '--output-last-message',
+      outputPath,
+      '--cd',
+      process.cwd(),
+      '-',
+    ];
+
+    const child = spawn(this.codexExecutable, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string | Buffer) => {
+      const raw = chunk.toString();
+      stderr += raw;
+      raw
+        .split(/\r?\n/)
+        .map((line) => normalizeTraceLine(line))
+        .filter((line) => line.length > 0)
+        .forEach((line) => {
+          onProgress?.(line);
+        });
+    });
+
+    let stdout = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string | Buffer) => {
+      stdout += chunk.toString();
+    });
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill('SIGTERM');
+      }, 90000);
+
+      child.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        resolve(code ?? -1);
+      });
+
+      child.stdin.end(prompt, 'utf8');
+    });
+
+    let output = '';
+    try {
+      output = await fs.readFile(outputPath, 'utf8');
+    } catch {
+      output = '';
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+
+    const normalizedOutput = output.trim();
+    if (exitCode !== 0 || !normalizedOutput) {
+      const detail = stderr || stdout || 'No output from codex exec.';
+      throw new Error(`Codex exec failed (exit ${exitCode}): ${detail.slice(-2400)}`);
+    }
+
+    return {
+      output: normalizedOutput,
+      stderr,
+      exitCode,
+    };
   }
 
   private async request<T>(method: string, params?: unknown): Promise<T> {
