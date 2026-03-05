@@ -107,6 +107,19 @@ Latest full-pass run: `2026-03-05T15:39:45.538Z` (`38/38` passed)
 - [x] `get_block_type`
   - Notes: PASS in final run (`mode=chat`).
 
+## Multi-Op Chain Reliability (Orchestration)
+
+- [ ] Chained scene/object creation from natural language
+  - Notes: Example prompt to track: "create scene home and add 3 objects in it". Current failure mode observed: model emits `create_object` entries without `sceneId`.
+- [ ] Cross-op inference for missing IDs in same turn
+  - Notes: Add inference rule for unambiguous chain cases (for example, infer `sceneId` from earlier `create_scene` in same `projectOps` list).
+- [ ] Agent instruction quality for chained edit payloads
+  - Notes: Strengthen prompt contract for multi-step edits (explicit requirement: object/costume/folder ops must include resolvable refs or ids).
+- [ ] Structured retry/self-repair loop for schema failures
+  - Notes: On `schema_validation_failed`, provide error-to-fix hints that can be used to regenerate corrected ops automatically.
+- [ ] Regression coverage for multi-op conversational prompts
+  - Notes: Add dedicated tests/cases beyond single-op matrix (scene + N objects, scene + folder + moves, scene + object + costume chain).
+
 ## Run Log
 
 - 2026-03-05: Checklist initialized.
@@ -114,3 +127,4 @@ Latest full-pass run: `2026-03-05T15:39:45.538Z` (`38/38` passed)
 - 2026-03-05: Added parser alias normalization (`type`/`blockId`/`eventBlockId`/`shadow`/`eventType`) to accept model payload variants.
 - 2026-03-05: Added readiness gates for runtime user id and Codex OAuth token before test execution.
 - 2026-03-05: Final full run completed with `38/38` passes.
+- 2026-03-06: Added multi-op chain reliability section to track orchestration-level failures and fixes.
