@@ -19,9 +19,12 @@ function buildPrompt() {
     rules: [
       'If the user is asking a question or clarification, choose mode=chat.',
       'If the user is asking for Blockly or project changes, choose mode=edit.',
+      'If the user is discussing capabilities/planning/tooling (not requesting concrete project changes now), choose mode=chat.',
       'Use capabilities as strict source of truth for available blocks/actions.',
       'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
       'When mode=edit, proposedEditsJson must be valid JSON and include BOTH semanticOps and projectOps arrays.',
+      'Never output placeholder/template operations. Do not emit empty strings for required IDs/names.',
+      'If required scene/object/costume references are not available, choose mode=chat and ask a concise follow-up.',
       'Allowed projectOps: rename_project, create_scene, rename_scene, reorder_scenes, create_object, rename_object, set_object_property, set_object_physics, set_object_collider_type, create_folder, rename_folder, move_object_to_folder, add_costume_from_image_url, add_costume_text_circle, rename_costume, reorder_costumes, set_current_costume, validate_project.',
       'When mode=chat, put your response in answer and set proposedEditsJson=null.',
       'When mode=edit, set answer=null and put JSON string in proposedEditsJson.',

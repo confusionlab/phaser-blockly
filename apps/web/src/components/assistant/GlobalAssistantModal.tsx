@@ -442,7 +442,38 @@ export function GlobalAssistantModal() {
 
       const parsedProposedEdits = validateSemanticOpsPayload(turn.proposedEdits);
       if (!parsedProposedEdits.ok) {
-        throw new Error(`Server response validation failed: ${parsedProposedEdits.errors.join('; ')}`);
+        const validationSummary = parsedProposedEdits.errors.slice(0, 4).join('; ');
+        const validationSuffix = parsedProposedEdits.errors.length > 4 ? '; ...' : '';
+        const fallbackMessage = [
+          'I could not generate executable edits because the model returned an invalid operation payload.',
+          `Validation: ${validationSummary}${validationSuffix}`,
+          'Please retry with concrete scene/object names (or IDs).',
+        ].join('\n');
+
+        setStatusMessage('Assistant returned an invalid edit payload. Showing guidance instead of applying edits.');
+        await appendAssistantMessage({
+          threadId,
+          role: 'assistant',
+          content: fallbackMessage,
+          createdAt: turnCompletedAt,
+          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
+        });
+        await appendAssistantTurn({
+          threadId,
+          userIntent,
+          mode: 'error',
+          provider: turn.provider,
+          model: turn.model,
+          debugTraceJson: JSON.stringify({
+            validationErrors: parsedProposedEdits.errors,
+            upstreamTrace: turn.debugTrace ?? null,
+          }),
+          createdAt: turnCompletedAt,
+        });
+
+        return {
+          content: [{ type: 'text', text: fallbackMessage }],
+        };
       }
       const proposedEdits = parsedProposedEdits.value;
       const modelLatency = formatDuration(startedAt, turnCompletedAt);

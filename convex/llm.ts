@@ -590,6 +590,7 @@ function buildAssistantTurnSystemPrompt(): string {
     '{ "mode":"edit", "proposedEdits": { "intentSummary": string, "assumptions": string[], "semanticOps": SemanticOp[], "projectOps": ProjectOp[] } }',
     "Use chat mode for questions/explanations/clarifications.",
     "Use edit mode only when the user asks to create/change/remove/fix project behavior.",
+    "If the user is discussing capabilities/planning/tooling (not requesting concrete project changes now), use chat mode.",
     "When project details are needed (scenes, objects, properties, physics, components, block capabilities), call tools instead of guessing.",
     "Edit mode semanticOps schema and rules:",
     '- create_event_flow / append_actions / replace_action / set_block_field / ensure_variable / ensure_message / retarget_reference / delete_subtree',
@@ -602,6 +603,8 @@ function buildAssistantTurnSystemPrompt(): string {
     "- add_costume_from_image_url / add_costume_text_circle / rename_costume / reorder_costumes / set_current_costume",
     "- validate_project",
     "Always include BOTH arrays in proposedEdits. Use empty arrays when not needed.",
+    "Never emit placeholder/template operations. Required IDs/names must be non-empty concrete values.",
+    "If required scene/object/costume references are unavailable, return chat mode with a concise follow-up question.",
     "- Only use block types/field names present in capabilities/context.",
     "- Never emit explanatory text outside JSON.",
   ].join("\n");

@@ -386,7 +386,35 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
       const parsedProposedEdits = validateSemanticOpsPayload(turn.proposedEdits);
       if (!parsedProposedEdits.ok) {
-        throw new Error(`Server response validation failed: ${parsedProposedEdits.errors.join('; ')}`);
+        const validationSummary = parsedProposedEdits.errors.slice(0, 4).join('; ');
+        const validationSuffix = parsedProposedEdits.errors.length > 4 ? '; ...' : '';
+        const fallbackMessage = [
+          'I could not generate executable edits because the model returned an invalid operation payload.',
+          `Validation: ${validationSummary}${validationSuffix}`,
+          'Please retry with concrete scene/object names (or IDs).',
+        ].join('\n');
+
+        setStatus('idle');
+        setStatusMessage('Assistant returned an invalid edit payload. No edits were prepared.');
+        await appendChatMessage({
+          role: 'assistant',
+          content: fallbackMessage,
+          createdAt: turnCompletedAt,
+          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
+        });
+        await appendAssistantTurn({
+          threadId,
+          userIntent,
+          mode: 'error',
+          provider: turn.provider,
+          model: turn.model,
+          debugTraceJson: JSON.stringify({
+            validationErrors: parsedProposedEdits.errors,
+            upstreamTrace: turn.debugTrace ?? null,
+          }),
+          createdAt: turnCompletedAt,
+        });
+        return;
       }
       const proposedEdits = parsedProposedEdits.value;
       const convexProvider: LLMProvider = {

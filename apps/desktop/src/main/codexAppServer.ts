@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import codexTurnOutputSchema from './codexTurnOutput.schema.json';
+import { validateSemanticOpsPayload } from '../../../../packages/assistant-core/src/semanticOps';
 import type {
   CodexAssistantTurnRequest,
   CodexAssistantTurnResponse,
@@ -208,9 +209,12 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
     rules: [
       'If the user is asking a question or clarification, choose mode=chat.',
       'If the user is asking for Blockly or project changes, choose mode=edit.',
+      'If the user is discussing capabilities/planning/tooling (not requesting concrete project changes now), choose mode=chat.',
       'Use capabilities as strict source of truth for available blocks/actions.',
       'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
       'When mode=edit, proposedEditsJson must be valid JSON and include BOTH semanticOps and projectOps arrays.',
+      'Never output placeholder/template operations. Do not emit empty strings for required IDs/names.',
+      'If required scene/object/costume references are not available, choose mode=chat and ask a concise follow-up.',
       'Allowed projectOps: rename_project, create_scene, rename_scene, reorder_scenes, create_object, rename_object, set_object_property, set_object_physics, set_object_collider_type, create_folder, rename_folder, move_object_to_folder, add_costume_from_image_url, add_costume_text_circle, rename_costume, reorder_costumes, set_current_costume, validate_project.',
       'When mode=chat, put your response in answer and set proposedEditsJson=null.',
       'When mode=edit, set answer=null and put JSON string in proposedEditsJson.',
@@ -229,6 +233,30 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
     'Return a JSON object matching the output schema.',
     JSON.stringify(envelope, null, 2),
   ].join('\n\n');
+}
+
+function buildInvalidEditFallback(args: {
+  reason: string;
+  exitCode: number;
+  stderr: string;
+  validationErrors?: string[];
+}): CodexAssistantTurnResponse {
+  const details = args.validationErrors && args.validationErrors.length > 0
+    ? `\n\nValidation: ${args.validationErrors.slice(0, 4).join('; ')}${args.validationErrors.length > 4 ? '; ...' : ''}`
+    : '';
+  return {
+    provider: 'codex',
+    model: 'gpt-5.3-codex',
+    mode: 'chat',
+    answer: `I couldn't apply executable edits this turn because the edit payload was invalid (${args.reason}). Please retry with concrete scene/object names or IDs.${details}`,
+    debugTrace: {
+      transport: 'codex-exec',
+      exitCode: args.exitCode,
+      stderrTail: args.stderr.slice(-1200),
+      fallbackReason: args.reason,
+      validationErrors: args.validationErrors ?? [],
+    },
+  };
 }
 
 export class CodexAppServerClient {
@@ -358,19 +386,36 @@ export class CodexAppServerClient {
     if (mode === 'edit') {
       const proposedEditsRaw = typeof parsed.proposedEditsJson === 'string' ? parsed.proposedEditsJson.trim() : '';
       if (!proposedEditsRaw) {
-        throw new Error('Codex returned edit mode without proposedEditsJson.');
+        return buildInvalidEditFallback({
+          reason: 'missing_proposedEditsJson',
+          exitCode,
+          stderr,
+        });
       }
       let proposedEdits: unknown;
       try {
         proposedEdits = JSON.parse(proposedEditsRaw);
       } catch (error) {
-        throw new Error(`Codex returned invalid proposedEditsJson: ${toErrorMessage(error)}`);
+        return buildInvalidEditFallback({
+          reason: `invalid_proposedEditsJson:${toErrorMessage(error)}`,
+          exitCode,
+          stderr,
+        });
+      }
+      const validated = validateSemanticOpsPayload(proposedEdits);
+      if (!validated.ok) {
+        return buildInvalidEditFallback({
+          reason: 'schema_validation_failed',
+          exitCode,
+          stderr,
+          validationErrors: validated.errors,
+        });
       }
       return {
         provider: 'codex',
         model: 'gpt-5.3-codex',
         mode: 'edit',
-        proposedEdits,
+        proposedEdits: validated.value,
         debugTrace: {
           transport: 'codex-exec',
           exitCode,
@@ -379,7 +424,11 @@ export class CodexAppServerClient {
       };
     }
 
-    throw new Error('Codex returned unsupported mode.');
+    return buildInvalidEditFallback({
+      reason: 'unsupported_mode',
+      exitCode,
+      stderr,
+    });
   }
 
   async loginWithChatGpt(): Promise<void> {
