@@ -237,6 +237,32 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
   ].join('\n\n');
 }
 
+function shouldFallbackToCodexExecFromUnifiedTurn(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.mode !== 'chat') return false;
+
+  const errorCode = typeof value.errorCode === 'string' ? value.errorCode : '';
+  if (errorCode !== 'assistant_transport_error') {
+    return false;
+  }
+
+  const answer = typeof value.answer === 'string' ? value.answer.toLowerCase() : '';
+  if (answer.includes('missing scopes: model.request') || answer.includes('insufficient permissions')) {
+    return true;
+  }
+
+  if (isRecord(value.debugTrace) && Array.isArray(value.debugTrace.validationErrors)) {
+    const joined = value.debugTrace.validationErrors
+      .map((entry) => (typeof entry === 'string' ? entry.toLowerCase() : ''))
+      .join('\n');
+    if (joined.includes('model.request') || joined.includes('insufficient permissions')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 const PROJECT_OPS = new Set([
   'rename_project',
   'create_scene',
@@ -497,7 +523,7 @@ export class CodexAppServerClient {
     await this.ensureStarted();
     const authToken = await this.getAuthToken();
     if (authToken) {
-      return runUnifiedAssistantTurn({
+      const unifiedTurn = await runUnifiedAssistantTurn({
         userIntent: args.userIntent,
         chatHistory: args.chatHistory,
         providerMode: 'codex_oauth',
@@ -510,8 +536,30 @@ export class CodexAppServerClient {
         programRead: args.programRead,
         projectSnapshot: args.projectSnapshot || {},
       });
+      if (!shouldFallbackToCodexExecFromUnifiedTurn(unifiedTurn)) {
+        return unifiedTurn;
+      }
+
+      try {
+        return await this.runAssistantTurnViaCodexExec(args);
+      } catch (fallbackError) {
+        const fallbackMessage = toErrorMessage(fallbackError);
+        if (isRecord(unifiedTurn)) {
+          if (isRecord(unifiedTurn.debugTrace) && Array.isArray(unifiedTurn.debugTrace.validationErrors)) {
+            unifiedTurn.debugTrace.validationErrors = [
+              ...unifiedTurn.debugTrace.validationErrors,
+              `codex_exec_fallback_error:${fallbackMessage}`,
+            ];
+          }
+        }
+        return unifiedTurn as CodexAssistantTurnResponse;
+      }
     }
 
+    return this.runAssistantTurnViaCodexExec(args);
+  }
+
+  private async runAssistantTurnViaCodexExec(args: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> {
     const prompt = buildCodexAssistantPrompt(args);
     const { output, stderr, exitCode } = await this.runCodexExecWithSchema(prompt);
 
