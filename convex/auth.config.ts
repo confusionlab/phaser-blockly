@@ -1,9 +1,5 @@
-const issuerDomains = [
-  process.env.CLERK_JWT_ISSUER_DOMAIN,
-  process.env.CLERK_JWT_ISSUER_DOMAIN_SECONDARY,
-]
-  .map((value) => value?.trim())
-  .filter((value): value is string => typeof value === "string" && value.length > 0);
+const primaryIssuer = process.env.CLERK_JWT_ISSUER_DOMAIN?.trim();
+const issuerDomains = primaryIssuer ? [primaryIssuer] : [];
 
 export default {
   providers: issuerDomains.map((domain) => ({
