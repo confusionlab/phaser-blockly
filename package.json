@@ -8,7 +8,7 @@
     "dev": "turbo dev --filter=@pochacoding/web --filter=@pochacoding/desktop",
     "dev:web": "turbo dev --filter=@pochacoding/web",
     "dev:desktop": "turbo dev --filter=@pochacoding/desktop",
-    "dev:desktop:fresh": "pkill -f '/Applications/PochaCoding.app' || true; pkill -f 'electron-vite dev' || true; pkill -f 'wait-on tcp:5173' || true; pkill -f 'vite -- --host 127.0.0.1 --port 5173 --strictPort' || true; pnpm --filter @pochacoding/desktop build && pnpm --filter @pochacoding/desktop dev",
+    "dev:desktop:fresh": "WT_PATH=\"$(pwd)\"; WT_KEY=\"$(printf '%s' \"$WT_PATH\" | cksum | awk '{print $1}')\"; PORT=\"$((5300 + WT_KEY % 200))\"; BRANCH=\"$(git rev-parse --abbrev-ref HEAD)\"; pkill -f \"worktree-key=${WT_KEY}\" || true; pkill -f \"wait-on tcp:${PORT}\" || true; pkill -f \"vite -- --host 127.0.0.1 --port ${PORT} --strictPort\" || true; lsof -ti tcp:${PORT} | xargs kill -9 2>/dev/null || true; DESKTOP_WEB_PORT=${PORT} DESKTOP_WORKTREE_KEY=${WT_KEY} DESKTOP_APP_BRANCH=${BRANCH} pnpm --filter @pochacoding/desktop build && DESKTOP_WEB_PORT=${PORT} DESKTOP_WORKTREE_KEY=${WT_KEY} DESKTOP_APP_BRANCH=${BRANCH} pnpm --filter @pochacoding/desktop dev",
     "dev:all": "concurrently \"pnpm exec convex dev\" \"pnpm run dev\"",
     "build": "turbo build",
     "lint": "turbo lint",
