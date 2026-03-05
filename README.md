@@ -54,7 +54,8 @@
 
 - macOS unsigned directory package: `pnpm --filter @pochacoding/desktop pack:mac`
 - macOS unsigned `dmg` + `zip`: `pnpm --filter @pochacoding/desktop dist:mac`
-- In development (`pnpm dev:desktop`), Electron renderer is forced to `http://127.0.0.1:5173` (or override via `POCHACODING_DESKTOP_WEB_URL`) to avoid `file://` auth redirect issues.
+- In development (`pnpm dev:desktop`), Electron renderer loads `http://localhost:5173` (or override via `POCHACODING_DESKTOP_WEB_URL`).
+- In packaged runtime, Electron loads the hosted app URL `https://code.confusionlab.com` by default (override via `POCHACODING_DESKTOP_PROD_WEB_URL`). It falls back to bundled `web-dist` if the hosted URL fails to load.
 
 ## Blockly LLM Assistant (OpenRouter)
 

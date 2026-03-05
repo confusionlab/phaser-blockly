@@ -37,6 +37,10 @@ function resetSessionStateForAccountBoundary() {
 
 function SignedOutScreen() {
   const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
+  const shouldForceDesktopAuthUrls =
+    isDesktopRuntime
+    && typeof window !== 'undefined'
+    && window.location.protocol === 'file:';
 
   useEffect(() => {
     resetSessionStateForAccountBoundary();
@@ -45,12 +49,12 @@ function SignedOutScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <SignIn
-        routing={isDesktopRuntime ? 'virtual' : undefined}
-        signUpUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.signUpUrl : undefined}
-        signUpForceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
-        signUpFallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
-        forceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
-        fallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
+        routing={shouldForceDesktopAuthUrls ? 'virtual' : undefined}
+        signUpUrl={shouldForceDesktopAuthUrls ? DESKTOP_AUTH_URLS.signUpUrl : undefined}
+        signUpForceRedirectUrl={shouldForceDesktopAuthUrls ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
+        signUpFallbackRedirectUrl={shouldForceDesktopAuthUrls ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
+        forceRedirectUrl={shouldForceDesktopAuthUrls ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
+        fallbackRedirectUrl={shouldForceDesktopAuthUrls ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
       />
     </div>
   );

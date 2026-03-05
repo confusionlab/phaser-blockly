@@ -17,23 +17,8 @@ const BYOK_ACCOUNT_PREFIX = 'openrouter-byok';
 const PROVIDER_MODE_FILE_PREFIX = 'assistant-provider-mode';
 const CODEX_AUTH_LINK_FILE = 'assistant-codex-auth-link.json';
 const FALLBACK_SECRET_FILE = 'assistant-secrets.json';
-const CLERK_STORAGE_RESET_MARKER_FILE = 'clerk-storage-reset-v2.json';
-const CLERK_STORAGE_ORIGINS = [
-  'https://clerk.confusionlab.com',
-  'https://accounts.confusionlab.com',
-  'https://true-dolphin-27.clerk.accounts.dev',
-  'https://true-dolphin-27.accounts.dev',
-];
-const CLERK_COOKIE_DOMAINS = [
-  'clerk.confusionlab.com',
-  '.clerk.confusionlab.com',
-  'accounts.confusionlab.com',
-  '.accounts.confusionlab.com',
-  'true-dolphin-27.clerk.accounts.dev',
-  '.true-dolphin-27.clerk.accounts.dev',
-  'true-dolphin-27.accounts.dev',
-  '.true-dolphin-27.accounts.dev',
-];
+const DEFAULT_PACKAGED_WEB_URL = 'https://code.confusionlab.com';
+const PACKAGED_WEB_CACHE_RESET_MARKER_PREFIX = 'packaged-web-cache-reset';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -227,110 +212,64 @@ function getProdWebEntry(): string {
   return path.resolve(__dirname, '../../../web/dist/index.html');
 }
 
-function getClerkStorageResetMarkerPath(): string {
-  return path.join(app.getPath('userData'), CLERK_STORAGE_RESET_MARKER_FILE);
+function getPackagedWebUrl(): string {
+  const override = process.env.POCHACODING_DESKTOP_PROD_WEB_URL?.trim();
+  return override && override.length > 0 ? override : DEFAULT_PACKAGED_WEB_URL;
 }
 
-function shouldRewriteClerkRequestHeaders(urlString: string): boolean {
-  try {
-    const url = new URL(urlString);
-    if (url.protocol !== 'https:') {
-      return false;
-    }
-    return (
-      url.hostname === 'clerk.confusionlab.com'
-      || url.hostname.endsWith('.clerk.accounts.dev')
-      || url.hostname.endsWith('.accounts.dev')
-    );
-  } catch {
-    return false;
-  }
+function getPackagedWebCacheResetMarkerPath(): string {
+  return path.join(
+    app.getPath('userData'),
+    `${PACKAGED_WEB_CACHE_RESET_MARKER_PREFIX}-${app.getVersion()}.json`,
+  );
 }
 
-function setupClerkRequestHeaderOverrides(): void {
+async function maybeResetPackagedWebCache(): Promise<void> {
   if (!app.isPackaged) {
     return;
   }
 
-  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    if (!shouldRewriteClerkRequestHeaders(details.url)) {
-      callback({ requestHeaders: details.requestHeaders });
-      return;
-    }
-
-    let requestOrigin: string;
-    try {
-      requestOrigin = new URL(details.url).origin;
-    } catch {
-      callback({ requestHeaders: details.requestHeaders });
-      return;
-    }
-
-    const headers = { ...details.requestHeaders };
-    headers.Origin = requestOrigin;
-    headers.Referer = `${requestOrigin}/`;
-    callback({ requestHeaders: headers });
-  });
-}
-
-async function maybeResetClerkStorage(): Promise<void> {
-  if (!app.isPackaged) {
-    return;
-  }
-
-  const markerPath = getClerkStorageResetMarkerPath();
+  const markerPath = getPackagedWebCacheResetMarkerPath();
   if (existsSync(markerPath)) {
     return;
   }
 
-  const storageTypes: ('cookies' | 'localstorage' | 'indexdb' | 'serviceworkers' | 'cachestorage')[] = [
-    'cookies',
-    'localstorage',
-    'indexdb',
-    'serviceworkers',
-    'cachestorage',
-  ];
-
-  const defaultSession = session.defaultSession;
-
-  for (const origin of CLERK_STORAGE_ORIGINS) {
-    try {
-      await defaultSession.clearStorageData({
-        origin,
-        storages: storageTypes,
-      });
-    } catch (error) {
-      console.warn(`[DesktopAuth] Failed clearing storage for ${origin}:`, error);
-    }
+  const targetUrl = getPackagedWebUrl();
+  let origin: string | null = null;
+  try {
+    origin = new URL(targetUrl).origin;
+  } catch {
+    origin = null;
   }
 
-  for (const domain of CLERK_COOKIE_DOMAINS) {
+  try {
+    await BrowserWindow.getAllWindows()[0]?.webContents.session.clearCache();
+  } catch {
+    // ignore, we'll use defaultSession fallback below
+  }
+
+  try {
+    await session.defaultSession.clearCache();
+  } catch (error) {
+    console.warn('[Desktop] Failed clearing HTTP cache:', error);
+  }
+
+  if (origin) {
     try {
-      const cookies = await defaultSession.cookies.get({ domain });
-      for (const cookie of cookies) {
-        const cookieDomain = cookie.domain ?? '';
-        if (!cookieDomain) {
-          continue;
-        }
-        const host = cookieDomain.startsWith('.') ? cookieDomain.slice(1) : cookieDomain;
-        const protocol = cookie.secure ? 'https' : 'http';
-        const url = `${protocol}://${host}${cookie.path}`;
-        await defaultSession.cookies.remove(url, cookie.name);
-      }
+      await session.defaultSession.clearStorageData({
+        origin,
+        storages: ['serviceworkers', 'cachestorage'],
+      });
     } catch (error) {
-      console.warn(`[DesktopAuth] Failed removing cookies for ${domain}:`, error);
+      console.warn('[Desktop] Failed clearing origin storage cache:', error);
     }
   }
 
   try {
     await fs.mkdir(app.getPath('userData'), { recursive: true });
-    await fs.writeFile(
-      markerPath,
-      JSON.stringify({ resetAt: new Date().toISOString() }, null, 2),
-      'utf8',
-    );
+    await fs.writeFile(markerPath, JSON.stringify({ resetAt: new Date().toISOString() }, null, 2), 'utf8');
   } catch (error) {
-    console.warn('[DesktopAuth] Failed writing storage reset marker:', error);
+    console.warn('[Desktop] Failed writing packaged cache reset marker:', error);
   }
 }
 
@@ -367,7 +306,24 @@ function createMainWindow(): BrowserWindow {
     void window.loadURL(overrideDevUrl || devUrl || fallbackDevUrl);
     window.webContents.openDevTools({ mode: 'detach' });
   } else {
-    void window.loadFile(getProdWebEntry());
+    const packagedWebUrl = getPackagedWebUrl();
+    if (/^https?:\/\//i.test(packagedWebUrl)) {
+      void window.loadURL(packagedWebUrl).catch((error) => {
+        console.error('[Desktop] Failed to load packaged remote URL:', error);
+        const safeMessage = String(error instanceof Error ? error.message : error).replace(/</g, '&lt;');
+        void window.loadURL(
+          `data:text/html;charset=utf-8,${encodeURIComponent(
+            `<html><body style="font-family:system-ui;padding:24px;">
+              <h2>Failed to load app</h2>
+              <p>Could not load <code>${packagedWebUrl}</code>.</p>
+              <pre>${safeMessage}</pre>
+            </body></html>`,
+          )}`,
+        );
+      });
+    } else {
+      void window.loadFile(getProdWebEntry());
+    }
   }
 
   return window;
@@ -436,8 +392,7 @@ function setupIpcHandlers(): void {
 }
 
 app.whenReady().then(async () => {
-  await maybeResetClerkStorage();
-  setupClerkRequestHeaderOverrides();
+  await maybeResetPackagedWebCache();
   setupIpcHandlers();
   mainWindow = createMainWindow();
 

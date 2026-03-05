@@ -36,46 +36,13 @@ function getClerkPublishableKey(preferProd: boolean): string | null {
   return fallback || devKey || prodKey || null
 }
 
-function clearStaleDesktopClerkState(currentPublishableKey: string): void {
-  if (!isDesktopRuntime) {
-    return
-  }
-
-  try {
-    const markerKey = 'pochacoding.clerk.publishable_key'
-    const previousPublishableKey = localStorage.getItem(markerKey)
-    if (previousPublishableKey === currentPublishableKey) {
-      return
-    }
-
-    const shouldClear = (key: string) => {
-      const normalized = key.toLowerCase()
-      return normalized.startsWith('__clerk') || normalized.startsWith('clerk.')
-    }
-
-    for (const key of Object.keys(localStorage)) {
-      if (shouldClear(key)) {
-        localStorage.removeItem(key)
-      }
-    }
-
-    for (const key of Object.keys(sessionStorage)) {
-      if (shouldClear(key)) {
-        sessionStorage.removeItem(key)
-      }
-    }
-
-    localStorage.setItem(markerKey, currentPublishableKey)
-  } catch (error) {
-    console.warn('[DesktopAuth] Failed to reset stale Clerk state:', error)
-  }
-}
-
 const rootElement = document.getElementById('root')
 const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant
+const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:'
 const convexUrl = getConvexCloudUrl()
 const clerkPublishableKey = getClerkPublishableKey(isDesktopRuntime)
 const desktopAuthUrls = resolveDesktopAuthUrls()
+const shouldForceDesktopAuthUrls = isDesktopRuntime && isFileProtocol
 const appBranch = import.meta.env.VITE_APP_BRANCH
 
 if (appBranch) {
@@ -107,19 +74,18 @@ if (!convexUrl || !clerkPublishableKey) {
 }
 
 const convex = new ConvexReactClient(convexUrl)
-clearStaleDesktopClerkState(clerkPublishableKey)
 
 createRoot(rootElement).render(
   <StrictMode>
     <ClerkProvider
       publishableKey={clerkPublishableKey}
-      standardBrowser={!isDesktopRuntime}
-      signInUrl={isDesktopRuntime ? desktopAuthUrls.signInUrl : undefined}
-      signUpUrl={isDesktopRuntime ? desktopAuthUrls.signUpUrl : undefined}
-      signInForceRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
-      signUpForceRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
-      signInFallbackRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
-      signUpFallbackRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
+      standardBrowser={!isFileProtocol}
+      signInUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signInUrl : undefined}
+      signUpUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signUpUrl : undefined}
+      signInForceRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
+      signUpForceRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
+      signInFallbackRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
+      signUpFallbackRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
     >
       <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
         {isDesktopRuntime ? (
