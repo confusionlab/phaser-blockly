@@ -15,6 +15,19 @@
 - `pnpm build`: build all workspace packages.
 - `pnpm typecheck`: type-check all workspace packages.
 - `pnpm lint`: lint all workspace packages.
+- `pnpm platform:plan`: preview unified platform config changes.
+- `pnpm platform:apply`: apply unified platform config to local/Convex/Vercel/Clerk.
+
+## Unified Platform Config
+
+- Single source of truth: `platform/unified.config.json` (gitignored).
+- Template: `platform/unified.config.example.json`.
+- Includes:
+  - local `.env.local` values
+  - Convex env vars (dev/prod)
+  - Vercel env vars (development/preview/production)
+  - Clerk instance + redirect URLs + domains + JWT templates
+  - `manualRequired` checklist for unavoidable manual/DNS steps
 
 ## Convex Env Separation (Dev vs Prod)
 

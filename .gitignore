@@ -29,3 +29,4 @@ test-results
 *.sln
 *.sw?
 .vercel
+platform/unified.config.json

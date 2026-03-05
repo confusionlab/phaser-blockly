@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "values": {
+    "VITE_CONVEX_URL_DEV": "https://your-dev-deployment.convex.cloud",
+    "VITE_CONVEX_SITE_URL_DEV": "https://your-dev-deployment.convex.site",
+    "VITE_CLERK_PUBLISHABLE_KEY_DEV": "pk_test_xxx",
+    "VITE_CONVEX_URL_PROD": "https://your-prod-deployment.convex.cloud",
+    "VITE_CONVEX_SITE_URL_PROD": "https://your-prod-deployment.convex.site",
+    "VITE_CLERK_PUBLISHABLE_KEY_PROD": "pk_live_xxx",
+    "VITE_CLERK_BILLING_PLAN_IDS": "free_plan_id,creator_plan_id,pro_plan_id",
+    "VITE_DESKTOP_AUTH_REDIRECT_URL": "https://accounts.example.com/",
+    "VITE_DESKTOP_AUTH_SIGN_IN_URL": "https://accounts.example.com/sign-in",
+    "VITE_DESKTOP_AUTH_SIGN_UP_URL": "https://accounts.example.com/sign-up",
+    "CLERK_JWT_ISSUER_DOMAIN_DEV": "https://clerk.dev-instance.example",
+    "CLERK_JWT_ISSUER_DOMAIN_PROD": "https://clerk.prod-instance.example",
+    "CLERK_WEBHOOK_SIGNING_SECRET": "whsec_xxx",
+    "OPENROUTER_API_KEY": "sk-or-v1-xxx",
+    "OPENROUTER_MODEL": "openai/gpt-5.3-codex",
+    "OPENROUTER_REFERER": "https://pochacoding.example.com",
+    "OPENROUTER_APP_NAME": "PochaCoding",
+    "OPENAI_OAUTH_MODEL": "gpt-5",
+    "OPENAI_OAUTH_APP_NAME": "PochaCoding",
+    "CLERK_SECRET_KEY": "sk_test_xxx",
+    "VERCEL_TOKEN": "your_vercel_token"
+  },
+  "manualRequired": [
+    {
+      "id": "clerk-production-domain-dns",
+      "service": "clerk",
+      "title": "Verify Clerk production domain DNS",
+      "why": "DNS/TXT/CNAME records must be created at your DNS provider.",
+      "instructions": "Create the DNS records Clerk shows for your production domain and set done=true after verification.",
+      "done": false,
+      "blocking": true,
+      "appliesTo": ["prod", "all"]
+    },
+    {
+      "id": "vercel-domain-dns",
+      "service": "vercel",
+      "title": "Attach and verify Vercel custom domain",
+      "why": "Vercel domain verification depends on DNS and ownership checks outside API-only control.",
+      "instructions": "Add the custom domain in Vercel once, complete DNS verification, then set done=true.",
+      "done": false,
+      "blocking": false,
+      "appliesTo": ["prod", "all"]
+    }
+  ],
+  "localEnvFiles": [
+    {
+      "path": ".env.local",
+      "values": {
+        "VITE_CONVEX_URL_DEV": "${VITE_CONVEX_URL_DEV}",
+        "VITE_CONVEX_SITE_URL_DEV": "${VITE_CONVEX_SITE_URL_DEV}",
+        "VITE_CLERK_PUBLISHABLE_KEY_DEV": "${VITE_CLERK_PUBLISHABLE_KEY_DEV}",
+        "VITE_CONVEX_URL_PROD": "${VITE_CONVEX_URL_PROD}",
+        "VITE_CONVEX_SITE_URL_PROD": "${VITE_CONVEX_SITE_URL_PROD}",
+        "VITE_CLERK_PUBLISHABLE_KEY_PROD": "${VITE_CLERK_PUBLISHABLE_KEY_PROD}",
+        "VITE_CLERK_BILLING_PLAN_IDS": "${VITE_CLERK_BILLING_PLAN_IDS}",
+        "VITE_DESKTOP_AUTH_REDIRECT_URL": "${VITE_DESKTOP_AUTH_REDIRECT_URL}",
+        "VITE_DESKTOP_AUTH_SIGN_IN_URL": "${VITE_DESKTOP_AUTH_SIGN_IN_URL}",
+        "VITE_DESKTOP_AUTH_SIGN_UP_URL": "${VITE_DESKTOP_AUTH_SIGN_UP_URL}"
+      }
+    }
+  ],
+  "providers": {
+    "convex": {
+      "environments": {
+        "dev": {
+          "selector": {
+            "kind": "default"
+          },
+          "env": {
+            "CLERK_JWT_ISSUER_DOMAIN": "${CLERK_JWT_ISSUER_DOMAIN_DEV}",
+            "CLERK_WEBHOOK_SIGNING_SECRET": {
+              "value": "${CLERK_WEBHOOK_SIGNING_SECRET}",
+              "sensitive": true
+            },
+            "OPENROUTER_API_KEY": {
+              "value": "${OPENROUTER_API_KEY}",
+              "sensitive": true
+            },
+            "OPENROUTER_MODEL": "${OPENROUTER_MODEL}",
+            "OPENROUTER_REFERER": "${OPENROUTER_REFERER}",
+            "OPENROUTER_APP_NAME": "${OPENROUTER_APP_NAME}",
+            "OPENAI_OAUTH_MODEL": "${OPENAI_OAUTH_MODEL}",
+            "OPENAI_OAUTH_APP_NAME": "${OPENAI_OAUTH_APP_NAME}"
+          }
+        },
+        "prod": {
+          "selector": {
+            "kind": "prod"
+          },
+          "env": {
+            "CLERK_JWT_ISSUER_DOMAIN": "${CLERK_JWT_ISSUER_DOMAIN_PROD}",
+            "CLERK_WEBHOOK_SIGNING_SECRET": {
+              "value": "${CLERK_WEBHOOK_SIGNING_SECRET}",
+              "sensitive": true
+            },
+            "OPENROUTER_API_KEY": {
+              "value": "${OPENROUTER_API_KEY}",
+              "sensitive": true
+            },
+            "OPENROUTER_MODEL": "${OPENROUTER_MODEL}",
+            "OPENROUTER_REFERER": "${OPENROUTER_REFERER}",
+            "OPENROUTER_APP_NAME": "${OPENROUTER_APP_NAME}",
+            "OPENAI_OAUTH_MODEL": "${OPENAI_OAUTH_MODEL}",
+            "OPENAI_OAUTH_APP_NAME": "${OPENAI_OAUTH_APP_NAME}"
+          }
+        }
+      }
+    },
+    "vercel": {
+      "cwd": ".",
+      "token": "${VERCEL_TOKEN}",
+      "environments": {
+        "development": {
+          "VITE_CONVEX_URL_DEV": "${VITE_CONVEX_URL_DEV}",
+          "VITE_CONVEX_SITE_URL_DEV": "${VITE_CONVEX_SITE_URL_DEV}",
+          "VITE_CLERK_PUBLISHABLE_KEY_DEV": "${VITE_CLERK_PUBLISHABLE_KEY_DEV}",
+          "VITE_CLERK_BILLING_PLAN_IDS": "${VITE_CLERK_BILLING_PLAN_IDS}",
+          "VITE_DESKTOP_AUTH_REDIRECT_URL": "${VITE_DESKTOP_AUTH_REDIRECT_URL}",
+          "VITE_DESKTOP_AUTH_SIGN_IN_URL": "${VITE_DESKTOP_AUTH_SIGN_IN_URL}",
+          "VITE_DESKTOP_AUTH_SIGN_UP_URL": "${VITE_DESKTOP_AUTH_SIGN_UP_URL}"
+        },
+        "preview": {
+          "VITE_CONVEX_URL_PROD": "${VITE_CONVEX_URL_PROD}",
+          "VITE_CONVEX_SITE_URL_PROD": "${VITE_CONVEX_SITE_URL_PROD}",
+          "VITE_CLERK_PUBLISHABLE_KEY_PROD": "${VITE_CLERK_PUBLISHABLE_KEY_PROD}",
+          "VITE_CLERK_BILLING_PLAN_IDS": "${VITE_CLERK_BILLING_PLAN_IDS}",
+          "VITE_DESKTOP_AUTH_REDIRECT_URL": "${VITE_DESKTOP_AUTH_REDIRECT_URL}",
+          "VITE_DESKTOP_AUTH_SIGN_IN_URL": "${VITE_DESKTOP_AUTH_SIGN_IN_URL}",
+          "VITE_DESKTOP_AUTH_SIGN_UP_URL": "${VITE_DESKTOP_AUTH_SIGN_UP_URL}"
+        },
+        "production": {
+          "VITE_CONVEX_URL_PROD": "${VITE_CONVEX_URL_PROD}",
+          "VITE_CONVEX_SITE_URL_PROD": "${VITE_CONVEX_SITE_URL_PROD}",
+          "VITE_CLERK_PUBLISHABLE_KEY_PROD": "${VITE_CLERK_PUBLISHABLE_KEY_PROD}",
+          "VITE_CLERK_BILLING_PLAN_IDS": "${VITE_CLERK_BILLING_PLAN_IDS}",
+          "VITE_DESKTOP_AUTH_REDIRECT_URL": "${VITE_DESKTOP_AUTH_REDIRECT_URL}",
+          "VITE_DESKTOP_AUTH_SIGN_IN_URL": "${VITE_DESKTOP_AUTH_SIGN_IN_URL}",
+          "VITE_DESKTOP_AUTH_SIGN_UP_URL": "${VITE_DESKTOP_AUTH_SIGN_UP_URL}"
+        }
+      }
+    },
+    "clerk": {
+      "secretKey": "${CLERK_SECRET_KEY}",
+      "instance": {
+        "developmentOrigin": "http://localhost:5173",
+        "allowedOrigins": [
+          "http://localhost:5173",
+          "http://127.0.0.1:5173"
+        ],
+        "urlBasedSessionSyncing": true
+      },
+      "redirectUrls": [
+        "https://accounts.example.com/",
+        "https://accounts.example.com/sign-in",
+        "https://accounts.example.com/sign-up"
+      ],
+      "redirectUrlsPrune": false,
+      "domains": [
+        {
+          "name": "accounts.example.com",
+          "isSatellite": true,
+          "proxyUrl": "https://accounts.example.com"
+        }
+      ],
+      "domainsPruneMissingSatellites": false,
+      "jwtTemplates": [
+        {
+          "name": "convex",
+          "claims": {
+            "aud": "convex",
+            "sub": "{{user.id}}"
+          },
+          "lifetime": 60,
+          "allowedClockSkew": 5
+        }
+      ],
+      "jwtTemplatesPrune": false
+    }
+  }
+}

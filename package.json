@@ -16,7 +16,9 @@
     "test": "turbo test",
     "preview": "pnpm --filter @pochacoding/web preview",
     "convex:dev": "pnpm exec convex dev",
-    "convex:deploy": "pnpm exec convex deploy"
+    "convex:deploy": "pnpm exec convex deploy",
+    "platform:plan": "node scripts/platform-sync.mjs plan --config platform/unified.config.json",
+    "platform:apply": "node scripts/platform-sync.mjs apply --config platform/unified.config.json"
   },
   "dependencies": {
     "@blockly/continuous-toolbox": "^7.0.8",
