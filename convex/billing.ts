@@ -135,35 +135,44 @@ export const getWalletSummary = query({
   }),
   handler: async (ctx) => {
     const userId = await requireAuthenticatedUserId(ctx);
-    const wallet = await ensureWalletDocument(ctx, userId);
+    const wallet = await ctx.db
+      .query("wallets")
+      .withIndex("by_userId", (q: any) => q.eq("userId", userId))
+      .unique();
+    const currentPeriod = currentMonthPeriodKey();
+
     if (!wallet) {
-      throw new Error("wallet_not_found");
-    }
-
-    // Free tier grants monthly credits by calendar month.
-    if (wallet.planSlug === "free") {
-      const periodKey = currentMonthPeriodKey();
-      await applyPeriodGrantInternal(ctx, {
-        userId,
-        wallet,
+      const freeCredits = PLAN_MONTHLY_CREDITS.free;
+      return {
         planSlug: "free",
-        periodKey,
-        reasonPrefix: "grant",
-      });
+        subscriptionStatus: "inactive",
+        balanceCredits: freeCredits,
+        activePeriodKey: currentPeriod,
+        periodEndsAt: undefined,
+        canRunManagedAssistant: freeCredits > 0,
+      };
     }
 
-    const refreshed = await ensureWalletDocument(ctx, userId);
-    if (!refreshed) {
-      throw new Error("wallet_not_found_after_refresh");
+    let effectiveBalance = wallet.balanceCredits;
+    let effectivePeriodKey = wallet.activePeriodKey;
+
+    // Queries are read-only in Convex, so only project the next free-tier grant.
+    if (wallet.planSlug === "free" && wallet.activePeriodKey !== currentPeriod) {
+      const projectedGrantReference = `grant:free:${currentPeriod}`;
+      const alreadyGranted = await hasLedgerReference(ctx, userId, projectedGrantReference);
+      if (!alreadyGranted) {
+        effectiveBalance += PLAN_MONTHLY_CREDITS.free;
+        effectivePeriodKey = currentPeriod;
+      }
     }
 
     return {
-      planSlug: refreshed.planSlug,
-      subscriptionStatus: refreshed.subscriptionStatus,
-      balanceCredits: refreshed.balanceCredits,
-      activePeriodKey: refreshed.activePeriodKey,
-      periodEndsAt: refreshed.periodEndsAt,
-      canRunManagedAssistant: refreshed.balanceCredits > 0,
+      planSlug: wallet.planSlug,
+      subscriptionStatus: wallet.subscriptionStatus,
+      balanceCredits: effectiveBalance,
+      activePeriodKey: effectivePeriodKey,
+      periodEndsAt: wallet.periodEndsAt,
+      canRunManagedAssistant: effectiveBalance > 0,
     };
   },
 });
