@@ -322,6 +322,10 @@ export async function listProjects(): Promise<Array<{ id: string; name: string; 
 }
 
 export async function deleteProject(id: string): Promise<void> {
+  if (!isNonEmptyStringKey(id)) {
+    return;
+  }
+
   await db.projects.delete(id);
   const revisions = await db.projectRevisions.where('projectId').equals(id).toArray();
   await db.transaction('rw', db.projectRevisions, async () => {
@@ -343,6 +347,10 @@ function normalizeCheckpointName(name: string): string {
   return name.trim().slice(0, MAX_CHECKPOINT_NAME_LENGTH);
 }
 
+function isNonEmptyStringKey(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function toPublicRevision(record: ProjectRevisionRecord): ProjectRevision {
   return {
     id: record.id,
@@ -362,6 +370,10 @@ function toPublicRevision(record: ProjectRevisionRecord): ProjectRevision {
 }
 
 async function getProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return [];
+  }
+
   return await db.projectRevisions
     .where('[projectId+createdAt]')
     .between([projectId, HISTORY_START_DATE], [projectId, HISTORY_END_DATE])
@@ -369,6 +381,10 @@ async function getProjectRevisionsAscending(projectId: string): Promise<ProjectR
 }
 
 async function getLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return null;
+  }
+
   const latest = await db.projectRevisions
     .where('[projectId+createdAt]')
     .between([projectId, HISTORY_START_DATE], [projectId, HISTORY_END_DATE])
@@ -378,6 +394,10 @@ async function getLatestRevision(projectId: string): Promise<ProjectRevisionReco
 }
 
 async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return null;
+  }
+
   const candidates = await db.projectRevisions
     .where('[projectId+isCheckpoint+createdAt]')
     .between([projectId, true, HISTORY_START_DATE], [projectId, true, HISTORY_END_DATE])
@@ -424,6 +444,10 @@ export async function createRevision(
   reason: ProjectRevisionReason,
   options: RevisionCreateOptions = {},
 ): Promise<ProjectRevision | null> {
+  if (!isNonEmptyStringKey(project.id)) {
+    throw new Error('Invalid project revision key: project.id must be a non-empty string.');
+  }
+
   const { serializedData, contentHash } = buildRevisionData(project);
   const latestRevision = await getLatestRevision(project.id);
   if (reason !== 'manual_checkpoint' && reason !== 'restore' && latestRevision?.contentHash === contentHash) {
@@ -489,6 +513,10 @@ export async function listProjectRevisions(
   projectId: string,
   filters: ListProjectRevisionFilters = {},
 ): Promise<ProjectRevision[]> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return [];
+  }
+
   const revisions = await getProjectRevisionsAscending(projectId);
   const filtered = filters.manualCheckpointsOnly
     ? revisions.filter((revision) => revision.reason === 'manual_checkpoint')
