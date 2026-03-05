@@ -14,14 +14,15 @@ function buildPrompt() {
     outputContract: {
       mode: 'chat|edit',
       chat: 'Provide answer',
-      edit: 'Provide proposedEditsJson stringified JSON with intentSummary, assumptions[], semanticOps[]',
+      edit: 'Provide proposedEditsJson stringified JSON with intentSummary, assumptions[], semanticOps[], projectOps[]',
     },
     rules: [
       'If the user is asking a question or clarification, choose mode=chat.',
-      'If the user is asking for Blockly changes, choose mode=edit.',
+      'If the user is asking for Blockly or project changes, choose mode=edit.',
       'Use capabilities as strict source of truth for available blocks/actions.',
       'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
-      'When mode=edit, proposedEditsJson must be valid JSON and include semanticOps.',
+      'When mode=edit, proposedEditsJson must be valid JSON and include BOTH semanticOps and projectOps arrays.',
+      'Allowed projectOps: rename_project, create_scene, rename_scene, reorder_scenes, create_object, rename_object, set_object_property, set_object_physics, set_object_collider_type, create_folder, rename_folder, move_object_to_folder, add_costume_from_image_url, add_costume_text_circle, rename_costume, reorder_costumes, set_current_costume, validate_project.',
       'When mode=chat, put your response in answer and set proposedEditsJson=null.',
       'When mode=edit, set answer=null and put JSON string in proposedEditsJson.',
       'Do not include markdown fences in any field.',

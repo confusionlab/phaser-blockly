@@ -68,10 +68,16 @@ type SemanticOp =
       targetBlockId: string;
     };
 
+type ProjectOp = {
+  op: string;
+  [key: string]: unknown;
+};
+
 type ProposedEdits = {
   intentSummary: string;
   assumptions: string[];
   semanticOps: SemanticOp[];
+  projectOps: ProjectOp[];
 };
 
 type AssistantTurnPayload =
@@ -120,6 +126,7 @@ const proposedEditsValidator = v.object({
   intentSummary: v.string(),
   assumptions: v.array(v.string()),
   semanticOps: v.array(v.any()),
+  projectOps: v.array(v.any()),
 });
 
 const assistantTurnReturnValidator = v.object({
@@ -577,15 +584,24 @@ function parseJsonFromResponse(content: string): unknown {
 function buildAssistantTurnSystemPrompt(): string {
   return [
     "You are a Blockly assistant.",
-    "Decide whether the user needs a conversational answer or a block-edit proposal.",
+    "Decide whether the user needs a conversational answer or an edit proposal.",
     "Return ONLY JSON in one of these shapes:",
     '{ "mode":"chat", "answer": string }',
-    '{ "mode":"edit", "proposedEdits": { "intentSummary": string, "assumptions": string[], "semanticOps": SemanticOp[] } }',
+    '{ "mode":"edit", "proposedEdits": { "intentSummary": string, "assumptions": string[], "semanticOps": SemanticOp[], "projectOps": ProjectOp[] } }',
     "Use chat mode for questions/explanations/clarifications.",
-    "Use edit mode only when the user asks to create/change/remove/fix program behavior.",
+    "Use edit mode only when the user asks to create/change/remove/fix project behavior.",
     "When project details are needed (scenes, objects, properties, physics, components, block capabilities), call tools instead of guessing.",
-    "Edit mode semantic op schema and rules:",
+    "Edit mode semanticOps schema and rules:",
     '- create_event_flow / append_actions / replace_action / set_block_field / ensure_variable / ensure_message / retarget_reference / delete_subtree',
+    "Edit mode projectOps schema and rules:",
+    "- rename_project",
+    "- create_scene / rename_scene / reorder_scenes",
+    "- create_object / rename_object / set_object_property",
+    "- set_object_physics / set_object_collider_type",
+    "- create_folder / rename_folder / move_object_to_folder",
+    "- add_costume_from_image_url / add_costume_text_circle / rename_costume / reorder_costumes / set_current_costume",
+    "- validate_project",
+    "Always include BOTH arrays in proposedEdits. Use empty arrays when not needed.",
     "- Only use block types/field names present in capabilities/context.",
     "- Never emit explanatory text outside JSON.",
   ].join("\n");
@@ -975,7 +991,7 @@ function buildAssistantToolDefinitions(): Array<Record<string, unknown>> {
       type: "function",
       function: {
         name: "get_scene",
-        description: "Get scene details and optionally scene objects.",
+        description: "Get scene details, folders, and optionally scene objects.",
         parameters: {
           type: "object",
           additionalProperties: false,
@@ -983,6 +999,22 @@ function buildAssistantToolDefinitions(): Array<Record<string, unknown>> {
             sceneId: { type: "string" },
             includeObjects: { type: "boolean" },
             includeObjectDetails: { type: "boolean" },
+            includeFolders: { type: "boolean" },
+          },
+          required: ["sceneId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_scene_folders",
+        description: "List folder hierarchy in a scene.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            sceneId: { type: "string" },
           },
           required: ["sceneId"],
         },
@@ -1007,13 +1039,28 @@ function buildAssistantToolDefinitions(): Array<Record<string, unknown>> {
       type: "function",
       function: {
         name: "get_object",
-        description: "Get object details including effective physics/collider and optional Blockly XML.",
+        description: "Get object details including hierarchy, costumes, effective physics/collider, and optional Blockly XML.",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
             objectId: { type: "string" },
             includeBlockly: { type: "boolean" },
+          },
+          required: ["objectId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_object_costumes",
+        description: "List costumes for one object (effective for component instances).",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            objectId: { type: "string" },
           },
           required: ["objectId"],
         },
@@ -1185,6 +1232,7 @@ function executeAssistantTool(args: {
       const sceneId = typeof toolArgs.sceneId === "string" ? toolArgs.sceneId : "";
       const includeObjects = toBoolean(toolArgs.includeObjects, true);
       const includeObjectDetails = toBoolean(toolArgs.includeObjectDetails, false);
+      const includeFolders = toBoolean(toolArgs.includeFolders, true);
       const scene = indexes.scenesById.get(sceneId);
       if (!scene) {
         return {
@@ -1194,6 +1242,7 @@ function executeAssistantTool(args: {
       }
 
       const objects = Array.isArray(scene.objects) ? scene.objects.filter(isRecord) : [];
+      const folders = Array.isArray(scene.objectFolders) ? scene.objectFolders.filter(isRecord) : [];
       return {
         scene: {
           id: typeof scene.id === "string" ? scene.id : "",
@@ -1201,6 +1250,14 @@ function executeAssistantTool(args: {
           order: typeof scene.order === "number" ? scene.order : null,
           ground: isRecord(scene.ground) ? scene.ground : null,
           cameraConfig: isRecord(scene.cameraConfig) ? scene.cameraConfig : null,
+          objectFolders: includeFolders
+            ? folders.map((folder) => ({
+                id: typeof folder.id === "string" ? folder.id : "",
+                name: typeof folder.name === "string" ? folder.name : "",
+                parentId: typeof folder.parentId === "string" ? folder.parentId : null,
+                order: typeof folder.order === "number" ? folder.order : null,
+              }))
+            : [],
           objects: includeObjects
             ? objects.map((object) => {
                 const componentId = typeof object.componentId === "string" ? object.componentId : null;
@@ -1209,6 +1266,8 @@ function executeAssistantTool(args: {
                   id: typeof object.id === "string" ? object.id : "",
                   name: typeof object.name === "string" ? object.name : "",
                   componentId,
+                  parentId: typeof object.parentId === "string" ? object.parentId : null,
+                  order: typeof object.order === "number" ? object.order : null,
                 };
                 if (!includeObjectDetails) {
                   return base;
@@ -1225,6 +1284,26 @@ function executeAssistantTool(args: {
               })
             : [],
         },
+      };
+    }
+    case "list_scene_folders": {
+      const sceneId = typeof toolArgs.sceneId === "string" ? toolArgs.sceneId : "";
+      const scene = indexes.scenesById.get(sceneId);
+      if (!scene) {
+        return {
+          error: `Scene not found: ${sceneId}`,
+          availableSceneIds: Array.from(indexes.scenesById.keys()),
+        };
+      }
+      const folders = Array.isArray(scene.objectFolders) ? scene.objectFolders.filter(isRecord) : [];
+      return {
+        sceneId,
+        folders: folders.map((folder) => ({
+          id: typeof folder.id === "string" ? folder.id : "",
+          name: typeof folder.name === "string" ? folder.name : "",
+          parentId: typeof folder.parentId === "string" ? folder.parentId : null,
+          order: typeof folder.order === "number" ? folder.order : null,
+        })),
       };
     }
     case "list_scene_objects": {
@@ -1272,6 +1351,13 @@ function executeAssistantTool(args: {
       const effectiveCollider = (component && component.collider) || object.collider || null;
       const effectiveLocalVariables = (component && component.localVariables) || object.localVariables || [];
       const effectiveSounds = (component && component.sounds) || object.sounds || [];
+      const effectiveCostumes = (component && component.costumes) || object.costumes || [];
+      const currentCostumeIndexRaw =
+        (component && component.currentCostumeIndex)
+        ?? object.currentCostumeIndex;
+      const currentCostumeIndex = typeof currentCostumeIndexRaw === "number"
+        ? currentCostumeIndexRaw
+        : 0;
       const effectiveBlocklyXml = typeof (component && component.blocklyXml) === "string"
         ? String(component?.blocklyXml || "")
         : (typeof object.blocklyXml === "string" ? object.blocklyXml : "");
@@ -1289,6 +1375,12 @@ function executeAssistantTool(args: {
             name: typeof item.name === "string" ? item.name : "",
           }))
         : [];
+      const costumes = Array.isArray(effectiveCostumes)
+        ? effectiveCostumes.filter(isRecord).map((item) => ({
+            id: typeof item.id === "string" ? item.id : "",
+            name: typeof item.name === "string" ? item.name : "",
+          }))
+        : [];
       return {
         object: {
           id: typeof object.id === "string" ? object.id : "",
@@ -1297,6 +1389,8 @@ function executeAssistantTool(args: {
           sceneName: meta.sceneName,
           componentId,
           componentName: component && typeof component.name === "string" ? component.name : null,
+          parentId: typeof object.parentId === "string" ? object.parentId : null,
+          order: typeof object.order === "number" ? object.order : null,
           x: typeof object.x === "number" ? object.x : null,
           y: typeof object.y === "number" ? object.y : null,
           visible: typeof object.visible === "boolean" ? object.visible : null,
@@ -1305,11 +1399,44 @@ function executeAssistantTool(args: {
           scaleY: typeof object.scaleY === "number" ? object.scaleY : null,
           physics: isRecord(effectivePhysics) ? effectivePhysics : null,
           collider: isRecord(effectiveCollider) ? effectiveCollider : null,
+          costumes,
+          currentCostumeIndex,
           localVariables,
           sounds,
           blocklyXml,
           blocklyXmlLength: effectiveBlocklyXml.length,
         },
+      };
+    }
+    case "list_object_costumes": {
+      const objectId = typeof toolArgs.objectId === "string" ? toolArgs.objectId : "";
+      const object = indexes.objectsById.get(objectId);
+      if (!object) {
+        return {
+          error: `Object not found: ${objectId}`,
+          availableObjectIds: Array.from(indexes.objectsById.keys()).slice(0, 120),
+        };
+      }
+      const componentId = typeof object.componentId === "string" ? object.componentId : null;
+      const component = componentId ? indexes.componentsById.get(componentId) : null;
+      const effectiveCostumes = (component && component.costumes) || object.costumes || [];
+      const currentCostumeIndexRaw =
+        (component && component.currentCostumeIndex)
+        ?? object.currentCostumeIndex;
+      const currentCostumeIndex = typeof currentCostumeIndexRaw === "number"
+        ? currentCostumeIndexRaw
+        : 0;
+      const costumes = Array.isArray(effectiveCostumes)
+        ? effectiveCostumes.filter(isRecord).map((item) => ({
+            id: typeof item.id === "string" ? item.id : "",
+            name: typeof item.name === "string" ? item.name : "",
+          }))
+        : [];
+      return {
+        objectId,
+        componentId,
+        currentCostumeIndex,
+        costumes,
       };
     }
     case "list_components": {
@@ -1700,6 +1827,14 @@ export const assistantTurn = action({
               `Too many semantic ops (${candidateTurn.proposedEdits.semanticOps.length}/${maxOpsPerRequest}).`
             );
           }
+          if (
+            candidateTurn.mode === "edit" &&
+            candidateTurn.proposedEdits.projectOps.length > 32
+          ) {
+            throw new Error(
+              `Too many project ops (${candidateTurn.proposedEdits.projectOps.length}/32).`
+            );
+          }
 
           turn = candidateTurn;
           debugTrace.finalVerdict = candidateTurn.mode;
@@ -1777,6 +1912,7 @@ export const assistantTurn = action({
         intentSummary: turn.proposedEdits.intentSummary,
         assumptions: turn.proposedEdits.assumptions,
         semanticOps: turn.proposedEdits.semanticOps,
+        projectOps: turn.proposedEdits.projectOps,
       },
       debugTrace,
     };

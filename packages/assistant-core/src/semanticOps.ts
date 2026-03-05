@@ -3,6 +3,7 @@ import type {
   AssistantValidationResult,
   EventFlowSelector,
   InputLiteralSpec,
+  ProjectOp,
   ProposedEdits,
   Scalar,
   SemanticOp,
@@ -407,6 +408,261 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
   }
 }
 
+function parseProjectOp(value: unknown, index: number, errors: string[]): ProjectOp | null {
+  const path = `projectOps[${index}]`;
+  if (!isRecord(value)) {
+    errors.push(`${path}: expected object`);
+    return null;
+  }
+
+  const op = getAlias<string>(value, 'op');
+  if (typeof op !== 'string' || !op.trim()) {
+    errors.push(`${path}.op: expected non-empty string`);
+    return null;
+  }
+
+  const requireString = (key: string, ...aliases: string[]): string | null => {
+    const raw = getAlias<string>(value, key, ...aliases);
+    if (typeof raw !== 'string' || !raw.trim()) {
+      errors.push(`${path}.${key}: expected non-empty string`);
+      return null;
+    }
+    return raw;
+  };
+
+  switch (op) {
+    case 'rename_project': {
+      const name = requireString('name');
+      if (!name) return null;
+      return { op: 'rename_project', name };
+    }
+    case 'create_scene': {
+      const name = requireString('name');
+      if (!name) return null;
+      return { op: 'create_scene', name };
+    }
+    case 'rename_scene': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const name = requireString('name');
+      if (!sceneId || !name) return null;
+      return { op: 'rename_scene', sceneId, name };
+    }
+    case 'reorder_scenes': {
+      const sceneIds = getAlias<unknown>(value, 'sceneIds', 'scene_ids');
+      if (!Array.isArray(sceneIds) || !sceneIds.every((item) => typeof item === 'string')) {
+        errors.push(`${path}.sceneIds: expected string[]`);
+        return null;
+      }
+      return { op: 'reorder_scenes', sceneIds };
+    }
+    case 'create_object': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const name = requireString('name');
+      if (!sceneId || !name) return null;
+      const parsed: ProjectOp = { op: 'create_object', sceneId, name };
+      const x = getAlias<unknown>(value, 'x');
+      const y = getAlias<unknown>(value, 'y');
+      if (typeof x === 'number' && Number.isFinite(x)) parsed.x = x;
+      if (typeof y === 'number' && Number.isFinite(y)) parsed.y = y;
+      return parsed;
+    }
+    case 'rename_object': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      const name = requireString('name');
+      if (!sceneId || !objectId || !name) return null;
+      return { op: 'rename_object', sceneId, objectId, name };
+    }
+    case 'set_object_property': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      const property = getAlias<string>(value, 'property');
+      const allowed = new Set(['x', 'y', 'scaleX', 'scaleY', 'rotation', 'visible']);
+      if (!sceneId || !objectId) return null;
+      if (typeof property !== 'string' || !allowed.has(property)) {
+        errors.push(`${path}.property: invalid property`);
+        return null;
+      }
+      const opValue = getAlias<unknown>(value, 'value');
+      if (!isScalar(opValue)) {
+        errors.push(`${path}.value: expected scalar`);
+        return null;
+      }
+      return {
+        op: 'set_object_property',
+        sceneId,
+        objectId,
+        property: property as 'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation' | 'visible',
+        value: opValue,
+      };
+    }
+    case 'set_object_physics': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      if (!sceneId || !objectId) return null;
+      const physicsCandidate = getAlias<unknown>(value, 'physics');
+      if (physicsCandidate === null) {
+        return { op: 'set_object_physics', sceneId, objectId, physics: null };
+      }
+      if (!isRecord(physicsCandidate)) {
+        errors.push(`${path}.physics: expected object or null`);
+        return null;
+      }
+      const enabled = getAlias<unknown>(physicsCandidate, 'enabled');
+      if (typeof enabled !== 'boolean') {
+        errors.push(`${path}.physics.enabled: expected boolean`);
+        return null;
+      }
+      const parsedPhysics: {
+        enabled: boolean;
+        bodyType?: 'dynamic' | 'static';
+        gravityY?: number;
+        velocityX?: number;
+        velocityY?: number;
+        bounce?: number;
+        friction?: number;
+        allowRotation?: boolean;
+      } = { enabled };
+
+      const bodyType = getAlias<unknown>(physicsCandidate, 'bodyType', 'body_type');
+      if (bodyType !== undefined) {
+        if (bodyType !== 'dynamic' && bodyType !== 'static') {
+          errors.push(`${path}.physics.bodyType: expected "dynamic" or "static"`);
+        } else {
+          parsedPhysics.bodyType = bodyType;
+        }
+      }
+
+      const numericFields: Array<{
+        key: 'gravityY' | 'velocityX' | 'velocityY' | 'bounce' | 'friction';
+        aliases?: string[];
+      }> = [
+        { key: 'gravityY', aliases: ['gravity_y'] },
+        { key: 'velocityX', aliases: ['velocity_x'] },
+        { key: 'velocityY', aliases: ['velocity_y'] },
+        { key: 'bounce' },
+        { key: 'friction' },
+      ];
+      for (const field of numericFields) {
+        const candidate = getAlias<unknown>(physicsCandidate, field.key, ...(field.aliases || []));
+        if (candidate === undefined) continue;
+        if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+          errors.push(`${path}.physics.${field.key}: expected number`);
+          continue;
+        }
+        parsedPhysics[field.key] = candidate;
+      }
+
+      const allowRotation = getAlias<unknown>(physicsCandidate, 'allowRotation', 'allow_rotation');
+      if (allowRotation !== undefined) {
+        if (typeof allowRotation !== 'boolean') {
+          errors.push(`${path}.physics.allowRotation: expected boolean`);
+        } else {
+          parsedPhysics.allowRotation = allowRotation;
+        }
+      }
+
+      return { op: 'set_object_physics', sceneId, objectId, physics: parsedPhysics };
+    }
+    case 'set_object_collider_type': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      const colliderType = getAlias<string>(value, 'colliderType', 'collider_type');
+      if (!sceneId || !objectId) return null;
+      if (colliderType !== 'none' && colliderType !== 'box' && colliderType !== 'circle' && colliderType !== 'capsule') {
+        errors.push(`${path}.colliderType: invalid collider type`);
+        return null;
+      }
+      return { op: 'set_object_collider_type', sceneId, objectId, colliderType };
+    }
+    case 'create_folder': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const name = requireString('name');
+      if (!sceneId || !name) return null;
+      const parentIdCandidate = getAlias<unknown>(value, 'parentId', 'parent_id');
+      const parsed: ProjectOp = { op: 'create_folder', sceneId, name };
+      if (typeof parentIdCandidate === 'string') {
+        parsed.parentId = parentIdCandidate;
+      } else if (parentIdCandidate === null) {
+        parsed.parentId = null;
+      }
+      return parsed;
+    }
+    case 'rename_folder': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const folderId = requireString('folderId', 'folder_id');
+      const name = requireString('name');
+      if (!sceneId || !folderId || !name) return null;
+      return { op: 'rename_folder', sceneId, folderId, name };
+    }
+    case 'move_object_to_folder': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      if (!sceneId || !objectId) return null;
+      const folderIdCandidate = getAlias<unknown>(value, 'folderId', 'folder_id');
+      if (folderIdCandidate !== null && typeof folderIdCandidate !== 'string') {
+        errors.push(`${path}.folderId: expected string or null`);
+        return null;
+      }
+      return { op: 'move_object_to_folder', sceneId, objectId, folderId: folderIdCandidate as string | null };
+    }
+    case 'add_costume_from_image_url': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      const name = requireString('name');
+      const imageUrl = requireString('imageUrl', 'image_url');
+      if (!sceneId || !objectId || !name || !imageUrl) return null;
+      return { op: 'add_costume_from_image_url', sceneId, objectId, name, imageUrl };
+    }
+    case 'add_costume_text_circle': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      const name = requireString('name');
+      const text = requireString('text');
+      if (!sceneId || !objectId || !name || !text) return null;
+      const parsed: ProjectOp = { op: 'add_costume_text_circle', sceneId, objectId, name, text };
+      const fillColor = getAlias<unknown>(value, 'fillColor', 'fill_color');
+      if (typeof fillColor === 'string' && fillColor.trim()) parsed.fillColor = fillColor;
+      const textColor = getAlias<unknown>(value, 'textColor', 'text_color');
+      if (typeof textColor === 'string' && textColor.trim()) parsed.textColor = textColor;
+      return parsed;
+    }
+    case 'rename_costume': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      const costumeId = requireString('costumeId', 'costume_id');
+      const name = requireString('name');
+      if (!sceneId || !objectId || !costumeId || !name) return null;
+      return { op: 'rename_costume', sceneId, objectId, costumeId, name };
+    }
+    case 'reorder_costumes': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      if (!sceneId || !objectId) return null;
+      const costumeIds = getAlias<unknown>(value, 'costumeIds', 'costume_ids');
+      if (!Array.isArray(costumeIds) || !costumeIds.every((item) => typeof item === 'string')) {
+        errors.push(`${path}.costumeIds: expected string[]`);
+        return null;
+      }
+      return { op: 'reorder_costumes', sceneId, objectId, costumeIds };
+    }
+    case 'set_current_costume': {
+      const sceneId = requireString('sceneId', 'scene_id');
+      const objectId = requireString('objectId', 'object_id');
+      const costumeId = requireString('costumeId', 'costume_id');
+      if (!sceneId || !objectId || !costumeId) return null;
+      return { op: 'set_current_costume', sceneId, objectId, costumeId };
+    }
+    case 'validate_project': {
+      return { op: 'validate_project' };
+    }
+    default: {
+      errors.push(`${path}.op: unsupported op "${op}"`);
+      return null;
+    }
+  }
+}
+
 export function validateSemanticOpsPayload(value: unknown): AssistantValidationResult<ProposedEdits> {
   if (!isRecord(value)) {
     return { ok: false, errors: ['Payload must be an object'] };
@@ -420,17 +676,44 @@ export function validateSemanticOpsPayload(value: unknown): AssistantValidationR
     : 'No summary provided.';
 
   const assumptions = parseStringArray(getAlias(value, 'assumptions') || []);
+
   const semanticOpsRaw = getAlias<unknown>(value, 'semanticOps', 'semantic_ops');
-  if (!Array.isArray(semanticOpsRaw)) {
-    return { ok: false, errors: ['semanticOps must be an array'] };
-  }
+  const projectOpsRaw = getAlias<unknown>(value, 'projectOps', 'project_ops');
 
   const semanticOps: SemanticOp[] = [];
-  for (let index = 0; index < semanticOpsRaw.length; index += 1) {
-    const parsedOp = parseSemanticOp(semanticOpsRaw[index], index, errors);
-    if (parsedOp) {
-      semanticOps.push(parsedOp);
+  if (semanticOpsRaw !== undefined) {
+    if (!Array.isArray(semanticOpsRaw)) {
+      errors.push('semanticOps must be an array');
+    } else {
+      for (let index = 0; index < semanticOpsRaw.length; index += 1) {
+        const parsedOp = parseSemanticOp(semanticOpsRaw[index], index, errors);
+        if (parsedOp) {
+          semanticOps.push(parsedOp);
+        }
+      }
     }
+  }
+
+  const projectOps: ProjectOp[] = [];
+  if (projectOpsRaw !== undefined) {
+    if (!Array.isArray(projectOpsRaw)) {
+      errors.push('projectOps must be an array');
+    } else {
+      for (let index = 0; index < projectOpsRaw.length; index += 1) {
+        const parsedOp = parseProjectOp(projectOpsRaw[index], index, errors);
+        if (parsedOp) {
+          projectOps.push(parsedOp);
+        }
+      }
+    }
+  }
+
+  if (semanticOpsRaw === undefined && projectOpsRaw === undefined) {
+    errors.push('Payload must include semanticOps or projectOps');
+  }
+
+  if (semanticOps.length === 0 && projectOps.length === 0) {
+    errors.push('At least one semanticOp or projectOp is required');
   }
 
   if (errors.length > 0) {
@@ -446,6 +729,7 @@ export function validateSemanticOpsPayload(value: unknown): AssistantValidationR
       intentSummary,
       assumptions,
       semanticOps,
+      projectOps,
     },
   };
 }

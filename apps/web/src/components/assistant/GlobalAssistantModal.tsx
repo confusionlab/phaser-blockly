@@ -24,15 +24,17 @@ import {
   type AssistantProviderMode,
 } from '@/db/assistantChatDb';
 import {
+  applyProjectOps,
   applyOrchestratedCandidate,
+  buildAssistantProjectSnapshot,
   buildProgramContext,
   getLlmExposedBlocklyCapabilities,
   readProgramSummary,
   runLlmBlocklyOrchestration,
+  summarizeProjectOps,
   validateSemanticOpsPayload,
 } from '@/lib/llm';
-import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate } from '@/lib/llm';
-import type { Project } from '@/types';
+import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate, ProjectOp } from '@/lib/llm';
 
 type ProviderCredentials = {
   openRouterApiKey?: string;
@@ -64,6 +66,11 @@ type PersistedChatMessage = {
   content: string;
 };
 
+type ProjectOpsCandidate = {
+  projectOps: ProjectOp[];
+  summaryLines: string[];
+};
+
 const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
   hasByokKey: false,
   hasCodexToken: false,
@@ -74,86 +81,6 @@ const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
   codexLoginInProgress: false,
   codexStatusMessage: null,
 };
-
-function buildProjectSnapshot(project: Project) {
-  return {
-    id: project.id,
-    name: project.name,
-    scenes: project.scenes.map((scene) => ({
-      id: scene.id,
-      name: scene.name,
-      order: scene.order,
-      ground: scene.ground
-        ? {
-            enabled: scene.ground.enabled,
-            y: scene.ground.y,
-            color: scene.ground.color,
-          }
-        : null,
-      cameraConfig: scene.cameraConfig
-        ? {
-            followTarget: scene.cameraConfig.followTarget,
-            bounds: scene.cameraConfig.bounds,
-            zoom: scene.cameraConfig.zoom,
-          }
-        : null,
-      objects: scene.objects.map((object) => ({
-        id: object.id,
-        name: object.name,
-        componentId: object.componentId || null,
-        x: object.x,
-        y: object.y,
-        scaleX: object.scaleX,
-        scaleY: object.scaleY,
-        rotation: object.rotation,
-        visible: object.visible,
-        physics: object.physics,
-        collider: object.collider,
-        blocklyXml: object.blocklyXml || '',
-        localVariables: (object.localVariables || []).map((variable) => ({
-          id: variable.id,
-          name: variable.name,
-          type: variable.type,
-          scope: variable.scope,
-          defaultValue: variable.defaultValue,
-        })),
-        sounds: (object.sounds || []).map((sound) => ({
-          id: sound.id,
-          name: sound.name,
-        })),
-      })),
-    })),
-    components: (project.components || []).map((component) => ({
-      id: component.id,
-      name: component.name,
-      physics: component.physics,
-      collider: component.collider,
-      blocklyXml: component.blocklyXml || '',
-      localVariables: (component.localVariables || []).map((variable) => ({
-        id: variable.id,
-        name: variable.name,
-        type: variable.type,
-        scope: variable.scope,
-        defaultValue: variable.defaultValue,
-      })),
-      sounds: (component.sounds || []).map((sound) => ({
-        id: sound.id,
-        name: sound.name,
-      })),
-    })),
-    messages: (project.messages || []).map((message) => ({
-      id: message.id,
-      name: message.name,
-    })),
-    globalVariables: (project.globalVariables || []).map((variable) => ({
-      id: variable.id,
-      name: variable.name,
-      type: variable.type,
-      scope: variable.scope,
-      defaultValue: variable.defaultValue,
-    })),
-  };
-}
 
 function getScopeStorageKey(scope: BlocklyEditScope | null): string | null {
   if (!scope) return null;
@@ -261,10 +188,16 @@ export function GlobalAssistantModal() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [persistedMessages, setPersistedMessages] = useState<PersistedChatMessage[]>([]);
   const [candidate, setCandidate] = useState<OrchestratedCandidate | null>(null);
+  const [projectOpsCandidate, setProjectOpsCandidate] = useState<ProjectOpsCandidate | null>(null);
   const [candidateDebugInfo, setCandidateDebugInfo] = useState<CandidateDebugInfo | null>(null);
 
   const {
     project,
+    updateProjectName,
+    addScene,
+    reorderScenes,
+    updateScene,
+    addObject,
     addMessage,
     addGlobalVariable,
     addLocalVariable,
@@ -393,6 +326,7 @@ export function GlobalAssistantModal() {
       setErrorMessage(null);
       setStatusMessage(null);
       setCandidate(null);
+      setProjectOpsCandidate(null);
       setCandidateDebugInfo(null);
 
       const messages = options.messages.filter((message) => message.role === 'user' || message.role === 'assistant');
@@ -452,7 +386,7 @@ export function GlobalAssistantModal() {
             });
           })()
         : (() => {
-            const projectSnapshot = buildProjectSnapshot(project);
+            const projectSnapshot = buildAssistantProjectSnapshot(project);
             return (async () => {
               const desktopCredentials =
                 typeof window !== 'undefined' && window.desktopAssistant && providerMode === 'byok'
@@ -511,37 +445,42 @@ export function GlobalAssistantModal() {
         throw new Error(`Server response validation failed: ${parsedProposedEdits.errors.join('; ')}`);
       }
       const proposedEdits = parsedProposedEdits.value;
-      if (!assistantScope) {
-        const assistantText =
-          'I can still chat without a selected object, but applying Blockly edits needs scope. Select an object/component, then ask again.';
-        await appendAssistantMessage({
-          threadId,
-          role: 'assistant',
-          content: assistantText,
-          createdAt: new Date().toISOString(),
-        });
-        return {
-          content: [{ type: 'text', text: assistantText }],
-        };
+      const modelLatency = formatDuration(startedAt, turnCompletedAt);
+      let compileLatency = '-';
+      let intentMismatchWarning: string | null = null;
+
+      let semanticCandidate: OrchestratedCandidate | null = null;
+      if (proposedEdits.semanticOps.length > 0) {
+        if (assistantScope) {
+          const convexProvider: LLMProvider = {
+            name: `convex:${turn.provider}`,
+            model: turn.model,
+            proposeEdits: async () => proposedEdits,
+          };
+
+          semanticCandidate = await runLlmBlocklyOrchestration({
+            project,
+            scope: assistantScope,
+            userIntent,
+            provider: convexProvider,
+          });
+          compileLatency = formatDuration(semanticCandidate.requestStartedAt, semanticCandidate.requestCompletedAt);
+          intentMismatchWarning = detectIntentMismatchWarning(userIntent, semanticCandidate);
+          setCandidate(semanticCandidate);
+        } else {
+          setCandidate(null);
+        }
+      } else {
+        setCandidate(null);
       }
 
-      const convexProvider: LLMProvider = {
-        name: `convex:${turn.provider}`,
-        model: turn.model,
-        proposeEdits: async () => proposedEdits,
-      };
-
-      const result = await runLlmBlocklyOrchestration({
-        project,
-        scope: assistantScope,
-        userIntent,
-        provider: convexProvider,
-      });
-
-      setCandidate(result);
-      const modelLatency = formatDuration(startedAt, turnCompletedAt);
-      const compileLatency = formatDuration(result.requestStartedAt, result.requestCompletedAt);
-      const intentMismatchWarning = detectIntentMismatchWarning(userIntent, result);
+      const nextProjectOpsCandidate = proposedEdits.projectOps.length > 0
+        ? {
+            projectOps: proposedEdits.projectOps,
+            summaryLines: summarizeProjectOps(proposedEdits.projectOps),
+          }
+        : null;
+      setProjectOpsCandidate(nextProjectOpsCandidate);
 
       setCandidateDebugInfo({
         userIntent,
@@ -553,12 +492,32 @@ export function GlobalAssistantModal() {
         intentMismatchWarning,
       });
 
-      let assistantText = `${result.proposedEdits.intentSummary}\n\n${result.build.diff.summaryLines.join('\n')}`;
-      if (!result.validation.pass) {
-        assistantText = `I proposed edits, but validation failed with ${result.validation.errors.length} issue(s). Review the validation panel before applying.`;
-      } else if (intentMismatchWarning) {
-        assistantText = `I generated a candidate, but blocked auto-apply because intent and diff do not match.\n\n${intentMismatchWarning}`;
+      const responseLines: string[] = [proposedEdits.intentSummary];
+      if (semanticCandidate) {
+        responseLines.push('', ...semanticCandidate.build.diff.summaryLines);
+        if (!semanticCandidate.validation.pass) {
+          responseLines.push(
+            '',
+            `Blockly validation failed with ${semanticCandidate.validation.errors.length} issue(s). Review before applying.`,
+          );
+        } else if (intentMismatchWarning) {
+          responseLines.push('', `Apply blocked by intent mismatch: ${intentMismatchWarning}`);
+        }
+      } else if (proposedEdits.semanticOps.length > 0 && !assistantScope) {
+        responseLines.push(
+          '',
+          'Blockly edits were proposed, but no object/component is selected. Select scope and ask again to apply code edits.',
+        );
       }
+
+      if (nextProjectOpsCandidate) {
+        responseLines.push('', 'Project ops:', ...nextProjectOpsCandidate.summaryLines);
+      }
+
+      if (!semanticCandidate && !nextProjectOpsCandidate) {
+        responseLines.push('', 'No executable edits were returned.');
+      }
+      const assistantText = responseLines.join('\n');
 
       await appendAssistantMessage({
         threadId,
@@ -595,7 +554,9 @@ export function GlobalAssistantModal() {
     initialMessages,
   });
 
-  const canApply = !!candidate && candidate.validation.pass && !candidateDebugInfo?.intentMismatchWarning;
+  const canApply =
+    (!!candidate || !!projectOpsCandidate) &&
+    (!candidate || (candidate.validation.pass && !candidateDebugInfo?.intentMismatchWarning));
 
   const clearChat = () => {
     if (!threadId) return;
@@ -608,9 +569,9 @@ export function GlobalAssistantModal() {
       });
   };
 
-  const applyCandidate = () => {
-    if (!candidate || !project) return;
-    if (!candidate.validation.pass) {
+  const applyCandidate = async () => {
+    if (!candidate && !projectOpsCandidate) return;
+    if (candidate && !candidate.validation.pass) {
       setErrorMessage('Candidate is not valid yet.');
       return;
     }
@@ -619,20 +580,55 @@ export function GlobalAssistantModal() {
       return;
     }
 
-    const result = applyOrchestratedCandidate({
-      orchestrated: candidate,
-      bindings: {
-        getProject: () => useProjectStore.getState().project,
-        addMessage,
-        addGlobalVariable,
-        addLocalVariable,
-        updateObject,
-        updateComponent,
-      },
-    });
+    const statusParts: string[] = [];
+    const errorParts: string[] = [];
 
-    setStatusMessage(`${result.message} Added ${result.createdMessageCount} message(s) and ${result.createdVariableCount} variable(s).`);
-    setErrorMessage(null);
+    if (candidate) {
+      const semanticResult = applyOrchestratedCandidate({
+        orchestrated: candidate,
+        bindings: {
+          getProject: () => useProjectStore.getState().project,
+          addMessage,
+          addGlobalVariable,
+          addLocalVariable,
+          updateObject,
+          updateComponent,
+        },
+      });
+      statusParts.push(
+        `${semanticResult.message} Added ${semanticResult.createdMessageCount} message(s) and ${semanticResult.createdVariableCount} variable(s).`,
+      );
+    }
+
+    if (projectOpsCandidate) {
+      const projectResult = await applyProjectOps({
+        projectOps: projectOpsCandidate.projectOps,
+        bindings: {
+          getProject: () => useProjectStore.getState().project,
+          updateProjectName,
+          addScene,
+          reorderScenes,
+          updateScene,
+          addObject,
+          updateObject,
+        },
+      });
+
+      statusParts.push(
+        `Applied ${projectResult.appliedOpCount}/${projectOpsCandidate.projectOps.length} project op(s).`,
+      );
+      if (projectResult.validationIssueCount > 0) {
+        statusParts.push(`Validation reported ${projectResult.validationIssueCount} issue(s).`);
+      }
+      if (projectResult.errors.length > 0) {
+        errorParts.push(...projectResult.errors);
+      }
+    }
+
+    setStatusMessage(statusParts.join(' '));
+    setErrorMessage(errorParts.length > 0 ? errorParts.join('\n') : null);
+    setCandidate(null);
+    setProjectOpsCandidate(null);
   };
 
   const rollback = () => {
@@ -805,7 +801,7 @@ export function GlobalAssistantModal() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="secondary" onClick={applyCandidate} disabled={!canApply}>
+                  <Button size="sm" variant="secondary" onClick={() => void applyCandidate()} disabled={!canApply}>
                     Apply Candidate
                   </Button>
                   <Button size="sm" variant="ghost" onClick={rollback}>
@@ -820,6 +816,15 @@ export function GlobalAssistantModal() {
                   <p className="text-xs text-amber-600">
                     Intent mismatch blocked apply: {candidateDebugInfo.intentMismatchWarning}
                   </p>
+                ) : null}
+
+                {projectOpsCandidate ? (
+                  <div className="rounded-md border bg-background p-2 text-xs">
+                    <div className="font-medium">Project Ops</div>
+                    <div className="text-muted-foreground">
+                      {projectOpsCandidate.projectOps.length} op(s) ready
+                    </div>
+                  </div>
                 ) : null}
               </div>
 

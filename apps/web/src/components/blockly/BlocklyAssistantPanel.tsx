@@ -7,6 +7,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { api } from '@convex-generated/api';
 import {
   applyOrchestratedCandidate,
+  buildAssistantProjectSnapshot,
   buildProgramContext,
   getLlmExposedBlocklyCapabilities,
   readProgramSummary,
@@ -14,7 +15,6 @@ import {
   validateSemanticOpsPayload,
 } from '@/lib/llm';
 import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate } from '@/lib/llm';
-import type { Project } from '@/types';
 import {
   appendAssistantMessage,
   appendAssistantTurn,
@@ -73,86 +73,6 @@ const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
   codexLoginInProgress: false,
   codexStatusMessage: null,
 };
-
-function buildProjectSnapshot(project: Project) {
-  return {
-    id: project.id,
-    name: project.name,
-    scenes: project.scenes.map((scene) => ({
-      id: scene.id,
-      name: scene.name,
-      order: scene.order,
-      ground: scene.ground
-        ? {
-            enabled: scene.ground.enabled,
-            y: scene.ground.y,
-            color: scene.ground.color,
-          }
-        : null,
-      cameraConfig: scene.cameraConfig
-        ? {
-            followTarget: scene.cameraConfig.followTarget,
-            bounds: scene.cameraConfig.bounds,
-            zoom: scene.cameraConfig.zoom,
-          }
-        : null,
-      objects: scene.objects.map((object) => ({
-        id: object.id,
-        name: object.name,
-        componentId: object.componentId || null,
-        x: object.x,
-        y: object.y,
-        scaleX: object.scaleX,
-        scaleY: object.scaleY,
-        rotation: object.rotation,
-        visible: object.visible,
-        physics: object.physics,
-        collider: object.collider,
-        blocklyXml: object.blocklyXml || '',
-        localVariables: (object.localVariables || []).map((variable) => ({
-          id: variable.id,
-          name: variable.name,
-          type: variable.type,
-          scope: variable.scope,
-          defaultValue: variable.defaultValue,
-        })),
-        sounds: (object.sounds || []).map((sound) => ({
-          id: sound.id,
-          name: sound.name,
-        })),
-      })),
-    })),
-    components: (project.components || []).map((component) => ({
-      id: component.id,
-      name: component.name,
-      physics: component.physics,
-      collider: component.collider,
-      blocklyXml: component.blocklyXml || '',
-      localVariables: (component.localVariables || []).map((variable) => ({
-        id: variable.id,
-        name: variable.name,
-        type: variable.type,
-        scope: variable.scope,
-        defaultValue: variable.defaultValue,
-      })),
-      sounds: (component.sounds || []).map((sound) => ({
-        id: sound.id,
-        name: sound.name,
-      })),
-    })),
-    messages: (project.messages || []).map((message) => ({
-      id: message.id,
-      name: message.name,
-    })),
-    globalVariables: (project.globalVariables || []).map((variable) => ({
-      id: variable.id,
-      name: variable.name,
-      type: variable.type,
-      scope: variable.scope,
-      defaultValue: variable.defaultValue,
-    })),
-  };
-}
 
 function getScopeStorageKey(scope: BlocklyEditScope | null): string | null {
   if (!scope) return null;
@@ -414,7 +334,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             });
           })()
         : (() => {
-            const projectSnapshot = buildProjectSnapshot(project);
+            const projectSnapshot = buildAssistantProjectSnapshot(project);
             return (async () => {
               const desktopCredentials =
                 typeof window !== 'undefined' && window.desktopAssistant && providerMode === 'byok'
