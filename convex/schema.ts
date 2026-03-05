@@ -139,6 +139,41 @@ export default defineSchema({
     .index("by_ownerUserId_and_localId", ["ownerUserId", "localId"])
     .index("by_ownerUserId_and_updatedAt", ["ownerUserId", "updatedAt"]),
 
+  // Project revision history - cloud-synced checkpoint/revision storage
+  projectRevisions: defineTable({
+    ownerUserId: v.optional(v.string()),
+    projectLocalId: v.string(),
+    revisionId: v.string(),
+    parentRevisionId: v.optional(v.string()),
+    kind: v.union(v.literal("snapshot"), v.literal("delta")),
+    baseRevisionId: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    data: v.optional(v.string()),
+    dataSizeBytes: v.optional(v.number()),
+    contentHash: v.string(),
+    createdAt: v.number(),
+    schemaVersion: v.union(v.number(), v.string()),
+    appVersion: v.optional(v.string()),
+    reason: v.union(
+      v.literal("manual_checkpoint"),
+      v.literal("auto_checkpoint"),
+      v.literal("import"),
+      v.literal("restore"),
+      v.literal("edit_revision"),
+    ),
+    checkpointName: v.optional(v.string()),
+    isCheckpoint: v.boolean(),
+    restoredFromRevisionId: v.optional(v.string()),
+  })
+    .index("by_projectLocalId_and_createdAt", ["projectLocalId", "createdAt"])
+    .index("by_projectLocalId_and_isCheckpoint_and_createdAt", ["projectLocalId", "isCheckpoint", "createdAt"])
+    .index("by_projectLocalId_and_revisionId", ["projectLocalId", "revisionId"])
+    .index("by_projectLocalId_and_contentHash", ["projectLocalId", "contentHash"])
+    .index("by_ownerUserId_and_projectLocalId_and_createdAt", ["ownerUserId", "projectLocalId", "createdAt"])
+    .index("by_ownerUserId_and_projectLocalId_and_isCheckpoint_and_createdAt", ["ownerUserId", "projectLocalId", "isCheckpoint", "createdAt"])
+    .index("by_ownerUserId_and_projectLocalId_and_revisionId", ["ownerUserId", "projectLocalId", "revisionId"])
+    .index("by_ownerUserId_and_projectLocalId_and_contentHash", ["ownerUserId", "projectLocalId", "contentHash"]),
+
   wallets: defineTable({
     userId: v.string(),
     planSlug: v.string(),
