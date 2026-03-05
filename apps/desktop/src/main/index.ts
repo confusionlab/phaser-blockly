@@ -235,9 +235,12 @@ function createMainWindow(): BrowserWindow {
     title: 'PochaCoding',
   });
 
-  const devUrl = process.env.ELECTRON_RENDERER_URL;
-  if (devUrl) {
-    void window.loadURL(devUrl);
+  const overrideDevUrl = process.env.POCHACODING_DESKTOP_WEB_URL?.trim();
+  const devUrl = process.env.ELECTRON_RENDERER_URL?.trim();
+  const fallbackDevUrl = 'http://127.0.0.1:5173';
+  if (!app.isPackaged) {
+    // Allow forcing Electron dev to a hosted HTTPS app domain for Clerk prod-origin checks.
+    void window.loadURL(overrideDevUrl || devUrl || fallbackDevUrl);
     window.webContents.openDevTools({ mode: 'detach' });
   } else {
     void window.loadFile(getProdWebEntry());

@@ -10,6 +10,8 @@ import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
 
 const E2E_AUTH_BYPASS = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
+const DESKTOP_AUTH_REDIRECT_URL = import.meta.env.VITE_DESKTOP_AUTH_REDIRECT_URL || 'https://accounts.confusionlab.com/';
+const DESKTOP_AUTH_SIGN_UP_URL = import.meta.env.VITE_DESKTOP_AUTH_SIGN_UP_URL || 'https://accounts.confusionlab.com/sign-up';
 
 function resetSessionStateForAccountBoundary() {
   useProjectStore.getState().closeProject();
@@ -32,13 +34,21 @@ function resetSessionStateForAccountBoundary() {
 }
 
 function SignedOutScreen() {
+  const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
+
   useEffect(() => {
     resetSessionStateForAccountBoundary();
   }, []);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <SignIn />
+      <SignIn
+        signUpUrl={isDesktopRuntime ? DESKTOP_AUTH_SIGN_UP_URL : undefined}
+        signUpForceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
+        signUpFallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
+        forceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
+        fallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
+      />
     </div>
   );
 }
