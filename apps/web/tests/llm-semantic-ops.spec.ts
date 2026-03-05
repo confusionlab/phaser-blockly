@@ -73,4 +73,42 @@ test.describe('LLM semantic op payload validation', () => {
     const result = validateSemanticOpsPayload(payload);
     expect(result.ok).toBe(false);
   });
+
+  test('accepts valid projectOps payload', () => {
+    const payload = {
+      intentSummary: 'Rename project and create a scene',
+      assumptions: [],
+      projectOps: [
+        {
+          op: 'rename_project',
+          name: 'Arcade Demo',
+        },
+        {
+          op: 'create_scene',
+          name: 'Stage 2',
+        },
+      ],
+    };
+
+    const result = validateSemanticOpsPayload(payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.projectOps).toHaveLength(2);
+      expect(result.value.projectOps[0].op).toBe('rename_project');
+      expect(result.value.semanticOps).toHaveLength(0);
+    }
+  });
+
+  test('rejects payloads with neither semanticOps nor projectOps', () => {
+    const payload = {
+      intentSummary: 'Do something',
+      assumptions: [],
+    };
+
+    const result = validateSemanticOpsPayload(payload);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join('\n')).toContain('semanticOps or projectOps');
+    }
+  });
 });

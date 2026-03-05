@@ -30,6 +30,7 @@ export interface CodexAssistantTurnRequest {
   capabilities: unknown;
   context: unknown;
   programRead: unknown;
+  projectSnapshot?: unknown;
   threadContext?: {
     threadId?: string;
     scopeKey?: string;

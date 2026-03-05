@@ -5,6 +5,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import codexTurnOutputSchema from './codexTurnOutput.schema.json';
+import { runUnifiedAssistantTurn } from '../../../../packages/assistant-core/src';
+import { validateSemanticOpsPayload } from '../../../../packages/assistant-core/src/semanticOps';
 import type {
   CodexAssistantTurnRequest,
   CodexAssistantTurnResponse,
@@ -203,14 +205,19 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
     outputContract: {
       mode: 'chat|edit',
       chat: 'Provide answer',
-      edit: 'Provide proposedEditsJson stringified JSON with intentSummary, assumptions[], semanticOps[]',
+      edit: 'Provide proposedEditsJson stringified JSON with intentSummary, assumptions[], semanticOps[], projectOps[]',
     },
     rules: [
       'If the user is asking a question or clarification, choose mode=chat.',
-      'If the user is asking for Blockly changes, choose mode=edit.',
+      'If the user is asking for Blockly or project changes, choose mode=edit.',
+      'If the user is discussing capabilities/planning/tooling (not requesting concrete project changes now), choose mode=chat.',
       'Use capabilities as strict source of truth for available blocks/actions.',
       'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
-      'When mode=edit, proposedEditsJson must be valid JSON and include semanticOps.',
+      'When mode=edit, proposedEditsJson must be valid JSON and include BOTH semanticOps and projectOps arrays.',
+      'Put Blockly code operations ONLY in semanticOps. Put scene/object/costume/project operations ONLY in projectOps.',
+      'Never output placeholder/template operations. Do not emit empty strings for required IDs/names.',
+      'If required scene/object/costume references are not available, choose mode=chat and ask a concise follow-up.',
+      'Allowed projectOps: rename_project, create_scene, rename_scene, reorder_scenes, create_object, rename_object, set_object_property, set_object_physics, set_object_collider_type, create_folder, rename_folder, move_object_to_folder, add_costume_from_image_url, add_costume_text_circle, rename_costume, reorder_costumes, set_current_costume, validate_project.',
       'When mode=chat, put your response in answer and set proposedEditsJson=null.',
       'When mode=edit, set answer=null and put JSON string in proposedEditsJson.',
       'Do not include markdown fences in any field.',
@@ -228,6 +235,173 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
     'Return a JSON object matching the output schema.',
     JSON.stringify(envelope, null, 2),
   ].join('\n\n');
+}
+
+const PROJECT_OPS = new Set([
+  'rename_project',
+  'create_scene',
+  'rename_scene',
+  'reorder_scenes',
+  'create_object',
+  'rename_object',
+  'set_object_property',
+  'set_object_physics',
+  'set_object_collider_type',
+  'create_folder',
+  'rename_folder',
+  'move_object_to_folder',
+  'add_costume_from_image_url',
+  'add_costume_text_circle',
+  'rename_costume',
+  'reorder_costumes',
+  'set_current_costume',
+  'validate_project',
+]);
+
+const PROJECT_OP_ALIASES: Record<string, string> = {
+  add_svg_text_costume: 'add_costume_text_circle',
+  add_text_costume: 'add_costume_text_circle',
+  create_text_costume: 'add_costume_text_circle',
+  add_image_costume: 'add_costume_from_image_url',
+  add_costume_from_image: 'add_costume_from_image_url',
+  import_image_costume: 'add_costume_from_image_url',
+  set_physics: 'set_object_physics',
+  set_collider_type: 'set_object_collider_type',
+};
+
+function normalizeProjectOpName(op: string): string {
+  const trimmed = op.trim();
+  if (!trimmed) return trimmed;
+  return PROJECT_OP_ALIASES[trimmed] ?? trimmed;
+}
+
+function normalizeProjectOpFields(value: Record<string, unknown>): Record<string, unknown> {
+  const opName = typeof value.op === 'string' ? normalizeProjectOpName(value.op) : '';
+  const next: Record<string, unknown> = {
+    ...value,
+    ...(opName ? { op: opName } : {}),
+  };
+
+  if (opName === 'add_costume_text_circle') {
+    if (typeof next.text !== 'string' || !next.text.trim()) {
+      const aliasText = [next.svgText, next.svg_text, next.label, next.content].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasText) {
+        next.text = aliasText;
+      }
+    }
+  }
+
+  if (opName === 'add_costume_from_image_url') {
+    if (typeof next.imageUrl !== 'string' || !next.imageUrl.trim()) {
+      const aliasUrl = [next.url, next.image, next.src].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasUrl) {
+        next.imageUrl = aliasUrl;
+      }
+    }
+  }
+
+  if (opName === 'set_object_collider_type') {
+    if (typeof next.colliderType !== 'string' || !next.colliderType.trim()) {
+      const aliasType = [next.type, next.collider].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasType) {
+        next.colliderType = aliasType;
+      }
+    }
+  }
+
+  return next;
+}
+
+function normalizeProposedEditsShape(raw: unknown): {
+  value: unknown;
+  movedProjectOpsFromSemantic: number;
+  renamedProjectOps: number;
+} {
+  if (!isRecord(raw)) {
+    return {
+      value: raw,
+      movedProjectOpsFromSemantic: 0,
+      renamedProjectOps: 0,
+    };
+  }
+
+  const semanticRaw = Array.isArray(raw.semanticOps) ? raw.semanticOps : [];
+  const projectRaw = Array.isArray(raw.projectOps) ? raw.projectOps : [];
+
+  let movedProjectOpsFromSemantic = 0;
+  let renamedProjectOps = 0;
+
+  const normalizedSemantic: unknown[] = [];
+  const normalizedProject: unknown[] = [];
+
+  for (const entry of semanticRaw) {
+    if (!isRecord(entry) || typeof entry.op !== 'string') {
+      normalizedSemantic.push(entry);
+      continue;
+    }
+    const normalizedName = normalizeProjectOpName(entry.op);
+    if (normalizedName !== entry.op) {
+      renamedProjectOps += 1;
+    }
+    if (PROJECT_OPS.has(normalizedName)) {
+      movedProjectOpsFromSemantic += 1;
+      normalizedProject.push(normalizeProjectOpFields(entry));
+      continue;
+    }
+    normalizedSemantic.push(entry);
+  }
+
+  for (const entry of projectRaw) {
+    if (!isRecord(entry) || typeof entry.op !== 'string') {
+      normalizedProject.push(entry);
+      continue;
+    }
+    const normalizedName = normalizeProjectOpName(entry.op);
+    if (normalizedName !== entry.op) {
+      renamedProjectOps += 1;
+    }
+    normalizedProject.push(normalizeProjectOpFields(entry));
+  }
+
+  return {
+    value: {
+      ...raw,
+      semanticOps: normalizedSemantic,
+      projectOps: normalizedProject,
+    },
+    movedProjectOpsFromSemantic,
+    renamedProjectOps,
+  };
+}
+
+function buildInvalidEditFallback(args: {
+  reason: string;
+  exitCode: number;
+  stderr: string;
+  validationErrors?: string[];
+}): CodexAssistantTurnResponse {
+  const details = args.validationErrors && args.validationErrors.length > 0
+    ? `\n\nValidation: ${args.validationErrors.slice(0, 4).join('; ')}${args.validationErrors.length > 4 ? '; ...' : ''}`
+    : '';
+  return {
+    provider: 'codex',
+    model: 'gpt-5.3-codex',
+    mode: 'chat',
+    answer: `I couldn't apply executable edits this turn because the edit payload was invalid (${args.reason}). Please retry with concrete scene/object names or IDs.${details}`,
+    debugTrace: {
+      transport: 'codex-exec',
+      exitCode: args.exitCode,
+      stderrTail: args.stderr.slice(-1200),
+      fallbackReason: args.reason,
+      validationErrors: args.validationErrors ?? [],
+    },
+  };
 }
 
 export class CodexAppServerClient {
@@ -321,6 +495,23 @@ export class CodexAppServerClient {
 
   async runAssistantTurn(args: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> {
     await this.ensureStarted();
+    const authToken = await this.getAuthToken();
+    if (authToken) {
+      return runUnifiedAssistantTurn({
+        userIntent: args.userIntent,
+        chatHistory: args.chatHistory,
+        providerMode: 'codex_oauth',
+        providerCredentials: {
+          codexToken: authToken,
+        },
+        threadContext: args.threadContext,
+        capabilities: args.capabilities,
+        context: args.context,
+        programRead: args.programRead,
+        projectSnapshot: args.projectSnapshot || {},
+      });
+    }
+
     const prompt = buildCodexAssistantPrompt(args);
     const { output, stderr, exitCode } = await this.runCodexExecWithSchema(prompt);
 
@@ -357,28 +548,52 @@ export class CodexAppServerClient {
     if (mode === 'edit') {
       const proposedEditsRaw = typeof parsed.proposedEditsJson === 'string' ? parsed.proposedEditsJson.trim() : '';
       if (!proposedEditsRaw) {
-        throw new Error('Codex returned edit mode without proposedEditsJson.');
+        return buildInvalidEditFallback({
+          reason: 'missing_proposedEditsJson',
+          exitCode,
+          stderr,
+        });
       }
       let proposedEdits: unknown;
       try {
         proposedEdits = JSON.parse(proposedEditsRaw);
       } catch (error) {
-        throw new Error(`Codex returned invalid proposedEditsJson: ${toErrorMessage(error)}`);
+        return buildInvalidEditFallback({
+          reason: `invalid_proposedEditsJson:${toErrorMessage(error)}`,
+          exitCode,
+          stderr,
+        });
+      }
+      const normalized = normalizeProposedEditsShape(proposedEdits);
+      const validated = validateSemanticOpsPayload(normalized.value);
+      if (!validated.ok) {
+        return buildInvalidEditFallback({
+          reason: 'schema_validation_failed',
+          exitCode,
+          stderr,
+          validationErrors: validated.errors,
+        });
       }
       return {
         provider: 'codex',
         model: 'gpt-5.3-codex',
         mode: 'edit',
-        proposedEdits,
+        proposedEdits: validated.value,
         debugTrace: {
           transport: 'codex-exec',
           exitCode,
           stderrTail: stderr.slice(-1200),
+          movedProjectOpsFromSemantic: normalized.movedProjectOpsFromSemantic,
+          renamedProjectOps: normalized.renamedProjectOps,
         },
       };
     }
 
-    throw new Error('Codex returned unsupported mode.');
+    return buildInvalidEditFallback({
+      reason: 'unsupported_mode',
+      exitCode,
+      stderr,
+    });
   }
 
   async loginWithChatGpt(): Promise<void> {

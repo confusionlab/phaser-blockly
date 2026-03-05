@@ -6,7 +6,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "ensure:electron": "node scripts/ensure-electron.mjs",
-    "dev": "pnpm run ensure:electron && concurrently -k \"VITE_APP_BRANCH=$(git rev-parse --abbrev-ref HEAD) pnpm --filter @pochacoding/web exec vite --host localhost --port 5173 --strictPort\" \"wait-on tcp:5173 && electron-vite dev\"",
+    "dev": "DESKTOP_WEB_PORT=${DESKTOP_WEB_PORT:-5173}; DESKTOP_WORKTREE_KEY=${DESKTOP_WORKTREE_KEY:-default}; DESKTOP_APP_BRANCH=${DESKTOP_APP_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}; pnpm run ensure:electron && concurrently -k \"VITE_APP_BRANCH=${DESKTOP_APP_BRANCH} pnpm --filter @pochacoding/web exec vite --host 127.0.0.1 --port ${DESKTOP_WEB_PORT} --strictPort\" \"wait-on tcp:${DESKTOP_WEB_PORT} && ELECTRON_RENDERER_URL=http://127.0.0.1:${DESKTOP_WEB_PORT} electron-vite dev -- --worktree-key=${DESKTOP_WORKTREE_KEY}\"",
     "build": "pnpm run test && VITE_DESKTOP_BUILD=1 pnpm --filter @pochacoding/web build && electron-vite build",
     "pack:mac": "pnpm run build && electron-builder --mac --dir",
     "dist:mac": "pnpm run build && electron-builder --mac dmg zip",

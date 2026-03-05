@@ -19,6 +19,9 @@ const CODEX_AUTH_LINK_FILE = 'assistant-codex-auth-link.json';
 const FALLBACK_SECRET_FILE = 'assistant-secrets.json';
 const DEFAULT_PACKAGED_WEB_URL = 'https://code.confusionlab.com';
 const PACKAGED_WEB_CACHE_RESET_MARKER_PREFIX = 'packaged-web-cache-reset';
+const APP_NAME = 'PochaCoding';
+const BRANCH_NAME = (process.env.DESKTOP_APP_BRANCH || '').trim();
+const APP_TITLE = BRANCH_NAME ? `${BRANCH_NAME} - ${APP_NAME}` : APP_NAME;
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -33,7 +36,7 @@ let keytarClient: KeytarClient | null | undefined;
 const codexClient = new CodexAppServerClient(
   {
     name: 'pochacoding-desktop',
-    title: 'PochaCoding',
+    title: APP_TITLE,
     version: app.getVersion(),
   },
   (event) => {
@@ -295,7 +298,7 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
-    title: 'PochaCoding',
+    title: APP_TITLE,
   });
 
   const overrideDevUrl = process.env.POCHACODING_DESKTOP_WEB_URL?.trim();
@@ -392,6 +395,9 @@ function setupIpcHandlers(): void {
 }
 
 app.whenReady().then(async () => {
+  if (BRANCH_NAME) {
+    app.setName(`${APP_NAME} (${BRANCH_NAME})`);
+  }
   await maybeResetPackagedWebCache();
   setupIpcHandlers();
   mainWindow = createMainWindow();

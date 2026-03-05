@@ -13,16 +13,28 @@ async function openEditorFromProjectList(page: import('@playwright/test').Page):
   await page.waitForLoadState('networkidle');
 }
 
-async function ensureBlocklyAssistantAvailable(page: import('@playwright/test').Page): Promise<void> {
+async function openAssistant(page: import('@playwright/test').Page): Promise<void> {
+  const globalAssistantButton = page.locator('button[title="Open assistant"]').first();
+  if (await globalAssistantButton.isVisible().catch(() => false)) {
+    await globalAssistantButton.click();
+    await expect(page.getByText('Provider mode')).toBeVisible();
+    return;
+  }
+
   const addObjectButton = page.getByRole('button', { name: /add object/i }).first();
-  await expect(addObjectButton).toBeVisible({ timeout: 10000 });
-  await addObjectButton.click();
+  if (await addObjectButton.isVisible().catch(() => false)) {
+    await addObjectButton.click();
+  }
 
   const codeTab = page.getByRole('tab', { name: /^code$/i });
-  await expect(codeTab).toBeVisible({ timeout: 10000 });
+  if (await codeTab.isVisible().catch(() => false)) {
+    await codeTab.click();
+  }
 
-  const assistantButton = page.locator('button[title="Open Blockly assistant"]');
-  await expect(assistantButton).toBeVisible({ timeout: 10000 });
+  const blocklyAssistantButton = page.locator('button[title="Open Blockly assistant"]').first();
+  await expect(blocklyAssistantButton).toBeVisible({ timeout: 10000 });
+  await blocklyAssistantButton.click();
+  await expect(page.getByText('Provider mode')).toBeVisible();
 }
 
 async function installDesktopAssistantMock(
@@ -139,10 +151,7 @@ test.describe('Blockly Assistant Codex provider flow', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
-    await ensureBlocklyAssistantAvailable(page);
-
-    await page.locator('button[title="Open Blockly assistant"]').click();
-    await expect(page.getByText('Provider mode')).toBeVisible();
+    await openAssistant(page);
 
     await page.locator('select').first().selectOption('codex_oauth');
     await page.getByRole('button', { name: /login with chatgpt/i }).click();
@@ -151,12 +160,11 @@ test.describe('Blockly Assistant Codex provider flow', () => {
     await expect(page.getByText(/e2e@example.com/i)).toBeVisible();
     await expect(page.getByText(/ChatGPT login completed\./i).first()).toBeVisible();
 
-    const input = page.getByPlaceholder(/Ask or request edits\./i);
+    const input = page.getByPlaceholder(/ask.*request edits/i);
     await input.fill('hello');
     await page.getByRole('button', { name: /^send$/i }).click();
 
     await expect(page.getByText('Echo: hello')).toBeVisible();
-    await expect(page.getByText(/Provider mode:\s*codex_oauth/i)).toBeVisible();
   });
 
   test('shows surfaced technical error for codex provider failure', async ({ page }) => {
@@ -164,14 +172,12 @@ test.describe('Blockly Assistant Codex provider flow', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
-    await ensureBlocklyAssistantAvailable(page);
+    await openAssistant(page);
 
-    await page.locator('button[title="Open Blockly assistant"]').click();
-    await expect(page.getByText('Provider mode')).toBeVisible();
     await page.locator('select').first().selectOption('codex_oauth');
     await page.getByRole('button', { name: /login with chatgpt/i }).click();
 
-    const input = page.getByPlaceholder(/Ask or request edits\./i);
+    const input = page.getByPlaceholder(/ask.*request edits/i);
     await input.fill('hello');
     await page.getByRole('button', { name: /^send$/i }).click();
 

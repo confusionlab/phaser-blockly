@@ -9,6 +9,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { api } from '@convex-generated/api';
 import {
   applyOrchestratedCandidate,
+  buildAssistantProjectSnapshot,
   buildProgramContext,
   getLlmExposedBlocklyCapabilities,
   readProgramSummary,
@@ -16,7 +17,6 @@ import {
   validateSemanticOpsPayload,
 } from '@/lib/llm';
 import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate } from '@/lib/llm';
-import type { Project } from '@/types';
 import {
   appendAssistantMessage,
   appendAssistantTurn,
@@ -75,86 +75,6 @@ const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
   codexLoginInProgress: false,
   codexStatusMessage: null,
 };
-
-function buildProjectSnapshot(project: Project) {
-  return {
-    id: project.id,
-    name: project.name,
-    scenes: project.scenes.map((scene) => ({
-      id: scene.id,
-      name: scene.name,
-      order: scene.order,
-      ground: scene.ground
-        ? {
-            enabled: scene.ground.enabled,
-            y: scene.ground.y,
-            color: scene.ground.color,
-          }
-        : null,
-      cameraConfig: scene.cameraConfig
-        ? {
-            followTarget: scene.cameraConfig.followTarget,
-            bounds: scene.cameraConfig.bounds,
-            zoom: scene.cameraConfig.zoom,
-          }
-        : null,
-      objects: scene.objects.map((object) => ({
-        id: object.id,
-        name: object.name,
-        componentId: object.componentId || null,
-        x: object.x,
-        y: object.y,
-        scaleX: object.scaleX,
-        scaleY: object.scaleY,
-        rotation: object.rotation,
-        visible: object.visible,
-        physics: object.physics,
-        collider: object.collider,
-        blocklyXml: object.blocklyXml || '',
-        localVariables: (object.localVariables || []).map((variable) => ({
-          id: variable.id,
-          name: variable.name,
-          type: variable.type,
-          scope: variable.scope,
-          defaultValue: variable.defaultValue,
-        })),
-        sounds: (object.sounds || []).map((sound) => ({
-          id: sound.id,
-          name: sound.name,
-        })),
-      })),
-    })),
-    components: (project.components || []).map((component) => ({
-      id: component.id,
-      name: component.name,
-      physics: component.physics,
-      collider: component.collider,
-      blocklyXml: component.blocklyXml || '',
-      localVariables: (component.localVariables || []).map((variable) => ({
-        id: variable.id,
-        name: variable.name,
-        type: variable.type,
-        scope: variable.scope,
-        defaultValue: variable.defaultValue,
-      })),
-      sounds: (component.sounds || []).map((sound) => ({
-        id: sound.id,
-        name: sound.name,
-      })),
-    })),
-    messages: (project.messages || []).map((message) => ({
-      id: message.id,
-      name: message.name,
-    })),
-    globalVariables: (project.globalVariables || []).map((variable) => ({
-      id: variable.id,
-      name: variable.name,
-      type: variable.type,
-      scope: variable.scope,
-      defaultValue: variable.defaultValue,
-    })),
-  };
-}
 
 function getScopeStorageKey(scope: BlocklyEditScope | null): string | null {
   if (!scope) return null;
@@ -423,6 +343,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         scopeKey,
       };
 
+      const projectSnapshot = buildAssistantProjectSnapshot(project);
       const turn = await (providerMode === 'codex_oauth'
         ? (() => {
             if (!isDesktopRuntime || !window.desktopAssistant) {
@@ -437,11 +358,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               capabilities,
               context,
               programRead,
+              projectSnapshot,
               threadContext,
             }, runtimeUserId);
           })()
         : (() => {
-            const projectSnapshot = buildProjectSnapshot(project);
             return (async () => {
               const desktopCredentials =
                 isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && runtimeUserId
@@ -496,7 +417,35 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
       const parsedProposedEdits = validateSemanticOpsPayload(turn.proposedEdits);
       if (!parsedProposedEdits.ok) {
-        throw new Error(`Server response validation failed: ${parsedProposedEdits.errors.join('; ')}`);
+        const validationSummary = parsedProposedEdits.errors.slice(0, 4).join('; ');
+        const validationSuffix = parsedProposedEdits.errors.length > 4 ? '; ...' : '';
+        const fallbackMessage = [
+          'I could not generate executable edits because the model returned an invalid operation payload.',
+          `Validation: ${validationSummary}${validationSuffix}`,
+          'Please retry with concrete scene/object names (or IDs).',
+        ].join('\n');
+
+        setStatus('idle');
+        setStatusMessage('Assistant returned an invalid edit payload. No edits were prepared.');
+        await appendChatMessage({
+          role: 'assistant',
+          content: fallbackMessage,
+          createdAt: turnCompletedAt,
+          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
+        });
+        await appendAssistantTurn({
+          threadId,
+          userIntent,
+          mode: 'error',
+          provider: turn.provider,
+          model: turn.model,
+          debugTraceJson: JSON.stringify({
+            validationErrors: parsedProposedEdits.errors,
+            upstreamTrace: turn.debugTrace ?? null,
+          }),
+          createdAt: turnCompletedAt,
+        });
+        return;
       }
       const proposedEdits = parsedProposedEdits.value;
       const convexProvider: LLMProvider = {
