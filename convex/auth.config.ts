@@ -1,5 +1,7 @@
-const issuerDomain = process.env.CLERK_JWT_ISSUER_DOMAIN?.trim();
-const issuerDomains = issuerDomain ? [issuerDomain] : [];
+const issuerDomains = (process.env.CLERK_JWT_ISSUER_DOMAIN ?? "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
 
 export default {
   providers: issuerDomains.map((domain) => ({
