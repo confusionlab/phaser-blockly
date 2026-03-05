@@ -92,7 +92,7 @@ export function EditorLayout() {
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!project || isBlockingCloudSyncRef.current) {
+      if (!project || !isDirty || isBlockingCloudSyncRef.current) {
         return;
       }
 
@@ -114,7 +114,7 @@ export function EditorLayout() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [project, saveCurrentProject, syncProjectToCloud]);
+  }, [isDirty, project, saveCurrentProject, syncProjectToCloud]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {
