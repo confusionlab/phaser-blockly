@@ -7,6 +7,7 @@ import { ConvexProviderWithClerk } from 'convex/react-clerk'
 import './index.css'
 import App from './App.tsx'
 import { getConvexCloudUrl } from '@/lib/convexEnv'
+import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls'
 
 function trimOrUndefined(value: string | undefined): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -35,28 +36,46 @@ function getClerkPublishableKey(preferProd: boolean): string | null {
   return fallback || devKey || prodKey || null
 }
 
-function getDesktopAuthRedirectUrl(): string {
-  return trimOrUndefined(import.meta.env.VITE_DESKTOP_AUTH_REDIRECT_URL)
-    || 'https://accounts.confusionlab.com/'
-}
+function clearStaleDesktopClerkState(currentPublishableKey: string): void {
+  if (!isDesktopRuntime) {
+    return
+  }
 
-function getDesktopSignInUrl(): string {
-  return trimOrUndefined(import.meta.env.VITE_DESKTOP_AUTH_SIGN_IN_URL)
-    || 'https://accounts.confusionlab.com/sign-in'
-}
+  try {
+    const markerKey = 'pochacoding.clerk.publishable_key'
+    const previousPublishableKey = localStorage.getItem(markerKey)
+    if (previousPublishableKey === currentPublishableKey) {
+      return
+    }
 
-function getDesktopSignUpUrl(): string {
-  return trimOrUndefined(import.meta.env.VITE_DESKTOP_AUTH_SIGN_UP_URL)
-    || 'https://accounts.confusionlab.com/sign-up'
+    const shouldClear = (key: string) => {
+      const normalized = key.toLowerCase()
+      return normalized.startsWith('__clerk') || normalized.startsWith('clerk.')
+    }
+
+    for (const key of Object.keys(localStorage)) {
+      if (shouldClear(key)) {
+        localStorage.removeItem(key)
+      }
+    }
+
+    for (const key of Object.keys(sessionStorage)) {
+      if (shouldClear(key)) {
+        sessionStorage.removeItem(key)
+      }
+    }
+
+    localStorage.setItem(markerKey, currentPublishableKey)
+  } catch (error) {
+    console.warn('[DesktopAuth] Failed to reset stale Clerk state:', error)
+  }
 }
 
 const rootElement = document.getElementById('root')
 const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant
 const convexUrl = getConvexCloudUrl()
 const clerkPublishableKey = getClerkPublishableKey(isDesktopRuntime)
-const desktopAuthRedirectUrl = getDesktopAuthRedirectUrl()
-const desktopSignInUrl = getDesktopSignInUrl()
-const desktopSignUpUrl = getDesktopSignUpUrl()
+const desktopAuthUrls = resolveDesktopAuthUrls()
 const appBranch = import.meta.env.VITE_APP_BRANCH
 
 if (appBranch) {
@@ -88,18 +107,19 @@ if (!convexUrl || !clerkPublishableKey) {
 }
 
 const convex = new ConvexReactClient(convexUrl)
+clearStaleDesktopClerkState(clerkPublishableKey)
 
 createRoot(rootElement).render(
   <StrictMode>
     <ClerkProvider
       publishableKey={clerkPublishableKey}
       standardBrowser={!isDesktopRuntime}
-      signInUrl={isDesktopRuntime ? desktopSignInUrl : undefined}
-      signUpUrl={isDesktopRuntime ? desktopSignUpUrl : undefined}
-      signInForceRedirectUrl={isDesktopRuntime ? desktopAuthRedirectUrl : undefined}
-      signUpForceRedirectUrl={isDesktopRuntime ? desktopAuthRedirectUrl : undefined}
-      signInFallbackRedirectUrl={isDesktopRuntime ? desktopAuthRedirectUrl : undefined}
-      signUpFallbackRedirectUrl={isDesktopRuntime ? desktopAuthRedirectUrl : undefined}
+      signInUrl={isDesktopRuntime ? desktopAuthUrls.signInUrl : undefined}
+      signUpUrl={isDesktopRuntime ? desktopAuthUrls.signUpUrl : undefined}
+      signInForceRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
+      signUpForceRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
+      signInFallbackRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
+      signUpFallbackRedirectUrl={isDesktopRuntime ? desktopAuthUrls.redirectUrl : undefined}
     >
       <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
         {isDesktopRuntime ? (

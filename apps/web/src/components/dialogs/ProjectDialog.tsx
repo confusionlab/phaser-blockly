@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useQuery } from 'convex/react';
+import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -39,13 +39,19 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const [tab, setTab] = useState<string>(currentProject ? 'open' : 'new');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
 
   // Cloud sync hook
-  const { syncAllFromCloud, syncProjectFromCloud, deleteProjectFromCloud, cloudProjects } = useCloudSync({ syncOnMount: false });
-  const cloudProjectSummaries = useQuery(api.projects.list, mode === 'page' ? {} : 'skip');
+  const { syncAllFromCloud, syncProjectFromCloud, deleteProjectFromCloud } = useCloudSync({
+    syncOnMount: false,
+    enableCloudProjectListQuery: mode !== 'page',
+  });
+  const cloudProjectSummaries = useQuery(
+    api.projects.list,
+    mode === 'page' && isConvexAuthenticated ? {} : 'skip',
+  );
 
   const loadProjectsList = useCallback(async () => {
     const list = await listProjects();
@@ -67,28 +73,14 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
     );
   }, [cloudProjectSummaries, mode]);
 
-  // In dialog mode, keep the previous full cloud->local sync behavior.
+  // In dialog mode, show local projects immediately without blocking full cloud hydration.
   useEffect(() => {
-    if (mode === 'page') {
+    if (mode !== 'dialog') {
       return;
     }
 
-    const syncAndLoad = async () => {
-      if (cloudProjects === undefined) {
-        return;
-      }
-
-      setSyncing(true);
-      try {
-        await syncAllFromCloud({ pruneLocal: false });
-      } finally {
-        setSyncing(false);
-        await loadProjectsList();
-      }
-    };
-
-    void syncAndLoad();
-  }, [cloudProjects, mode, syncAllFromCloud, loadProjectsList]);
+    void loadProjectsList();
+  }, [mode, loadProjectsList]);
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
@@ -138,14 +130,21 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
     e.stopPropagation();
     if (confirm('Are you sure you want to delete this project?')) {
       const deletedInCloud = await deleteProjectFromCloud(projectId);
+      if (mode === 'page') {
+        if (deletedInCloud) {
+          await deleteProject(projectId);
+        }
+        return;
+      }
+
       if (!deletedInCloud) {
-        await syncAllFromCloud({ pruneLocal: mode === 'page' });
+        await syncAllFromCloud({ pruneLocal: false });
         await loadProjectsList();
         return;
       }
 
       await deleteProject(projectId);
-      await syncAllFromCloud({ pruneLocal: mode === 'page' });
+      await syncAllFromCloud({ pruneLocal: false });
       await loadProjectsList();
     }
   };
@@ -329,11 +328,9 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
             </div>
           )}
 
-          {(loading || syncing) && (
+          {loading && (
             <div className="absolute inset-0 bg-background/80 flex items-center justify-center">
-              <div className="text-muted-foreground">
-                {syncing ? 'Syncing from cloud...' : 'Loading...'}
-              </div>
+              <div className="text-muted-foreground">Loading...</div>
             </div>
           )}
         </div>
@@ -418,11 +415,9 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
           </TabsContent>
         </Tabs>
 
-        {(loading || syncing) && (
+        {loading && (
           <div className="absolute inset-0 bg-background/80 flex items-center justify-center rounded-lg">
-            <div className="text-muted-foreground">
-              {syncing ? 'Syncing from cloud...' : 'Loading...'}
-            </div>
+            <div className="text-muted-foreground">Loading...</div>
           </div>
         )}
       </DialogContent>

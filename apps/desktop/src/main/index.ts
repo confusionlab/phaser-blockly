@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -17,6 +17,23 @@ const BYOK_ACCOUNT_PREFIX = 'openrouter-byok';
 const PROVIDER_MODE_FILE_PREFIX = 'assistant-provider-mode';
 const CODEX_AUTH_LINK_FILE = 'assistant-codex-auth-link.json';
 const FALLBACK_SECRET_FILE = 'assistant-secrets.json';
+const CLERK_STORAGE_RESET_MARKER_FILE = 'clerk-storage-reset-v2.json';
+const CLERK_STORAGE_ORIGINS = [
+  'https://clerk.confusionlab.com',
+  'https://accounts.confusionlab.com',
+  'https://true-dolphin-27.clerk.accounts.dev',
+  'https://true-dolphin-27.accounts.dev',
+];
+const CLERK_COOKIE_DOMAINS = [
+  'clerk.confusionlab.com',
+  '.clerk.confusionlab.com',
+  'accounts.confusionlab.com',
+  '.accounts.confusionlab.com',
+  'true-dolphin-27.clerk.accounts.dev',
+  '.true-dolphin-27.clerk.accounts.dev',
+  'true-dolphin-27.accounts.dev',
+  '.true-dolphin-27.accounts.dev',
+];
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -210,6 +227,113 @@ function getProdWebEntry(): string {
   return path.resolve(__dirname, '../../../web/dist/index.html');
 }
 
+function getClerkStorageResetMarkerPath(): string {
+  return path.join(app.getPath('userData'), CLERK_STORAGE_RESET_MARKER_FILE);
+}
+
+function shouldRewriteClerkRequestHeaders(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    if (url.protocol !== 'https:') {
+      return false;
+    }
+    return (
+      url.hostname === 'clerk.confusionlab.com'
+      || url.hostname.endsWith('.clerk.accounts.dev')
+      || url.hostname.endsWith('.accounts.dev')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function setupClerkRequestHeaderOverrides(): void {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    if (!shouldRewriteClerkRequestHeaders(details.url)) {
+      callback({ requestHeaders: details.requestHeaders });
+      return;
+    }
+
+    let requestOrigin: string;
+    try {
+      requestOrigin = new URL(details.url).origin;
+    } catch {
+      callback({ requestHeaders: details.requestHeaders });
+      return;
+    }
+
+    const headers = { ...details.requestHeaders };
+    headers.Origin = requestOrigin;
+    headers.Referer = `${requestOrigin}/`;
+    callback({ requestHeaders: headers });
+  });
+}
+
+async function maybeResetClerkStorage(): Promise<void> {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  const markerPath = getClerkStorageResetMarkerPath();
+  if (existsSync(markerPath)) {
+    return;
+  }
+
+  const storageTypes: ('cookies' | 'localstorage' | 'indexdb' | 'serviceworkers' | 'cachestorage')[] = [
+    'cookies',
+    'localstorage',
+    'indexdb',
+    'serviceworkers',
+    'cachestorage',
+  ];
+
+  const defaultSession = session.defaultSession;
+
+  for (const origin of CLERK_STORAGE_ORIGINS) {
+    try {
+      await defaultSession.clearStorageData({
+        origin,
+        storages: storageTypes,
+      });
+    } catch (error) {
+      console.warn(`[DesktopAuth] Failed clearing storage for ${origin}:`, error);
+    }
+  }
+
+  for (const domain of CLERK_COOKIE_DOMAINS) {
+    try {
+      const cookies = await defaultSession.cookies.get({ domain });
+      for (const cookie of cookies) {
+        const cookieDomain = cookie.domain ?? '';
+        if (!cookieDomain) {
+          continue;
+        }
+        const host = cookieDomain.startsWith('.') ? cookieDomain.slice(1) : cookieDomain;
+        const protocol = cookie.secure ? 'https' : 'http';
+        const url = `${protocol}://${host}${cookie.path}`;
+        await defaultSession.cookies.remove(url, cookie.name);
+      }
+    } catch (error) {
+      console.warn(`[DesktopAuth] Failed removing cookies for ${domain}:`, error);
+    }
+  }
+
+  try {
+    await fs.mkdir(app.getPath('userData'), { recursive: true });
+    await fs.writeFile(
+      markerPath,
+      JSON.stringify({ resetAt: new Date().toISOString() }, null, 2),
+      'utf8',
+    );
+  } catch (error) {
+    console.warn('[DesktopAuth] Failed writing storage reset marker:', error);
+  }
+}
+
 function createMainWindow(): BrowserWindow {
   const preloadCandidates = [
     path.join(__dirname, '../preload/index.cjs'),
@@ -311,7 +435,9 @@ function setupIpcHandlers(): void {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await maybeResetClerkStorage();
+  setupClerkRequestHeaderOverrides();
   setupIpcHandlers();
   mainWindow = createMainWindow();
 

@@ -710,7 +710,11 @@ export const list = query({
   args: {},
   returns: v.array(projectSummaryValidator),
   handler: async (ctx) => {
-    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return [];
+    }
+    const ownerUserId = identity.subject;
     const projects = await listProjectsForOwner(ctx, ownerUserId);
     return pickCanonicalProjectsByLocalId(projects).map(toSummary);
   },
@@ -880,7 +884,11 @@ export const listFull = query({
   args: {},
   returns: v.array(fullProjectValidator),
   handler: async (ctx) => {
-    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return [];
+    }
+    const ownerUserId = identity.subject;
     const projects = await listProjectsForOwner(ctx, ownerUserId);
     const canonicalProjects = pickCanonicalProjectsByLocalId(projects);
     return await Promise.all(canonicalProjects.map((project) => toFull(ctx, project)));

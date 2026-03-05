@@ -10,10 +10,10 @@ import { GlobalAssistantModal } from './components/assistant/GlobalAssistantModa
 import { BillingPage } from './components/billing/BillingPage';
 import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
+import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls';
 
 const E2E_AUTH_BYPASS = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
-const DESKTOP_AUTH_REDIRECT_URL = import.meta.env.VITE_DESKTOP_AUTH_REDIRECT_URL || 'https://accounts.confusionlab.com/';
-const DESKTOP_AUTH_SIGN_UP_URL = import.meta.env.VITE_DESKTOP_AUTH_SIGN_UP_URL || 'https://accounts.confusionlab.com/sign-up';
+const DESKTOP_AUTH_URLS = resolveDesktopAuthUrls();
 
 function resetSessionStateForAccountBoundary() {
   useProjectStore.getState().closeProject();
@@ -45,11 +45,12 @@ function SignedOutScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <SignIn
-        signUpUrl={isDesktopRuntime ? DESKTOP_AUTH_SIGN_UP_URL : undefined}
-        signUpForceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
-        signUpFallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
-        forceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
-        fallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_REDIRECT_URL : undefined}
+        routing={isDesktopRuntime ? 'virtual' : undefined}
+        signUpUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.signUpUrl : undefined}
+        signUpForceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
+        signUpFallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
+        forceRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
+        fallbackRedirectUrl={isDesktopRuntime ? DESKTOP_AUTH_URLS.redirectUrl : undefined}
       />
     </div>
   );

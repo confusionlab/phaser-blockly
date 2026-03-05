@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useMutation, useQuery } from 'convex/react';
+import { useConvex, useConvexAuth, useMutation, useQuery } from 'convex/react';
 import type { Id } from '@convex-generated/dataModel';
 import { api } from '@convex-generated/api';
 import {
@@ -28,6 +28,8 @@ interface CloudSyncOptions {
   syncOnUnmount?: boolean;
   // Periodic checkpoint interval while dirty.
   checkpointIntervalMs?: number;
+  // Whether to keep a reactive full cloud project list in memory.
+  enableCloudProjectListQuery?: boolean;
 }
 
 interface CloudProjectRecord {
@@ -160,15 +162,21 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     isDirty = false,
     syncOnUnmount = true,
     checkpointIntervalMs = 45_000,
+    enableCloudProjectListQuery = true,
   } = options;
 
+  const convex = useConvex();
   const generateUploadUrlMutation = useMutation(api.projects.generateUploadUrl);
   const syncMutation = useMutation(api.projects.syncBatch);
   const syncSingleMutation = useMutation(api.projects.sync);
   const syncRevisionsMutation = useMutation(api.projects.syncRevisions);
   const listRevisionsMutation = useMutation(api.projects.listRevisionsForSync);
   const removeProjectMutation = useMutation(api.projects.remove);
-  const cloudProjects = useQuery(api.projects.listFull);
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const cloudProjects = useQuery(
+    api.projects.listFull,
+    isConvexAuthenticated && enableCloudProjectListQuery ? {} : 'skip',
+  );
 
   const isSyncingRef = useRef(false);
   const currentProjectIdRef = useRef(currentProjectId);
@@ -290,13 +298,24 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   }, []);
 
   const reconcileProjectFromCloud = useCallback(async (localId: string): Promise<boolean> => {
-    if (!cloudProjects) {
-      return false;
+    let candidate = cloudProjects
+      ? dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]).find(
+          (project) => project.localId === localId,
+        )
+      : undefined;
+
+    if (!candidate) {
+      try {
+        const fullProject = await convex.query(api.projects.getFullProject, { localId });
+        if (fullProject) {
+          candidate = fullProject as CloudProjectRecord;
+        }
+      } catch (error) {
+        console.error(`[CloudSync] Failed to fetch cloud project "${localId}":`, error);
+        return false;
+      }
     }
 
-    const candidate = dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]).find(
-      (project) => project.localId === localId,
-    );
     if (!candidate) {
       return false;
     }
@@ -339,7 +358,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       console.error(`[CloudSync] Failed to reconcile local project "${localId}" from cloud:`, error);
       return false;
     }
-  }, [cloudProjects, listRevisionsMutation]);
+  }, [cloudProjects, convex, listRevisionsMutation]);
 
   // Sync all local projects to cloud
   const syncAllToCloud = useCallback(async () => {
