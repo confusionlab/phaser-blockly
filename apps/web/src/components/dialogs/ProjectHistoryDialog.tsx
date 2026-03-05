@@ -1,0 +1,214 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Project } from '@/types';
+import {
+  listProjectRevisions,
+  renameCheckpoint,
+  restoreAsNewProject,
+  type ProjectRevision,
+} from '@/db/database';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+
+type HistoryFilter = 'all' | 'manual';
+
+interface ProjectHistoryDialogProps {
+  project: Project | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onRestoredProject: (project: Project) => void;
+}
+
+const REASON_LABEL: Record<ProjectRevision['reason'], string> = {
+  manual_checkpoint: 'Manual Checkpoint',
+  auto_checkpoint: 'Auto Checkpoint',
+  import: 'Import',
+  restore: 'Restore',
+  edit_revision: 'Edit',
+};
+
+function formatRevisionDate(value: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(value);
+}
+
+export function ProjectHistoryDialog({
+  project,
+  open,
+  onOpenChange,
+  onRestoredProject,
+}: ProjectHistoryDialogProps) {
+  const [filter, setFilter] = useState<HistoryFilter>('all');
+  const [revisions, setRevisions] = useState<ProjectRevision[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!project) {
+      setRevisions([]);
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const next = await listProjectRevisions(project.id, {
+        manualCheckpointsOnly: filter === 'manual',
+      });
+      setRevisions(next);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to load history.');
+    } finally {
+      setLoading(false);
+    }
+  }, [filter, project]);
+
+  useEffect(() => {
+    if (open) {
+      void reload();
+    }
+  }, [open, reload]);
+
+  const title = useMemo(() => {
+    if (!project) return 'Version History';
+    return `Version History - ${project.name}`;
+  }, [project]);
+
+  const handleRenameCheckpoint = useCallback(async (revision: ProjectRevision) => {
+    if (!project) return;
+
+    const currentName = revision.checkpointName ?? '';
+    const nextName = window.prompt('Checkpoint name', currentName);
+    if (nextName === null) return;
+
+    const trimmed = nextName.trim();
+    if (!trimmed) {
+      alert('Checkpoint name cannot be empty.');
+      return;
+    }
+
+    try {
+      await renameCheckpoint(project.id, revision.id, trimmed);
+      await reload();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to rename checkpoint.');
+    }
+  }, [project, reload]);
+
+  const handleRestore = useCallback(async (revision: ProjectRevision) => {
+    if (!project) return;
+
+    const label = revision.checkpointName || formatRevisionDate(revision.createdAt);
+    const confirmed = window.confirm(
+      `Restore as new project from "${label}"? This creates a new copy and keeps your current project unchanged.`,
+    );
+    if (!confirmed) return;
+
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const restoredProject = await restoreAsNewProject(project.id, revision.id);
+      onRestoredProject(restoredProject);
+      onOpenChange(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to restore revision.');
+    } finally {
+      setLoading(false);
+    }
+  }, [onOpenChange, onRestoredProject, project]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col gap-4">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant={filter === 'all' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('all')}
+          >
+            All
+          </Button>
+          <Button
+            variant={filter === 'manual' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setFilter('manual')}
+          >
+            Manual Checkpoints
+          </Button>
+          <div className="ml-auto">
+            <Button variant="outline" size="sm" onClick={() => void reload()} disabled={loading}>
+              Refresh
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto rounded-md border">
+          {loading && revisions.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground">Loading revision history...</div>
+          ) : revisions.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground">No revision history yet.</div>
+          ) : (
+            <div className="divide-y">
+              {revisions.map((revision) => (
+                <div key={revision.id} className="p-3 flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      {revision.isCheckpoint && (
+                        <span className="text-[11px] px-2 py-0.5 rounded bg-primary/10 text-primary">
+                          Checkpoint
+                        </span>
+                      )}
+                      <span className="text-sm font-medium">{REASON_LABEL[revision.reason]}</span>
+                    </div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      {formatRevisionDate(revision.createdAt)}
+                    </div>
+                    {revision.checkpointName && (
+                      <div className="text-sm mt-1">{revision.checkpointName}</div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {revision.isCheckpoint && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleRenameCheckpoint(revision)}
+                        disabled={loading}
+                      >
+                        Rename
+                      </Button>
+                    )}
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => void handleRestore(revision)}
+                      disabled={loading}
+                    >
+                      Restore
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {errorMessage && <div className="text-sm text-destructive">{errorMessage}</div>}
+      </DialogContent>
+    </Dialog>
+  );
+}
