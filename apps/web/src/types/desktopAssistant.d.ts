@@ -53,6 +53,7 @@ export type DesktopCodexAssistantTurnResponse =
       model: string;
       mode: 'chat';
       answer: string;
+      errorCode?: string;
       debugTrace?: unknown;
     }
   | {
@@ -60,6 +61,7 @@ export type DesktopCodexAssistantTurnResponse =
       model: string;
       mode: 'edit';
       proposedEdits: unknown;
+      errorCode?: string;
       debugTrace?: unknown;
     };
 

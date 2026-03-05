@@ -9,14 +9,14 @@ Runtime target: Electron desktop (`codex_oauth`, no OpenRouter spend)
 This checklist tracks real end-to-end verification of AI agent abilities in the desktop runtime.
 Each item includes a short note from the latest fully passing run.
 
-Latest full-pass run: `2026-03-05T23:30:21.265Z` (`38/38` passed)
-Latest attempted run: `2026-03-05T23:30:21.265Z` (`38/38` passed)
+Latest full-pass run: `2026-03-05T23:30:21.265Z` (`38/38` passed, before removing native JSON fallback)
+Latest attempted run: `2026-03-05T22:49:40.211Z` (`0/38` passed on direct Responses-only desktop Codex OAuth)
 
 Current transport notes:
 - Web remains on the shared OpenAI Responses runner.
 - Desktop `managed` can use that same OpenAI Responses runner.
-- Desktop `codex_oauth` now falls back to the native Codex turn path again, which restores ChatGPT-subscription-backed execution without requiring `api.responses.write`.
-- Direct desktop `codex_oauth` use of the shared OpenAI Responses runner is still blocked by `assistant_transport_error` / `Missing scopes: api.responses.write`, so native Codex transport is the canonical desktop subscription path.
+- Desktop `codex_oauth` now uses only the shared OpenAI Responses runner.
+- Desktop `codex_oauth` no longer falls back to a native `codex-exec` JSON path; when the token lacks `api.responses.write`, the turn fails safely and surfaces that transport error directly.
 
 ## Preflight
 
@@ -26,8 +26,8 @@ Current transport notes:
   - Notes: Wait gate now requires runtime user id before any case runs.
 - [x] Codex OAuth status is ready for signed-in user (`hasCodexToken=true`, `codexAvailable=true`).
   - Notes: Wait gate logs `phase:codex_ready mode=codex_oauth hasToken=true available=true`.
-- [x] Assistant turn transport succeeds in desktop runtime.
-  - Notes: Latest run (`2026-03-05T23:30:21.265Z`) passed `38/38` cases through the native `codex-exec` turn path after the shared Responses attempt correctly fell back for `codex_oauth`.
+- [ ] Assistant turn transport succeeds in desktop runtime.
+  - Notes: Direct desktop `codex_oauth` requests still fail when the ChatGPT/Codex token lacks `api.responses.write`; native JSON fallback was removed intentionally so the app now surfaces that failure instead of silently taking the slow compatibility path.
 
 ## Project Ops
 
@@ -138,3 +138,4 @@ Current transport notes:
 - 2026-03-06: Rebuilt desktop main bundle and reran the harness against the shared OpenAI Responses runner; direct `codex_oauth` Responses requests failed `0/38` due to `assistant_transport_error` / missing `api.responses.write` on the Codex OAuth token.
 - 2026-03-06: Hardened `apps/desktop/scripts/e2e-agent-abilities.mjs` so grounding chat fallback transport errors no longer count as PASS.
 - 2026-03-06: Restored desktop `codex_oauth` fallback to the native Codex turn path, tightened the prompt for literal op-contract requests, and reran the full matrix to `38/38` PASS.
+- 2026-03-06: Removed the native `codex-exec` JSON fallback again so desktop `codex_oauth` now either uses the shared Responses/tool-calling path or fails safely with the underlying transport error.
