@@ -660,6 +660,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     syncAllFromCloud,
     syncAllBidirectional,
     syncProjectToCloud,
+    syncProjectFromCloud: reconcileProjectFromCloud,
     deleteProjectFromCloud,
     syncProjectRevisionsToCloud,
     isProjectInCloud,
