@@ -7,16 +7,12 @@ import { CodexAppServerClient } from './codexAppServer';
 import type {
   AssistantProviderMode,
   CodexAssistantTurnRequest,
-  ProviderCredentials,
   ProviderStatus,
 } from '../shared/provider';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const KEYCHAIN_SERVICE = 'PochaCodingAssistant';
-const BYOK_ACCOUNT_PREFIX = 'openrouter-byok';
 const PROVIDER_MODE_FILE_PREFIX = 'assistant-provider-mode';
 const CODEX_AUTH_LINK_FILE = 'assistant-codex-auth-link.json';
-const FALLBACK_SECRET_FILE = 'assistant-secrets.json';
 const DEFAULT_PACKAGED_WEB_URL = 'https://code.confusionlab.com';
 const PACKAGED_WEB_CACHE_RESET_MARKER_PREFIX = 'packaged-web-cache-reset';
 const APP_NAME = 'PochaCoding';
@@ -24,14 +20,6 @@ const BRANCH_NAME = (process.env.DESKTOP_APP_BRANCH || '').trim();
 const APP_TITLE = BRANCH_NAME ? `${BRANCH_NAME} - ${APP_NAME}` : APP_NAME;
 
 let mainWindow: BrowserWindow | null = null;
-
-type KeytarClient = {
-  getPassword: (service: string, account: string) => Promise<string | null>;
-  setPassword: (service: string, account: string, password: string) => Promise<void>;
-  deletePassword: (service: string, account: string) => Promise<boolean>;
-};
-
-let keytarClient: KeytarClient | null | undefined;
 
 const codexClient = new CodexAppServerClient(
   {
@@ -44,69 +32,6 @@ const codexClient = new CodexAppServerClient(
   },
 );
 
-async function getKeytarClient() {
-  if (keytarClient !== undefined) return keytarClient;
-  try {
-    const imported = await import('keytar');
-    const candidate = (imported.default ?? imported) as unknown as KeytarClient;
-    keytarClient = candidate;
-    return keytarClient;
-  } catch {
-    keytarClient = null;
-    return null;
-  }
-}
-
-async function fallbackSecretFilePath(): Promise<string> {
-  return path.join(app.getPath('userData'), FALLBACK_SECRET_FILE);
-}
-
-async function readFallbackSecrets(): Promise<Record<string, string>> {
-  try {
-    const content = await fs.readFile(await fallbackSecretFilePath(), 'utf8');
-    const parsed = JSON.parse(content) as Record<string, string>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-async function writeFallbackSecrets(secrets: Record<string, string>): Promise<void> {
-  await fs.mkdir(app.getPath('userData'), { recursive: true });
-  await fs.writeFile(await fallbackSecretFilePath(), JSON.stringify(secrets), 'utf8');
-}
-
-async function getSecret(account: string): Promise<string | null> {
-  const client = await getKeytarClient();
-  if (client) {
-    return client.getPassword(KEYCHAIN_SERVICE, account);
-  }
-  const fallback = await readFallbackSecrets();
-  return fallback[account] || null;
-}
-
-async function setSecret(account: string, value: string): Promise<void> {
-  const client = await getKeytarClient();
-  if (client) {
-    await client.setPassword(KEYCHAIN_SERVICE, account, value);
-    return;
-  }
-  const fallback = await readFallbackSecrets();
-  fallback[account] = value;
-  await writeFallbackSecrets(fallback);
-}
-
-async function deleteSecret(account: string): Promise<void> {
-  const client = await getKeytarClient();
-  if (client) {
-    await client.deletePassword(KEYCHAIN_SERVICE, account);
-    return;
-  }
-  const fallback = await readFallbackSecrets();
-  delete fallback[account];
-  await writeFallbackSecrets(fallback);
-}
-
 function assertValidUserId(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error('Missing authenticated user id for provider scope.');
@@ -118,10 +43,6 @@ function sanitizeUserIdForPath(userId: string): string {
   return userId.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
-function getScopedByokAccount(userId: string): string {
-  return `${BYOK_ACCOUNT_PREFIX}:${userId}`;
-}
-
 function getProviderModePath(userId: string): string {
   return path.join(app.getPath('userData'), `${PROVIDER_MODE_FILE_PREFIX}:${sanitizeUserIdForPath(userId)}.json`);
 }
@@ -130,7 +51,7 @@ async function readProviderMode(userId: string): Promise<AssistantProviderMode> 
   try {
     const content = await fs.readFile(getProviderModePath(userId), 'utf8');
     const parsed = JSON.parse(content) as { mode?: AssistantProviderMode };
-    if (parsed.mode === 'managed' || parsed.mode === 'byok' || parsed.mode === 'codex_oauth') {
+    if (parsed.mode === 'managed' || parsed.mode === 'codex_oauth') {
       return parsed.mode;
     }
     return 'managed';
@@ -166,10 +87,7 @@ async function writeCodexLinkedUserId(userId: string | null): Promise<void> {
 
 async function getProviderStatus(userId: string): Promise<ProviderStatus> {
   const mode = await readProviderMode(userId);
-  const [byok, codexStatus] = await Promise.all([
-    getSecret(getScopedByokAccount(userId)),
-    codexClient.getStatus(),
-  ]);
+  const codexStatus = await codexClient.getStatus();
   const linkedCodexUserId = await readCodexLinkedUserId();
   const codexLinkedToAnotherUser =
     codexStatus.hasToken
@@ -179,7 +97,6 @@ async function getProviderStatus(userId: string): Promise<ProviderStatus> {
 
   return {
     mode,
-    hasByokKey: !!byok,
     hasCodexToken,
     codexAvailable: codexStatus.available && !codexLinkedToAnotherUser,
     codexAuthMethod: codexStatus.authMethod,
@@ -189,18 +106,6 @@ async function getProviderStatus(userId: string): Promise<ProviderStatus> {
     codexStatusMessage: codexLinkedToAnotherUser
       ? 'Codex auth on this device is linked to a different account. Re-authenticate for this account to use Codex.'
       : codexStatus.statusMessage,
-  };
-}
-
-async function getProviderCredentials(userId: string): Promise<ProviderCredentials> {
-  const linkedCodexUserId = await readCodexLinkedUserId();
-  const [openRouterApiKey, codexToken] = await Promise.all([
-    getSecret(getScopedByokAccount(userId)),
-    linkedCodexUserId === userId ? codexClient.getAuthToken() : Promise.resolve(null),
-  ]);
-  return {
-    openRouterApiKey,
-    codexToken,
   };
 }
 
@@ -338,28 +243,12 @@ function setupIpcHandlers(): void {
     return getProviderStatus(userId);
   });
 
-  ipcMain.handle('assistant:provider:get-credentials', async (_event, rawUserId: unknown) => {
-    const userId = assertValidUserId(rawUserId);
-    return getProviderCredentials(userId);
-  });
-
   ipcMain.handle('assistant:provider:set-mode', async (_event, mode: AssistantProviderMode, rawUserId: unknown) => {
     const userId = assertValidUserId(rawUserId);
-    if (mode !== 'managed' && mode !== 'byok' && mode !== 'codex_oauth') {
+    if (mode !== 'managed' && mode !== 'codex_oauth') {
       throw new Error(`Invalid provider mode: ${String(mode)}`);
     }
     await writeProviderMode(userId, mode);
-    return getProviderStatus(userId);
-  });
-
-  ipcMain.handle('assistant:provider:set-byok-key', async (_event, key: string, rawUserId: unknown) => {
-    const userId = assertValidUserId(rawUserId);
-    const byokAccount = getScopedByokAccount(userId);
-    if (!key.trim()) {
-      await deleteSecret(byokAccount);
-    } else {
-      await setSecret(byokAccount, key.trim());
-    }
     return getProviderStatus(userId);
   });
 

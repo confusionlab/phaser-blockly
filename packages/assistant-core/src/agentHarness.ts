@@ -25,7 +25,6 @@ type ChatHistoryTurn = {
 };
 
 type AssistantProviderCredentials = {
-  openRouterApiKey?: string;
   codexToken?: string;
 };
 
@@ -44,14 +43,10 @@ type UnifiedAssistantTurnRequest = {
   projectSnapshot: unknown;
 };
 
-type ProviderTransport = 'openrouter' | 'openai';
-
 type ResolvedProviderConfig = {
-  provider: 'openrouter' | 'openai';
-  transport: ProviderTransport;
+  provider: 'openai';
   apiKey: string;
   model: string;
-  referer?: string;
   appName: string;
 };
 
@@ -59,6 +54,16 @@ type AgentRunContext = {
   projectSnapshot: Record<string, unknown>;
   capabilities: unknown;
 };
+
+type AssistantFinalSubmission =
+  | {
+      mode: 'chat';
+      answer: string;
+    }
+  | {
+      mode: 'edit';
+      proposedEdits: unknown;
+    };
 
 type OpenAIApiError = {
   status?: number;
@@ -117,6 +122,10 @@ function getEnv(name: string): string | undefined {
   return maybeProcess.process?.env?.[name];
 }
 
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function toErrorCode(value: string): string {
   return value
     .toLowerCase()
@@ -125,18 +134,16 @@ function toErrorCode(value: string): string {
     .slice(0, 64) || 'assistant_turn_error';
 }
 
-function getOpenRouterDefaults() {
-  const model = (getEnv('OPENROUTER_MODEL') || 'openai/gpt-5.3-codex').trim();
-  const referer = getEnv('OPENROUTER_REFERER')?.trim();
-  const appName = (getEnv('OPENROUTER_APP_NAME') || 'PochaCoding').trim();
+function getManagedOpenAIDefaults() {
+  const model = (getEnv('OPENAI_MODEL') || getEnv('OPENAI_MANAGED_MODEL') || 'gpt-5').trim();
+  const appName = (getEnv('OPENAI_APP_NAME') || getEnv('OPENAI_MANAGED_APP_NAME') || 'PochaCoding').trim();
   return {
     model,
-    referer,
     appName,
   };
 }
 
-function getOpenAIDefaults() {
+function getCodexOpenAIDefaults() {
   const model = (getEnv('OPENAI_OAUTH_MODEL') || 'gpt-5').trim();
   const appName = (getEnv('OPENAI_OAUTH_APP_NAME') || 'PochaCoding').trim();
   return {
@@ -145,10 +152,10 @@ function getOpenAIDefaults() {
   };
 }
 
-function getManagedOpenRouterApiKey(): string {
-  const apiKey = getEnv('OPENROUTER_API_KEY');
+function getManagedOpenAIApiKey(): string {
+  const apiKey = getEnv('OPENAI_API_KEY');
   if (!apiKey || !apiKey.trim()) {
-    throw new Error('Missing OPENROUTER_API_KEY in Convex environment.');
+    throw new Error('openai_api_key_missing');
   }
   return apiKey.trim();
 }
@@ -211,32 +218,11 @@ function resolveProviderConfig(args: {
   const credentials = isRecord(args.providerCredentials) ? args.providerCredentials : {};
 
   if (args.providerMode === 'managed') {
-    const defaults = getOpenRouterDefaults();
+    const defaults = getManagedOpenAIDefaults();
     return {
-      provider: 'openrouter',
-      transport: 'openrouter',
-      apiKey: getManagedOpenRouterApiKey(),
+      provider: 'openai',
+      apiKey: getManagedOpenAIApiKey(),
       model: defaults.model,
-      referer: defaults.referer,
-      appName: defaults.appName,
-    };
-  }
-
-  if (args.providerMode === 'byok') {
-    const byokKey =
-      typeof credentials.openRouterApiKey === 'string'
-        ? credentials.openRouterApiKey.trim()
-        : '';
-    if (!byokKey) {
-      throw new Error('byok_missing_openrouter_key');
-    }
-    const defaults = getOpenRouterDefaults();
-    return {
-      provider: 'openrouter',
-      transport: 'openrouter',
-      apiKey: byokKey,
-      model: defaults.model,
-      referer: defaults.referer,
       appName: defaults.appName,
     };
   }
@@ -249,10 +235,9 @@ function resolveProviderConfig(args: {
   if (!codexToken) {
     throw new Error('codex_oauth_missing_token');
   }
-  const defaults = getOpenAIDefaults();
+  const defaults = getCodexOpenAIDefaults();
   return {
     provider: 'openai',
-    transport: 'openai',
     apiKey: codexToken,
     model: defaults.model,
     appName: defaults.appName,
@@ -273,14 +258,15 @@ function buildAssistantTurnSystemPrompt(): string {
   return [
     'You are a Blockly assistant.',
     'Decide whether the user needs a conversational answer or an edit proposal.',
-    'Return ONLY JSON in one of these shapes:',
-    '{ "mode":"chat", "answer": string }',
-    '{ "mode":"edit", "proposedEdits": { "intentSummary": string, "assumptions": string[], "semanticOps": SemanticOp[], "projectOps": ProjectOp[] } }',
     'Use chat mode for questions/explanations/clarifications.',
     'Use edit mode only when the user asks to create/change/remove/fix project behavior.',
     'If the user is discussing capabilities/planning/tooling (not requesting concrete project changes now), use chat mode.',
     'When project details are needed (scenes, objects, properties, physics, components, block capabilities), call tools instead of guessing.',
     'Put Blockly code operations ONLY in semanticOps. Put scene/object/costume/project operations ONLY in projectOps.',
+    'Finalize every turn by calling exactly one tool:',
+    '- submit_chat_response(answer)',
+    '- submit_edit_response(intentSummary, assumptions, semanticOps, projectOps)',
+    'Do not output a JSON envelope in plain text.',
     'Edit mode semanticOps schema and rules:',
     '- create_event_flow / append_actions / replace_action / set_block_field / ensure_variable / ensure_message / retarget_reference / delete_subtree',
     'Edit mode projectOps schema and rules:',
@@ -293,9 +279,9 @@ function buildAssistantTurnSystemPrompt(): string {
     '- validate_project',
     'Always include BOTH arrays in proposedEdits. Use empty arrays when not needed.',
     'Never emit placeholder/template operations. Required IDs/names must be non-empty concrete values.',
-    'If required scene/object/costume references are unavailable, return chat mode with a concise follow-up question.',
+    'If required scene/object/costume references are unavailable, use submit_chat_response with a concise follow-up question.',
     '- Only use block types/field names present in capabilities/context.',
-    '- Never emit explanatory text outside JSON.',
+    '- If you already have enough information to answer without tools, answer directly through the chat finalization tool.',
   ].join('\n');
 }
 
@@ -950,8 +936,11 @@ function executeAssistantTool(args: {
   }
 }
 
-function buildAssistantTools(): FunctionTool<AgentRunContext, any, Record<string, unknown>>[] {
-  const toolSpecs: Array<{
+function buildAssistantTools(args: {
+  onChatResponse: (answer: string) => void;
+  onEditResponse: (proposedEdits: unknown) => void;
+}): FunctionTool<AgentRunContext, any, Record<string, unknown>>[] {
+  const readToolSpecs: Array<{
     name: string;
     description: string;
     parameters: Record<string, unknown>;
@@ -1096,7 +1085,7 @@ function buildAssistantTools(): FunctionTool<AgentRunContext, any, Record<string
     },
   ];
 
-  return toolSpecs.map((spec) => tool<any, AgentRunContext, Record<string, unknown>>({
+  const readTools = readToolSpecs.map((spec) => tool<any, AgentRunContext, Record<string, unknown>>({
     name: spec.name,
     description: spec.description,
     parameters: spec.parameters,
@@ -1116,6 +1105,80 @@ function buildAssistantTools(): FunctionTool<AgentRunContext, any, Record<string
       });
     },
   }));
+
+  const submitChatResponseTool = tool<any, AgentRunContext, Record<string, unknown>>({
+    name: 'submit_chat_response',
+    description: 'Finalize the assistant turn with a conversational answer.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        answer: { type: 'string' },
+      },
+      required: ['answer'],
+    },
+    strict: true,
+    execute: async (input) => {
+      const answer = isRecord(input) && typeof input.answer === 'string' ? input.answer.trim() : '';
+      if (!answer) {
+        throw new Error('submit_chat_response requires a non-empty answer');
+      }
+      args.onChatResponse(answer);
+      return {
+        accepted: true,
+        mode: 'chat',
+      };
+    },
+  });
+
+  const submitEditResponseTool = tool<any, AgentRunContext, Record<string, unknown>>({
+    name: 'submit_edit_response',
+    description: 'Finalize the assistant turn with a structured edit proposal.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        intentSummary: { type: 'string' },
+        assumptions: {
+          type: 'array',
+          items: { type: 'string' },
+        },
+        semanticOps: {
+          type: 'array',
+          items: { type: 'object' },
+        },
+        projectOps: {
+          type: 'array',
+          items: { type: 'object' },
+        },
+      },
+      required: ['intentSummary', 'assumptions', 'semanticOps', 'projectOps'],
+    },
+    strict: false,
+    execute: async (input) => {
+      if (!isRecord(input)) {
+        throw new Error('submit_edit_response requires an object payload');
+      }
+      args.onEditResponse({
+        intentSummary: typeof input.intentSummary === 'string' ? input.intentSummary.trim() : '',
+        assumptions: Array.isArray(input.assumptions)
+          ? input.assumptions.filter((entry): entry is string => typeof entry === 'string')
+          : [],
+        semanticOps: Array.isArray(input.semanticOps) ? input.semanticOps : [],
+        projectOps: Array.isArray(input.projectOps) ? input.projectOps : [],
+      });
+      return {
+        accepted: true,
+        mode: 'edit',
+      };
+    },
+  });
+
+  return [
+    ...readTools,
+    submitChatResponseTool,
+    submitEditResponseTool,
+  ];
 }
 
 function extractToolCalls(newItems: unknown[]): AssistantTraceToolCall[] {
@@ -1227,8 +1290,10 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
     });
   } catch (error) {
     const configError = error instanceof Error ? error.message : 'provider_configuration_error';
-    const provider = providerMode === 'codex_oauth' ? 'openai' : 'openrouter';
-    const model = providerMode === 'codex_oauth' ? getOpenAIDefaults().model : getOpenRouterDefaults().model;
+    const provider = 'openai';
+    const model = providerMode === 'codex_oauth'
+      ? getCodexOpenAIDefaults().model
+      : getManagedOpenAIDefaults().model;
     return buildFallbackChat({
       provider,
       model,
@@ -1236,7 +1301,7 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
       message:
         providerMode === 'codex_oauth'
           ? 'Codex mode is not authenticated. Use the desktop app\'s Login with ChatGPT flow and try again.'
-          : 'Provider configuration is incomplete. Check assistant provider settings and try again.',
+          : 'Managed OpenAI configuration is incomplete. Check assistant provider settings and try again.',
       debugTrace: {
         ...debugTraceBase,
         validationErrors: [`provider:${configError}`],
@@ -1244,22 +1309,30 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
     });
   }
 
-  const toolDefinitions = buildAssistantTools();
+  let finalSubmission: AssistantFinalSubmission | null = null;
+  const toolDefinitions = buildAssistantTools({
+    onChatResponse: (answer) => {
+      finalSubmission = {
+        mode: 'chat',
+        answer,
+      };
+    },
+    onEditResponse: (proposedEdits) => {
+      finalSubmission = {
+        mode: 'edit',
+        proposedEdits,
+      };
+    },
+  });
   const modelClient = new OpenAI({
     apiKey: providerConfig.apiKey,
-    ...(providerConfig.transport === 'openrouter'
-      ? {
-          baseURL: 'https://openrouter.ai/api/v1',
-          defaultHeaders: {
-            ...(providerConfig.referer ? { 'HTTP-Referer': providerConfig.referer } : {}),
-            'X-Title': providerConfig.appName,
-          },
-        }
-      : {}),
+    defaultHeaders: {
+      'X-Title': providerConfig.appName,
+    },
   });
   const provider = new OpenAIProvider({
     openAIClient: modelClient,
-    useResponses: false,
+    useResponses: true,
   });
 
   const agent = new Agent<AgentRunContext>({
@@ -1310,29 +1383,68 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
       ? result.finalOutput
       : JSON.stringify(result.finalOutput ?? null);
     const rawResponsesLength = Array.isArray(result.rawResponses) ? result.rawResponses.length : 0;
-    const parsedPayload = parseJsonFromResponse(outputText);
-
-    const validated = validateAssistantTurnPayload(parsedPayload);
     const toolCalls = extractToolCalls(Array.isArray(result.newItems) ? result.newItems : []);
+    let parsedPayloadPreview: string | null = null;
+    let validationErrors: string[] = [];
 
-    if (validated.mode === 'chat') {
-      return {
+    if (!finalSubmission && outputText.trim()) {
+      try {
+        const parsedPayload = parseJsonFromResponse(outputText);
+        const validated = validateAssistantTurnPayload(parsedPayload);
+        parsedPayloadPreview = truncateText(JSON.stringify(parsedPayload), 2000);
+        finalSubmission = validated.mode === 'chat'
+          ? {
+              mode: 'chat',
+              answer: validated.answer,
+            }
+          : {
+              mode: 'edit',
+              proposedEdits: validated.proposedEdits,
+            };
+        validationErrors.push('legacy_final_output_fallback');
+      } catch (error) {
+        validationErrors.push(`finalization:${toErrorMessage(error)}`);
+      }
+    }
+
+    if (!finalSubmission) {
+      return buildFallbackChat({
         provider: providerConfig.provider,
         model: providerConfig.model,
-        mode: 'chat',
-        answer: validated.answer,
+        reason: 'missing_finalization_tool',
+        message: 'Assistant request completed without a final response tool call. Please retry.',
         debugTrace: {
           ...debugTraceBase,
           modelRounds: rawResponsesLength,
           toolCalls,
-          parsedPayloadPreview: truncateText(JSON.stringify(parsedPayload), 2000),
+          validationErrors,
+          parsedPayloadPreview,
+          finalResponsePreview: truncateText(outputText, 4000),
+        },
+      });
+    }
+
+    parsedPayloadPreview ||= truncateText(JSON.stringify(finalSubmission), 2000);
+
+    if (finalSubmission.mode === 'chat') {
+      return {
+        provider: providerConfig.provider,
+        model: providerConfig.model,
+        mode: 'chat',
+        answer: finalSubmission.answer,
+        debugTrace: {
+          ...debugTraceBase,
+          modelRounds: rawResponsesLength,
+          toolCalls,
+          validationErrors,
+          parsedPayloadPreview,
           finalResponsePreview: truncateText(outputText, 4000),
           finalVerdict: 'chat',
         },
       };
     }
 
-    const normalized = normalizeProposedEditsShape(validated.proposedEdits);
+    const normalized = normalizeProposedEditsShape(finalSubmission.proposedEdits);
     const parsed = validateSemanticOpsPayload(normalized.value);
     if (!parsed.ok) {
       return buildFallbackChat({
@@ -1344,8 +1456,8 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
           ...debugTraceBase,
           modelRounds: rawResponsesLength,
           toolCalls,
-          validationErrors: parsed.errors,
-          parsedPayloadPreview: truncateText(JSON.stringify(parsedPayload), 2000),
+          validationErrors: [...validationErrors, ...parsed.errors],
+          parsedPayloadPreview,
           finalResponsePreview: truncateText(outputText, 4000),
         },
       });
@@ -1355,13 +1467,15 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
       ...debugTraceBase,
       modelRounds: rawResponsesLength,
       toolCalls,
-      parsedPayloadPreview: truncateText(JSON.stringify(parsedPayload), 2000),
+      validationErrors,
+      parsedPayloadPreview,
       finalResponsePreview: truncateText(outputText, 4000),
       finalVerdict: 'edit',
     };
 
     if (isRecord(normalized) && (normalized.movedProjectOpsFromSemantic > 0 || normalized.renamedProjectOps > 0)) {
       editTrace.validationErrors = [
+        ...editTrace.validationErrors,
         `normalized_project_ops:moved=${normalized.movedProjectOpsFromSemantic};renamed=${normalized.renamedProjectOps}`,
       ];
     }

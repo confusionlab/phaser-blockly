@@ -1,7 +1,7 @@
 export type Scalar = string | number | boolean;
 
 export type AssistantMode = 'chat' | 'edit';
-export type AssistantProviderMode = 'managed' | 'byok' | 'codex_oauth';
+export type AssistantProviderMode = 'managed' | 'codex_oauth';
 
 export type InputLiteralSpec =
   | Scalar

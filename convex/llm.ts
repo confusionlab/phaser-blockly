@@ -28,9 +28,8 @@ export const assistantTurn = action({
       role: v.union(v.literal("user"), v.literal("assistant")),
       content: v.string(),
     })),
-    providerMode: v.optional(v.union(v.literal("managed"), v.literal("byok"), v.literal("codex_oauth"))),
+    providerMode: v.optional(v.union(v.literal("managed"), v.literal("codex_oauth"))),
     providerCredentials: v.optional(v.object({
-      openRouterApiKey: v.optional(v.string()),
       codexToken: v.optional(v.string()),
     })),
     threadContext: v.optional(v.object({

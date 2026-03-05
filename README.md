@@ -57,19 +57,21 @@
 - In development (`pnpm dev:desktop`), Electron renderer loads `http://localhost:5173` (or override via `POCHACODING_DESKTOP_WEB_URL`).
 - In packaged runtime, Electron loads the hosted app URL `https://code.confusionlab.com` by default (override via `POCHACODING_DESKTOP_PROD_WEB_URL`). It falls back to bundled `web-dist` if the hosted URL fails to load.
 
-## Blockly LLM Assistant (OpenRouter)
+## Blockly LLM Assistant (OpenAI Responses)
 
 - The Blockly editor includes an assistant panel for natural-language block edits.
 - Provider calls are made from a Convex action (server-side), not from browser code.
+- Web and desktop now share the same `@openai/agents` + Responses-based orchestration in `packages/assistant-core`.
+- Desktop `codex_oauth` uses the same shared runner after obtaining the user's ChatGPT/Codex auth token from the local Codex app server.
 - Configure Convex env vars:
-  - `OPENROUTER_API_KEY`
-  - `OPENROUTER_MODEL` (optional, defaults to `openai/gpt-5.3-codex`)
-  - `OPENROUTER_REFERER` / `OPENROUTER_APP_NAME` (optional headers)
+  - `OPENAI_API_KEY`
+  - `OPENAI_MODEL` or `OPENAI_MANAGED_MODEL` (optional, defaults to `gpt-5`)
+  - `OPENAI_APP_NAME` or `OPENAI_MANAGED_APP_NAME` (optional title header)
   - `OPENAI_OAUTH_MODEL` (optional for `codex_oauth`, defaults to `gpt-5`)
   - `OPENAI_OAUTH_APP_NAME` (optional title header)
 - Flow:
   1. Enter an instruction in the assistant panel.
-  2. Convex action calls the selected provider and validates semantic-op JSON schema.
+  2. Convex action or desktop `codex_oauth` calls the same shared assistant-core runner.
   3. Client builds candidate Blockly XML deterministically, diffs, and validates.
   4. Apply if validation passes (with component propagation confirmation when needed).
   5. Use rollback to undo the latest apply transaction.

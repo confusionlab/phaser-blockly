@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 
-export type AssistantProviderMode = 'managed' | 'byok' | 'codex_oauth';
+export type AssistantProviderMode = 'managed' | 'codex_oauth';
 
 export interface AssistantThreadRecord {
   id: string;

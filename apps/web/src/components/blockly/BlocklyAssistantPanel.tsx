@@ -51,12 +51,7 @@ type CandidateDebugInfo = {
   trace: unknown;
   intentMismatchWarning: string | null;
 };
-type ProviderCredentials = {
-  openRouterApiKey?: string;
-  codexToken?: string;
-};
 type ProviderStatusSnapshot = {
-  hasByokKey: boolean;
   hasCodexToken: boolean;
   codexAvailable: boolean;
   codexAuthMethod: 'chatgpt' | 'api_key' | 'unknown' | null;
@@ -68,7 +63,6 @@ type ProviderStatusSnapshot = {
 
 const MAX_CHAT_MESSAGES = 50;
 const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
-  hasByokKey: false,
   hasCodexToken: false,
   codexAvailable: false,
   codexAuthMethod: null,
@@ -117,7 +111,6 @@ function detectIntentMismatchWarning(userIntent: string, candidate: Orchestrated
 }
 
 function mapProviderStatus(status: {
-  hasByokKey: boolean;
   hasCodexToken: boolean;
   codexAvailable: boolean;
   codexAuthMethod?: 'chatgpt' | 'api_key' | 'unknown' | null;
@@ -127,7 +120,6 @@ function mapProviderStatus(status: {
   codexStatusMessage?: string | null;
 }): ProviderStatusSnapshot {
   return {
-    hasByokKey: status.hasByokKey,
     hasCodexToken: status.hasCodexToken,
     codexAvailable: status.codexAvailable,
     codexAuthMethod: status.codexAuthMethod ?? null,
@@ -155,7 +147,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [providerMode, setProviderMode] = useState<AssistantProviderMode>('managed');
   const [providerStatus, setProviderStatus] = useState<ProviderStatusSnapshot | null>(null);
-  const [providerSecretInput, setProviderSecretInput] = useState('');
 
   const { project, addMessage, addGlobalVariable, addLocalVariable, updateObject, updateComponent } = useProjectStore();
   const { undo } = useEditorStore();
@@ -325,11 +316,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       setErrorMessage('Out of credits. Open Billing to upgrade or manage your plan.');
       return;
     }
-    if (providerMode === 'byok' && !(providerStatus?.hasByokKey || false)) {
-      setStatus('error');
-      setErrorMessage('BYOK mode selected but no key is configured.');
-      return;
-    }
     if (providerMode === 'codex_oauth' && !(providerStatus?.hasCodexToken || false)) {
       setStatus('error');
       setErrorMessage('Codex mode selected but not signed in. Click Login with ChatGPT.');
@@ -426,18 +412,10 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               })()
             : (() => {
                 return (async () => {
-                  const desktopCredentials =
-                    isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && runtimeUserId
-                      ? await window.desktopAssistant.provider.getCredentials(runtimeUserId)
-                      : undefined;
-                  const providerCredentials: ProviderCredentials | undefined = desktopCredentials
-                    ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
-                    : undefined;
                   return assistantTurnAction({
                     userIntent,
                     chatHistory: historyForTurn,
                     providerMode,
-                    providerCredentials,
                     threadContext,
                     capabilities,
                     context,
@@ -739,34 +717,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     }
   };
 
-  const saveByokSecret = async () => {
-    if (!isDesktopRuntime || !window.desktopAssistant) {
-      setErrorMessage('Provider secrets can only be configured in the desktop app.');
-      return;
-    }
-    if (!runtimeUserId) {
-      setErrorMessage('Missing signed-in user context for desktop provider.');
-      return;
-    }
-    if (providerMode !== 'byok') {
-      setErrorMessage('BYOK secret save is only available in BYOK mode.');
-      return;
-    }
-    if (!providerSecretInput.trim()) {
-      setErrorMessage('Enter an OpenRouter key first.');
-      return;
-    }
-    try {
-      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim(), runtimeUserId);
-      setProviderStatus(mapProviderStatus(status));
-      setProviderSecretInput('');
-      setStatusMessage('Credential saved to OS keychain.');
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to save credential.');
-    }
-  };
-
   const loginCodexProvider = async () => {
     if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Codex login is only available in the desktop app.');
@@ -839,27 +789,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             >
               <option value="managed">Managed credits</option>
               {isDesktopRuntime ? (
-                <>
-                  <option value="byok">BYO key</option>
-                  <option value="codex_oauth" disabled={providerStatus?.codexAvailable === false}>
-                    Codex / ChatGPT login
-                  </option>
-                </>
+                <option value="codex_oauth" disabled={providerStatus?.codexAvailable === false}>
+                  Codex / ChatGPT login
+                </option>
               ) : null}
             </select>
-            {isDesktopRuntime && providerMode === 'byok' ? (
-              <div className="flex items-center gap-2">
-                <input
-                  value={providerSecretInput}
-                  onChange={(event) => setProviderSecretInput(event.target.value)}
-                  placeholder="Paste OpenRouter key"
-                  className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
-                />
-                <Button size="sm" variant="secondary" onClick={() => void saveByokSecret()}>
-                  Save
-                </Button>
-              </div>
-            ) : null}
             {isDesktopRuntime && providerMode === 'codex_oauth' ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -892,7 +826,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             ) : null}
             {isDesktopRuntime ? (
               <div className="text-[11px] text-muted-foreground">
-                BYOK: {providerStatus?.hasByokKey ? 'configured' : 'missing'} · Codex: {providerStatus?.hasCodexToken ? 'configured' : 'missing'}
+                Codex: {providerStatus?.hasCodexToken ? 'configured' : 'missing'}
                 {providerMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable ? ' · Codex unavailable on this runtime' : ''}
               </div>
             ) : null}

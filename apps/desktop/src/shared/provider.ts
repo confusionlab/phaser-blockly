@@ -1,9 +1,8 @@
-export type AssistantProviderMode = 'managed' | 'byok' | 'codex_oauth';
+export type AssistantProviderMode = 'managed' | 'codex_oauth';
 export type CodexAuthMethod = 'chatgpt' | 'api_key' | 'unknown' | null;
 
 export interface ProviderStatus {
   mode: AssistantProviderMode;
-  hasByokKey: boolean;
   hasCodexToken: boolean;
   codexAvailable: boolean;
   codexAuthMethod: CodexAuthMethod;
@@ -11,11 +10,6 @@ export interface ProviderStatus {
   codexPlanType: string | null;
   codexLoginInProgress: boolean;
   codexStatusMessage: string | null;
-}
-
-export interface ProviderCredentials {
-  openRouterApiKey: string | null;
-  codexToken: string | null;
 }
 
 export interface ProviderEventPayload {

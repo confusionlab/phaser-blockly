@@ -1,9 +1,8 @@
-export type AssistantProviderMode = 'managed' | 'byok' | 'codex_oauth';
+export type AssistantProviderMode = 'managed' | 'codex_oauth';
 export type CodexAuthMethod = 'chatgpt' | 'api_key' | 'unknown' | null;
 
 export interface DesktopProviderStatus {
   mode: AssistantProviderMode;
-  hasByokKey: boolean;
   hasCodexToken: boolean;
   codexAvailable: boolean;
   codexAuthMethod: CodexAuthMethod;
@@ -11,11 +10,6 @@ export interface DesktopProviderStatus {
   codexPlanType: string | null;
   codexLoginInProgress: boolean;
   codexStatusMessage: string | null;
-}
-
-export interface DesktopProviderCredentials {
-  openRouterApiKey: string | null;
-  codexToken: string | null;
 }
 
 export interface DesktopProviderEvent {
@@ -73,11 +67,9 @@ export interface DesktopAssistantApi {
   provider: {
     status: (userId: string) => Promise<DesktopProviderStatus>;
     setMode: (mode: AssistantProviderMode, userId: string) => Promise<DesktopProviderStatus>;
-    setByokKey: (key: string, userId: string) => Promise<DesktopProviderStatus>;
     loginCodex: (userId: string) => Promise<DesktopProviderStatus>;
     logoutCodex: (userId: string) => Promise<DesktopProviderStatus>;
     assistantTurn: (request: DesktopCodexAssistantTurnRequest, userId: string) => Promise<DesktopCodexAssistantTurnResponse>;
-    getCredentials: (userId: string) => Promise<DesktopProviderCredentials>;
   };
   onProviderEvent: (listener: (payload: DesktopProviderEvent) => void) => () => void;
 }

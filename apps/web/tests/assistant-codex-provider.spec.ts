@@ -42,13 +42,12 @@ async function installDesktopAssistantMock(
   mode: 'chat-success' | 'error',
 ): Promise<void> {
   await page.addInitScript(({ scenario }) => {
-    type ProviderMode = 'managed' | 'byok' | 'codex_oauth';
+    type ProviderMode = 'managed' | 'codex_oauth';
     type Listener = (event: { type: string; success?: boolean; message?: string | null }) => void;
 
     const listeners: Listener[] = [];
     const state = {
       mode: 'managed' as ProviderMode,
-      hasByokKey: false,
       hasCodexToken: false,
       codexAvailable: true,
       codexAuthMethod: null as 'chatgpt' | 'api_key' | 'unknown' | null,
@@ -75,11 +74,9 @@ async function installDesktopAssistantMock(
         provider: {
           status: () => Promise<typeof state>;
           setMode: (mode: ProviderMode) => Promise<typeof state>;
-          setByokKey: (key: string) => Promise<typeof state>;
           loginCodex: () => Promise<typeof state>;
           logoutCodex: () => Promise<typeof state>;
           assistantTurn: (request: { userIntent: string }) => Promise<unknown>;
-          getCredentials: () => Promise<{ openRouterApiKey: string | null; codexToken: string | null }>;
         };
         onProviderEvent: (listener: Listener) => () => void;
       };
@@ -88,10 +85,6 @@ async function installDesktopAssistantMock(
         status: async () => cloneState(),
         setMode: async (modeValue: ProviderMode) => {
           state.mode = modeValue;
-          return cloneState();
-        },
-        setByokKey: async (key: string) => {
-          state.hasByokKey = key.trim().length > 0;
           return cloneState();
         },
         loginCodex: async () => {
@@ -129,10 +122,6 @@ async function installDesktopAssistantMock(
             },
           };
         },
-        getCredentials: async () => ({
-          openRouterApiKey: null,
-          codexToken: state.hasCodexToken ? 'mock-codex-token' : null,
-        }),
       },
       onProviderEvent: (listener: Listener) => {
         listeners.push(listener);

@@ -4,7 +4,6 @@ import type {
   CodexAssistantTurnRequest,
   CodexAssistantTurnResponse,
   ProviderEventPayload,
-  ProviderCredentials,
   ProviderStatus,
 } from '../shared/provider';
 
@@ -18,9 +17,6 @@ const assistantDesktopApi = {
     setMode: async (mode: AssistantProviderMode, userId: string): Promise<ProviderStatus> => {
       return ipcRenderer.invoke('assistant:provider:set-mode', mode, userId);
     },
-    setByokKey: async (key: string, userId: string): Promise<ProviderStatus> => {
-      return ipcRenderer.invoke('assistant:provider:set-byok-key', key, userId);
-    },
     loginCodex: async (userId: string): Promise<ProviderStatus> => {
       return ipcRenderer.invoke('assistant:provider:login-codex', userId);
     },
@@ -29,9 +25,6 @@ const assistantDesktopApi = {
     },
     assistantTurn: async (request: CodexAssistantTurnRequest, userId: string): Promise<CodexAssistantTurnResponse> => {
       return ipcRenderer.invoke('assistant:provider:assistant-turn', request, userId);
-    },
-    getCredentials: async (userId: string): Promise<ProviderCredentials> => {
-      return ipcRenderer.invoke('assistant:provider:get-credentials', userId);
     },
   },
   onProviderEvent: (listener: ProviderEventListener): (() => void) => {

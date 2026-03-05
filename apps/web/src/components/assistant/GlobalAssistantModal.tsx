@@ -40,13 +40,7 @@ import { createTraceRecorder } from '@/lib/llm/liveTrace';
 import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate, ProjectOp } from '@/lib/llm';
 import { buildModelEditOverviewLines } from '@/lib/llm/traceSummary';
 
-type ProviderCredentials = {
-  openRouterApiKey?: string;
-  codexToken?: string;
-};
-
 type ProviderStatusSnapshot = {
-  hasByokKey: boolean;
   hasCodexToken: boolean;
   codexAvailable: boolean;
   codexAuthMethod: 'chatgpt' | 'api_key' | 'unknown' | null;
@@ -77,7 +71,6 @@ type ProjectOpsCandidate = {
 };
 
 const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
-  hasByokKey: false,
   hasCodexToken: false,
   codexAvailable: false,
   codexAuthMethod: null,
@@ -126,7 +119,6 @@ function detectIntentMismatchWarning(userIntent: string, candidate: Orchestrated
 }
 
 function mapProviderStatus(status: {
-  hasByokKey: boolean;
   hasCodexToken: boolean;
   codexAvailable: boolean;
   codexAuthMethod?: 'chatgpt' | 'api_key' | 'unknown' | null;
@@ -136,7 +128,6 @@ function mapProviderStatus(status: {
   codexStatusMessage?: string | null;
 }): ProviderStatusSnapshot {
   return {
-    hasByokKey: status.hasByokKey,
     hasCodexToken: status.hasCodexToken,
     codexAvailable: status.codexAvailable,
     codexAuthMethod: status.codexAuthMethod ?? null,
@@ -192,7 +183,6 @@ export function GlobalAssistantModal() {
   const [scopeKey, setScopeKey] = useState<string | null>(null);
   const [providerMode, setProviderMode] = useState<AssistantProviderMode>('managed');
   const [providerStatus, setProviderStatus] = useState<ProviderStatusSnapshot>(DEFAULT_PROVIDER_STATUS);
-  const [providerSecretInput, setProviderSecretInput] = useState('');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [persistedMessages, setPersistedMessages] = useState<PersistedChatMessage[]>([]);
@@ -342,9 +332,6 @@ export function GlobalAssistantModal() {
       }
       if (managedCreditsBlocked) {
         throw new Error('Out of credits. Open Billing to upgrade or manage your plan.');
-      }
-      if (providerMode === 'byok' && !providerStatus.hasByokKey) {
-        throw new Error('BYOK mode selected but no key is configured.');
       }
       if (providerMode === 'codex_oauth' && !providerStatus.hasCodexToken) {
         throw new Error('Codex mode selected but not signed in. Click Login with ChatGPT.');
@@ -497,18 +484,10 @@ export function GlobalAssistantModal() {
               })()
             : (() => {
                 return (async () => {
-                  const desktopCredentials =
-                    isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && runtimeUserId
-                      ? await window.desktopAssistant.provider.getCredentials(runtimeUserId)
-                      : undefined;
-                  const providerCredentials: ProviderCredentials | undefined = desktopCredentials
-                    ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
-                    : undefined;
                   return assistantTurnAction({
                     userIntent,
                     chatHistory: historyForTurn,
                     providerMode,
-                    providerCredentials,
                     threadContext,
                     capabilities,
                     context,
@@ -882,31 +861,6 @@ export function GlobalAssistantModal() {
     }
   };
 
-  const saveByokSecret = async () => {
-    if (!isDesktopRuntime || !window.desktopAssistant) {
-      setErrorMessage('Provider secrets can only be configured in desktop app.');
-      return;
-    }
-    if (!runtimeUserId) {
-      setErrorMessage('Missing signed-in user context for desktop provider.');
-      return;
-    }
-    if (!providerSecretInput.trim()) {
-      setErrorMessage('Enter an OpenRouter key first.');
-      return;
-    }
-
-    try {
-      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim(), runtimeUserId);
-      setProviderStatus(mapProviderStatus(status));
-      setProviderSecretInput('');
-      setStatusMessage('Credential saved to OS keychain.');
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to save credential.');
-    }
-  };
-
   const loginCodexProvider = async () => {
     if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Codex login is only available in desktop app.');
@@ -981,32 +935,15 @@ export function GlobalAssistantModal() {
                       void updateProviderMode(event.target.value as AssistantProviderMode);
                     }}
                     className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
-                    disabled={!isDesktopRuntime}
-                  >
-                    <option value="managed">Managed credits</option>
-                    {isDesktopRuntime ? (
-                      <>
-                        <option value="byok">BYO key</option>
-                        <option value="codex_oauth">
-                          Codex / ChatGPT login
-                        </option>
-                      </>
-                    ) : null}
-                  </select>
-
-                  {isDesktopRuntime && providerMode === 'byok' ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={providerSecretInput}
-                        onChange={(event) => setProviderSecretInput(event.target.value)}
-                        placeholder="Paste OpenRouter key"
-                        className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
-                      />
-                      <Button size="sm" variant="secondary" onClick={() => void saveByokSecret()}>
-                        Save
-                      </Button>
-                    </div>
+                  disabled={!isDesktopRuntime}
+                >
+                  <option value="managed">Managed credits</option>
+                  {isDesktopRuntime ? (
+                    <option value="codex_oauth">
+                      Codex / ChatGPT login
+                    </option>
                   ) : null}
+                </select>
 
                   {isDesktopRuntime && providerMode === 'codex_oauth' ? (
                     <div className="space-y-2">
