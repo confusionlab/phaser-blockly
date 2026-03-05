@@ -592,6 +592,7 @@ function buildAssistantTurnSystemPrompt(): string {
     "Use edit mode only when the user asks to create/change/remove/fix project behavior.",
     "If the user is discussing capabilities/planning/tooling (not requesting concrete project changes now), use chat mode.",
     "When project details are needed (scenes, objects, properties, physics, components, block capabilities), call tools instead of guessing.",
+    "Put Blockly code operations ONLY in semanticOps. Put scene/object/costume/project operations ONLY in projectOps.",
     "Edit mode semanticOps schema and rules:",
     '- create_event_flow / append_actions / replace_action / set_block_field / ensure_variable / ensure_message / retarget_reference / delete_subtree',
     "Edit mode projectOps schema and rules:",

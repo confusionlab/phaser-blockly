@@ -213,6 +213,7 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
       'Use capabilities as strict source of truth for available blocks/actions.',
       'Do not use deprecated blocks. If unsupported, explain with mode=chat.',
       'When mode=edit, proposedEditsJson must be valid JSON and include BOTH semanticOps and projectOps arrays.',
+      'Put Blockly code operations ONLY in semanticOps. Put scene/object/costume/project operations ONLY in projectOps.',
       'Never output placeholder/template operations. Do not emit empty strings for required IDs/names.',
       'If required scene/object/costume references are not available, choose mode=chat and ask a concise follow-up.',
       'Allowed projectOps: rename_project, create_scene, rename_scene, reorder_scenes, create_object, rename_object, set_object_property, set_object_physics, set_object_collider_type, create_folder, rename_folder, move_object_to_folder, add_costume_from_image_url, add_costume_text_circle, rename_costume, reorder_costumes, set_current_costume, validate_project.',
@@ -233,6 +234,149 @@ function buildCodexAssistantPrompt(args: CodexAssistantTurnRequest): string {
     'Return a JSON object matching the output schema.',
     JSON.stringify(envelope, null, 2),
   ].join('\n\n');
+}
+
+const PROJECT_OPS = new Set([
+  'rename_project',
+  'create_scene',
+  'rename_scene',
+  'reorder_scenes',
+  'create_object',
+  'rename_object',
+  'set_object_property',
+  'set_object_physics',
+  'set_object_collider_type',
+  'create_folder',
+  'rename_folder',
+  'move_object_to_folder',
+  'add_costume_from_image_url',
+  'add_costume_text_circle',
+  'rename_costume',
+  'reorder_costumes',
+  'set_current_costume',
+  'validate_project',
+]);
+
+const PROJECT_OP_ALIASES: Record<string, string> = {
+  add_svg_text_costume: 'add_costume_text_circle',
+  add_text_costume: 'add_costume_text_circle',
+  create_text_costume: 'add_costume_text_circle',
+  add_image_costume: 'add_costume_from_image_url',
+  add_costume_from_image: 'add_costume_from_image_url',
+  import_image_costume: 'add_costume_from_image_url',
+  set_physics: 'set_object_physics',
+  set_collider_type: 'set_object_collider_type',
+};
+
+function normalizeProjectOpName(op: string): string {
+  const trimmed = op.trim();
+  if (!trimmed) return trimmed;
+  return PROJECT_OP_ALIASES[trimmed] ?? trimmed;
+}
+
+function normalizeProjectOpFields(value: Record<string, unknown>): Record<string, unknown> {
+  const opName = typeof value.op === 'string' ? normalizeProjectOpName(value.op) : '';
+  const next: Record<string, unknown> = {
+    ...value,
+    ...(opName ? { op: opName } : {}),
+  };
+
+  if (opName === 'add_costume_text_circle') {
+    if (typeof next.text !== 'string' || !next.text.trim()) {
+      const aliasText = [next.svgText, next.svg_text, next.label, next.content].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasText) {
+        next.text = aliasText;
+      }
+    }
+  }
+
+  if (opName === 'add_costume_from_image_url') {
+    if (typeof next.imageUrl !== 'string' || !next.imageUrl.trim()) {
+      const aliasUrl = [next.url, next.image, next.src].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasUrl) {
+        next.imageUrl = aliasUrl;
+      }
+    }
+  }
+
+  if (opName === 'set_object_collider_type') {
+    if (typeof next.colliderType !== 'string' || !next.colliderType.trim()) {
+      const aliasType = [next.type, next.collider].find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ) as string | undefined;
+      if (aliasType) {
+        next.colliderType = aliasType;
+      }
+    }
+  }
+
+  return next;
+}
+
+function normalizeProposedEditsShape(raw: unknown): {
+  value: unknown;
+  movedProjectOpsFromSemantic: number;
+  renamedProjectOps: number;
+} {
+  if (!isRecord(raw)) {
+    return {
+      value: raw,
+      movedProjectOpsFromSemantic: 0,
+      renamedProjectOps: 0,
+    };
+  }
+
+  const semanticRaw = Array.isArray(raw.semanticOps) ? raw.semanticOps : [];
+  const projectRaw = Array.isArray(raw.projectOps) ? raw.projectOps : [];
+
+  let movedProjectOpsFromSemantic = 0;
+  let renamedProjectOps = 0;
+
+  const normalizedSemantic: unknown[] = [];
+  const normalizedProject: unknown[] = [];
+
+  for (const entry of semanticRaw) {
+    if (!isRecord(entry) || typeof entry.op !== 'string') {
+      normalizedSemantic.push(entry);
+      continue;
+    }
+    const normalizedName = normalizeProjectOpName(entry.op);
+    if (normalizedName !== entry.op) {
+      renamedProjectOps += 1;
+    }
+    if (PROJECT_OPS.has(normalizedName)) {
+      movedProjectOpsFromSemantic += 1;
+      normalizedProject.push(normalizeProjectOpFields(entry));
+      continue;
+    }
+    normalizedSemantic.push(entry);
+  }
+
+  for (const entry of projectRaw) {
+    if (!isRecord(entry) || typeof entry.op !== 'string') {
+      normalizedProject.push(entry);
+      continue;
+    }
+    const normalizedName = normalizeProjectOpName(entry.op);
+    if (normalizedName !== entry.op) {
+      renamedProjectOps += 1;
+    }
+    normalizedProject.push(normalizeProjectOpFields(entry));
+  }
+
+  return {
+    value: {
+      ...raw,
+      semanticOps: normalizedSemantic,
+      projectOps: normalizedProject,
+    },
+    movedProjectOpsFromSemantic,
+    renamedProjectOps,
+  };
 }
 
 function buildInvalidEditFallback(args: {
@@ -402,7 +546,8 @@ export class CodexAppServerClient {
           stderr,
         });
       }
-      const validated = validateSemanticOpsPayload(proposedEdits);
+      const normalized = normalizeProposedEditsShape(proposedEdits);
+      const validated = validateSemanticOpsPayload(normalized.value);
       if (!validated.ok) {
         return buildInvalidEditFallback({
           reason: 'schema_validation_failed',
@@ -420,6 +565,8 @@ export class CodexAppServerClient {
           transport: 'codex-exec',
           exitCode,
           stderrTail: stderr.slice(-1200),
+          movedProjectOpsFromSemantic: normalized.movedProjectOpsFromSemantic,
+          renamedProjectOps: normalized.renamedProjectOps,
         },
       };
     }
