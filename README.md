@@ -26,8 +26,9 @@
   - `VITE_CLERK_PUBLISHABLE_KEY_DEV` for development.
   - `VITE_CLERK_PUBLISHABLE_KEY_PROD` for production/desktop builds.
 - Desktop runtime uses the DEV Clerk key by default in local dev. To force PROD key during local desktop runs, set `VITE_DESKTOP_USE_PROD_CLERK_KEY=1`.
-- Convex trusts a single Clerk issuer domain:
+- Convex can trust multiple Clerk issuer domains:
   - `CLERK_JWT_ISSUER_DOMAIN` (required)
+  - `CLERK_JWT_ISSUER_DOMAIN_SECONDARY` (optional)
 - Desktop runtime can force Clerk redirects to HTTPS via `VITE_DESKTOP_AUTH_REDIRECT_URL` (default: `https://accounts.confusionlab.com/`) to avoid `file://` redirect scheme errors.
 - Desktop runtime can also force explicit hosted auth paths:
   - `VITE_DESKTOP_AUTH_SIGN_IN_URL` (default: `https://accounts.confusionlab.com/sign-in`)
