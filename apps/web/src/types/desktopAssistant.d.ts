@@ -19,9 +19,25 @@ export interface DesktopProviderCredentials {
 }
 
 export interface DesktopProviderEvent {
-  type: 'codex-login-started' | 'codex-login-completed' | 'codex-logout' | 'codex-status' | 'codex-error';
+  type:
+    | 'codex-login-started'
+    | 'codex-login-completed'
+    | 'codex-logout'
+    | 'codex-status'
+    | 'codex-error'
+    | 'assistant-turn-started'
+    | 'assistant-turn-progress'
+    | 'assistant-turn-completed'
+    | 'assistant-turn-error';
   success?: boolean;
   message?: string | null;
+  detail?: string | null;
+  phase?: string | null;
+  timestamp?: string | null;
+  sequence?: number;
+  turnId?: string | null;
+  threadId?: string | null;
+  scopeKey?: string | null;
 }
 
 export interface DesktopCodexAssistantTurnRequest {

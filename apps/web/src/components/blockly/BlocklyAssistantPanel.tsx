@@ -17,7 +17,8 @@ import {
   validateSemanticOpsPayload,
 } from '@/lib/llm';
 import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate } from '@/lib/llm';
-import { buildAgentActivityLines, buildModelEditOverviewLines } from '@/lib/llm/traceSummary';
+import { createTraceRecorder } from '@/lib/llm/liveTrace';
+import { buildModelEditOverviewLines } from '@/lib/llm/traceSummary';
 import {
   appendAssistantMessage,
   appendAssistantTurn,
@@ -249,6 +250,9 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     if (!isDesktopRuntime || !runtimeUserId || !window.desktopAssistant) return;
     const desktopAssistant = window.desktopAssistant;
     return desktopAssistant.onProviderEvent((event) => {
+      if (event.type.startsWith('assistant-turn-')) {
+        return;
+      }
       if (event.message) {
         setStatusMessage(event.message);
       }
@@ -272,6 +276,22 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       meta: message.meta,
     });
     setChatMessages((prev) => [...prev, stored].slice(-MAX_CHAT_MESSAGES));
+  };
+
+  const upsertTransientChatMessage = (message: ChatMessage) => {
+    setChatMessages((prev) => {
+      const index = prev.findIndex((entry) => entry.id === message.id);
+      if (index < 0) {
+        return [...prev, message].slice(-MAX_CHAT_MESSAGES);
+      }
+      const next = [...prev];
+      next[index] = message;
+      return next.slice(-MAX_CHAT_MESSAGES);
+    });
+  };
+
+  const removeTransientChatMessage = (messageId: string) => {
+    setChatMessages((prev) => prev.filter((entry) => entry.id !== messageId));
   };
 
   const runAssistantTurn = async () => {
@@ -328,6 +348,21 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     setCandidateDebugInfo(null);
     const userIntent = prompt.trim();
     const startedAt = new Date().toISOString();
+    const traceMessageId = `trace_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const traceMessageCreatedAt = new Date().toISOString();
+    const traceRecorder = createTraceRecorder();
+    const updateTraceMessage = (options: { finalBody?: string | null; finalLabel?: string } = {}) => {
+      upsertTransientChatMessage({
+        id: traceMessageId,
+        role: 'assistant',
+        content: traceRecorder.render({
+          ...options,
+          runningLabel: options.finalBody ? null : 'Waiting for assistant response...',
+        }),
+        createdAt: traceMessageCreatedAt,
+        meta: options.finalBody ? 'Agent trace' : 'Agent trace (live)',
+      });
+    };
     const historyForTurn = chatMessages.map((message) => ({ role: message.role, content: message.content }));
     await appendChatMessage({
       role: 'user',
@@ -335,59 +370,90 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       createdAt: new Date().toISOString(),
     });
     setPrompt('');
+    traceRecorder.push(`Turn started in ${providerMode} mode.`, { phase: 'start' });
+    updateTraceMessage();
 
     try {
       const capabilities = getLlmExposedBlocklyCapabilities();
       const context = buildProgramContext(project, scope);
       const programRead = readProgramSummary(context);
+      let unsubscribeTrace: (() => void) | null = null;
       const threadContext = {
         threadId,
         scopeKey,
       };
 
       const projectSnapshot = buildAssistantProjectSnapshot(project);
-      const turn = await (providerMode === 'codex_oauth'
-        ? (() => {
-            if (!isDesktopRuntime || !window.desktopAssistant) {
-              throw new Error('Codex mode requires the desktop app runtime.');
-            }
-            if (!runtimeUserId) {
-              throw new Error('Missing signed-in user context for desktop provider.');
-            }
-            return window.desktopAssistant.provider.assistantTurn({
-              userIntent,
-              chatHistory: historyForTurn,
-              capabilities,
-              context,
-              programRead,
-              projectSnapshot,
-              threadContext,
-            }, runtimeUserId);
-          })()
-        : (() => {
-            return (async () => {
-              const desktopCredentials =
-                isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && runtimeUserId
-                  ? await window.desktopAssistant.provider.getCredentials(runtimeUserId)
-                  : undefined;
-              const providerCredentials: ProviderCredentials | undefined = desktopCredentials
-                ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
-                : undefined;
-              return assistantTurnAction({
-                userIntent,
-                chatHistory: historyForTurn,
-                providerMode,
-                providerCredentials,
-                threadContext,
-                capabilities,
-                context,
-                programRead,
-                projectSnapshot,
-              });
-            })();
-          })());
+      traceRecorder.push('Prepared Blockly capabilities, scope context, and project snapshot.', {
+        phase: 'context',
+      });
+      traceRecorder.push(
+        providerMode === 'codex_oauth'
+          ? 'Submitting request through the desktop Codex provider.'
+          : `Submitting request through ${providerMode} provider mode.`,
+        { phase: 'request' },
+      );
+      updateTraceMessage();
+
+      if (providerMode === 'codex_oauth' && isDesktopRuntime && window.desktopAssistant) {
+        unsubscribeTrace = window.desktopAssistant.onProviderEvent((event) => {
+          const added = traceRecorder.pushProviderEvent(event, threadId);
+          if (added) {
+            updateTraceMessage();
+          }
+        });
+      }
+
+      const turn = await (async () => {
+        try {
+          return await (providerMode === 'codex_oauth'
+            ? (() => {
+                if (!isDesktopRuntime || !window.desktopAssistant) {
+                  throw new Error('Codex mode requires the desktop app runtime.');
+                }
+                if (!runtimeUserId) {
+                  throw new Error('Missing signed-in user context for desktop provider.');
+                }
+                return window.desktopAssistant.provider.assistantTurn({
+                  userIntent,
+                  chatHistory: historyForTurn,
+                  capabilities,
+                  context,
+                  programRead,
+                  projectSnapshot,
+                  threadContext,
+                }, runtimeUserId);
+              })()
+            : (() => {
+                return (async () => {
+                  const desktopCredentials =
+                    isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && runtimeUserId
+                      ? await window.desktopAssistant.provider.getCredentials(runtimeUserId)
+                      : undefined;
+                  const providerCredentials: ProviderCredentials | undefined = desktopCredentials
+                    ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
+                    : undefined;
+                  return assistantTurnAction({
+                    userIntent,
+                    chatHistory: historyForTurn,
+                    providerMode,
+                    providerCredentials,
+                    threadContext,
+                    capabilities,
+                    context,
+                    programRead,
+                    projectSnapshot,
+                  });
+                })();
+              })());
+        } finally {
+          unsubscribeTrace?.();
+        }
+      })();
       const turnCompletedAt = new Date().toISOString();
       const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
+      traceRecorder.push('Received assistant turn response payload.', { phase: 'response' });
+      traceRecorder.pushDebugTrace(turn.debugTrace);
 
       if (turn.mode === 'chat') {
         if ((turn as { errorCode?: string }).errorCode === 'credits_exhausted') {
@@ -397,13 +463,14 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         if (!chatAnswer) {
           throw new Error('Assistant returned an empty chat response.');
         }
-        const activityLines = buildAgentActivityLines(turn.debugTrace);
-        const chatAnswerWithActivity = activityLines.length > 0
-          ? [chatAnswer, '', ...activityLines].join('\n')
-          : chatAnswer;
+        const chatAnswerWithTrace = traceRecorder.render({
+          finalLabel: 'Assistant response',
+          finalBody: chatAnswer,
+        });
+        removeTransientChatMessage(traceMessageId);
         await appendChatMessage({
           role: 'assistant',
-          content: chatAnswerWithActivity,
+          content: chatAnswerWithTrace,
           createdAt: turnCompletedAt,
           meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
         });
@@ -433,9 +500,15 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
         setStatus('idle');
         setStatusMessage('Assistant returned an invalid edit payload. No edits were prepared.');
+        traceRecorder.push('Panel-side edit payload validation failed.', { phase: 'validation' });
+        const fallbackContent = traceRecorder.render({
+          finalLabel: 'Assistant response',
+          finalBody: fallbackMessage,
+        });
+        removeTransientChatMessage(traceMessageId);
         await appendChatMessage({
           role: 'assistant',
-          content: fallbackMessage,
+          content: fallbackContent,
           createdAt: turnCompletedAt,
           meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
         });
@@ -460,6 +533,10 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         proposeEdits: async () => proposedEdits,
       };
 
+      traceRecorder.push('Compiling Blockly diff candidate from proposed semantic ops.', {
+        phase: 'compile',
+      });
+      updateTraceMessage();
       const result = await runLlmBlocklyOrchestration({
         project,
         scope,
@@ -481,19 +558,36 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         trace: turn.debugTrace ?? null,
         intentMismatchWarning,
       });
+      traceRecorder.push('Blockly diff compilation finished.', { phase: 'compile' });
       if (!result.validation.pass) {
         setStatusMessage(`Generated a candidate, but validation failed with ${result.validation.errors.length} issue(s).`);
+        traceRecorder.push(`Candidate validation failed with ${result.validation.errors.length} issue(s).`, {
+          phase: 'validation',
+        });
+        const assistantContent = traceRecorder.render({
+          finalLabel: 'Assistant response',
+          finalBody: `I proposed edits, but validation failed with ${result.validation.errors.length} issue(s). Review the validation panel before applying.`,
+        });
+        removeTransientChatMessage(traceMessageId);
         await appendChatMessage({
           role: 'assistant',
-          content: `I proposed edits, but validation failed with ${result.validation.errors.length} issue(s). Review the validation panel before applying.`,
+          content: assistantContent,
           createdAt: new Date().toISOString(),
           meta: `Provider mode: ${providerMode} · Provider: ${result.providerName}/${result.model} · Latency: ${formatDuration(result.requestStartedAt, result.requestCompletedAt)}`,
         });
       } else if (intentMismatchWarning) {
         setStatusMessage(`Candidate blocked by quality gate: ${intentMismatchWarning}`);
+        traceRecorder.push(`Intent mismatch blocked apply: ${intentMismatchWarning}`, {
+          phase: 'validation',
+        });
+        const assistantContent = traceRecorder.render({
+          finalLabel: 'Assistant response',
+          finalBody: `I generated a candidate, but blocked auto-apply because intent and diff do not match.\n\n${intentMismatchWarning}`,
+        });
+        removeTransientChatMessage(traceMessageId);
         await appendChatMessage({
           role: 'assistant',
-          content: `I generated a candidate, but blocked auto-apply because intent and diff do not match.\n\n${intentMismatchWarning}`,
+          content: assistantContent,
           createdAt: new Date().toISOString(),
           meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
         });
@@ -505,13 +599,15 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           'Compiled diff summary:',
           ...result.build.diff.summaryLines,
         ];
-        const activityLines = buildAgentActivityLines(turn.debugTrace);
-        if (activityLines.length > 0) {
-          responseLines.push('', ...activityLines);
-        }
+        traceRecorder.push('Candidate is ready to apply.', { phase: 'result' });
+        const assistantContent = traceRecorder.render({
+          finalLabel: 'Prepared edits',
+          finalBody: responseLines.join('\n'),
+        });
+        removeTransientChatMessage(traceMessageId);
         await appendChatMessage({
           role: 'assistant',
-          content: responseLines.join('\n'),
+          content: assistantContent,
           createdAt: new Date().toISOString(),
           meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
         });
@@ -527,14 +623,28 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       });
     } catch (error) {
       setStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to run assistant request.');
+      const errorText = error instanceof Error ? error.message : 'Failed to run assistant request.';
+      setErrorMessage(errorText);
+      traceRecorder.push(errorText, { phase: 'error' });
+      removeTransientChatMessage(traceMessageId);
+      if (threadId) {
+        await appendChatMessage({
+          role: 'assistant',
+          content: traceRecorder.render({
+            finalLabel: 'Assistant error',
+            finalBody: errorText,
+          }),
+          createdAt: new Date().toISOString(),
+          meta: `Provider mode: ${providerMode}`,
+        });
+      }
       await appendAssistantTurn({
         threadId,
         userIntent,
         mode: 'error',
         provider: 'convex',
         model: 'unknown',
-        debugTraceJson: JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+        debugTraceJson: JSON.stringify({ error: errorText }),
         createdAt: new Date().toISOString(),
       });
     }

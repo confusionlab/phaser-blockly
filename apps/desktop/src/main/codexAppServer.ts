@@ -116,6 +116,29 @@ function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function stripAnsi(value: string): string {
+  return value.replace(/\u001B\[[0-9;]*[A-Za-z]/g, '');
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 1))}…`;
+}
+
+function normalizeTraceLine(value: string): string {
+  return truncateText(stripAnsi(value).replace(/\s+/g, ' ').trim(), 320);
+}
+
+function previewValue(value: unknown, maxChars: number): string | null {
+  try {
+    const raw = typeof value === 'string' ? value : JSON.stringify(value);
+    const normalized = raw.replace(/\s+/g, ' ').trim();
+    return normalized.length > 0 ? truncateText(normalized, maxChars) : null;
+  } catch {
+    return null;
+  }
+}
+
 function validateCodexOutputSchema(schema: unknown): string[] {
   const errors: string[] = [];
   if (!isRecord(schema)) {
@@ -430,6 +453,116 @@ function buildInvalidEditFallback(args: {
   };
 }
 
+type TurnEventEmitter = (payload: Omit<ProviderEventPayload, 'threadId' | 'scopeKey' | 'turnId' | 'sequence' | 'timestamp'>) => void;
+
+function createTurnEventEmitter(
+  emitEvent: (payload: ProviderEventPayload) => void,
+  threadContext?: { threadId?: string; scopeKey?: string } | null,
+): TurnEventEmitter {
+  const turnId = `turn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let sequence = 0;
+
+  return (payload) => {
+    sequence += 1;
+    emitEvent({
+      ...payload,
+      threadId: threadContext?.threadId ?? null,
+      scopeKey: threadContext?.scopeKey ?? null,
+      turnId,
+      sequence,
+      timestamp: new Date().toISOString(),
+    });
+  };
+}
+
+function emitTraceDetails(emitTurnEvent: TurnEventEmitter, trace: unknown): void {
+  if (!isRecord(trace)) return;
+
+  if (typeof trace.transport === 'string' && trace.transport.trim()) {
+    emitTurnEvent({
+      type: 'assistant-turn-progress',
+      phase: 'transport',
+      message: `Transport: ${trace.transport.trim()}`,
+    });
+  }
+
+  if (typeof trace.modelRounds === 'number') {
+    emitTurnEvent({
+      type: 'assistant-turn-progress',
+      phase: 'model',
+      message: `Model rounds: ${trace.modelRounds}`,
+    });
+  }
+
+  if (typeof trace.maxToolRounds === 'number') {
+    emitTurnEvent({
+      type: 'assistant-turn-progress',
+      phase: 'model',
+      message: `Max tool rounds: ${trace.maxToolRounds}`,
+    });
+  }
+
+  if (Array.isArray(trace.toolCalls)) {
+    trace.toolCalls
+      .filter(isRecord)
+      .forEach((call, index) => {
+        const name = typeof call.name === 'string' && call.name.trim().length > 0 ? call.name.trim() : 'unknown_tool';
+        const round = typeof call.round === 'number' ? `round ${call.round}` : `step ${index + 1}`;
+        const argsPreview = previewValue(call.args, 220);
+        const resultPreview = previewValue(call.resultPreview, 260);
+        emitTurnEvent({
+          type: 'assistant-turn-progress',
+          phase: 'tool',
+          message: `Tool call [${round}] ${name}${argsPreview ? ` args=${argsPreview}` : ''}`,
+          detail: resultPreview ? `result=${resultPreview}` : null,
+        });
+      });
+  }
+
+  if (Array.isArray(trace.validationErrors)) {
+    trace.validationErrors
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .forEach((entry) => {
+        emitTurnEvent({
+          type: 'assistant-turn-progress',
+          phase: 'validation',
+          message: `Validation: ${entry.trim()}`,
+        });
+      });
+  }
+
+  const fallbackReason =
+    typeof trace.fallbackReason === 'string' && trace.fallbackReason.trim()
+      ? trace.fallbackReason.trim()
+      : (typeof trace.fallbackReasonCode === 'string' && trace.fallbackReasonCode.trim()
+          ? trace.fallbackReasonCode.trim()
+          : null);
+  if (fallbackReason) {
+    emitTurnEvent({
+      type: 'assistant-turn-progress',
+      phase: 'fallback',
+      message: `Fallback reason: ${fallbackReason}`,
+    });
+  }
+
+  if (typeof trace.finalVerdict === 'string' && trace.finalVerdict.trim()) {
+    emitTurnEvent({
+      type: 'assistant-turn-progress',
+      phase: 'result',
+      message: `Final verdict: ${trace.finalVerdict.trim()}`,
+    });
+  }
+
+  if (typeof trace.finalResponsePreview === 'string' && trace.finalResponsePreview.trim()) {
+    emitTurnEvent({
+      type: 'assistant-turn-progress',
+      phase: 'result',
+      message: 'Raw model output preview',
+      detail: truncateText(trace.finalResponsePreview.replace(/\s+/g, ' ').trim(), 420),
+    });
+  }
+}
+
 export class CodexAppServerClient {
   private process: ChildProcessWithoutNullStreams | null = null;
   private startPromise: Promise<void> | null = null;
@@ -520,48 +653,119 @@ export class CodexAppServerClient {
   }
 
   async runAssistantTurn(args: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> {
-    await this.ensureStarted();
-    const authToken = await this.getAuthToken();
-    if (authToken) {
-      const unifiedTurn = await runUnifiedAssistantTurn({
-        userIntent: args.userIntent,
-        chatHistory: args.chatHistory,
-        providerMode: 'codex_oauth',
-        providerCredentials: {
-          codexToken: authToken,
-        },
-        threadContext: args.threadContext,
-        capabilities: args.capabilities,
-        context: args.context,
-        programRead: args.programRead,
-        projectSnapshot: args.projectSnapshot || {},
-      });
-      if (!shouldFallbackToCodexExecFromUnifiedTurn(unifiedTurn)) {
-        return unifiedTurn;
-      }
+    const emitTurnEvent = createTurnEventEmitter(this.emitEvent, args.threadContext ?? null);
+    emitTurnEvent({
+      type: 'assistant-turn-started',
+      phase: 'start',
+      message: 'Assistant turn started.',
+    });
 
-      try {
-        return await this.runAssistantTurnViaCodexExec(args);
-      } catch (fallbackError) {
-        const fallbackMessage = toErrorMessage(fallbackError);
-        if (isRecord(unifiedTurn)) {
-          if (isRecord(unifiedTurn.debugTrace) && Array.isArray(unifiedTurn.debugTrace.validationErrors)) {
-            unifiedTurn.debugTrace.validationErrors = [
-              ...unifiedTurn.debugTrace.validationErrors,
-              `codex_exec_fallback_error:${fallbackMessage}`,
-            ];
-          }
+    try {
+      await this.ensureStarted();
+      const authToken = await this.getAuthToken();
+      if (authToken) {
+        emitTurnEvent({
+          type: 'assistant-turn-progress',
+          phase: 'transport',
+          message: 'Trying unified Codex OAuth transport.',
+        });
+        const unifiedTurn = await runUnifiedAssistantTurn({
+          userIntent: args.userIntent,
+          chatHistory: args.chatHistory,
+          providerMode: 'codex_oauth',
+          providerCredentials: {
+            codexToken: authToken,
+          },
+          threadContext: args.threadContext,
+          capabilities: args.capabilities,
+          context: args.context,
+          programRead: args.programRead,
+          projectSnapshot: args.projectSnapshot || {},
+        });
+        if (!shouldFallbackToCodexExecFromUnifiedTurn(unifiedTurn)) {
+          emitTraceDetails(emitTurnEvent, unifiedTurn.debugTrace);
+          emitTurnEvent({
+            type: 'assistant-turn-completed',
+            phase: 'complete',
+            message: `Assistant turn completed in ${unifiedTurn.mode} mode.`,
+          });
+          return unifiedTurn;
         }
-        return unifiedTurn as CodexAssistantTurnResponse;
-      }
-    }
 
-    return this.runAssistantTurnViaCodexExec(args);
+        emitTurnEvent({
+          type: 'assistant-turn-progress',
+          phase: 'fallback',
+          message: 'Unified transport requested fallback to codex exec.',
+        });
+
+        try {
+          const fallbackTurn = await this.runAssistantTurnViaCodexExec(args, emitTurnEvent);
+          emitTurnEvent({
+            type: 'assistant-turn-completed',
+            phase: 'complete',
+            message: `Assistant turn completed in ${fallbackTurn.mode} mode.`,
+          });
+          return fallbackTurn;
+        } catch (fallbackError) {
+          const fallbackMessage = toErrorMessage(fallbackError);
+          if (isRecord(unifiedTurn)) {
+            if (isRecord(unifiedTurn.debugTrace) && Array.isArray(unifiedTurn.debugTrace.validationErrors)) {
+              unifiedTurn.debugTrace.validationErrors = [
+                ...unifiedTurn.debugTrace.validationErrors,
+                `codex_exec_fallback_error:${fallbackMessage}`,
+              ];
+            }
+          }
+          emitTraceDetails(emitTurnEvent, unifiedTurn.debugTrace);
+          emitTurnEvent({
+            type: 'assistant-turn-completed',
+            phase: 'complete',
+            message: `Assistant turn completed in ${unifiedTurn.mode} mode after fallback error.`,
+            detail: fallbackMessage,
+          });
+          return unifiedTurn as CodexAssistantTurnResponse;
+        }
+      }
+
+      const execTurn = await this.runAssistantTurnViaCodexExec(args, emitTurnEvent);
+      emitTurnEvent({
+        type: 'assistant-turn-completed',
+        phase: 'complete',
+        message: `Assistant turn completed in ${execTurn.mode} mode.`,
+      });
+      return execTurn;
+    } catch (error) {
+      emitTurnEvent({
+        type: 'assistant-turn-error',
+        phase: 'error',
+        message: toErrorMessage(error),
+      });
+      throw error;
+    }
   }
 
-  private async runAssistantTurnViaCodexExec(args: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> {
+  private async runAssistantTurnViaCodexExec(
+    args: CodexAssistantTurnRequest,
+    emitTurnEvent?: TurnEventEmitter,
+  ): Promise<CodexAssistantTurnResponse> {
     const prompt = buildCodexAssistantPrompt(args);
-    const { output, stderr, exitCode } = await this.runCodexExecWithSchema(prompt);
+    emitTurnEvent?.({
+      type: 'assistant-turn-progress',
+      phase: 'transport',
+      message: 'Launching codex exec transport.',
+    });
+    const { output, stderr, exitCode } = await this.runCodexExecWithSchema(prompt, (line: string) => {
+      emitTurnEvent?.({
+        type: 'assistant-turn-progress',
+        phase: 'stderr',
+        message: line,
+      });
+    });
+    emitTurnEvent?.({
+      type: 'assistant-turn-progress',
+      phase: 'transport',
+      message: `codex exec exited with code ${exitCode}.`,
+    });
 
     let parsed: unknown;
     try {
@@ -580,7 +784,7 @@ export class CodexAppServerClient {
       if (!answer) {
         throw new Error('Codex returned chat mode without a non-empty answer.');
       }
-      return {
+      const response: CodexAssistantTurnResponse = {
         provider: 'codex',
         model: 'gpt-5.3-codex',
         mode: 'chat',
@@ -591,38 +795,66 @@ export class CodexAppServerClient {
           stderrTail: stderr.slice(-1200),
         },
       };
+      emitTraceDetails(emitTurnEvent ?? (() => undefined), response.debugTrace);
+      return response;
     }
 
     if (mode === 'edit') {
       const proposedEditsRaw = typeof parsed.proposedEditsJson === 'string' ? parsed.proposedEditsJson.trim() : '';
       if (!proposedEditsRaw) {
-        return buildInvalidEditFallback({
+        const fallback = buildInvalidEditFallback({
           reason: 'missing_proposedEditsJson',
           exitCode,
           stderr,
         });
+        emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+        return fallback;
       }
       let proposedEdits: unknown;
       try {
         proposedEdits = JSON.parse(proposedEditsRaw);
       } catch (error) {
-        return buildInvalidEditFallback({
+        const fallback = buildInvalidEditFallback({
           reason: `invalid_proposedEditsJson:${toErrorMessage(error)}`,
           exitCode,
           stderr,
         });
+        emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+        return fallback;
       }
       const normalized = normalizeProposedEditsShape(proposedEdits);
+      if (normalized.movedProjectOpsFromSemantic > 0 || normalized.renamedProjectOps > 0) {
+        emitTurnEvent?.({
+          type: 'assistant-turn-progress',
+          phase: 'normalization',
+          message: `Normalized edit payload (${normalized.movedProjectOpsFromSemantic} moved project op(s), ${normalized.renamedProjectOps} renamed op(s)).`,
+        });
+      } else {
+        emitTurnEvent?.({
+          type: 'assistant-turn-progress',
+          phase: 'normalization',
+          message: 'Parsed edit payload JSON.',
+        });
+      }
       const validated = validateSemanticOpsPayload(normalized.value);
       if (!validated.ok) {
-        return buildInvalidEditFallback({
+        validated.errors.forEach((entry) => {
+          emitTurnEvent?.({
+            type: 'assistant-turn-progress',
+            phase: 'validation',
+            message: `Validation: ${entry}`,
+          });
+        });
+        const fallback = buildInvalidEditFallback({
           reason: 'schema_validation_failed',
           exitCode,
           stderr,
           validationErrors: validated.errors,
         });
+        emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+        return fallback;
       }
-      return {
+      const response: CodexAssistantTurnResponse = {
         provider: 'codex',
         model: 'gpt-5.3-codex',
         mode: 'edit',
@@ -635,13 +867,17 @@ export class CodexAppServerClient {
           renamedProjectOps: normalized.renamedProjectOps,
         },
       };
+      emitTraceDetails(emitTurnEvent ?? (() => undefined), response.debugTrace);
+      return response;
     }
 
-    return buildInvalidEditFallback({
+    const fallback = buildInvalidEditFallback({
       reason: 'unsupported_mode',
       exitCode,
       stderr,
     });
+    emitTraceDetails(emitTurnEvent ?? (() => undefined), fallback.debugTrace);
+    return fallback;
   }
 
   async loginWithChatGpt(): Promise<void> {
@@ -769,7 +1005,10 @@ export class CodexAppServerClient {
     this.statusMessage = 'Codex app server is ready.';
   }
 
-  private async runCodexExecWithSchema(prompt: string): Promise<{
+  private async runCodexExecWithSchema(
+    prompt: string,
+    onProgress?: (line: string) => void,
+  ): Promise<{
     output: string;
     stderr: string;
     exitCode: number;
@@ -803,7 +1042,15 @@ export class CodexAppServerClient {
     let stderr = '';
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string | Buffer) => {
-      stderr += chunk.toString();
+      const raw = chunk.toString();
+      stderr += raw;
+      raw
+        .split(/\r?\n/)
+        .map((line) => normalizeTraceLine(line))
+        .filter((line) => line.length > 0)
+        .forEach((line) => {
+          onProgress?.(line);
+        });
     });
 
     let stdout = '';
