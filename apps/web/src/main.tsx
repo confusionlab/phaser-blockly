@@ -14,21 +14,28 @@ function trimOrUndefined(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined
 }
 
-function getClerkPublishableKey(): string | null {
-  const modeSpecific = import.meta.env.DEV
-    ? trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_DEV)
-    : import.meta.env.PROD
-      ? trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_PROD)
-      : undefined
+function getClerkPublishableKey(preferProd: boolean): string | null {
+  const devKey = trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_DEV)
+  const prodKey = trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_PROD)
   const fallback = trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
-  return modeSpecific || fallback || null
+
+  if (preferProd) {
+    return prodKey || devKey || fallback || null
+  }
+  if (import.meta.env.DEV) {
+    return devKey || fallback || prodKey || null
+  }
+  if (import.meta.env.PROD) {
+    return prodKey || fallback || devKey || null
+  }
+  return fallback || devKey || prodKey || null
 }
 
 const rootElement = document.getElementById('root')
-const convexUrl = getConvexCloudUrl()
-const clerkPublishableKey = getClerkPublishableKey()
-const appBranch = import.meta.env.VITE_APP_BRANCH
 const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant
+const convexUrl = getConvexCloudUrl()
+const clerkPublishableKey = getClerkPublishableKey(isDesktopRuntime)
+const appBranch = import.meta.env.VITE_APP_BRANCH
 
 if (appBranch) {
   document.title = appBranch
@@ -51,7 +58,7 @@ if (!convexUrl || !clerkPublishableKey) {
           </>
         ) : null}
         {!clerkPublishableKey
-          ? ' Set `VITE_CLERK_PUBLISHABLE_KEY_DEV` and `VITE_CLERK_PUBLISHABLE_KEY_PROD` (or fallback `VITE_CLERK_PUBLISHABLE_KEY`).'
+          ? ' Set `VITE_CLERK_PUBLISHABLE_KEY_DEV` and `VITE_CLERK_PUBLISHABLE_KEY_PROD` (or fallback `VITE_CLERK_PUBLISHABLE_KEY`). Desktop runtime prefers the prod key.'
           : null}
       </div>
     </StrictMode>,

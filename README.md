@@ -25,6 +25,7 @@
 - Clerk keys can also be mode-specific:
   - `VITE_CLERK_PUBLISHABLE_KEY_DEV` for development.
   - `VITE_CLERK_PUBLISHABLE_KEY_PROD` for production/desktop builds.
+- Desktop runtime prefers `VITE_CLERK_PUBLISHABLE_KEY_PROD` even in dev to avoid Clerk development-browser auth gating in Electron.
 - Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` if mode-specific values are missing.
   - Optional fallback for Clerk: `VITE_CLERK_PUBLISHABLE_KEY`.
 
