@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Project } from '@/types';
 import {
+  createManualCheckpoint,
   listProjectRevisions,
   renameCheckpoint,
   restoreAsNewProject,
@@ -104,6 +105,29 @@ export function ProjectHistoryDialog({
     }
   }, [project, reload]);
 
+  const handleCreateCheckpoint = useCallback(async () => {
+    if (!project) return;
+
+    const checkpointName = window.prompt('Checkpoint name');
+    if (checkpointName === null) return;
+
+    const normalized = checkpointName.trim();
+    if (!normalized) {
+      alert('Checkpoint name cannot be empty.');
+      return;
+    }
+
+    try {
+      const created = await createManualCheckpoint(project, normalized);
+      if (!created) {
+        alert('No content changes since the latest revision, but your project is still safe with autosave.');
+      }
+      await reload();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to create checkpoint.');
+    }
+  }, [project, reload]);
+
   const handleRestore = useCallback(async (revision: ProjectRevision) => {
     if (!project) return;
 
@@ -132,6 +156,17 @@ export function ProjectHistoryDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
+
+        <div className="flex items-center justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleCreateCheckpoint()}
+            disabled={loading || !project}
+          >
+            Create Checkpoint
+          </Button>
+        </div>
 
         <div className="flex items-center gap-2">
           <Button

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { createManualCheckpoint, downloadProject } from '@/db/database';
+import { downloadProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { ProjectHistoryDialog } from '@/components/dialogs/ProjectHistoryDialog';
 import { Button } from '@/components/ui/button';
-import { Upload, History, Flag, Sun, Moon, Wallet } from 'lucide-react';
+import { Upload, History, Sun, Moon, Wallet } from 'lucide-react';
 
 export function Toolbar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { project, isDirty, saveCurrentProject, closeProject, updateProjectName, openProject } = useProjectStore();
   const { isDarkMode, toggleDarkMode, selectScene } = useEditorStore();
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
@@ -29,6 +30,7 @@ export function Toolbar() {
     if (!project) return 'Upload to Cloud';
     return isProjectInCloud(project.id) ? 'Update to Cloud' : 'Upload to Cloud';
   }, [isProjectInCloud, project]);
+  const showBillingButton = location.pathname === '/';
 
   const syncCurrentProjectToCloud = async (): Promise<boolean> => {
     if (!project) return true;
@@ -59,28 +61,6 @@ export function Toolbar() {
 
   const handleUploadToCloud = async () => {
     await syncCurrentProjectToCloud();
-  };
-
-  const handleCreateCheckpoint = async () => {
-    if (!project) return;
-
-    const checkpointName = window.prompt('Checkpoint name');
-    if (checkpointName === null) return;
-
-    const normalized = checkpointName.trim();
-    if (!normalized) {
-      alert('Checkpoint name cannot be empty.');
-      return;
-    }
-
-    try {
-      const created = await createManualCheckpoint(project, normalized);
-      if (!created) {
-        alert('No content changes since the latest revision, but your project is still safe with autosave.');
-      }
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to create checkpoint.');
-    }
   };
 
   useEffect(() => {
@@ -162,15 +142,17 @@ export function Toolbar() {
         <div />
 
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate('/billing')}
-            title="Manage credits and plan"
-          >
-            <Wallet className="size-4" />
-            Billing
-          </Button>
+          {showBillingButton && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('/billing')}
+              title="Manage credits and plan"
+            >
+              <Wallet className="size-4" />
+              Billing
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -190,19 +172,6 @@ export function Toolbar() {
             >
               <Upload className="size-4" />
               Export
-            </Button>
-          )}
-
-          {project && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleCreateCheckpoint()}
-              disabled={isSyncingCloud}
-              title="Create a named checkpoint"
-            >
-              <Flag className="size-4" />
-              Create Checkpoint
             </Button>
           )}
 
