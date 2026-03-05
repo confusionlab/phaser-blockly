@@ -6,11 +6,13 @@ import {
   createProjectSyncPayload,
   getAllProjectsForSync,
   getProjectForSync,
+  getProjectRevisionsForSync,
   pruneLocalProjectsNotInCloud,
   syncProjectFromCloud,
+  syncProjectRevisionsFromCloud,
   type ProjectSyncPayload,
+  type ProjectRevisionSyncPayload,
 } from '@/db/database';
-import { getConvexCloudUrl, getConvexSiteUrl } from '@/lib/convexEnv';
 import type { Project } from '@/types';
 
 interface CloudSyncOptions {
@@ -20,8 +22,12 @@ interface CloudSyncOptions {
   currentProjectId?: string | null;
   // Current in-memory project for reliable unload beacon payload
   currentProject?: Project | null;
+  // Whether current project has unsaved/dirty local state.
+  isDirty?: boolean;
   // Sync current project on hook unmount (navigation)
   syncOnUnmount?: boolean;
+  // Periodic checkpoint interval while dirty.
+  checkpointIntervalMs?: number;
 }
 
 interface CloudProjectRecord {
@@ -38,42 +44,35 @@ interface CloudProjectRecord {
   dataUrl: string | null;
 }
 
+interface CloudRevisionRecord {
+  projectLocalId: string;
+  revisionId: string;
+  parentRevisionId?: string;
+  kind: 'snapshot' | 'delta';
+  baseRevisionId: string;
+  storageId?: Id<'_storage'>;
+  dataSizeBytes?: number;
+  contentHash: string;
+  createdAt: number;
+  schemaVersion: number | string;
+  appVersion?: string;
+  reason: 'manual_checkpoint' | 'auto_checkpoint' | 'import' | 'restore' | 'edit_revision';
+  checkpointName?: string;
+  isCheckpoint: boolean;
+  restoredFromRevisionId?: string;
+  data?: string;
+  dataUrl: string | null;
+}
+
 type StorageSyncPayload = Omit<ProjectSyncPayload, 'data'> & {
   storageId: Id<'_storage'>;
   dataSizeBytes: number;
 };
 
-type BeaconSyncPayload = Pick<
-  ProjectSyncPayload,
-  'localId' | 'name' | 'data' | 'createdAt' | 'updatedAt' | 'schemaVersion' | 'appVersion' | 'contentHash'
->;
-
-function toBeaconSyncPayload(payload: ProjectSyncPayload): BeaconSyncPayload {
-  return {
-    localId: payload.localId,
-    name: payload.name,
-    data: payload.data,
-    createdAt: payload.createdAt,
-    updatedAt: payload.updatedAt,
-    schemaVersion: payload.schemaVersion,
-    appVersion: payload.appVersion,
-    contentHash: payload.contentHash,
-  };
-}
-
-function getSyncBeaconUrl(): string | null {
-  const siteUrl = getConvexSiteUrl();
-  if (siteUrl) {
-    return `${siteUrl.replace(/\/$/, '')}/sync-beacon`;
-  }
-
-  const cloudUrl = getConvexCloudUrl();
-  if (!cloudUrl) {
-    return null;
-  }
-
-  return `${cloudUrl.replace('.cloud', '.site')}/sync-beacon`;
-}
+type StorageRevisionSyncPayload = Omit<ProjectRevisionSyncPayload, 'data'> & {
+  storageId: Id<'_storage'>;
+  dataSizeBytes: number;
+};
 
 async function loadProjectDataFromCloud(cloudProject: CloudProjectRecord): Promise<string> {
   if (typeof cloudProject.data === 'string') {
@@ -89,6 +88,22 @@ async function loadProjectDataFromCloud(cloudProject: CloudProjectRecord): Promi
   }
 
   throw new Error(`Cloud project "${cloudProject.localId}" has no sync data`);
+}
+
+async function loadRevisionDataFromCloud(cloudRevision: CloudRevisionRecord): Promise<string> {
+  if (typeof cloudRevision.data === 'string') {
+    return cloudRevision.data;
+  }
+
+  if (cloudRevision.dataUrl) {
+    const response = await fetch(cloudRevision.dataUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch revision data (${response.status})`);
+    }
+    return await response.text();
+  }
+
+  throw new Error(`Cloud revision "${cloudRevision.revisionId}" has no sync data`);
 }
 
 function normalizeSchemaVersion(version: number | string): number {
@@ -142,12 +157,16 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     syncOnMount = false,
     currentProjectId = null,
     currentProject = null,
+    isDirty = false,
     syncOnUnmount = true,
+    checkpointIntervalMs = 45_000,
   } = options;
 
   const generateUploadUrlMutation = useMutation(api.projects.generateUploadUrl);
   const syncMutation = useMutation(api.projects.syncBatch);
   const syncSingleMutation = useMutation(api.projects.sync);
+  const syncRevisionsMutation = useMutation(api.projects.syncRevisions);
+  const listRevisionsMutation = useMutation(api.projects.listRevisionsForSync);
   const removeProjectMutation = useMutation(api.projects.remove);
   const cloudProjects = useQuery(api.projects.listFull);
 
@@ -187,6 +206,32 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     [generateUploadUrlMutation],
   );
 
+  const toStorageRevisionPayload = useCallback(
+    async (payload: ProjectRevisionSyncPayload): Promise<StorageRevisionSyncPayload> => {
+      const { data, ...metadata } = payload;
+      const uploadUrl = await generateUploadUrlMutation();
+      const blob = new Blob([data], { type: 'application/json' });
+
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: blob,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Revision upload failed (${uploadResponse.status})`);
+      }
+
+      const uploadResult = (await uploadResponse.json()) as { storageId: string };
+      return {
+        ...metadata,
+        storageId: uploadResult.storageId as Id<'_storage'>,
+        dataSizeBytes: blob.size,
+      };
+    },
+    [generateUploadUrlMutation],
+  );
+
   const syncPayloadToCloud = useCallback(
     async (payload: ProjectSyncPayload) => {
       try {
@@ -197,6 +242,32 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       }
     },
     [syncSingleMutation, toStorageSyncPayload],
+  );
+
+  const syncProjectRevisionsToCloud = useCallback(
+    async (projectId: string) => {
+      const revisions = await getProjectRevisionsForSync(projectId);
+      if (revisions.length === 0) {
+        return { created: 0, updated: 0, skipped: 0 };
+      }
+
+      const storageRevisions: StorageRevisionSyncPayload[] = [];
+      for (const revision of revisions) {
+        try {
+          const storageRevision = await toStorageRevisionPayload(revision);
+          storageRevisions.push(storageRevision);
+        } catch (error) {
+          console.error(`[CloudSync] Failed to prepare revision "${revision.revisionId}" for upload:`, error);
+        }
+      }
+
+      if (storageRevisions.length === 0) {
+        return { created: 0, updated: 0, skipped: revisions.length };
+      }
+
+      return await syncRevisionsMutation({ revisions: storageRevisions });
+    },
+    [syncRevisionsMutation, toStorageRevisionPayload],
   );
 
   const runWithRetry = useCallback(async (fn: () => Promise<void>, attempts = 2) => {
@@ -236,12 +307,39 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         ...candidate,
         data,
       });
+      try {
+        const revisionRecords = await listRevisionsMutation({ localId });
+        const hydratedRevisions = await Promise.all(
+          (revisionRecords as CloudRevisionRecord[]).map(async (revision) => {
+            const revisionData = await loadRevisionDataFromCloud(revision);
+            return {
+              localProjectId: revision.projectLocalId,
+              revisionId: revision.revisionId,
+              parentRevisionId: revision.parentRevisionId,
+              kind: revision.kind,
+              baseRevisionId: revision.baseRevisionId,
+              data: revisionData,
+              contentHash: revision.contentHash,
+              createdAt: revision.createdAt,
+              schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
+              appVersion: revision.appVersion,
+              reason: revision.reason,
+              checkpointName: revision.checkpointName,
+              isCheckpoint: revision.isCheckpoint,
+              restoredFromRevisionId: revision.restoredFromRevisionId,
+            } satisfies ProjectRevisionSyncPayload;
+          }),
+        );
+        await syncProjectRevisionsFromCloud(localId, hydratedRevisions);
+      } catch (error) {
+        console.error(`[CloudSync] Failed to sync revisions from cloud for "${localId}":`, error);
+      }
       return true;
     } catch (error) {
       console.error(`[CloudSync] Failed to reconcile local project "${localId}" from cloud:`, error);
       return false;
     }
-  }, [cloudProjects]);
+  }, [cloudProjects, listRevisionsMutation]);
 
   // Sync all local projects to cloud
   const syncAllToCloud = useCallback(async () => {
@@ -273,12 +371,20 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
       const results = await syncMutation({ projects: storageProjects });
       console.log('[CloudSync] Sync results:', results);
+
+      for (const localProject of localProjects) {
+        try {
+          await syncProjectRevisionsToCloud(localProject.localId);
+        } catch (error) {
+          console.error(`[CloudSync] Failed to sync revisions for "${localProject.localId}":`, error);
+        }
+      }
     } catch (error) {
       console.error('[CloudSync] Failed to sync to cloud:', error);
     } finally {
       isSyncingRef.current = false;
     }
-  }, [syncMutation, toStorageSyncPayload]);
+  }, [syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
 
   // Sync a single project to cloud by local project id
   const syncProjectToCloud = useCallback(
@@ -297,13 +403,15 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           return false;
         }
 
+        await syncProjectRevisionsToCloud(projectId);
+
         return true;
       } catch (error) {
         console.error('[CloudSync] Failed to sync project:', error);
         return false;
       }
     },
-    [reconcileProjectFromCloud, syncSingleMutation, toStorageSyncPayload],
+    [reconcileProjectFromCloud, syncProjectRevisionsToCloud, syncSingleMutation, toStorageSyncPayload],
   );
 
   const deleteProjectFromCloud = useCallback(
@@ -337,6 +445,33 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
               ...cloudProject,
               data,
             });
+            try {
+              const revisionRecords = await listRevisionsMutation({ localId: cloudProject.localId });
+              const hydratedRevisions = await Promise.all(
+                (revisionRecords as CloudRevisionRecord[]).map(async (revision) => {
+                  const revisionData = await loadRevisionDataFromCloud(revision);
+                  return {
+                    localProjectId: revision.projectLocalId,
+                    revisionId: revision.revisionId,
+                    parentRevisionId: revision.parentRevisionId,
+                    kind: revision.kind,
+                    baseRevisionId: revision.baseRevisionId,
+                    data: revisionData,
+                    contentHash: revision.contentHash,
+                    createdAt: revision.createdAt,
+                    schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
+                    appVersion: revision.appVersion,
+                    reason: revision.reason,
+                    checkpointName: revision.checkpointName,
+                    isCheckpoint: revision.isCheckpoint,
+                    restoredFromRevisionId: revision.restoredFromRevisionId,
+                  } satisfies ProjectRevisionSyncPayload;
+                }),
+              );
+              await syncProjectRevisionsFromCloud(cloudProject.localId, hydratedRevisions);
+            } catch (revisionError) {
+              console.error(`[CloudSync] Failed to sync revisions for "${cloudProject.localId}":`, revisionError);
+            }
             return { localId: cloudProject.localId, ...result };
           } catch (error) {
             console.error(`[CloudSync] Failed cloud->local sync for "${cloudProject.localId}":`, error);
@@ -363,7 +498,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [cloudProjects]);
+  }, [cloudProjects, listRevisionsMutation]);
 
   // Run a full two-way reconciliation:
   // 1) push all local projects up, then 2) pull cloud projects down.
@@ -391,6 +526,10 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         }
 
         await syncMutation({ projects: storageProjects });
+
+        for (const localProject of localProjects) {
+          await syncProjectRevisionsToCloud(localProject.localId);
+        }
       });
 
       if (cloudProjects) {
@@ -403,6 +542,29 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
                 ...cloudProject,
                 data,
               });
+              const revisionRecords = await listRevisionsMutation({ localId: cloudProject.localId });
+              const hydratedRevisions = await Promise.all(
+                (revisionRecords as CloudRevisionRecord[]).map(async (revision) => {
+                  const revisionData = await loadRevisionDataFromCloud(revision);
+                  return {
+                    localProjectId: revision.projectLocalId,
+                    revisionId: revision.revisionId,
+                    parentRevisionId: revision.parentRevisionId,
+                    kind: revision.kind,
+                    baseRevisionId: revision.baseRevisionId,
+                    data: revisionData,
+                    contentHash: revision.contentHash,
+                    createdAt: revision.createdAt,
+                    schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
+                    appVersion: revision.appVersion,
+                    reason: revision.reason,
+                    checkpointName: revision.checkpointName,
+                    isCheckpoint: revision.isCheckpoint,
+                    restoredFromRevisionId: revision.restoredFromRevisionId,
+                  } satisfies ProjectRevisionSyncPayload;
+                }),
+              );
+              await syncProjectRevisionsFromCloud(cloudProject.localId, hydratedRevisions);
             } catch (error) {
               console.error(`[CloudSync] Failed to reconcile "${cloudProject.localId}" in bidirectional sync:`, error);
             }
@@ -414,7 +576,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [cloudProjects, runWithRetry, syncMutation, toStorageSyncPayload]);
+  }, [cloudProjects, listRevisionsMutation, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
 
   // Sync on mount if requested
   useEffect(() => {
@@ -443,29 +605,65 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     };
   }, [syncOnUnmount, syncPayloadToCloud, syncProjectToCloud]);
 
-  // Fire-and-forget beacon for hard unload (refresh/tab close)
+  // Periodic authenticated checkpoints while local state is dirty.
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      const payload = beaconPayloadRef.current;
-      const beaconUrl = getSyncBeaconUrl();
+    if (!isDirty || checkpointIntervalMs <= 0) {
+      return;
+    }
 
-      if (!payload || !beaconUrl || typeof navigator.sendBeacon !== 'function') {
+    const intervalId = window.setInterval(() => {
+      const payload = beaconPayloadRef.current;
+      if (!payload) {
         return;
       }
+      void syncPayloadToCloud(payload);
+    }, checkpointIntervalMs);
 
-      navigator.sendBeacon(beaconUrl, JSON.stringify(toBeaconSyncPayload(payload)));
+    return () => window.clearInterval(intervalId);
+  }, [checkpointIntervalMs, isDirty, syncPayloadToCloud]);
+
+  // Fire-and-forget flush for page lifecycle changes without anonymous beacon route.
+  useEffect(() => {
+    const flushCurrentPayload = () => {
+      const payload = beaconPayloadRef.current;
+      if (!payload) {
+        return;
+      }
+      void syncPayloadToCloud(payload);
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushCurrentPayload();
+      }
+    };
+
+    window.addEventListener('pagehide', flushCurrentPayload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', flushCurrentPayload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [syncPayloadToCloud]);
+
+  const isProjectInCloud = useCallback(
+    (projectId: string) => {
+      if (!cloudProjects) return false;
+      const normalized = dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]);
+      return normalized.some((project) => project.localId === projectId);
+    },
+    [cloudProjects],
+  );
 
   return {
     syncAllToCloud,
     syncAllFromCloud,
     syncAllBidirectional,
     syncProjectToCloud,
+    syncProjectFromCloud: reconcileProjectFromCloud,
     deleteProjectFromCloud,
+    syncProjectRevisionsToCloud,
+    isProjectInCloud,
     cloudProjects,
     isSyncing: isSyncingRef.current,
   };

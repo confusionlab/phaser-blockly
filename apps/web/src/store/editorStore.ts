@@ -119,6 +119,7 @@ interface EditorStore {
 
   // Theme actions
   toggleDarkMode: () => void;
+  setDarkMode: (isDarkMode: boolean) => void;
 
   // Undo/Redo registration
   registerCostumeUndo: (handler: UndoRedoHandler | null) => void;
@@ -397,6 +398,12 @@ export const useEditorStore = create<EditorStore>((set) => ({
     document.documentElement.classList.toggle('dark', newValue);
     localStorage.setItem('pochacoding-dark-mode', String(newValue));
     set({ isDarkMode: newValue });
+  },
+
+  setDarkMode: (isDarkMode) => {
+    document.documentElement.classList.toggle('dark', isDarkMode);
+    localStorage.setItem('pochacoding-dark-mode', String(isDarkMode));
+    set({ isDarkMode });
   },
 
   registerCostumeUndo: (handler) => {

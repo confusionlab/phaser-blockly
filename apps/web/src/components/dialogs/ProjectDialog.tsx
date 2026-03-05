@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { listProjects, loadProject, deleteProject, downloadProject, importProjectFromFile, saveProject } from '@/db/database';
@@ -42,16 +44,35 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Cloud sync hook
-  const { syncAllFromCloud, deleteProjectFromCloud, cloudProjects } = useCloudSync({ syncOnMount: false });
+  const { syncAllFromCloud, syncProjectFromCloud, deleteProjectFromCloud, cloudProjects } = useCloudSync({ syncOnMount: false });
+  const cloudProjectSummaries = useQuery(api.projects.list, mode === 'page' ? {} : 'skip');
 
   const loadProjectsList = useCallback(async () => {
     const list = await listProjects();
     setProjects(list);
   }, []);
 
-  // Cloud is the source of truth on homepage:
-  // pull all cloud projects to local cache and prune local-only records.
+  // On the homepage, load cloud metadata only (fast list). Full project data is hydrated on open.
   useEffect(() => {
+    if (mode !== 'page' || cloudProjectSummaries === undefined) {
+      return;
+    }
+
+    setProjects(
+      cloudProjectSummaries.map((project) => ({
+        id: project.localId,
+        name: project.name,
+        updatedAt: new Date(project.updatedAt),
+      })),
+    );
+  }, [cloudProjectSummaries, mode]);
+
+  // In dialog mode, keep the previous full cloud->local sync behavior.
+  useEffect(() => {
+    if (mode === 'page') {
+      return;
+    }
+
     const syncAndLoad = async () => {
       if (cloudProjects === undefined) {
         return;
@@ -59,7 +80,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
 
       setSyncing(true);
       try {
-        await syncAllFromCloud({ pruneLocal: mode === 'page' });
+        await syncAllFromCloud({ pruneLocal: false });
       } finally {
         setSyncing(false);
         await loadProjectsList();
@@ -92,6 +113,10 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const handleOpenProject = async (projectId: string) => {
     setLoading(true);
     try {
+      if (mode === 'page') {
+        await syncProjectFromCloud(projectId);
+      }
+
       const project = await loadProject(projectId);
       if (project) {
         openProject(project);

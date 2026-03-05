@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useAction } from 'convex/react';
+import { useAction, useQuery } from 'convex/react';
+import { useAuth } from '@clerk/clerk-react';
+import { Link } from 'react-router-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { api } from '@convex-generated/api';
@@ -135,6 +137,9 @@ function mapProviderStatus(status: {
 }
 
 export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
+  const { userId } = useAuth();
+  const runtimeUserId = userId ?? (import.meta.env.VITE_E2E_AUTH_BYPASS_USER_ID?.trim() || null);
+  const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [status, setStatus] = useState<RequestState>('idle');
@@ -152,8 +157,13 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const { project, addMessage, addGlobalVariable, addLocalVariable, updateObject, updateComponent } = useProjectStore();
   const { undo } = useEditorStore();
   const assistantTurnAction = useAction(api.llm.assistantTurn);
+  const walletSummary = useQuery(api.billing.getWalletSummary);
 
   const canApply = !!candidate && candidate.validation.pass && !candidateDebugInfo?.intentMismatchWarning;
+  const managedCreditsBlocked =
+    providerMode === 'managed'
+    && walletSummary !== undefined
+    && !walletSummary.canRunManagedAssistant;
   const validationErrors = candidate?.validation.errors || [];
   const validationWarnings = candidate?.validation.warnings || [];
 
@@ -185,24 +195,28 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
         const persistedMode = await getAssistantThreadProviderMode(thread.id);
         if (cancelled) return;
-        setProviderMode(persistedMode);
+        const nextMode = !isDesktopRuntime ? 'managed' : persistedMode;
+        setProviderMode(nextMode);
+        if (persistedMode !== nextMode) {
+          await setAssistantThreadProviderMode(thread.id, nextMode);
+        }
 
         const messages = await listAssistantMessages(thread.id);
         if (cancelled) return;
         setChatMessages(messages.slice(-MAX_CHAT_MESSAGES));
 
-        if (typeof window !== 'undefined' && window.desktopAssistant) {
-          const status = await window.desktopAssistant.provider.status();
+        if (isDesktopRuntime && window.desktopAssistant && runtimeUserId) {
+          const status = await window.desktopAssistant.provider.status(runtimeUserId);
           if (cancelled) return;
           setProviderStatus(mapProviderStatus(status));
-          const shouldForceManaged = persistedMode === 'codex_oauth' && !status.codexAvailable;
-          const preferredMode = shouldForceManaged ? 'managed' : persistedMode;
-          if (preferredMode !== persistedMode) {
+          const shouldForceManaged = nextMode === 'codex_oauth' && !status.codexAvailable;
+          const preferredMode = shouldForceManaged ? 'managed' : nextMode;
+          if (preferredMode !== nextMode) {
             await setAssistantThreadProviderMode(thread.id, preferredMode);
           }
 
           if (status.mode !== preferredMode) {
-            const syncedStatus = await window.desktopAssistant.provider.setMode(preferredMode);
+            const syncedStatus = await window.desktopAssistant.provider.setMode(preferredMode, runtimeUserId);
             if (cancelled) return;
             setProviderStatus(mapProviderStatus(syncedStatus));
             setProviderMode(syncedStatus.mode);
@@ -211,7 +225,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             setProviderMode(preferredMode);
           }
         } else {
-          if (persistedMode !== 'managed') {
+          if (nextMode !== 'managed') {
             setProviderMode('managed');
             await setAssistantThreadProviderMode(thread.id, 'managed');
           }
@@ -227,16 +241,16 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [project, scopeKey]);
+  }, [isDesktopRuntime, project, runtimeUserId, scopeKey]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) return;
+    if (!isDesktopRuntime || !runtimeUserId || !window.desktopAssistant) return;
     const desktopAssistant = window.desktopAssistant;
     return desktopAssistant.onProviderEvent((event) => {
       if (event.message) {
         setStatusMessage(event.message);
       }
-      void desktopAssistant.provider.status()
+      void desktopAssistant.provider.status(runtimeUserId)
         .then((status) => {
           setProviderStatus(mapProviderStatus(status));
         })
@@ -244,7 +258,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           setProviderStatus(DEFAULT_PROVIDER_STATUS);
         });
     });
-  }, []);
+  }, [isDesktopRuntime, runtimeUserId]);
 
   const appendChatMessage = async (message: Omit<ChatMessage, 'id'>) => {
     if (!threadId) return;
@@ -277,6 +291,16 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     if (!threadId || !scopeKey) {
       setStatus('error');
       setErrorMessage('Assistant thread is not ready yet. Try again in a moment.');
+      return;
+    }
+    if (!isDesktopRuntime && providerMode !== 'managed') {
+      setStatus('error');
+      setErrorMessage('Web runtime only supports managed mode.');
+      return;
+    }
+    if (managedCreditsBlocked) {
+      setStatus('error');
+      setErrorMessage('Out of credits. Open Billing to upgrade or manage your plan.');
       return;
     }
     if (providerMode === 'byok' && !(providerStatus?.hasByokKey || false)) {
@@ -322,8 +346,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       const projectSnapshot = buildAssistantProjectSnapshot(project);
       const turn = await (providerMode === 'codex_oauth'
         ? (() => {
-            if (typeof window === 'undefined' || !window.desktopAssistant) {
+            if (!isDesktopRuntime || !window.desktopAssistant) {
               throw new Error('Codex mode requires the desktop app runtime.');
+            }
+            if (!runtimeUserId) {
+              throw new Error('Missing signed-in user context for desktop provider.');
             }
             return window.desktopAssistant.provider.assistantTurn({
               userIntent,
@@ -333,13 +360,13 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               programRead,
               projectSnapshot,
               threadContext,
-            });
+            }, runtimeUserId);
           })()
         : (() => {
             return (async () => {
               const desktopCredentials =
-                typeof window !== 'undefined' && window.desktopAssistant && providerMode === 'byok'
-                  ? await window.desktopAssistant.provider.getCredentials()
+                isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && runtimeUserId
+                  ? await window.desktopAssistant.provider.getCredentials(runtimeUserId)
                   : undefined;
               const providerCredentials: ProviderCredentials | undefined = desktopCredentials
                 ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
@@ -361,6 +388,9 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
 
       if (turn.mode === 'chat') {
+        if ((turn as { errorCode?: string }).errorCode === 'credits_exhausted') {
+          setErrorMessage('Out of credits. Open Billing to upgrade or manage your plan.');
+        }
         const chatAnswer = (turn.answer || '').trim();
         if (!chatAnswer) {
           throw new Error('Assistant returned an empty chat response.');
@@ -554,6 +584,10 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
   const updateProviderMode = async (nextMode: AssistantProviderMode) => {
     if (!threadId) return;
+    if (!isDesktopRuntime && nextMode !== 'managed') {
+      setErrorMessage('Web runtime only supports managed mode.');
+      return;
+    }
     const previousMode = providerMode;
     if (nextMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
       setErrorMessage(providerStatus.codexStatusMessage || 'Codex mode is currently unavailable in this runtime.');
@@ -562,8 +596,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     try {
       setProviderMode(nextMode);
       await setAssistantThreadProviderMode(threadId, nextMode);
-      if (typeof window !== 'undefined' && window.desktopAssistant) {
-        const status = await window.desktopAssistant.provider.setMode(nextMode);
+      if (isDesktopRuntime && window.desktopAssistant) {
+        if (!runtimeUserId) {
+          throw new Error('Missing signed-in user context for desktop provider.');
+        }
+        const status = await window.desktopAssistant.provider.setMode(nextMode, runtimeUserId);
         setProviderStatus(mapProviderStatus(status));
         setProviderMode(status.mode);
         await setAssistantThreadProviderMode(threadId, status.mode);
@@ -577,8 +614,12 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   };
 
   const saveByokSecret = async () => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) {
+    if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Provider secrets can only be configured in the desktop app.');
+      return;
+    }
+    if (!runtimeUserId) {
+      setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
     if (providerMode !== 'byok') {
@@ -590,7 +631,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       return;
     }
     try {
-      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim());
+      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim(), runtimeUserId);
       setProviderStatus(mapProviderStatus(status));
       setProviderSecretInput('');
       setStatusMessage('Credential saved to OS keychain.');
@@ -601,13 +642,17 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   };
 
   const loginCodexProvider = async () => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) {
+    if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Codex login is only available in the desktop app.');
+      return;
+    }
+    if (!runtimeUserId) {
+      setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
     try {
       setStatusMessage('Opening ChatGPT login in browser...');
-      const status = await window.desktopAssistant.provider.loginCodex();
+      const status = await window.desktopAssistant.provider.loginCodex(runtimeUserId);
       setProviderStatus(mapProviderStatus(status));
       setErrorMessage(null);
     } catch (error) {
@@ -616,12 +661,16 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   };
 
   const logoutCodexProvider = async () => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) {
+    if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Codex logout is only available in the desktop app.');
       return;
     }
+    if (!runtimeUserId) {
+      setErrorMessage('Missing signed-in user context for desktop provider.');
+      return;
+    }
     try {
-      const status = await window.desktopAssistant.provider.logoutCodex();
+      const status = await window.desktopAssistant.provider.logoutCodex(runtimeUserId);
       setProviderStatus(mapProviderStatus(status));
       setStatusMessage('Logged out from ChatGPT.');
       setErrorMessage(null);
@@ -660,14 +709,19 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
                 void updateProviderMode(event.target.value as AssistantProviderMode);
               }}
               className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
+              disabled={!isDesktopRuntime}
             >
               <option value="managed">Managed credits</option>
-              <option value="byok">BYO key</option>
-              <option value="codex_oauth" disabled={providerStatus?.codexAvailable === false}>
-                Codex / ChatGPT login
-              </option>
+              {isDesktopRuntime ? (
+                <>
+                  <option value="byok">BYO key</option>
+                  <option value="codex_oauth" disabled={providerStatus?.codexAvailable === false}>
+                    Codex / ChatGPT login
+                  </option>
+                </>
+              ) : null}
             </select>
-            {providerMode === 'byok' ? (
+            {isDesktopRuntime && providerMode === 'byok' ? (
               <div className="flex items-center gap-2">
                 <input
                   value={providerSecretInput}
@@ -680,7 +734,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
                 </Button>
               </div>
             ) : null}
-            {providerMode === 'codex_oauth' ? (
+            {isDesktopRuntime && providerMode === 'codex_oauth' ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   {!providerStatus?.hasCodexToken ? (
@@ -710,10 +764,42 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
                 ) : null}
               </div>
             ) : null}
-            <div className="text-[11px] text-muted-foreground">
-              BYOK: {providerStatus?.hasByokKey ? 'configured' : 'missing'} · Codex: {providerStatus?.hasCodexToken ? 'configured' : 'missing'}
-              {providerMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable ? ' · Codex unavailable on this runtime' : ''}
-            </div>
+            {isDesktopRuntime ? (
+              <div className="text-[11px] text-muted-foreground">
+                BYOK: {providerStatus?.hasByokKey ? 'configured' : 'missing'} · Codex: {providerStatus?.hasCodexToken ? 'configured' : 'missing'}
+                {providerMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable ? ' · Codex unavailable on this runtime' : ''}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-2 rounded-md border bg-background p-2 text-xs">
+            <div className="font-medium">Credits</div>
+            {walletSummary === undefined ? (
+              <div className="text-muted-foreground">Loading credit balance...</div>
+            ) : (
+              <>
+                <div className="text-muted-foreground">
+                  Plan: <span className="font-medium text-foreground">{walletSummary.planSlug}</span>
+                </div>
+                <div className="text-muted-foreground">
+                  Remaining: <span className="font-medium text-foreground">{walletSummary.balanceCredits}</span>
+                </div>
+                <div className="text-muted-foreground">
+                  Period end:{' '}
+                  <span className="font-medium text-foreground">
+                    {walletSummary.periodEndsAt
+                      ? new Date(walletSummary.periodEndsAt).toLocaleString()
+                      : 'monthly reset'}
+                  </span>
+                </div>
+                {!walletSummary.canRunManagedAssistant ? (
+                  <div className="text-red-600">Out of credits. Upgrade to continue managed assistant usage.</div>
+                ) : null}
+                <Button size="sm" variant="secondary" asChild>
+                  <Link to="/billing">Upgrade / Manage</Link>
+                </Button>
+              </>
+            )}
           </div>
 
           <div className="h-44 overflow-y-auto rounded-md border bg-background p-2 space-y-2">
@@ -752,7 +838,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             <Button
               size="sm"
               onClick={() => void runAssistantTurn()}
-              disabled={status === 'loading' || !scope || !project}
+              disabled={status === 'loading' || !scope || !project || managedCreditsBlocked}
             >
               {status === 'loading' ? <Loader2 className="size-4 animate-spin" /> : null}
               Send
@@ -778,6 +864,11 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
 
           {errorMessage ? <p className="text-xs text-red-600 whitespace-pre-wrap">{errorMessage}</p> : null}
           {statusMessage ? <p className="text-xs text-muted-foreground whitespace-pre-wrap">{statusMessage}</p> : null}
+          {managedCreditsBlocked ? (
+            <p className="text-xs text-red-600">
+              Managed assistant is blocked at zero credits. Open <Link to="/billing" className="underline">Billing</Link> to upgrade.
+            </p>
+          ) : null}
 
           {candidate ? (
             <div className="space-y-2 rounded-md border bg-background p-2 text-xs">
@@ -843,7 +934,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               <Button
                 size="sm"
                 onClick={applyCandidate}
-                disabled={!canApply || (propagationRequired && !allowComponentPropagation)}
+                disabled={!canApply || managedCreditsBlocked || (propagationRequired && !allowComponentPropagation)}
               >
                 Apply
               </Button>

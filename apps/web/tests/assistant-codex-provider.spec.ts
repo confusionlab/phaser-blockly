@@ -14,9 +14,26 @@ async function openEditorFromProjectList(page: import('@playwright/test').Page):
 }
 
 async function openAssistant(page: import('@playwright/test').Page): Promise<void> {
-  const assistantButton = page.locator('button[title="Open Blockly assistant"], button[title="Open assistant"]').first();
-  await expect(assistantButton).toBeVisible({ timeout: 10000 });
-  await assistantButton.click();
+  const globalAssistantButton = page.locator('button[title="Open assistant"]').first();
+  if (await globalAssistantButton.isVisible().catch(() => false)) {
+    await globalAssistantButton.click();
+    await expect(page.getByText('Provider mode')).toBeVisible();
+    return;
+  }
+
+  const addObjectButton = page.getByRole('button', { name: /add object/i }).first();
+  if (await addObjectButton.isVisible().catch(() => false)) {
+    await addObjectButton.click();
+  }
+
+  const codeTab = page.getByRole('tab', { name: /^code$/i });
+  if (await codeTab.isVisible().catch(() => false)) {
+    await codeTab.click();
+  }
+
+  const blocklyAssistantButton = page.locator('button[title="Open Blockly assistant"]').first();
+  await expect(blocklyAssistantButton).toBeVisible({ timeout: 10000 });
+  await blocklyAssistantButton.click();
   await expect(page.getByText('Provider mode')).toBeVisible();
 }
 

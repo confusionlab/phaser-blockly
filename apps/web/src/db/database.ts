@@ -41,6 +41,49 @@ interface ProjectRecord extends ProjectRecordV1 {
   contentHash?: string;
 }
 
+export type ProjectRevisionReason =
+  | 'manual_checkpoint'
+  | 'auto_checkpoint'
+  | 'import'
+  | 'restore'
+  | 'edit_revision';
+
+export type ProjectRevisionKind = 'snapshot' | 'delta';
+
+interface ProjectRevisionRecord {
+  id: string;
+  projectId: string;
+  parentRevisionId?: string;
+  kind: ProjectRevisionKind;
+  baseRevisionId: string;
+  snapshotData?: string;
+  patch?: string;
+  contentHash: string;
+  createdAt: Date;
+  schemaVersion: number;
+  appVersion?: string;
+  reason: ProjectRevisionReason;
+  checkpointName?: string;
+  isCheckpoint: boolean;
+  restoredFromRevisionId?: string;
+}
+
+export interface ProjectRevision {
+  id: string;
+  projectId: string;
+  parentRevisionId: string | null;
+  kind: ProjectRevisionKind;
+  baseRevisionId: string;
+  contentHash: string;
+  createdAt: Date;
+  schemaVersion: number;
+  appVersion?: string;
+  reason: ProjectRevisionReason;
+  checkpointName: string | null;
+  isCheckpoint: boolean;
+  restoredFromRevisionId: string | null;
+}
+
 interface AssetRecord {
   id: string;
   name: string;
@@ -202,6 +245,7 @@ function toProjectRecord(project: Project, updatedAt: Date = new Date()): Projec
 
 class GameMakerDatabase extends Dexie {
   projects!: EntityTable<ProjectRecord, 'id'>;
+  projectRevisions!: EntityTable<ProjectRevisionRecord, 'id'>;
   assets!: EntityTable<AssetRecord, 'id'>;
   reusables!: EntityTable<ReusableRecord, 'id'>;
 
@@ -231,6 +275,14 @@ class GameMakerDatabase extends Dexie {
             }
           });
       });
+
+    this.version(3).stores({
+      projects: 'id, name, createdAt, updatedAt, schemaVersion',
+      projectRevisions:
+        'id, projectId, createdAt, [projectId+createdAt], [projectId+isCheckpoint+createdAt], [projectId+reason+createdAt], [projectId+contentHash]',
+      assets: 'id, name, type',
+      reusables: 'id, name, createdAt, *tags',
+    });
   }
 }
 
@@ -270,7 +322,311 @@ export async function listProjects(): Promise<Array<{ id: string; name: string; 
 }
 
 export async function deleteProject(id: string): Promise<void> {
+  if (!isNonEmptyStringKey(id)) {
+    return;
+  }
+
   await db.projects.delete(id);
+  const revisions = await db.projectRevisions.where('projectId').equals(id).toArray();
+  await db.transaction('rw', db.projectRevisions, async () => {
+    await Promise.all(revisions.map((revision) => db.projectRevisions.delete(revision.id)));
+  });
+}
+
+const HISTORY_START_DATE = new Date(0);
+const HISTORY_END_DATE = new Date(8640000000000000);
+const MAX_CHECKPOINT_NAME_LENGTH = 80;
+
+type RevisionCreateOptions = {
+  isCheckpoint?: boolean;
+  checkpointName?: string;
+  restoredFromRevisionId?: string;
+};
+
+function normalizeCheckpointName(name: string): string {
+  return name.trim().slice(0, MAX_CHECKPOINT_NAME_LENGTH);
+}
+
+function isNonEmptyStringKey(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function toPublicRevision(record: ProjectRevisionRecord): ProjectRevision {
+  return {
+    id: record.id,
+    projectId: record.projectId,
+    parentRevisionId: record.parentRevisionId ?? null,
+    kind: record.kind,
+    baseRevisionId: record.baseRevisionId,
+    contentHash: record.contentHash,
+    createdAt: new Date(record.createdAt),
+    schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+    appVersion: record.appVersion,
+    reason: record.reason,
+    checkpointName: record.checkpointName ?? null,
+    isCheckpoint: record.isCheckpoint,
+    restoredFromRevisionId: record.restoredFromRevisionId ?? null,
+  };
+}
+
+async function getProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return [];
+  }
+
+  return await db.projectRevisions
+    .where('[projectId+createdAt]')
+    .between([projectId, HISTORY_START_DATE], [projectId, HISTORY_END_DATE])
+    .sortBy('createdAt');
+}
+
+async function getLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return null;
+  }
+
+  const latest = await db.projectRevisions
+    .where('[projectId+createdAt]')
+    .between([projectId, HISTORY_START_DATE], [projectId, HISTORY_END_DATE])
+    .reverse()
+    .first();
+  return latest ?? null;
+}
+
+async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return null;
+  }
+
+  const candidates = await db.projectRevisions
+    .where('[projectId+isCheckpoint+createdAt]')
+    .between([projectId, true, HISTORY_START_DATE], [projectId, true, HISTORY_END_DATE])
+    .reverse()
+    .first();
+  return candidates ?? null;
+}
+
+function buildRevisionData(project: Project): { serializedData: string; contentHash: string } {
+  const serializedData = serializeProjectData(project);
+  return {
+    serializedData,
+    contentHash: computeContentHash(serializedData),
+  };
+}
+
+function parseRevisionProjectData(serializedData: string): Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'> {
+  return JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+}
+
+function formatRestoreTimestamp(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+async function ensureUniqueProjectName(baseName: string): Promise<string> {
+  const existing = await listProjects();
+  const names = new Set(existing.map((project) => project.name));
+  if (!names.has(baseName)) return baseName;
+
+  let index = 2;
+  while (names.has(`${baseName} (${index})`)) {
+    index += 1;
+  }
+  return `${baseName} (${index})`;
+}
+
+export async function createRevision(
+  project: Project,
+  reason: ProjectRevisionReason,
+  options: RevisionCreateOptions = {},
+): Promise<ProjectRevision | null> {
+  if (!isNonEmptyStringKey(project.id)) {
+    throw new Error('Invalid project revision key: project.id must be a non-empty string.');
+  }
+
+  const { serializedData, contentHash } = buildRevisionData(project);
+  const latestRevision = await getLatestRevision(project.id);
+  if (reason !== 'manual_checkpoint' && reason !== 'restore' && latestRevision?.contentHash === contentHash) {
+    return null;
+  }
+
+  const checkpointName = options.checkpointName ? normalizeCheckpointName(options.checkpointName) : undefined;
+  const isCheckpoint = options.isCheckpoint ?? false;
+  if (isCheckpoint && !checkpointName && reason === 'manual_checkpoint') {
+    throw new Error('Checkpoint name is required for manual checkpoints.');
+  }
+
+  const revisionId = crypto.randomUUID();
+  const record: ProjectRevisionRecord = {
+    id: revisionId,
+    projectId: project.id,
+    parentRevisionId: latestRevision?.id,
+    kind: 'snapshot',
+    baseRevisionId: revisionId,
+    snapshotData: serializedData,
+    patch: undefined,
+    contentHash,
+    createdAt: new Date(),
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    appVersion: APP_VERSION,
+    reason,
+    checkpointName,
+    isCheckpoint,
+    restoredFromRevisionId: options.restoredFromRevisionId,
+  };
+
+  await db.projectRevisions.put(record);
+  return toPublicRevision(record);
+}
+
+export async function createManualCheckpoint(project: Project, checkpointName: string): Promise<ProjectRevision | null> {
+  const normalizedName = normalizeCheckpointName(checkpointName);
+  if (!normalizedName) {
+    throw new Error('Checkpoint name cannot be empty.');
+  }
+  return await createRevision(project, 'manual_checkpoint', {
+    isCheckpoint: true,
+    checkpointName: normalizedName,
+  });
+}
+
+export async function createAutoCheckpoint(project: Project): Promise<ProjectRevision | null> {
+  const latestCheckpoint = await getLatestCheckpointRevision(project.id);
+  const { contentHash } = buildRevisionData(project);
+  if (latestCheckpoint?.contentHash === contentHash) {
+    return null;
+  }
+  return await createRevision(project, 'auto_checkpoint', {
+    isCheckpoint: true,
+  });
+}
+
+export type ListProjectRevisionFilters = {
+  manualCheckpointsOnly?: boolean;
+};
+
+export async function listProjectRevisions(
+  projectId: string,
+  filters: ListProjectRevisionFilters = {},
+): Promise<ProjectRevision[]> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return [];
+  }
+
+  const revisions = await getProjectRevisionsAscending(projectId);
+  const filtered = filters.manualCheckpointsOnly
+    ? revisions.filter((revision) => revision.reason === 'manual_checkpoint')
+    : revisions;
+  return filtered
+    .slice()
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .map(toPublicRevision);
+}
+
+export async function renameCheckpoint(
+  projectId: string,
+  revisionId: string,
+  checkpointName: string,
+): Promise<ProjectRevision> {
+  const normalizedName = normalizeCheckpointName(checkpointName);
+  if (!normalizedName) {
+    throw new Error('Checkpoint name cannot be empty.');
+  }
+
+  const revision = await db.projectRevisions.get(revisionId);
+  if (!revision || revision.projectId !== projectId) {
+    throw new Error('Checkpoint not found.');
+  }
+  if (!revision.isCheckpoint) {
+    throw new Error('Revision is not a checkpoint.');
+  }
+
+  const updated: ProjectRevisionRecord = {
+    ...revision,
+    checkpointName: normalizedName,
+  };
+  await db.projectRevisions.put(updated);
+  return toPublicRevision(updated);
+}
+
+export async function restoreAsNewProject(projectId: string, revisionId: string): Promise<Project> {
+  const sourceProject = await loadProject(projectId);
+  if (!sourceProject) {
+    throw new Error('Source project not found.');
+  }
+
+  const revisions = await getProjectRevisionsAscending(projectId);
+  const targetIndex = revisions.findIndex((revision) => revision.id === revisionId);
+  if (targetIndex < 0) {
+    throw new Error('Revision not found.');
+  }
+
+  const targetRevision = revisions[targetIndex];
+  if (!targetRevision.snapshotData) {
+    throw new Error('Only snapshot revisions are currently restorable.');
+  }
+
+  const parsedData = parseRevisionProjectData(targetRevision.snapshotData);
+  const restoreLabel = targetRevision.checkpointName
+    ? targetRevision.checkpointName
+    : formatRestoreTimestamp(new Date(targetRevision.createdAt));
+  const desiredName = `${sourceProject.name} (Restored: ${restoreLabel})`;
+  const uniqueName = await ensureUniqueProjectName(desiredName);
+  const newProjectId = crypto.randomUUID();
+  const now = new Date();
+
+  const restoredProject: Project = {
+    ...parsedData,
+    id: newProjectId,
+    name: uniqueName,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await saveProject(restoredProject);
+
+  const copiedRevisions = revisions.slice(0, targetIndex + 1);
+  const revisionIdMap = new Map<string, string>();
+  const newRevisionRecords: ProjectRevisionRecord[] = [];
+
+  for (const revision of copiedRevisions) {
+    const newRevisionId = crypto.randomUUID();
+    revisionIdMap.set(revision.id, newRevisionId);
+  }
+
+  for (const revision of copiedRevisions) {
+    const mappedId = revisionIdMap.get(revision.id);
+    if (!mappedId) continue;
+    const mappedParentId = revision.parentRevisionId ? revisionIdMap.get(revision.parentRevisionId) : undefined;
+    const mappedBaseRevisionId = revisionIdMap.get(revision.baseRevisionId) ?? mappedId;
+    const mappedRestoredFrom = revision.restoredFromRevisionId
+      ? revisionIdMap.get(revision.restoredFromRevisionId)
+      : undefined;
+
+    newRevisionRecords.push({
+      ...revision,
+      id: mappedId,
+      projectId: newProjectId,
+      parentRevisionId: mappedParentId,
+      baseRevisionId: mappedBaseRevisionId,
+      restoredFromRevisionId: mappedRestoredFrom,
+      createdAt: new Date(revision.createdAt),
+    });
+  }
+
+  if (newRevisionRecords.length > 0) {
+    await db.projectRevisions.bulkPut(newRevisionRecords);
+  }
+
+  await createRevision(restoredProject, 'restore', {
+    restoredFromRevisionId: revisionIdMap.get(targetRevision.id) ?? undefined,
+  });
+
+  return restoredProject;
 }
 
 // Reusable Object Repository
@@ -332,6 +688,23 @@ export interface ProjectSyncPayload {
   schemaVersion: number;
   appVersion: string;
   contentHash: string;
+}
+
+export interface ProjectRevisionSyncPayload {
+  localProjectId: string;
+  revisionId: string;
+  parentRevisionId?: string;
+  kind: ProjectRevisionKind;
+  baseRevisionId: string;
+  data: string;
+  contentHash: string;
+  createdAt: number;
+  schemaVersion: number;
+  appVersion?: string;
+  reason: ProjectRevisionReason;
+  checkpointName?: string;
+  isCheckpoint: boolean;
+  restoredFromRevisionId?: string;
 }
 
 const FNV64_OFFSET = 0xcbf29ce484222325n;
@@ -411,6 +784,26 @@ function recordToSyncPayload(record: ProjectRecord): ProjectSyncPayload {
   };
 }
 
+function revisionRecordToSyncPayload(record: ProjectRevisionRecord): ProjectRevisionSyncPayload {
+  const data = record.snapshotData ?? record.patch ?? '';
+  return {
+    localProjectId: record.projectId,
+    revisionId: record.id,
+    parentRevisionId: record.parentRevisionId,
+    kind: record.kind,
+    baseRevisionId: record.baseRevisionId,
+    data,
+    contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(data),
+    createdAt: record.createdAt.getTime(),
+    schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+    appVersion: record.appVersion ?? APP_VERSION,
+    reason: record.reason,
+    checkpointName: record.checkpointName,
+    isCheckpoint: record.isCheckpoint,
+    restoredFromRevisionId: record.restoredFromRevisionId,
+  };
+}
+
 // Get all local projects for batch sync
 export async function getAllProjectsForSync(): Promise<ProjectSyncPayload[]> {
   const records = await db.projects.toArray();
@@ -428,6 +821,11 @@ export async function getAllProjectsForSync(): Promise<ProjectSyncPayload[]> {
   }
 
   return payloads;
+}
+
+export async function getProjectRevisionsForSync(projectId: string): Promise<ProjectRevisionSyncPayload[]> {
+  const revisions = await getProjectRevisionsAscending(projectId);
+  return revisions.map(revisionRecordToSyncPayload);
 }
 
 export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Promise<{ deleted: number }> {
@@ -565,6 +963,82 @@ export async function syncProjectFromCloud(cloudProject: {
 
   await db.projects.put(incomingRecord);
   return { action: 'updated', migrated, reason };
+}
+
+export async function syncProjectRevisionsFromCloud(
+  projectId: string,
+  cloudRevisions: ProjectRevisionSyncPayload[],
+): Promise<{ created: number; updated: number; skipped: number }> {
+  const projectExists = await db.projects.get(projectId);
+  if (!projectExists) {
+    return { created: 0, updated: 0, skipped: cloudRevisions.length };
+  }
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const payload of cloudRevisions) {
+    if (payload.localProjectId !== projectId) {
+      skipped += 1;
+      continue;
+    }
+
+    const incomingKind: ProjectRevisionKind = payload.kind === 'delta' ? 'delta' : 'snapshot';
+    const incomingReason: ProjectRevisionReason = (
+      ['manual_checkpoint', 'auto_checkpoint', 'import', 'restore', 'edit_revision'] as ProjectRevisionReason[]
+    ).includes(payload.reason)
+      ? payload.reason
+      : 'edit_revision';
+
+    const incomingRecord: ProjectRevisionRecord = {
+      id: payload.revisionId,
+      projectId: payload.localProjectId,
+      parentRevisionId: payload.parentRevisionId,
+      kind: incomingKind,
+      baseRevisionId: payload.baseRevisionId,
+      snapshotData: incomingKind === 'snapshot' ? payload.data : undefined,
+      patch: incomingKind === 'delta' ? payload.data : undefined,
+      contentHash: normalizeContentHash(payload.contentHash) ?? computeContentHash(payload.data),
+      createdAt: new Date(payload.createdAt),
+      schemaVersion: normalizeSchemaVersion(payload.schemaVersion),
+      appVersion: payload.appVersion,
+      reason: incomingReason,
+      checkpointName: payload.checkpointName ? normalizeCheckpointName(payload.checkpointName) : undefined,
+      isCheckpoint: Boolean(payload.isCheckpoint),
+      restoredFromRevisionId: payload.restoredFromRevisionId,
+    };
+
+    const existing = await db.projectRevisions.get(incomingRecord.id);
+    if (!existing) {
+      await db.projectRevisions.put(incomingRecord);
+      created += 1;
+      continue;
+    }
+
+    if (existing.projectId !== projectId) {
+      skipped += 1;
+      continue;
+    }
+
+    const shouldUpdate =
+      incomingRecord.createdAt.getTime() > existing.createdAt.getTime() ||
+      (incomingRecord.createdAt.getTime() === existing.createdAt.getTime() &&
+        (incomingRecord.contentHash !== existing.contentHash ||
+          incomingRecord.checkpointName !== existing.checkpointName ||
+          incomingRecord.reason !== existing.reason ||
+          incomingRecord.isCheckpoint !== existing.isCheckpoint));
+
+    if (!shouldUpdate) {
+      skipped += 1;
+      continue;
+    }
+
+    await db.projectRevisions.put(incomingRecord);
+    updated += 1;
+  }
+
+  return { created, updated, skipped };
 }
 
 // Get single project record for sync
@@ -1390,6 +1864,7 @@ export async function importProject(jsonString: string): Promise<Project> {
   };
 
   await saveProject(importedProject);
+  await createRevision(importedProject, 'import');
 
   return importedProject;
 }

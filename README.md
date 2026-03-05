@@ -22,12 +22,26 @@
 - Use mode-specific env vars to avoid accidentally using prod backend in local dev:
   - `VITE_CONVEX_URL_DEV` / `VITE_CONVEX_SITE_URL_DEV` for development.
   - `VITE_CONVEX_URL_PROD` / `VITE_CONVEX_SITE_URL_PROD` for production builds.
-- Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` if mode-specific values are missing.
+- Clerk keys can also be mode-specific:
+  - `VITE_CLERK_PUBLISHABLE_KEY_DEV` for development.
+  - `VITE_CLERK_PUBLISHABLE_KEY_PROD` for production/desktop builds.
+- Desktop runtime uses the DEV Clerk key by default in local dev. To force PROD key during local desktop runs, set `VITE_DESKTOP_USE_PROD_CLERK_KEY=1`.
+- Convex can trust multiple Clerk issuer domains:
+  - `CLERK_JWT_ISSUER_DOMAIN` (required)
+  - `CLERK_JWT_ISSUER_DOMAIN_SECONDARY` (optional)
+- Desktop runtime can force Clerk redirects to HTTPS via `VITE_DESKTOP_AUTH_REDIRECT_URL` (default: `https://accounts.confusionlab.com/`) to avoid `file://` redirect scheme errors.
+- Desktop runtime can also force explicit hosted auth paths:
+  - `VITE_DESKTOP_AUTH_SIGN_IN_URL` (default: `https://accounts.confusionlab.com/sign-in`)
+  - `VITE_DESKTOP_AUTH_SIGN_UP_URL` (default: `https://accounts.confusionlab.com/sign-up`)
+- Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` for development-only fallback.
+  - Production builds require `VITE_CONVEX_URL_PROD` (and `VITE_CONVEX_SITE_URL_PROD` when explicitly needed).
+  - Optional fallback for Clerk: `VITE_CLERK_PUBLISHABLE_KEY`.
 
 ## Desktop Packaging
 
 - macOS unsigned directory package: `pnpm --filter @pochacoding/desktop pack:mac`
 - macOS unsigned `dmg` + `zip`: `pnpm --filter @pochacoding/desktop dist:mac`
+- In development (`pnpm dev:desktop`), Electron renderer is forced to `http://127.0.0.1:5173` (or override via `POCHACODING_DESKTOP_WEB_URL`) to avoid `file://` auth redirect issues.
 
 ## Blockly LLM Assistant (OpenRouter)
 

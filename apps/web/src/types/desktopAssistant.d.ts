@@ -55,13 +55,13 @@ export type DesktopCodexAssistantTurnResponse =
 
 export interface DesktopAssistantApi {
   provider: {
-    status: () => Promise<DesktopProviderStatus>;
-    setMode: (mode: AssistantProviderMode) => Promise<DesktopProviderStatus>;
-    setByokKey: (key: string) => Promise<DesktopProviderStatus>;
-    loginCodex: () => Promise<DesktopProviderStatus>;
-    logoutCodex: () => Promise<DesktopProviderStatus>;
-    assistantTurn: (request: DesktopCodexAssistantTurnRequest) => Promise<DesktopCodexAssistantTurnResponse>;
-    getCredentials: () => Promise<DesktopProviderCredentials>;
+    status: (userId: string) => Promise<DesktopProviderStatus>;
+    setMode: (mode: AssistantProviderMode, userId: string) => Promise<DesktopProviderStatus>;
+    setByokKey: (key: string, userId: string) => Promise<DesktopProviderStatus>;
+    loginCodex: (userId: string) => Promise<DesktopProviderStatus>;
+    logoutCodex: (userId: string) => Promise<DesktopProviderStatus>;
+    assistantTurn: (request: DesktopCodexAssistantTurnRequest, userId: string) => Promise<DesktopCodexAssistantTurnResponse>;
+    getCredentials: (userId: string) => Promise<DesktopProviderCredentials>;
   };
   onProviderEvent: (listener: (payload: DesktopProviderEvent) => void) => () => void;
 }
