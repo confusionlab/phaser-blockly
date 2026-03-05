@@ -70,10 +70,11 @@ function AuthenticatedShell() {
   const isEditorRoute =
     location.pathname === '/'
     || location.pathname.startsWith('/project/');
+  const isHomeRoute = location.pathname === '/';
 
   return (
     <>
-      {user ? (
+      {user && isHomeRoute ? (
         <div className="fixed right-4 top-3 z-[100300]">
           <UserButton />
         </div>
