@@ -225,6 +225,74 @@ test.describe('LLM semantic op payload validation', () => {
     }
   });
 
+  test('accepts common model-style alias fields', () => {
+    const payload = {
+      intentSummary: 'Alias shape payload',
+      assumptions: [],
+      semanticOps: [
+        {
+          type: 'create_event_flow',
+          eventType: 'event_game_start',
+          actions: [{ type: 'motion_change_x', inputs: { VALUE: 10 } }],
+        },
+        {
+          op: 'append_actions',
+          eventBlockId: 'event-1',
+          actions: [{ blockType: 'motion_change_y', inputs: { VALUE: { shadow: { type: 'math_number', fields: { NUM: -5 } } } } }],
+        },
+        {
+          op: 'replace_action',
+          targetBlockId: 'action-1',
+          action: { type: 'motion_set_x', inputs: { VALUE: 20 } },
+        },
+        {
+          op: 'set_block_field',
+          blockId: 'event-1',
+          field: 'KEY',
+          value: 'SPACE',
+        },
+        {
+          op: 'delete_subtree',
+          blockId: 'action-1',
+        },
+      ],
+      projectOps: [
+        {
+          type: 'rename_scene',
+          sceneId: 'scene-1',
+          name: 'Arena',
+        },
+        {
+          type: 'rename_object',
+          sceneId: 'scene-1',
+          objectId: 'obj-1',
+          name: 'Hero',
+        },
+        {
+          type: 'set_current_costume',
+          sceneId: 'scene-1',
+          objectId: 'obj-1',
+          costumeId: 'costume-1',
+        },
+      ],
+    };
+
+    const result = validateSemanticOpsPayload(payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.semanticOps[0].op).toBe('create_event_flow');
+      expect(result.value.semanticOps[1].op).toBe('append_actions');
+      expect(result.value.semanticOps[1].flowSelector.eventBlockId).toBe('event-1');
+      expect(result.value.semanticOps[3].op).toBe('set_block_field');
+      expect(result.value.semanticOps[3].targetBlockId).toBe('event-1');
+      expect(result.value.semanticOps[4].op).toBe('delete_subtree');
+      expect(result.value.semanticOps[4].targetBlockId).toBe('action-1');
+      expect(result.value.projectOps[0].op).toBe('rename_scene');
+      expect(result.value.projectOps[1].op).toBe('rename_object');
+      expect(result.value.projectOps[2].op).toBe('set_current_costume');
+    }
+  });
+
   test('rejects project op payloads with invalid field types', () => {
     const payload = {
       intentSummary: 'bad payload',

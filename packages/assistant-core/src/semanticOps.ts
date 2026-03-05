@@ -26,6 +26,65 @@ function getAlias<T>(obj: Record<string, unknown>, ...keys: string[]): T | undef
   return undefined;
 }
 
+const SEMANTIC_OP_NAMES = new Set([
+  'create_event_flow',
+  'append_actions',
+  'replace_action',
+  'set_block_field',
+  'ensure_variable',
+  'ensure_message',
+  'retarget_reference',
+  'delete_subtree',
+]);
+
+const PROJECT_OP_NAMES = new Set([
+  'rename_project',
+  'create_scene',
+  'rename_scene',
+  'reorder_scenes',
+  'create_object',
+  'rename_object',
+  'set_object_property',
+  'set_object_physics',
+  'set_object_collider_type',
+  'create_folder',
+  'rename_folder',
+  'move_object_to_folder',
+  'add_costume_from_image_url',
+  'add_costume_text_circle',
+  'rename_costume',
+  'reorder_costumes',
+  'set_current_costume',
+  'validate_project',
+]);
+
+const PROJECT_OP_ALIASES: Record<string, string> = {
+  add_svg_text_costume: 'add_costume_text_circle',
+  add_text_costume: 'add_costume_text_circle',
+  create_text_costume: 'add_costume_text_circle',
+  add_image_costume: 'add_costume_from_image_url',
+  add_costume_from_image: 'add_costume_from_image_url',
+  import_image_costume: 'add_costume_from_image_url',
+  set_physics: 'set_object_physics',
+  set_collider_type: 'set_object_collider_type',
+};
+
+function readOpName(
+  value: Record<string, unknown>,
+  allowed: Set<string>,
+  aliases?: Record<string, string>,
+): string | null {
+  const normalize = (raw: unknown): string => (typeof raw === 'string' ? raw.trim() : '');
+  const applyAlias = (raw: string): string => aliases?.[raw] ?? raw;
+
+  const direct = applyAlias(normalize(getAlias(value, 'op')));
+  if (direct) return direct;
+
+  const typeAlias = applyAlias(normalize(getAlias(value, 'type')));
+  if (!typeAlias || !allowed.has(typeAlias)) return null;
+  return typeAlias;
+}
+
 function parseStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === 'string');
@@ -38,7 +97,13 @@ function parseInputLiteral(value: unknown, path: string, errors: string[]): Inpu
     return null;
   }
 
-  const block = value.block;
+  const block = getAlias<string>(value, 'block', 'type', 'blockType', 'block_type');
+  if ((typeof block !== 'string' || !block.trim()) && value.shadow !== undefined) {
+    const parsedShadow = parseInputLiteral(value.shadow, `${path}.shadow`, errors);
+    if (parsedShadow !== null) {
+      return parsedShadow;
+    }
+  }
   if (typeof block !== 'string' || !block.trim()) {
     errors.push(`${path}.block: expected non-empty string`);
     return null;
@@ -107,7 +172,7 @@ function parseAction(value: unknown, path: string, errors: string[]): ActionSpec
     return null;
   }
 
-  const action = value.action;
+  const action = getAlias<string>(value, 'action', 'type', 'block', 'blockType', 'block_type');
   if (typeof action !== 'string' || !action.trim()) {
     errors.push(`${path}.action: expected non-empty string`);
     return null;
@@ -193,15 +258,15 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
     return null;
   }
 
-  const op = value.op;
-  if (typeof op !== 'string' || !op.trim()) {
+  const op = readOpName(value, SEMANTIC_OP_NAMES);
+  if (!op) {
     errors.push(`${path}.op: expected non-empty string`);
     return null;
   }
 
   switch (op) {
     case 'create_event_flow': {
-      const event = getAlias<string>(value, 'event');
+      const event = getAlias<string>(value, 'event', 'eventType', 'event_type');
       if (typeof event !== 'string' || !event.trim()) {
         errors.push(`${path}.event: expected non-empty string`);
         return null;
@@ -239,7 +304,29 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
       return parsed;
     }
     case 'append_actions': {
-      const flowSelectorCandidate = getAlias<unknown>(value, 'flowSelector', 'flow_selector');
+      let flowSelectorCandidate = getAlias<unknown>(value, 'flowSelector', 'flow_selector');
+      if (!isRecord(flowSelectorCandidate)) {
+        const inferredSelector: Record<string, unknown> = {};
+        const inferredEventBlockId = getAlias<string>(value, 'eventBlockId', 'event_block_id');
+        if (typeof inferredEventBlockId === 'string' && inferredEventBlockId.trim()) {
+          inferredSelector.eventBlockId = inferredEventBlockId;
+        }
+        const inferredEventType = getAlias<string>(value, 'eventType', 'event_type', 'event');
+        if (typeof inferredEventType === 'string' && inferredEventType.trim()) {
+          inferredSelector.eventType = inferredEventType;
+        }
+        const inferredFieldEquals = getAlias<unknown>(value, 'eventFieldEquals', 'event_field_equals');
+        if (inferredFieldEquals !== undefined) {
+          inferredSelector.eventFieldEquals = inferredFieldEquals;
+        }
+        const inferredIndex = getAlias<number>(value, 'index');
+        if (typeof inferredIndex === 'number') {
+          inferredSelector.index = inferredIndex;
+        }
+        if (Object.keys(inferredSelector).length > 0) {
+          flowSelectorCandidate = inferredSelector;
+        }
+      }
       if (!isRecord(flowSelectorCandidate)) {
         errors.push(`${path}.flowSelector: expected object`);
         return null;
@@ -285,12 +372,12 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
       };
     }
     case 'replace_action': {
-      const targetBlockId = getAlias<string>(value, 'targetBlockId', 'target_block_id');
+      const targetBlockId = getAlias<string>(value, 'targetBlockId', 'target_block_id', 'blockId', 'block_id');
       if (typeof targetBlockId !== 'string' || !targetBlockId.trim()) {
         errors.push(`${path}.targetBlockId: expected non-empty string`);
         return null;
       }
-      const action = parseAction(getAlias(value, 'action'), `${path}.action`, errors);
+      const action = parseAction(getAlias(value, 'action', 'newAction', 'replacement'), `${path}.action`, errors);
       if (!action) return null;
       return {
         op: 'replace_action',
@@ -299,7 +386,7 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
       };
     }
     case 'set_block_field': {
-      const targetBlockId = getAlias<string>(value, 'targetBlockId', 'target_block_id');
+      const targetBlockId = getAlias<string>(value, 'targetBlockId', 'target_block_id', 'blockId', 'block_id');
       if (typeof targetBlockId !== 'string' || !targetBlockId.trim()) {
         errors.push(`${path}.targetBlockId: expected non-empty string`);
         return null;
@@ -391,7 +478,7 @@ function parseSemanticOp(value: unknown, index: number, errors: string[]): Seman
       };
     }
     case 'delete_subtree': {
-      const targetBlockId = getAlias<string>(value, 'targetBlockId', 'target_block_id');
+      const targetBlockId = getAlias<string>(value, 'targetBlockId', 'target_block_id', 'blockId', 'block_id');
       if (typeof targetBlockId !== 'string' || !targetBlockId.trim()) {
         errors.push(`${path}.targetBlockId: expected non-empty string`);
         return null;
@@ -415,8 +502,8 @@ function parseProjectOp(value: unknown, index: number, errors: string[]): Projec
     return null;
   }
 
-  const op = getAlias<string>(value, 'op');
-  if (typeof op !== 'string' || !op.trim()) {
+  const op = readOpName(value, PROJECT_OP_NAMES, PROJECT_OP_ALIASES);
+  if (!op) {
     errors.push(`${path}.op: expected non-empty string`);
     return null;
   }
@@ -567,7 +654,7 @@ function parseProjectOp(value: unknown, index: number, errors: string[]): Projec
     case 'set_object_collider_type': {
       const sceneId = requireString('sceneId', 'scene_id');
       const objectId = requireString('objectId', 'object_id');
-      const colliderType = getAlias<string>(value, 'colliderType', 'collider_type');
+      const colliderType = getAlias<string>(value, 'colliderType', 'collider_type', 'type');
       if (!sceneId || !objectId) return null;
       if (colliderType !== 'none' && colliderType !== 'box' && colliderType !== 'circle' && colliderType !== 'capsule') {
         errors.push(`${path}.colliderType: invalid collider type`);
