@@ -33,7 +33,8 @@
 - Desktop runtime can also force explicit hosted auth paths:
   - `VITE_DESKTOP_AUTH_SIGN_IN_URL` (default: `https://accounts.confusionlab.com/sign-in`)
   - `VITE_DESKTOP_AUTH_SIGN_UP_URL` (default: `https://accounts.confusionlab.com/sign-up`)
-- Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` if mode-specific values are missing.
+- Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` for development-only fallback.
+  - Production builds require `VITE_CONVEX_URL_PROD` (and `VITE_CONVEX_SITE_URL_PROD` when explicitly needed).
   - Optional fallback for Clerk: `VITE_CLERK_PUBLISHABLE_KEY`.
 
 ## Desktop Packaging

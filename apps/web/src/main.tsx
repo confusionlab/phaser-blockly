@@ -75,8 +75,7 @@ if (!convexUrl || !clerkPublishableKey) {
         {!convexUrl ? (
           <>
             {' '}
-            Set `VITE_CONVEX_URL_DEV` for development and `VITE_CONVEX_URL_PROD` for production
-            (or fallback `VITE_CONVEX_URL`).
+            Set `VITE_CONVEX_URL_DEV` for development and `VITE_CONVEX_URL_PROD` for production.
           </>
         ) : null}
         {!clerkPublishableKey
