@@ -61,6 +61,7 @@ export function EditorLayout() {
     currentProject: project,
     isDirty,
     syncOnUnmount: false,
+    checkpointIntervalMs: 10 * 60 * 1000,
   });
 
 
@@ -92,7 +93,7 @@ export function EditorLayout() {
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!project || !isDirty || isBlockingCloudSyncRef.current) {
+      if (!project || isBlockingCloudSyncRef.current) {
         return;
       }
 
@@ -114,7 +115,7 @@ export function EditorLayout() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isDirty, project, saveCurrentProject, syncProjectToCloud]);
+  }, [project, saveCurrentProject, syncProjectToCloud]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {

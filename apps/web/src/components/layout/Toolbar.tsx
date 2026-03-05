@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
@@ -21,18 +21,13 @@ export function Toolbar() {
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const projectNameInputRef = useRef<HTMLInputElement>(null);
-  const { syncProjectToCloud, isProjectInCloud } = useCloudSync({
+  const { syncProjectToCloud } = useCloudSync({
     currentProjectId: project?.id ?? null,
     currentProject: project,
     isDirty,
     syncOnUnmount: false,
     checkpointIntervalMs: 0,
   });
-
-  const cloudButtonLabel = useMemo(() => {
-    if (!project) return 'Upload to Cloud';
-    return isProjectInCloud(project.id) ? 'Update to Cloud' : 'Upload to Cloud';
-  }, [isProjectInCloud, project]);
   const showBillingButton = location.pathname === '/';
 
   const syncCurrentProjectToCloud = async (): Promise<boolean> => {
@@ -53,17 +48,13 @@ export function Toolbar() {
   };
 
   const handleGoHome = async () => {
-    if (project && isDirty) {
+    if (project) {
       const synced = await syncCurrentProjectToCloud();
       if (!synced) return;
     }
 
     closeProject();
     navigate('/');
-  };
-
-  const handleUploadToCloud = async () => {
-    await syncCurrentProjectToCloud();
   };
 
   const handleToggleDarkMode = async () => {
@@ -201,17 +192,6 @@ export function Toolbar() {
             </Button>
           )}
 
-          {project && (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => void handleUploadToCloud()}
-              disabled={isSyncingCloud}
-            >
-              <Upload className="size-4" />
-              {isSyncingCloud ? 'Uploading...' : cloudButtonLabel}
-            </Button>
-          )}
         </div>
       </div>
 
