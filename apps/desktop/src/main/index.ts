@@ -13,8 +13,9 @@ import type {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const KEYCHAIN_SERVICE = 'PochaCodingAssistant';
-const BYOK_ACCOUNT = 'openrouter-byok';
-const PROVIDER_MODE_FILE = 'assistant-provider-mode.json';
+const BYOK_ACCOUNT_PREFIX = 'openrouter-byok';
+const PROVIDER_MODE_FILE_PREFIX = 'assistant-provider-mode';
+const CODEX_AUTH_LINK_FILE = 'assistant-codex-auth-link.json';
 const FALLBACK_SECRET_FILE = 'assistant-secrets.json';
 
 let mainWindow: BrowserWindow | null = null;
@@ -101,13 +102,28 @@ async function deleteSecret(account: string): Promise<void> {
   await writeFallbackSecrets(fallback);
 }
 
-function getProviderModePath(): string {
-  return path.join(app.getPath('userData'), PROVIDER_MODE_FILE);
+function assertValidUserId(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('Missing authenticated user id for provider scope.');
+  }
+  return value.trim();
 }
 
-async function readProviderMode(): Promise<AssistantProviderMode> {
+function sanitizeUserIdForPath(userId: string): string {
+  return userId.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function getScopedByokAccount(userId: string): string {
+  return `${BYOK_ACCOUNT_PREFIX}:${userId}`;
+}
+
+function getProviderModePath(userId: string): string {
+  return path.join(app.getPath('userData'), `${PROVIDER_MODE_FILE_PREFIX}:${sanitizeUserIdForPath(userId)}.json`);
+}
+
+async function readProviderMode(userId: string): Promise<AssistantProviderMode> {
   try {
-    const content = await fs.readFile(getProviderModePath(), 'utf8');
+    const content = await fs.readFile(getProviderModePath(userId), 'utf8');
     const parsed = JSON.parse(content) as { mode?: AssistantProviderMode };
     if (parsed.mode === 'managed' || parsed.mode === 'byok' || parsed.mode === 'codex_oauth') {
       return parsed.mode;
@@ -118,34 +134,64 @@ async function readProviderMode(): Promise<AssistantProviderMode> {
   }
 }
 
-async function writeProviderMode(mode: AssistantProviderMode): Promise<void> {
+async function writeProviderMode(userId: string, mode: AssistantProviderMode): Promise<void> {
   await fs.mkdir(app.getPath('userData'), { recursive: true });
-  await fs.writeFile(getProviderModePath(), JSON.stringify({ mode }), 'utf8');
+  await fs.writeFile(getProviderModePath(userId), JSON.stringify({ mode }), 'utf8');
 }
 
-async function getProviderStatus(): Promise<ProviderStatus> {
-  const mode = await readProviderMode();
+async function readCodexLinkedUserId(): Promise<string | null> {
+  try {
+    const filePath = path.join(app.getPath('userData'), CODEX_AUTH_LINK_FILE);
+    const content = await fs.readFile(filePath, 'utf8');
+    const parsed = JSON.parse(content) as { userId?: string | null };
+    if (typeof parsed.userId === 'string' && parsed.userId.trim().length > 0) {
+      return parsed.userId.trim();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCodexLinkedUserId(userId: string | null): Promise<void> {
+  await fs.mkdir(app.getPath('userData'), { recursive: true });
+  const filePath = path.join(app.getPath('userData'), CODEX_AUTH_LINK_FILE);
+  await fs.writeFile(filePath, JSON.stringify({ userId }), 'utf8');
+}
+
+async function getProviderStatus(userId: string): Promise<ProviderStatus> {
+  const mode = await readProviderMode(userId);
   const [byok, codexStatus] = await Promise.all([
-    getSecret(BYOK_ACCOUNT),
+    getSecret(getScopedByokAccount(userId)),
     codexClient.getStatus(),
   ]);
+  const linkedCodexUserId = await readCodexLinkedUserId();
+  const codexLinkedToAnotherUser =
+    codexStatus.hasToken
+    && !!linkedCodexUserId
+    && linkedCodexUserId !== userId;
+  const hasCodexToken = codexStatus.hasToken && linkedCodexUserId === userId;
+
   return {
     mode,
     hasByokKey: !!byok,
-    hasCodexToken: codexStatus.hasToken,
-    codexAvailable: codexStatus.available,
+    hasCodexToken,
+    codexAvailable: codexStatus.available && !codexLinkedToAnotherUser,
     codexAuthMethod: codexStatus.authMethod,
-    codexEmail: codexStatus.email,
-    codexPlanType: codexStatus.planType,
+    codexEmail: hasCodexToken ? codexStatus.email : null,
+    codexPlanType: hasCodexToken ? codexStatus.planType : null,
     codexLoginInProgress: codexStatus.loginInProgress,
-    codexStatusMessage: codexStatus.statusMessage,
+    codexStatusMessage: codexLinkedToAnotherUser
+      ? 'Codex auth on this device is linked to a different account. Re-authenticate for this account to use Codex.'
+      : codexStatus.statusMessage,
   };
 }
 
-async function getProviderCredentials(): Promise<ProviderCredentials> {
+async function getProviderCredentials(userId: string): Promise<ProviderCredentials> {
+  const linkedCodexUserId = await readCodexLinkedUserId();
   const [openRouterApiKey, codexToken] = await Promise.all([
-    getSecret(BYOK_ACCOUNT),
-    codexClient.getAuthToken(),
+    getSecret(getScopedByokAccount(userId)),
+    linkedCodexUserId === userId ? codexClient.getAuthToken() : Promise.resolve(null),
   ]);
   return {
     openRouterApiKey,
@@ -201,42 +247,63 @@ function createMainWindow(): BrowserWindow {
 }
 
 function setupIpcHandlers(): void {
-  ipcMain.handle('assistant:provider:get-status', async () => {
-    return getProviderStatus();
+  ipcMain.handle('assistant:provider:get-status', async (_event, rawUserId: unknown) => {
+    const userId = assertValidUserId(rawUserId);
+    return getProviderStatus(userId);
   });
 
-  ipcMain.handle('assistant:provider:get-credentials', async () => {
-    return getProviderCredentials();
+  ipcMain.handle('assistant:provider:get-credentials', async (_event, rawUserId: unknown) => {
+    const userId = assertValidUserId(rawUserId);
+    return getProviderCredentials(userId);
   });
 
-  ipcMain.handle('assistant:provider:set-mode', async (_event, mode: AssistantProviderMode) => {
+  ipcMain.handle('assistant:provider:set-mode', async (_event, mode: AssistantProviderMode, rawUserId: unknown) => {
+    const userId = assertValidUserId(rawUserId);
     if (mode !== 'managed' && mode !== 'byok' && mode !== 'codex_oauth') {
       throw new Error(`Invalid provider mode: ${String(mode)}`);
     }
-    await writeProviderMode(mode);
-    return getProviderStatus();
+    await writeProviderMode(userId, mode);
+    return getProviderStatus(userId);
   });
 
-  ipcMain.handle('assistant:provider:set-byok-key', async (_event, key: string) => {
+  ipcMain.handle('assistant:provider:set-byok-key', async (_event, key: string, rawUserId: unknown) => {
+    const userId = assertValidUserId(rawUserId);
+    const byokAccount = getScopedByokAccount(userId);
     if (!key.trim()) {
-      await deleteSecret(BYOK_ACCOUNT);
+      await deleteSecret(byokAccount);
     } else {
-      await setSecret(BYOK_ACCOUNT, key.trim());
+      await setSecret(byokAccount, key.trim());
     }
-    return getProviderStatus();
+    return getProviderStatus(userId);
   });
 
-  ipcMain.handle('assistant:provider:login-codex', async () => {
+  ipcMain.handle('assistant:provider:login-codex', async (_event, rawUserId: unknown) => {
+    const userId = assertValidUserId(rawUserId);
     await codexClient.loginWithChatGpt();
-    return getProviderStatus();
+    const codexStatus = await codexClient.getStatus();
+    if (codexStatus.hasToken) {
+      await writeCodexLinkedUserId(userId);
+    }
+    return getProviderStatus(userId);
   });
 
-  ipcMain.handle('assistant:provider:logout-codex', async () => {
+  ipcMain.handle('assistant:provider:logout-codex', async (_event, rawUserId: unknown) => {
+    const userId = assertValidUserId(rawUserId);
+    const linkedCodexUserId = await readCodexLinkedUserId();
+    if (linkedCodexUserId && linkedCodexUserId !== userId) {
+      throw new Error('codex_auth_linked_to_different_user');
+    }
     await codexClient.logout();
-    return getProviderStatus();
+    await writeCodexLinkedUserId(null);
+    return getProviderStatus(userId);
   });
 
-  ipcMain.handle('assistant:provider:assistant-turn', async (_event, request: CodexAssistantTurnRequest) => {
+  ipcMain.handle('assistant:provider:assistant-turn', async (_event, request: CodexAssistantTurnRequest, rawUserId: unknown) => {
+    const userId = assertValidUserId(rawUserId);
+    const linkedCodexUserId = await readCodexLinkedUserId();
+    if (linkedCodexUserId !== userId) {
+      throw new Error('codex_oauth_missing_token');
+    }
     return codexClient.runAssistantTurn(request);
   });
 }

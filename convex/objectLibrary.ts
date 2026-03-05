@@ -1,6 +1,14 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
+async function requireAuthenticatedUserId(ctx: any): Promise<string> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("unauthenticated");
+  }
+  return identity.subject;
+}
+
 const boundsValidator = v.object({
   x: v.number(),
   y: v.number(),
@@ -111,7 +119,12 @@ export const list = query({
   args: {},
   returns: v.array(objectLibraryWithUrlsValidator),
   handler: async (ctx) => {
-    const items = await ctx.db.query("objectLibrary").order("desc").collect();
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const items = await ctx.db
+      .query("objectLibrary")
+      .withIndex("by_ownerUserId_and_createdAt", (q) => q.eq("ownerUserId", ownerUserId))
+      .order("desc")
+      .collect();
 
     return await Promise.all(
       items.map(async (item) => {
@@ -130,7 +143,16 @@ export const list = query({
         );
 
         return {
-          ...item,
+          _id: item._id,
+          _creationTime: item._creationTime,
+          name: item.name,
+          thumbnail: item.thumbnail,
+          blocklyXml: item.blocklyXml,
+          currentCostumeIndex: item.currentCostumeIndex,
+          physics: item.physics,
+          collider: item.collider,
+          localVariables: item.localVariables,
+          createdAt: item.createdAt,
           costumes: costumesWithUrls,
           sounds: soundsWithUrls,
         };
@@ -143,6 +165,7 @@ export const generateUploadUrl = mutation({
   args: {},
   returns: v.string(),
   handler: async (ctx) => {
+    await requireAuthenticatedUserId(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });
@@ -161,7 +184,9 @@ export const create = mutation({
   },
   returns: v.id("objectLibrary"),
   handler: async (ctx, args) => {
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
     return await ctx.db.insert("objectLibrary", {
+      ownerUserId,
       ...args,
       createdAt: Date.now(),
     });
@@ -172,8 +197,9 @@ export const remove = mutation({
   args: { id: v.id("objectLibrary") },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
     const item = await ctx.db.get(args.id);
-    if (item) {
+    if (item && item.ownerUserId === ownerUserId) {
       for (const costume of item.costumes) {
         await ctx.storage.delete(costume.storageId);
       }
@@ -190,6 +216,11 @@ export const rename = mutation({
   args: { id: v.id("objectLibrary"), name: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const item = await ctx.db.get(args.id);
+    if (!item || item.ownerUserId !== ownerUserId) {
+      return null;
+    }
     await ctx.db.patch(args.id, { name: args.name });
     return null;
   },

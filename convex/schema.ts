@@ -63,6 +63,7 @@ const variableValidator = v.object({
 export default defineSchema({
   // Costume library - images for sprites
   costumeLibrary: defineTable({
+    ownerUserId: v.optional(v.string()),
     name: v.string(),
     storageId: v.id("_storage"),
     thumbnail: v.string(), // Base64 small preview
@@ -72,20 +73,22 @@ export default defineSchema({
     mimeType: v.string(),
     size: v.number(),
     createdAt: v.number(),
-  }),
+  }).index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
 
   // Sound library - audio files
   soundLibrary: defineTable({
+    ownerUserId: v.optional(v.string()),
     name: v.string(),
     storageId: v.id("_storage"),
     mimeType: v.string(),
     size: v.number(),
     duration: v.optional(v.number()),
     createdAt: v.number(),
-  }),
+  }).index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
 
   // Object library - complete game objects with costumes, sounds, and code
   objectLibrary: defineTable({
+    ownerUserId: v.optional(v.string()),
     name: v.string(),
     thumbnail: v.string(), // Base64 preview
     costumes: v.array(
@@ -114,10 +117,11 @@ export default defineSchema({
     collider: v.optional(colliderValidator),
     localVariables: v.optional(v.array(variableValidator)),
     createdAt: v.number(),
-  }),
+  }).index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
 
   // Projects - cloud-synced project storage
   projects: defineTable({
+    ownerUserId: v.optional(v.string()),
     localId: v.string(),
     name: v.string(),
     storageId: v.optional(v.id("_storage")),
@@ -130,5 +134,38 @@ export default defineSchema({
     schemaVersion: v.union(v.number(), v.string()),
     appVersion: v.optional(v.string()),
     contentHash: v.optional(v.string()),
-  }).index("by_localId", ["localId"]),
+  })
+    .index("by_localId", ["localId"])
+    .index("by_ownerUserId_and_localId", ["ownerUserId", "localId"])
+    .index("by_ownerUserId_and_updatedAt", ["ownerUserId", "updatedAt"]),
+
+  wallets: defineTable({
+    userId: v.string(),
+    planSlug: v.string(),
+    subscriptionStatus: v.string(),
+    balanceCredits: v.number(),
+    activePeriodKey: v.optional(v.string()),
+    periodEndsAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
+
+  creditLedger: defineTable({
+    userId: v.string(),
+    delta: v.number(),
+    reason: v.string(),
+    referenceId: v.string(),
+    balanceAfter: v.number(),
+    metadataJson: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_userId_and_createdAt", ["userId", "createdAt"])
+    .index("by_userId_and_referenceId", ["userId", "referenceId"]),
+
+  billingEvents: defineTable({
+    eventId: v.string(),
+    eventType: v.string(),
+    payloadHash: v.string(),
+    processedAt: v.number(),
+  }).index("by_eventId", ["eventId"]),
 });

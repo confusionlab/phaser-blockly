@@ -56,6 +56,7 @@ export function EditorLayout() {
   const { syncProjectToCloud } = useCloudSync({
     currentProjectId: project?.id ?? null,
     currentProject: project,
+    isDirty,
     syncOnUnmount: false,
   });
 

@@ -2,6 +2,7 @@
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { hashFnv1a64, validateSemanticOpsPayload as validateSemanticOpsPayloadShared } from "../packages/assistant-core/src";
 
 type Scalar = string | number | boolean;
@@ -1501,7 +1502,7 @@ export const assistantTurn = action({
     projectSnapshot: v.any(),
   },
   returns: assistantTurnReturnValidator,
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     const recentTurns = args.chatHistory
       .filter((turn) => (turn.role === "user" || turn.role === "assistant") && !!turn.content.trim())
       .slice(-16)
@@ -1511,6 +1512,32 @@ export const assistantTurn = action({
       }));
     const projectSnapshot = isRecord(args.projectSnapshot) ? args.projectSnapshot : {};
     const providerMode = (args.providerMode || "managed") as ProviderMode;
+    let authenticatedUserId: string | null = null;
+    if (providerMode === "managed" || providerMode === "byok") {
+      const identity = await ctx.auth.getUserIdentity();
+      if (!identity) {
+        return {
+          provider: "openrouter",
+          model: getOpenRouterDefaults().model,
+          mode: "chat" as const,
+          answer: "You must sign in before using managed or BYOK assistant modes.",
+          errorCode: "unauthenticated",
+          debugTrace: {
+            promptEnvelopeHash: hashFnv1a64(JSON.stringify({ providerMode, reason: "unauthenticated" })),
+            maxToolRounds: 0,
+            modelRounds: 0,
+            toolCalls: [],
+            validationErrors: ["auth:unauthenticated"],
+            repairAttempts: 0,
+            parsedPayloadPreview: null,
+            finalResponsePreview: null,
+            finalVerdict: "fallback_chat" as const,
+            fallbackReasonCode: "unauthenticated",
+          },
+        };
+      }
+      authenticatedUserId = identity.subject;
+    }
     const threadContext = isRecord(args.threadContext) ? args.threadContext : {};
     const tools = buildAssistantToolDefinitions();
     let providerConfig: ResolvedProviderConfig;
@@ -1558,6 +1585,58 @@ export const assistantTurn = action({
       capabilities: args.capabilities,
     };
     const promptEnvelopeHash = hashFnv1a64(JSON.stringify(promptEnvelope));
+    const creditReservationReferenceId =
+      providerMode === "managed"
+      && authenticatedUserId
+      ? `${threadContext.threadId || "thread"}:${promptEnvelopeHash}:${Date.now()}`
+      : null;
+    let reservedManagedCredits = false;
+    if (providerMode === "managed" && authenticatedUserId && creditReservationReferenceId) {
+      const reservation = await ctx.runMutation(internal.billing.reserveCredits, {
+        userId: authenticatedUserId,
+        amount: 1,
+        referenceId: creditReservationReferenceId,
+      });
+      if (!reservation.reserved) {
+        return {
+          provider: providerConfig.provider,
+          model: providerConfig.model,
+          mode: "chat" as const,
+          answer: "You are out of credits. Upgrade your plan or wait for your next credit refill.",
+          errorCode: "credits_exhausted",
+          debugTrace: {
+            promptEnvelopeHash,
+            maxToolRounds: 0,
+            modelRounds: 0,
+            toolCalls: [],
+            validationErrors: ["billing:credits_exhausted"],
+            repairAttempts: 0,
+            parsedPayloadPreview: null,
+            finalResponsePreview: null,
+            finalVerdict: "fallback_chat" as const,
+            fallbackReasonCode: "credits_exhausted",
+          },
+        };
+      }
+      reservedManagedCredits = true;
+    }
+    const settleReservedCredits = async (settleMode: "commit" | "refund") => {
+      if (!reservedManagedCredits || !authenticatedUserId || !creditReservationReferenceId) {
+        return;
+      }
+      if (settleMode === "commit") {
+        await ctx.runMutation(internal.billing.commitReservedCredits, {
+          userId: authenticatedUserId,
+          referenceId: creditReservationReferenceId,
+        }).catch(() => null);
+        return;
+      }
+      await ctx.runMutation(internal.billing.refundReservedCredits, {
+        userId: authenticatedUserId,
+        amount: 1,
+        referenceId: creditReservationReferenceId,
+      }).catch(() => null);
+    };
     const messages: Array<Record<string, unknown>> = [
       {
         role: "system",
@@ -1730,6 +1809,7 @@ export const assistantTurn = action({
       debugTrace.validationErrors.push(`transport:${transportError}`);
       debugTrace.fallbackReasonCode = "assistant_transport_error";
       debugTrace.finalVerdict = "fallback_chat";
+      await settleReservedCredits("refund");
       return {
         provider: providerConfig.provider,
         model: providerConfig.model,
@@ -1745,6 +1825,7 @@ export const assistantTurn = action({
       const reasonCode = toErrorCode(reason);
       debugTrace.fallbackReasonCode = reasonCode;
       debugTrace.finalVerdict = "fallback_chat";
+      await settleReservedCredits("refund");
       return {
         provider: providerConfig.provider,
         model: providerConfig.model,
@@ -1759,6 +1840,7 @@ export const assistantTurn = action({
 
     if (turn.mode === "chat") {
       debugTrace.finalVerdict = "chat";
+      await settleReservedCredits("commit");
       return {
         provider: providerConfig.provider,
         model: providerConfig.model,
@@ -1769,6 +1851,7 @@ export const assistantTurn = action({
     }
 
     debugTrace.finalVerdict = "edit";
+    await settleReservedCredits("commit");
     return {
       provider: providerConfig.provider,
       model: providerConfig.model,

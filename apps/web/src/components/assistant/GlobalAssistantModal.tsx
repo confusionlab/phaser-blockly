@@ -8,7 +8,9 @@ import {
   type ChatModelAdapter,
 } from '@assistant-ui/react';
 import { Bot, Loader2, Sparkles, X } from 'lucide-react';
-import { useAction } from 'convex/react';
+import { useAction, useQuery } from 'convex/react';
+import { useAuth } from '@clerk/clerk-react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
@@ -251,6 +253,8 @@ function AssistantMessage() {
 }
 
 export function GlobalAssistantModal() {
+  const { userId } = useAuth();
+  const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
   const [open, setOpen] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [scopeKey, setScopeKey] = useState<string | null>(null);
@@ -274,6 +278,11 @@ export function GlobalAssistantModal() {
 
   const { selectedSceneId, selectedObjectId, selectedComponentId, undo } = useEditorStore();
   const assistantTurnAction = useAction(api.llm.assistantTurn);
+  const walletSummary = useQuery(api.billing.getWalletSummary);
+  const managedCreditsBlocked =
+    providerMode === 'managed'
+    && walletSummary !== undefined
+    && !walletSummary.canRunManagedAssistant;
 
   const assistantScope: BlocklyEditScope | null = useMemo(() => {
     if (!project) return null;
@@ -322,9 +331,13 @@ export function GlobalAssistantModal() {
         if (cancelled) return;
         setThreadId(thread.id);
 
-        const mode = await getAssistantThreadProviderMode(thread.id);
+        const persistedMode = await getAssistantThreadProviderMode(thread.id);
         if (cancelled) return;
-        setProviderMode(mode);
+        const nextMode = !isDesktopRuntime ? 'managed' : persistedMode;
+        setProviderMode(nextMode);
+        if (persistedMode !== nextMode) {
+          await setAssistantThreadProviderMode(thread.id, nextMode);
+        }
 
         const messages = await listAssistantMessages(thread.id);
         if (cancelled) return;
@@ -345,12 +358,15 @@ export function GlobalAssistantModal() {
     return () => {
       cancelled = true;
     };
-  }, [assistantScope, project]);
+  }, [assistantScope, isDesktopRuntime, project]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) return;
+    if (!isDesktopRuntime || !userId || !window.desktopAssistant) {
+      setProviderStatus(DEFAULT_PROVIDER_STATUS);
+      return;
+    }
     const desktopAssistant = window.desktopAssistant;
-    void desktopAssistant.provider.status()
+    void desktopAssistant.provider.status(userId)
       .then((status) => {
         setProviderStatus(mapProviderStatus(status));
       })
@@ -362,7 +378,7 @@ export function GlobalAssistantModal() {
       if (event.message) {
         setStatusMessage(event.message);
       }
-      void desktopAssistant.provider.status()
+      void desktopAssistant.provider.status(userId)
         .then((status) => {
           setProviderStatus(mapProviderStatus(status));
         })
@@ -370,7 +386,7 @@ export function GlobalAssistantModal() {
           setProviderStatus(DEFAULT_PROVIDER_STATUS);
         });
     });
-  }, []);
+  }, [isDesktopRuntime, userId]);
 
   const adapter = useMemo<ChatModelAdapter>(() => ({
     run: async (options) => {
@@ -379,6 +395,12 @@ export function GlobalAssistantModal() {
       }
       if (!threadId || !scopeKey) {
         throw new Error('Assistant thread is not ready yet.');
+      }
+      if (!isDesktopRuntime && providerMode !== 'managed') {
+        throw new Error('Web runtime only supports managed mode.');
+      }
+      if (managedCreditsBlocked) {
+        throw new Error('Out of credits. Open Billing to upgrade or manage your plan.');
       }
       if (providerMode === 'byok' && !providerStatus.hasByokKey) {
         throw new Error('BYOK mode selected but no key is configured.');
@@ -439,8 +461,11 @@ export function GlobalAssistantModal() {
 
       const turn = await (providerMode === 'codex_oauth'
         ? (() => {
-            if (typeof window === 'undefined' || !window.desktopAssistant) {
+            if (!isDesktopRuntime || !window.desktopAssistant) {
               throw new Error('Codex mode requires desktop app runtime.');
+            }
+            if (!userId) {
+              throw new Error('Missing signed-in user context for desktop provider.');
             }
             return window.desktopAssistant.provider.assistantTurn({
               userIntent,
@@ -449,14 +474,14 @@ export function GlobalAssistantModal() {
               context,
               programRead,
               threadContext,
-            });
+            }, userId);
           })()
         : (() => {
             const projectSnapshot = buildProjectSnapshot(project);
             return (async () => {
               const desktopCredentials =
-                typeof window !== 'undefined' && window.desktopAssistant && providerMode === 'byok'
-                  ? await window.desktopAssistant.provider.getCredentials()
+                isDesktopRuntime && window.desktopAssistant && providerMode === 'byok' && userId
+                  ? await window.desktopAssistant.provider.getCredentials(userId)
                   : undefined;
               const providerCredentials: ProviderCredentials | undefined = desktopCredentials
                 ? { openRouterApiKey: desktopCredentials.openRouterApiKey || undefined }
@@ -479,6 +504,9 @@ export function GlobalAssistantModal() {
       const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
 
       if (turn.mode === 'chat') {
+        if ((turn as { errorCode?: string }).errorCode === 'credits_exhausted') {
+          setErrorMessage('Out of credits. Open Billing to upgrade or manage your plan.');
+        }
         const chatAnswer = (turn.answer || '').trim();
         if (!chatAnswer) {
           throw new Error('Assistant returned an empty response.');
@@ -581,7 +609,7 @@ export function GlobalAssistantModal() {
         content: [{ type: 'text', text: assistantText }],
       };
     },
-  }), [assistantScope, assistantTurnAction, project, providerMode, providerStatus, scopeKey, threadId]);
+  }), [assistantScope, assistantTurnAction, isDesktopRuntime, managedCreditsBlocked, project, providerMode, providerStatus, scopeKey, threadId, userId]);
 
   const initialMessages = useMemo(
     () => persistedMessages.map((message) => ({
@@ -642,12 +670,19 @@ export function GlobalAssistantModal() {
 
   const updateProviderMode = async (nextMode: AssistantProviderMode) => {
     if (!threadId) return;
+    if (!isDesktopRuntime && nextMode !== 'managed') {
+      setErrorMessage('Web runtime only supports managed mode.');
+      return;
+    }
 
     try {
       setProviderMode(nextMode);
       await setAssistantThreadProviderMode(threadId, nextMode);
-      if (typeof window !== 'undefined' && window.desktopAssistant) {
-        const status = await window.desktopAssistant.provider.setMode(nextMode);
+      if (isDesktopRuntime && window.desktopAssistant) {
+        if (!userId) {
+          throw new Error('Missing signed-in user context for desktop provider.');
+        }
+        const status = await window.desktopAssistant.provider.setMode(nextMode, userId);
         setProviderStatus(mapProviderStatus(status));
         setProviderMode(status.mode);
         await setAssistantThreadProviderMode(threadId, status.mode);
@@ -659,8 +694,12 @@ export function GlobalAssistantModal() {
   };
 
   const saveByokSecret = async () => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) {
+    if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Provider secrets can only be configured in desktop app.');
+      return;
+    }
+    if (!userId) {
+      setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
     if (!providerSecretInput.trim()) {
@@ -669,7 +708,7 @@ export function GlobalAssistantModal() {
     }
 
     try {
-      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim());
+      const status = await window.desktopAssistant.provider.setByokKey(providerSecretInput.trim(), userId);
       setProviderStatus(mapProviderStatus(status));
       setProviderSecretInput('');
       setStatusMessage('Credential saved to OS keychain.');
@@ -680,14 +719,18 @@ export function GlobalAssistantModal() {
   };
 
   const loginCodexProvider = async () => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) {
+    if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Codex login is only available in desktop app.');
+      return;
+    }
+    if (!userId) {
+      setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
 
     try {
       setStatusMessage('Opening ChatGPT login in browser...');
-      const status = await window.desktopAssistant.provider.loginCodex();
+      const status = await window.desktopAssistant.provider.loginCodex(userId);
       setProviderStatus(mapProviderStatus(status));
       setErrorMessage(null);
     } catch (error) {
@@ -696,13 +739,17 @@ export function GlobalAssistantModal() {
   };
 
   const logoutCodexProvider = async () => {
-    if (typeof window === 'undefined' || !window.desktopAssistant) {
+    if (!isDesktopRuntime || !window.desktopAssistant) {
       setErrorMessage('Codex logout is only available in desktop app.');
+      return;
+    }
+    if (!userId) {
+      setErrorMessage('Missing signed-in user context for desktop provider.');
       return;
     }
 
     try {
-      const status = await window.desktopAssistant.provider.logoutCodex();
+      const status = await window.desktopAssistant.provider.logoutCodex(userId);
       setProviderStatus(mapProviderStatus(status));
       setStatusMessage('Logged out from ChatGPT.');
       setErrorMessage(null);
@@ -745,15 +792,20 @@ export function GlobalAssistantModal() {
                       void updateProviderMode(event.target.value as AssistantProviderMode);
                     }}
                     className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
+                    disabled={!isDesktopRuntime}
                   >
                     <option value="managed">Managed credits</option>
-                    <option value="byok">BYO key</option>
-                    <option value="codex_oauth">
-                      Codex / ChatGPT login
-                    </option>
+                    {isDesktopRuntime ? (
+                      <>
+                        <option value="byok">BYO key</option>
+                        <option value="codex_oauth">
+                          Codex / ChatGPT login
+                        </option>
+                      </>
+                    ) : null}
                   </select>
 
-                  {providerMode === 'byok' ? (
+                  {isDesktopRuntime && providerMode === 'byok' ? (
                     <div className="flex items-center gap-2">
                       <input
                         value={providerSecretInput}
@@ -767,7 +819,7 @@ export function GlobalAssistantModal() {
                     </div>
                   ) : null}
 
-                  {providerMode === 'codex_oauth' ? (
+                  {isDesktopRuntime && providerMode === 'codex_oauth' ? (
                     <div className="space-y-2">
                       {!providerStatus.hasCodexToken ? (
                         <Button
@@ -794,6 +846,36 @@ export function GlobalAssistantModal() {
                 </div>
 
                 <div className="space-y-2 rounded-md border bg-background p-2 text-xs">
+                  <div className="font-medium">Credits</div>
+                  {walletSummary === undefined ? (
+                    <div className="text-muted-foreground">Loading credit balance...</div>
+                  ) : (
+                    <>
+                      <div className="text-muted-foreground">
+                        Plan: <span className="font-medium text-foreground">{walletSummary.planSlug}</span>
+                      </div>
+                      <div className="text-muted-foreground">
+                        Remaining: <span className="font-medium text-foreground">{walletSummary.balanceCredits}</span>
+                      </div>
+                      <div className="text-muted-foreground">
+                        Period end:{' '}
+                        <span className="font-medium text-foreground">
+                          {walletSummary.periodEndsAt
+                            ? new Date(walletSummary.periodEndsAt).toLocaleString()
+                            : 'monthly reset'}
+                        </span>
+                      </div>
+                      {!walletSummary.canRunManagedAssistant ? (
+                        <div className="text-red-600">Out of credits. Upgrade to continue managed assistant usage.</div>
+                      ) : null}
+                      <Button size="sm" variant="secondary" asChild>
+                        <Link to="/billing">Upgrade / Manage</Link>
+                      </Button>
+                    </>
+                  )}
+                </div>
+
+                <div className="space-y-2 rounded-md border bg-background p-2 text-xs">
                   <div className="font-medium">Scope</div>
                   <div className="text-muted-foreground">
                     {assistantScope
@@ -805,7 +887,7 @@ export function GlobalAssistantModal() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="secondary" onClick={applyCandidate} disabled={!canApply}>
+                  <Button size="sm" variant="secondary" onClick={applyCandidate} disabled={!canApply || managedCreditsBlocked}>
                     Apply Candidate
                   </Button>
                   <Button size="sm" variant="ghost" onClick={rollback}>
@@ -842,7 +924,10 @@ export function GlobalAssistantModal() {
                           className="max-h-36 min-h-[44px] flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           placeholder="Ask anything or request edits..."
                         />
-                        <ComposerPrimitive.Send className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-primary-foreground hover:opacity-90">
+                        <ComposerPrimitive.Send
+                          disabled={managedCreditsBlocked}
+                          className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
                           Send
                         </ComposerPrimitive.Send>
                       </div>
@@ -857,6 +942,11 @@ export function GlobalAssistantModal() {
               <p className="px-4 pb-3 text-xs text-muted-foreground whitespace-pre-wrap flex items-center gap-2">
                 {statusMessage}
                 {statusMessage.toLowerCase().includes('waiting') ? <Loader2 className="size-3 animate-spin" /> : null}
+              </p>
+            ) : null}
+            {managedCreditsBlocked ? (
+              <p className="px-4 pb-3 text-xs text-red-600">
+                Managed assistant is blocked at zero credits. Open <Link to="/billing" className="underline">Billing</Link> to upgrade.
               </p>
             ) : null}
           </div>

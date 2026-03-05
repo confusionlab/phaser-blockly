@@ -5,7 +5,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
-import { Upload, Save, Sun, Moon } from 'lucide-react';
+import { Upload, Save, Sun, Moon, Wallet } from 'lucide-react';
 
 export function Toolbar() {
   const navigate = useNavigate();
@@ -18,7 +18,9 @@ export function Toolbar() {
   const { syncProjectToCloud } = useCloudSync({
     currentProjectId: project?.id ?? null,
     currentProject: project,
+    isDirty,
     syncOnUnmount: false,
+    checkpointIntervalMs: 0,
   });
 
   const handleGoHome = async () => {
@@ -134,6 +136,16 @@ export function Toolbar() {
 
       {/* Right section - Actions */}
       <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate('/billing')}
+          title="Manage credits and plan"
+        >
+          <Wallet className="size-4" />
+          Billing
+        </Button>
+
         <Button
           variant="ghost"
           size="icon"

@@ -10,7 +10,6 @@ import {
   syncProjectFromCloud,
   type ProjectSyncPayload,
 } from '@/db/database';
-import { getConvexCloudUrl, getConvexSiteUrl } from '@/lib/convexEnv';
 import type { Project } from '@/types';
 
 interface CloudSyncOptions {
@@ -20,8 +19,12 @@ interface CloudSyncOptions {
   currentProjectId?: string | null;
   // Current in-memory project for reliable unload beacon payload
   currentProject?: Project | null;
+  // Whether current project has unsaved/dirty local state.
+  isDirty?: boolean;
   // Sync current project on hook unmount (navigation)
   syncOnUnmount?: boolean;
+  // Periodic checkpoint interval while dirty.
+  checkpointIntervalMs?: number;
 }
 
 interface CloudProjectRecord {
@@ -42,38 +45,6 @@ type StorageSyncPayload = Omit<ProjectSyncPayload, 'data'> & {
   storageId: Id<'_storage'>;
   dataSizeBytes: number;
 };
-
-type BeaconSyncPayload = Pick<
-  ProjectSyncPayload,
-  'localId' | 'name' | 'data' | 'createdAt' | 'updatedAt' | 'schemaVersion' | 'appVersion' | 'contentHash'
->;
-
-function toBeaconSyncPayload(payload: ProjectSyncPayload): BeaconSyncPayload {
-  return {
-    localId: payload.localId,
-    name: payload.name,
-    data: payload.data,
-    createdAt: payload.createdAt,
-    updatedAt: payload.updatedAt,
-    schemaVersion: payload.schemaVersion,
-    appVersion: payload.appVersion,
-    contentHash: payload.contentHash,
-  };
-}
-
-function getSyncBeaconUrl(): string | null {
-  const siteUrl = getConvexSiteUrl();
-  if (siteUrl) {
-    return `${siteUrl.replace(/\/$/, '')}/sync-beacon`;
-  }
-
-  const cloudUrl = getConvexCloudUrl();
-  if (!cloudUrl) {
-    return null;
-  }
-
-  return `${cloudUrl.replace('.cloud', '.site')}/sync-beacon`;
-}
 
 async function loadProjectDataFromCloud(cloudProject: CloudProjectRecord): Promise<string> {
   if (typeof cloudProject.data === 'string') {
@@ -142,7 +113,9 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     syncOnMount = false,
     currentProjectId = null,
     currentProject = null,
+    isDirty = false,
     syncOnUnmount = true,
+    checkpointIntervalMs = 45_000,
   } = options;
 
   const generateUploadUrlMutation = useMutation(api.projects.generateUploadUrl);
@@ -443,22 +416,46 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     };
   }, [syncOnUnmount, syncPayloadToCloud, syncProjectToCloud]);
 
-  // Fire-and-forget beacon for hard unload (refresh/tab close)
+  // Periodic authenticated checkpoints while local state is dirty.
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      const payload = beaconPayloadRef.current;
-      const beaconUrl = getSyncBeaconUrl();
+    if (!isDirty || checkpointIntervalMs <= 0) {
+      return;
+    }
 
-      if (!payload || !beaconUrl || typeof navigator.sendBeacon !== 'function') {
+    const intervalId = window.setInterval(() => {
+      const payload = beaconPayloadRef.current;
+      if (!payload) {
         return;
       }
+      void syncPayloadToCloud(payload);
+    }, checkpointIntervalMs);
 
-      navigator.sendBeacon(beaconUrl, JSON.stringify(toBeaconSyncPayload(payload)));
+    return () => window.clearInterval(intervalId);
+  }, [checkpointIntervalMs, isDirty, syncPayloadToCloud]);
+
+  // Fire-and-forget flush for page lifecycle changes without anonymous beacon route.
+  useEffect(() => {
+    const flushCurrentPayload = () => {
+      const payload = beaconPayloadRef.current;
+      if (!payload) {
+        return;
+      }
+      void syncPayloadToCloud(payload);
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushCurrentPayload();
+      }
+    };
+
+    window.addEventListener('pagehide', flushCurrentPayload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', flushCurrentPayload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [syncPayloadToCloud]);
 
   return {
     syncAllToCloud,

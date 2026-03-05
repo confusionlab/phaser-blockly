@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { SCHEMA_VERSION } from "./schema";
 
@@ -60,6 +60,7 @@ const syncPayloadValidator = v.object({
 
 type StoredProject = {
   _id: Id<"projects">;
+  ownerUserId?: string;
   localId: string;
   name: string;
   storageId?: Id<"_storage">;
@@ -84,6 +85,14 @@ type SyncPayload = {
   appVersion?: string;
   contentHash?: string;
 };
+
+async function requireAuthenticatedUserId(ctx: any): Promise<string> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("unauthenticated");
+  }
+  return identity.subject;
+}
 
 const FNV64_OFFSET = 0xcbf29ce484222325n;
 const FNV64_PRIME = 0x100000001b3n;
@@ -161,10 +170,18 @@ function pickCanonicalProjectsByLocalId(projects: StoredProject[]): StoredProjec
   return Array.from(byLocalId.values());
 }
 
-async function listProjectsByLocalId(ctx: any, localId: string): Promise<StoredProject[]> {
+async function listProjectsByLocalId(ctx: any, ownerUserId: string, localId: string): Promise<StoredProject[]> {
   return (await ctx.db
     .query("projects")
-    .withIndex("by_localId", (q: any) => q.eq("localId", localId))
+    .withIndex("by_ownerUserId_and_localId", (q: any) => q.eq("ownerUserId", ownerUserId).eq("localId", localId))
+    .collect()) as StoredProject[];
+}
+
+async function listProjectsForOwner(ctx: any, ownerUserId: string): Promise<StoredProject[]> {
+  return (await ctx.db
+    .query("projects")
+    .withIndex("by_ownerUserId_and_updatedAt", (q: any) => q.eq("ownerUserId", ownerUserId))
+    .order("desc")
     .collect()) as StoredProject[];
 }
 
@@ -275,6 +292,7 @@ async function toFull(ctx: any, project: StoredProject) {
 }
 
 function toProjectDocument(
+  ownerUserId: string,
   payload: SyncPayload,
   normalizedSchemaVersion: number,
   createdAt: number,
@@ -284,6 +302,7 @@ function toProjectDocument(
     (typeof payload.data === "string" ? computeContentHash(payload.data) : undefined);
 
   const base: {
+    ownerUserId: string;
     localId: string;
     name: string;
     createdAt: number;
@@ -293,6 +312,7 @@ function toProjectDocument(
     contentHash?: string;
     dataSizeBytes?: number;
   } = {
+    ownerUserId,
     localId: payload.localId,
     name: payload.name,
     createdAt,
@@ -333,13 +353,13 @@ async function cleanupStorage(ctx: any, storageId: Id<"_storage"> | undefined) {
   }
 }
 
-async function upsertProject(ctx: any, payload: SyncPayload) {
+async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload) {
   const incomingSchemaVersion = normalizeSchemaVersion(payload.schemaVersion);
   const incomingHash =
     normalizeContentHash(payload.contentHash) ??
     (typeof payload.data === "string" ? computeContentHash(payload.data) : null);
 
-  const matchingProjects = await listProjectsByLocalId(ctx, payload.localId);
+  const matchingProjects = await listProjectsByLocalId(ctx, ownerUserId, payload.localId);
   const existing = pickCanonicalProject(matchingProjects);
 
   if (existing && matchingProjects.length > 1) {
@@ -411,7 +431,7 @@ async function upsertProject(ctx: any, payload: SyncPayload) {
 
     await ctx.db.replace(
       existing._id,
-      toProjectDocument(payload, incomingSchemaVersion, existing.createdAt),
+      toProjectDocument(ownerUserId, payload, incomingSchemaVersion, existing.createdAt),
     );
 
     await cleanupStorage(ctx, staleStorageId);
@@ -421,7 +441,7 @@ async function upsertProject(ctx: any, payload: SyncPayload) {
 
   const id = await ctx.db.insert(
     "projects",
-    toProjectDocument(payload, incomingSchemaVersion, payload.createdAt),
+    toProjectDocument(ownerUserId, payload, incomingSchemaVersion, payload.createdAt),
   );
 
   return { action: "created" as const, id };
@@ -432,7 +452,8 @@ export const list = query({
   args: {},
   returns: v.array(projectSummaryValidator),
   handler: async (ctx) => {
-    const projects = (await ctx.db.query("projects").collect()) as StoredProject[];
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const projects = await listProjectsForOwner(ctx, ownerUserId);
     return pickCanonicalProjectsByLocalId(projects).map(toSummary);
   },
 });
@@ -442,7 +463,8 @@ export const getByLocalId = query({
   args: { localId: v.string() },
   returns: v.union(projectSummaryValidator, v.null()),
   handler: async (ctx, args) => {
-    const projects = await listProjectsByLocalId(ctx, args.localId);
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const projects = await listProjectsByLocalId(ctx, ownerUserId, args.localId);
     const project = pickCanonicalProject(projects);
 
     if (!project) {
@@ -458,7 +480,8 @@ export const getFullProject = query({
   args: { localId: v.string() },
   returns: v.union(fullProjectValidator, v.null()),
   handler: async (ctx, args) => {
-    const projects = await listProjectsByLocalId(ctx, args.localId);
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const projects = await listProjectsByLocalId(ctx, ownerUserId, args.localId);
     const project = pickCanonicalProject(projects);
 
     if (!project) {
@@ -473,6 +496,7 @@ export const generateUploadUrl = mutation({
   args: {},
   returns: v.string(),
   handler: async (ctx) => {
+    await requireAuthenticatedUserId(ctx);
     return await ctx.storage.generateUploadUrl();
   },
 });
@@ -482,7 +506,8 @@ export const sync = mutation({
   args: syncPayloadValidator,
   returns: syncResultValidator,
   handler: async (ctx, args) => {
-    return await upsertProject(ctx, args);
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    return await upsertProject(ctx, ownerUserId, args);
   },
 });
 
@@ -493,10 +518,11 @@ export const syncBatch = mutation({
   },
   returns: v.array(syncBatchResultValidator),
   handler: async (ctx, args) => {
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
     const results = [];
 
     for (const project of args.projects) {
-      const result = await upsertProject(ctx, project);
+      const result = await upsertProject(ctx, ownerUserId, project);
       results.push({
         localId: project.localId,
         action: result.action,
@@ -508,22 +534,13 @@ export const syncBatch = mutation({
   },
 });
 
-// Internal mutation for sync beacons
-export const syncBeacon = internalMutation({
-  args: syncPayloadValidator,
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await upsertProject(ctx, args);
-    return null;
-  },
-});
-
 // Delete a project from cloud
 export const remove = mutation({
   args: { localId: v.string() },
   returns: v.object({ deleted: v.boolean() }),
   handler: async (ctx, args) => {
-    const projects = await listProjectsByLocalId(ctx, args.localId);
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const projects = await listProjectsByLocalId(ctx, ownerUserId, args.localId);
     if (projects.length === 0) {
       return { deleted: false };
     }
@@ -549,7 +566,8 @@ export const listFull = query({
   args: {},
   returns: v.array(fullProjectValidator),
   handler: async (ctx) => {
-    const projects = (await ctx.db.query("projects").collect()) as StoredProject[];
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const projects = await listProjectsForOwner(ctx, ownerUserId);
     const canonicalProjects = pickCanonicalProjectsByLocalId(projects);
     return await Promise.all(canonicalProjects.map((project) => toFull(ctx, project)));
   },

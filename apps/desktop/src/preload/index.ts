@@ -12,26 +12,26 @@ type ProviderEventListener = (payload: ProviderEventPayload) => void;
 
 const assistantDesktopApi = {
   provider: {
-    status: async (): Promise<ProviderStatus> => {
-      return ipcRenderer.invoke('assistant:provider:get-status');
+    status: async (userId: string): Promise<ProviderStatus> => {
+      return ipcRenderer.invoke('assistant:provider:get-status', userId);
     },
-    setMode: async (mode: AssistantProviderMode): Promise<ProviderStatus> => {
-      return ipcRenderer.invoke('assistant:provider:set-mode', mode);
+    setMode: async (mode: AssistantProviderMode, userId: string): Promise<ProviderStatus> => {
+      return ipcRenderer.invoke('assistant:provider:set-mode', mode, userId);
     },
-    setByokKey: async (key: string): Promise<ProviderStatus> => {
-      return ipcRenderer.invoke('assistant:provider:set-byok-key', key);
+    setByokKey: async (key: string, userId: string): Promise<ProviderStatus> => {
+      return ipcRenderer.invoke('assistant:provider:set-byok-key', key, userId);
     },
-    loginCodex: async (): Promise<ProviderStatus> => {
-      return ipcRenderer.invoke('assistant:provider:login-codex');
+    loginCodex: async (userId: string): Promise<ProviderStatus> => {
+      return ipcRenderer.invoke('assistant:provider:login-codex', userId);
     },
-    logoutCodex: async (): Promise<ProviderStatus> => {
-      return ipcRenderer.invoke('assistant:provider:logout-codex');
+    logoutCodex: async (userId: string): Promise<ProviderStatus> => {
+      return ipcRenderer.invoke('assistant:provider:logout-codex', userId);
     },
-    assistantTurn: async (request: CodexAssistantTurnRequest): Promise<CodexAssistantTurnResponse> => {
-      return ipcRenderer.invoke('assistant:provider:assistant-turn', request);
+    assistantTurn: async (request: CodexAssistantTurnRequest, userId: string): Promise<CodexAssistantTurnResponse> => {
+      return ipcRenderer.invoke('assistant:provider:assistant-turn', request, userId);
     },
-    getCredentials: async (): Promise<ProviderCredentials> => {
-      return ipcRenderer.invoke('assistant:provider:get-credentials');
+    getCredentials: async (userId: string): Promise<ProviderCredentials> => {
+      return ipcRenderer.invoke('assistant:provider:get-credentials', userId);
     },
   },
   onProviderEvent: (listener: ProviderEventListener): (() => void) => {
