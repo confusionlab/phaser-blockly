@@ -1,3 +1,4 @@
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { PricingTable } from '@clerk/clerk-react';
 import { useQuery } from 'convex/react';
 import { Link } from 'react-router-dom';
@@ -19,6 +20,42 @@ function parseConfiguredPlanIds(rawValue: string | undefined): string[] {
     .split(',')
     .map((id) => id.trim())
     .filter((id) => id.length > 0);
+}
+
+function isBillingDisabledError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return message.includes('cannot_render_billing_disabled')
+    || message.includes('component cannot be rendered when billing is disabled');
+}
+
+class PricingTableErrorBoundary extends Component<{ children: ReactNode }, { error: unknown | null }> {
+  state: { error: unknown | null } = { error: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+
+  componentDidCatch(_error: unknown, _errorInfo: ErrorInfo) {}
+
+  render() {
+    if (this.state.error) {
+      const billingDisabled = isBillingDisabledError(this.state.error);
+      return (
+        <div className="rounded-md border bg-background p-4 text-sm">
+          <div className="font-medium">
+            {billingDisabled ? 'Clerk billing is not enabled for this instance yet.' : 'Unable to load pricing table.'}
+          </div>
+          <p className="mt-2 text-muted-foreground">
+            {billingDisabled
+              ? 'Enable billing in Clerk Dashboard to use the hosted PricingTable component.'
+              : 'Try refreshing the page. If the issue persists, check Clerk billing configuration.'}
+          </p>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 export function BillingPage() {
@@ -76,7 +113,9 @@ export function BillingPage() {
 
       <div className="rounded-lg border bg-card p-4">
         <h2 className="mb-3 text-lg font-semibold">Plans</h2>
-        <PricingTable />
+        <PricingTableErrorBoundary>
+          <PricingTable />
+        </PricingTableErrorBoundary>
       </div>
     </div>
   );
