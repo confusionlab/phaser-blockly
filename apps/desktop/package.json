@@ -17,7 +17,8 @@
     "test:codex-turn": "node scripts/test-codex-assistant-turn.mjs"
   },
   "dependencies": {
-    "keytar": "^7.9.0"
+    "keytar": "^7.9.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "electron": "^37.2.0",

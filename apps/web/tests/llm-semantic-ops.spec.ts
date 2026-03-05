@@ -99,6 +99,154 @@ test.describe('LLM semantic op payload validation', () => {
     }
   });
 
+  test('accepts all supported semantic ops in one payload', () => {
+    const payload = {
+      intentSummary: 'Cover every semantic op',
+      assumptions: [],
+      semanticOps: [
+        {
+          op: 'create_event_flow',
+          event: 'event_game_start',
+          fields: { KEY: 'SPACE' },
+          actions: [{ action: 'motion_change_x', inputs: { VALUE: 10 } }],
+          index: 0,
+        },
+        {
+          op: 'append_actions',
+          flowSelector: {
+            eventType: 'event_game_start',
+            eventFieldEquals: { KEY: 'SPACE' },
+            index: 0,
+          },
+          actions: [{ action: 'motion_change_y', inputs: { VALUE: -5 } }],
+        },
+        {
+          op: 'replace_action',
+          targetBlockId: 'block-1',
+          action: { action: 'motion_set_x', inputs: { VALUE: 12 } },
+        },
+        {
+          op: 'set_block_field',
+          targetBlockId: 'block-2',
+          field: 'TARGET',
+          value: 'enemy-1',
+        },
+        {
+          op: 'ensure_variable',
+          scope: 'global',
+          name: 'score',
+          variableType: 'integer',
+          defaultValue: 0,
+        },
+        {
+          op: 'ensure_message',
+          name: 'spawn_enemy',
+        },
+        {
+          op: 'retarget_reference',
+          referenceKind: 'object',
+          from: 'old-target',
+          to: 'new-target',
+        },
+        {
+          op: 'delete_subtree',
+          targetBlockId: 'block-3',
+        },
+      ],
+    };
+
+    const result = validateSemanticOpsPayload(payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.semanticOps).toHaveLength(8);
+      expect(result.value.projectOps).toHaveLength(0);
+    }
+  });
+
+  test('accepts all supported project ops in one payload', () => {
+    const payload = {
+      intentSummary: 'Cover every project op',
+      assumptions: [],
+      projectOps: [
+        { op: 'rename_project', name: 'Arcade' },
+        { op: 'create_scene', name: 'Boss' },
+        { op: 'rename_scene', sceneId: 'scene-1', name: 'Arena' },
+        { op: 'reorder_scenes', sceneIds: ['scene-2', 'scene-1'] },
+        { op: 'create_object', sceneId: 'scene-1', name: 'Coin', x: 120, y: 240 },
+        { op: 'rename_object', sceneId: 'scene-1', objectId: 'obj-1', name: 'Player' },
+        { op: 'set_object_property', sceneId: 'scene-1', objectId: 'obj-1', property: 'visible', value: false },
+        {
+          op: 'set_object_physics',
+          sceneId: 'scene-1',
+          objectId: 'obj-1',
+          physics: {
+            enabled: true,
+            bodyType: 'dynamic',
+            gravityY: 1,
+            velocityX: 0,
+            velocityY: 0,
+            bounce: 0.2,
+            friction: 0.1,
+            allowRotation: false,
+          },
+        },
+        { op: 'set_object_collider_type', sceneId: 'scene-1', objectId: 'obj-1', colliderType: 'circle' },
+        { op: 'create_folder', sceneId: 'scene-1', name: 'Enemies', parentId: null },
+        { op: 'rename_folder', sceneId: 'scene-1', folderId: 'folder-1', name: 'Bosses' },
+        { op: 'move_object_to_folder', sceneId: 'scene-1', objectId: 'obj-1', folderId: 'folder-1' },
+        {
+          op: 'add_costume_from_image_url',
+          sceneId: 'scene-1',
+          objectId: 'obj-1',
+          name: 'sprite',
+          imageUrl: 'https://example.com/sprite.png',
+        },
+        {
+          op: 'add_costume_text_circle',
+          sceneId: 'scene-1',
+          objectId: 'obj-1',
+          name: 'label',
+          text: 'GO',
+          fillColor: '#00ff00',
+          textColor: '#111111',
+        },
+        { op: 'rename_costume', sceneId: 'scene-1', objectId: 'obj-1', costumeId: 'costume-1', name: 'idle' },
+        { op: 'reorder_costumes', sceneId: 'scene-1', objectId: 'obj-1', costumeIds: ['costume-2', 'costume-1'] },
+        { op: 'set_current_costume', sceneId: 'scene-1', objectId: 'obj-1', costumeId: 'costume-2' },
+        { op: 'validate_project' },
+      ],
+    };
+
+    const result = validateSemanticOpsPayload(payload);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.projectOps).toHaveLength(18);
+      expect(result.value.semanticOps).toHaveLength(0);
+    }
+  });
+
+  test('rejects project op payloads with invalid field types', () => {
+    const payload = {
+      intentSummary: 'bad payload',
+      assumptions: [],
+      projectOps: [
+        {
+          op: 'set_object_property',
+          sceneId: 'scene-1',
+          objectId: 'obj-1',
+          property: 'visible',
+          value: { invalid: true },
+        },
+      ],
+    };
+
+    const result = validateSemanticOpsPayload(payload);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join('\n')).toContain('projectOps[0].value');
+    }
+  });
+
   test('rejects payloads with neither semanticOps nor projectOps', () => {
     const payload = {
       intentSummary: 'Do something',

@@ -182,6 +182,7 @@ function AssistantMessage() {
 
 export function GlobalAssistantModal() {
   const { userId } = useAuth();
+  const isE2EAuthBypass = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
   const runtimeUserId = userId ?? (import.meta.env.VITE_E2E_AUTH_BYPASS_USER_ID?.trim() || null);
   const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
   const [open, setOpen] = useState(false);
@@ -213,7 +214,7 @@ export function GlobalAssistantModal() {
 
   const { selectedSceneId, selectedObjectId, selectedComponentId, undo } = useEditorStore();
   const assistantTurnAction = useAction(api.llm.assistantTurn);
-  const walletSummary = useQuery(api.billing.getWalletSummary);
+  const walletSummary = useQuery(api.billing.getWalletSummary, isE2EAuthBypass ? 'skip' : {});
   const managedCreditsBlocked =
     providerMode === 'managed'
     && walletSummary !== undefined
