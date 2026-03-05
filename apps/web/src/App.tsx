@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { Authenticated, AuthLoading, Unauthenticated } from 'convex/react';
+import { useQuery } from 'convex/react';
+import { api } from '@convex-generated/api';
 import { SignIn, UserButton, useUser } from '@clerk/clerk-react';
 import { EditorLayout } from './components/layout/EditorLayout';
 import { DebugPanel } from './components/debug/DebugPanel';
@@ -57,6 +59,8 @@ function AuthenticatedShell() {
   const { user } = useUser();
   const previousUserIdRef = useRef<string | null>(null);
   const location = useLocation();
+  const setDarkMode = useEditorStore((state) => state.setDarkMode);
+  const userSettings = useQuery(api.userSettings.getMySettings, user ? {} : 'skip');
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -66,6 +70,13 @@ function AuthenticatedShell() {
     }
     previousUserIdRef.current = nextUserId;
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!userSettings || userSettings.isDarkMode === undefined) {
+      return;
+    }
+    setDarkMode(userSettings.isDarkMode);
+  }, [setDarkMode, userSettings]);
 
   const isEditorRoute =
     location.pathname === '/'

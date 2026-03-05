@@ -203,4 +203,11 @@ export default defineSchema({
     payloadHash: v.string(),
     processedAt: v.number(),
   }).index("by_eventId", ["eventId"]),
+
+  userSettings: defineTable({
+    userId: v.string(),
+    isDarkMode: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
 });

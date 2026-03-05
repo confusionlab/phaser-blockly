@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useMutation } from 'convex/react';
+import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
@@ -13,6 +15,7 @@ export function Toolbar() {
   const location = useLocation();
   const { project, isDirty, saveCurrentProject, closeProject, updateProjectName, openProject } = useProjectStore();
   const { isDarkMode, toggleDarkMode, selectScene } = useEditorStore();
+  const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
@@ -61,6 +64,16 @@ export function Toolbar() {
 
   const handleUploadToCloud = async () => {
     await syncCurrentProjectToCloud();
+  };
+
+  const handleToggleDarkMode = async () => {
+    const nextIsDarkMode = !isDarkMode;
+    toggleDarkMode();
+    try {
+      await updateMySettings({ isDarkMode: nextIsDarkMode });
+    } catch (error) {
+      console.error('[UserSettings] Failed to persist dark mode setting:', error);
+    }
   };
 
   useEffect(() => {
@@ -156,7 +169,7 @@ export function Toolbar() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={toggleDarkMode}
+            onClick={() => void handleToggleDarkMode()}
             title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {isDarkMode ? <Sun className="size-4" /> : <Moon className="size-4" />}

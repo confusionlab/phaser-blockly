@@ -15,6 +15,7 @@ import type * as llm from "../llm.js";
 import type * as objectLibrary from "../objectLibrary.js";
 import type * as projects from "../projects.js";
 import type * as soundLibrary from "../soundLibrary.js";
+import type * as userSettings from "../userSettings.js";
 
 import type {
   ApiFromModules,
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   objectLibrary: typeof objectLibrary;
   projects: typeof projects;
   soundLibrary: typeof soundLibrary;
+  userSettings: typeof userSettings;
 }>;
 
 /**
