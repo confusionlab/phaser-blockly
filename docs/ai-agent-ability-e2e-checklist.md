@@ -1,6 +1,6 @@
 # AI Agent Ability E2E Checklist
 
-Last updated: 2026-03-05
+Last updated: 2026-03-06
 Target project for live checks: `AI Test`
 Runtime target: Electron desktop (`codex_oauth`, no OpenRouter spend)
 
@@ -10,6 +10,11 @@ This checklist tracks real end-to-end verification of AI agent abilities in the 
 Each item includes a short note from the latest fully passing run.
 
 Latest full-pass run: `2026-03-05T15:39:45.538Z` (`38/38` passed)
+Latest attempted run: `2026-03-05T22:49:40.211Z` (`0/38` passed)
+
+Current blocker:
+- Shared OpenAI Responses runner in desktop `codex_oauth` is currently blocked by `assistant_transport_error` with `Missing scopes: api.responses.write`.
+- `apps/desktop/scripts/e2e-agent-abilities.mjs` now treats transport-error fallback chats as failures for grounding cases, so current totals reflect the real runtime failure instead of false positives.
 
 ## Preflight
 
@@ -19,8 +24,8 @@ Latest full-pass run: `2026-03-05T15:39:45.538Z` (`38/38` passed)
   - Notes: Wait gate now requires runtime user id before any case runs.
 - [x] Codex OAuth status is ready for signed-in user (`hasCodexToken=true`, `codexAvailable=true`).
   - Notes: Wait gate logs `phase:codex_ready mode=codex_oauth hasToken=true available=true`.
-- [x] Assistant turn transport succeeds in desktop runtime.
-  - Notes: All mutation and grounding requests completed through desktop provider path.
+- [ ] Assistant turn transport succeeds in desktop runtime.
+  - Notes: Latest attempted run (`2026-03-05T22:49:40.211Z`) failed all `38/38` cases with `assistant_transport_error` because the ChatGPT/Codex auth token did not have `api.responses.write` for the Responses endpoint.
 
 ## Project Ops
 
@@ -128,3 +133,5 @@ Latest full-pass run: `2026-03-05T15:39:45.538Z` (`38/38` passed)
 - 2026-03-05: Added readiness gates for runtime user id and Codex OAuth token before test execution.
 - 2026-03-05: Final full run completed with `38/38` passes.
 - 2026-03-06: Added multi-op chain reliability section to track orchestration-level failures and fixes.
+- 2026-03-06: Rebuilt desktop main bundle and reran the harness against the shared OpenAI Responses runner; latest attempted run failed `0/38` due to `assistant_transport_error` / missing `api.responses.write` on the Codex OAuth token.
+- 2026-03-06: Hardened `apps/desktop/scripts/e2e-agent-abilities.mjs` so grounding chat fallback transport errors no longer count as PASS.

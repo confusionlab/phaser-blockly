@@ -443,6 +443,7 @@ async function runAssistantCase(page, testCase, runtimeUserId) {
       mode: turn.mode,
       provider: turn.provider,
       model: turn.model,
+      errorCode: typeof turn.errorCode === 'string' ? turn.errorCode : '',
       answer: turn.mode === 'chat' ? (turn.answer || '') : '',
       semanticOps: [],
       projectOps: [],
@@ -461,9 +462,20 @@ async function runAssistantCase(page, testCase, runtimeUserId) {
     }
 
     const opList = category === 'project' ? output.projectOps : output.semanticOps;
+    const validationErrors = Array.isArray(output.debugTrace?.validationErrors)
+      ? output.debugTrace.validationErrors.filter((value) => typeof value === 'string')
+      : [];
+    const fallbackReasonCode =
+      output.debugTrace && typeof output.debugTrace === 'object' && typeof output.debugTrace.fallbackReasonCode === 'string'
+        ? output.debugTrace.fallbackReasonCode
+        : '';
+    const transportFailed =
+      output.errorCode === 'assistant_transport_error'
+      || fallbackReasonCode === 'assistant_transport_error'
+      || validationErrors.some((value) => value.startsWith('transport:'));
     const hasExpectedOp = category === 'grounding'
-      ? turn.mode === 'chat'
-      : opList.includes(expectedOp);
+      ? turn.mode === 'chat' && !transportFailed
+      : !transportFailed && opList.includes(expectedOp);
 
     return {
       ...output,
