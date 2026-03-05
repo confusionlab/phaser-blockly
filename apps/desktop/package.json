@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node scripts/validate-codex-output-schema.mjs",
     "test:codex-smoke": "CODEX_SMOKE=1 node scripts/validate-codex-output-schema.mjs",
-    "test:codex-turn": "node scripts/test-codex-assistant-turn.mjs"
+    "test:codex-turn": "node scripts/test-codex-assistant-turn.mjs",
+    "test:e2e-abilities": "pnpm --filter @pochacoding/web exec node ../desktop/scripts/e2e-agent-abilities.mjs"
   },
   "dependencies": {
     "keytar": "^7.9.0",
