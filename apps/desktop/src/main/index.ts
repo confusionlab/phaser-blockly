@@ -237,7 +237,7 @@ function createMainWindow(): BrowserWindow {
 
   const overrideDevUrl = process.env.POCHACODING_DESKTOP_WEB_URL?.trim();
   const devUrl = process.env.ELECTRON_RENDERER_URL?.trim();
-  const fallbackDevUrl = 'http://127.0.0.1:5173';
+  const fallbackDevUrl = 'http://localhost:5173';
   if (!app.isPackaged) {
     // Allow forcing Electron dev to a hosted HTTPS app domain for Clerk prod-origin checks.
     void window.loadURL(overrideDevUrl || devUrl || fallbackDevUrl);
