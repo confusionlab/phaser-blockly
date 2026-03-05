@@ -48,7 +48,7 @@ export function Toolbar() {
   };
 
   const handleGoHome = async () => {
-    if (project) {
+    if (project && isDirty) {
       const synced = await syncCurrentProjectToCloud();
       if (!synced) return;
     }
