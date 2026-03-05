@@ -22,7 +22,11 @@
 - Use mode-specific env vars to avoid accidentally using prod backend in local dev:
   - `VITE_CONVEX_URL_DEV` / `VITE_CONVEX_SITE_URL_DEV` for development.
   - `VITE_CONVEX_URL_PROD` / `VITE_CONVEX_SITE_URL_PROD` for production builds.
+- Clerk keys can also be mode-specific:
+  - `VITE_CLERK_PUBLISHABLE_KEY_DEV` for development.
+  - `VITE_CLERK_PUBLISHABLE_KEY_PROD` for production/desktop builds.
 - Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` if mode-specific values are missing.
+  - Optional fallback for Clerk: `VITE_CLERK_PUBLISHABLE_KEY`.
 
 ## Desktop Packaging
 

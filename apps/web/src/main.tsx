@@ -8,10 +8,27 @@ import './index.css'
 import App from './App.tsx'
 import { getConvexCloudUrl } from '@/lib/convexEnv'
 
+function trimOrUndefined(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function getClerkPublishableKey(): string | null {
+  const modeSpecific = import.meta.env.DEV
+    ? trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_DEV)
+    : import.meta.env.PROD
+      ? trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY_PROD)
+      : undefined
+  const fallback = trimOrUndefined(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY)
+  return modeSpecific || fallback || null
+}
+
 const rootElement = document.getElementById('root')
 const convexUrl = getConvexCloudUrl()
-const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY?.trim() || null
+const clerkPublishableKey = getClerkPublishableKey()
 const appBranch = import.meta.env.VITE_APP_BRANCH
+const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant
 
 if (appBranch) {
   document.title = appBranch
@@ -33,7 +50,9 @@ if (!convexUrl || !clerkPublishableKey) {
             (or fallback `VITE_CONVEX_URL`).
           </>
         ) : null}
-        {!clerkPublishableKey ? ' Set `VITE_CLERK_PUBLISHABLE_KEY`.' : null}
+        {!clerkPublishableKey
+          ? ' Set `VITE_CLERK_PUBLISHABLE_KEY_DEV` and `VITE_CLERK_PUBLISHABLE_KEY_PROD` (or fallback `VITE_CLERK_PUBLISHABLE_KEY`).'
+          : null}
       </div>
     </StrictMode>,
   )
@@ -44,9 +63,9 @@ const convex = new ConvexReactClient(convexUrl)
 
 createRoot(rootElement).render(
   <StrictMode>
-    <ClerkProvider publishableKey={clerkPublishableKey}>
+    <ClerkProvider publishableKey={clerkPublishableKey} standardBrowser={!isDesktopRuntime}>
       <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
-        {typeof window !== 'undefined' && window.desktopAssistant ? (
+        {isDesktopRuntime ? (
           <HashRouter>
             <App />
           </HashRouter>
