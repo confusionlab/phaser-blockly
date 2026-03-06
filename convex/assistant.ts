@@ -43,6 +43,8 @@ const internalAssistant = (internal as any).assistant;
 const ASSISTANT_SNAPSHOT_MISSING_ERROR = "assistant_snapshot_missing_for_project_version";
 const FAST_ASSISTANT_MODEL = "gpt-5-mini-2025-08-07";
 const SMART_ASSISTANT_MODEL = "gpt-5.4-2026-03-05";
+const STALE_QUEUED_RUN_TIMEOUT_MS = 2 * 60 * 1000;
+const STALE_RUNNING_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 
 type AssistantRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 type AssistantRunMode = "mutate" | "analyze";
@@ -138,6 +140,68 @@ function resolveAssistantModel(modelMode: AssistantModelMode): string {
   }
 
   return FAST_ASSISTANT_MODEL;
+}
+
+function getActiveRunTimestamp(run: StoredRun): number {
+  return run.startedAt ?? run.createdAt;
+}
+
+function isStaleActiveRun(run: StoredRun, now: number): boolean {
+  if (run.status === "queued") {
+    return now - run.createdAt >= STALE_QUEUED_RUN_TIMEOUT_MS;
+  }
+
+  if (run.status === "running") {
+    return now - getActiveRunTimestamp(run) >= STALE_RUNNING_RUN_TIMEOUT_MS;
+  }
+
+  return false;
+}
+
+async function appendRunEventDirect(
+  ctx: { db: any },
+  runId: Id<"assistantRuns">,
+  type: string,
+  payload: unknown,
+) {
+  const lastEvent = await ctx.db
+    .query("assistantRunEvents")
+    .withIndex("by_runId_and_sequence", (q: any) => q.eq("runId", runId))
+    .order("desc")
+    .first();
+  const nextSequence = lastEvent ? lastEvent.sequence + 1 : 0;
+  await ctx.db.insert("assistantRunEvents", {
+    runId,
+    sequence: nextSequence,
+    type,
+    payloadJson: safeStringify(payload),
+    createdAt: Date.now(),
+  });
+}
+
+async function failStaleRunDirect(
+  ctx: { db: any },
+  run: StoredRun,
+  now: number,
+) {
+  await ctx.db.patch(run._id, {
+    status: "failed",
+    failedAt: now,
+    errorCode: "stale_run_recovered",
+    errorMessage: `Recovered a stale assistant run that remained ${run.status} beyond the timeout.`,
+  });
+  await appendRunEventDirect(ctx, run._id, "run_failed", {
+    runId: run._id,
+    errorCode: "stale_run_recovered",
+    errorMessage: `Recovered stale ${run.status} run before starting a new assistant run.`,
+    staleStatus: run.status,
+    staleSince: getActiveRunTimestamp(run),
+    recoveredAt: now,
+  });
+  await appendRunEventDirect(ctx, run._id, "editor_unlocked", {
+    runId: run._id,
+    recoveredAt: now,
+  });
 }
 
 async function findReusableSnapshot(
@@ -1302,6 +1366,7 @@ export const createRun = mutation({
   handler: async (ctx, args) => {
     const ownerUserId = await requireAuthenticatedUserId(ctx);
     const modelMode = normalizeAssistantModelMode(args.modelMode);
+    const now = Date.now();
     const activeRuns = await ctx.db
       .query("assistantRuns")
       .withIndex("by_ownerUserId_and_projectId_and_createdAt", (q) =>
@@ -1309,7 +1374,19 @@ export const createRun = mutation({
       )
       .collect();
 
-    if (activeRuns.some((run) => run.status === "queued" || run.status === "running")) {
+    let hasBlockingActiveRun = false;
+    for (const run of activeRuns) {
+      if (run.status !== "queued" && run.status !== "running") {
+        continue;
+      }
+      if (isStaleActiveRun(run, now)) {
+        await failStaleRunDirect(ctx, run, now);
+        continue;
+      }
+      hasBlockingActiveRun = true;
+    }
+
+    if (hasBlockingActiveRun) {
       throw new Error("An assistant run is already active for this project.");
     }
 
@@ -1331,7 +1408,7 @@ export const createRun = mutation({
         projectVersion: args.projectVersion,
         snapshotJson: args.snapshotJson,
         source: "full",
-        createdAt: Date.now(),
+        createdAt: now,
       });
     }
 
@@ -1345,7 +1422,7 @@ export const createRun = mutation({
       conversationHistoryJson: args.conversationHistoryJson,
       projectVersion: args.projectVersion,
       snapshotId,
-      createdAt: Date.now(),
+      createdAt: now,
     });
 
     await ctx.db.insert("assistantRunEvents", {
@@ -1357,7 +1434,7 @@ export const createRun = mutation({
         projectId: args.projectId,
         status: "queued",
       }),
-      createdAt: Date.now(),
+      createdAt: now,
     });
 
     await ctx.db.insert("assistantRunEvents", {
@@ -1372,7 +1449,7 @@ export const createRun = mutation({
         requestText: args.requestText,
         conversationTurnCount: parseConversationHistory(args.conversationHistoryJson).length,
       }),
-      createdAt: Date.now(),
+      createdAt: now,
     });
 
     await ctx.scheduler.runAfter(0, internalAssistant.executeRunInternal, { runId });
