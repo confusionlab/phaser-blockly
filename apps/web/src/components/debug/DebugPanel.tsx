@@ -414,6 +414,9 @@ function formatXml(xml: string): string {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xml, 'text/xml');
+    if (doc.getElementsByTagName('parsererror').length > 0) {
+      return xml.replace(/></g, '>\n<');
+    }
     const serializer = new XMLSerializer();
     let formatted = serializer.serializeToString(doc);
 

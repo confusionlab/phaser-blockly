@@ -1,4 +1,8 @@
-import { normalizeBlocklyXml } from './blocklyXml';
+import {
+  findUnsupportedBlocklyBlockTypes,
+  normalizeBlocklyXml,
+  validateBlocklyXmlStructure,
+} from './blocklyXml';
 
 export type AssistantVariableType = 'string' | 'integer' | 'float' | 'boolean';
 
@@ -1087,6 +1091,24 @@ export function validateAssistantProjectState(state: AssistantProjectState): Ass
           entityIds: [scene.id, object.id],
         });
       }
+
+      const normalizedBlocklyXml = normalizeBlocklyXml(object.blocklyXml);
+      const blocklyXmlIssue = validateBlocklyXmlStructure(normalizedBlocklyXml);
+      if (blocklyXmlIssue) {
+        issues.push({
+          code: 'object.invalid_blockly_xml',
+          message: `Object "${object.id}" has invalid Blockly XML: ${blocklyXmlIssue}`,
+          entityIds: [scene.id, object.id],
+        });
+      }
+      const unsupportedBlockTypes = findUnsupportedBlocklyBlockTypes(normalizedBlocklyXml);
+      if (unsupportedBlockTypes.length > 0) {
+        issues.push({
+          code: 'object.unsupported_blockly_block_types',
+          message: `Object "${object.id}" uses unsupported Blockly block types: ${unsupportedBlockTypes.join(', ')}.`,
+          entityIds: [scene.id, object.id],
+        });
+      }
     }
 
     const cameraTarget = scene.cameraConfig.followTarget;
@@ -1110,6 +1132,24 @@ export function validateAssistantProjectState(state: AssistantProjectState): Ass
       continue;
     }
     componentIds.add(component.id);
+
+    const normalizedBlocklyXml = normalizeBlocklyXml(component.blocklyXml);
+    const blocklyXmlIssue = validateBlocklyXmlStructure(normalizedBlocklyXml);
+    if (blocklyXmlIssue) {
+      issues.push({
+        code: 'component.invalid_blockly_xml',
+        message: `Component "${component.id}" has invalid Blockly XML: ${blocklyXmlIssue}`,
+        entityIds: [component.id],
+      });
+    }
+    const unsupportedBlockTypes = findUnsupportedBlocklyBlockTypes(normalizedBlocklyXml);
+    if (unsupportedBlockTypes.length > 0) {
+      issues.push({
+        code: 'component.unsupported_blockly_block_types',
+        message: `Component "${component.id}" uses unsupported Blockly block types: ${unsupportedBlockTypes.join(', ')}.`,
+        entityIds: [component.id],
+      });
+    }
   }
 
   for (const scene of state.scenes) {

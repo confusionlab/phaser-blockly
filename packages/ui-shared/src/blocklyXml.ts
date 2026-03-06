@@ -359,6 +359,110 @@ function normalizeControlsIfBlocks(xml: string): string {
   return normalized;
 }
 
+function collectBlocklyBlockTypes(blocklyXml: string): string[] {
+  const blockTypes: string[] = [];
+  const seen = new Set<string>();
+  const pattern = /<(?:block|shadow)\b[^>]*type=(["'])([^"']+)\1/gi;
+
+  for (let match = pattern.exec(blocklyXml); match; match = pattern.exec(blocklyXml)) {
+    const blockType = match[2]?.trim();
+    if (!blockType || seen.has(blockType)) continue;
+    seen.add(blockType);
+    blockTypes.push(blockType);
+  }
+
+  return blockTypes;
+}
+
+const UNSUPPORTED_BLOCK_TYPE_PATTERNS: ReadonlyArray<RegExp> = [
+  /^keyboard_/i,
+  /^when_key_pressed$/i,
+  /^events_whenkey(?:pressed|released)$/i,
+  /^event_when_key_pressed$/i,
+  /^event_send_message$/i,
+  /^set_physics_velocity$/i,
+  /^apply_physics_impulse$/i,
+  /^if_on_ground$/i,
+  /^wait_for_frame$/i,
+  /^physics_is_on_ground$/i,
+  /^object_jump$/i,
+  /^motion_jump$/i,
+  /^jump_if_on_floor$/i,
+  /^is_on_ground$/i,
+  /^event_set_velocity_y$/i,
+  /^physics_jump$/i,
+  /^object_set_velocity_[xy]$/i,
+  /^setVelocity$/i,
+  /^whenKeyPressed$/i,
+  /^waitUntilKeyReleased$/i,
+  /^isTouchingGround$/i,
+  /^change_velocity$/i,
+  /^jump$/i,
+  /^variables_set_velocity_x(?:_to)?$/i,
+  /^variables_set_velocity_y(?:_to)?$/i,
+  /^variables_set_physics_jump$/i,
+];
+
+export function findUnsupportedBlocklyBlockTypes(blocklyXml: string): string[] {
+  return collectBlocklyBlockTypes(blocklyXml).filter((blockType) =>
+    UNSUPPORTED_BLOCK_TYPE_PATTERNS.some((pattern) => pattern.test(blockType)),
+  );
+}
+
+export function validateBlocklyXmlStructure(blocklyXml: string): string | null {
+  const trimmed = blocklyXml.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (!trimmed.startsWith('<xml')) {
+    return 'Expected <xml> root element.';
+  }
+
+  if (/<parsererror\b/i.test(trimmed)) {
+    return 'XML contains parsererror nodes.';
+  }
+
+  const tagPattern = /<[^>]+>/g;
+  const stack: string[] = [];
+
+  for (let match = tagPattern.exec(trimmed); match; match = tagPattern.exec(trimmed)) {
+    const tag = match[0];
+    if (tag.startsWith('<?') || tag.startsWith('<!')) {
+      continue;
+    }
+
+    const closingMatch = tag.match(/^<\/([A-Za-z_][\w:.-]*)\s*>$/);
+    if (closingMatch) {
+      const expectedTag = stack.pop();
+      if (!expectedTag) {
+        return `Unexpected closing tag </${closingMatch[1]}>.`;
+      }
+      if (expectedTag !== closingMatch[1]) {
+        return `Opening and ending tag mismatch: <${expectedTag}> and </${closingMatch[1]}>.`;
+      }
+      continue;
+    }
+
+    const openingMatch = tag.match(/^<([A-Za-z_][\w:.-]*)(?:\s[^<>]*?)?\/?>$/);
+    if (!openingMatch) {
+      return `Malformed tag: ${tag}`;
+    }
+
+    if (tag.endsWith('/>')) {
+      continue;
+    }
+
+    stack.push(openingMatch[1]);
+  }
+
+  if (stack.length > 0) {
+    return `Unclosed tag <${stack[stack.length - 1]}>.`;
+  }
+
+  return null;
+}
+
 export function normalizeBlocklyXml(blocklyXml: string): string {
   let normalized = blocklyXml;
 

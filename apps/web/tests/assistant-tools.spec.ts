@@ -5,6 +5,7 @@ import {
   listAssistantEntityReferences,
   materializeAssistantOperationIds,
   type AssistantChangeSet,
+  validateAssistantProjectState,
 } from '../../../packages/ui-shared/src/assistant';
 import { normalizeBlocklyXml } from '../../../packages/ui-shared/src/blocklyXml';
 import { applyAssistantChangeSetToProject, createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
@@ -599,5 +600,47 @@ test.describe('Assistant tool curation primitives', () => {
     expect(heroInstance?.blocklyXml).toBe(blocklyXml);
     expect(heroInstance?.x).toBe(300);
     expect(heroInstance?.y).toBe(140);
+  });
+
+  test('validateAssistantProjectState rejects unrecoverable Blockly XML', () => {
+    const fixture = buildProjectFixture();
+    const scene = fixture.project.scenes.find((candidate) => candidate.id === fixture.sceneId)!;
+    const hero = scene.objects.find((candidate) => candidate.id === fixture.heroId)!;
+    hero.blocklyXml = 'not xml at all';
+
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const issues = validateAssistantProjectState(snapshot.state);
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'object.invalid_blockly_xml',
+          entityIds: [fixture.sceneId, fixture.heroId],
+        }),
+      ]),
+    );
+  });
+
+  test('validateAssistantProjectState rejects unsupported generic Blockly block types', () => {
+    const fixture = buildProjectFixture();
+    const scene = fixture.project.scenes.find((candidate) => candidate.id === fixture.sceneId)!;
+    const hero = scene.objects.find((candidate) => candidate.id === fixture.heroId)!;
+    hero.blocklyXml = `
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="keyboard_keyPressed"></block>
+      </xml>
+    `.trim();
+
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const issues = validateAssistantProjectState(snapshot.state);
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'object.unsupported_blockly_block_types',
+          entityIds: [fixture.sceneId, fixture.heroId],
+        }),
+      ]),
+    );
   });
 });
