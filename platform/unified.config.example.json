@@ -14,12 +14,8 @@
     "CLERK_JWT_ISSUER_DOMAIN_DEV": "https://clerk.dev-instance.example",
     "CLERK_JWT_ISSUER_DOMAIN_PROD": "https://clerk.prod-instance.example",
     "CLERK_WEBHOOK_SIGNING_SECRET": "whsec_xxx",
-    "OPENROUTER_API_KEY": "sk-or-v1-xxx",
-    "OPENROUTER_MODEL": "openai/gpt-5.3-codex",
-    "OPENROUTER_REFERER": "https://pochacoding.example.com",
-    "OPENROUTER_APP_NAME": "PochaCoding",
-    "OPENAI_OAUTH_MODEL": "gpt-5",
-    "OPENAI_OAUTH_APP_NAME": "PochaCoding",
+    "OPENAI_MODEL": "gpt-5",
+    "OPENAI_APP_NAME": "PochaCoding",
     "CLERK_SECRET_KEY": "sk_test_xxx",
     "VERCEL_TOKEN": "your_vercel_token"
   },
@@ -75,15 +71,8 @@
               "value": "${CLERK_WEBHOOK_SIGNING_SECRET}",
               "sensitive": true
             },
-            "OPENROUTER_API_KEY": {
-              "value": "${OPENROUTER_API_KEY}",
-              "sensitive": true
-            },
-            "OPENROUTER_MODEL": "${OPENROUTER_MODEL}",
-            "OPENROUTER_REFERER": "${OPENROUTER_REFERER}",
-            "OPENROUTER_APP_NAME": "${OPENROUTER_APP_NAME}",
-            "OPENAI_OAUTH_MODEL": "${OPENAI_OAUTH_MODEL}",
-            "OPENAI_OAUTH_APP_NAME": "${OPENAI_OAUTH_APP_NAME}"
+            "OPENAI_MODEL": "${OPENAI_MODEL}",
+            "OPENAI_APP_NAME": "${OPENAI_APP_NAME}"
           }
         },
         "prod": {
@@ -96,15 +85,8 @@
               "value": "${CLERK_WEBHOOK_SIGNING_SECRET}",
               "sensitive": true
             },
-            "OPENROUTER_API_KEY": {
-              "value": "${OPENROUTER_API_KEY}",
-              "sensitive": true
-            },
-            "OPENROUTER_MODEL": "${OPENROUTER_MODEL}",
-            "OPENROUTER_REFERER": "${OPENROUTER_REFERER}",
-            "OPENROUTER_APP_NAME": "${OPENROUTER_APP_NAME}",
-            "OPENAI_OAUTH_MODEL": "${OPENAI_OAUTH_MODEL}",
-            "OPENAI_OAUTH_APP_NAME": "${OPENAI_OAUTH_APP_NAME}"
+            "OPENAI_MODEL": "${OPENAI_MODEL}",
+            "OPENAI_APP_NAME": "${OPENAI_APP_NAME}"
           }
         }
       }

@@ -9,7 +9,6 @@ export default defineConfig({
         input: {
           index: path.resolve(__dirname, 'src/main/index.ts'),
         },
-        external: ['keytar', 'ws', 'bufferutil', 'utf-8-validate'],
       },
     },
   },

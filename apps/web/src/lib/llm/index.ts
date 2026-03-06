@@ -4,7 +4,7 @@ export { buildAssistantProjectSnapshot } from '@/lib/llm/projectSnapshot';
 export { runLlmBlocklyOrchestration } from '@/lib/llm/orchestrator';
 export { applyOrchestratedCandidate } from '@/lib/llm/apply';
 export { validateSemanticOpsPayload } from '@/lib/llm/semanticOps';
-export { applyProjectOps, summarizeProjectOps } from '@/lib/llm/projectOps';
+export { applyProjectOps, previewProjectOps, summarizeProjectOps } from '@/lib/llm/projectOps';
 export type {
   BlocklyCapabilities,
   BlocklyEditScope,

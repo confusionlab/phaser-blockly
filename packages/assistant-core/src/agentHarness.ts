@@ -2,7 +2,6 @@ import OpenAI from 'openai';
 import { hashFnv1a64 } from './intent';
 import { validateSemanticOpsPayload } from './semanticOps';
 import type {
-  AssistantProviderMode,
   AssistantTrace,
   AssistantTraceToolCall,
   AssistantTurnResponse,
@@ -14,15 +13,9 @@ type ChatHistoryTurn = {
   content: string;
 };
 
-type AssistantProviderCredentials = {
-  codexToken?: string;
-};
-
 type UnifiedAssistantTurnRequest = {
   userIntent: string;
   chatHistory: ChatHistoryTurn[];
-  providerMode?: AssistantProviderMode;
-  providerCredentials?: AssistantProviderCredentials;
   threadContext?: {
     threadId?: string;
     scopeKey?: string;
@@ -146,15 +139,6 @@ function getManagedOpenAIDefaults() {
   };
 }
 
-function getCodexOpenAIDefaults() {
-  const model = (getEnv('OPENAI_OAUTH_MODEL') || 'gpt-5').trim();
-  const appName = (getEnv('OPENAI_OAUTH_APP_NAME') || 'PochaCoding').trim();
-  return {
-    model,
-    appName,
-  };
-}
-
 function getManagedOpenAIApiKey(): string {
   const apiKey = getEnv('OPENAI_API_KEY');
   if (!apiKey || !apiKey.trim()) {
@@ -162,86 +146,12 @@ function getManagedOpenAIApiKey(): string {
   }
   return apiKey.trim();
 }
-
-function normalizeBearerToken(value: string): string {
-  return value.replace(/^bearer\s+/i, '').trim();
-}
-
-function extractCodexToken(raw: string): string {
-  const trimmed = normalizeBearerToken(raw.trim());
-  if (!trimmed) return '';
-  const looksLikeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || trimmed.startsWith('pochacoding://');
-
-  if (trimmed.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (isRecord(parsed)) {
-        const keys = ['access_token', 'token', 'id_token', 'authToken'];
-        for (const key of keys) {
-          const candidate = parsed[key];
-          if (typeof candidate === 'string' && candidate.trim()) {
-            return normalizeBearerToken(candidate);
-          }
-        }
-      }
-      return '';
-    } catch {
-      // fall through to URL/raw parsing
-    }
-  }
-
-  try {
-    const url = new URL(trimmed);
-    const hash = url.hash.startsWith('#') ? url.hash.slice(1) : url.hash;
-    const hashParams = new URLSearchParams(hash);
-    const tokenCandidate =
-      url.searchParams.get('access_token')
-      || hashParams.get('access_token')
-      || url.searchParams.get('token')
-      || hashParams.get('token')
-      || url.searchParams.get('id_token')
-      || hashParams.get('id_token');
-    if (typeof tokenCandidate === 'string' && tokenCandidate.trim()) {
-      return normalizeBearerToken(tokenCandidate);
-    }
-    return '';
-  } catch {
-    if (looksLikeUrl) {
-      return '';
-    }
-  }
-
-  return trimmed;
-}
-
-function resolveProviderConfig(args: {
-  providerMode: AssistantProviderMode;
-  providerCredentials?: AssistantProviderCredentials;
-}): ResolvedProviderConfig {
-  const credentials = isRecord(args.providerCredentials) ? args.providerCredentials : {};
-
-  if (args.providerMode === 'managed') {
-    const defaults = getManagedOpenAIDefaults();
-    return {
-      provider: 'openai',
-      apiKey: getManagedOpenAIApiKey(),
-      model: defaults.model,
-      appName: defaults.appName,
-    };
-  }
-
-  const codexRaw =
-    typeof credentials.codexToken === 'string'
-      ? credentials.codexToken
-      : '';
-  const codexToken = extractCodexToken(codexRaw);
-  if (!codexToken) {
-    throw new Error('codex_oauth_missing_token');
-  }
-  const defaults = getCodexOpenAIDefaults();
+ 
+function resolveProviderConfig(): ResolvedProviderConfig {
+  const defaults = getManagedOpenAIDefaults();
   return {
     provider: 'openai',
-    apiKey: codexToken,
+    apiKey: getManagedOpenAIApiKey(),
     model: defaults.model,
     appName: defaults.appName,
   };
@@ -1157,11 +1067,9 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
       content: truncate(turn.content.trim(), 1800),
     }));
 
-  const providerMode = (args.providerMode || 'managed') as AssistantProviderMode;
   const threadContext = isRecord(args.threadContext) ? args.threadContext : {};
   const promptEnvelope = {
     userIntent: args.userIntent,
-    providerMode,
     threadContext,
     chatHistory: recentTurns,
     context: args.context,
@@ -1184,24 +1092,14 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
 
   let providerConfig: ResolvedProviderConfig;
   try {
-    providerConfig = resolveProviderConfig({
-      providerMode,
-      providerCredentials: args.providerCredentials,
-    });
+    providerConfig = resolveProviderConfig();
   } catch (error) {
     const configError = error instanceof Error ? error.message : 'provider_configuration_error';
-    const provider = 'openai';
-    const model = providerMode === 'codex_oauth'
-      ? getCodexOpenAIDefaults().model
-      : getManagedOpenAIDefaults().model;
     return buildFallbackChat({
-      provider,
-      model,
+      provider: 'openai',
+      model: getManagedOpenAIDefaults().model,
       reason: configError,
-      message:
-        providerMode === 'codex_oauth'
-          ? 'Codex mode is not authenticated. Use the desktop app\'s Login with ChatGPT flow and try again.'
-          : 'Managed OpenAI configuration is incomplete. Check assistant provider settings and try again.',
+      message: 'Managed OpenAI configuration is incomplete. Check assistant provider settings and try again.',
       debugTrace: {
         ...debugTraceBase,
         validationErrors: [`provider:${configError}`],
@@ -1255,7 +1153,6 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
               context: args.context,
               programRead: args.programRead,
               capabilities: args.capabilities,
-              providerMode,
               threadContext,
               toolingHint: 'Use tools to fetch project entities/properties before finalizing answer.',
             },
@@ -1475,6 +1372,5 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
 }
 
 export type {
-  AssistantProviderCredentials,
   UnifiedAssistantTurnRequest,
 };

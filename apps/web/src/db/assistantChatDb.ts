@@ -1,12 +1,9 @@
 import Dexie, { type EntityTable } from 'dexie';
 
-export type AssistantProviderMode = 'managed' | 'codex_oauth';
-
 export interface AssistantThreadRecord {
   id: string;
   projectId: string;
   scopeKey: string;
-  providerMode: AssistantProviderMode;
   createdAt: string;
   updatedAt: string;
 }
@@ -71,7 +68,6 @@ export async function ensureAssistantThread(projectId: string, scopeKey: string)
     id: makeId('thread'),
     projectId,
     scopeKey,
-    providerMode: 'managed',
     createdAt: now,
     updatedAt: now,
   };
@@ -125,27 +121,4 @@ export async function clearAssistantThreadMessages(threadId: string): Promise<vo
     await db.turns.where('threadId').equals(threadId).delete();
   });
   await db.threads.update(threadId, { updatedAt: new Date().toISOString() });
-}
-
-export async function setAssistantThreadProviderMode(
-  threadId: string,
-  providerMode: AssistantProviderMode,
-): Promise<void> {
-  if (!isNonEmptyStringKey(threadId)) {
-    return;
-  }
-
-  await db.threads.update(threadId, {
-    providerMode,
-    updatedAt: new Date().toISOString(),
-  });
-}
-
-export async function getAssistantThreadProviderMode(threadId: string): Promise<AssistantProviderMode> {
-  if (!isNonEmptyStringKey(threadId)) {
-    return 'managed';
-  }
-
-  const thread = await db.threads.get(threadId);
-  return thread?.providerMode || 'managed';
 }

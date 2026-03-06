@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Bot, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAction, useQuery } from 'convex/react';
-import { useAuth } from '@clerk/clerk-react';
 import { Link } from 'react-router-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -13,10 +12,11 @@ import {
   buildAssistantProjectSnapshot,
   buildProgramContext,
   getLlmExposedBlocklyCapabilities,
+  previewProjectOps,
   readProgramSummary,
+  runLlmBlocklyOrchestration,
 } from '@/lib/llm';
 import type { BlocklyEditScope, OrchestratedCandidate } from '@/lib/llm';
-import { runManagedAssistantRepairLoop } from '@/lib/llm/managedRepairLoop';
 import { createTraceRecorder } from '@/lib/llm/liveTrace';
 import { buildModelEditOverviewLines } from '@/lib/llm/traceSummary';
 import {
@@ -24,10 +24,7 @@ import {
   appendAssistantTurn,
   clearAssistantThreadMessages,
   ensureAssistantThread,
-  getAssistantThreadProviderMode,
   listAssistantMessages,
-  setAssistantThreadProviderMode,
-  type AssistantProviderMode,
 } from '@/db/assistantChatDb';
 
 type BlocklyAssistantPanelProps = {
@@ -42,35 +39,7 @@ type ChatMessage = {
   createdAt: string;
   meta?: string;
 };
-type CandidateDebugInfo = {
-  userIntent: string;
-  modelProvider: string;
-  modelName: string;
-  modelLatency: string;
-  compileLatency: string;
-  trace: unknown;
-  intentMismatchWarning: string | null;
-};
-type ProviderStatusSnapshot = {
-  hasCodexToken: boolean;
-  codexAvailable: boolean;
-  codexAuthMethod: 'chatgpt' | 'api_key' | 'unknown' | null;
-  codexEmail: string | null;
-  codexPlanType: string | null;
-  codexLoginInProgress: boolean;
-  codexStatusMessage: string | null;
-};
-
 const MAX_CHAT_MESSAGES = 50;
-const DEFAULT_PROVIDER_STATUS: ProviderStatusSnapshot = {
-  hasCodexToken: false,
-  codexAvailable: false,
-  codexAuthMethod: null,
-  codexEmail: null,
-  codexPlanType: null,
-  codexLoginInProgress: false,
-  codexStatusMessage: null,
-};
 
 function getScopeStorageKey(scope: BlocklyEditScope | null): string | null {
   if (!scope) return null;
@@ -110,43 +79,15 @@ function detectIntentMismatchWarning(userIntent: string, candidate: Orchestrated
   return null;
 }
 
-function mapProviderStatus(status: {
-  hasCodexToken: boolean;
-  codexAvailable: boolean;
-  codexAuthMethod?: 'chatgpt' | 'api_key' | 'unknown' | null;
-  codexEmail?: string | null;
-  codexPlanType?: string | null;
-  codexLoginInProgress?: boolean;
-  codexStatusMessage?: string | null;
-}): ProviderStatusSnapshot {
-  return {
-    hasCodexToken: status.hasCodexToken,
-    codexAvailable: status.codexAvailable,
-    codexAuthMethod: status.codexAuthMethod ?? null,
-    codexEmail: status.codexEmail ?? null,
-    codexPlanType: status.codexPlanType ?? null,
-    codexLoginInProgress: status.codexLoginInProgress ?? false,
-    codexStatusMessage: status.codexStatusMessage ?? null,
-  };
-}
-
 export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
-  const { userId } = useAuth();
   const isE2EAuthBypass = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
-  const runtimeUserId = userId ?? (import.meta.env.VITE_E2E_AUTH_BYPASS_USER_ID?.trim() || null);
-  const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [status, setStatus] = useState<RequestState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [candidate, setCandidate] = useState<OrchestratedCandidate | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [allowComponentPropagation, setAllowComponentPropagation] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [candidateDebugInfo, setCandidateDebugInfo] = useState<CandidateDebugInfo | null>(null);
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [providerMode, setProviderMode] = useState<AssistantProviderMode>('managed');
-  const [providerStatus, setProviderStatus] = useState<ProviderStatusSnapshot | null>(null);
 
   const {
     project,
@@ -165,18 +106,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
   const assistantTurnAction = useAction(api.llm.assistantTurn);
   const walletSummary = useQuery(api.billing.getWalletSummary, isE2EAuthBypass ? 'skip' : {});
 
-  const canApply = !!candidate && candidate.validation.pass && !candidateDebugInfo?.intentMismatchWarning;
-  const managedCreditsBlocked =
-    providerMode === 'managed'
-    && walletSummary !== undefined
-    && !walletSummary.canRunManagedAssistant;
-  const validationErrors = candidate?.validation.errors || [];
-  const validationWarnings = candidate?.validation.warnings || [];
-
-  const propagationRequired = useMemo(
-    () => !!candidate?.context.isComponentInstanceSelection,
-    [candidate?.context.isComponentInstanceSelection],
-  );
+  const managedCreditsBlocked = walletSummary !== undefined && !walletSummary.canRunManagedAssistant;
   const scopeKey = useMemo(() => {
     if (!project) return null;
     return getScopeStorageKey(scope);
@@ -188,8 +118,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     if (!project || !scopeKey) {
       setThreadId(null);
       setChatMessages([]);
-      setProviderMode('managed');
-      setProviderStatus(null);
       return;
     }
 
@@ -199,44 +127,9 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         if (cancelled) return;
         setThreadId(thread.id);
 
-        const persistedMode = await getAssistantThreadProviderMode(thread.id);
-        if (cancelled) return;
-        const nextMode = !isDesktopRuntime ? 'managed' : persistedMode;
-        setProviderMode(nextMode);
-        if (persistedMode !== nextMode) {
-          await setAssistantThreadProviderMode(thread.id, nextMode);
-        }
-
         const messages = await listAssistantMessages(thread.id);
         if (cancelled) return;
         setChatMessages(messages.slice(-MAX_CHAT_MESSAGES));
-
-        if (isDesktopRuntime && window.desktopAssistant && runtimeUserId) {
-          const status = await window.desktopAssistant.provider.status(runtimeUserId);
-          if (cancelled) return;
-          setProviderStatus(mapProviderStatus(status));
-          const shouldForceManaged = nextMode === 'codex_oauth' && !status.codexAvailable;
-          const preferredMode = shouldForceManaged ? 'managed' : nextMode;
-          if (preferredMode !== nextMode) {
-            await setAssistantThreadProviderMode(thread.id, preferredMode);
-          }
-
-          if (status.mode !== preferredMode) {
-            const syncedStatus = await window.desktopAssistant.provider.setMode(preferredMode, runtimeUserId);
-            if (cancelled) return;
-            setProviderStatus(mapProviderStatus(syncedStatus));
-            setProviderMode(syncedStatus.mode);
-            await setAssistantThreadProviderMode(thread.id, syncedStatus.mode);
-          } else {
-            setProviderMode(preferredMode);
-          }
-        } else {
-          if (nextMode !== 'managed') {
-            setProviderMode('managed');
-            await setAssistantThreadProviderMode(thread.id, 'managed');
-          }
-          setProviderStatus(DEFAULT_PROVIDER_STATUS);
-        }
       } catch {
         if (cancelled) return;
         setThreadId(null);
@@ -247,27 +140,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [isDesktopRuntime, project, runtimeUserId, scopeKey]);
-
-  useEffect(() => {
-    if (!isDesktopRuntime || !runtimeUserId || !window.desktopAssistant) return;
-    const desktopAssistant = window.desktopAssistant;
-    return desktopAssistant.onProviderEvent((event) => {
-      if (event.type.startsWith('assistant-turn-')) {
-        return;
-      }
-      if (event.message) {
-        setStatusMessage(event.message);
-      }
-      void desktopAssistant.provider.status(runtimeUserId)
-        .then((status) => {
-          setProviderStatus(mapProviderStatus(status));
-        })
-        .catch(() => {
-          setProviderStatus(DEFAULT_PROVIDER_STATUS);
-        });
-    });
-  }, [isDesktopRuntime, runtimeUserId]);
+  }, [project, scopeKey]);
 
   const appendChatMessage = async (message: Omit<ChatMessage, 'id'>) => {
     if (!threadId) return;
@@ -318,32 +191,15 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       setErrorMessage('Assistant thread is not ready yet. Try again in a moment.');
       return;
     }
-    if (!isDesktopRuntime && providerMode !== 'managed') {
-      setStatus('error');
-      setErrorMessage('Web runtime only supports managed mode.');
-      return;
-    }
     if (managedCreditsBlocked) {
       setStatus('error');
       setErrorMessage('Out of credits. Open Billing to upgrade or manage your plan.');
-      return;
-    }
-    if (providerMode === 'codex_oauth' && !(providerStatus?.hasCodexToken || false)) {
-      setStatus('error');
-      setErrorMessage('Codex mode selected but not signed in. Click Login with ChatGPT.');
-      return;
-    }
-    if (providerMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
-      setStatus('error');
-      setErrorMessage(providerStatus.codexStatusMessage || 'Codex mode is not available in this runtime yet.');
       return;
     }
 
     setStatus('loading');
     setErrorMessage(null);
     setStatusMessage(null);
-    setCandidate(null);
-    setCandidateDebugInfo(null);
     const userIntent = prompt.trim();
     const startedAt = new Date().toISOString();
     const traceMessageId = `trace_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -368,14 +224,13 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       createdAt: new Date().toISOString(),
     });
     setPrompt('');
-    traceRecorder.push(`Turn started in ${providerMode} mode.`, { phase: 'start' });
+    traceRecorder.push('Turn started in managed mode.', { phase: 'start' });
     updateTraceMessage();
 
     try {
       const capabilities = getLlmExposedBlocklyCapabilities();
       const context = buildProgramContext(project, scope);
       const programRead = readProgramSummary(context);
-      let unsubscribeTrace: (() => void) | null = null;
       const threadContext = {
         threadId,
         scopeKey,
@@ -385,113 +240,26 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       traceRecorder.push('Prepared Blockly capabilities, scope context, and project snapshot.', {
         phase: 'context',
       });
-      traceRecorder.push(
-        providerMode === 'codex_oauth'
-          ? 'Submitting request through the desktop Codex provider.'
-          : `Submitting request through ${providerMode} provider mode.`,
-        { phase: 'request' },
-      );
+      traceRecorder.push('Submitting request through the managed Convex provider.', { phase: 'request' });
       updateTraceMessage();
 
-      if (providerMode === 'codex_oauth' && isDesktopRuntime && window.desktopAssistant) {
-        unsubscribeTrace = window.desktopAssistant.onProviderEvent((event) => {
-          const added = traceRecorder.pushProviderEvent(event, threadId);
-          if (added) {
-            updateTraceMessage();
-          }
-        });
-      }
-
-      const repairResult = await (async () => {
-        try {
-          return await runManagedAssistantRepairLoop({
-            project,
-            scope,
-            userIntent,
-            requestTurn: async ({ effectiveUserIntent, attempt }) => {
-              traceRecorder.push(
-                attempt === 1
-                  ? 'Running managed assistant attempt 1.'
-                  : `Running managed repair attempt ${attempt}.`,
-                { phase: 'request' },
-              );
-              updateTraceMessage();
-              const turn = await (providerMode === 'codex_oauth'
-                ? (() => {
-                    if (!isDesktopRuntime || !window.desktopAssistant) {
-                      throw new Error('Codex mode requires the desktop app runtime.');
-                    }
-                    if (!runtimeUserId) {
-                      throw new Error('Missing signed-in user context for desktop provider.');
-                    }
-                    return window.desktopAssistant.provider.assistantTurn({
-                      userIntent: effectiveUserIntent,
-                      chatHistory: historyForTurn,
-                      capabilities,
-                      context,
-                      programRead,
-                      projectSnapshot,
-                      threadContext,
-                    }, runtimeUserId);
-                  })()
-                : assistantTurnAction({
-                    userIntent: effectiveUserIntent,
-                    chatHistory: historyForTurn,
-                    providerMode,
-                    threadContext,
-                    capabilities,
-                    context,
-                    programRead,
-                    projectSnapshot,
-                  }));
-              traceRecorder.push(`Received assistant turn response payload for attempt ${attempt}.`, { phase: 'response' });
-              traceRecorder.pushDebugTrace(turn.debugTrace);
-              updateTraceMessage();
-              return turn;
-            },
-          });
-        } finally {
-          unsubscribeTrace?.();
-        }
-      })();
+      const turn = await assistantTurnAction({
+        userIntent,
+        chatHistory: historyForTurn,
+        threadContext,
+        capabilities,
+        context,
+        programRead,
+        projectSnapshot,
+      });
       const turnCompletedAt = new Date().toISOString();
+      traceRecorder.push('Received assistant turn response payload.', { phase: 'response' });
+      traceRecorder.pushDebugTrace(turn.debugTrace);
+      updateTraceMessage();
 
-      if (repairResult.kind === 'failed') {
-        setStatus('error');
-        setStatusMessage('Assistant could not produce a valid edit plan.');
-        traceRecorder.push(repairResult.message, { phase: 'validation' });
-        const provider = repairResult.turn?.provider || 'convex';
-        const model = repairResult.turn?.model || 'unknown';
-        const assistantContent = traceRecorder.render({
-          finalLabel: 'Assistant response',
-          finalBody: repairResult.message,
-        });
-        removeTransientChatMessage(traceMessageId);
-        await appendChatMessage({
-          role: 'assistant',
-          content: assistantContent,
-          createdAt: turnCompletedAt,
-          meta: `Provider mode: ${providerMode} · Provider: ${provider}/${model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
-        });
-        await appendAssistantTurn({
-          threadId,
-          userIntent,
-          mode: 'error',
-          provider,
-          model,
-          debugTraceJson: JSON.stringify({
-            repairAttempts: repairResult.attempts,
-            upstreamTrace: repairResult.turn?.debugTrace ?? null,
-          }),
-          createdAt: turnCompletedAt,
-        });
-        return;
-      }
+      const turnProviderLabel = `convex:${turn.provider}`;
 
-      const turn = repairResult.turn;
-      const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
-
-      if (repairResult.kind === 'chat') {
+      if (turn.mode === 'chat') {
         if ((turn as { errorCode?: string }).errorCode === 'credits_exhausted') {
           setErrorMessage('Out of credits. Open Billing to upgrade or manage your plan.');
         }
@@ -508,7 +276,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           role: 'assistant',
           content: chatAnswerWithTrace,
           createdAt: turnCompletedAt,
-          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
+          meta: `Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
         });
         await appendAssistantTurn({
           threadId,
@@ -516,41 +284,75 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           mode: 'chat',
           provider: turn.provider,
           model: turn.model,
-          debugTraceJson: JSON.stringify({
-            repairAttempts: repairResult.attempts,
-            upstreamTrace: turn.debugTrace ?? null,
-          }),
+          debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
           createdAt: turnCompletedAt,
         });
-        setCandidate(null);
         setStatus('idle');
         return;
       }
 
-      const result = repairResult.orchestrated;
-      const proposedEdits = repairResult.proposedEdits;
-      const modelLatency = formatDuration(startedAt, turnCompletedAt);
-      const compileLatency = result
-        ? formatDuration(result.requestStartedAt, result.requestCompletedAt)
-        : '-';
-      const intentMismatchWarning = result
-        ? detectIntentMismatchWarning(userIntent, result)
+      const proposedEdits = turn.proposedEdits;
+      if (proposedEdits.semanticOps.length === 0 && proposedEdits.projectOps.length === 0) {
+        throw new Error('Assistant returned edit mode without any executable operations.');
+      }
+
+      const semanticCandidate = proposedEdits.semanticOps.length > 0
+        ? await runLlmBlocklyOrchestration({
+            project,
+            scope,
+            userIntent,
+            provider: {
+              name: turnProviderLabel,
+              model: turn.model,
+              proposeEdits: async () => proposedEdits,
+            },
+          })
         : null;
-      setCandidateDebugInfo({
-        userIntent,
-        modelProvider: turn.provider,
-        modelName: turn.model,
-        modelLatency,
-        compileLatency,
-        trace: {
-          repairAttempts: repairResult.attempts,
-          upstreamTrace: turn.debugTrace ?? null,
-        },
-        intentMismatchWarning,
+      const projectPreview = await previewProjectOps({
+        project,
+        projectOps: proposedEdits.projectOps,
       });
 
-      if (repairResult.attempts.length > 0) {
-        traceRecorder.push(`Repair loop succeeded after ${repairResult.attemptCount} attempt(s).`, { phase: 'validation' });
+      const modelLatency = formatDuration(startedAt, turnCompletedAt);
+      const compileLatency = semanticCandidate
+        ? formatDuration(semanticCandidate.requestStartedAt, semanticCandidate.requestCompletedAt)
+        : '-';
+      const intentMismatchWarning = semanticCandidate
+        ? detectIntentMismatchWarning(userIntent, semanticCandidate)
+        : null;
+
+      const validationIssues = [
+        ...(semanticCandidate?.validation.errors ?? []),
+        ...projectPreview.errors,
+        ...projectPreview.validationIssueSample.map((issue: string) => `[Project validation] ${issue}`),
+      ];
+      if (validationIssues.length > 0) {
+        setStatus('error');
+        setStatusMessage('Assistant produced an invalid edit plan.');
+        validationIssues.forEach((issue) => {
+          traceRecorder.push(issue, { phase: 'validation' });
+        });
+        const assistantContent = traceRecorder.render({
+          finalLabel: 'Assistant response',
+          finalBody: `I proposed edits, but validation failed.\n\n${validationIssues.slice(0, 8).join('\n')}`,
+        });
+        removeTransientChatMessage(traceMessageId);
+        await appendChatMessage({
+          role: 'assistant',
+          content: assistantContent,
+          createdAt: turnCompletedAt,
+          meta: `Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+        });
+        await appendAssistantTurn({
+          threadId,
+          userIntent,
+          mode: 'error',
+          provider: turn.provider,
+          model: turn.model,
+          debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
+          createdAt: turnCompletedAt,
+        });
+        return;
       }
 
       if (intentMismatchWarning) {
@@ -568,7 +370,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           role: 'assistant',
           content: fallbackContent,
           createdAt: turnCompletedAt,
-          meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+          meta: `Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
         });
         await appendAssistantTurn({
           threadId,
@@ -576,17 +378,15 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           mode: 'edit',
           provider: turn.provider,
           model: turn.model,
-          debugTraceJson: JSON.stringify({
-            repairAttempts: repairResult.attempts,
-            upstreamTrace: turn.debugTrace ?? null,
-          }),
+          debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
           createdAt: turnCompletedAt,
         });
         return;
       }
-      const semanticResult = proposedEdits.semanticOps.length > 0 && result
+
+      const semanticResult = semanticCandidate
         ? applyOrchestratedCandidate({
-            orchestrated: result,
+            orchestrated: semanticCandidate,
             bindings: {
               getProject: () => useProjectStore.getState().project,
               addMessage,
@@ -597,6 +397,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             },
           })
         : null;
+
       const projectResult = proposedEdits.projectOps.length > 0
         ? await applyProjectOps({
             projectOps: proposedEdits.projectOps,
@@ -612,14 +413,12 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
           })
         : null;
 
-      setCandidate(null);
       setStatus('idle');
-      setAllowComponentPropagation(false);
       const responseLines: string[] = [
         ...buildModelEditOverviewLines(proposedEdits),
       ];
-      if (result) {
-        responseLines.push('', 'Compiled diff summary:', ...result.build.diff.summaryLines);
+      if (semanticCandidate) {
+        responseLines.push('', 'Compiled diff summary:', ...semanticCandidate.build.diff.summaryLines);
       }
       if (semanticResult) {
         responseLines.push('', `${semanticResult.message} Added ${semanticResult.createdMessageCount} message(s) and ${semanticResult.createdVariableCount} variable(s).`);
@@ -641,7 +440,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         role: 'assistant',
         content: assistantContent,
         createdAt: new Date().toISOString(),
-        meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+        meta: `Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
       });
       setStatusMessage(
         [
@@ -655,10 +454,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
         mode: 'edit',
         provider: turn.provider,
         model: turn.model,
-        debugTraceJson: JSON.stringify({
-          repairAttempts: repairResult.attempts,
-          upstreamTrace: turn.debugTrace ?? null,
-        }),
+        debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
         createdAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -675,7 +471,7 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             finalBody: errorText,
           }),
           createdAt: new Date().toISOString(),
-          meta: `Provider mode: ${providerMode}`,
+          meta: 'Provider: convex',
         });
       }
       await appendAssistantTurn({
@@ -690,51 +486,9 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
     }
   };
 
-  const applyCandidate = () => {
-    if (!candidate || !project) return;
-    if (candidateDebugInfo?.intentMismatchWarning) {
-      setErrorMessage(`Apply blocked: ${candidateDebugInfo.intentMismatchWarning}`);
-      return;
-    }
-    if (!candidate.validation.pass) {
-      setErrorMessage('Candidate is not valid yet.');
-      return;
-    }
-    if (propagationRequired && !allowComponentPropagation) {
-      setErrorMessage('Confirm component-wide propagation before applying.');
-      return;
-    }
-
-    const result = applyOrchestratedCandidate({
-      orchestrated: candidate,
-      bindings: {
-        getProject: () => useProjectStore.getState().project,
-        addMessage,
-        addGlobalVariable,
-        addLocalVariable,
-        updateObject,
-        updateComponent,
-      },
-    });
-
-    setStatusMessage(
-      `${result.message} Added ${result.createdMessageCount} message(s) and ${result.createdVariableCount} variable(s).`
-    );
-    setErrorMessage(null);
-  };
-
   const rollback = () => {
     undo();
     setStatusMessage('Undid last change. If the LLM apply was the most recent edit, it has been rolled back.');
-  };
-
-  const cancelCandidate = () => {
-    setCandidate(null);
-    setStatus('idle');
-    setStatusMessage('Candidate discarded.');
-    setErrorMessage(null);
-    setAllowComponentPropagation(false);
-    setCandidateDebugInfo(null);
   };
 
   const clearChat = () => {
@@ -746,75 +500,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
       .catch((error) => {
         setErrorMessage(error instanceof Error ? error.message : 'Failed to clear chat history.');
       });
-  };
-
-  const updateProviderMode = async (nextMode: AssistantProviderMode) => {
-    if (!threadId) return;
-    if (!isDesktopRuntime && nextMode !== 'managed') {
-      setErrorMessage('Web runtime only supports managed mode.');
-      return;
-    }
-    const previousMode = providerMode;
-    if (nextMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable) {
-      setErrorMessage(providerStatus.codexStatusMessage || 'Codex mode is currently unavailable in this runtime.');
-      return;
-    }
-    try {
-      setProviderMode(nextMode);
-      await setAssistantThreadProviderMode(threadId, nextMode);
-      if (isDesktopRuntime && window.desktopAssistant) {
-        if (!runtimeUserId) {
-          throw new Error('Missing signed-in user context for desktop provider.');
-        }
-        const status = await window.desktopAssistant.provider.setMode(nextMode, runtimeUserId);
-        setProviderStatus(mapProviderStatus(status));
-        setProviderMode(status.mode);
-        await setAssistantThreadProviderMode(threadId, status.mode);
-      }
-      setErrorMessage(null);
-    } catch (error) {
-      setProviderMode(previousMode);
-      void setAssistantThreadProviderMode(threadId, previousMode);
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to switch provider mode.');
-    }
-  };
-
-  const loginCodexProvider = async () => {
-    if (!isDesktopRuntime || !window.desktopAssistant) {
-      setErrorMessage('Codex login is only available in the desktop app.');
-      return;
-    }
-    if (!runtimeUserId) {
-      setErrorMessage('Missing signed-in user context for desktop provider.');
-      return;
-    }
-    try {
-      setStatusMessage('Opening ChatGPT login in browser...');
-      const status = await window.desktopAssistant.provider.loginCodex(runtimeUserId);
-      setProviderStatus(mapProviderStatus(status));
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to start ChatGPT login.');
-    }
-  };
-
-  const logoutCodexProvider = async () => {
-    if (!isDesktopRuntime || !window.desktopAssistant) {
-      setErrorMessage('Codex logout is only available in the desktop app.');
-      return;
-    }
-    if (!runtimeUserId) {
-      setErrorMessage('Missing signed-in user context for desktop provider.');
-      return;
-    }
-    try {
-      const status = await window.desktopAssistant.provider.logoutCodex(runtimeUserId);
-      setProviderStatus(mapProviderStatus(status));
-      setStatusMessage('Logged out from ChatGPT.');
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to log out from ChatGPT.');
-    }
   };
 
   return (
@@ -837,61 +522,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               Blockly Assistant
             </div>
             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Close</Button>
-          </div>
-
-          <div className="space-y-2 rounded-md border bg-background p-2">
-            <div className="text-[11px] text-muted-foreground">Provider mode</div>
-            <select
-              value={providerMode}
-              onChange={(event) => {
-                void updateProviderMode(event.target.value as AssistantProviderMode);
-              }}
-              className="w-full rounded border border-input bg-background px-2 py-1 text-xs"
-              disabled={!isDesktopRuntime}
-            >
-              <option value="managed">Managed credits</option>
-              {isDesktopRuntime ? (
-                <option value="codex_oauth" disabled={providerStatus?.codexAvailable === false}>
-                  Codex / ChatGPT login
-                </option>
-              ) : null}
-            </select>
-            {isDesktopRuntime && providerMode === 'codex_oauth' ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  {!providerStatus?.hasCodexToken ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => void loginCodexProvider()}
-                      disabled={providerStatus?.codexLoginInProgress || providerStatus?.codexAvailable === false}
-                    >
-                      {providerStatus?.codexLoginInProgress ? 'Waiting for login...' : 'Login with ChatGPT'}
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="secondary" onClick={() => void logoutCodexProvider()}>
-                      Logout ChatGPT
-                    </Button>
-                  )}
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Auth: {providerStatus?.codexAuthMethod || 'none'}
-                  {providerStatus?.codexEmail ? ` · ${providerStatus.codexEmail}` : ''}
-                  {providerStatus?.codexPlanType ? ` · plan: ${providerStatus.codexPlanType}` : ''}
-                </div>
-                {providerStatus?.codexStatusMessage ? (
-                  <div className="text-[11px] text-muted-foreground whitespace-pre-wrap">
-                    {providerStatus.codexStatusMessage}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            {isDesktopRuntime ? (
-              <div className="text-[11px] text-muted-foreground">
-                Codex: {providerStatus?.hasCodexToken ? 'configured' : 'missing'}
-                {providerMode === 'codex_oauth' && providerStatus && !providerStatus.codexAvailable ? ' · Codex unavailable on this runtime' : ''}
-              </div>
-            ) : null}
           </div>
 
           <div className="space-y-2 rounded-md border bg-background p-2 text-xs">
@@ -965,11 +595,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
               {status === 'loading' ? <Loader2 className="size-4 animate-spin" /> : null}
               Send
             </Button>
-            {candidate ? (
-              <Button size="sm" variant="secondary" onClick={cancelCandidate}>
-                Cancel
-              </Button>
-            ) : null}
             <Button size="sm" variant="ghost" onClick={clearChat}>
               Clear chat
             </Button>
@@ -990,96 +615,6 @@ export function BlocklyAssistantPanel({ scope }: BlocklyAssistantPanelProps) {
             <p className="text-xs text-red-600">
               Managed assistant is blocked at zero credits. Open <Link to="/billing" className="underline">Billing</Link> to upgrade.
             </p>
-          ) : null}
-
-          {candidate ? (
-            <div className="space-y-2 rounded-md border bg-background p-2 text-xs">
-              <div>
-                <p className="font-medium">Intent</p>
-                <p className="text-muted-foreground">{candidate.proposedEdits.intentSummary}</p>
-              </div>
-
-              <div>
-                <p className="font-medium">Diff</p>
-                <ul className="list-disc pl-4 text-muted-foreground">
-                  {candidate.build.diff.summaryLines.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="text-muted-foreground">
-                Provider: convex:{candidateDebugInfo?.modelProvider || candidate.providerName}/{candidateDebugInfo?.modelName || candidate.model}
-                {' '}· Model latency: {candidateDebugInfo?.modelLatency || '-'}
-                {' '}· Compile/validate: {candidateDebugInfo?.compileLatency || formatDuration(candidate.requestStartedAt, candidate.requestCompletedAt)}
-              </div>
-
-              {candidateDebugInfo?.intentMismatchWarning ? (
-                <p className="text-amber-600">
-                  Intent mismatch blocked apply: {candidateDebugInfo.intentMismatchWarning}
-                </p>
-              ) : null}
-
-              <div>
-                <p className="font-medium">Validation</p>
-                <p className={candidate.validation.pass ? 'text-emerald-600' : 'text-red-600'}>
-                  {candidate.validation.pass ? 'Pass' : `Failed (${validationErrors.length} errors)`}
-                </p>
-                {validationErrors.length > 0 ? (
-                  <ul className="list-disc pl-4 text-red-600">
-                    {validationErrors.slice(0, 6).map((error) => (
-                      <li key={error}>{error}</li>
-                    ))}
-                  </ul>
-                ) : null}
-                {validationWarnings.length > 0 ? (
-                  <ul className="list-disc pl-4 text-amber-600">
-                    {validationWarnings.slice(0, 4).map((warning) => (
-                      <li key={warning}>{warning}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-
-              {propagationRequired ? (
-                <label className="flex items-start gap-2 text-amber-700">
-                  <input
-                    type="checkbox"
-                    checked={allowComponentPropagation}
-                    onChange={(event) => setAllowComponentPropagation(event.target.checked)}
-                    className="mt-0.5"
-                  />
-                  <span>This object is a component instance. Apply will update all instances of that component.</span>
-                </label>
-              ) : null}
-
-              <Button
-                size="sm"
-                onClick={applyCandidate}
-                disabled={!canApply || managedCreditsBlocked || (propagationRequired && !allowComponentPropagation)}
-              >
-                Apply
-              </Button>
-
-              <details className="rounded border p-2 bg-muted/30">
-                <summary className="cursor-pointer font-medium">Debug Trace</summary>
-                <div className="mt-2 space-y-2">
-                  <div className="text-muted-foreground">User intent: {candidateDebugInfo?.userIntent || '(unknown)'}</div>
-                  <div>
-                    <p className="font-medium">Semantic ops</p>
-                    <pre className="max-h-44 overflow-auto rounded bg-background p-2 text-[11px]">
-                      {JSON.stringify(candidate.proposedEdits.semanticOps, null, 2)}
-                    </pre>
-                  </div>
-                  <div>
-                    <p className="font-medium">Assistant turn trace</p>
-                    <pre className="max-h-64 overflow-auto rounded bg-background p-2 text-[11px]">
-                      {JSON.stringify(candidateDebugInfo?.trace ?? null, null, 2)}
-                    </pre>
-                  </div>
-                </div>
-              </details>
-            </div>
           ) : null}
         </div>
       )}

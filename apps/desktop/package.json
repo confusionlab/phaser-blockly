@@ -12,12 +12,7 @@
     "dist:mac": "pnpm run build && electron-builder --mac dmg zip",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run typecheck",
-    "test:e2e-abilities": "pnpm --filter @pochacoding/web exec node ../desktop/scripts/e2e-agent-abilities.mjs"
-  },
-  "dependencies": {
-    "keytar": "^7.9.0",
-    "ws": "^8.19.0"
+    "test": "pnpm run typecheck"
   },
   "devDependencies": {
     "electron": "^37.2.0",

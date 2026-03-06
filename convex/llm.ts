@@ -28,10 +28,6 @@ export const assistantTurn = action({
       role: v.union(v.literal("user"), v.literal("assistant")),
       content: v.string(),
     })),
-    providerMode: v.optional(v.union(v.literal("managed"), v.literal("codex_oauth"))),
-    providerCredentials: v.optional(v.object({
-      codexToken: v.optional(v.string()),
-    })),
     threadContext: v.optional(v.object({
       threadId: v.optional(v.string()),
       scopeKey: v.optional(v.string()),
@@ -46,8 +42,6 @@ export const assistantTurn = action({
     return runUnifiedAssistantTurn({
       userIntent: args.userIntent,
       chatHistory: args.chatHistory,
-      providerMode: args.providerMode,
-      providerCredentials: args.providerCredentials,
       threadContext: args.threadContext,
       capabilities: args.capabilities,
       context: args.context,

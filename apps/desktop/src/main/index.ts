@@ -1,18 +1,10 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CodexAppServerClient } from './codexAppServer';
-import type {
-  AssistantProviderMode,
-  CodexAssistantTurnRequest,
-  ProviderStatus,
-} from '../shared/provider';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROVIDER_MODE_FILE_PREFIX = 'assistant-provider-mode';
-const CODEX_AUTH_LINK_FILE = 'assistant-codex-auth-link.json';
 const DEFAULT_PACKAGED_WEB_URL = 'https://code.confusionlab.com';
 const PACKAGED_WEB_CACHE_RESET_MARKER_PREFIX = 'packaged-web-cache-reset';
 const APP_NAME = 'PochaCoding';
@@ -20,94 +12,6 @@ const BRANCH_NAME = (process.env.DESKTOP_APP_BRANCH || '').trim();
 const APP_TITLE = BRANCH_NAME ? `${BRANCH_NAME} - ${APP_NAME}` : APP_NAME;
 
 let mainWindow: BrowserWindow | null = null;
-
-const codexClient = new CodexAppServerClient(
-  {
-    name: 'pochacoding-desktop',
-    title: APP_TITLE,
-    version: app.getVersion(),
-  },
-  (event) => {
-    mainWindow?.webContents.send('assistant:provider:event', event);
-  },
-);
-
-function assertValidUserId(value: unknown): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error('Missing authenticated user id for provider scope.');
-  }
-  return value.trim();
-}
-
-function sanitizeUserIdForPath(userId: string): string {
-  return userId.replace(/[^a-zA-Z0-9._-]/g, '_');
-}
-
-function getProviderModePath(userId: string): string {
-  return path.join(app.getPath('userData'), `${PROVIDER_MODE_FILE_PREFIX}:${sanitizeUserIdForPath(userId)}.json`);
-}
-
-async function readProviderMode(userId: string): Promise<AssistantProviderMode> {
-  try {
-    const content = await fs.readFile(getProviderModePath(userId), 'utf8');
-    const parsed = JSON.parse(content) as { mode?: AssistantProviderMode };
-    if (parsed.mode === 'managed' || parsed.mode === 'codex_oauth') {
-      return parsed.mode;
-    }
-    return 'managed';
-  } catch {
-    return 'managed';
-  }
-}
-
-async function writeProviderMode(userId: string, mode: AssistantProviderMode): Promise<void> {
-  await fs.mkdir(app.getPath('userData'), { recursive: true });
-  await fs.writeFile(getProviderModePath(userId), JSON.stringify({ mode }), 'utf8');
-}
-
-async function readCodexLinkedUserId(): Promise<string | null> {
-  try {
-    const filePath = path.join(app.getPath('userData'), CODEX_AUTH_LINK_FILE);
-    const content = await fs.readFile(filePath, 'utf8');
-    const parsed = JSON.parse(content) as { userId?: string | null };
-    if (typeof parsed.userId === 'string' && parsed.userId.trim().length > 0) {
-      return parsed.userId.trim();
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function writeCodexLinkedUserId(userId: string | null): Promise<void> {
-  await fs.mkdir(app.getPath('userData'), { recursive: true });
-  const filePath = path.join(app.getPath('userData'), CODEX_AUTH_LINK_FILE);
-  await fs.writeFile(filePath, JSON.stringify({ userId }), 'utf8');
-}
-
-async function getProviderStatus(userId: string): Promise<ProviderStatus> {
-  const mode = await readProviderMode(userId);
-  const codexStatus = await codexClient.getStatus();
-  const linkedCodexUserId = await readCodexLinkedUserId();
-  const codexLinkedToAnotherUser =
-    codexStatus.hasToken
-    && !!linkedCodexUserId
-    && linkedCodexUserId !== userId;
-  const hasCodexToken = codexStatus.hasToken && linkedCodexUserId === userId;
-
-  return {
-    mode,
-    hasCodexToken,
-    codexAvailable: codexStatus.available && !codexLinkedToAnotherUser,
-    codexAuthMethod: codexStatus.authMethod,
-    codexEmail: hasCodexToken ? codexStatus.email : null,
-    codexPlanType: hasCodexToken ? codexStatus.planType : null,
-    codexLoginInProgress: codexStatus.loginInProgress,
-    codexStatusMessage: codexLinkedToAnotherUser
-      ? 'Codex auth on this device is linked to a different account. Re-authenticate for this account to use Codex.'
-      : codexStatus.statusMessage,
-  };
-}
 
 function getProdWebEntry(): string {
   if (app.isPackaged) {
@@ -237,58 +141,11 @@ function createMainWindow(): BrowserWindow {
   return window;
 }
 
-function setupIpcHandlers(): void {
-  ipcMain.handle('assistant:provider:get-status', async (_event, rawUserId: unknown) => {
-    const userId = assertValidUserId(rawUserId);
-    return getProviderStatus(userId);
-  });
-
-  ipcMain.handle('assistant:provider:set-mode', async (_event, mode: AssistantProviderMode, rawUserId: unknown) => {
-    const userId = assertValidUserId(rawUserId);
-    if (mode !== 'managed' && mode !== 'codex_oauth') {
-      throw new Error(`Invalid provider mode: ${String(mode)}`);
-    }
-    await writeProviderMode(userId, mode);
-    return getProviderStatus(userId);
-  });
-
-  ipcMain.handle('assistant:provider:login-codex', async (_event, rawUserId: unknown) => {
-    const userId = assertValidUserId(rawUserId);
-    await codexClient.loginWithChatGpt();
-    const codexStatus = await codexClient.getStatus();
-    if (codexStatus.hasToken) {
-      await writeCodexLinkedUserId(userId);
-    }
-    return getProviderStatus(userId);
-  });
-
-  ipcMain.handle('assistant:provider:logout-codex', async (_event, rawUserId: unknown) => {
-    const userId = assertValidUserId(rawUserId);
-    const linkedCodexUserId = await readCodexLinkedUserId();
-    if (linkedCodexUserId && linkedCodexUserId !== userId) {
-      throw new Error('codex_auth_linked_to_different_user');
-    }
-    await codexClient.logout();
-    await writeCodexLinkedUserId(null);
-    return getProviderStatus(userId);
-  });
-
-  ipcMain.handle('assistant:provider:assistant-turn', async (_event, request: CodexAssistantTurnRequest, rawUserId: unknown) => {
-    const userId = assertValidUserId(rawUserId);
-    const linkedCodexUserId = await readCodexLinkedUserId();
-    if (linkedCodexUserId !== userId) {
-      throw new Error('codex_oauth_missing_token');
-    }
-    return codexClient.runAssistantTurn(request);
-  });
-}
-
 app.whenReady().then(async () => {
   if (BRANCH_NAME) {
     app.setName(`${APP_NAME} (${BRANCH_NAME})`);
   }
   await maybeResetPackagedWebCache();
-  setupIpcHandlers();
   mainWindow = createMainWindow();
 
   app.on('activate', () => {
@@ -296,10 +153,6 @@ app.whenReady().then(async () => {
       mainWindow = createMainWindow();
     }
   });
-});
-
-app.on('before-quit', () => {
-  codexClient.dispose();
 });
 
 app.on('window-all-closed', () => {

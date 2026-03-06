@@ -1,7 +1,6 @@
 export type Scalar = string | number | boolean;
 
 export type AssistantMode = 'chat' | 'edit';
-export type AssistantProviderMode = 'managed' | 'codex_oauth';
 
 export type InputLiteralSpec =
   | Scalar
@@ -197,6 +196,154 @@ export type ProposedEdits = {
   projectOps: ProjectOp[];
 };
 
+export type ProgramContextEntity = {
+  id: string;
+  label: string;
+};
+
+export type ProgramContext =
+  | {
+      scope: {
+        scope: 'object';
+        sceneId: string;
+        objectId: string;
+        componentId?: string | null;
+      };
+      targetXml: string;
+      blockCount: number;
+      sceneObjects: ProgramContextEntity[];
+      scenes: ProgramContextEntity[];
+      messages: ProgramContextEntity[];
+      sounds: ProgramContextEntity[];
+      globalVariables: Array<ProgramContextEntity & { variableType: 'string' | 'integer' | 'float' | 'boolean' }>;
+      localVariables: Array<ProgramContextEntity & { variableType: 'string' | 'integer' | 'float' | 'boolean' }>;
+      componentTypes: ProgramContextEntity[];
+      isComponentInstanceSelection: boolean;
+    }
+  | {
+      scope: {
+        scope: 'component';
+        componentId: string;
+        selectedSceneId?: string | null;
+      };
+      targetXml: string;
+      blockCount: number;
+      sceneObjects: ProgramContextEntity[];
+      scenes: ProgramContextEntity[];
+      messages: ProgramContextEntity[];
+      sounds: ProgramContextEntity[];
+      globalVariables: Array<ProgramContextEntity & { variableType: 'string' | 'integer' | 'float' | 'boolean' }>;
+      localVariables: Array<ProgramContextEntity & { variableType: 'string' | 'integer' | 'float' | 'boolean' }>;
+      componentTypes: ProgramContextEntity[];
+      isComponentInstanceSelection: boolean;
+    }
+  | {
+      scope: {
+        scope: 'project';
+      };
+      targetXml: string;
+      blockCount: number;
+      sceneObjects: ProgramContextEntity[];
+      scenes: ProgramContextEntity[];
+      messages: ProgramContextEntity[];
+      sounds: ProgramContextEntity[];
+      globalVariables: Array<ProgramContextEntity & { variableType: 'string' | 'integer' | 'float' | 'boolean' }>;
+      localVariables: Array<ProgramContextEntity & { variableType: 'string' | 'integer' | 'float' | 'boolean' }>;
+      componentTypes: ProgramContextEntity[];
+      isComponentInstanceSelection: boolean;
+    };
+
+export type ProgramReadSummary = {
+  summary: string;
+  eventFlows: Array<{
+    eventType: string;
+    eventBlockId: string;
+    actionCount: number;
+  }>;
+  warnings: string[];
+};
+
+export type BlockInputCapability = {
+  name: string;
+  kind: 'value' | 'statement' | 'dummy';
+  checks: string[];
+};
+
+export type BlockFieldCapability = {
+  name: string;
+  value: string;
+  kind: string;
+};
+
+export type BlockCapability = {
+  type: string;
+  isStatement: boolean;
+  isValue: boolean;
+  hasPreviousConnection: boolean;
+  hasNextConnection: boolean;
+  fields: BlockFieldCapability[];
+  inputs: BlockInputCapability[];
+};
+
+export type CapabilityLimits = {
+  maxOpsPerRequest: number;
+  maxActionDepth: number;
+  maxBlocksPerMutation: number;
+};
+
+export type BlocklyCapabilities = {
+  blocks: BlockCapability[];
+  byType: Record<string, BlockCapability>;
+  specialTokens: {
+    objectTargets: string[];
+    componentAnyPrefix: string;
+  };
+  limits: CapabilityLimits;
+};
+
+export type PendingMessageEnsure = {
+  tempId: string;
+  name: string;
+};
+
+export type PendingVariableEnsure = {
+  tempId: string;
+  name: string;
+  scope: 'global' | 'local';
+  variableType: 'string' | 'integer' | 'float' | 'boolean';
+  defaultValue: Scalar;
+};
+
+export type CandidateDiff = {
+  addedBlockCount: number;
+  removedBlockCount: number;
+  changedFieldCount: number;
+  changedConnectionCount: number;
+  addedBlockTypes: Record<string, number>;
+  removedBlockTypes: Record<string, number>;
+  summaryLines: string[];
+};
+
+export type BuildCandidateResult = {
+  previousXml: string;
+  candidateXml: string;
+  semanticOps: SemanticOp[];
+  diff: CandidateDiff;
+  pendingEnsures: {
+    messages: PendingMessageEnsure[];
+    variables: PendingVariableEnsure[];
+  };
+  blocksBefore: number;
+  blocksAfter: number;
+};
+
+export type CandidateValidationResult = {
+  pass: boolean;
+  errors: string[];
+  warnings: string[];
+  repairHints: string[];
+};
+
 export type AssistantValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; errors: string[] };
@@ -229,7 +376,6 @@ export type AssistantThreadContext = {
 export type AssistantTurnRequest = {
   userIntent: string;
   chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>;
-  providerMode?: AssistantProviderMode;
   threadContext?: AssistantThreadContext;
 };
 

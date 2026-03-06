@@ -60,20 +60,17 @@
 ## Blockly LLM Assistant (OpenAI Responses)
 
 - The Blockly editor includes an assistant panel for natural-language block edits.
-- Provider calls are made from a Convex action (server-side), not from browser code.
-- Web and desktop now share the same OpenAI Responses-based orchestration in `packages/assistant-core`.
-- Desktop `codex_oauth` uses the same shared runner after obtaining the user's ChatGPT/Codex auth token from the local Codex app server.
+- Assistant calls are made from a Convex action (server-side), not from browser code.
+- Web and desktop both use the same managed OpenAI Responses-based runner in `packages/assistant-core`.
 - Configure Convex env vars:
   - `OPENAI_API_KEY`
   - `OPENAI_MODEL` or `OPENAI_MANAGED_MODEL` (optional, defaults to `gpt-5`)
   - `OPENAI_APP_NAME` or `OPENAI_MANAGED_APP_NAME` (optional title header)
-  - `OPENAI_OAUTH_MODEL` (optional for `codex_oauth`, defaults to `gpt-5`)
-  - `OPENAI_OAUTH_APP_NAME` (optional title header)
 - Flow:
   1. Enter an instruction in the assistant panel.
-  2. Convex action or desktop `codex_oauth` calls the same shared assistant-core runner.
-  3. Client builds candidate Blockly XML deterministically, diffs, and validates.
-  4. Apply if validation passes (with component propagation confirmation when needed).
+  2. Convex calls the shared assistant-core runner.
+  3. Client validates the returned semantic/project edits against the current project.
+  4. Valid edits are applied automatically.
   5. Use rollback to undo the latest apply transaction.
 
 ## Convex Cloud Sync (Current Behavior)
