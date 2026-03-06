@@ -16,7 +16,7 @@ test.describe('assistant model snapshot', () => {
     expect(projectVersion).toBe(snapshot.projectVersion);
   });
 
-  test('createAssistantProjectSnapshot redacts asset payloads and buildAssistantModelSnapshot exposes logic summary', () => {
+  test('createAssistantProjectSnapshot redacts asset payloads and buildAssistantModelSnapshot exposes readable logic projections', () => {
     const project = createDefaultProject('Snapshot Fixture');
     const scene = project.scenes[0]!;
     const hero = createDefaultGameObject('Hero');
@@ -88,6 +88,8 @@ test.describe('assistant model snapshot', () => {
     expect(objectModel.logic.hasLogic).toBe(true);
     expect(objectModel.logic.editableWith).toBe('set_object_logic');
     expect(objectModel.logic.blockTypes).toEqual(['event_game_start']);
+    expect(objectModel.logic.generatedCode).toContain('when game starts:');
+    expect(objectModel.logic.generatedCodeTruncated).toBe(false);
   });
 
   test('buildAssistantRunInputText uses the sanitized snapshot', () => {
@@ -112,12 +114,13 @@ test.describe('assistant model snapshot', () => {
       conversationHistory: [],
     });
 
-    expect(prompt).toContain('Sanitized project snapshot JSON');
+    expect(prompt).toContain('Project snapshot (sanitized, readable):');
     expect(prompt).not.toContain('blocklyXml');
     expect(prompt).not.toContain('data:image');
     expect(prompt).not.toContain('data:audio');
     expect(prompt).not.toContain('assetId');
     expect(prompt).not.toContain('spriteAssetId');
-    expect(prompt).toContain('Stored Blockly logic');
+    expect(prompt).toContain('Project: "Prompt Fixture"');
+    expect(prompt).toContain('forever:');
   });
 });

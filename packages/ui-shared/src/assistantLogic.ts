@@ -1,3 +1,6 @@
+import { DOMParser } from '@xmldom/xmldom';
+import { normalizeBlocklyXml } from './blocklyXml';
+
 export type AssistantLogicTrigger =
   | { kind: 'on_start' }
   | { kind: 'forever' }
@@ -47,6 +50,8 @@ export interface AssistantLogicOverview {
   editableWith: 'set_object_logic' | 'set_component_logic';
   blockTypes: string[];
   summary: string;
+  generatedCode?: string;
+  generatedCodeTruncated?: boolean;
 }
 
 const BLOCKLY_XML_NS = 'https://developers.google.com/blockly/xml';
@@ -154,6 +159,640 @@ function summarizeUnknownAction(action: unknown): string {
   } catch {
     return `invalid_${(action as { kind: string }).kind}`;
   }
+}
+
+type BlocklyProjectionNode = {
+  type: string;
+  fields: Record<string, string>;
+  values: Record<string, BlocklyProjectionNode>;
+  statements: Record<string, BlocklyProjectionNode>;
+  next: BlocklyProjectionNode | null;
+};
+
+type LogicProjectionOptions = {
+  codeMode?: 'preview' | 'full';
+  maxChars?: number;
+  maxLines?: number;
+};
+
+type LogicProjectionResult = {
+  code: string;
+  truncated: boolean;
+};
+
+const DEFAULT_LOGIC_PREVIEW_CHAR_LIMIT = 1600;
+const DEFAULT_LOGIC_PREVIEW_LINE_LIMIT = 32;
+
+function getElementChildren(node: any): any[] {
+  const children: any[] = [];
+  const childNodes = node?.childNodes ?? [];
+  for (let index = 0; index < childNodes.length; index += 1) {
+    const child = childNodes[index];
+    if (child?.nodeType === 1) {
+      children.push(child);
+    }
+  }
+  return children;
+}
+
+function getFirstChildBlock(node: any): any | null {
+  return getElementChildren(node).find((child) => {
+    const tagName = String(child?.tagName ?? '').toLowerCase();
+    return tagName === 'block' || tagName === 'shadow';
+  }) ?? null;
+}
+
+function parseBlocklyProjectionNode(element: any): BlocklyProjectionNode {
+  const fields: Record<string, string> = {};
+  const values: Record<string, BlocklyProjectionNode> = {};
+  const statements: Record<string, BlocklyProjectionNode> = {};
+  let next: BlocklyProjectionNode | null = null;
+
+  for (const child of getElementChildren(element)) {
+    const tagName = String(child?.tagName ?? '').toLowerCase();
+    const name = String(child?.getAttribute?.('name') ?? '');
+    switch (tagName) {
+      case 'field':
+        if (name) {
+          fields[name] = String(child.textContent ?? '').trim();
+        }
+        break;
+      case 'value': {
+        const block = getFirstChildBlock(child);
+        if (name && block) {
+          values[name] = parseBlocklyProjectionNode(block);
+        }
+        break;
+      }
+      case 'statement': {
+        const block = getFirstChildBlock(child);
+        if (name && block) {
+          statements[name] = parseBlocklyProjectionNode(block);
+        }
+        break;
+      }
+      case 'next': {
+        const block = getFirstChildBlock(child);
+        if (block) {
+          next = parseBlocklyProjectionNode(block);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return {
+    type: String(element?.getAttribute?.('type') ?? '').trim() || 'unknown_block',
+    fields,
+    values,
+    statements,
+    next,
+  };
+}
+
+function parseBlocklyProjectionRoots(blocklyXml: string): BlocklyProjectionNode[] {
+  const normalizedXml = normalizeBlocklyXml(blocklyXml);
+  if (!normalizedXml.trim()) {
+    return [];
+  }
+
+  try {
+    const xmlDocument = new DOMParser().parseFromString(normalizedXml, 'text/xml');
+    const root = xmlDocument?.documentElement;
+    if (!root || String(root.tagName ?? '').toLowerCase() !== 'xml') {
+      return [];
+    }
+
+    if (root.getElementsByTagName('parsererror').length > 0) {
+      return [];
+    }
+
+    return getElementChildren(root)
+      .filter((child) => {
+        const tagName = String(child?.tagName ?? '').toLowerCase();
+        return tagName === 'block' || tagName === 'shadow';
+      })
+      .map((child) => parseBlocklyProjectionNode(child));
+  } catch {
+    return [];
+  }
+}
+
+function indentLine(level: number, text: string): string {
+  return `${'  '.repeat(level)}${text}`;
+}
+
+function toFriendlyBlockName(blockType: string): string {
+  const withoutPrefix = blockType
+    .replace(/^(event|control|controls|motion|looks|physics|camera|sensing|sound|typed_variable|operator|debug|math|logic|text|target)_/, '');
+  return withoutPrefix || blockType;
+}
+
+function quoteValue(value: string): string {
+  return JSON.stringify(value);
+}
+
+function formatFieldValue(fieldName: string, value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '""';
+  }
+
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed === 'TRUE' || trimmed === 'FALSE') {
+    return trimmed.toLowerCase();
+  }
+
+  if (fieldName === 'BOOL') {
+    return trimmed.toLowerCase();
+  }
+
+  return quoteValue(trimmed);
+}
+
+function getField(node: BlocklyProjectionNode, name: string): string | undefined {
+  return node.fields[name];
+}
+
+function getValue(node: BlocklyProjectionNode, name: string): BlocklyProjectionNode | undefined {
+  return node.values[name];
+}
+
+function getStatement(node: BlocklyProjectionNode, ...names: string[]): BlocklyProjectionNode | null {
+  for (const name of names) {
+    const statement = node.statements[name];
+    if (statement) {
+      return statement;
+    }
+  }
+  return null;
+}
+
+function renderBlocklyExpression(node?: BlocklyProjectionNode | null): string {
+  if (!node) {
+    return 'null';
+  }
+
+  switch (node.type) {
+    case 'math_number':
+      return getField(node, 'NUM') ?? '0';
+    case 'text':
+      return quoteValue(getField(node, 'TEXT') ?? '');
+    case 'logic_boolean':
+      return (getField(node, 'BOOL') ?? 'FALSE').toLowerCase();
+    case 'motion_my_x':
+      return 'my.x';
+    case 'motion_my_y':
+      return 'my.y';
+    case 'looks_costume_number':
+      return 'costumeNumber()';
+    case 'control_current_item':
+      return 'currentItem';
+    case 'sensing_mouse_down':
+      return 'mouse.isDown';
+    case 'sensing_mouse_x':
+      return 'mouse.x';
+    case 'sensing_mouse_y':
+      return 'mouse.y';
+    case 'sensing_timer':
+      return 'timer()';
+    case 'physics_enabled':
+      return 'physicsEnabled()';
+    case 'sensing_touching_object':
+      return 'touchingObject()';
+    case 'sensing_all_touching_objects':
+      return 'allTouchingObjects()';
+    case 'sensing_my_type':
+      return 'my.type';
+    case 'sensing_type_literal':
+      return quoteValue(getField(node, 'TYPE') ?? '');
+    case 'typed_variable_get':
+      return `var(${formatFieldValue('VAR', getField(node, 'VAR') ?? '')})`;
+    case 'sensing_key_pressed':
+      return `keyPressed(${formatFieldValue('KEY', getField(node, 'KEY') ?? '')})`;
+    case 'sensing_touching':
+      return `touching(${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')})`;
+    case 'sensing_touching_value':
+      return `touching(${renderBlocklyExpression(getValue(node, 'TARGET'))})`;
+    case 'sensing_touching_direction':
+      return `touching(${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}, from=${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')})`;
+    case 'sensing_touching_direction_value':
+      return `touching(${renderBlocklyExpression(getValue(node, 'TARGET'))}, from=${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')})`;
+    case 'sensing_distance_to':
+      return `distanceTo(${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')})`;
+    case 'sensing_distance_to_value':
+      return `distanceTo(${renderBlocklyExpression(getValue(node, 'TARGET'))})`;
+    case 'sensing_type_of_object':
+      return `typeOf(${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')})`;
+    case 'sensing_type_of_object_value':
+      return `typeOf(${renderBlocklyExpression(getValue(node, 'TARGET'))})`;
+    case 'sensing_object_x':
+      return `xOf(${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')})`;
+    case 'sensing_object_y':
+      return `yOf(${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')})`;
+    case 'sensing_object_costume':
+      return `costumeOf(${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')})`;
+    case 'math_arithmetic': {
+      const op = getField(node, 'OP') ?? 'ADD';
+      const left = renderBlocklyExpression(getValue(node, 'A'));
+      const right = renderBlocklyExpression(getValue(node, 'B'));
+      const symbol = ({
+        ADD: '+',
+        MINUS: '-',
+        MULTIPLY: '*',
+        DIVIDE: '/',
+        POWER: '^',
+      } as const)[op as 'ADD' | 'MINUS' | 'MULTIPLY' | 'DIVIDE' | 'POWER'] ?? op;
+      return `(${left} ${symbol} ${right})`;
+    }
+    case 'math_random_int':
+      return `randomInt(${renderBlocklyExpression(getValue(node, 'FROM'))}, ${renderBlocklyExpression(getValue(node, 'TO'))})`;
+    case 'logic_compare': {
+      const op = getField(node, 'OP') ?? 'EQ';
+      const left = renderBlocklyExpression(getValue(node, 'A'));
+      const right = renderBlocklyExpression(getValue(node, 'B'));
+      const symbol = ({
+        EQ: '==',
+        NEQ: '!=',
+        LT: '<',
+        LTE: '<=',
+        GT: '>',
+        GTE: '>=',
+      } as const)[op as 'EQ' | 'NEQ' | 'LT' | 'LTE' | 'GT' | 'GTE'] ?? op;
+      return `(${left} ${symbol} ${right})`;
+    }
+    case 'logic_operation': {
+      const op = getField(node, 'OP') ?? 'AND';
+      const left = renderBlocklyExpression(getValue(node, 'A'));
+      const right = renderBlocklyExpression(getValue(node, 'B'));
+      return `(${left} ${op === 'OR' ? 'or' : 'and'} ${right})`;
+    }
+    case 'logic_negate':
+      return `(not ${renderBlocklyExpression(getValue(node, 'BOOL'))})`;
+    case 'operator_join':
+      return `join(${renderBlocklyExpression(getValue(node, 'STRING1'))}, ${renderBlocklyExpression(getValue(node, 'STRING2'))})`;
+    case 'operator_letter_of':
+      return `letter(${renderBlocklyExpression(getValue(node, 'LETTER'))}, ${renderBlocklyExpression(getValue(node, 'STRING'))})`;
+    case 'operator_length':
+      return `length(${renderBlocklyExpression(getValue(node, 'STRING'))})`;
+    case 'operator_contains':
+      return `contains(${renderBlocklyExpression(getValue(node, 'STRING1'))}, ${renderBlocklyExpression(getValue(node, 'STRING2'))})`;
+    case 'operator_mod':
+      return `mod(${renderBlocklyExpression(getValue(node, 'NUM1'))}, ${renderBlocklyExpression(getValue(node, 'NUM2'))})`;
+    case 'operator_round':
+      return `round(${renderBlocklyExpression(getValue(node, 'NUM'))})`;
+    case 'operator_mathop':
+      return `${String(getField(node, 'OP') ?? 'MATH').toLowerCase()}(${renderBlocklyExpression(getValue(node, 'NUM'))})`;
+    case 'object_from_dropdown':
+      return formatFieldValue('TARGET', getField(node, 'TARGET') ?? '');
+    case 'target_mouse':
+      return '"MOUSE"';
+    case 'target_myself':
+      return '"MYSELF"';
+    case 'target_ground':
+      return '"GROUND"';
+    default:
+      return renderGenericBlockCall(node);
+  }
+}
+
+function renderGenericBlockCall(node: BlocklyProjectionNode): string {
+  const fieldArgs = Object.entries(node.fields)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name.toLowerCase()}=${formatFieldValue(name, value)}`);
+  const valueArgs = Object.entries(node.values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name.toLowerCase()}=${renderBlocklyExpression(value)}`);
+  const args = [...fieldArgs, ...valueArgs].join(', ');
+  return `${toFriendlyBlockName(node.type)}(${args})`;
+}
+
+function renderBlockBodyLines(block: BlocklyProjectionNode | null, indent: number): string[] {
+  if (!block) {
+    return [indentLine(indent, 'pass')];
+  }
+  return renderBlocklyBlockChain(block, indent);
+}
+
+function renderRandomChoiceBranches(node: BlocklyProjectionNode, indent: number): string[] {
+  const lines: string[] = [];
+  const branchNames = Object.keys(node.statements)
+    .filter((name) => /^DO\d+$/.test(name))
+    .sort((left, right) => Number(left.slice(2)) - Number(right.slice(2)));
+  branchNames.forEach((branchName, index) => {
+    lines.push(indentLine(indent, `branch ${index + 1}:`));
+    lines.push(...renderBlockBodyLines(node.statements[branchName] ?? null, indent + 1));
+  });
+  return lines;
+}
+
+function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): string[] {
+  switch (node.type) {
+    case 'controls_if': {
+      const lines: string[] = [];
+      const branchIndexes = Object.keys(node.values)
+        .filter((name) => /^IF\d+$/.test(name))
+        .map((name) => Number(name.slice(2)))
+        .filter((value) => Number.isFinite(value))
+        .sort((left, right) => left - right);
+      if (branchIndexes.length === 0) {
+        return [indentLine(indent, 'if <missing condition>:')];
+      }
+
+      branchIndexes.forEach((branchIndex, index) => {
+        const condition = renderBlocklyExpression(node.values[`IF${branchIndex}`] ?? null);
+        lines.push(indentLine(indent, `${index === 0 ? 'if' : 'else if'} ${condition}:`));
+        lines.push(...renderBlockBodyLines(node.statements[`DO${branchIndex}`] ?? null, indent + 1));
+      });
+
+      if (node.statements.ELSE) {
+        lines.push(indentLine(indent, 'else:'));
+        lines.push(...renderBlockBodyLines(node.statements.ELSE, indent + 1));
+      }
+      return lines;
+    }
+    case 'control_repeat':
+      return [
+        indentLine(indent, `repeat ${renderBlocklyExpression(getValue(node, 'TIMES'))} times:`),
+        ...renderBlockBodyLines(getStatement(node, 'DO'), indent + 1),
+      ];
+    case 'control_repeat_until':
+      return [
+        indentLine(indent, `repeat until ${renderBlocklyExpression(getValue(node, 'CONDITION'))}:`),
+        ...renderBlockBodyLines(getStatement(node, 'DO'), indent + 1),
+      ];
+    case 'control_while':
+      return [
+        indentLine(indent, `while ${renderBlocklyExpression(getValue(node, 'CONDITION'))}:`),
+        ...renderBlockBodyLines(getStatement(node, 'DO'), indent + 1),
+      ];
+    case 'control_wait_until':
+      return [indentLine(indent, `wait until ${renderBlocklyExpression(getValue(node, 'CONDITION'))}`)];
+    case 'control_random_choice':
+      return [
+        indentLine(indent, 'choose randomly:'),
+        ...renderRandomChoiceBranches(node, indent + 1),
+      ];
+    case 'control_group_block':
+      return [
+        indentLine(indent, `group ${formatFieldValue('NAME', getField(node, 'NAME') ?? 'group')}:`),
+        ...renderBlockBodyLines(getStatement(node, 'DO'), indent + 1),
+      ];
+    case 'control_for_each':
+      return [
+        indentLine(indent, `for each currentItem in ${renderBlocklyExpression(getValue(node, 'LIST'))}:`),
+        ...renderBlockBodyLines(getStatement(node, 'DO'), indent + 1),
+      ];
+    case 'event_forever':
+      return [
+        indentLine(indent, 'forever:'),
+        ...renderBlockBodyLines(getStatement(node, 'DO', 'NEXT'), indent + 1),
+      ];
+    case 'event_game_start':
+      return [
+        indentLine(indent, 'when game starts:'),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'event_key_pressed':
+      return [
+        indentLine(indent, `when key ${formatFieldValue('KEY', getField(node, 'KEY') ?? '')} is pressed:`),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'event_clicked':
+      return [
+        indentLine(indent, 'when this is clicked:'),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'event_when_receive':
+      return [
+        indentLine(indent, `when message ${formatFieldValue('MESSAGE', getField(node, 'MESSAGE') ?? '')} is received:`),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'event_when_touching':
+      return [
+        indentLine(indent, `when touching ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}:`),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'event_when_touching_value':
+      return [
+        indentLine(indent, `when touching ${renderBlocklyExpression(getValue(node, 'TARGET'))}:`),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'event_when_touching_direction':
+      return [
+        indentLine(indent, `when touching ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'event_when_touching_direction_value':
+      return [
+        indentLine(indent, `when touching ${renderBlocklyExpression(getValue(node, 'TARGET'))} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
+        ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
+      ];
+    case 'looks_show':
+      return [indentLine(indent, 'show')];
+    case 'looks_hide':
+      return [indentLine(indent, 'hide')];
+    case 'looks_set_size':
+      return [indentLine(indent, `set size to ${renderBlocklyExpression(getValue(node, 'SIZE'))}`)];
+    case 'looks_change_size':
+      return [indentLine(indent, `change size by ${renderBlocklyExpression(getValue(node, 'SIZE'))}`)];
+    case 'looks_set_opacity':
+      return [indentLine(indent, `set opacity to ${renderBlocklyExpression(getValue(node, 'OPACITY'))}`)];
+    case 'looks_go_to_front':
+      return [indentLine(indent, 'go to front layer')];
+    case 'looks_go_to_back':
+      return [indentLine(indent, 'go to back layer')];
+    case 'looks_next_costume':
+      return [indentLine(indent, 'next costume')];
+    case 'looks_previous_costume':
+      return [indentLine(indent, 'previous costume')];
+    case 'looks_switch_costume':
+      return [indentLine(indent, `switch costume to ${renderBlocklyExpression(getValue(node, 'COSTUME'))}`)];
+    case 'motion_move_steps':
+      return [indentLine(indent, `move ${renderBlocklyExpression(getValue(node, 'STEPS'))} steps`)];
+    case 'motion_go_to':
+      return [indentLine(indent, `go to x=${renderBlocklyExpression(getValue(node, 'X'))}, y=${renderBlocklyExpression(getValue(node, 'Y'))}`)];
+    case 'motion_glide_to':
+      return [indentLine(indent, `glide to x=${renderBlocklyExpression(getValue(node, 'X'))}, y=${renderBlocklyExpression(getValue(node, 'Y'))} in ${renderBlocklyExpression(getValue(node, 'SECONDS'))} sec easing=${formatFieldValue('EASING', getField(node, 'EASING') ?? 'Linear')}`)];
+    case 'motion_change_x':
+      return [indentLine(indent, `change x by ${renderBlocklyExpression(getValue(node, 'VALUE'))}`)];
+    case 'motion_change_y':
+      return [indentLine(indent, `change y by ${renderBlocklyExpression(getValue(node, 'VALUE'))}`)];
+    case 'motion_set_x':
+      return [indentLine(indent, `set x to ${renderBlocklyExpression(getValue(node, 'VALUE'))}`)];
+    case 'motion_set_y':
+      return [indentLine(indent, `set y to ${renderBlocklyExpression(getValue(node, 'VALUE'))}`)];
+    case 'motion_point_direction':
+      return [indentLine(indent, `point in direction ${renderBlocklyExpression(getValue(node, 'DIRECTION'))}`)];
+    case 'motion_point_towards':
+      return [indentLine(indent, `point towards ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}`)];
+    case 'motion_point_towards_value':
+      return [indentLine(indent, `point towards ${renderBlocklyExpression(getValue(node, 'TARGET'))}`)];
+    case 'motion_rotate_tween':
+      return [indentLine(indent, `rotate ${renderBlocklyExpression(getValue(node, 'DEGREES'))} degrees in ${renderBlocklyExpression(getValue(node, 'SECONDS'))} sec easing=${formatFieldValue('EASING', getField(node, 'EASING') ?? 'Linear')}`)];
+    case 'motion_attach_to_dropdown':
+      return [indentLine(indent, `attach myself to ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}`)];
+    case 'motion_attach_to_block':
+      return [indentLine(indent, `attach myself to ${renderBlocklyExpression(getValue(node, 'TARGET'))}`)];
+    case 'motion_attach_dropdown_to_me':
+      return [indentLine(indent, `attach ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')} to myself`)];
+    case 'motion_attach_block_to_me':
+      return [indentLine(indent, `attach ${renderBlocklyExpression(getValue(node, 'TARGET'))} to myself`)];
+    case 'motion_detach':
+      return [indentLine(indent, 'detach from parent')];
+    case 'physics_enable':
+      return [indentLine(indent, 'enable physics')];
+    case 'physics_disable':
+      return [indentLine(indent, 'disable physics')];
+    case 'physics_set_velocity':
+      return [indentLine(indent, `set velocity x=${renderBlocklyExpression(getValue(node, 'VX'))}, y=${renderBlocklyExpression(getValue(node, 'VY'))}`)];
+    case 'physics_set_velocity_x':
+      return [indentLine(indent, `set velocity x to ${renderBlocklyExpression(getValue(node, 'VX'))}`)];
+    case 'physics_set_velocity_y':
+      return [indentLine(indent, `set velocity y to ${renderBlocklyExpression(getValue(node, 'VY'))}`)];
+    case 'physics_set_gravity':
+      return [indentLine(indent, `set gravity to ${renderBlocklyExpression(getValue(node, 'GRAVITY'))}`)];
+    case 'physics_set_bounce':
+      return [indentLine(indent, `set bounce to ${renderBlocklyExpression(getValue(node, 'BOUNCE'))}`)];
+    case 'physics_set_friction':
+      return [indentLine(indent, `set friction to ${renderBlocklyExpression(getValue(node, 'FRICTION'))}`)];
+    case 'physics_immovable':
+      return [indentLine(indent, 'make immovable')];
+    case 'physics_ground_on':
+      return [indentLine(indent, 'enable ground collision')];
+    case 'physics_ground_off':
+      return [indentLine(indent, 'disable ground collision')];
+    case 'physics_set_ground_y':
+      return [indentLine(indent, `set ground y to ${renderBlocklyExpression(getValue(node, 'Y'))}`)];
+    case 'camera_follow_me':
+      return [indentLine(indent, 'camera follow me')];
+    case 'camera_follow_object':
+      return [indentLine(indent, `camera follow ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}`)];
+    case 'camera_follow_object_value':
+      return [indentLine(indent, `camera follow ${renderBlocklyExpression(getValue(node, 'TARGET'))}`)];
+    case 'camera_stop_follow':
+      return [indentLine(indent, 'camera stop following')];
+    case 'camera_go_to':
+      return [indentLine(indent, `camera go to x=${renderBlocklyExpression(getValue(node, 'X'))}, y=${renderBlocklyExpression(getValue(node, 'Y'))}`)];
+    case 'camera_shake':
+      return [indentLine(indent, `camera shake for ${renderBlocklyExpression(getValue(node, 'DURATION'))} seconds`)];
+    case 'camera_zoom':
+      return [indentLine(indent, `set camera zoom to ${renderBlocklyExpression(getValue(node, 'ZOOM'))}%`)];
+    case 'camera_fade':
+      return [indentLine(indent, `camera fade ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'IN')} in ${renderBlocklyExpression(getValue(node, 'DURATION'))} seconds`)];
+    case 'camera_set_follow_range':
+      return [indentLine(indent, `set camera follow range width=${renderBlocklyExpression(getValue(node, 'WIDTH'))}, height=${renderBlocklyExpression(getValue(node, 'HEIGHT'))}`)];
+    case 'camera_set_follow_smoothness':
+      return [indentLine(indent, `set camera follow smoothness to ${renderBlocklyExpression(getValue(node, 'SMOOTHNESS'))}%`)];
+    case 'camera_set_follow_offset':
+      return [indentLine(indent, `set camera offset x=${renderBlocklyExpression(getValue(node, 'X'))}, y=${renderBlocklyExpression(getValue(node, 'Y'))}`)];
+    case 'sound_play':
+      return [indentLine(indent, `play sound ${formatFieldValue('SOUND', getField(node, 'SOUND') ?? '')}`)];
+    case 'sound_play_until_done':
+      return [indentLine(indent, `play sound ${formatFieldValue('SOUND', getField(node, 'SOUND') ?? '')} until done`)];
+    case 'sound_stop_all':
+      return [indentLine(indent, 'stop all sounds')];
+    case 'sound_set_volume':
+      return [indentLine(indent, `set volume to ${renderBlocklyExpression(getValue(node, 'VOLUME'))}%`)];
+    case 'sound_change_volume':
+      return [indentLine(indent, `change volume by ${renderBlocklyExpression(getValue(node, 'DELTA'))}`)];
+    case 'control_spawn_type_at':
+      return [indentLine(indent, `spawn ${formatFieldValue('TYPE', getField(node, 'TYPE') ?? '')} at x=${renderBlocklyExpression(getValue(node, 'X'))}, y=${renderBlocklyExpression(getValue(node, 'Y'))}`)];
+    case 'control_delete_object':
+      return [indentLine(indent, `delete ${renderBlocklyExpression(getValue(node, 'OBJECT'))}`)];
+    case 'control_broadcast':
+      return [indentLine(indent, `broadcast ${formatFieldValue('MESSAGE', getField(node, 'MESSAGE') ?? '')}`)];
+    case 'control_broadcast_wait':
+      return [indentLine(indent, `broadcast ${formatFieldValue('MESSAGE', getField(node, 'MESSAGE') ?? '')} and wait`)];
+    case 'control_switch_scene':
+      return [indentLine(indent, `switch scene to ${formatFieldValue('SCENE', getField(node, 'SCENE') ?? '')} mode=${formatFieldValue('MODE', getField(node, 'MODE') ?? 'RESUME')}`)];
+    case 'sensing_reset_timer':
+      return [indentLine(indent, 'reset timer')];
+    case 'typed_variable_set':
+      return [indentLine(indent, `set ${formatFieldValue('VAR', getField(node, 'VAR') ?? '')} to ${renderBlocklyExpression(getValue(node, 'VALUE'))}`)];
+    case 'typed_variable_change':
+      return [indentLine(indent, `change ${formatFieldValue('VAR', getField(node, 'VAR') ?? '')} by ${renderBlocklyExpression(getValue(node, 'DELTA'))}`)];
+    case 'debug_console_log':
+      return [indentLine(indent, `console log ${renderBlocklyExpression(getValue(node, 'VALUE'))}`)];
+    default:
+      return [indentLine(indent, renderGenericBlockCall(node))];
+  }
+}
+
+function renderBlocklyBlockChain(block: BlocklyProjectionNode, indent: number): string[] {
+  const lines: string[] = [];
+  let current: BlocklyProjectionNode | null = block;
+  while (current) {
+    lines.push(...renderBlocklyStatement(current, indent));
+    current = current.next;
+  }
+  return lines;
+}
+
+function truncateGeneratedCode(
+  code: string,
+  {
+    maxChars = DEFAULT_LOGIC_PREVIEW_CHAR_LIMIT,
+    maxLines = DEFAULT_LOGIC_PREVIEW_LINE_LIMIT,
+  }: Pick<Required<LogicProjectionOptions>, 'maxChars' | 'maxLines'>,
+): LogicProjectionResult {
+  const rawLines = code.trim().split('\n');
+  let lines = rawLines;
+  let truncated = false;
+
+  if (lines.length > maxLines) {
+    lines = lines.slice(0, maxLines);
+    truncated = true;
+  }
+
+  let truncatedCode = lines.join('\n');
+  if (truncatedCode.length > maxChars) {
+    truncatedCode = `${truncatedCode.slice(0, maxChars).trimEnd()}\n...`;
+    truncated = true;
+  } else if (truncated) {
+    truncatedCode = `${truncatedCode}\n...`;
+  }
+
+  return {
+    code: truncatedCode,
+    truncated,
+  };
+}
+
+function buildGeneratedBlocklyLogic(
+  blocklyXml: string,
+  options: LogicProjectionOptions = {},
+): LogicProjectionResult | null {
+  const roots = parseBlocklyProjectionRoots(blocklyXml);
+  if (roots.length === 0) {
+    return null;
+  }
+
+  const fullCode = roots
+    .flatMap((root) => renderBlocklyBlockChain(root, 0))
+    .join('\n')
+    .trim();
+
+  if (!fullCode) {
+    return null;
+  }
+
+  if (options.codeMode === 'full') {
+    return {
+      code: fullCode,
+      truncated: false,
+    };
+  }
+
+  return truncateGeneratedCode(fullCode, {
+    maxChars: options.maxChars ?? DEFAULT_LOGIC_PREVIEW_CHAR_LIMIT,
+    maxLines: options.maxLines ?? DEFAULT_LOGIC_PREVIEW_LINE_LIMIT,
+  });
 }
 
 function buildMathNumberInput(name: string, value: number): string {
@@ -415,14 +1054,18 @@ export function summarizeAssistantLogicProgram(program: AssistantLogicProgram): 
 export function summarizeStoredBlocklyLogic(
   blocklyXml: string,
   editableWith: AssistantLogicOverview['editableWith'],
+  options: LogicProjectionOptions = {},
 ): AssistantLogicOverview {
   const blockTypes = extractBlocklyBlockTypes(blocklyXml);
+  const generatedLogic = buildGeneratedBlocklyLogic(blocklyXml, options);
   return {
     hasLogic: blockTypes.length > 0,
     editableWith,
     blockTypes,
     summary: blockTypes.length > 0
-      ? `Stored Blockly logic (${blockTypes.slice(0, 6).join(', ')}${blockTypes.length > 6 ? ', +more' : ''})`
+      ? `Logic blocks: ${blockTypes.slice(0, 6).join(', ')}${blockTypes.length > 6 ? ', +more' : ''}`
       : 'No logic',
+    generatedCode: generatedLogic?.code,
+    generatedCodeTruncated: generatedLogic?.truncated,
   };
 }

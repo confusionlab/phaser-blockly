@@ -38,6 +38,18 @@ import {
   buildAssistantModelObject,
   buildAssistantModelScene,
 } from "../packages/ui-shared/src/assistantReadModel";
+import {
+  formatAssistantFolderDetail,
+  formatAssistantModelComponentDetail,
+  formatAssistantModelObjectDetail,
+  formatAssistantModelSceneDetail,
+  formatAssistantMutationResult,
+  formatAssistantProjectSummary,
+  formatAssistantReferenceReport,
+  formatAssistantSearchResults,
+  formatAssistantToolError,
+  formatAssistantValidationIssues,
+} from "../packages/ui-shared/src/assistantModelText";
 
 const internalAssistant = (internal as any).assistant;
 const ASSISTANT_SNAPSHOT_MISSING_ERROR = "assistant_snapshot_missing_for_project_version";
@@ -383,6 +395,80 @@ function buildToolError(message: string, code = "tool_error", details?: unknown)
       details: details ?? null,
     },
   };
+}
+
+function formatToolResultForModel(toolName: string, toolResult: unknown): string {
+  if (!toolResult || typeof toolResult !== "object") {
+    return typeof toolResult === "string" && toolResult.trim()
+      ? toolResult
+      : `Tool "${toolName}" completed.`;
+  }
+
+  const result = toolResult as Record<string, unknown>;
+  if (result.ok === false) {
+    const error = (result.error ?? {}) as Record<string, unknown>;
+    return formatAssistantToolError({
+      code: typeof error.code === "string" ? error.code : "tool_error",
+      message: typeof error.message === "string" ? error.message : `Tool "${toolName}" failed.`,
+      details: error.details,
+    });
+  }
+
+  switch (toolName) {
+    case "emit_progress":
+      return "Progress update recorded.";
+    case "get_project_summary":
+      return result.summary
+        ? formatAssistantProjectSummary(result.summary as Parameters<typeof formatAssistantProjectSummary>[0])
+        : "Project summary unavailable.";
+    case "get_scene":
+      return result.scene
+        ? formatAssistantModelSceneDetail(result.scene as Parameters<typeof formatAssistantModelSceneDetail>[0])
+        : "Scene details unavailable.";
+    case "get_folder":
+      return result.folder
+        ? formatAssistantFolderDetail(result.folder as Parameters<typeof formatAssistantFolderDetail>[0])
+        : "Folder details unavailable.";
+    case "get_object":
+      return result.object
+        ? formatAssistantModelObjectDetail(result.object as Parameters<typeof formatAssistantModelObjectDetail>[0])
+        : "Object details unavailable.";
+    case "get_component":
+      return result.component
+        ? formatAssistantModelComponentDetail(result.component as Parameters<typeof formatAssistantModelComponentDetail>[0])
+        : "Component details unavailable.";
+    case "search_entities":
+      return result.results
+        ? formatAssistantSearchResults(result.results as Parameters<typeof formatAssistantSearchResults>[0])
+        : "Search results unavailable.";
+    case "list_references":
+      return result.references
+        ? formatAssistantReferenceReport(result.references as Parameters<typeof formatAssistantReferenceReport>[0])
+        : "Reference report unavailable.";
+    case "inspect_validation_issues":
+      return formatAssistantValidationIssues(
+        Array.isArray(result.issues)
+          ? (result.issues as Parameters<typeof formatAssistantValidationIssues>[0])
+          : [],
+      );
+    default:
+      if (result.ok === true && result.operation && result.stateSummary) {
+        return formatAssistantMutationResult({
+          operation: result.operation as Parameters<typeof formatAssistantMutationResult>[0]["operation"],
+          createdEntities: Array.isArray(result.createdEntities)
+            ? (result.createdEntities as Parameters<typeof formatAssistantMutationResult>[0]["createdEntities"])
+            : [],
+          affectedEntityIds: Array.isArray(result.affectedEntityIds)
+            ? result.affectedEntityIds.map(String)
+            : [],
+          validationIssues: Array.isArray(result.validationIssues)
+            ? (result.validationIssues as Parameters<typeof formatAssistantMutationResult>[0]["validationIssues"])
+            : [],
+          stateSummary: result.stateSummary as Parameters<typeof formatAssistantMutationResult>[0]["stateSummary"],
+        });
+      }
+      return `Tool "${toolName}" completed successfully.`;
+  }
 }
 
 function createChangeSet(
@@ -2335,7 +2421,7 @@ export const executeRunInternal = internalAction({
           toolOutputs.push({
             type: "function_call_output",
             call_id: toolCall.call_id,
-            output: safeStringify(toolResult),
+            output: formatToolResultForModel(toolCall.name, toolResult),
           });
         }
         nextInput = toolOutputs;

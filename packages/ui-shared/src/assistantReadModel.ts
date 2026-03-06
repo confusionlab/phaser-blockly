@@ -7,7 +7,9 @@ import type {
 } from './assistant';
 import { summarizeStoredBlocklyLogic } from './assistantLogic';
 
-function summarizeObjectForModel(object: AssistantObject) {
+type LogicCodeMode = 'preview' | 'full';
+
+function summarizeObjectForModel(object: AssistantObject, logicCodeMode: LogicCodeMode) {
   return {
     id: object.id,
     name: object.name,
@@ -29,11 +31,12 @@ function summarizeObjectForModel(object: AssistantObject) {
     logic: summarizeStoredBlocklyLogic(
       object.blocklyXml,
       object.componentId ? 'set_component_logic' : 'set_object_logic',
+      { codeMode: logicCodeMode },
     ),
   };
 }
 
-function summarizeComponentForModel(component: AssistantComponent) {
+function summarizeComponentForModel(component: AssistantComponent, logicCodeMode: LogicCodeMode) {
   return {
     id: component.id,
     name: component.name,
@@ -43,11 +46,11 @@ function summarizeComponentForModel(component: AssistantComponent) {
     currentCostumeIndex: component.currentCostumeIndex,
     sounds: component.sounds,
     localVariables: component.localVariables,
-    logic: summarizeStoredBlocklyLogic(component.blocklyXml, 'set_component_logic'),
+    logic: summarizeStoredBlocklyLogic(component.blocklyXml, 'set_component_logic', { codeMode: logicCodeMode }),
   };
 }
 
-function summarizeSceneForModel(scene: AssistantScene) {
+function summarizeSceneForModel(scene: AssistantScene, logicCodeMode: LogicCodeMode) {
   return {
     id: scene.id,
     name: scene.name,
@@ -56,7 +59,7 @@ function summarizeSceneForModel(scene: AssistantScene) {
     cameraConfig: scene.cameraConfig,
     ground: scene.ground ?? null,
     objectFolders: scene.objectFolders,
-    objects: scene.objects.map((object) => summarizeObjectForModel(object)),
+    objects: scene.objects.map((object) => summarizeObjectForModel(object, logicCodeMode)),
   };
 }
 
@@ -64,8 +67,8 @@ export function buildAssistantModelState(state: AssistantProjectState) {
   return {
     project: state.project,
     settings: state.settings,
-    scenes: state.scenes.map((scene) => summarizeSceneForModel(scene)),
-    components: state.components.map((component) => summarizeComponentForModel(component)),
+    scenes: state.scenes.map((scene) => summarizeSceneForModel(scene, 'preview')),
+    components: state.components.map((component) => summarizeComponentForModel(component, 'preview')),
     globalVariables: state.globalVariables,
     messages: state.messages,
   };
@@ -82,13 +85,13 @@ export function buildAssistantModelSnapshot(snapshot: AssistantProjectSnapshot) 
 }
 
 export function buildAssistantModelScene(scene: AssistantScene) {
-  return summarizeSceneForModel(scene);
+  return summarizeSceneForModel(scene, 'preview');
 }
 
 export function buildAssistantModelObject(object: AssistantObject) {
-  return summarizeObjectForModel(object);
+  return summarizeObjectForModel(object, 'full');
 }
 
 export function buildAssistantModelComponent(component: AssistantComponent) {
-  return summarizeComponentForModel(component);
+  return summarizeComponentForModel(component, 'full');
 }

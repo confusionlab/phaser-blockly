@@ -49,6 +49,7 @@ test.describe('Assistant thread context', () => {
     expect(inputText).toContain('User: Add a player object.');
     expect(inputText).toContain('Assistant: The player object is ready.');
     expect(inputText).toContain('Current user request: Add double jump support too.');
-    expect(inputText).toContain('"name":"Assistant Prompt Fixture"');
+    expect(inputText).toContain('Project snapshot (sanitized, readable):');
+    expect(inputText).toContain('Project: "Assistant Prompt Fixture"');
   });
 });
