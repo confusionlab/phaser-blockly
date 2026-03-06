@@ -526,6 +526,13 @@ export function AiAssistantPanel() {
 
             if (run.status === 'completed') {
               setStatusLabel('Completed');
+              const finalSummary = typeof run.finalSummary === 'string' ? run.finalSummary.trim() : '';
+              if (finalSummary && !assistantText.includes(finalSummary)) {
+                assistantText = `${assistantText}\n${finalSummary}`;
+                yield {
+                  content: [{ type: 'text', text: assistantText.trim() }],
+                };
+              }
               if (run.changeSetJson) {
                 const changeSet = JSON.parse(run.changeSetJson) as AssistantChangeSet;
                 const nextProject = useProjectStore.getState().applyAssistantChangeSet(changeSet);
