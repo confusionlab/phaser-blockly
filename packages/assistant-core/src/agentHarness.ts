@@ -1,14 +1,4 @@
 import OpenAI from 'openai';
-import {
-  Agent,
-  OpenAIProvider,
-  Runner,
-  assistant,
-  setTracingDisabled,
-  tool,
-  user,
-  type FunctionTool,
-} from '@openai/agents';
 import { hashFnv1a64 } from './intent';
 import { validateSemanticOpsPayload } from './semanticOps';
 import type {
@@ -53,6 +43,23 @@ type ResolvedProviderConfig = {
 type AgentRunContext = {
   projectSnapshot: Record<string, unknown>;
   capabilities: unknown;
+};
+
+type AssistantToolDefinition = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  strict: boolean;
+};
+
+type AssistantToolExecutor = (args: {
+  input: Record<string, unknown>;
+  context: AgentRunContext;
+}) => Promise<Record<string, unknown>>;
+
+type AssistantTool = {
+  definition: AssistantToolDefinition;
+  execute: AssistantToolExecutor;
 };
 
 type AssistantFinalSubmission =
@@ -120,10 +127,6 @@ function toBoundedInteger(value: unknown, fallback: number, min: number, max: nu
 function getEnv(name: string): string | undefined {
   const maybeProcess = globalThis as { process?: { env?: Record<string, string | undefined> } };
   return maybeProcess.process?.env?.[name];
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function toErrorCode(value: string): string {
@@ -242,16 +245,6 @@ function resolveProviderConfig(args: {
     model: defaults.model,
     appName: defaults.appName,
   };
-}
-
-function parseJsonFromResponse(content: string): unknown {
-  const trimmed = content.trim();
-  if (!trimmed) {
-    throw new Error('Empty model response');
-  }
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const rawJson = fencedMatch ? fencedMatch[1].trim() : trimmed;
-  return JSON.parse(rawJson);
 }
 
 function buildAssistantTurnSystemPrompt(): string {
@@ -426,60 +419,6 @@ function normalizeProposedEditsShape(raw: unknown): {
     movedProjectOpsFromSemantic,
     renamedProjectOps,
   };
-}
-
-function validateAssistantTurnPayload(value: unknown): AssistantTurnResponse {
-  if (!isRecord(value)) {
-    throw new Error('Assistant turn payload must be an object');
-  }
-
-  const mode = value.mode;
-  if (mode === 'chat') {
-    const answerRaw =
-      (typeof value.answer === 'string' ? value.answer : '')
-      || (typeof value.chatAnswer === 'string' ? value.chatAnswer : '')
-      || (typeof value.chat_answer === 'string' ? value.chat_answer : '');
-    if (!answerRaw.trim()) {
-      throw new Error('Assistant chat mode requires non-empty answer');
-    }
-    return {
-      provider: 'unknown',
-      model: 'unknown',
-      mode: 'chat',
-      answer: answerRaw.trim(),
-    };
-  }
-
-  if (mode === 'edit') {
-    const proposedEditsRaw = value.proposedEdits ?? value.proposed_edits;
-    if (proposedEditsRaw === undefined) {
-      throw new Error('Assistant edit mode requires proposedEdits object');
-    }
-    const normalized = normalizeProposedEditsShape(proposedEditsRaw);
-    const parsed = validateSemanticOpsPayload(normalized.value);
-    if (!parsed.ok) {
-      throw new Error(`Model output validation failed: ${parsed.errors.join('; ')}`);
-    }
-    return {
-      provider: 'unknown',
-      model: 'unknown',
-      mode: 'edit',
-      proposedEdits: parsed.value,
-      debugTrace: {
-        promptEnvelopeHash: '0000000000000000',
-        maxToolRounds: 0,
-        modelRounds: 0,
-        toolCalls: [],
-        validationErrors: [],
-        repairAttempts: 0,
-        parsedPayloadPreview: null,
-        finalResponsePreview: null,
-        finalVerdict: 'edit',
-      },
-    };
-  }
-
-  throw new Error('Assistant turn mode must be "chat" or "edit"');
 }
 
 function buildSnapshotIndexes(projectSnapshot: Record<string, unknown>) {
@@ -939,7 +878,7 @@ function executeAssistantTool(args: {
 function buildAssistantTools(args: {
   onChatResponse: (answer: string) => void;
   onEditResponse: (proposedEdits: unknown) => void;
-}): FunctionTool<AgentRunContext, any, Record<string, unknown>>[] {
+}): AssistantTool[] {
   const readToolSpecs: Array<{
     name: string;
     description: string;
@@ -1085,31 +1024,34 @@ function buildAssistantTools(args: {
     },
   ];
 
-  const readTools = readToolSpecs.map((spec) => tool<any, AgentRunContext, Record<string, unknown>>({
-    name: spec.name,
-    description: spec.description,
-    parameters: spec.parameters,
-    strict: false,
-    execute: async (input, runContext) => {
-      const currentContext = isRecord(runContext?.context)
-        ? runContext.context as AgentRunContext
-        : { projectSnapshot: {}, capabilities: {} };
-      const projectSnapshot = isRecord(currentContext.projectSnapshot)
-        ? currentContext.projectSnapshot
+  const readTools = readToolSpecs.map((spec) => ({
+    definition: {
+      name: spec.name,
+      description: spec.description,
+      parameters: spec.parameters,
+      strict: false,
+    },
+    execute: async ({ input, context }: {
+      input: Record<string, unknown>;
+      context: AgentRunContext;
+    }) => {
+      const projectSnapshot = isRecord(context.projectSnapshot)
+        ? context.projectSnapshot
         : {};
       return executeAssistantTool({
         toolName: spec.name,
-        toolArgs: isRecord(input) ? input : {},
+        toolArgs: input,
         projectSnapshot,
-        capabilities: currentContext.capabilities,
+        capabilities: context.capabilities,
       });
     },
   }));
 
-  const submitChatResponseTool = tool<any, AgentRunContext, Record<string, unknown>>({
-    name: 'submit_chat_response',
-    description: 'Finalize the assistant turn with a conversational answer.',
-    parameters: {
+  const submitChatResponseTool: AssistantTool = {
+    definition: {
+      name: 'submit_chat_response',
+      description: 'Finalize the assistant turn with a conversational answer.',
+      parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
@@ -1117,8 +1059,9 @@ function buildAssistantTools(args: {
       },
       required: ['answer'],
     },
-    strict: true,
-    execute: async (input) => {
+      strict: true,
+    },
+    execute: async ({ input }) => {
       const answer = isRecord(input) && typeof input.answer === 'string' ? input.answer.trim() : '';
       if (!answer) {
         throw new Error('submit_chat_response requires a non-empty answer');
@@ -1129,12 +1072,13 @@ function buildAssistantTools(args: {
         mode: 'chat',
       };
     },
-  });
+  };
 
-  const submitEditResponseTool = tool<any, AgentRunContext, Record<string, unknown>>({
-    name: 'submit_edit_response',
-    description: 'Finalize the assistant turn with a structured edit proposal.',
-    parameters: {
+  const submitEditResponseTool: AssistantTool = {
+    definition: {
+      name: 'submit_edit_response',
+      description: 'Finalize the assistant turn with a structured edit proposal.',
+      parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
@@ -1154,8 +1098,9 @@ function buildAssistantTools(args: {
       },
       required: ['intentSummary', 'assumptions', 'semanticOps', 'projectOps'],
     },
-    strict: false,
-    execute: async (input) => {
+      strict: false,
+    },
+    execute: async ({ input }) => {
       if (!isRecord(input)) {
         throw new Error('submit_edit_response requires an object payload');
       }
@@ -1172,56 +1117,13 @@ function buildAssistantTools(args: {
         mode: 'edit',
       };
     },
-  });
+  };
 
   return [
     ...readTools,
     submitChatResponseTool,
     submitEditResponseTool,
   ];
-}
-
-function extractToolCalls(newItems: unknown[]): AssistantTraceToolCall[] {
-  const toolCalls: AssistantTraceToolCall[] = [];
-  const callIndexById = new Map<string, number>();
-
-  for (const item of newItems) {
-    if (!isRecord(item)) continue;
-    const raw = item.rawItem;
-    if (!isRecord(raw)) continue;
-    const type = typeof raw.type === 'string' ? raw.type : '';
-
-    if (type === 'function_call') {
-      const callId = typeof raw.callId === 'string' ? raw.callId : '';
-      const name = typeof raw.name === 'string' ? raw.name : 'unknown_tool';
-      const args = parseToolArguments(typeof raw.arguments === 'string' ? raw.arguments : undefined);
-      const nextIndex = toolCalls.length;
-      toolCalls.push({
-        round: 0,
-        name,
-        args,
-        resultPreview: '',
-      });
-      if (callId) {
-        callIndexById.set(callId, nextIndex);
-      }
-      continue;
-    }
-
-    if (type === 'function_call_result') {
-      const callId = typeof raw.callId === 'string' ? raw.callId : '';
-      const outputRaw = raw.output;
-      const outputText = typeof outputRaw === 'string'
-        ? outputRaw
-        : JSON.stringify(outputRaw ?? null);
-      if (callId && callIndexById.has(callId)) {
-        const index = callIndexById.get(callId) as number;
-        toolCalls[index].resultPreview = truncateText(outputText, 800);
-      }
-    }
-  }
-
-  return toolCalls;
 }
 
 function buildFallbackChat(args: {
@@ -1247,8 +1149,6 @@ function buildFallbackChat(args: {
 }
 
 export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest): Promise<AssistantTurnResponse> {
-  setTracingDisabled(true);
-
   const recentTurns = args.chatHistory
     .filter((turn) => (turn.role === 'user' || turn.role === 'assistant') && !!turn.content.trim())
     .slice(-16)
@@ -1330,84 +1230,155 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
       'X-Title': providerConfig.appName,
     },
   });
-  const provider = new OpenAIProvider({
-    openAIClient: modelClient,
-    useResponses: true,
-  });
+  const toolByName = new Map<string, AssistantTool>();
+  for (const tool of toolDefinitions) {
+    toolByName.set(tool.definition.name, tool);
+  }
 
-  const agent = new Agent<AgentRunContext>({
-    name: 'PochaCodingBlocklyAssistant',
-    instructions: buildAssistantTurnSystemPrompt(),
-    model: providerConfig.model,
-    modelSettings: {
-      temperature: 0.2,
-      maxTokens: 1800,
-      toolChoice: 'auto',
-    },
-    tools: toolDefinitions,
-  });
+  const responseTools = toolDefinitions.map((tool) => ({
+    type: 'function' as const,
+    name: tool.definition.name,
+    description: tool.definition.description,
+    parameters: tool.definition.parameters,
+    strict: tool.definition.strict,
+  }));
 
   const inputItems = [
-    user(JSON.stringify(
-      {
-        task: 'Classify and handle Blockly assistant turn',
-        context: args.context,
-        programRead: args.programRead,
-        capabilities: args.capabilities,
-        providerMode,
-        threadContext,
-        toolingHint: 'Use tools to fetch project entities/properties before finalizing answer.',
-      },
-      null,
-      2,
-    )),
-    ...recentTurns.map((turn) => (turn.role === 'assistant' ? assistant(turn.content) : user(turn.content))),
-    user(args.userIntent),
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: JSON.stringify(
+            {
+              task: 'Classify and handle Blockly assistant turn',
+              context: args.context,
+              programRead: args.programRead,
+              capabilities: args.capabilities,
+              providerMode,
+              threadContext,
+              toolingHint: 'Use tools to fetch project entities/properties before finalizing answer.',
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    },
+    ...recentTurns.map((turn) => ({
+      role: turn.role,
+      content: [
+        {
+          type: 'input_text',
+          text: turn.content,
+        },
+      ],
+    })),
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: args.userIntent,
+        },
+      ],
+    },
   ];
+  const runContext: AgentRunContext = {
+    projectSnapshot: isRecord(args.projectSnapshot) ? args.projectSnapshot : {},
+    capabilities: args.capabilities,
+  };
 
   try {
-    const runner = new Runner({
-      modelProvider: provider,
-      tracingDisabled: true,
-      traceIncludeSensitiveData: false,
-    });
-    const result = await runner.run(agent, inputItems, {
-      maxTurns: 8,
-      context: {
-        projectSnapshot: isRecord(args.projectSnapshot) ? args.projectSnapshot : {},
-        capabilities: args.capabilities,
-      },
-    });
-
-    const outputText = typeof result.finalOutput === 'string'
-      ? result.finalOutput
-      : JSON.stringify(result.finalOutput ?? null);
-    const rawResponsesLength = Array.isArray(result.rawResponses) ? result.rawResponses.length : 0;
-    const toolCalls = extractToolCalls(Array.isArray(result.newItems) ? result.newItems : []);
+    const toolCalls: AssistantTraceToolCall[] = [];
+    const validationErrors: string[] = [];
     let parsedPayloadPreview: string | null = null;
-    let validationErrors: string[] = [];
+    let finalResponsePreview: string | null = null;
+    let responseCount = 0;
+    let previousResponseId: string | null = null;
+    let nextInput: any = inputItems;
 
-    if (!finalSubmission && outputText.trim()) {
-      try {
-        const parsedPayload = parseJsonFromResponse(outputText);
-        const validated = validateAssistantTurnPayload(parsedPayload);
-        parsedPayloadPreview = truncateText(JSON.stringify(parsedPayload), 2000);
-        finalSubmission = validated.mode === 'chat'
-          ? {
-              mode: 'chat',
-              answer: validated.answer,
-            }
-          : {
-              mode: 'edit',
-              proposedEdits: validated.proposedEdits,
-            };
-        validationErrors.push('legacy_final_output_fallback');
-      } catch (error) {
-        validationErrors.push(`finalization:${toErrorMessage(error)}`);
+    for (let round = 1; round <= debugTraceBase.maxToolRounds; round += 1) {
+      const response: any = await modelClient.responses.create({
+        model: providerConfig.model,
+        instructions: buildAssistantTurnSystemPrompt(),
+        input: nextInput,
+        previous_response_id: previousResponseId,
+        tools: responseTools,
+        tool_choice: 'auto',
+        temperature: 0.2,
+        max_output_tokens: 1800,
+        parallel_tool_calls: false,
+      });
+
+      responseCount += 1;
+      previousResponseId = response.id;
+      finalResponsePreview = truncateText(response.output_text || '', 4000);
+
+      const outputItems = Array.isArray(response.output) ? response.output : [];
+      const functionCalls = outputItems.filter((item: any) => isRecord(item) && item.type === 'function_call');
+
+      if (functionCalls.length === 0) {
+        break;
       }
+
+      const toolOutputs: Array<Record<string, unknown>> = [];
+
+      for (const item of functionCalls) {
+        const callId = typeof item.call_id === 'string' ? item.call_id : '';
+        const toolName = typeof item.name === 'string' ? item.name : 'unknown_tool';
+        const toolArgs = parseToolArguments(typeof item.arguments === 'string' ? item.arguments : undefined);
+        const traceIndex = toolCalls.length;
+        toolCalls.push({
+          round,
+          name: toolName,
+          args: toolArgs,
+          resultPreview: '',
+        });
+
+        const tool = toolByName.get(toolName);
+        if (!tool) {
+          const result = { error: `Unknown tool: ${toolName}` };
+          toolCalls[traceIndex].resultPreview = truncateText(JSON.stringify(result), 800);
+          validationErrors.push(`unknown_tool:${toolName}`);
+          if (callId) {
+            toolOutputs.push({
+              type: 'function_call_output',
+              call_id: callId,
+              output: JSON.stringify(result),
+            });
+          }
+          continue;
+        }
+
+        const result = await tool.execute({
+          input: toolArgs,
+          context: runContext,
+        });
+        toolCalls[traceIndex].resultPreview = truncateText(JSON.stringify(result), 800);
+        if (callId) {
+          toolOutputs.push({
+            type: 'function_call_output',
+            call_id: callId,
+            output: JSON.stringify(result),
+          });
+        }
+      }
+
+      if (finalSubmission) {
+        break;
+      }
+
+      if (toolOutputs.length === 0) {
+        break;
+      }
+
+      nextInput = toolOutputs;
     }
 
-    if (!finalSubmission) {
+    const submission = finalSubmission as AssistantFinalSubmission | null;
+
+    if (!submission) {
       return buildFallbackChat({
         provider: providerConfig.provider,
         model: providerConfig.model,
@@ -1415,36 +1386,36 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
         message: 'Assistant request completed without a final response tool call. Please retry.',
         debugTrace: {
           ...debugTraceBase,
-          modelRounds: rawResponsesLength,
+          modelRounds: responseCount,
           toolCalls,
           validationErrors,
           parsedPayloadPreview,
-          finalResponsePreview: truncateText(outputText, 4000),
+          finalResponsePreview,
         },
       });
     }
 
-    parsedPayloadPreview ||= truncateText(JSON.stringify(finalSubmission), 2000);
+    parsedPayloadPreview ||= truncateText(JSON.stringify(submission), 2000);
 
-    if (finalSubmission.mode === 'chat') {
+    if (submission.mode === 'chat') {
       return {
         provider: providerConfig.provider,
         model: providerConfig.model,
         mode: 'chat',
-        answer: finalSubmission.answer,
+        answer: submission.answer,
         debugTrace: {
           ...debugTraceBase,
-          modelRounds: rawResponsesLength,
+          modelRounds: responseCount,
           toolCalls,
           validationErrors,
           parsedPayloadPreview,
-          finalResponsePreview: truncateText(outputText, 4000),
+          finalResponsePreview,
           finalVerdict: 'chat',
         },
       };
     }
 
-    const normalized = normalizeProposedEditsShape(finalSubmission.proposedEdits);
+    const normalized = normalizeProposedEditsShape(submission.proposedEdits);
     const parsed = validateSemanticOpsPayload(normalized.value);
     if (!parsed.ok) {
       return buildFallbackChat({
@@ -1454,22 +1425,22 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
         message: `I couldn't apply executable edits this turn because the edit payload was invalid (schema_validation_failed). Please retry with concrete scene/object names or IDs.\n\nValidation: ${parsed.errors.slice(0, 4).join('; ')}${parsed.errors.length > 4 ? '; ...' : ''}`,
         debugTrace: {
           ...debugTraceBase,
-          modelRounds: rawResponsesLength,
+          modelRounds: responseCount,
           toolCalls,
           validationErrors: [...validationErrors, ...parsed.errors],
           parsedPayloadPreview,
-          finalResponsePreview: truncateText(outputText, 4000),
+          finalResponsePreview,
         },
       });
     }
 
     const editTrace: AssistantTrace = {
       ...debugTraceBase,
-      modelRounds: rawResponsesLength,
+      modelRounds: responseCount,
       toolCalls,
       validationErrors,
       parsedPayloadPreview,
-      finalResponsePreview: truncateText(outputText, 4000),
+      finalResponsePreview,
       finalVerdict: 'edit',
     };
 
@@ -1500,8 +1471,6 @@ export async function runUnifiedAssistantTurn(args: UnifiedAssistantTurnRequest)
         validationErrors: [`transport:${truncate(message, 280)}`],
       },
     });
-  } finally {
-    await provider.close().catch(() => undefined);
   }
 }
 

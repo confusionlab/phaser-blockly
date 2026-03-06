@@ -61,7 +61,7 @@
 
 - The Blockly editor includes an assistant panel for natural-language block edits.
 - Provider calls are made from a Convex action (server-side), not from browser code.
-- Web and desktop now share the same `@openai/agents` + Responses-based orchestration in `packages/assistant-core`.
+- Web and desktop now share the same OpenAI Responses-based orchestration in `packages/assistant-core`.
 - Desktop `codex_oauth` uses the same shared runner after obtaining the user's ChatGPT/Codex auth token from the local Codex app server.
 - Configure Convex env vars:
   - `OPENAI_API_KEY`
