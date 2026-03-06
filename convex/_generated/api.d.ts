@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as assistant from "../assistant.js";
 import type * as costumeLibrary from "../costumeLibrary.js";
 import type * as http from "../http.js";
 import type * as objectLibrary from "../objectLibrary.js";
@@ -22,6 +23,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  assistant: typeof assistant;
   costumeLibrary: typeof costumeLibrary;
   http: typeof http;
   objectLibrary: typeof objectLibrary;

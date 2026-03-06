@@ -1,6 +1,7 @@
 {
   "version": 1,
   "values": {
+    "CONVEX_DEPLOYMENT_DEV": "dev:your-dev-deployment",
     "VITE_CONVEX_URL_DEV": "https://your-dev-deployment.convex.cloud",
     "VITE_CONVEX_SITE_URL_DEV": "https://your-dev-deployment.convex.site",
     "VITE_CLERK_PUBLISHABLE_KEY_DEV": "pk_test_xxx",
@@ -45,6 +46,7 @@
     {
       "path": ".env.local",
       "values": {
+        "CONVEX_DEPLOYMENT": "${CONVEX_DEPLOYMENT_DEV}",
         "VITE_CONVEX_URL_DEV": "${VITE_CONVEX_URL_DEV}",
         "VITE_CONVEX_SITE_URL_DEV": "${VITE_CONVEX_SITE_URL_DEV}",
         "VITE_CLERK_PUBLISHABLE_KEY_DEV": "${VITE_CLERK_PUBLISHABLE_KEY_DEV}",

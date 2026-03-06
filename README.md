@@ -16,10 +16,12 @@
 - `pnpm lint`: lint all workspace packages.
 - `pnpm platform:plan`: preview unified platform config changes.
 - `pnpm platform:apply`: apply unified platform config to local/Convex/Vercel/Clerk.
+- `pnpm platform:plan:local-convex`: preview only local `.env.local` + Convex changes.
+- `pnpm platform:apply:local-convex`: apply only local `.env.local` + Convex changes.
 
 ## Unified Platform Config
 
-- Single source of truth: `platform/unified.config.json` (gitignored).
+- Single source of truth: `platform/unified.config.json` (local, gitignored).
 - Template: `platform/unified.config.example.json`.
 - Includes:
   - local `.env.local` values
@@ -27,6 +29,8 @@
   - Vercel env vars (development/preview/production)
   - Clerk instance + redirect URLs + domains + JWT templates
   - `manualRequired` checklist for unavoidable manual/DNS steps
+- Local `.env.local` should include `CONVEX_DEPLOYMENT` so `pnpm exec convex dev` and `pnpm exec convex codegen` target the correct deployment without extra shell exports.
+- Use the `local-convex` platform sync commands when you only need local development setup and do not want Vercel/Clerk credentials to block the apply step.
 
 ## Convex Env Separation (Dev vs Prod)
 
