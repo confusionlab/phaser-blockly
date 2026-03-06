@@ -10,17 +10,28 @@ import { buildAssistantModelObject } from '../../../packages/ui-shared/src/assis
 
 test.describe('assistant model text', () => {
   test('formats object detail as readable text instead of raw JSON', () => {
+    const project = createDefaultProject('Text Fixture');
     const hero = createDefaultGameObject('Hero');
     hero.blocklyXml = '<xml><block type="event_forever"></block></xml>';
+    project.scenes[0]!.objects = [hero];
+    const snapshot = createAssistantProjectSnapshot(project);
+    const snapshotHero = snapshot.state.scenes[0]!.objects[0]!;
+    snapshotHero.generatedJs = [
+      '(function(runtime, spriteId, sprite) {',
+      'runtime.forever(sprite.id, async function(sprite) {',
+      '});',
+      '})',
+    ].join('\n');
 
     const text = formatAssistantModelObjectDetail({
-      ...buildAssistantModelObject(hero),
+      ...buildAssistantModelObject(snapshotHero),
       logicOwner: { type: 'object', objectId: hero.id },
     });
 
     expect(text).toContain('Object "Hero"');
     expect(text).toContain('Logic owner: object');
-    expect(text).toContain('forever:');
+    expect(text).toContain('Generated JS:');
+    expect(text).toContain('runtime.forever');
     expect(text).not.toContain('blocklyXml');
     expect(text).not.toContain('"id"');
   });

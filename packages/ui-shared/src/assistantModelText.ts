@@ -183,7 +183,7 @@ function appendLogic(
     return;
   }
 
-  lines.push(`${indent}Logic preview:`);
+  lines.push(`${indent}Generated JS:`);
   for (const line of logic.generatedCode.split('\n')) {
     lines.push(`${indent}  ${line}`);
   }

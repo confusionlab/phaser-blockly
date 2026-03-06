@@ -11,6 +11,7 @@ import type {
 } from '../../../../../packages/ui-shared/src/assistant';
 import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
 import { compileAssistantLogicProgram } from '../../../../../packages/ui-shared/src/assistantLogic';
+import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import type {
   ComponentDefinition,
   GameObject,
@@ -27,6 +28,8 @@ import {
   remapVariableIdsInBlocklyXml,
 } from '@/lib/variableUtils';
 import { normalizeProjectLayering, normalizeSceneLayering } from '@/utils/layerTree';
+
+const ASSISTANT_SNAPSHOT_FORMAT_VERSION = 2;
 
 function cloneProject<T>(value: T): T {
   return structuredClone(value);
@@ -178,6 +181,7 @@ function toAssistantBackground(background: Scene['background']): AssistantBackgr
 }
 
 function toAssistantObject(object: GameObject): AssistantObject {
+  const blocklyXml = normalizeBlocklyXml(object.blocklyXml);
   return {
     id: object.id,
     name: object.name,
@@ -192,7 +196,8 @@ function toAssistantObject(object: GameObject): AssistantObject {
     componentId: object.componentId,
     physics: object.physics ? { ...object.physics } : null,
     collider: object.collider ? { ...object.collider } : null,
-    blocklyXml: normalizeBlocklyXml(object.blocklyXml),
+    blocklyXml,
+    generatedJs: generateCodeForObject(blocklyXml, object.id) || undefined,
     costumes: (object.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
@@ -210,10 +215,12 @@ function toAssistantObject(object: GameObject): AssistantObject {
 }
 
 function toAssistantComponent(component: ComponentDefinition): AssistantComponent {
+  const blocklyXml = normalizeBlocklyXml(component.blocklyXml);
   return {
     id: component.id,
     name: component.name,
-    blocklyXml: normalizeBlocklyXml(component.blocklyXml),
+    blocklyXml,
+    generatedJs: generateCodeForObject(blocklyXml, component.id) || undefined,
     costumes: (component.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
@@ -250,7 +257,7 @@ function toAssistantScene(scene: Scene): AssistantScene {
 }
 
 export function createAssistantProjectVersion(project: Pick<Project, 'id' | 'updatedAt'>): string {
-  return `${project.id}:${project.updatedAt.toISOString()}`;
+  return `${project.id}:${project.updatedAt.toISOString()}:assistant-v${ASSISTANT_SNAPSHOT_FORMAT_VERSION}`;
 }
 
 export function createAssistantProjectSnapshot(project: Project): AssistantProjectSnapshot {

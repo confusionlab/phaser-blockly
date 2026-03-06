@@ -108,6 +108,7 @@ export interface AssistantObject {
   physics: AssistantPhysicsConfig | null;
   collider: AssistantColliderConfig | null;
   blocklyXml: string;
+  generatedJs?: string;
   costumes: AssistantCostumeSummary[];
   currentCostumeIndex: number;
   sounds: AssistantSoundSummary[];
@@ -118,6 +119,7 @@ export interface AssistantComponent {
   id: string;
   name: string;
   blocklyXml: string;
+  generatedJs?: string;
   costumes: AssistantCostumeSummary[];
   currentCostumeIndex: number;
   physics: AssistantPhysicsConfig | null;

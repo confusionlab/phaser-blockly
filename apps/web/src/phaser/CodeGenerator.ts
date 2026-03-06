@@ -6,11 +6,18 @@ function asJsString(value: string | null | undefined): string {
   return JSON.stringify(value ?? '');
 }
 
+let codeGeneratorsRegistered = false;
+
 /**
  * Register code generators for all custom blocks.
  * Generated code calls runtime.* methods.
  */
 export function registerCodeGenerators(): void {
+  if (codeGeneratorsRegistered) {
+    return;
+  }
+  codeGeneratorsRegistered = true;
+
   const objectExprToId = (expr: string): string => {
     return `((__obj) => (typeof __obj === 'string' ? __obj : __obj?.id))(${expr})`;
   };
@@ -801,6 +808,7 @@ const HAT_BLOCKS = [
  */
 export function generateCodeForObject(blocklyXml: string, objectId: string): string {
   if (!blocklyXml) return '';
+  registerCodeGenerators();
   const normalizedBlocklyXml = normalizeBlocklyXml(blocklyXml);
 
   let workspace: Blockly.Workspace | null = null;

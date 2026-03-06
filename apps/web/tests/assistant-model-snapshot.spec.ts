@@ -54,6 +54,12 @@ test.describe('assistant model snapshot', () => {
     };
 
     const snapshot = createAssistantProjectSnapshot(project);
+    snapshot.state.scenes[0]!.objects[0]!.generatedJs = [
+      '(function(runtime, spriteId, sprite) {',
+      'runtime.onGameStart(spriteId, async function(sprite) {',
+      '});',
+      '})',
+    ].join('\n');
     const snapshotJson = JSON.stringify(snapshot);
     const modelSnapshot = buildAssistantModelSnapshot(snapshot);
     const sceneModel = modelSnapshot.state.scenes[0]!;
@@ -88,7 +94,7 @@ test.describe('assistant model snapshot', () => {
     expect(objectModel.logic.hasLogic).toBe(true);
     expect(objectModel.logic.editableWith).toBe('set_object_logic');
     expect(objectModel.logic.blockTypes).toEqual(['event_game_start']);
-    expect(objectModel.logic.generatedCode).toContain('when game starts:');
+    expect(objectModel.logic.generatedCode).toContain('runtime.onGameStart');
     expect(objectModel.logic.generatedCodeTruncated).toBe(false);
   });
 
@@ -107,6 +113,12 @@ test.describe('assistant model snapshot', () => {
     scene.objects = [hero];
 
     const snapshot = createAssistantProjectSnapshot(project);
+    snapshot.state.scenes[0]!.objects[0]!.generatedJs = [
+      '(function(runtime, spriteId, sprite) {',
+      'runtime.forever(sprite.id, async function(sprite) {',
+      '});',
+      '})',
+    ].join('\n');
     const prompt = buildAssistantRunInputText({
       mode: 'mutate',
       requestText: 'Add jump controls',
@@ -121,6 +133,7 @@ test.describe('assistant model snapshot', () => {
     expect(prompt).not.toContain('assetId');
     expect(prompt).not.toContain('spriteAssetId');
     expect(prompt).toContain('Project: "Prompt Fixture"');
-    expect(prompt).toContain('forever:');
+    expect(prompt).toContain('Generated JS:');
+    expect(prompt).toContain('runtime.forever');
   });
 });

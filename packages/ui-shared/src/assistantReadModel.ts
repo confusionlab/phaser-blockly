@@ -9,6 +9,33 @@ import { summarizeStoredBlocklyLogic } from './assistantLogic';
 
 type LogicCodeMode = 'preview' | 'full';
 
+function buildModelLogic(
+  blocklyXml: string,
+  editableWith: 'set_object_logic' | 'set_component_logic',
+  logicCodeMode: LogicCodeMode,
+  generatedJs?: string,
+) {
+  const logic = summarizeStoredBlocklyLogic(
+    blocklyXml,
+    editableWith,
+    { codeMode: logicCodeMode },
+  );
+
+  if (!generatedJs?.trim()) {
+    return {
+      ...logic,
+      generatedCode: undefined,
+      generatedCodeTruncated: undefined,
+    };
+  }
+
+  return {
+    ...logic,
+    generatedCode: generatedJs,
+    generatedCodeTruncated: false,
+  };
+}
+
 function summarizeObjectForModel(object: AssistantObject, logicCodeMode: LogicCodeMode) {
   return {
     id: object.id,
@@ -28,10 +55,11 @@ function summarizeObjectForModel(object: AssistantObject, logicCodeMode: LogicCo
     currentCostumeIndex: object.currentCostumeIndex,
     sounds: object.sounds,
     localVariables: object.localVariables,
-    logic: summarizeStoredBlocklyLogic(
+    logic: buildModelLogic(
       object.blocklyXml,
       object.componentId ? 'set_component_logic' : 'set_object_logic',
-      { codeMode: logicCodeMode },
+      logicCodeMode,
+      object.generatedJs,
     ),
   };
 }
@@ -46,7 +74,7 @@ function summarizeComponentForModel(component: AssistantComponent, logicCodeMode
     currentCostumeIndex: component.currentCostumeIndex,
     sounds: component.sounds,
     localVariables: component.localVariables,
-    logic: summarizeStoredBlocklyLogic(component.blocklyXml, 'set_component_logic', { codeMode: logicCodeMode }),
+    logic: buildModelLogic(component.blocklyXml, 'set_component_logic', logicCodeMode, component.generatedJs),
   };
 }
 
