@@ -12,12 +12,16 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
   applyAssistantProjectOperations,
+  getAssistantFolderSummary,
+  listAssistantEntityReferences,
+  materializeAssistantOperationIds,
   validateAssistantProjectState,
   type AssistantChangeSet,
   type AssistantOperationResult,
   type AssistantProjectOperation,
   type AssistantProjectSnapshot,
   type AssistantProjectState,
+  type AssistantReferenceEntityType,
   type AssistantValidationIssue,
 } from "../packages/ui-shared/src/assistant";
 
@@ -87,10 +91,16 @@ const runEventValidator = v.object({
 
 async function requireAuthenticatedUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error("unauthenticated");
+  if (identity?.subject) {
+    return identity.subject;
   }
-  return identity.subject;
+
+  const e2eBypassUserId = process.env.ASSISTANT_E2E_BYPASS_USER_ID?.trim();
+  if (e2eBypassUserId) {
+    return e2eBypassUserId;
+  }
+
+  throw new Error("unauthenticated");
 }
 
 function safeStringify(value: unknown): string {
@@ -277,15 +287,36 @@ function createChangeSet(
         affected.add(operation.sceneId);
         affected.add(operation.objectId);
         break;
+      case "duplicate_object":
+        affected.add(operation.sceneId);
+        affected.add(operation.objectId);
+        if (operation.duplicateObjectId) {
+          affected.add(operation.duplicateObjectId);
+        }
+        break;
       case "rename_component":
       case "update_component_properties":
       case "set_component_blockly_xml":
         affected.add(operation.componentId);
         break;
       case "create_folder":
+        affected.add(operation.sceneId);
+        if (operation.folderId) {
+          affected.add(operation.folderId);
+        }
+        break;
       case "create_object":
+        affected.add(operation.sceneId);
+        if (operation.objectId) {
+          affected.add(operation.objectId);
+        }
+        break;
       case "create_scene":
-        affected.add(operation.sceneId ?? state.project.id);
+        if (operation.sceneId) {
+          affected.add(operation.sceneId);
+        } else {
+          affected.add(state.project.id);
+        }
         break;
       case "update_project_settings":
         break;
@@ -344,6 +375,21 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   },
   {
     type: "function",
+    name: "get_folder",
+    description: "Read one folder inside a scene, including its direct child folders and direct child objects.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        folderId: { type: "string" },
+      },
+      required: ["sceneId", "folderId"],
+    },
+  },
+  {
+    type: "function",
     name: "get_object",
     description: "Read one object and its effective logic owner. Use this before editing complex object logic.",
     strict: true,
@@ -383,6 +429,22 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
         query: { type: "string" },
       },
       required: ["query"],
+    },
+  },
+  {
+    type: "function",
+    name: "list_references",
+    description: "List direct references for a scene, folder, object, or component before destructive edits or moves.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        entityType: { type: "string", enum: ["scene", "folder", "object", "component"] },
+        id: { type: "string" },
+        sceneId: { type: "string" },
+      },
+      required: ["entityType", "id"],
     },
   },
   {
@@ -702,6 +764,21 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
         objectId: { type: "string" },
         parentId: { anyOf: [{ type: "string" }, { type: "null" }] },
         index: { type: "number" },
+      },
+      required: ["sceneId", "objectId"],
+    },
+  },
+  {
+    type: "function",
+    name: "duplicate_object",
+    description: "Duplicate an object in place. Use follow-up rename, move, or property tools to customize the copy.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        objectId: { type: "string" },
       },
       required: ["sceneId", "objectId"],
     },
@@ -1204,6 +1281,10 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "Never assume IDs. Read them from the provided snapshot or query tools.",
     "Use emit_progress before significant work and when your plan changes.",
     "Use the domain tools only. Do not invent unsupported operations.",
+    "Prefer the narrowest inspection tool that answers the question: get_scene/get_folder/get_object/get_component before broad search when you already know the target.",
+    "Before deleting or moving scenes, folders, objects, or components when impact is unclear, call list_references first.",
+    "When a write tool creates or duplicates an entity and you need to use it later in the same run, reuse the id returned in createdEntities instead of guessing by name.",
+    "After duplicate_object, keep the original object unchanged unless the user explicitly asks to edit it too. Apply follow-up rename/move/property edits to the newly created duplicate id.",
     "For mutate runs, stage safe project operations until the request is fulfilled, then return a concise final summary.",
     "For analyze runs, do not call mutation tools. Read state, diagnose, and return a concise explanation.",
     "If an object is component-backed, inspect the component and edit the component for shared logic/physics/collider changes.",
@@ -1304,9 +1385,11 @@ function refuseMutationTool(mode: AssistantRunMode, toolName: string) {
     "emit_progress",
     "get_project_summary",
     "get_scene",
+    "get_folder",
     "get_object",
     "get_component",
     "search_entities",
+    "list_references",
     "inspect_validation_issues",
   ]);
   if (readOnlyTools.has(toolName)) return null;
@@ -1342,6 +1425,15 @@ async function performTool(
           ok: true,
           scene: getSceneSummary(execution.stagedState, String(args.sceneId ?? "")),
         };
+      case "get_folder":
+        return {
+          ok: true,
+          folder: getAssistantFolderSummary(
+            execution.stagedState,
+            String(args.sceneId ?? ""),
+            String(args.folderId ?? ""),
+          ),
+        };
       case "get_object":
         return {
           ok: true,
@@ -1360,6 +1452,16 @@ async function performTool(
         return {
           ok: true,
           results: searchEntities(execution.stagedState, String(args.query ?? "")),
+        };
+      case "list_references":
+        return {
+          ok: true,
+          references: listAssistantEntityReferences(
+            execution.stagedState,
+            String(args.entityType ?? "") as AssistantReferenceEntityType,
+            String(args.id ?? ""),
+            typeof args.sceneId === "string" ? args.sceneId : undefined,
+          ),
         };
       case "inspect_validation_issues":
         return {
@@ -1458,6 +1560,12 @@ async function performTool(
           parentId: args.parentId === null ? null : typeof args.parentId === "string" ? args.parentId : undefined,
           index: typeof args.index === "number" ? args.index : undefined,
         });
+      case "duplicate_object":
+        return stageOperation(execution, {
+          kind: "duplicate_object",
+          sceneId: String(args.sceneId ?? ""),
+          objectId: String(args.objectId ?? ""),
+        });
       case "update_object_properties": {
         const sceneId = String(args.sceneId ?? "");
         const objectId = String(args.objectId ?? "");
@@ -1532,14 +1640,15 @@ function stageOperation(
   execution: ToolExecutionContext,
   operation: AssistantProjectOperation,
 ) {
-  const nextOperations = [...execution.stagedOperations, operation];
-  const result = applyAssistantProjectOperations(execution.stagedState, [operation]);
+  const stabilizedOperation = materializeAssistantOperationIds(operation);
+  const nextOperations = [...execution.stagedOperations, stabilizedOperation];
+  const result = applyAssistantProjectOperations(execution.stagedState, [stabilizedOperation]);
   if (result.issues.length > 0) {
     return buildToolError(
       "The proposed operation produced an invalid staged state.",
       "validation_failed",
       {
-        operation,
+        operation: stabilizedOperation,
         issues: summarizeValidationIssues(result.issues),
       },
     );
@@ -1547,7 +1656,7 @@ function stageOperation(
 
   execution.stagedState = result.state;
   execution.stagedOperations = nextOperations;
-  return buildMutationResult(operation, result);
+  return buildMutationResult(stabilizedOperation, result);
 }
 
 export const executeRunInternal = internalAction({

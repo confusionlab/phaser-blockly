@@ -19,6 +19,10 @@ import {
   createDefaultGameObject,
   createDefaultScene,
 } from '@/types';
+import {
+  normalizeVariableDefinition,
+  remapVariableIdsInBlocklyXml,
+} from '@/lib/variableUtils';
 import { normalizeProjectLayering, normalizeSceneLayering } from '@/utils/layerTree';
 
 function cloneProject<T>(value: T): T {
@@ -107,6 +111,10 @@ function moveObjects(
 
   const unaffected = remaining.filter((object) => (object.parentId ?? null) !== parentId);
   return [...unaffected, ...updatedSiblings];
+}
+
+function cloneLocalVariables(object: GameObject): GameObject['localVariables'] {
+  return (object.localVariables || []).map((variable) => ({ ...variable }));
 }
 
 function toAssistantFolder(folder: SceneFolder): AssistantSceneFolder {
@@ -448,6 +456,55 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
               })
             : scene,
         ),
+      };
+    case 'duplicate_object':
+      return {
+        ...project,
+        scenes: project.scenes.map((scene) => {
+          if (scene.id !== operation.sceneId) return scene;
+          const original = scene.objects.find((object) => object.id === operation.objectId);
+          if (!original) {
+            throw new Error(`Object "${operation.objectId}" was not found in scene "${operation.sceneId}".`);
+          }
+
+          const duplicateId = operation.duplicateObjectId ?? crypto.randomUUID();
+          let duplicateBlocklyXml = original.blocklyXml;
+          let duplicateLocalVariables = cloneLocalVariables(original);
+
+          if (!original.componentId) {
+            const variableIdMap = new Map<string, string>();
+            duplicateLocalVariables = (original.localVariables || []).map((variable) => {
+              const nextId = crypto.randomUUID();
+              variableIdMap.set(variable.id, nextId);
+              return normalizeVariableDefinition(
+                { ...variable, id: nextId },
+                { scope: 'local', objectId: duplicateId },
+              );
+            });
+            duplicateBlocklyXml = remapVariableIdsInBlocklyXml(original.blocklyXml || '', variableIdMap);
+          }
+
+          const duplicate: GameObject = {
+            ...original,
+            id: duplicateId,
+            name: original.componentId ? original.name : `${original.name} Copy`,
+            x: original.x + 50,
+            y: original.y + 50,
+            order: original.order + 1,
+            blocklyXml: duplicateBlocklyXml,
+            localVariables: duplicateLocalVariables,
+          };
+
+          return normalizeSceneLayering({
+            ...scene,
+            objects: moveObjects(
+              [...scene.objects, duplicate],
+              duplicate.id,
+              original.parentId ?? null,
+              original.order + 1,
+            ),
+          });
+        }),
       };
     case 'update_object_properties':
       return {
