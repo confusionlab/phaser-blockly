@@ -3,6 +3,10 @@ import {
   normalizeBlocklyXml,
   validateBlocklyXmlStructure,
 } from '../../../../../packages/ui-shared/src/blocklyXml';
+import {
+  isAssistantLogicProgram,
+  summarizeAssistantLogicProgram,
+} from '../../../../../packages/ui-shared/src/assistantLogic';
 
 function truncateDiagnosticText(text: string, maxLength = 180): string {
   if (text.length <= maxLength) return text;
@@ -72,6 +76,10 @@ export function formatDiagnosticValue(value: unknown): string {
     return truncateDiagnosticText(JSON.stringify(value), 96);
   }
 
+  if (isAssistantLogicProgram(value)) {
+    return summarizeAssistantLogicProgram(value);
+  }
+
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
     return String(value);
   }
@@ -115,6 +123,9 @@ export function summarizeToolDiagnostics(result: Record<string, unknown> | null)
   const operation = result.operation as Record<string, unknown> | undefined;
   if (typeof operation?.blocklyXml === 'string') {
     diagnostics.push(`blocklyXml=${formatDiagnosticValue(operation.blocklyXml)}`);
+  }
+  if (isAssistantLogicProgram(operation?.logic)) {
+    diagnostics.push(`logic=${summarizeAssistantLogicProgram(operation.logic)}`);
   }
 
   const createdEntities = Array.isArray(result.createdEntities)

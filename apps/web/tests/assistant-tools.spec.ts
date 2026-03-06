@@ -8,6 +8,10 @@ import {
   validateAssistantProjectState,
 } from '../../../packages/ui-shared/src/assistant';
 import { normalizeBlocklyXml } from '../../../packages/ui-shared/src/blocklyXml';
+import {
+  compileAssistantLogicProgram,
+  type AssistantLogicProgram,
+} from '../../../packages/ui-shared/src/assistantLogic';
 import { applyAssistantChangeSetToProject, createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
 import {
   createDefaultGameObject,
@@ -364,6 +368,61 @@ test.describe('Assistant tool curation primitives', () => {
     expect(hero?.blocklyXml).toBe(expectedBlocklyXml);
   });
 
+  test('set_object_logic compiles typed logic into canonical Blockly XML', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const logic: AssistantLogicProgram = {
+      formatVersion: 1,
+      scripts: [
+        {
+          trigger: { kind: 'forever' },
+          actions: [
+            { kind: 'set_velocity_x', value: 0 },
+            {
+              kind: 'if',
+              condition: { kind: 'key_pressed', key: 'a' },
+              thenActions: [{ kind: 'set_velocity_x', value: -150 }],
+            },
+            {
+              kind: 'if',
+              condition: { kind: 'key_pressed', key: 'd' },
+              thenActions: [{ kind: 'set_velocity_x', value: 150 }],
+            },
+            {
+              kind: 'if',
+              condition: {
+                kind: 'all',
+                conditions: [
+                  { kind: 'key_pressed', key: 'w' },
+                  { kind: 'touching_ground' },
+                ],
+              },
+              thenActions: [{ kind: 'set_velocity_y', value: -400 }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = applyAssistantProjectOperations(snapshot.state, [
+      {
+        kind: 'set_object_logic',
+        sceneId: fixture.sceneId,
+        objectId: fixture.heroId,
+        logic,
+      },
+    ]);
+
+    const scene = result.state.scenes.find((candidate) => candidate.id === fixture.sceneId);
+    const hero = scene?.objects.find((candidate) => candidate.id === fixture.heroId);
+
+    expect(hero?.blocklyXml).toBe(normalizeBlocklyXml(compileAssistantLogicProgram(logic)));
+    expect(hero?.blocklyXml).toContain('event_game_start');
+    expect(hero?.blocklyXml).toContain('event_forever');
+    expect(hero?.blocklyXml).toContain('physics_set_velocity_x');
+    expect(hero?.blocklyXml).toContain('sensing_touching_direction');
+  });
+
   test('applyAssistantChangeSetToProject supports duplicate_object end to end', () => {
     const fixture = buildProjectFixture();
     const snapshot = createAssistantProjectSnapshot(fixture.project);
@@ -600,6 +659,40 @@ test.describe('Assistant tool curation primitives', () => {
     expect(heroInstance?.blocklyXml).toBe(blocklyXml);
     expect(heroInstance?.x).toBe(300);
     expect(heroInstance?.y).toBe(140);
+  });
+
+  test('set_component_logic updates the component and synced instances', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const logic: AssistantLogicProgram = {
+      formatVersion: 1,
+      scripts: [
+        {
+          trigger: { kind: 'on_key_pressed', key: 'space' },
+          actions: [
+            { kind: 'wait', seconds: 0.1 },
+            { kind: 'broadcast', message: 'jumped', wait: true },
+          ],
+        },
+      ],
+    };
+
+    const result = applyAssistantProjectOperations(snapshot.state, [
+      {
+        kind: 'set_component_logic',
+        componentId: fixture.componentId,
+        logic,
+      },
+    ]);
+
+    const component = result.state.components.find((candidate) => candidate.id === fixture.componentId);
+    const scene = result.state.scenes.find((candidate) => candidate.id === fixture.sceneId);
+    const enemy = scene?.objects.find((candidate) => candidate.id === fixture.enemyId);
+
+    expect(component?.blocklyXml).toBe(normalizeBlocklyXml(compileAssistantLogicProgram(logic)));
+    expect(enemy?.blocklyXml).toBe(component?.blocklyXml);
+    expect(component?.blocklyXml).toContain('event_key_pressed');
+    expect(component?.blocklyXml).toContain('control_broadcast_wait');
   });
 
   test('validateAssistantProjectState rejects unrecoverable Blockly XML', () => {

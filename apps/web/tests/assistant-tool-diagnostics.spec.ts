@@ -58,4 +58,26 @@ test.describe('assistant tool diagnostics', () => {
     expect(summary).toContain('code=validation_failed');
     expect(summary).toContain('object.invalid_blockly_xml');
   });
+
+  test('summarizeToolArgs condenses typed logic programs', () => {
+    const summary = summarizeToolArgs({
+      sceneId: 'scene_1',
+      objectId: 'object_1',
+      logic: {
+        formatVersion: 1,
+        scripts: [
+          {
+            trigger: { kind: 'forever' },
+            actions: [
+              { kind: 'set_velocity_x', value: 0 },
+              { kind: 'set_velocity_y', value: -400 },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(summary).toContain('Logic v1');
+    expect(summary).toContain('triggers=forever');
+  });
 });

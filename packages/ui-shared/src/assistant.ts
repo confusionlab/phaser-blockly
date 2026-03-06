@@ -3,6 +3,10 @@ import {
   normalizeBlocklyXml,
   validateBlocklyXmlStructure,
 } from './blocklyXml';
+import {
+  compileAssistantLogicProgram,
+  type AssistantLogicProgram,
+} from './assistantLogic';
 
 export type AssistantVariableType = 'string' | 'integer' | 'float' | 'boolean';
 
@@ -353,6 +357,12 @@ export type AssistantProjectOperation =
       blocklyXml: string;
     }
   | {
+      kind: 'set_object_logic';
+      sceneId: string;
+      objectId: string;
+      logic: AssistantLogicProgram;
+    }
+  | {
       kind: 'make_component';
       sceneId: string;
       objectId: string;
@@ -391,6 +401,11 @@ export type AssistantProjectOperation =
       kind: 'set_component_blockly_xml';
       componentId: string;
       blocklyXml: string;
+    }
+  | {
+      kind: 'set_component_logic';
+      componentId: string;
+      logic: AssistantLogicProgram;
     };
 
 export interface AssistantChangeSet {
@@ -977,6 +992,7 @@ function collectAffectedEntitiesFromOperation(operation: AssistantProjectOperati
     case 'move_object':
     case 'update_object_properties':
     case 'set_object_blockly_xml':
+    case 'set_object_logic':
       return [operation.sceneId, operation.objectId];
     case 'duplicate_object':
       return operation.duplicateObjectId
@@ -996,6 +1012,7 @@ function collectAffectedEntitiesFromOperation(operation: AssistantProjectOperati
     case 'rename_component':
     case 'update_component_properties':
     case 'set_component_blockly_xml':
+    case 'set_component_logic':
       return [operation.componentId];
   }
 }
@@ -1479,6 +1496,22 @@ export function applyAssistantProjectOperations(
         );
         break;
       }
+      case 'set_object_logic': {
+        const compiledBlocklyXml = normalizeBlocklyXml(compileAssistantLogicProgram(operation.logic));
+        const scene = ensureScene(state, operation.sceneId);
+        ensureObject(scene, operation.objectId);
+        state.scenes = state.scenes.map((candidate) =>
+          candidate.id === scene.id
+            ? normalizeScene({
+                ...candidate,
+                objects: candidate.objects.map((object) =>
+                  object.id === operation.objectId ? { ...object, blocklyXml: compiledBlocklyXml } : object,
+                ),
+              })
+            : candidate,
+        );
+        break;
+      }
       case 'make_component': {
         const scene = ensureScene(state, operation.sceneId);
         const object = ensureObject(scene, operation.objectId);
@@ -1646,6 +1679,26 @@ export function applyAssistantProjectOperations(
             objects: scene.objects.map((object) =>
               object.componentId === operation.componentId
                 ? { ...object, blocklyXml: normalizedBlocklyXml }
+                : object,
+            ),
+          }),
+        );
+        break;
+      }
+      case 'set_component_logic': {
+        const compiledBlocklyXml = normalizeBlocklyXml(compileAssistantLogicProgram(operation.logic));
+        ensureComponent(state, operation.componentId);
+        state.components = state.components.map((component) =>
+          component.id === operation.componentId
+            ? { ...component, blocklyXml: compiledBlocklyXml }
+            : component,
+        );
+        state.scenes = state.scenes.map((scene) =>
+          normalizeScene({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === operation.componentId
+                ? { ...object, blocklyXml: compiledBlocklyXml }
                 : object,
             ),
           }),

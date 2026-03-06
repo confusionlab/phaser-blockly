@@ -29,6 +29,11 @@ import {
   normalizeAssistantConversationTurns,
   type AssistantConversationTurn,
 } from "../packages/ui-shared/src/assistantConversation";
+import {
+  buildAssistantModelComponent,
+  buildAssistantModelObject,
+  buildAssistantModelScene,
+} from "../packages/ui-shared/src/assistantReadModel";
 
 const internalAssistant = (internal as any).assistant;
 
@@ -304,6 +309,7 @@ function createChangeSet(
       case "move_object":
       case "update_object_properties":
       case "set_object_blockly_xml":
+      case "set_object_logic":
         affected.add(operation.sceneId);
         affected.add(operation.objectId);
         break;
@@ -336,6 +342,7 @@ function createChangeSet(
       case "rename_component":
       case "update_component_properties":
       case "set_component_blockly_xml":
+      case "set_component_logic":
         affected.add(operation.componentId);
         break;
       case "create_folder":
@@ -370,6 +377,183 @@ function createChangeSet(
     affectedEntityIds: [...affected],
   };
 }
+
+const logicConditionAtomSchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["key_pressed"] },
+        key: { type: "string" },
+      },
+      required: ["kind", "key"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["touching_ground"] },
+      },
+      required: ["kind"],
+    },
+  ],
+} as const;
+
+const logicConditionSchema = {
+  anyOf: [
+    logicConditionAtomSchema,
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["all", "any"] },
+        conditions: {
+          type: "array",
+          items: logicConditionAtomSchema,
+        },
+      },
+      required: ["kind", "conditions"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["not"] },
+        condition: logicConditionAtomSchema,
+      },
+      required: ["kind", "condition"],
+    },
+  ],
+} as const;
+
+const logicPrimitiveActionSchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["set_velocity"] },
+        x: { type: "number" },
+        y: { type: "number" },
+      },
+      required: ["kind", "x", "y"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["set_velocity_x", "set_velocity_y", "change_x", "change_y"] },
+        value: { type: "number" },
+      },
+      required: ["kind", "value"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["wait"] },
+        seconds: { type: "number" },
+      },
+      required: ["kind", "seconds"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["broadcast"] },
+        message: { type: "string" },
+        wait: { type: "boolean" },
+      },
+      required: ["kind", "message"],
+    },
+  ],
+} as const;
+
+const logicActionSchema = {
+  anyOf: [
+    logicPrimitiveActionSchema,
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["if"] },
+        condition: logicConditionSchema,
+        thenActions: {
+          type: "array",
+          items: logicPrimitiveActionSchema,
+        },
+        elseActions: {
+          type: "array",
+          items: logicPrimitiveActionSchema,
+        },
+      },
+      required: ["kind", "condition", "thenActions"],
+    },
+  ],
+} as const;
+
+const logicTriggerSchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["on_start"] },
+      },
+      required: ["kind"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["forever"] },
+      },
+      required: ["kind"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["on_clicked"] },
+      },
+      required: ["kind"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["on_key_pressed"] },
+        key: { type: "string" },
+      },
+      required: ["kind", "key"],
+    },
+  ],
+} as const;
+
+const logicProgramSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    formatVersion: { type: "number", enum: [1] },
+    scripts: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          trigger: logicTriggerSchema,
+          actions: {
+            type: "array",
+            items: logicActionSchema,
+          },
+        },
+        required: ["trigger", "actions"],
+      },
+    },
+  },
+  required: ["formatVersion", "scripts"],
+} as const;
 
 const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
@@ -829,7 +1013,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "update_object_properties",
-    description: "Update object properties. Do not use for blocklyXml. For component-backed logic or physics, inspect the object first and then edit the component instead if needed.",
+    description: "Update object properties. Do not use for gameplay logic. For component-backed logic or physics, inspect the object first and then edit the component instead if needed.",
     strict: true,
     parameters: {
       type: "object",
@@ -896,8 +1080,8 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   },
   {
     type: "function",
-    name: "set_object_blockly_xml",
-    description: "Replace an object's Blockly XML only when the object owns its own logic. If the object is component-backed, edit the component instead.",
+    name: "set_object_logic",
+    description: "Replace an object's gameplay logic using a typed logic program. Use this only when the object owns its logic. If the object is component-backed, edit the component instead.",
     strict: true,
     parameters: {
       type: "object",
@@ -905,9 +1089,9 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
       properties: {
         sceneId: { type: "string" },
         objectId: { type: "string" },
-        blocklyXml: { type: "string" },
+        logic: logicProgramSchema,
       },
-      required: ["sceneId", "objectId", "blocklyXml"],
+      required: ["sceneId", "objectId", "logic"],
     },
   },
   {
@@ -1064,17 +1248,17 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   },
   {
     type: "function",
-    name: "set_component_blockly_xml",
-    description: "Replace a component definition's shared Blockly XML.",
+    name: "set_component_logic",
+    description: "Replace a component definition's shared gameplay logic using a typed logic program.",
     strict: true,
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         componentId: { type: "string" },
-        blocklyXml: { type: "string" },
+        logic: logicProgramSchema,
       },
-      required: ["componentId", "blocklyXml"],
+      required: ["componentId", "logic"],
     },
   },
 ];
@@ -1413,8 +1597,10 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "When a write tool creates or duplicates an entity and you need to use it later in the same run, reuse the id returned in createdEntities instead of guessing by name.",
     "After duplicate_object, keep the original object unchanged unless the user explicitly asks to edit it too. Apply follow-up rename/move/property edits to the newly created duplicate id.",
     "If the user wants reusable actors, use make_component to convert a standalone object, add_component_instance to place copies, and detach_from_component to break inheritance for one object.",
-    "For Blockly XML, use PochaCoding's exact block type ids. Use event_game_start, event_key_pressed, event_clicked, event_forever, and sensing_key_pressed instead of generic aliases like controls_forever or keyboard_is_key_pressed.",
-    "For motion_change_x and motion_change_y, use the VALUE input with signed numbers. Do not use DIR/NUM scratch-style fields.",
+    "Never write or describe raw Blockly XML. Use set_object_logic or set_component_logic with typed JSON logic programs instead.",
+    "For continuous movement, prefer a forever trigger and explicitly reset horizontal velocity to 0 before conditional left/right movement.",
+    "For jumping, use an if condition with all:[key_pressed, touching_ground] and set_velocity_y for the jump impulse.",
+    "Use only the supported typed logic actions and conditions from the tool schema. Do not invent new action kinds.",
     "For mutate runs, stage safe project operations until the request is fulfilled, then return a concise final summary.",
     "For analyze runs, do not call mutation tools. Read state, diagnose, and return a concise explanation.",
     "If an object is component-backed, inspect the component and edit the component for shared logic/physics/collider changes.",
@@ -1555,7 +1741,7 @@ async function performTool(
       case "get_scene":
         return {
           ok: true,
-          scene: getSceneSummary(execution.stagedState, String(args.sceneId ?? "")),
+          scene: buildAssistantModelScene(getSceneSummary(execution.stagedState, String(args.sceneId ?? ""))),
         };
       case "get_folder":
         return {
@@ -1567,18 +1753,32 @@ async function performTool(
           ),
         };
       case "get_object":
-        return {
-          ok: true,
-          object: getObjectSummary(
+        {
+          const object = getObjectSummary(
             execution.stagedState,
             String(args.sceneId ?? ""),
             String(args.objectId ?? ""),
-          ),
-        };
+          );
+          return {
+            ok: true,
+            object: {
+              ...buildAssistantModelObject(object),
+              logicOwner: object.logicOwner,
+              linkedComponent: object.linkedComponent
+                ? {
+                    id: object.linkedComponent.id,
+                    name: object.linkedComponent.name,
+                  }
+                : null,
+            },
+          };
+        }
       case "get_component":
         return {
           ok: true,
-          component: getComponentSummary(execution.stagedState, String(args.componentId ?? "")),
+          component: buildAssistantModelComponent(
+            getComponentSummary(execution.stagedState, String(args.componentId ?? "")),
+          ),
         };
       case "search_entities":
         return {
@@ -1743,6 +1943,24 @@ async function performTool(
           blocklyXml: String(args.blocklyXml ?? ""),
         });
       }
+      case "set_object_logic": {
+        const sceneId = String(args.sceneId ?? "");
+        const objectId = String(args.objectId ?? "");
+        const objectSummary = getObjectSummary(execution.stagedState, sceneId, objectId);
+        if (objectSummary.linkedComponent) {
+          return buildToolError(
+            `Object "${objectId}" is component-backed. Edit component "${objectSummary.linkedComponent.id}" instead.`,
+            "component_backed_object",
+            { componentId: objectSummary.linkedComponent.id },
+          );
+        }
+        return stageOperation(execution, {
+          kind: "set_object_logic",
+          sceneId,
+          objectId,
+          logic: (args.logic ?? {}) as any,
+        });
+      }
       case "make_component":
         return stageOperation(execution, {
           kind: "make_component",
@@ -1789,6 +2007,12 @@ async function performTool(
           kind: "set_component_blockly_xml",
           componentId: String(args.componentId ?? ""),
           blocklyXml: String(args.blocklyXml ?? ""),
+        });
+      case "set_component_logic":
+        return stageOperation(execution, {
+          kind: "set_component_logic",
+          componentId: String(args.componentId ?? ""),
+          logic: (args.logic ?? {}) as any,
         });
       default:
         return buildToolError(`Unknown tool "${toolName}".`, "unknown_tool");

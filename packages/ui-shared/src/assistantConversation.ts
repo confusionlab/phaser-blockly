@@ -1,4 +1,5 @@
 import type { AssistantProjectSnapshot } from './assistant';
+import { buildAssistantModelSnapshot } from './assistantReadModel';
 
 export type AssistantConversationRole = 'user' | 'assistant';
 
@@ -57,8 +58,8 @@ export function buildAssistantRunInputText({
   }
 
   sections.push(`Current user request: ${requestText}`);
-  sections.push('Normalized project snapshot JSON:');
-  sections.push(JSON.stringify(snapshot));
+  sections.push('Sanitized project snapshot JSON:');
+  sections.push(JSON.stringify(buildAssistantModelSnapshot(snapshot)));
 
   return sections.join('\n\n');
 }

@@ -9,6 +9,7 @@ import type {
   AssistantSceneFolder,
 } from '../../../../../packages/ui-shared/src/assistant';
 import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
+import { compileAssistantLogicProgram } from '../../../../../packages/ui-shared/src/assistantLogic';
 import type {
   ComponentDefinition,
   GameObject,
@@ -571,6 +572,25 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
           ),
         };
       }
+    case 'set_object_logic':
+      {
+        const normalizedBlocklyXml = normalizeBlocklyXml(compileAssistantLogicProgram(operation.logic));
+        return {
+          ...project,
+          scenes: project.scenes.map((scene) =>
+            scene.id === operation.sceneId
+              ? normalizeSceneLayering({
+                  ...scene,
+                  objects: scene.objects.map((object) =>
+                    object.id === operation.objectId
+                      ? { ...object, blocklyXml: normalizedBlocklyXml }
+                      : object,
+                  ),
+                })
+              : scene,
+          ),
+        };
+      }
     case 'make_component': {
       const scene = project.scenes.find((candidate) => candidate.id === operation.sceneId);
       const object = scene?.objects.find((candidate) => candidate.id === operation.objectId);
@@ -746,6 +766,28 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
     case 'set_component_blockly_xml':
       {
         const normalizedBlocklyXml = normalizeBlocklyXml(operation.blocklyXml);
+        return {
+          ...project,
+          components: (project.components || []).map((component) =>
+            component.id === operation.componentId
+              ? { ...component, blocklyXml: normalizedBlocklyXml }
+              : component,
+          ),
+          scenes: project.scenes.map((scene) =>
+            normalizeSceneLayering({
+              ...scene,
+              objects: scene.objects.map((object) =>
+                object.componentId === operation.componentId
+                  ? { ...object, blocklyXml: normalizedBlocklyXml }
+                  : object,
+              ),
+            }),
+          ),
+        };
+      }
+    case 'set_component_logic':
+      {
+        const normalizedBlocklyXml = normalizeBlocklyXml(compileAssistantLogicProgram(operation.logic));
         return {
           ...project,
           components: (project.components || []).map((component) =>
