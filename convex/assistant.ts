@@ -769,7 +769,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "update_scene_properties",
-    description: "Update scene background, camera config, or ground config.",
+    description: "Update scene camera config or ground config.",
     strict: true,
     parameters: {
       type: "object",
@@ -780,29 +780,6 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
           type: "object",
           additionalProperties: false,
           properties: {
-            background: {
-              anyOf: [
-                { type: "null" },
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    type: { type: "string", enum: ["color", "image", "tiled"] },
-                    value: { type: "string" },
-                    scrollFactor: {
-                      type: "object",
-                      additionalProperties: false,
-                      properties: {
-                        x: { type: "number" },
-                        y: { type: "number" },
-                      },
-                      required: ["x", "y"],
-                    },
-                  },
-                  required: ["type", "value"],
-                },
-              ],
-            },
             cameraConfig: {
               type: "object",
               additionalProperties: false,
@@ -932,7 +909,6 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
           type: "object",
           additionalProperties: false,
           properties: {
-            spriteAssetId: { anyOf: [{ type: "string" }, { type: "null" }] },
             x: { type: "number" },
             y: { type: "number" },
             scaleX: { type: "number" },
@@ -1026,7 +1002,6 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
           additionalProperties: false,
           properties: {
             name: { type: "string" },
-            spriteAssetId: { anyOf: [{ type: "string" }, { type: "null" }] },
             x: { type: "number" },
             y: { type: "number" },
             scaleX: { type: "number" },

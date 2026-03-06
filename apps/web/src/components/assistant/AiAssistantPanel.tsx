@@ -60,10 +60,12 @@ const WELCOME_SUGGESTIONS = [
     prompt: 'Improve the player movement with better jump and landing feel.',
   },
   {
-    text: 'Create a parallax background that moves with the camera.',
-    prompt: 'Add a parallax background that reacts to camera movement.',
+    text: 'Tune the camera follow and zoom for smoother platforming.',
+    prompt: 'Improve the camera follow and zoom for smoother platforming.',
   },
 ] as const;
+
+const MAX_ASSISTANT_SNAPSHOT_BYTES = 900 * 1024;
 
 function parseEventPayload(payloadJson: string): Record<string, unknown> | null {
   try {
@@ -101,6 +103,10 @@ function summarizeToolResult(result: Record<string, unknown> | null): string | n
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function getUtf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
 }
 
 function getStatusTone({
@@ -200,13 +206,20 @@ export function AiAssistantPanel() {
         try {
           const convexClient = convexRef.current;
           const snapshot = createAssistantProjectSnapshot(latestProject);
+          const snapshotJson = JSON.stringify(snapshot);
+          const snapshotBytes = getUtf8ByteLength(snapshotJson);
+          if (snapshotBytes > MAX_ASSISTANT_SNAPSHOT_BYTES) {
+            throw new Error(
+              `Assistant context is still too large after media redaction (${Math.round(snapshotBytes / 1024)} KiB). Try a smaller project area or request.`,
+            );
+          }
           const created = await convexClient.mutation(assistantApi.createRun, {
             projectId: latestProject.id,
             mode: 'mutate',
             requestText: userPrompt,
             conversationHistoryJson: JSON.stringify(conversationHistory),
             projectVersion: snapshot.projectVersion,
-            snapshotJson: JSON.stringify(snapshot),
+            snapshotJson,
           });
 
           const runId = String(created.runId);
@@ -448,7 +461,7 @@ export function AiAssistantPanel() {
       welcome: {
         message: project
           ? 'Describe a change for the open project. I will stream progress, validate the result, and apply the update automatically.'
-          : 'Open a project first, then ask for scene, logic, art, or gameplay changes.',
+          : 'Open a project first, then ask for scene, logic, camera, or gameplay changes.',
         suggestions: project ? [...WELCOME_SUGGESTIONS] : undefined,
       },
       composer: {

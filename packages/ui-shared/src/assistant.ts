@@ -47,23 +47,26 @@ export interface AssistantColliderConfig {
 export interface AssistantCostumeSummary {
   id: string;
   name: string;
-  assetId: string;
 }
 
 export interface AssistantSoundSummary {
   id: string;
   name: string;
-  assetId: string;
   trimStart?: number;
   trimEnd?: number;
   duration?: number;
 }
 
-export interface AssistantBackgroundConfig {
-  type: 'color' | 'image' | 'tiled';
-  value: string;
-  scrollFactor?: { x: number; y: number };
-}
+export type AssistantBackgroundConfig =
+  | {
+      type: 'color';
+      color: string;
+    }
+  | {
+      type: 'image' | 'tiled';
+      hasAsset: boolean;
+      scrollFactor?: { x: number; y: number };
+    };
 
 export interface AssistantGroundConfig {
   enabled: boolean;
@@ -93,7 +96,6 @@ export interface AssistantSceneFolder {
 export interface AssistantObject {
   id: string;
   name: string;
-  spriteAssetId: string | null;
   x: number;
   y: number;
   scaleX: number;
@@ -215,7 +217,6 @@ export type AssistantObjectProperties = Partial<
   Pick<
     AssistantObject,
     | 'name'
-    | 'spriteAssetId'
     | 'x'
     | 'y'
     | 'scaleX'
@@ -252,7 +253,7 @@ export type AssistantComponentInstanceProperties = Partial<
 >;
 
 export type AssistantSceneProperties = Partial<
-  Pick<AssistantScene, 'background' | 'cameraConfig' | 'ground'>
+  Pick<AssistantScene, 'cameraConfig' | 'ground'>
 >;
 
 export type AssistantProjectOperation =
@@ -624,7 +625,7 @@ function createDefaultScene(name: string, order: number, sceneId?: string): Assi
     id: sceneId ?? createId('scene'),
     name,
     order,
-    background: { type: 'color', value: '#87CEEB' },
+    background: { type: 'color', color: '#87CEEB' },
     cameraConfig: {
       followTarget: null,
       bounds: null,
@@ -639,7 +640,6 @@ function createDefaultObject(name: string, order: number, objectId?: string): As
   return {
     id: objectId ?? createId('object'),
     name,
-    spriteAssetId: null,
     x: 400,
     y: 300,
     scaleX: 1,
@@ -1214,7 +1214,6 @@ export function applyAssistantProjectOperations(
           operation.sceneId,
         );
         if (operation.properties) {
-          nextScene.background = operation.properties.background ?? nextScene.background;
           nextScene.cameraConfig = operation.properties.cameraConfig ?? nextScene.cameraConfig;
           nextScene.ground = operation.properties.ground ?? nextScene.ground;
         }
@@ -1254,10 +1253,6 @@ export function applyAssistantProjectOperations(
           scene.id === operation.sceneId
             ? normalizeScene({
                 ...scene,
-                background:
-                  operation.properties.background === undefined
-                    ? scene.background
-                    : operation.properties.background,
                 cameraConfig: operation.properties.cameraConfig ?? scene.cameraConfig,
                 ground: operation.properties.ground ?? scene.ground,
               })

@@ -1,4 +1,5 @@
 import type {
+  AssistantBackgroundConfig,
   AssistantChangeSet,
   AssistantComponent,
   AssistantObject,
@@ -157,11 +158,29 @@ function toAssistantFolder(folder: SceneFolder): AssistantSceneFolder {
   };
 }
 
+function toAssistantBackground(background: Scene['background']): AssistantBackgroundConfig | null {
+  if (!background) {
+    return null;
+  }
+
+  if (background.type === 'color') {
+    return {
+      type: 'color',
+      color: background.value,
+    };
+  }
+
+  return {
+    type: background.type,
+    hasAsset: Boolean(background.value || Object.keys(background.chunks || {}).length > 0),
+    scrollFactor: background.scrollFactor ? { ...background.scrollFactor } : undefined,
+  };
+}
+
 function toAssistantObject(object: GameObject): AssistantObject {
   return {
     id: object.id,
     name: object.name,
-    spriteAssetId: object.spriteAssetId ?? null,
     x: object.x,
     y: object.y,
     scaleX: object.scaleX,
@@ -177,13 +196,11 @@ function toAssistantObject(object: GameObject): AssistantObject {
     costumes: (object.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
-      assetId: costume.assetId,
     })),
     currentCostumeIndex: object.currentCostumeIndex,
     sounds: (object.sounds || []).map((sound) => ({
       id: sound.id,
       name: sound.name,
-      assetId: sound.assetId,
       trimStart: sound.trimStart,
       trimEnd: sound.trimEnd,
       duration: sound.duration,
@@ -200,7 +217,6 @@ function toAssistantComponent(component: ComponentDefinition): AssistantComponen
     costumes: (component.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
-      assetId: costume.assetId,
     })),
     currentCostumeIndex: component.currentCostumeIndex,
     physics: component.physics ? { ...component.physics } : null,
@@ -208,7 +224,6 @@ function toAssistantComponent(component: ComponentDefinition): AssistantComponen
     sounds: (component.sounds || []).map((sound) => ({
       id: sound.id,
       name: sound.name,
-      assetId: sound.assetId,
       trimStart: sound.trimStart,
       trimEnd: sound.trimEnd,
       duration: sound.duration,
@@ -222,13 +237,7 @@ function toAssistantScene(scene: Scene): AssistantScene {
     id: scene.id,
     name: scene.name,
     order: scene.order,
-    background: scene.background
-      ? {
-          type: scene.background.type,
-          value: scene.background.value,
-          scrollFactor: scene.background.scrollFactor ? { ...scene.background.scrollFactor } : undefined,
-        }
-      : null,
+    background: toAssistantBackground(scene.background),
     cameraConfig: {
       followTarget: scene.cameraConfig.followTarget,
       bounds: scene.cameraConfig.bounds ? { ...scene.cameraConfig.bounds } : null,
@@ -300,7 +309,6 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
         project.scenes.length,
       );
       if (operation.properties) {
-        nextScene.background = operation.properties.background ?? nextScene.background;
         nextScene.cameraConfig = operation.properties.cameraConfig ?? nextScene.cameraConfig;
         nextScene.ground = operation.properties.ground ?? nextScene.ground;
       }
@@ -351,10 +359,6 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
           scene.id === operation.sceneId
             ? normalizeSceneLayering({
                 ...scene,
-                background:
-                  operation.properties.background === undefined
-                    ? scene.background
-                    : operation.properties.background,
                 cameraConfig: operation.properties.cameraConfig ?? scene.cameraConfig,
                 ground: operation.properties.ground ?? scene.ground,
               })

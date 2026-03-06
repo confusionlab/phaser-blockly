@@ -11,7 +11,6 @@ function summarizeObjectForModel(object: AssistantObject) {
   return {
     id: object.id,
     name: object.name,
-    spriteAssetId: object.spriteAssetId,
     x: object.x,
     y: object.y,
     scaleX: object.scaleX,
