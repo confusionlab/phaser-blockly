@@ -719,6 +719,25 @@ test.describe('Assistant tool curation primitives', () => {
     ).toThrow(/fields\.VAR is required/);
   });
 
+  test('compileAssistantBlockProgram accepts control_switch_scene MODE field', () => {
+    const fixture = buildProjectFixture();
+
+    expect(() =>
+      compileAssistantBlockProgram({
+        formatVersion: 1,
+        blocks: [
+          {
+            type: 'control_switch_scene',
+            fields: {
+              SCENE: fixture.sceneId,
+              MODE: 'RESTART',
+            },
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   test('block tree reads exact existing structure and supports targeted inserts without rebuilding neighbors', () => {
     const variableId = 'variable_score';
     const soundId = 'sound_merge';
@@ -779,6 +798,46 @@ test.describe('Assistant tool curation primitives', () => {
     expect(insertedBlock?.values.SIZE?.fields.NUM).toBe('10');
     expect(insertedBlock?.next?.type).toBe('typed_variable_set');
     expect(insertedBlock?.next?.fields.VAR).toBe(variableId);
+  });
+
+  test('block tree edits accept control_switch_scene MODE field', () => {
+    const fixture = buildProjectFixture();
+    const blocklyXml = `
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="event_game_start">
+          <statement name="NEXT">
+            <block type="typed_variable_set">
+              <field name="VAR">${fixture.heroVariableId}</field>
+              <value name="VALUE">
+                <block type="math_number">
+                  <field name="NUM">1</field>
+                </block>
+              </value>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `.trim();
+
+    const editedXml = applyAssistantBlockTreeEdits(blocklyXml, [
+      {
+        kind: 'insert_after',
+        path: 'roots[0].statements.NEXT[0]',
+        block: {
+          type: 'control_switch_scene',
+          fields: {
+            SCENE: fixture.sceneId,
+            MODE: 'RESUME',
+          },
+        },
+      },
+    ]);
+
+    const editedTree = buildAssistantBlockTree(editedXml);
+    const insertedBlock = editedTree.roots[0]?.statements.NEXT[0]?.next;
+    expect(insertedBlock?.type).toBe('control_switch_scene');
+    expect(insertedBlock?.fields.SCENE).toBe(fixture.sceneId);
+    expect(insertedBlock?.fields.MODE).toBe('RESUME');
   });
 
   test('applyAssistantProjectOperations rejects invalid component Blockly references introduced by a write', () => {
