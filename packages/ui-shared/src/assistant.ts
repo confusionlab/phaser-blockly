@@ -162,6 +162,7 @@ export interface AssistantProjectSnapshot {
   projectId: string;
   projectVersion: string;
   normalizedAtIso: string;
+  focusSceneId?: string | null;
   state: AssistantProjectState;
 }
 

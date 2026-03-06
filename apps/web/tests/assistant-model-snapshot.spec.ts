@@ -127,8 +127,12 @@ test.describe('assistant model snapshot', () => {
     });
 
     expect(prompt).toContain('Project snapshot (sanitized, readable):');
-    expect(prompt).toContain('Available blocks (compact catalog):');
-    expect(prompt).toContain('looks_change_size | statement | Change size by amount');
+    expect(prompt).toContain('Project overview: scenes=1 objects=1 components=0');
+    expect(prompt).toContain('Active scene:');
+    expect(prompt).toContain('Standalone objects: Hero');
+    expect(prompt).toContain('Logic owners in active scene:');
+    expect(prompt).toContain('Additional context can be fetched with tools: get_scene, get_object, get_component, search_blocks, get_block_details');
+    expect(prompt).not.toContain('Available blocks (compact catalog):');
     expect(prompt).not.toContain('blocklyXml');
     expect(prompt).not.toContain('data:image');
     expect(prompt).not.toContain('data:audio');

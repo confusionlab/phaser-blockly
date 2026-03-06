@@ -256,13 +256,20 @@ function toAssistantScene(scene: Scene): AssistantScene {
   };
 }
 
-export function createAssistantProjectVersion(project: Pick<Project, 'id' | 'updatedAt'>): string {
-  return `${project.id}:${project.updatedAt.toISOString()}:assistant-v${ASSISTANT_SNAPSHOT_FORMAT_VERSION}`;
+export function createAssistantProjectVersion(
+  project: Pick<Project, 'id' | 'updatedAt'>,
+  options: { focusSceneId?: string | null } = {},
+): string {
+  const focusSceneToken = options.focusSceneId?.trim() || 'auto';
+  return `${project.id}:${project.updatedAt.toISOString()}:assistant-v${ASSISTANT_SNAPSHOT_FORMAT_VERSION}:focus-${focusSceneToken}`;
 }
 
-export function createAssistantProjectSnapshot(project: Project): AssistantProjectSnapshot {
+export function createAssistantProjectSnapshot(
+  project: Project,
+  options: { focusSceneId?: string | null } = {},
+): AssistantProjectSnapshot {
   const normalizedProject = normalizeProjectLayering(cloneProject(project));
-  const projectVersion = createAssistantProjectVersion(normalizedProject);
+  const projectVersion = createAssistantProjectVersion(normalizedProject, options);
   const state: AssistantProjectState = {
     project: {
       id: normalizedProject.id,
@@ -282,6 +289,7 @@ export function createAssistantProjectSnapshot(project: Project): AssistantProje
     projectId: normalizedProject.id,
     projectVersion,
     normalizedAtIso: new Date().toISOString(),
+    focusSceneId: options.focusSceneId ?? null,
     state,
   };
 }

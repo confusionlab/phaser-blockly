@@ -162,8 +162,11 @@ function getUtf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-function buildAssistantSnapshotUpload(project: NonNullable<ReturnType<typeof useProjectStore.getState>['project']>) {
-  const snapshot = createAssistantProjectSnapshot(project);
+function buildAssistantSnapshotUpload(
+  project: NonNullable<ReturnType<typeof useProjectStore.getState>['project']>,
+  options: { focusSceneId?: string | null } = {},
+) {
+  const snapshot = createAssistantProjectSnapshot(project, options);
   const snapshotJson = JSON.stringify(snapshot);
   const snapshotBytes = getUtf8ByteLength(snapshotJson);
   if (snapshotBytes > MAX_ASSISTANT_SNAPSHOT_BYTES) {
@@ -329,9 +332,12 @@ export function AiAssistantPanel() {
         try {
           const convexClient = convexRef.current;
           const latestIsDirty = useProjectStore.getState().isDirty;
+          const latestSelectedSceneId = useEditorStore.getState().selectedSceneId;
           let preparedSnapshot: ReturnType<typeof buildAssistantSnapshotUpload> | null = null;
           const ensureSnapshotUpload = () => {
-            preparedSnapshot ??= buildAssistantSnapshotUpload(latestProject);
+            preparedSnapshot ??= buildAssistantSnapshotUpload(latestProject, {
+              focusSceneId: latestSelectedSceneId,
+            });
             return preparedSnapshot;
           };
           const createRun = (snapshotJson?: string) =>
@@ -341,7 +347,9 @@ export function AiAssistantPanel() {
               modelMode: assistantModelModeRef.current,
               requestText: userPrompt,
               conversationHistoryJson: JSON.stringify(conversationHistory),
-              projectVersion: preparedSnapshot?.projectVersion ?? createAssistantProjectVersion(latestProject),
+              projectVersion: preparedSnapshot?.projectVersion ?? createAssistantProjectVersion(latestProject, {
+                focusSceneId: latestSelectedSceneId,
+              }),
               snapshotJson,
             });
 

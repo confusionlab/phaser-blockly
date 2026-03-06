@@ -2180,7 +2180,7 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "Use emit_progress before significant work and when your plan changes.",
     "Use the domain tools only. Do not invent unsupported operations.",
     "Prefer the narrowest inspection tool that answers the question: get_scene/get_folder/get_object/get_component before broad search when you already know the target.",
-    "A compact toolbox catalog is included in the prompt. Use search_blocks and get_block_details when you need exact block signatures.",
+    "Use search_blocks and get_block_details when you need exact block signatures. Do not expect the full toolbox catalog to be preloaded in the prompt.",
     "Before deleting or moving scenes, folders, objects, or components when impact is unclear, call list_references first.",
     "When you create a scene, folder, object, or component that you will reference again in the same run, provide a stable id in that create call and reuse it in follow-up calls.",
     "When a write tool creates or duplicates an entity and you need to use it later in the same run, reuse the id returned in createdEntities instead of guessing by name.",

@@ -10,7 +10,6 @@ import type {
   AssistantValidationIssue,
 } from './assistant';
 import type { AssistantBlockCatalogEntry } from './assistantBlocks';
-import { getAssistantBlockCatalog } from './assistantBlocks';
 import {
   buildAssistantModelComponent,
   buildAssistantModelObject,
@@ -505,70 +504,95 @@ export function formatAssistantToolError(error: AssistantToolErrorTextInput): st
   return lines.join('\n');
 }
 
-function formatSceneSection(snapshot: AssistantPromptSnapshot, lines: string[]) {
-  lines.push('Scenes:');
-
+function getFocusScene(snapshot: AssistantPromptSnapshot): AssistantPromptSnapshot['state']['scenes'][number] | null {
   if (snapshot.state.scenes.length === 0) {
-    lines.push('  none');
-    return;
+    return null;
   }
 
-  snapshot.state.scenes.forEach((scene, sceneIndex) => {
-    lines.push(`  ${sceneIndex + 1}. Scene "${scene.name}" [id=${scene.id}, order=${scene.order}]`);
-    lines.push(`    Background: ${formatBackground(scene.background)}`);
-    lines.push(`    Camera: ${formatCamera(scene.cameraConfig)}`);
-    lines.push(`    Ground: ${formatGround(scene.ground)}`);
-    lines.push(
-      `    Folders: ${
-        scene.objectFolders.length === 0
-          ? 'none'
-          : scene.objectFolders
-            .map((folder) => `${folder.name}[id=${folder.id}, parent=${formatId(folder.parentId)}, order=${folder.order}]`)
-            .join(', ')
-      }`,
-    );
+  return snapshot.state.scenes.find((scene) => scene.id === snapshot.focusSceneId) ?? snapshot.state.scenes[0] ?? null;
+}
 
-    if (scene.objects.length === 0) {
-      lines.push('    Objects: none');
+function collectReferencedComponentIds(
+  snapshot: AssistantPromptSnapshot,
+  scene: AssistantPromptSnapshot['state']['scenes'][number],
+): Set<string> {
+  const referencedComponentIds = new Set<string>();
+
+  scene.objects.forEach((object) => {
+    if (object.componentId) {
+      referencedComponentIds.add(object.componentId);
+    }
+  });
+
+  snapshot.state.components.forEach((component) => {
+    const componentToken = `component:${component.id}`;
+    const referencedByLogic = scene.objects.some((object) => {
+      const generatedCode = object.logic.generatedCode ?? '';
+      return generatedCode.includes(component.id) || generatedCode.includes(componentToken);
+    });
+    if (referencedByLogic) {
+      referencedComponentIds.add(component.id);
+    }
+  });
+
+  return referencedComponentIds;
+}
+
+function formatComponentInstanceGroups(
+  scene: AssistantPromptSnapshot['state']['scenes'][number],
+  snapshot: AssistantPromptSnapshot,
+): string {
+  const grouped = new Map<string, { componentName: string; count: number }>();
+
+  scene.objects.forEach((object) => {
+    if (!object.componentId) {
       return;
     }
 
-    lines.push('    Objects:');
-    scene.objects.forEach((object, objectIndex) => {
-      appendObjectDetail(lines, object, '      ', `${objectIndex + 1}.`);
+    const component = snapshot.state.components.find((candidate) => candidate.id === object.componentId);
+    const componentName = component?.name ?? object.componentId;
+    const current = grouped.get(object.componentId);
+    if (current) {
+      current.count += 1;
+      return;
+    }
+
+    grouped.set(object.componentId, {
+      componentName,
+      count: 1,
     });
   });
-}
 
-function formatComponentSection(snapshot: AssistantPromptSnapshot, lines: string[]) {
-  lines.push('Components:');
-
-  if (snapshot.state.components.length === 0) {
-    lines.push('  none');
-    return;
+  if (grouped.size === 0) {
+    return 'none';
   }
 
-  snapshot.state.components.forEach((component, componentIndex) => {
-    appendComponentDetail(lines, component, '  ', `${componentIndex + 1}.`);
-  });
+  return Array.from(grouped.entries())
+    .map(([componentId, entry]) => `${entry.componentName} x${entry.count} [component=${componentId}]`)
+    .join(', ');
 }
 
-function formatBlockCatalogSection(lines: string[]) {
-  const catalog = getAssistantBlockCatalog();
-  lines.push('Available blocks (compact catalog):');
-
-  let currentCategory = '';
-  catalog.forEach((entry) => {
-    if (entry.category !== currentCategory) {
-      currentCategory = entry.category;
-      lines.push(`  ${currentCategory}:`);
-    }
-    lines.push(`    ${entry.type} | ${entry.kind} | ${entry.summary}`);
+function appendPromptLogicOwner(
+  lines: string[],
+  heading: string,
+  entity: { id: string; name: string; logic: { summary: string; generatedCode?: string; generatedCodeTruncated?: boolean } },
+  indent = '  ',
+) {
+  lines.push(`${indent}${heading} "${entity.name}" [id=${entity.id}]`);
+  lines.push(`${indent}  Logic summary: ${entity.logic.summary}`);
+  if (!entity.logic.generatedCode) {
+    return;
+  }
+  lines.push(`${indent}  Generated JS:`);
+  entity.logic.generatedCode.split('\n').forEach((line) => {
+    lines.push(`${indent}    ${line}`);
   });
 }
 
 export function formatAssistantPromptSnapshot(snapshotInput: Parameters<typeof buildAssistantModelSnapshot>[0]): string {
   const snapshot = buildAssistantModelSnapshot(snapshotInput);
+  const focusScene = getFocusScene(snapshot);
+  const totalObjectCount = snapshot.state.scenes.reduce((count, scene) => count + scene.objects.length, 0);
   const lines: string[] = [
     'Project snapshot (sanitized, readable):',
     `Project: "${snapshot.state.project.name}" [id=${snapshot.projectId}, version=${snapshot.projectVersion}]`,
@@ -576,14 +600,58 @@ export function formatAssistantPromptSnapshot(snapshotInput: Parameters<typeof b
     `Canvas: ${formatNumber(snapshot.state.settings.canvasWidth)}x${formatNumber(snapshot.state.settings.canvasHeight)} background=${snapshot.state.settings.backgroundColor}`,
     `Global variables: ${formatVariableList(snapshot.state.globalVariables)}`,
     `Messages: ${snapshot.state.messages.length === 0 ? 'none' : formatNameList(snapshot.state.messages)}`,
+    `Project overview: scenes=${snapshot.state.scenes.length} objects=${totalObjectCount} components=${snapshot.state.components.length}`,
     '',
   ];
 
-  formatSceneSection(snapshot, lines);
+  lines.push('Active scene:');
+  if (!focusScene) {
+    lines.push('  none');
+    return lines.join('\n').trim();
+  }
+
+  const standaloneObjects = focusScene.objects.filter((object) => !object.componentId);
+  const standaloneLogicOwners = standaloneObjects.filter((object) => object.logic.hasLogic);
+  const referencedComponentIds = collectReferencedComponentIds(snapshot, focusScene);
+  const referencedComponents = snapshot.state.components.filter((component) => referencedComponentIds.has(component.id));
+  const referencedLogicComponents = referencedComponents.filter((component) => component.logic.hasLogic);
+  const otherScenes = snapshot.state.scenes.filter((scene) => scene.id !== focusScene.id);
+  const otherComponents = snapshot.state.components.filter((component) => !referencedComponentIds.has(component.id));
+
+  lines.push(`  Scene "${focusScene.name}" [id=${focusScene.id}, order=${focusScene.order}]`);
+  lines.push(`    Background: ${formatBackground(focusScene.background)}`);
+  lines.push(`    Camera: ${formatCamera(focusScene.cameraConfig)}`);
+  lines.push(`    Ground: ${formatGround(focusScene.ground)}`);
+  lines.push(
+    `    Folders: ${
+      focusScene.objectFolders.length === 0
+        ? 'none'
+        : focusScene.objectFolders
+          .map((folder) => `${folder.name}[id=${folder.id}, parent=${formatId(folder.parentId)}, order=${folder.order}]`)
+          .join(', ')
+    }`,
+  );
+  lines.push(`    Standalone objects: ${standaloneObjects.length === 0 ? 'none' : formatNameList(standaloneObjects)}`);
+  lines.push(`    Component instances: ${formatComponentInstanceGroups(focusScene, snapshot)}`);
+  lines.push(
+    `    Referenced components in scene logic: ${
+      referencedComponents.length === 0 ? 'none' : formatNameList(referencedComponents)
+    }`,
+  );
+
   lines.push('');
-  formatComponentSection(snapshot, lines);
+  lines.push('Logic owners in active scene:');
+  if (standaloneLogicOwners.length === 0 && referencedLogicComponents.length === 0) {
+    lines.push('  none');
+  } else {
+    standaloneLogicOwners.forEach((object) => appendPromptLogicOwner(lines, 'Object', object));
+    referencedLogicComponents.forEach((component) => appendPromptLogicOwner(lines, 'Component', component));
+  }
+
   lines.push('');
-  formatBlockCatalogSection(lines);
+  lines.push(`Other scenes: ${otherScenes.length === 0 ? 'none' : formatNameList(otherScenes)}`);
+  lines.push(`Other components: ${otherComponents.length === 0 ? 'none' : formatNameList(otherComponents)}`);
+  lines.push('Additional context can be fetched with tools: get_scene, get_object, get_component, search_blocks, get_block_details');
 
   return lines.join('\n').trim();
 }

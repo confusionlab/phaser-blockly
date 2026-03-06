@@ -120,6 +120,7 @@ export function buildAssistantModelSnapshot(snapshot: AssistantProjectSnapshot) 
     projectId: snapshot.projectId,
     projectVersion: snapshot.projectVersion,
     normalizedAtIso: snapshot.normalizedAtIso,
+    focusSceneId: snapshot.focusSceneId ?? null,
     state: buildAssistantModelState(snapshot.state),
   };
 }
