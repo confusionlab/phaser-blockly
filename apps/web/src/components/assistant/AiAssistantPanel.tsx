@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { useConvex, useMutation, useQuery } from 'convex/react';
 import {
   AssistantRuntimeProvider,
@@ -161,6 +161,33 @@ function getStatusTone({
   return 'idle';
 }
 
+function AssistantThreadShell({
+  runtimeAdapter,
+  threadConfig,
+  children,
+}: {
+  runtimeAdapter: ChatModelAdapter;
+  threadConfig: ComponentProps<typeof Thread.Root>['config'];
+  children: ReactNode;
+}) {
+  const runtime = useLocalRuntime(runtimeAdapter);
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <Thread.Root
+        config={threadConfig}
+        className={cn(
+          'assistant-panel-theme assistant-panel-chrome h-full overflow-hidden rounded-[28px]',
+          'border border-white/60 shadow-[0_40px_120px_-48px_rgba(15,23,42,0.65)]',
+          'dark:border-white/10',
+        )}
+      >
+        {children}
+      </Thread.Root>
+    </AssistantRuntimeProvider>
+  );
+}
+
 export function AiAssistantPanel() {
   const { user } = useUser();
   const convex = useConvex();
@@ -228,8 +255,7 @@ export function AiAssistantPanel() {
     }
   };
 
-  const runtime = useLocalRuntime(
-    useMemo<ChatModelAdapter>(() => ({
+  const runtimeAdapter = useMemo<ChatModelAdapter>(() => ({
       run: async function* ({ messages, abortSignal }: ChatModelRunOptions) {
         const { requestText: userPrompt, conversationHistory } = extractAssistantThreadContext(messages as never);
         if (!userPrompt) {
@@ -520,8 +546,7 @@ export function AiAssistantPanel() {
           return;
         }
       },
-    }), []),
-  );
+    }), []);
 
   const objectCount = useMemo(
     () => project?.scenes.reduce((total, scene) => total + scene.objects.length, 0) ?? 0,
@@ -631,16 +656,11 @@ export function AiAssistantPanel() {
           />
 
           <div className="absolute inset-3 animate-in fade-in zoom-in-95 slide-in-from-bottom-4 duration-200 sm:inset-4">
-            <AssistantRuntimeProvider key={threadSessionKey} runtime={runtime}>
-              <Thread.Root
-                key={threadSessionKey}
-                config={threadConfig}
-                className={cn(
-                  'assistant-panel-theme assistant-panel-chrome h-full overflow-hidden rounded-[28px]',
-                  'border border-white/60 shadow-[0_40px_120px_-48px_rgba(15,23,42,0.65)]',
-                  'dark:border-white/10',
-                )}
-              >
+            <AssistantThreadShell
+              key={threadSessionKey}
+              runtimeAdapter={runtimeAdapter}
+              threadConfig={threadConfig}
+            >
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="border-b border-black/6 px-5 py-4 dark:border-white/10 sm:px-6">
                     <div className="flex items-start justify-between gap-4">
@@ -912,8 +932,7 @@ export function AiAssistantPanel() {
                     </section>
                   </div>
                 </div>
-              </Thread.Root>
-            </AssistantRuntimeProvider>
+            </AssistantThreadShell>
           </div>
         </div>
       </div>
