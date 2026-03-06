@@ -118,6 +118,7 @@ export function AiAssistantPanel() {
   const convex = useConvex();
   const convexRef = useRef(convex);
   const project = useProjectStore((state) => state.project);
+  const projectId = project?.id ?? 'no-project';
   const assistantLockRunId = useEditorStore((state) => state.assistantLockRunId);
   const assistantLockMessage = useEditorStore((state) => state.assistantLockMessage);
   const [isOpen, setIsOpen] = useState(false);
@@ -144,6 +145,13 @@ export function AiAssistantPanel() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
+
+  useEffect(() => {
+    setRecentFeed([]);
+    setCurrentTool(null);
+    setStatusLabel('Ready');
+    setErrorMessage(null);
+  }, [projectId]);
 
   const runtime = useLocalRuntime(
     useMemo<ChatModelAdapter>(() => ({
@@ -482,8 +490,16 @@ export function AiAssistantPanel() {
         </Button>
       ) : null}
 
-      {isOpen ? (
-        <div className="fixed inset-0 z-[100330]">
+      <div
+        className={cn(
+          'fixed inset-0 z-[100330]',
+          !isOpen && 'pointer-events-none invisible opacity-0',
+        )}
+      >
+        <div
+          className="absolute inset-0"
+          style={{ display: isOpen ? 'block' : 'none' }}
+        >
           <button
             type="button"
             className="absolute inset-0 bg-slate-950/20 backdrop-blur-[3px]"
@@ -494,6 +510,7 @@ export function AiAssistantPanel() {
           <div className="absolute inset-3 animate-in fade-in zoom-in-95 slide-in-from-bottom-4 duration-200 sm:inset-4">
             <AssistantRuntimeProvider runtime={runtime}>
               <Thread.Root
+                key={projectId}
                 config={threadConfig}
                 className={cn(
                   'assistant-panel-theme assistant-panel-chrome h-full overflow-hidden rounded-[28px]',
@@ -724,7 +741,7 @@ export function AiAssistantPanel() {
             </AssistantRuntimeProvider>
           </div>
         </div>
-      ) : null}
+      </div>
     </>
   );
 }
