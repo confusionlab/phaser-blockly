@@ -1,10 +1,21 @@
 import { expect, test } from '@playwright/test';
-import { createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
+import {
+  createAssistantProjectSnapshot,
+  createAssistantProjectVersion,
+} from '../src/lib/assistant/projectState';
 import { createDefaultGameObject, createDefaultProject } from '../src/types';
 import { buildAssistantRunInputText } from '../../../packages/ui-shared/src/assistantConversation';
 import { buildAssistantModelSnapshot } from '../../../packages/ui-shared/src/assistantReadModel';
 
 test.describe('assistant model snapshot', () => {
+  test('createAssistantProjectVersion matches the snapshot version without building prompt state', () => {
+    const project = createDefaultProject('Version Fixture');
+    const projectVersion = createAssistantProjectVersion(project);
+    const snapshot = createAssistantProjectSnapshot(project);
+
+    expect(projectVersion).toBe(snapshot.projectVersion);
+  });
+
   test('createAssistantProjectSnapshot redacts asset payloads and buildAssistantModelSnapshot exposes logic summary', () => {
     const project = createDefaultProject('Snapshot Fixture');
     const scene = project.scenes[0]!;

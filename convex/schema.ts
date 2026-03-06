@@ -189,7 +189,14 @@ export default defineSchema({
     source: v.union(v.literal("full"), v.literal("patch")),
     baseSnapshotId: v.optional(v.id("assistantSnapshots")),
     createdAt: v.number(),
-  }).index("by_ownerUserId_and_projectId_and_createdAt", ["ownerUserId", "projectId", "createdAt"]),
+  })
+    .index("by_ownerUserId_and_projectId_and_createdAt", ["ownerUserId", "projectId", "createdAt"])
+    .index("by_ownerUserId_and_projectId_and_projectVersion_and_createdAt", [
+      "ownerUserId",
+      "projectId",
+      "projectVersion",
+      "createdAt",
+    ]),
 
   assistantRuns: defineTable({
     ownerUserId: v.optional(v.string()),

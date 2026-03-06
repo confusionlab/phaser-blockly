@@ -36,6 +36,7 @@ import {
 } from "../packages/ui-shared/src/assistantReadModel";
 
 const internalAssistant = (internal as any).assistant;
+const ASSISTANT_SNAPSHOT_MISSING_ERROR = "assistant_snapshot_missing_for_project_version";
 
 type AssistantRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 type AssistantRunMode = "mutate" | "analyze";
@@ -117,6 +118,24 @@ async function requireAuthenticatedUserId(ctx: any): Promise<string> {
 
 function safeStringify(value: unknown): string {
   return JSON.stringify(value);
+}
+
+async function findReusableSnapshot(
+  ctx: any,
+  ownerUserId: string,
+  projectId: string,
+  projectVersion: string,
+) {
+  return await ctx.db
+    .query("assistantSnapshots")
+    .withIndex("by_ownerUserId_and_projectId_and_projectVersion_and_createdAt", (q: any) =>
+      q
+        .eq("ownerUserId", ownerUserId)
+        .eq("projectId", projectId)
+        .eq("projectVersion", projectVersion),
+    )
+    .order("desc")
+    .first();
 }
 
 function parseSnapshot(snapshotJson: string): AssistantProjectSnapshot {
@@ -1254,7 +1273,7 @@ export const createRun = mutation({
     requestText: v.string(),
     conversationHistoryJson: v.optional(v.string()),
     projectVersion: v.string(),
-    snapshotJson: v.string(),
+    snapshotJson: v.optional(v.string()),
   },
   returns: v.object({
     runId: v.id("assistantRuns"),
@@ -1272,14 +1291,27 @@ export const createRun = mutation({
       throw new Error("An assistant run is already active for this project.");
     }
 
-    const snapshotId = await ctx.db.insert("assistantSnapshots", {
+    const existingSnapshot = await findReusableSnapshot(
+      ctx,
       ownerUserId,
-      projectId: args.projectId,
-      projectVersion: args.projectVersion,
-      snapshotJson: args.snapshotJson,
-      source: "full",
-      createdAt: Date.now(),
-    });
+      args.projectId,
+      args.projectVersion,
+    );
+    let snapshotId = existingSnapshot?._id;
+    if (!snapshotId) {
+      if (!args.snapshotJson) {
+        throw new Error(ASSISTANT_SNAPSHOT_MISSING_ERROR);
+      }
+
+      snapshotId = await ctx.db.insert("assistantSnapshots", {
+        ownerUserId,
+        projectId: args.projectId,
+        projectVersion: args.projectVersion,
+        snapshotJson: args.snapshotJson,
+        source: "full",
+        createdAt: Date.now(),
+      });
+    }
 
     const runId = await ctx.db.insert("assistantRuns", {
       ownerUserId,

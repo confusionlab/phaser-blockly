@@ -249,9 +249,13 @@ function toAssistantScene(scene: Scene): AssistantScene {
   };
 }
 
+export function createAssistantProjectVersion(project: Pick<Project, 'id' | 'updatedAt'>): string {
+  return `${project.id}:${project.updatedAt.toISOString()}`;
+}
+
 export function createAssistantProjectSnapshot(project: Project): AssistantProjectSnapshot {
   const normalizedProject = normalizeProjectLayering(cloneProject(project));
-  const projectVersion = `${normalizedProject.id}:${normalizedProject.updatedAt.toISOString()}`;
+  const projectVersion = createAssistantProjectVersion(normalizedProject);
   const state: AssistantProjectState = {
     project: {
       id: normalizedProject.id,

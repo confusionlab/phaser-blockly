@@ -35,7 +35,12 @@ import {
 } from '@/lib/assistant/toolDiagnostics';
 import { extractAssistantThreadContext } from '@/lib/assistant/threadContext';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { createAssistantProjectSnapshot, projectContainsObject, projectContainsScene } from '@/lib/assistant/projectState';
+import {
+  createAssistantProjectSnapshot,
+  createAssistantProjectVersion,
+  projectContainsObject,
+  projectContainsScene,
+} from '@/lib/assistant/projectState';
 import { cn } from '@/lib/utils';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
@@ -66,6 +71,7 @@ const WELCOME_SUGGESTIONS = [
 ] as const;
 
 const MAX_ASSISTANT_SNAPSHOT_BYTES = 900 * 1024;
+const ASSISTANT_SNAPSHOT_MISSING_ERROR = 'assistant_snapshot_missing_for_project_version';
 
 function parseEventPayload(payloadJson: string): Record<string, unknown> | null {
   try {
@@ -107,6 +113,22 @@ function sleep(ms: number) {
 
 function getUtf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
+}
+
+function buildAssistantSnapshotUpload(project: NonNullable<ReturnType<typeof useProjectStore.getState>['project']>) {
+  const snapshot = createAssistantProjectSnapshot(project);
+  const snapshotJson = JSON.stringify(snapshot);
+  const snapshotBytes = getUtf8ByteLength(snapshotJson);
+  if (snapshotBytes > MAX_ASSISTANT_SNAPSHOT_BYTES) {
+    throw new Error(
+      `Assistant context is still too large after media redaction (${Math.round(snapshotBytes / 1024)} KiB). Try a smaller project area or request.`,
+    );
+  }
+
+  return {
+    projectVersion: snapshot.projectVersion,
+    snapshotJson,
+  };
 }
 
 function getStatusTone({
@@ -205,22 +227,39 @@ export function AiAssistantPanel() {
 
         try {
           const convexClient = convexRef.current;
-          const snapshot = createAssistantProjectSnapshot(latestProject);
-          const snapshotJson = JSON.stringify(snapshot);
-          const snapshotBytes = getUtf8ByteLength(snapshotJson);
-          if (snapshotBytes > MAX_ASSISTANT_SNAPSHOT_BYTES) {
-            throw new Error(
-              `Assistant context is still too large after media redaction (${Math.round(snapshotBytes / 1024)} KiB). Try a smaller project area or request.`,
-            );
+          const latestIsDirty = useProjectStore.getState().isDirty;
+          let preparedSnapshot: ReturnType<typeof buildAssistantSnapshotUpload> | null = null;
+          const ensureSnapshotUpload = () => {
+            preparedSnapshot ??= buildAssistantSnapshotUpload(latestProject);
+            return preparedSnapshot;
+          };
+          const createRun = (snapshotJson?: string) =>
+            convexClient.mutation(assistantApi.createRun, {
+              projectId: latestProject.id,
+              mode: 'mutate',
+              requestText: userPrompt,
+              conversationHistoryJson: JSON.stringify(conversationHistory),
+              projectVersion: preparedSnapshot?.projectVersion ?? createAssistantProjectVersion(latestProject),
+              snapshotJson,
+            });
+
+          let created;
+          if (latestIsDirty) {
+            const snapshotUpload = ensureSnapshotUpload();
+            created = await createRun(snapshotUpload.snapshotJson);
+          } else {
+            try {
+              created = await createRun();
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              if (!message.includes(ASSISTANT_SNAPSHOT_MISSING_ERROR)) {
+                throw error;
+              }
+
+              const snapshotUpload = ensureSnapshotUpload();
+              created = await createRun(snapshotUpload.snapshotJson);
+            }
           }
-          const created = await convexClient.mutation(assistantApi.createRun, {
-            projectId: latestProject.id,
-            mode: 'mutate',
-            requestText: userPrompt,
-            conversationHistoryJson: JSON.stringify(conversationHistory),
-            projectVersion: snapshot.projectVersion,
-            snapshotJson,
-          });
 
           const runId = String(created.runId);
           activeRunIdRef.current = runId;
