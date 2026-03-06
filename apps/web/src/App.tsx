@@ -6,8 +6,6 @@ import { api } from '@convex-generated/api';
 import { SignIn, UserButton, useUser } from '@clerk/clerk-react';
 import { EditorLayout } from './components/layout/EditorLayout';
 import { DebugPanel } from './components/debug/DebugPanel';
-import { GlobalAssistantModal } from './components/assistant/GlobalAssistantModal';
-import { BillingPage } from './components/billing/BillingPage';
 import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
 import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls';
@@ -83,9 +81,6 @@ function AuthenticatedShell() {
     setDarkMode(userSettings.isDarkMode);
   }, [setDarkMode, userSettings]);
 
-  const isEditorRoute =
-    location.pathname === '/'
-    || location.pathname.startsWith('/project/');
   const isHomeRoute = location.pathname === '/';
 
   return (
@@ -98,10 +93,8 @@ function AuthenticatedShell() {
       <Routes>
         <Route path="/" element={<EditorLayout />} />
         <Route path="/project/:projectId" element={<EditorLayout />} />
-        <Route path="/billing" element={<BillingPage />} />
       </Routes>
-      {isEditorRoute ? <GlobalAssistantModal /> : null}
-      {isEditorRoute ? <DebugPanel /> : null}
+      {(location.pathname === '/' || location.pathname.startsWith('/project/')) ? <DebugPanel /> : null}
     </>
   );
 }

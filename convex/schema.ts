@@ -174,36 +174,6 @@ export default defineSchema({
     .index("by_ownerUserId_and_projectLocalId_and_revisionId", ["ownerUserId", "projectLocalId", "revisionId"])
     .index("by_ownerUserId_and_projectLocalId_and_contentHash", ["ownerUserId", "projectLocalId", "contentHash"]),
 
-  wallets: defineTable({
-    userId: v.string(),
-    planSlug: v.string(),
-    subscriptionStatus: v.string(),
-    balanceCredits: v.number(),
-    activePeriodKey: v.optional(v.string()),
-    periodEndsAt: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  }).index("by_userId", ["userId"]),
-
-  creditLedger: defineTable({
-    userId: v.string(),
-    delta: v.number(),
-    reason: v.string(),
-    referenceId: v.string(),
-    balanceAfter: v.number(),
-    metadataJson: v.optional(v.string()),
-    createdAt: v.number(),
-  })
-    .index("by_userId_and_createdAt", ["userId", "createdAt"])
-    .index("by_userId_and_referenceId", ["userId", "referenceId"]),
-
-  billingEvents: defineTable({
-    eventId: v.string(),
-    eventType: v.string(),
-    payloadHash: v.string(),
-    processedAt: v.number(),
-  }).index("by_eventId", ["eventId"]),
-
   userSettings: defineTable({
     userId: v.string(),
     isDarkMode: v.optional(v.boolean()),

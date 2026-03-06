@@ -4,8 +4,7 @@
 
 - `apps/web`: Vite + React web editor.
 - `apps/desktop`: Electron shell (macOS-first).
-- `packages/assistant-core`: Shared assistant contracts and semantic-op validator.
-- `convex`: Convex backend/actions for cloud sync + LLM turn routing.
+- `convex`: Convex backend/actions for cloud sync.
 
 ## Common Commands
 
@@ -56,22 +55,6 @@
 - macOS unsigned `dmg` + `zip`: `pnpm --filter @pochacoding/desktop dist:mac`
 - In development (`pnpm dev:desktop`), Electron renderer loads `http://localhost:5173` (or override via `POCHACODING_DESKTOP_WEB_URL`).
 - In packaged runtime, Electron loads the hosted app URL `https://code.confusionlab.com` by default (override via `POCHACODING_DESKTOP_PROD_WEB_URL`). It falls back to bundled `web-dist` if the hosted URL fails to load.
-
-## Blockly LLM Assistant (OpenAI Responses)
-
-- The Blockly editor includes an assistant panel for natural-language block edits.
-- Assistant calls are made from a Convex action (server-side), not from browser code.
-- Web and desktop both use the same managed OpenAI Responses-based runner in `packages/assistant-core`.
-- Configure Convex env vars:
-  - `OPENAI_API_KEY`
-  - `OPENAI_MODEL` or `OPENAI_MANAGED_MODEL` (optional, defaults to `gpt-5`)
-  - `OPENAI_APP_NAME` or `OPENAI_MANAGED_APP_NAME` (optional title header)
-- Flow:
-  1. Enter an instruction in the assistant panel.
-  2. Convex calls the shared assistant-core runner.
-  3. Client validates the returned semantic/project edits against the current project.
-  4. Valid edits are applied automatically.
-  5. Use rollback to undo the latest apply transaction.
 
 ## Convex Cloud Sync (Current Behavior)
 

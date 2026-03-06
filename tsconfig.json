@@ -3,7 +3,6 @@
   "references": [
     { "path": "./apps/web" },
     { "path": "./apps/desktop" },
-    { "path": "./packages/assistant-core" },
     { "path": "./packages/ui-shared" }
   ]
 }

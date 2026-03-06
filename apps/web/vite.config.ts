@@ -24,7 +24,6 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@convex-generated': path.resolve(__dirname, '../../convex/_generated'),
-      '@assistant-core': path.resolve(__dirname, '../../packages/assistant-core/src'),
     },
   },
 })

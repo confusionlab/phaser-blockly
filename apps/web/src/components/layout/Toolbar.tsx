@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
@@ -8,11 +8,10 @@ import { downloadProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { ProjectHistoryDialog } from '@/components/dialogs/ProjectHistoryDialog';
 import { Button } from '@/components/ui/button';
-import { Upload, History, Sun, Moon, Wallet } from 'lucide-react';
+import { Upload, History, Sun, Moon } from 'lucide-react';
 
 export function Toolbar() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { project, isDirty, saveCurrentProject, closeProject, updateProjectName, openProject } = useProjectStore();
   const { isDarkMode, toggleDarkMode, selectScene } = useEditorStore();
   const updateMySettings = useMutation(api.userSettings.updateMySettings);
@@ -28,8 +27,6 @@ export function Toolbar() {
     syncOnUnmount: false,
     checkpointIntervalMs: 0,
   });
-  const showBillingButton = location.pathname === '/';
-
   const syncCurrentProjectToCloud = async (): Promise<boolean> => {
     if (!project) return true;
 
@@ -146,17 +143,6 @@ export function Toolbar() {
         <div />
 
         <div className="flex items-center gap-2">
-          {showBillingButton && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate('/billing')}
-              title="Manage credits and plan"
-            >
-              <Wallet className="size-4" />
-              Billing
-            </Button>
-          )}
           <Button
             variant="ghost"
             size="icon"
