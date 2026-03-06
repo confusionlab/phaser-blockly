@@ -52,6 +52,10 @@ The assistant toolset should stay small, distinct, and composable.
 
 ### Component mutation
 
+- `make_component`
+- `delete_component`
+- `add_component_instance`
+- `detach_from_component`
 - `rename_component`
 - `update_component_properties`
 - `set_component_blockly_xml`

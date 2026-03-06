@@ -87,11 +87,27 @@ function buildProjectFixture(): {
   const component: ComponentDefinition = {
     id: componentId,
     name: 'EnemyComponent',
-    blocklyXml: '<xml />',
+    blocklyXml: '<xml><block type="logic_compare" /></xml>',
     costumes: [],
     currentCostumeIndex: 0,
-    physics: null,
-    collider: null,
+    physics: {
+      enabled: true,
+      bodyType: 'dynamic',
+      gravityY: 1,
+      velocityX: 10,
+      velocityY: -20,
+      bounce: 0.3,
+      friction: 0.2,
+      allowRotation: false,
+    },
+    collider: {
+      type: 'circle',
+      offsetX: 0,
+      offsetY: 0,
+      width: 32,
+      height: 32,
+      radius: 16,
+    },
     sounds: [],
     localVariables: [],
   };
@@ -208,6 +224,16 @@ test.describe('Assistant tool curation primitives', () => {
       sceneId: 'scene_existing',
       objectId: 'object_hero',
     });
+    const createdComponent = materializeAssistantOperationIds({
+      kind: 'make_component',
+      sceneId: 'scene_existing',
+      objectId: 'object_hero',
+    });
+    const componentInstance = materializeAssistantOperationIds({
+      kind: 'add_component_instance',
+      sceneId: 'scene_existing',
+      componentId: 'component_enemy',
+    });
 
     expect(createdScene.kind).toBe('create_scene');
     expect(createdScene.sceneId).toMatch(/^scene_/);
@@ -217,6 +243,91 @@ test.describe('Assistant tool curation primitives', () => {
     expect(createdObject.objectId).toMatch(/^object_/);
     expect(duplicatedObject.kind).toBe('duplicate_object');
     expect(duplicatedObject.duplicateObjectId).toMatch(/^object_/);
+    expect(createdComponent.kind).toBe('make_component');
+    expect(createdComponent.componentId).toMatch(/^component_/);
+    expect(componentInstance.kind).toBe('add_component_instance');
+    expect(componentInstance.objectId).toMatch(/^object_/);
+  });
+
+  test('make_component and add_component_instance support reusable component flows', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const heroComponentId = 'component_hero';
+    const heroInstanceId = 'object_hero_spawn';
+
+    const result = applyAssistantProjectOperations(snapshot.state, [
+      {
+        kind: 'make_component',
+        sceneId: fixture.sceneId,
+        objectId: fixture.heroId,
+        componentId: heroComponentId,
+      },
+      {
+        kind: 'add_component_instance',
+        sceneId: fixture.sceneId,
+        componentId: heroComponentId,
+        objectId: heroInstanceId,
+        properties: { x: 260, y: 180, name: 'Hero Spawn' },
+      },
+    ]);
+
+    expect(result.issues).toEqual([]);
+    expect(result.createdEntities).toEqual([
+      { type: 'component', id: heroComponentId, name: 'Hero' },
+      { type: 'object', id: heroInstanceId, name: 'Hero Spawn' },
+    ]);
+
+    const nextScene = result.state.scenes.find((scene) => scene.id === fixture.sceneId);
+    const originalHero = nextScene?.objects.find((object) => object.id === fixture.heroId);
+    const heroInstance = nextScene?.objects.find((object) => object.id === heroInstanceId);
+    const heroComponent = result.state.components.find((component) => component.id === heroComponentId);
+
+    expect(heroComponent?.name).toBe('Hero');
+    expect(heroComponent?.blocklyXml).toContain('typed_variable_set');
+    expect(originalHero?.componentId).toBe(heroComponentId);
+    expect(heroInstance?.componentId).toBe(heroComponentId);
+    expect(heroInstance?.name).toBe('Hero Spawn');
+    expect(heroInstance?.x).toBe(260);
+    expect(heroInstance?.y).toBe(180);
+  });
+
+  test('delete_component detaches instances and preserves component-backed fields', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+
+    const result = applyAssistantProjectOperations(snapshot.state, [
+      {
+        kind: 'delete_component',
+        componentId: fixture.componentId,
+      },
+    ]);
+
+    expect(result.issues).toEqual([]);
+    expect(result.state.components).toEqual([]);
+
+    const nextScene = result.state.scenes.find((scene) => scene.id === fixture.sceneId);
+    const enemy = nextScene?.objects.find((object) => object.id === fixture.enemyId);
+
+    expect(enemy?.componentId).toBeUndefined();
+    expect(enemy?.blocklyXml).toBe('<xml><block type="logic_compare" /></xml>');
+    expect(enemy?.physics).toEqual({
+      enabled: true,
+      bodyType: 'dynamic',
+      gravityY: 1,
+      velocityX: 10,
+      velocityY: -20,
+      bounce: 0.3,
+      friction: 0.2,
+      allowRotation: false,
+    });
+    expect(enemy?.collider).toEqual({
+      type: 'circle',
+      offsetX: 0,
+      offsetY: 0,
+      width: 32,
+      height: 32,
+      radius: 16,
+    });
   });
 
   test('applyAssistantChangeSetToProject supports duplicate_object end to end', () => {
@@ -341,5 +452,67 @@ test.describe('Assistant tool curation primitives', () => {
     expect(duplicate?.x).toBe(260);
     expect(duplicate?.y).toBe(220);
     expect(duplicate?.localVariables[0]?.id).not.toBe(fixture.heroVariableId);
+  });
+
+  test('applyAssistantChangeSetToProject supports component lifecycle actions and syncs component edits to instances', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const heroComponentId = 'component_hero';
+    const heroInstanceId = 'object_hero_spawn';
+    const blocklyXml = '<xml><block type="controls_if" /></xml>';
+
+    const changeSet: AssistantChangeSet = {
+      baseProjectId: fixture.project.id,
+      baseProjectVersion: snapshot.projectVersion,
+      operations: [
+        {
+          kind: 'make_component',
+          sceneId: fixture.sceneId,
+          objectId: fixture.heroId,
+          componentId: heroComponentId,
+        },
+        {
+          kind: 'add_component_instance',
+          sceneId: fixture.sceneId,
+          componentId: heroComponentId,
+          objectId: heroInstanceId,
+          properties: { x: 300, y: 140 },
+        },
+        {
+          kind: 'rename_component',
+          componentId: heroComponentId,
+          name: 'Hero Template',
+        },
+        {
+          kind: 'set_component_blockly_xml',
+          componentId: heroComponentId,
+          blocklyXml,
+        },
+        {
+          kind: 'detach_from_component',
+          sceneId: fixture.sceneId,
+          objectId: heroInstanceId,
+        },
+      ],
+      summary: 'Created a hero component, added an instance, synced edits, and detached one instance',
+      affectedEntityIds: [fixture.sceneId, fixture.heroId, heroComponentId, heroInstanceId],
+    };
+
+    const nextProject = applyAssistantChangeSetToProject(fixture.project, changeSet);
+    const nextScene = nextProject.scenes.find((scene) => scene.id === fixture.sceneId);
+    const originalHero = nextScene?.objects.find((object) => object.id === fixture.heroId);
+    const heroInstance = nextScene?.objects.find((object) => object.id === heroInstanceId);
+    const heroComponent = nextProject.components.find((component) => component.id === heroComponentId);
+
+    expect(heroComponent?.name).toBe('Hero Template');
+    expect(heroComponent?.blocklyXml).toBe(blocklyXml);
+    expect(originalHero?.componentId).toBe(heroComponentId);
+    expect(originalHero?.name).toBe('Hero Template');
+    expect(originalHero?.blocklyXml).toBe(blocklyXml);
+    expect(heroInstance?.componentId).toBeUndefined();
+    expect(heroInstance?.name).toBe('Hero Template');
+    expect(heroInstance?.blocklyXml).toBe(blocklyXml);
+    expect(heroInstance?.x).toBe(300);
+    expect(heroInstance?.y).toBe(140);
   });
 });

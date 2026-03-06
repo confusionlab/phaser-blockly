@@ -24,6 +24,11 @@ import {
   type AssistantReferenceEntityType,
   type AssistantValidationIssue,
 } from "../packages/ui-shared/src/assistant";
+import {
+  buildAssistantRunInputText,
+  normalizeAssistantConversationTurns,
+  type AssistantConversationTurn,
+} from "../packages/ui-shared/src/assistantConversation";
 
 const internalAssistant = (internal as any).assistant;
 
@@ -37,6 +42,7 @@ type StoredRun = {
   mode: AssistantRunMode;
   status: AssistantRunStatus;
   requestText: string;
+  conversationHistoryJson?: string;
   projectVersion: string;
   snapshotId: Id<"assistantSnapshots">;
   finalSummary?: string;
@@ -65,6 +71,7 @@ const runValidator = v.object({
     v.literal("cancelled"),
   ),
   requestText: v.string(),
+  conversationHistoryJson: v.optional(v.string()),
   projectVersion: v.string(),
   finalSummary: v.optional(v.string()),
   changeSetJson: v.optional(v.string()),
@@ -113,6 +120,19 @@ function parseSnapshot(snapshotJson: string): AssistantProjectSnapshot {
 
 function parseJsonObject<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function parseConversationHistory(conversationHistoryJson?: string): AssistantConversationTurn[] {
+  if (!conversationHistoryJson) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(conversationHistoryJson) as AssistantConversationTurn[];
+    return normalizeAssistantConversationTurns(parsed);
+  } catch {
+    return [];
+  }
 }
 
 function summarizeState(state: AssistantProjectState) {
@@ -294,6 +314,25 @@ function createChangeSet(
           affected.add(operation.duplicateObjectId);
         }
         break;
+      case "make_component":
+        affected.add(operation.sceneId);
+        affected.add(operation.objectId);
+        if (operation.componentId) {
+          affected.add(operation.componentId);
+        }
+        break;
+      case "add_component_instance":
+        affected.add(operation.sceneId);
+        affected.add(operation.componentId);
+        if (operation.objectId) {
+          affected.add(operation.objectId);
+        }
+        break;
+      case "detach_from_component":
+        affected.add(operation.sceneId);
+        affected.add(operation.objectId);
+        break;
+      case "delete_component":
       case "rename_component":
       case "update_component_properties":
       case "set_component_blockly_xml":
@@ -869,6 +908,81 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   },
   {
     type: "function",
+    name: "make_component",
+    description: "Convert a standalone object into a reusable component while keeping the object as the first instance.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        objectId: { type: "string" },
+        name: { type: "string" },
+      },
+      required: ["sceneId", "objectId"],
+    },
+  },
+  {
+    type: "function",
+    name: "delete_component",
+    description: "Delete a component definition. Existing instances become standalone objects and keep the component's current fields.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        componentId: { type: "string" },
+      },
+      required: ["componentId"],
+    },
+  },
+  {
+    type: "function",
+    name: "add_component_instance",
+    description: "Create a new object instance from a reusable component inside a scene or folder.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        componentId: { type: "string" },
+        parentId: { anyOf: [{ type: "string" }, { type: "null" }] },
+        index: { type: "number" },
+        properties: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            name: { type: "string" },
+            x: { type: "number" },
+            y: { type: "number" },
+            scaleX: { type: "number" },
+            scaleY: { type: "number" },
+            rotation: { type: "number" },
+            visible: { type: "boolean" },
+          },
+        },
+      },
+      required: ["sceneId", "componentId"],
+    },
+  },
+  {
+    type: "function",
+    name: "detach_from_component",
+    description: "Detach one object from its component so it becomes a standalone object with copied fields.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        objectId: { type: "string" },
+      },
+      required: ["sceneId", "objectId"],
+    },
+  },
+  {
+    type: "function",
     name: "rename_component",
     description: "Rename a component definition.",
     strict: true,
@@ -973,6 +1087,7 @@ export const createRun = mutation({
     projectId: v.string(),
     mode: v.union(v.literal("mutate"), v.literal("analyze")),
     requestText: v.string(),
+    conversationHistoryJson: v.optional(v.string()),
     projectVersion: v.string(),
     snapshotJson: v.string(),
   },
@@ -1007,6 +1122,7 @@ export const createRun = mutation({
       mode: args.mode,
       status: "queued",
       requestText: args.requestText,
+      conversationHistoryJson: args.conversationHistoryJson,
       projectVersion: args.projectVersion,
       snapshotId,
       createdAt: Date.now(),
@@ -1033,6 +1149,7 @@ export const createRun = mutation({
         projectId: args.projectId,
         mode: args.mode,
         requestText: args.requestText,
+        conversationTurnCount: parseConversationHistory(args.conversationHistoryJson).length,
       }),
       createdAt: Date.now(),
     });
@@ -1061,6 +1178,7 @@ export const getRun = query({
       mode: run.mode,
       status: run.status,
       requestText: run.requestText,
+      conversationHistoryJson: run.conversationHistoryJson,
       projectVersion: run.projectVersion,
       finalSummary: run.finalSummary,
       changeSetJson: run.changeSetJson,
@@ -1171,6 +1289,7 @@ export const getRunContextInternal = internalQuery({
           v.literal("cancelled"),
         ),
         requestText: v.string(),
+        conversationHistoryJson: v.optional(v.string()),
         projectVersion: v.string(),
         snapshotId: v.id("assistantSnapshots"),
       }),
@@ -1195,6 +1314,7 @@ export const getRunContextInternal = internalQuery({
         mode: run.mode,
         status: run.status,
         requestText: run.requestText,
+        conversationHistoryJson: run.conversationHistoryJson,
         projectVersion: run.projectVersion,
         snapshotId: run.snapshotId,
       },
@@ -1285,6 +1405,7 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "Before deleting or moving scenes, folders, objects, or components when impact is unclear, call list_references first.",
     "When a write tool creates or duplicates an entity and you need to use it later in the same run, reuse the id returned in createdEntities instead of guessing by name.",
     "After duplicate_object, keep the original object unchanged unless the user explicitly asks to edit it too. Apply follow-up rename/move/property edits to the newly created duplicate id.",
+    "If the user wants reusable actors, use make_component to convert a standalone object, add_component_instance to place copies, and detach_from_component to break inheritance for one object.",
     "For mutate runs, stage safe project operations until the request is fulfilled, then return a concise final summary.",
     "For analyze runs, do not call mutation tools. Read state, diagnose, and return a concise explanation.",
     "If an object is component-backed, inspect the component and edit the component for shared logic/physics/collider changes.",
@@ -1299,6 +1420,7 @@ function buildInitialInput(
   requestText: string,
   snapshot: AssistantProjectSnapshot,
   mode: AssistantRunMode,
+  conversationHistory: readonly AssistantConversationTurn[],
 ) {
   return [
     {
@@ -1306,12 +1428,12 @@ function buildInitialInput(
       content: [
         {
           type: "input_text" as const,
-          text: [
-            `Mode: ${mode}`,
-            `User request: ${requestText}`,
-            "Normalized project snapshot JSON:",
-            safeStringify(snapshot),
-          ].join("\n\n"),
+          text: buildAssistantRunInputText({
+            mode,
+            requestText,
+            snapshot,
+            conversationHistory,
+          }),
         },
       ],
     },
@@ -1607,6 +1729,33 @@ async function performTool(
           blocklyXml: String(args.blocklyXml ?? ""),
         });
       }
+      case "make_component":
+        return stageOperation(execution, {
+          kind: "make_component",
+          sceneId: String(args.sceneId ?? ""),
+          objectId: String(args.objectId ?? ""),
+          name: typeof args.name === "string" ? args.name : undefined,
+        });
+      case "delete_component":
+        return stageOperation(execution, {
+          kind: "delete_component",
+          componentId: String(args.componentId ?? ""),
+        });
+      case "add_component_instance":
+        return stageOperation(execution, {
+          kind: "add_component_instance",
+          sceneId: String(args.sceneId ?? ""),
+          componentId: String(args.componentId ?? ""),
+          parentId: args.parentId === null ? null : typeof args.parentId === "string" ? args.parentId : undefined,
+          index: typeof args.index === "number" ? args.index : undefined,
+          properties: (args.properties ?? {}) as any,
+        });
+      case "detach_from_component":
+        return stageOperation(execution, {
+          kind: "detach_from_component",
+          sceneId: String(args.sceneId ?? ""),
+          objectId: String(args.objectId ?? ""),
+        });
       case "rename_component":
         return stageOperation(execution, {
           kind: "rename_component",
@@ -1737,6 +1886,7 @@ export const executeRunInternal = internalAction({
       stagedState: snapshot.state,
       stagedOperations: [],
     };
+    const conversationHistory = parseConversationHistory(runContext.run.conversationHistoryJson);
 
     const maxSteps = 30;
     let previousResponseId: string | null = null;
@@ -1744,6 +1894,7 @@ export const executeRunInternal = internalAction({
       runContext.run.requestText,
       snapshot,
       runContext.run.mode,
+      conversationHistory,
     );
     let finalSummary = "";
     let totalUsage = {

@@ -228,6 +228,19 @@ export type AssistantComponentProperties = Partial<
   >
 >;
 
+export type AssistantComponentInstanceProperties = Partial<
+  Pick<
+    AssistantObject,
+    | 'name'
+    | 'x'
+    | 'y'
+    | 'scaleX'
+    | 'scaleY'
+    | 'rotation'
+    | 'visible'
+  >
+>;
+
 export type AssistantSceneProperties = Partial<
   Pick<AssistantScene, 'background' | 'cameraConfig' | 'ground'>
 >;
@@ -334,6 +347,31 @@ export type AssistantProjectOperation =
       blocklyXml: string;
     }
   | {
+      kind: 'make_component';
+      sceneId: string;
+      objectId: string;
+      componentId?: string;
+      name?: string;
+    }
+  | {
+      kind: 'delete_component';
+      componentId: string;
+    }
+  | {
+      kind: 'add_component_instance';
+      sceneId: string;
+      componentId: string;
+      objectId?: string;
+      parentId?: string | null;
+      index?: number;
+      properties?: AssistantComponentInstanceProperties;
+    }
+  | {
+      kind: 'detach_from_component';
+      sceneId: string;
+      objectId: string;
+    }
+  | {
       kind: 'rename_component';
       componentId: string;
       name: string;
@@ -365,7 +403,7 @@ export interface AssistantValidationIssue {
 
 export interface AssistantOperationResult {
   state: AssistantProjectState;
-  createdEntities: Array<{ type: 'scene' | 'folder' | 'object'; id: string; name: string }>;
+  createdEntities: Array<{ type: 'scene' | 'folder' | 'object' | 'component'; id: string; name: string }>;
   affectedEntityIds: string[];
   issues: AssistantValidationIssue[];
 }
@@ -384,6 +422,10 @@ export function materializeAssistantOperationIds<T extends AssistantProjectOpera
       return (operation.objectId ? operation : { ...operation, objectId: createId('object') }) as T;
     case 'duplicate_object':
       return (operation.duplicateObjectId ? operation : { ...operation, duplicateObjectId: createId('object') }) as T;
+    case 'make_component':
+      return (operation.componentId ? operation : { ...operation, componentId: createId('component') }) as T;
+    case 'add_component_instance':
+      return (operation.objectId ? operation : { ...operation, objectId: createId('object') }) as T;
     default:
       return operation;
   }
@@ -592,6 +634,56 @@ function createDefaultObject(name: string, order: number, objectId?: string): As
     currentCostumeIndex: 0,
     sounds: [],
     localVariables: [],
+  };
+}
+
+function createComponentFromObject(
+  object: AssistantObject,
+  componentId = createId('component'),
+  name?: string,
+): AssistantComponent {
+  return {
+    id: componentId,
+    name: name?.trim() || object.name,
+    blocklyXml: object.blocklyXml,
+    costumes: cloneState(object.costumes || []),
+    currentCostumeIndex: object.currentCostumeIndex,
+    physics: cloneState(object.physics),
+    collider: cloneState(object.collider),
+    sounds: cloneState(object.sounds || []),
+    localVariables: cloneLocalVariables(object.localVariables || []),
+  };
+}
+
+function toComponentBackedObjectFields(component: AssistantComponent): Pick<
+  AssistantObject,
+  'name' | 'blocklyXml' | 'costumes' | 'currentCostumeIndex' | 'physics' | 'collider' | 'sounds' | 'localVariables'
+> {
+  return {
+    name: component.name,
+    blocklyXml: component.blocklyXml,
+    costumes: cloneState(component.costumes || []),
+    currentCostumeIndex: component.currentCostumeIndex,
+    physics: cloneState(component.physics),
+    collider: cloneState(component.collider),
+    sounds: cloneState(component.sounds || []),
+    localVariables: cloneLocalVariables(component.localVariables || []),
+  };
+}
+
+function createObjectFromComponent(
+  component: AssistantComponent,
+  order: number,
+  objectId?: string,
+  properties?: AssistantComponentInstanceProperties,
+): AssistantObject {
+  return {
+    ...createDefaultObject(component.name, order, objectId),
+    ...toComponentBackedObjectFields(component),
+    componentId: component.id,
+    x: 0,
+    y: 0,
+    ...properties,
   };
 }
 
@@ -884,6 +976,17 @@ function collectAffectedEntitiesFromOperation(operation: AssistantProjectOperati
       return operation.duplicateObjectId
         ? [operation.sceneId, operation.objectId, operation.duplicateObjectId]
         : [operation.sceneId, operation.objectId];
+    case 'make_component':
+      return operation.componentId
+        ? [operation.sceneId, operation.objectId, operation.componentId]
+        : [operation.sceneId, operation.objectId];
+    case 'add_component_instance':
+      return operation.objectId
+        ? [operation.sceneId, operation.componentId, operation.objectId]
+        : [operation.sceneId, operation.componentId];
+    case 'detach_from_component':
+      return [operation.sceneId, operation.objectId];
+    case 'delete_component':
     case 'rename_component':
     case 'update_component_properties':
     case 'set_component_blockly_xml':
@@ -1333,21 +1436,156 @@ export function applyAssistantProjectOperations(
         );
         break;
       }
+      case 'make_component': {
+        const scene = ensureScene(state, operation.sceneId);
+        const object = ensureObject(scene, operation.objectId);
+        if (object.componentId) {
+          throw new Error(`Object "${operation.objectId}" is already backed by component "${object.componentId}".`);
+        }
+        const nextComponent = createComponentFromObject(object, operation.componentId, operation.name);
+        state.components = [...state.components, nextComponent];
+        state.scenes = state.scenes.map((candidate) =>
+          candidate.id === scene.id
+            ? normalizeScene({
+                ...candidate,
+                objects: candidate.objects.map((item) =>
+                  item.id === operation.objectId
+                    ? {
+                        ...item,
+                        componentId: nextComponent.id,
+                        ...(operation.name?.trim() ? { name: nextComponent.name } : {}),
+                      }
+                    : item,
+                ),
+              })
+            : candidate,
+        );
+        createdEntities.push({ type: 'component', id: nextComponent.id, name: nextComponent.name });
+        affectedEntityIds.add(nextComponent.id);
+        break;
+      }
+      case 'delete_component': {
+        const component = ensureComponent(state, operation.componentId);
+        const detachedFields = toComponentBackedObjectFields(component);
+        state.components = state.components.filter((item) => item.id !== operation.componentId);
+        state.scenes = state.scenes.map((scene) =>
+          normalizeScene({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === operation.componentId
+                ? {
+                    ...object,
+                    componentId: undefined,
+                    ...detachedFields,
+                  }
+                : object,
+            ),
+          }),
+        );
+        break;
+      }
+      case 'add_component_instance': {
+        const scene = ensureScene(state, operation.sceneId);
+        const component = ensureComponent(state, operation.componentId);
+        if (operation.parentId) {
+          ensureFolder(scene, operation.parentId);
+        }
+        const siblings = sortByOrder(
+          scene.objects.filter((object) => (object.parentId ?? null) === (operation.parentId ?? null)),
+        );
+        const insertIndex = operation.index === undefined ? siblings.length : clampIndex(operation.index, siblings.length);
+        const nextObject = {
+          ...createObjectFromComponent(component, insertIndex, operation.objectId, operation.properties),
+          parentId: operation.parentId ?? null,
+        };
+        state.scenes = state.scenes.map((candidate) =>
+          candidate.id === scene.id
+            ? normalizeScene({
+                ...candidate,
+                objects: moveWithinSiblings(
+                  [...candidate.objects, nextObject],
+                  nextObject.id,
+                  operation.parentId ?? null,
+                  operation.index,
+                ),
+              })
+            : candidate,
+        );
+        createdEntities.push({ type: 'object', id: nextObject.id, name: nextObject.name });
+        affectedEntityIds.add(nextObject.id);
+        break;
+      }
+      case 'detach_from_component': {
+        const scene = ensureScene(state, operation.sceneId);
+        const object = ensureObject(scene, operation.objectId);
+        if (!object.componentId) {
+          throw new Error(`Object "${operation.objectId}" is not backed by a component.`);
+        }
+        const component = ensureComponent(state, object.componentId);
+        const detachedFields = toComponentBackedObjectFields(component);
+        state.scenes = state.scenes.map((candidate) =>
+          candidate.id === scene.id
+            ? normalizeScene({
+                ...candidate,
+                objects: candidate.objects.map((item) =>
+                  item.id === operation.objectId
+                    ? {
+                        ...item,
+                        componentId: undefined,
+                        ...detachedFields,
+                      }
+                    : item,
+                ),
+              })
+            : candidate,
+        );
+        break;
+      }
       case 'rename_component': {
         ensureComponent(state, operation.componentId);
-        state.components = state.components.map((component) =>
+        const nextComponents = state.components.map((component) =>
           component.id === operation.componentId
             ? { ...component, name: operation.name.trim() || component.name }
             : component,
+        );
+        const nextComponent = nextComponents.find((component) => component.id === operation.componentId)!;
+        state.components = nextComponents;
+        state.scenes = state.scenes.map((scene) =>
+          normalizeScene({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === operation.componentId
+                ? { ...object, name: nextComponent.name }
+                : object,
+            ),
+          }),
         );
         break;
       }
       case 'update_component_properties': {
         ensureComponent(state, operation.componentId);
-        state.components = state.components.map((component) =>
+        const nextComponents = state.components.map((component) =>
           component.id === operation.componentId
             ? { ...component, ...operation.properties }
             : component,
+        );
+        const nextComponent = nextComponents.find((component) => component.id === operation.componentId)!;
+        state.components = nextComponents;
+        state.scenes = state.scenes.map((scene) =>
+          normalizeScene({
+            ...scene,
+            objects: scene.objects.map((object) => {
+              if (object.componentId !== operation.componentId) return object;
+              const updates: Partial<AssistantObject> = {};
+              if (operation.properties.name !== undefined) updates.name = nextComponent.name;
+              if (operation.properties.physics !== undefined) updates.physics = cloneState(nextComponent.physics);
+              if (operation.properties.collider !== undefined) updates.collider = cloneState(nextComponent.collider);
+              if (operation.properties.currentCostumeIndex !== undefined) {
+                updates.currentCostumeIndex = nextComponent.currentCostumeIndex;
+              }
+              return { ...object, ...updates };
+            }),
+          }),
         );
         break;
       }
@@ -1357,6 +1595,16 @@ export function applyAssistantProjectOperations(
           component.id === operation.componentId
             ? { ...component, blocklyXml: operation.blocklyXml }
             : component,
+        );
+        state.scenes = state.scenes.map((scene) =>
+          normalizeScene({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === operation.componentId
+                ? { ...object, blocklyXml: operation.blocklyXml }
+                : object,
+            ),
+          }),
         );
         break;
       }

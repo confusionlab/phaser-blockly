@@ -23,6 +23,7 @@ import {
 import { api } from '@convex-generated/api';
 import type { AssistantChangeSet } from '../../../../../packages/ui-shared/src/assistant';
 import { Button } from '@/components/ui/button';
+import { extractAssistantThreadContext } from '@/lib/assistant/threadContext';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { createAssistantProjectSnapshot, projectContainsObject, projectContainsScene } from '@/lib/assistant/projectState';
 import { cn } from '@/lib/utils';
@@ -66,16 +67,6 @@ function parseEventPayload(payloadJson: string): Record<string, unknown> | null 
   } catch {
     return null;
   }
-}
-
-function extractLatestUserText(messages: readonly { role: string; content: readonly { type: string; text?: string }[] }[]) {
-  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user');
-  if (!latestUserMessage) return '';
-  return latestUserMessage.content
-    .filter((part) => part.type === 'text' && typeof part.text === 'string')
-    .map((part) => part.text ?? '')
-    .join('\n')
-    .trim();
 }
 
 function summarizeToolResult(result: Record<string, unknown> | null): string | null {
@@ -157,7 +148,7 @@ export function AiAssistantPanel() {
   const runtime = useLocalRuntime(
     useMemo<ChatModelAdapter>(() => ({
       run: async function* ({ messages, abortSignal }: ChatModelRunOptions) {
-        const userPrompt = extractLatestUserText(messages as never);
+        const { requestText: userPrompt, conversationHistory } = extractAssistantThreadContext(messages as never);
         if (!userPrompt) {
           yield {
             content: [{ type: 'text', text: 'Enter a request first.' }],
@@ -201,6 +192,7 @@ export function AiAssistantPanel() {
             projectId: latestProject.id,
             mode: 'mutate',
             requestText: userPrompt,
+            conversationHistoryJson: JSON.stringify(conversationHistory),
             projectVersion: snapshot.projectVersion,
             snapshotJson: JSON.stringify(snapshot),
           });

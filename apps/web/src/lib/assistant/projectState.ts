@@ -117,6 +117,35 @@ function cloneLocalVariables(object: GameObject): GameObject['localVariables'] {
   return (object.localVariables || []).map((variable) => ({ ...variable }));
 }
 
+function toComponentBackedFieldsFromObject(object: GameObject): Omit<ComponentDefinition, 'id'> {
+  return {
+    name: object.name,
+    blocklyXml: object.blocklyXml,
+    costumes: cloneProject(object.costumes || []),
+    currentCostumeIndex: object.currentCostumeIndex,
+    physics: cloneProject(object.physics),
+    collider: cloneProject(object.collider),
+    sounds: cloneProject(object.sounds || []),
+    localVariables: cloneLocalVariables(object),
+  };
+}
+
+function toComponentBackedObjectFields(component: ComponentDefinition): Pick<
+  GameObject,
+  'name' | 'blocklyXml' | 'costumes' | 'currentCostumeIndex' | 'physics' | 'collider' | 'sounds' | 'localVariables'
+> {
+  return {
+    name: component.name,
+    blocklyXml: component.blocklyXml,
+    costumes: cloneProject(component.costumes || []),
+    currentCostumeIndex: component.currentCostumeIndex,
+    physics: cloneProject(component.physics),
+    collider: cloneProject(component.collider),
+    sounds: cloneProject(component.sounds || []),
+    localVariables: cloneProject(component.localVariables || []),
+  };
+}
+
 function toAssistantFolder(folder: SceneFolder): AssistantSceneFolder {
   return {
     id: folder.id,
@@ -538,6 +567,134 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
             : scene,
         ),
       };
+    case 'make_component': {
+      const scene = project.scenes.find((candidate) => candidate.id === operation.sceneId);
+      const object = scene?.objects.find((candidate) => candidate.id === operation.objectId);
+      if (!scene || !object) {
+        throw new Error(`Object "${operation.objectId}" was not found in scene "${operation.sceneId}".`);
+      }
+      if (object.componentId) {
+        throw new Error(`Object "${operation.objectId}" is already backed by component "${object.componentId}".`);
+      }
+
+      const componentId = operation.componentId ?? crypto.randomUUID();
+      const component: ComponentDefinition = {
+        id: componentId,
+        ...toComponentBackedFieldsFromObject(object),
+        ...(operation.name?.trim() ? { name: operation.name.trim() } : {}),
+      };
+
+      return {
+        ...project,
+        components: [...(project.components || []), component],
+        scenes: project.scenes.map((candidate) =>
+          candidate.id === operation.sceneId
+            ? normalizeSceneLayering({
+                ...candidate,
+                objects: candidate.objects.map((item) =>
+                  item.id === operation.objectId
+                    ? {
+                        ...item,
+                        componentId,
+                        ...(operation.name?.trim() ? { name: component.name } : {}),
+                      }
+                    : item,
+                ),
+              })
+            : candidate,
+        ),
+      };
+    }
+    case 'delete_component': {
+      const component = (project.components || []).find((candidate) => candidate.id === operation.componentId);
+      if (!component) {
+        throw new Error(`Component "${operation.componentId}" was not found.`);
+      }
+
+      const detachedFields = toComponentBackedObjectFields(component);
+      return {
+        ...project,
+        components: (project.components || []).filter((candidate) => candidate.id !== operation.componentId),
+        scenes: project.scenes.map((scene) =>
+          normalizeSceneLayering({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === operation.componentId
+                ? {
+                    ...object,
+                    componentId: undefined,
+                    ...detachedFields,
+                  }
+                : object,
+            ),
+          }),
+        ),
+      };
+    }
+    case 'add_component_instance': {
+      const component = (project.components || []).find((candidate) => candidate.id === operation.componentId);
+      if (!component) {
+        throw new Error(`Component "${operation.componentId}" was not found.`);
+      }
+
+      return {
+        ...project,
+        scenes: project.scenes.map((scene) => {
+          if (scene.id !== operation.sceneId) return scene;
+          const nextObject = createDefaultGameObject(component.name);
+          nextObject.id = operation.objectId ?? nextObject.id;
+          nextObject.componentId = component.id;
+          nextObject.parentId = operation.parentId ?? null;
+          nextObject.x = 0;
+          nextObject.y = 0;
+          Object.assign(nextObject, toComponentBackedObjectFields(component), operation.properties ?? {});
+          return normalizeSceneLayering({
+            ...scene,
+            objects: moveObjects(
+              [...scene.objects, nextObject],
+              nextObject.id,
+              operation.parentId ?? null,
+              operation.index,
+            ),
+          });
+        }),
+      };
+    }
+    case 'detach_from_component': {
+      const scene = project.scenes.find((candidate) => candidate.id === operation.sceneId);
+      const object = scene?.objects.find((candidate) => candidate.id === operation.objectId);
+      if (!scene || !object) {
+        throw new Error(`Object "${operation.objectId}" was not found in scene "${operation.sceneId}".`);
+      }
+      if (!object.componentId) {
+        throw new Error(`Object "${operation.objectId}" is not backed by a component.`);
+      }
+      const component = (project.components || []).find((candidate) => candidate.id === object.componentId);
+      if (!component) {
+        throw new Error(`Component "${object.componentId}" was not found.`);
+      }
+
+      const detachedFields = toComponentBackedObjectFields(component);
+      return {
+        ...project,
+        scenes: project.scenes.map((candidate) =>
+          candidate.id === operation.sceneId
+            ? normalizeSceneLayering({
+                ...candidate,
+                objects: candidate.objects.map((item) =>
+                  item.id === operation.objectId
+                    ? {
+                        ...item,
+                        componentId: undefined,
+                        ...detachedFields,
+                      }
+                    : item,
+                ),
+              })
+            : candidate,
+        ),
+      };
+    }
     case 'rename_component':
       return {
         ...project,
@@ -545,6 +702,16 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
           component.id === operation.componentId
             ? { ...component, name: operation.name.trim() || component.name }
             : component,
+        ),
+        scenes: project.scenes.map((scene) =>
+          normalizeSceneLayering({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === operation.componentId
+                ? { ...object, name: operation.name.trim() || object.name }
+                : object,
+            ),
+          }),
         ),
       };
     case 'update_component_properties':
@@ -555,6 +722,22 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
             ? { ...component, ...operation.properties }
             : component,
         ),
+        scenes: project.scenes.map((scene) =>
+          normalizeSceneLayering({
+            ...scene,
+            objects: scene.objects.map((object) => {
+              if (object.componentId !== operation.componentId) return object;
+              const updates: Partial<GameObject> = {};
+              if (operation.properties.name !== undefined) updates.name = operation.properties.name;
+              if (operation.properties.physics !== undefined) updates.physics = cloneProject(operation.properties.physics);
+              if (operation.properties.collider !== undefined) updates.collider = cloneProject(operation.properties.collider);
+              if (operation.properties.currentCostumeIndex !== undefined) {
+                updates.currentCostumeIndex = operation.properties.currentCostumeIndex;
+              }
+              return { ...object, ...updates };
+            }),
+          }),
+        ),
       };
     case 'set_component_blockly_xml':
       return {
@@ -563,6 +746,16 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
           component.id === operation.componentId
             ? { ...component, blocklyXml: operation.blocklyXml }
             : component,
+        ),
+        scenes: project.scenes.map((scene) =>
+          normalizeSceneLayering({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === operation.componentId
+                ? { ...object, blocklyXml: operation.blocklyXml }
+                : object,
+            ),
+          }),
         ),
       };
   }

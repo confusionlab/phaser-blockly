@@ -203,6 +203,7 @@ export default defineSchema({
       v.literal("cancelled"),
     ),
     requestText: v.string(),
+    conversationHistoryJson: v.optional(v.string()),
     projectVersion: v.string(),
     snapshotId: v.id("assistantSnapshots"),
     finalSummary: v.optional(v.string()),
