@@ -4,6 +4,10 @@ import {
   validateBlocklyXmlStructure,
 } from './blocklyXml';
 import {
+  validateAssistantComponentBlocklyXml,
+  validateAssistantObjectBlocklyXml,
+} from './assistantBlocklyValidation';
+import {
   compileAssistantLogicProgram,
   type AssistantLogicProgram,
 } from './assistantLogic';
@@ -1193,6 +1197,7 @@ export function applyAssistantProjectOperations(
   let state = cloneState(initialState);
   const createdEntities: AssistantOperationResult['createdEntities'] = [];
   const affectedEntityIds = new Set<string>();
+  const operationIssues: AssistantValidationIssue[] = [];
 
   for (const operation of operations) {
     for (const entityId of collectAffectedEntitiesFromOperation(operation)) {
@@ -1491,6 +1496,15 @@ export function applyAssistantProjectOperations(
               })
             : candidate,
         );
+        operationIssues.push(
+          ...validateAssistantObjectBlocklyXml(state, operation.sceneId, operation.objectId, normalizedBlocklyXml).map(
+            (issue) => ({
+              code: 'object.invalid_blockly_reference',
+              message: `Object "${operation.objectId}" uses invalid Blockly references in block "${issue.blockType}": ${issue.message}`,
+              entityIds: [operation.sceneId, operation.objectId],
+            }),
+          ),
+        );
         break;
       }
       case 'set_object_logic': {
@@ -1506,6 +1520,15 @@ export function applyAssistantProjectOperations(
                 ),
               })
             : candidate,
+        );
+        operationIssues.push(
+          ...validateAssistantObjectBlocklyXml(state, operation.sceneId, operation.objectId, compiledBlocklyXml).map(
+            (issue) => ({
+              code: 'object.invalid_blockly_reference',
+              message: `Object "${operation.objectId}" uses invalid Blockly references in block "${issue.blockType}": ${issue.message}`,
+              entityIds: [operation.sceneId, operation.objectId],
+            }),
+          ),
         );
         break;
       }
@@ -1680,6 +1703,13 @@ export function applyAssistantProjectOperations(
             ),
           }),
         );
+        operationIssues.push(
+          ...validateAssistantComponentBlocklyXml(state, operation.componentId, normalizedBlocklyXml).map((issue) => ({
+            code: 'component.invalid_blockly_reference',
+            message: `Component "${operation.componentId}" uses invalid Blockly references in block "${issue.blockType}": ${issue.message}`,
+            entityIds: [operation.componentId],
+          })),
+        );
         break;
       }
       case 'set_component_logic': {
@@ -1700,6 +1730,13 @@ export function applyAssistantProjectOperations(
             ),
           }),
         );
+        operationIssues.push(
+          ...validateAssistantComponentBlocklyXml(state, operation.componentId, compiledBlocklyXml).map((issue) => ({
+            code: 'component.invalid_blockly_reference',
+            message: `Component "${operation.componentId}" uses invalid Blockly references in block "${issue.blockType}": ${issue.message}`,
+            entityIds: [operation.componentId],
+          })),
+        );
         break;
       }
     }
@@ -1714,7 +1751,7 @@ export function applyAssistantProjectOperations(
     },
   };
 
-  const issues = validateAssistantProjectState(state);
+  const issues = [...operationIssues, ...validateAssistantProjectState(state)];
 
   return {
     state,

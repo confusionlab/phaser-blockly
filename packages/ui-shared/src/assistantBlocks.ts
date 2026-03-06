@@ -241,6 +241,10 @@ function validateBlockNode(node: unknown, path: string): string[] {
   }
 
   const fields = record.fields;
+  const fieldsRecord =
+    fields && typeof fields === 'object' && !Array.isArray(fields)
+      ? (fields as Record<string, unknown>)
+      : null;
   if (fields !== undefined) {
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
       issues.push(`${path}.fields must be an object when provided.`);
@@ -252,6 +256,49 @@ function validateBlockNode(node: unknown, path: string): string[] {
         if (!['string', 'number', 'boolean'].includes(typeof value)) {
           issues.push(`${path}.fields.${name} must be a string, number, or boolean.`);
         }
+      }
+    }
+  }
+
+  if (entry && entry.fieldNames.length > 0) {
+    for (const fieldName of entry.fieldNames) {
+      if (!fieldsRecord || !(fieldName in fieldsRecord)) {
+        issues.push(`${path}.fields.${fieldName} is required for block "${type}".`);
+      }
+    }
+  }
+
+  if (fieldsRecord) {
+    const requiredNonEmptyFieldNames = (
+      {
+        object_from_dropdown: ['TARGET'],
+        sensing_touching: ['TARGET'],
+        sensing_touching_direction: ['TARGET'],
+        sensing_distance_to: ['TARGET'],
+        motion_point_towards: ['TARGET'],
+        camera_follow_object: ['TARGET'],
+        event_when_touching: ['TARGET'],
+        event_when_touching_direction: ['TARGET'],
+        motion_attach_to_dropdown: ['TARGET'],
+        motion_attach_dropdown_to_me: ['TARGET'],
+        sound_play: ['SOUND'],
+        sound_play_until_done: ['SOUND'],
+        typed_variable_get: ['VAR'],
+        typed_variable_set: ['VAR'],
+        typed_variable_change: ['VAR'],
+        control_switch_scene: ['SCENE'],
+        control_spawn_type_at: ['TYPE'],
+        sensing_type_literal: ['TYPE'],
+        event_when_receive: ['MESSAGE'],
+        control_broadcast: ['MESSAGE'],
+        control_broadcast_wait: ['MESSAGE'],
+      } as const satisfies Record<string, readonly string[]>
+    )[type] ?? [];
+
+    for (const fieldName of requiredNonEmptyFieldNames) {
+      const value = fieldsRecord[fieldName];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        issues.push(`${path}.fields.${fieldName} must be a non-empty string for block "${type}".`);
       }
     }
   }

@@ -7,6 +7,7 @@ import {
   type AssistantChangeSet,
   validateAssistantProjectState,
 } from '../../../packages/ui-shared/src/assistant';
+import { compileAssistantBlockProgram } from '../../../packages/ui-shared/src/assistantBlocks';
 import { normalizeBlocklyXml } from '../../../packages/ui-shared/src/blocklyXml';
 import {
   compileAssistantLogicProgram,
@@ -693,6 +694,66 @@ test.describe('Assistant tool curation primitives', () => {
     expect(enemy?.blocklyXml).toBe(component?.blocklyXml);
     expect(component?.blocklyXml).toContain('event_key_pressed');
     expect(component?.blocklyXml).toContain('control_broadcast_wait');
+  });
+
+  test('compileAssistantBlockProgram rejects missing required block fields', () => {
+    expect(() =>
+      compileAssistantBlockProgram({
+        formatVersion: 1,
+        blocks: [
+          {
+            type: 'typed_variable_set',
+            values: {
+              VALUE: {
+                type: 'math_number',
+                fields: { NUM: 10 },
+              },
+            },
+          },
+        ],
+      }),
+    ).toThrow(/fields\.VAR is required/);
+  });
+
+  test('applyAssistantProjectOperations rejects invalid component Blockly references introduced by a write', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+
+    const result = applyAssistantProjectOperations(snapshot.state, [
+      {
+        kind: 'set_component_blockly_xml',
+        componentId: fixture.componentId,
+        blocklyXml: `
+          <xml xmlns="https://developers.google.com/blockly/xml">
+            <block type="event_game_start">
+              <statement name="NEXT">
+                <block type="typed_variable_set">
+                  <value name="VALUE">
+                    <block type="math_number">
+                      <field name="NUM">10</field>
+                    </block>
+                  </value>
+                  <next>
+                    <block type="control_switch_scene">
+                      <field name="MODE">RESUME</field>
+                    </block>
+                  </next>
+                </block>
+              </statement>
+            </block>
+          </xml>
+        `.trim(),
+      },
+    ]);
+
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'component.invalid_blockly_reference',
+          entityIds: [fixture.componentId],
+        }),
+      ]),
+    );
   });
 
   test('validateAssistantProjectState rejects unrecoverable Blockly XML', () => {
