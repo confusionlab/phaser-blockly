@@ -23,18 +23,18 @@ import {
 import { api } from '@convex-generated/api';
 import type { AssistantChangeSet } from '../../../../../packages/ui-shared/src/assistant';
 import { Button } from '@/components/ui/button';
+import {
+  appendCompletedRunFeedItem,
+  finishToolRunFeedItem,
+  startToolRunFeedItem,
+  type RunFeedItem,
+} from '@/lib/assistant/runFeed';
 import { extractAssistantThreadContext } from '@/lib/assistant/threadContext';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { createAssistantProjectSnapshot, projectContainsObject, projectContainsScene } from '@/lib/assistant/projectState';
 import { cn } from '@/lib/utils';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
-
-type RunFeedItem = {
-  id: string;
-  label: string;
-  tone?: 'normal' | 'warning';
-};
 
 type StatusTone = 'idle' | 'running' | 'success' | 'error';
 
@@ -214,12 +214,13 @@ export function AiAssistantPanel() {
             ]);
 
             let textChanged = false;
-            const nextFeed: RunFeedItem[] = [];
+            const feedUpdates: Array<(items: RunFeedItem[]) => RunFeedItem[]> = [];
 
             for (const event of events as Array<{ _id: string; type: string; payloadJson: string }>) {
               if (seenEventIds.has(String(event._id))) continue;
               seenEventIds.add(String(event._id));
               const payload = parseEventPayload(event.payloadJson);
+              const eventId = String(event._id);
 
               switch (event.type) {
                 case 'context_prepared':
@@ -227,21 +228,30 @@ export function AiAssistantPanel() {
                     ? assistantText
                     : `${assistantText}\nPrepared project context.`;
                   textChanged = true;
-                  nextFeed.push({ id: String(event._id), label: 'Context prepared.' });
+                  feedUpdates.push((items) => appendCompletedRunFeedItem(items, {
+                    id: eventId,
+                    label: 'Context prepared.',
+                  }));
                   break;
                 case 'reasoning_delta': {
                   const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
                   if (text) {
                     assistantText = `${assistantText}\n${text}`;
                     textChanged = true;
-                    nextFeed.push({ id: String(event._id), label: text });
+                    feedUpdates.push((items) => appendCompletedRunFeedItem(items, {
+                      id: eventId,
+                      label: text,
+                    }));
                   }
                   break;
                 }
                 case 'tool_call_started': {
                   const tool = typeof payload?.tool === 'string' ? payload.tool : 'tool';
                   setCurrentTool(tool);
-                  nextFeed.push({ id: String(event._id), label: `Running ${tool}...` });
+                  feedUpdates.push((items) => startToolRunFeedItem(items, {
+                    id: eventId,
+                    tool,
+                  }));
                   break;
                 }
                 case 'tool_call_finished': {
@@ -249,11 +259,12 @@ export function AiAssistantPanel() {
                   const result = payload?.result as Record<string, unknown> | null | undefined;
                   const summary = summarizeToolResult(result ?? null);
                   setCurrentTool(null);
-                  nextFeed.push({
-                    id: String(event._id),
+                  feedUpdates.push((items) => finishToolRunFeedItem(items, {
+                    eventId,
+                    tool,
                     label: summary ? `${tool}: ${summary}` : `${tool} finished.`,
                     tone: result?.ok === false ? 'warning' : 'normal',
-                  });
+                  }));
                   break;
                 }
                 case 'validation_failed': {
@@ -264,7 +275,11 @@ export function AiAssistantPanel() {
                     : 'Validation failed during staging.';
                   assistantText = `${assistantText}\nWarning: ${warning}`;
                   textChanged = true;
-                  nextFeed.push({ id: String(event._id), label: warning, tone: 'warning' });
+                  feedUpdates.push((items) => appendCompletedRunFeedItem(items, {
+                    id: eventId,
+                    label: warning,
+                    tone: 'warning',
+                  }));
                   break;
                 }
                 case 'run_completed': {
@@ -272,7 +287,10 @@ export function AiAssistantPanel() {
                   if (summary) {
                     assistantText = `${assistantText}\n${summary}`;
                     textChanged = true;
-                    nextFeed.push({ id: String(event._id), label: summary });
+                    feedUpdates.push((items) => appendCompletedRunFeedItem(items, {
+                      id: eventId,
+                      label: summary,
+                    }));
                   }
                   break;
                 }
@@ -282,7 +300,11 @@ export function AiAssistantPanel() {
                     : 'The assistant run failed.';
                   assistantText = `${assistantText}\nFailed: ${failure}`;
                   textChanged = true;
-                  nextFeed.push({ id: String(event._id), label: failure, tone: 'warning' });
+                  feedUpdates.push((items) => appendCompletedRunFeedItem(items, {
+                    id: eventId,
+                    label: failure,
+                    tone: 'warning',
+                  }));
                   break;
                 }
                 default:
@@ -290,8 +312,8 @@ export function AiAssistantPanel() {
               }
             }
 
-            if (nextFeed.length > 0) {
-              setRecentFeed((current) => [...current, ...nextFeed].slice(-12));
+            if (feedUpdates.length > 0) {
+              setRecentFeed((current) => feedUpdates.reduce((items, update) => update(items), current));
             }
 
             if (textChanged) {
@@ -634,7 +656,7 @@ export function AiAssistantPanel() {
                           ) : (
                             <div className="space-y-3">
                               {recentFeed.map((item) => {
-                                const running = item.label.startsWith('Running ');
+                                const running = item.status === 'running';
                                 const warning = item.tone === 'warning';
                                 return (
                                   <div key={item.id} className="flex gap-3" title={item.label}>
