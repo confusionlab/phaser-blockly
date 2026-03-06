@@ -15,6 +15,10 @@ function buildModelLogic(
   logicCodeMode: LogicCodeMode,
   generatedJs?: string,
 ) {
+  const fullEditableWith =
+    editableWith === 'set_component_logic'
+      ? ('set_component_block_program' as const)
+      : ('set_object_block_program' as const);
   const logic = summarizeStoredBlocklyLogic(
     blocklyXml,
     editableWith,
@@ -24,6 +28,7 @@ function buildModelLogic(
   if (!generatedJs?.trim()) {
     return {
       ...logic,
+      fullEditableWith,
       generatedCode: undefined,
       generatedCodeTruncated: undefined,
     };
@@ -31,6 +36,7 @@ function buildModelLogic(
 
   return {
     ...logic,
+    fullEditableWith,
     generatedCode: generatedJs,
     generatedCodeTruncated: false,
   };

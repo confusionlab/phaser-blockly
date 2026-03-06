@@ -9,6 +9,8 @@ import type {
   AssistantReferenceReport,
   AssistantValidationIssue,
 } from './assistant';
+import type { AssistantBlockCatalogEntry } from './assistantBlocks';
+import { getAssistantBlockCatalog } from './assistantBlocks';
 import {
   buildAssistantModelComponent,
   buildAssistantModelObject,
@@ -61,6 +63,15 @@ type AssistantToolErrorTextInput = {
   message: string;
   details?: unknown;
 };
+
+type AssistantBlockSearchResultsTextInput = {
+  query: string;
+  category?: string;
+  kind?: string;
+  matches: AssistantBlockCatalogEntry[];
+};
+
+type AssistantBlockDetailTextInput = AssistantBlockCatalogEntry;
 
 const MAX_LIST_PREVIEW_ITEMS = 6;
 
@@ -175,10 +186,18 @@ function formatCollider(collider: AssistantColliderConfig | null): string {
 
 function appendLogic(
   lines: string[],
-  logic: { summary: string; generatedCode?: string; generatedCodeTruncated?: boolean },
+  logic: {
+    summary: string;
+    fullEditableWith?: 'set_object_block_program' | 'set_component_block_program';
+    generatedCode?: string;
+    generatedCodeTruncated?: boolean;
+  },
   indent: string,
 ) {
   lines.push(`${indent}Logic summary: ${logic.summary}`);
+  if (logic.fullEditableWith) {
+    lines.push(`${indent}Full toolbox editing: ${logic.fullEditableWith}`);
+  }
   if (!logic.generatedCode) {
     return;
   }
@@ -345,6 +364,49 @@ export function formatAssistantSearchResults(results: AssistantSearchResultsText
   return lines.join('\n');
 }
 
+function formatBlockSignature(entry: AssistantBlockCatalogEntry): string {
+  const parts = [entry.type, entry.kind];
+  if (entry.inputNames.length > 0) {
+    parts.push(`inputs=${entry.inputNames.join(',')}`);
+  }
+  if (entry.statementInputNames.length > 0) {
+    parts.push(`statements=${entry.statementInputNames.join(',')}`);
+  }
+  if (entry.fieldNames.length > 0) {
+    parts.push(`fields=${entry.fieldNames.join(',')}`);
+  }
+  return parts.join(' | ');
+}
+
+export function formatAssistantBlockSearchResults(results: AssistantBlockSearchResultsTextInput): string {
+  const lines = [
+    `Block search results: query="${results.query || '*'}"${results.category ? ` category=${results.category}` : ''}${results.kind ? ` kind=${results.kind}` : ''}`,
+  ];
+
+  if (results.matches.length === 0) {
+    lines.push('  none');
+    return lines.join('\n');
+  }
+
+  results.matches.forEach((entry, index) => {
+    lines.push(`  ${index + 1}. [${entry.category}] ${formatBlockSignature(entry)} | ${entry.summary}`);
+  });
+  return lines.join('\n');
+}
+
+export function formatAssistantBlockDetail(entry: AssistantBlockDetailTextInput): string {
+  const lines = [
+    `Block "${entry.type}"`,
+    `  Category: ${entry.category}`,
+    `  Kind: ${entry.kind}`,
+    `  Summary: ${entry.summary}`,
+    `  Inputs: ${entry.inputNames.length === 0 ? 'none' : entry.inputNames.join(', ')}`,
+    `  Statement inputs: ${entry.statementInputNames.length === 0 ? 'none' : entry.statementInputNames.join(', ')}`,
+    `  Fields: ${entry.fieldNames.length === 0 ? 'none' : entry.fieldNames.join(', ')}`,
+  ];
+  return lines.join('\n');
+}
+
 function formatReferenceLink(link: AssistantReferenceLink): string {
   const parts: string[] = [link.relation.replaceAll('_', ' ')];
   if (link.sceneName || link.sceneId) {
@@ -487,6 +549,20 @@ function formatComponentSection(snapshot: AssistantPromptSnapshot, lines: string
   });
 }
 
+function formatBlockCatalogSection(lines: string[]) {
+  const catalog = getAssistantBlockCatalog();
+  lines.push('Available blocks (compact catalog):');
+
+  let currentCategory = '';
+  catalog.forEach((entry) => {
+    if (entry.category !== currentCategory) {
+      currentCategory = entry.category;
+      lines.push(`  ${currentCategory}:`);
+    }
+    lines.push(`    ${entry.type} | ${entry.kind} | ${entry.summary}`);
+  });
+}
+
 export function formatAssistantPromptSnapshot(snapshotInput: Parameters<typeof buildAssistantModelSnapshot>[0]): string {
   const snapshot = buildAssistantModelSnapshot(snapshotInput);
   const lines: string[] = [
@@ -502,6 +578,8 @@ export function formatAssistantPromptSnapshot(snapshotInput: Parameters<typeof b
   formatSceneSection(snapshot, lines);
   lines.push('');
   formatComponentSection(snapshot, lines);
+  lines.push('');
+  formatBlockCatalogSection(lines);
 
   return lines.join('\n').trim();
 }

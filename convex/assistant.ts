@@ -39,6 +39,14 @@ import {
   buildAssistantModelScene,
 } from "../packages/ui-shared/src/assistantReadModel";
 import {
+  compileAssistantBlockProgram,
+  getAssistantBlockCatalogEntry,
+  searchAssistantBlocks,
+  type AssistantBlockProgram,
+} from "../packages/ui-shared/src/assistantBlocks";
+import {
+  formatAssistantBlockDetail,
+  formatAssistantBlockSearchResults,
   formatAssistantFolderDetail,
   formatAssistantModelComponentDetail,
   formatAssistantModelObjectDetail,
@@ -535,6 +543,14 @@ function formatToolResultForModel(toolName: string, toolResult: unknown): string
       return result.results
         ? formatAssistantSearchResults(result.results as Parameters<typeof formatAssistantSearchResults>[0])
         : "Search results unavailable.";
+    case "search_blocks":
+      return result.results
+        ? formatAssistantBlockSearchResults(result.results as Parameters<typeof formatAssistantBlockSearchResults>[0])
+        : "Block search results unavailable.";
+    case "get_block_details":
+      return result.block
+        ? formatAssistantBlockDetail(result.block as Parameters<typeof formatAssistantBlockDetail>[0])
+        : "Block details unavailable.";
     case "list_references":
       return result.references
         ? formatAssistantReferenceReport(result.references as Parameters<typeof formatAssistantReferenceReport>[0])
@@ -839,6 +855,51 @@ const logicProgramSchema = {
   required: ["formatVersion", "scripts"],
 } as const;
 
+const blockNodeSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    type: { type: "string" },
+    fields: {
+      type: "object",
+      additionalProperties: {
+        anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
+      },
+    },
+    values: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+    statements: {
+      type: "object",
+      additionalProperties: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: true,
+        },
+      },
+    },
+  },
+  required: ["type"],
+} as const;
+
+const blockProgramSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    formatVersion: { type: "number", enum: [1] },
+    blocks: {
+      type: "array",
+      items: blockNodeSchema,
+    },
+  },
+  required: ["formatVersion", "blocks"],
+} as const;
+
 const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
@@ -936,6 +997,37 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
         query: { type: "string" },
       },
       required: ["query"],
+    },
+  },
+  {
+    type: "function",
+    name: "search_blocks",
+    description: "Search the full Blockly toolbox catalog by block type, category, behavior, or connection names.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { type: "string" },
+        category: { type: "string" },
+        kind: { type: "string", enum: ["hat", "statement", "reporter", "boolean"] },
+        limit: { type: "number" },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "get_block_details",
+    description: "Read one block's exact category, kind, inputs, statement inputs, and fields before authoring a block program.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        blockType: { type: "string" },
+      },
+      required: ["blockType"],
     },
   },
   {
@@ -1355,6 +1447,22 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   },
   {
     type: "function",
+    name: "set_object_block_program",
+    description: "Replace an object's gameplay logic using a typed block program that can express any supported toolbox block. Use get_block_details when you need exact input or field names.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        objectId: { type: "string" },
+        program: blockProgramSchema,
+      },
+      required: ["sceneId", "objectId", "program"],
+    },
+  },
+  {
+    type: "function",
     name: "make_component",
     description: "Convert a standalone object into a reusable component while keeping the object as the first instance. Provide componentId when you will reference the new component later in the same run.",
     strict: true,
@@ -1518,6 +1626,21 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
         logic: logicProgramSchema,
       },
       required: ["componentId", "logic"],
+    },
+  },
+  {
+    type: "function",
+    name: "set_component_block_program",
+    description: "Replace a component definition's shared gameplay logic using a typed block program that can express any supported toolbox block.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        componentId: { type: "string" },
+        program: blockProgramSchema,
+      },
+      required: ["componentId", "program"],
     },
   },
 ];
@@ -1887,15 +2010,16 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "Use emit_progress before significant work and when your plan changes.",
     "Use the domain tools only. Do not invent unsupported operations.",
     "Prefer the narrowest inspection tool that answers the question: get_scene/get_folder/get_object/get_component before broad search when you already know the target.",
+    "A compact toolbox catalog is included in the prompt. Use search_blocks and get_block_details when you need exact block signatures.",
     "Before deleting or moving scenes, folders, objects, or components when impact is unclear, call list_references first.",
     "When you create a scene, folder, object, or component that you will reference again in the same run, provide a stable id in that create call and reuse it in follow-up calls.",
     "When a write tool creates or duplicates an entity and you need to use it later in the same run, reuse the id returned in createdEntities instead of guessing by name.",
     "After duplicate_object, keep the original object unchanged unless the user explicitly asks to edit it too. Apply follow-up rename/move/property edits to the newly created duplicate id.",
     "If the user wants reusable actors, use make_component to convert a standalone object, add_component_instance to place copies, and detach_from_component to break inheritance for one object.",
-    "Never write or describe raw Blockly XML. Use set_object_logic or set_component_logic with typed JSON logic programs instead.",
+    "Never write or describe raw Blockly XML. Use set_object_logic/set_component_logic for canonical simple patterns, or set_object_block_program/set_component_block_program for full toolbox access.",
     "For continuous movement, prefer a forever trigger and explicitly reset horizontal velocity to 0 before conditional left/right movement.",
     "For jumping, use an if condition with all:[key_pressed, touching_ground] and set_velocity_y for the jump impulse.",
-    "Use only the supported typed logic actions and conditions from the tool schema. Do not invent new action kinds.",
+    "For typed logic tools, use only the supported actions and conditions from the tool schema. For block-program tools, use only block types and connection names from the catalog/details tools.",
     "For mutate runs, stage safe project operations until the request is fulfilled, then return a concise final summary.",
     "For analyze runs, do not call mutation tools. Read state, diagnose, and return a concise explanation.",
     "If an object is component-backed, inspect the component and edit the component for shared logic/physics/collider changes.",
@@ -2002,6 +2126,8 @@ function refuseMutationTool(mode: AssistantRunMode, toolName: string) {
     "get_object",
     "get_component",
     "search_entities",
+    "search_blocks",
+    "get_block_details",
     "list_references",
     "inspect_validation_issues",
   ]);
@@ -2080,6 +2206,36 @@ async function performTool(
           ok: true,
           results: searchEntities(execution.stagedState, String(args.query ?? "")),
         };
+      case "search_blocks":
+        return {
+          ok: true,
+          results: {
+            query: typeof args.query === "string" ? args.query : "",
+            category: typeof args.category === "string" ? args.category : undefined,
+            kind: typeof args.kind === "string" ? args.kind : undefined,
+            matches: searchAssistantBlocks({
+              query: typeof args.query === "string" ? args.query : undefined,
+              category: typeof args.category === "string" ? args.category : undefined,
+              kind: typeof args.kind === "string" ? (args.kind as any) : undefined,
+              limit: typeof args.limit === "number" ? args.limit : undefined,
+            }),
+          },
+        };
+      case "get_block_details":
+        {
+          const blockType = String(args.blockType ?? "");
+          const block = getAssistantBlockCatalogEntry(blockType);
+          if (!block) {
+            return buildToolError(
+              `Block "${blockType}" was not found in the supported toolbox catalog.`,
+              "unknown_block_type",
+            );
+          }
+          return {
+            ok: true,
+            block,
+          };
+        }
       case "list_references":
         return {
           ok: true,
@@ -2256,6 +2412,35 @@ async function performTool(
           logic: (args.logic ?? {}) as any,
         });
       }
+      case "set_object_block_program": {
+        const sceneId = String(args.sceneId ?? "");
+        const objectId = String(args.objectId ?? "");
+        const objectSummary = getObjectSummary(execution.stagedState, sceneId, objectId);
+        if (objectSummary.linkedComponent) {
+          return buildToolError(
+            `Object "${objectId}" is component-backed. Edit component "${objectSummary.linkedComponent.id}" instead.`,
+            "component_backed_object",
+            { componentId: objectSummary.linkedComponent.id },
+          );
+        }
+
+        let blocklyXml: string;
+        try {
+          blocklyXml = compileAssistantBlockProgram((args.program ?? {}) as AssistantBlockProgram);
+        } catch (error) {
+          return buildToolError(
+            error instanceof Error ? error.message : "Invalid block program.",
+            "invalid_block_program",
+          );
+        }
+
+        return stageOperation(execution, {
+          kind: "set_object_blockly_xml",
+          sceneId,
+          objectId,
+          blocklyXml,
+        });
+      }
       case "make_component":
         return stageOperation(execution, {
           kind: "make_component",
@@ -2309,6 +2494,23 @@ async function performTool(
           componentId: String(args.componentId ?? ""),
           logic: (args.logic ?? {}) as any,
         });
+      case "set_component_block_program": {
+        let blocklyXml: string;
+        try {
+          blocklyXml = compileAssistantBlockProgram((args.program ?? {}) as AssistantBlockProgram);
+        } catch (error) {
+          return buildToolError(
+            error instanceof Error ? error.message : "Invalid block program.",
+            "invalid_block_program",
+          );
+        }
+
+        return stageOperation(execution, {
+          kind: "set_component_blockly_xml",
+          componentId: String(args.componentId ?? ""),
+          blocklyXml,
+        });
+      }
       default:
         return buildToolError(`Unknown tool "${toolName}".`, "unknown_tool");
     }

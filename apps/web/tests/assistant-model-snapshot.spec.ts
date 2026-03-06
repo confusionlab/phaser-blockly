@@ -127,6 +127,8 @@ test.describe('assistant model snapshot', () => {
     });
 
     expect(prompt).toContain('Project snapshot (sanitized, readable):');
+    expect(prompt).toContain('Available blocks (compact catalog):');
+    expect(prompt).toContain('looks_change_size | statement | Change size by amount');
     expect(prompt).not.toContain('blocklyXml');
     expect(prompt).not.toContain('data:image');
     expect(prompt).not.toContain('data:audio');
