@@ -58,6 +58,8 @@ const SMART_ASSISTANT_MODEL = "gpt-5.4-2026-03-05";
 const STALE_QUEUED_RUN_TIMEOUT_MS = 15 * 1000;
 const STALE_RUNNING_RUN_TIMEOUT_MS = 15 * 60 * 1000;
 const ASSISTANT_EXECUTION_BACKSTOP_DELAY_MS = 2 * 1000;
+const OPENAI_DEBUG_TEXT_LIMIT = 12000;
+const OPENAI_DEBUG_ITEM_LIMIT = 8;
 
 type AssistantRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 type AssistantRunMode = "mutate" | "analyze";
@@ -394,6 +396,98 @@ function buildToolError(message: string, code = "tool_error", details?: unknown)
       message,
       details: details ?? null,
     },
+  };
+}
+
+function buildTruncatedTextPreview(text: string, maxChars = OPENAI_DEBUG_TEXT_LIMIT) {
+  if (text.length <= maxChars) {
+    return {
+      preview: text,
+      length: text.length,
+      truncated: false,
+    };
+  }
+
+  return {
+    preview: `${text.slice(0, maxChars).trimEnd()}\n...[truncated]`,
+    length: text.length,
+    truncated: true,
+  };
+}
+
+function summarizeOpenAiInputItem(item: unknown) {
+  if (!item || typeof item !== "object") {
+    return {
+      kind: "unknown",
+      ...buildTruncatedTextPreview(String(item ?? "")),
+    };
+  }
+
+  const record = item as Record<string, unknown>;
+  if (record.type === "function_call_output") {
+    return {
+      kind: "function_call_output",
+      callId: typeof record.call_id === "string" ? record.call_id : null,
+      ...buildTruncatedTextPreview(typeof record.output === "string" ? record.output : safeStringify(record.output)),
+    };
+  }
+
+  const role = typeof record.role === "string" ? record.role : null;
+  const content = Array.isArray(record.content) ? record.content : [];
+  const text = content
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const contentRecord = entry as Record<string, unknown>;
+      if (contentRecord.type === "input_text" && typeof contentRecord.text === "string") {
+        return [contentRecord.text];
+      }
+      return [];
+    })
+    .join("\n\n")
+    .trim();
+
+  return {
+    kind: role ? `message:${role}` : "message",
+    ...buildTruncatedTextPreview(text || safeStringify(record)),
+  };
+}
+
+function summarizeOpenAiInputForDebug(input: OpenAI.Responses.ResponseInput) {
+  const items = Array.isArray(input) ? input : [input];
+  return {
+    itemCount: items.length,
+    omittedItemCount: Math.max(items.length - OPENAI_DEBUG_ITEM_LIMIT, 0),
+    items: items.slice(0, OPENAI_DEBUG_ITEM_LIMIT).map((item) => summarizeOpenAiInputItem(item)),
+  };
+}
+
+function summarizeOpenAiResponseForDebug(response: OpenAI.Responses.Response) {
+  const functionCalls = response.output
+    .filter(
+      (item: OpenAI.Responses.ResponseOutputItem): item is OpenAI.Responses.ResponseFunctionToolCall =>
+        item.type === "function_call",
+    )
+    .slice(0, OPENAI_DEBUG_ITEM_LIMIT)
+    .map((toolCall) => ({
+      name: toolCall.name,
+      callId: toolCall.call_id,
+      ...buildTruncatedTextPreview(toolCall.arguments ?? ""),
+    }));
+
+  return {
+    responseId: response.id,
+    outputItemCount: response.output.length,
+    outputItemTypes: response.output.map((item) => item.type).slice(0, OPENAI_DEBUG_ITEM_LIMIT),
+    outputText: buildTruncatedTextPreview(response.output_text ?? ""),
+    functionCallCount: functionCalls.length,
+    functionCalls,
+    usage: response.usage
+      ? {
+          inputTokens: response.usage.input_tokens ?? 0,
+          outputTokens: response.usage.output_tokens ?? 0,
+          totalTokens: response.usage.total_tokens ?? 0,
+        }
+      : null,
   };
 }
 
@@ -2347,6 +2441,14 @@ export const executeRunInternal = internalAction({
 
     try {
       for (let step = 1; step <= maxSteps; step += 1) {
+        await appendRunEvent(ctx, args.runId, "openai_request_started", {
+          runId: args.runId,
+          step,
+          model,
+          previousResponseId,
+          request: summarizeOpenAiInputForDebug(nextInput),
+        });
+
         const response: OpenAI.Responses.Response = await openai.responses.create({
           model,
           instructions: previousResponseId ? undefined : buildSystemInstructions(runContext.run.mode),
@@ -2363,6 +2465,13 @@ export const executeRunInternal = internalAction({
           output_tokens: totalUsage.output_tokens + (response.usage?.output_tokens ?? 0),
           total_tokens: totalUsage.total_tokens + (response.usage?.total_tokens ?? 0),
         };
+
+        await appendRunEvent(ctx, args.runId, "openai_response_received", {
+          runId: args.runId,
+          step,
+          model,
+          response: summarizeOpenAiResponseForDebug(response),
+        });
 
         const functionCalls = response.output.filter(
           (item: OpenAI.Responses.ResponseOutputItem): item is OpenAI.Responses.ResponseFunctionToolCall =>
@@ -2418,10 +2527,18 @@ export const executeRunInternal = internalAction({
         const toolOutputs: OpenAI.Responses.ResponseInput = [];
         for (const toolCall of functionCalls) {
           const toolResult = await executeToolCall(ctx, toolCall, execution);
+          const formattedToolOutput = formatToolResultForModel(toolCall.name, toolResult);
+          await appendRunEvent(ctx, args.runId, "tool_result_forwarded", {
+            runId: args.runId,
+            step,
+            tool: toolCall.name,
+            callId: toolCall.call_id,
+            output: buildTruncatedTextPreview(formattedToolOutput),
+          });
           toolOutputs.push({
             type: "function_call_output",
             call_id: toolCall.call_id,
-            output: formatToolResultForModel(toolCall.name, toolResult),
+            output: formattedToolOutput,
           });
         }
         nextInput = toolOutputs;
