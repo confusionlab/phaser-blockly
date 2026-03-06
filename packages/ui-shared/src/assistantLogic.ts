@@ -144,6 +144,18 @@ function summarizeAction(action: AssistantLogicAction): string {
   }
 }
 
+function summarizeUnknownAction(action: unknown): string {
+  if (!action || typeof action !== 'object' || typeof (action as { kind?: unknown }).kind !== 'string') {
+    return 'invalid_action';
+  }
+
+  try {
+    return summarizeAction(action as AssistantLogicAction);
+  } catch {
+    return `invalid_${(action as { kind: string }).kind}`;
+  }
+}
+
 function buildMathNumberInput(name: string, value: number): string {
   return `<value name="${name}"><block type="math_number"><field name="NUM">${value}</field></block></value>`;
 }
@@ -379,11 +391,25 @@ export function isAssistantLogicProgram(value: unknown): value is AssistantLogic
 }
 
 export function summarizeAssistantLogicProgram(program: AssistantLogicProgram): string {
-  const triggerSummary = program.scripts.map((script) => summarizeScriptTrigger(script.trigger)).join(',');
+  const scripts = Array.isArray(program.scripts) ? program.scripts : [];
+  const triggerSummary = scripts.map((script) => {
+    if (!script || typeof script !== 'object' || !script.trigger || typeof script.trigger !== 'object') {
+      return 'invalid_trigger';
+    }
+    try {
+      return summarizeScriptTrigger(script.trigger as AssistantLogicTrigger);
+    } catch {
+      return 'invalid_trigger';
+    }
+  }).join(',');
   const actionKinds = Array.from(new Set(
-    program.scripts.flatMap((script) => script.actions.map((action) => summarizeAction(action))),
+    scripts.flatMap((script) => (
+      Array.isArray(script?.actions)
+        ? script.actions.map((action) => summarizeUnknownAction(action))
+        : ['invalid_actions']
+    )),
   ));
-  return `Logic v${program.formatVersion} (${program.scripts.length} scripts; triggers=${triggerSummary || 'none'}; actions=${actionKinds.slice(0, 4).join(',') || 'none'}${actionKinds.length > 4 ? ',+more' : ''})`;
+  return `Logic v${program.formatVersion} (${scripts.length} scripts; triggers=${triggerSummary || 'none'}; actions=${actionKinds.slice(0, 4).join(',') || 'none'}${actionKinds.length > 4 ? ',+more' : ''})`;
 }
 
 export function summarizeStoredBlocklyLogic(

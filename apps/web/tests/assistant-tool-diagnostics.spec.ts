@@ -80,4 +80,22 @@ test.describe('assistant tool diagnostics', () => {
     expect(summary).toContain('Logic v1');
     expect(summary).toContain('triggers=forever');
   });
+
+  test('summarizeToolArgs tolerates malformed typed logic payloads', () => {
+    const summary = summarizeToolArgs({
+      sceneId: 'scene_1',
+      objectId: 'object_1',
+      logic: {
+        formatVersion: 1,
+        scripts: [
+          {
+            trigger: { kind: 'forever' },
+          },
+        ],
+      } as unknown as Record<string, unknown>,
+    });
+
+    expect(summary).toContain('Logic v1');
+    expect(summary).toContain('invalid_actions');
+  });
 });
