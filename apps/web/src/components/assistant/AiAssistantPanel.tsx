@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useConvex } from 'convex/react';
+import { useConvex, useMutation, useQuery } from 'convex/react';
 import {
   AssistantRuntimeProvider,
   useLocalRuntime,
@@ -8,6 +8,7 @@ import {
   type ChatModelRunResult,
 } from '@assistant-ui/react';
 import { Composer, Thread, ThreadWelcome } from '@assistant-ui/react-ui';
+import { useUser } from '@clerk/clerk-react';
 import {
   Activity,
   Bot,
@@ -16,13 +17,26 @@ import {
   Lock,
   Sparkles,
   TriangleAlert,
+  Trash2,
   WandSparkles,
   Wrench,
   X,
 } from 'lucide-react';
 import { api } from '@convex-generated/api';
 import type { AssistantChangeSet } from '../../../../../packages/ui-shared/src/assistant';
+import {
+  ASSISTANT_MODEL_MODE_OPTIONS,
+  DEFAULT_ASSISTANT_MODEL_MODE,
+  type AssistantModelMode,
+} from '../../../../../packages/ui-shared/src/assistantModels';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   appendCompletedRunFeedItem,
   finishToolRunFeedItem,
@@ -72,6 +86,7 @@ const WELCOME_SUGGESTIONS = [
 
 const MAX_ASSISTANT_SNAPSHOT_BYTES = 900 * 1024;
 const ASSISTANT_SNAPSHOT_MISSING_ERROR = 'assistant_snapshot_missing_for_project_version';
+const assistantModelOptions = [...ASSISTANT_MODEL_MODE_OPTIONS];
 
 function parseEventPayload(payloadJson: string): Record<string, unknown> | null {
   try {
@@ -147,8 +162,11 @@ function getStatusTone({
 }
 
 export function AiAssistantPanel() {
+  const { user } = useUser();
   const convex = useConvex();
   const convexRef = useRef(convex);
+  const userSettings = useQuery(api.userSettings.getMySettings, user ? {} : 'skip');
+  const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const project = useProjectStore((state) => state.project);
   const projectId = project?.id ?? 'no-project';
   const assistantLockRunId = useEditorStore((state) => state.assistantLockRunId);
@@ -158,8 +176,11 @@ export function AiAssistantPanel() {
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [statusLabel, setStatusLabel] = useState<string>('Ready');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [assistantModelMode, setAssistantModelMode] = useState<AssistantModelMode>(DEFAULT_ASSISTANT_MODEL_MODE);
+  const [threadResetVersion, setThreadResetVersion] = useState(0);
 
   const activeRunIdRef = useRef<string | null>(null);
+  const assistantModelModeRef = useRef<AssistantModelMode>(DEFAULT_ASSISTANT_MODEL_MODE);
 
   useEffect(() => {
     convexRef.current = convex;
@@ -184,6 +205,28 @@ export function AiAssistantPanel() {
     setStatusLabel('Ready');
     setErrorMessage(null);
   }, [projectId]);
+
+  useEffect(() => {
+    const nextMode = userSettings?.assistantModelMode ?? DEFAULT_ASSISTANT_MODEL_MODE;
+    setAssistantModelMode(nextMode);
+  }, [userSettings?.assistantModelMode]);
+
+  useEffect(() => {
+    assistantModelModeRef.current = assistantModelMode;
+  }, [assistantModelMode]);
+
+  const handleAssistantModelModeChange = async (value: string) => {
+    const nextMode = value === 'smart' ? 'smart' : DEFAULT_ASSISTANT_MODEL_MODE;
+    setAssistantModelMode(nextMode);
+    if (!user) {
+      return;
+    }
+    try {
+      await updateMySettings({ assistantModelMode: nextMode });
+    } catch (error) {
+      console.error('[UserSettings] Failed to persist assistant model mode:', error);
+    }
+  };
 
   const runtime = useLocalRuntime(
     useMemo<ChatModelAdapter>(() => ({
@@ -237,6 +280,7 @@ export function AiAssistantPanel() {
             convexClient.mutation(assistantApi.createRun, {
               projectId: latestProject.id,
               mode: 'mutate',
+              modelMode: assistantModelModeRef.current,
               requestText: userPrompt,
               conversationHistoryJson: JSON.stringify(conversationHistory),
               projectVersion: preparedSnapshot?.projectVersion ?? createAssistantProjectVersion(latestProject),
@@ -483,6 +527,9 @@ export function AiAssistantPanel() {
     () => project?.scenes.reduce((total, scene) => total + scene.objects.length, 0) ?? 0,
     [project],
   );
+  const selectedAssistantModelOption = assistantModelOptions.find((option) => option.mode === assistantModelMode)
+    ?? assistantModelOptions[0]!;
+  const threadSessionKey = `${projectId}:${threadResetVersion}`;
 
   const statusTone = getStatusTone({ assistantLockRunId, errorMessage, statusLabel });
 
@@ -523,6 +570,17 @@ export function AiAssistantPanel() {
     }),
     [project],
   );
+
+  const handleClearChat = () => {
+    if (assistantLockRunId) {
+      return;
+    }
+    setRecentFeed([]);
+    setCurrentTool(null);
+    setStatusLabel('Ready');
+    setErrorMessage(null);
+    setThreadResetVersion((current) => current + 1);
+  };
 
   return (
     <>
@@ -573,9 +631,9 @@ export function AiAssistantPanel() {
           />
 
           <div className="absolute inset-3 animate-in fade-in zoom-in-95 slide-in-from-bottom-4 duration-200 sm:inset-4">
-            <AssistantRuntimeProvider runtime={runtime}>
+            <AssistantRuntimeProvider key={threadSessionKey} runtime={runtime}>
               <Thread.Root
-                key={projectId}
+                key={threadSessionKey}
                 config={threadConfig}
                 className={cn(
                   'assistant-panel-theme assistant-panel-chrome h-full overflow-hidden rounded-[28px]',
@@ -610,15 +668,53 @@ export function AiAssistantPanel() {
                         </div>
                       </div>
 
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        className="shrink-0 rounded-full bg-white/60 dark:bg-white/6"
-                        onClick={() => setIsOpen(false)}
-                        aria-label="Close AI assistant"
-                      >
-                        <X className="size-4" />
-                      </Button>
+                      <div className="flex shrink-0 items-start gap-2">
+                        <div className="min-w-[160px] rounded-2xl border border-black/8 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/6">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                            Model
+                          </div>
+                          <Select value={assistantModelMode} onValueChange={(value) => void handleAssistantModelModeChange(value)}>
+                            <SelectTrigger
+                              size="sm"
+                              className="mt-1 h-8 w-full border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                            >
+                              <SelectValue placeholder="Select model mode" />
+                            </SelectTrigger>
+                            <SelectContent className="z-[100360]">
+                              {assistantModelOptions.map((option) => (
+                                <SelectItem key={option.mode} value={option.mode}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="mt-1 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                            {selectedAssistantModelOption.description}
+                          </p>
+                        </div>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full bg-white/60 dark:bg-white/6"
+                          onClick={handleClearChat}
+                          disabled={!!assistantLockRunId}
+                          title={assistantLockRunId ? 'Wait for the current run to finish' : 'Clear chat'}
+                        >
+                          <Trash2 className="size-4" />
+                          Clear chat
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          className="shrink-0 rounded-full bg-white/60 dark:bg-white/6"
+                          onClick={() => setIsOpen(false)}
+                          aria-label="Close AI assistant"
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
 
@@ -674,10 +770,13 @@ export function AiAssistantPanel() {
                           </div>
                           <div className="rounded-2xl bg-black/5 p-3 dark:bg-white/5">
                             <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                              Apply mode
+                              Model
                             </div>
                             <div className="mt-1 text-sm font-medium text-slate-800 dark:text-slate-100">
-                              Auto-apply
+                              {selectedAssistantModelOption.label}
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                              {assistantModelMode === 'smart' ? 'gpt-5.4-2026-03-05' : 'gpt-5-mini-2025-08-07'}
                             </div>
                           </div>
                         </div>

@@ -30,6 +30,10 @@ import {
   type AssistantConversationTurn,
 } from "../packages/ui-shared/src/assistantConversation";
 import {
+  DEFAULT_ASSISTANT_MODEL_MODE,
+  type AssistantModelMode,
+} from "../packages/ui-shared/src/assistantModels";
+import {
   buildAssistantModelComponent,
   buildAssistantModelObject,
   buildAssistantModelScene,
@@ -37,6 +41,8 @@ import {
 
 const internalAssistant = (internal as any).assistant;
 const ASSISTANT_SNAPSHOT_MISSING_ERROR = "assistant_snapshot_missing_for_project_version";
+const FAST_ASSISTANT_MODEL = "gpt-5-mini-2025-08-07";
+const SMART_ASSISTANT_MODEL = "gpt-5.4-2026-03-05";
 
 type AssistantRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 type AssistantRunMode = "mutate" | "analyze";
@@ -46,6 +52,7 @@ type StoredRun = {
   ownerUserId?: string;
   projectId: string;
   mode: AssistantRunMode;
+  modelMode?: AssistantModelMode;
   status: AssistantRunStatus;
   requestText: string;
   conversationHistoryJson?: string;
@@ -69,6 +76,7 @@ const runValidator = v.object({
   _id: v.id("assistantRuns"),
   projectId: v.string(),
   mode: v.union(v.literal("mutate"), v.literal("analyze")),
+  modelMode: v.optional(v.union(v.literal("fast"), v.literal("smart"))),
   status: v.union(
     v.literal("queued"),
     v.literal("running"),
@@ -118,6 +126,18 @@ async function requireAuthenticatedUserId(ctx: any): Promise<string> {
 
 function safeStringify(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function normalizeAssistantModelMode(modelMode?: string): AssistantModelMode {
+  return modelMode === "smart" ? "smart" : DEFAULT_ASSISTANT_MODEL_MODE;
+}
+
+function resolveAssistantModel(modelMode: AssistantModelMode): string {
+  if (modelMode === "smart") {
+    return SMART_ASSISTANT_MODEL;
+  }
+
+  return FAST_ASSISTANT_MODEL;
 }
 
 async function findReusableSnapshot(
@@ -1270,6 +1290,7 @@ export const createRun = mutation({
   args: {
     projectId: v.string(),
     mode: v.union(v.literal("mutate"), v.literal("analyze")),
+    modelMode: v.optional(v.union(v.literal("fast"), v.literal("smart"))),
     requestText: v.string(),
     conversationHistoryJson: v.optional(v.string()),
     projectVersion: v.string(),
@@ -1280,6 +1301,7 @@ export const createRun = mutation({
   }),
   handler: async (ctx, args) => {
     const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const modelMode = normalizeAssistantModelMode(args.modelMode);
     const activeRuns = await ctx.db
       .query("assistantRuns")
       .withIndex("by_ownerUserId_and_projectId_and_createdAt", (q) =>
@@ -1317,6 +1339,7 @@ export const createRun = mutation({
       ownerUserId,
       projectId: args.projectId,
       mode: args.mode,
+      modelMode,
       status: "queued",
       requestText: args.requestText,
       conversationHistoryJson: args.conversationHistoryJson,
@@ -1345,6 +1368,7 @@ export const createRun = mutation({
         runId,
         projectId: args.projectId,
         mode: args.mode,
+        modelMode,
         requestText: args.requestText,
         conversationTurnCount: parseConversationHistory(args.conversationHistoryJson).length,
       }),
@@ -1373,6 +1397,7 @@ export const getRun = query({
       _id: run._id,
       projectId: run.projectId,
       mode: run.mode,
+      modelMode: run.modelMode,
       status: run.status,
       requestText: run.requestText,
       conversationHistoryJson: run.conversationHistoryJson,
@@ -1509,6 +1534,7 @@ export const getRunContextInternal = internalQuery({
         _id: run._id,
         projectId: run.projectId,
         mode: run.mode,
+        modelMode: run.modelMode ?? DEFAULT_ASSISTANT_MODEL_MODE,
         status: run.status,
         requestText: run.requestText,
         conversationHistoryJson: run.conversationHistoryJson,
@@ -2089,7 +2115,8 @@ export const executeRunInternal = internalAction({
     }
 
     const openai = new OpenAI({ apiKey });
-    const model = process.env.OPENAI_ASSISTANT_MODEL ?? "gpt-4.1-mini";
+    const modelMode = normalizeAssistantModelMode(runContext.run.modelMode);
+    const model = resolveAssistantModel(modelMode);
     const snapshot = parseSnapshot(runContext.snapshot.snapshotJson);
     const initialIssues = validateAssistantProjectState(snapshot.state);
     if (initialIssues.length > 0) {

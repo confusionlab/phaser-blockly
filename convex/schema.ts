@@ -177,6 +177,7 @@ export default defineSchema({
   userSettings: defineTable({
     userId: v.string(),
     isDarkMode: v.optional(v.boolean()),
+    assistantModelMode: v.optional(v.union(v.literal("fast"), v.literal("smart"))),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
@@ -202,6 +203,7 @@ export default defineSchema({
     ownerUserId: v.optional(v.string()),
     projectId: v.string(),
     mode: v.union(v.literal("mutate"), v.literal("analyze")),
+    modelMode: v.optional(v.union(v.literal("fast"), v.literal("smart"))),
     status: v.union(
       v.literal("queued"),
       v.literal("running"),
