@@ -7,6 +7,10 @@ import {
   type AssistantChangeSet,
   validateAssistantProjectState,
 } from '../../../packages/ui-shared/src/assistant';
+import {
+  applyAssistantBlockTreeEdits,
+  buildAssistantBlockTree,
+} from '../../../packages/ui-shared/src/assistantBlockTree';
 import { compileAssistantBlockProgram } from '../../../packages/ui-shared/src/assistantBlocks';
 import { normalizeBlocklyXml } from '../../../packages/ui-shared/src/blocklyXml';
 import {
@@ -713,6 +717,68 @@ test.describe('Assistant tool curation primitives', () => {
         ],
       }),
     ).toThrow(/fields\.VAR is required/);
+  });
+
+  test('block tree reads exact existing structure and supports targeted inserts without rebuilding neighbors', () => {
+    const variableId = 'variable_score';
+    const soundId = 'sound_merge';
+    const blocklyXml = `
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="event_game_start">
+          <statement name="NEXT">
+            <block type="sound_play">
+              <field name="SOUND">${soundId}</field>
+              <next>
+                <block type="looks_next_costume">
+                  <next>
+                    <block type="typed_variable_set">
+                      <field name="VAR">${variableId}</field>
+                      <value name="VALUE">
+                        <block type="math_number">
+                          <field name="NUM">5</field>
+                        </block>
+                      </value>
+                    </block>
+                  </next>
+                </block>
+              </next>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `.trim();
+
+    const tree = buildAssistantBlockTree(blocklyXml);
+    expect(tree.roots[0]?.statements.NEXT[0]?.type).toBe('sound_play');
+    expect(tree.roots[0]?.statements.NEXT[0]?.fields.SOUND).toBe(soundId);
+    expect(tree.roots[0]?.statements.NEXT[0]?.next?.path).toBe('roots[0].statements.NEXT[0].next');
+    expect(tree.roots[0]?.statements.NEXT[0]?.next?.type).toBe('looks_next_costume');
+    expect(tree.roots[0]?.statements.NEXT[0]?.next?.next?.type).toBe('typed_variable_set');
+    expect(tree.roots[0]?.statements.NEXT[0]?.next?.next?.fields.VAR).toBe(variableId);
+
+    const editedXml = applyAssistantBlockTreeEdits(blocklyXml, [
+      {
+        kind: 'insert_after',
+        path: 'roots[0].statements.NEXT[0].next',
+        block: {
+          type: 'looks_change_size',
+          values: {
+            SIZE: {
+              type: 'math_number',
+              fields: { NUM: 10 },
+            },
+          },
+        },
+      },
+    ]);
+
+    const editedTree = buildAssistantBlockTree(editedXml);
+    const insertedBlock = editedTree.roots[0]?.statements.NEXT[0]?.next?.next;
+    expect(insertedBlock?.type).toBe('looks_change_size');
+    expect(insertedBlock?.values.SIZE?.type).toBe('math_number');
+    expect(insertedBlock?.values.SIZE?.fields.NUM).toBe('10');
+    expect(insertedBlock?.next?.type).toBe('typed_variable_set');
+    expect(insertedBlock?.next?.fields.VAR).toBe(variableId);
   });
 
   test('applyAssistantProjectOperations rejects invalid component Blockly references introduced by a write', () => {

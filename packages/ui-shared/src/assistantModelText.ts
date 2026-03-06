@@ -189,6 +189,7 @@ function appendLogic(
   logic: {
     summary: string;
     fullEditableWith?: 'set_object_block_program' | 'set_component_block_program';
+    exactEditableWith?: string;
     generatedCode?: string;
     generatedCodeTruncated?: boolean;
   },
@@ -196,7 +197,10 @@ function appendLogic(
 ) {
   lines.push(`${indent}Logic summary: ${logic.summary}`);
   if (logic.fullEditableWith) {
-    lines.push(`${indent}Full toolbox editing: ${logic.fullEditableWith}`);
+    lines.push(`${indent}Full toolbox replacement: ${logic.fullEditableWith}`);
+  }
+  if (logic.exactEditableWith) {
+    lines.push(`${indent}Exact tree editing: ${logic.exactEditableWith}`);
   }
   if (!logic.generatedCode) {
     return;

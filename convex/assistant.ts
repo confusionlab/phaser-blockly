@@ -45,6 +45,11 @@ import {
   type AssistantBlockProgram,
 } from "../packages/ui-shared/src/assistantBlocks";
 import {
+  applyAssistantBlockTreeEdits,
+  buildAssistantBlockTree,
+  type AssistantBlockTreeEditOperation,
+} from "../packages/ui-shared/src/assistantBlockTree";
+import {
   formatAssistantBlockDetail,
   formatAssistantBlockSearchResults,
   formatAssistantFolderDetail,
@@ -539,6 +544,11 @@ function formatToolResultForModel(toolName: string, toolResult: unknown): string
       return result.component
         ? formatAssistantModelComponentDetail(result.component as Parameters<typeof formatAssistantModelComponentDetail>[0])
         : "Component details unavailable.";
+    case "get_object_block_tree":
+    case "get_component_block_tree":
+      return result.blockTree
+        ? `Block tree:\n${safeStringify(result.blockTree)}`
+        : "Block tree unavailable.";
     case "search_entities":
       return result.results
         ? formatAssistantSearchResults(result.results as Parameters<typeof formatAssistantSearchResults>[0])
@@ -900,6 +910,100 @@ const blockProgramSchema = {
   required: ["formatVersion", "blocks"],
 } as const;
 
+const blockPatchNodeSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    type: { type: "string" },
+    fields: {
+      type: "object",
+      additionalProperties: {
+        anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
+      },
+    },
+    values: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+    statements: {
+      type: "object",
+      additionalProperties: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: true,
+        },
+      },
+    },
+    next: {
+      anyOf: [{ type: "null" }, { type: "object", additionalProperties: true }],
+    },
+  },
+  required: ["type"],
+} as const;
+
+const blockTreeEditOperationSchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["insert_after"] },
+        path: { type: "string" },
+        block: blockPatchNodeSchema,
+      },
+      required: ["kind", "path", "block"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["replace_block"] },
+        path: { type: "string" },
+        block: blockPatchNodeSchema,
+      },
+      required: ["kind", "path", "block"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["delete_block"] },
+        path: { type: "string" },
+      },
+      required: ["kind", "path"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["set_field"] },
+        path: { type: "string" },
+        fieldName: { type: "string" },
+        value: {
+          anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
+        },
+      },
+      required: ["kind", "path", "fieldName", "value"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: ["insert_into_statement"] },
+        path: { type: "string" },
+        statementName: { type: "string" },
+        block: blockPatchNodeSchema,
+        index: { type: "number" },
+      },
+      required: ["kind", "path", "statementName", "block"],
+    },
+  ],
+} as const;
+
 const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
@@ -975,6 +1079,35 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
     type: "function",
     name: "get_component",
     description: "Read one component definition when an object is backed by a component.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        componentId: { type: "string" },
+      },
+      required: ["componentId"],
+    },
+  },
+  {
+    type: "function",
+    name: "get_object_block_tree",
+    description: "Read one standalone object's exact Blockly tree for lossless targeted edits. If the object is component-backed, inspect the component tree instead.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        objectId: { type: "string" },
+      },
+      required: ["sceneId", "objectId"],
+    },
+  },
+  {
+    type: "function",
+    name: "get_component_block_tree",
+    description: "Read one component's exact Blockly tree for lossless targeted edits.",
     strict: true,
     parameters: {
       type: "object",
@@ -1463,6 +1596,25 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   },
   {
     type: "function",
+    name: "edit_object_block_tree",
+    description: "Apply targeted edits to one standalone object's exact Blockly tree without reconstructing the whole program. If the object is component-backed, edit the component tree instead.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        sceneId: { type: "string" },
+        objectId: { type: "string" },
+        operations: {
+          type: "array",
+          items: blockTreeEditOperationSchema,
+        },
+      },
+      required: ["sceneId", "objectId", "operations"],
+    },
+  },
+  {
+    type: "function",
     name: "make_component",
     description: "Convert a standalone object into a reusable component while keeping the object as the first instance. Provide componentId when you will reference the new component later in the same run.",
     strict: true,
@@ -1641,6 +1793,24 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
         program: blockProgramSchema,
       },
       required: ["componentId", "program"],
+    },
+  },
+  {
+    type: "function",
+    name: "edit_component_block_tree",
+    description: "Apply targeted edits to one component's exact Blockly tree without reconstructing the whole program.",
+    strict: true,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        componentId: { type: "string" },
+        operations: {
+          type: "array",
+          items: blockTreeEditOperationSchema,
+        },
+      },
+      required: ["componentId", "operations"],
     },
   },
 ];
@@ -2017,6 +2187,8 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "After duplicate_object, keep the original object unchanged unless the user explicitly asks to edit it too. Apply follow-up rename/move/property edits to the newly created duplicate id.",
     "If the user wants reusable actors, use make_component to convert a standalone object, add_component_instance to place copies, and detach_from_component to break inheritance for one object.",
     "Never write or describe raw Blockly XML. Use set_object_logic/set_component_logic for canonical simple patterns, or set_object_block_program/set_component_block_program for full toolbox access.",
+    "For existing full Blockly targets, do not reconstruct whole programs from summaries or generated JavaScript.",
+    "When you need exact existing Blockly structure, use get_object_block_tree or get_component_block_tree, then apply minimal path-based edits with edit_object_block_tree or edit_component_block_tree.",
     "For continuous movement, prefer a forever trigger and explicitly reset horizontal velocity to 0 before conditional left/right movement.",
     "For jumping, use an if condition with all:[key_pressed, touching_ground] and set_velocity_y for the jump impulse.",
     "For typed logic tools, use only the supported actions and conditions from the tool schema. For block-program tools, use only block types and connection names from the catalog/details tools.",
@@ -2125,6 +2297,8 @@ function refuseMutationTool(mode: AssistantRunMode, toolName: string) {
     "get_folder",
     "get_object",
     "get_component",
+    "get_object_block_tree",
+    "get_component_block_tree",
     "search_entities",
     "search_blocks",
     "get_block_details",
@@ -2201,6 +2375,32 @@ async function performTool(
             getComponentSummary(execution.stagedState, String(args.componentId ?? "")),
           ),
         };
+      case "get_object_block_tree": {
+        const sceneId = String(args.sceneId ?? "");
+        const objectId = String(args.objectId ?? "");
+        const objectSummary = getObjectSummary(execution.stagedState, sceneId, objectId);
+        if (objectSummary.linkedComponent) {
+          return buildToolError(
+            `Object "${objectId}" is component-backed. Read component "${objectSummary.linkedComponent.id}" instead.`,
+            "component_backed_object",
+            { componentId: objectSummary.linkedComponent.id },
+          );
+        }
+        return {
+          ok: true,
+          sceneId,
+          objectId,
+          blockTree: buildAssistantBlockTree(objectSummary.blocklyXml || ""),
+        };
+      }
+      case "get_component_block_tree": {
+        const component = getComponentSummary(execution.stagedState, String(args.componentId ?? ""));
+        return {
+          ok: true,
+          componentId: component.id,
+          blockTree: buildAssistantBlockTree(component.blocklyXml || ""),
+        };
+      }
       case "search_entities":
         return {
           ok: true,
@@ -2441,6 +2641,38 @@ async function performTool(
           blocklyXml,
         });
       }
+      case "edit_object_block_tree": {
+        const sceneId = String(args.sceneId ?? "");
+        const objectId = String(args.objectId ?? "");
+        const objectSummary = getObjectSummary(execution.stagedState, sceneId, objectId);
+        if (objectSummary.linkedComponent) {
+          return buildToolError(
+            `Object "${objectId}" is component-backed. Edit component "${objectSummary.linkedComponent.id}" instead.`,
+            "component_backed_object",
+            { componentId: objectSummary.linkedComponent.id },
+          );
+        }
+
+        let blocklyXml: string;
+        try {
+          blocklyXml = applyAssistantBlockTreeEdits(
+            objectSummary.blocklyXml || "",
+            (Array.isArray(args.operations) ? args.operations : []) as AssistantBlockTreeEditOperation[],
+          );
+        } catch (error) {
+          return buildToolError(
+            error instanceof Error ? error.message : "Invalid block tree edit operations.",
+            "invalid_block_tree_edit",
+          );
+        }
+
+        return stageOperation(execution, {
+          kind: "set_object_blockly_xml",
+          sceneId,
+          objectId,
+          blocklyXml,
+        });
+      }
       case "make_component":
         return stageOperation(execution, {
           kind: "make_component",
@@ -2508,6 +2740,27 @@ async function performTool(
         return stageOperation(execution, {
           kind: "set_component_blockly_xml",
           componentId: String(args.componentId ?? ""),
+          blocklyXml,
+        });
+      }
+      case "edit_component_block_tree": {
+        const component = getComponentSummary(execution.stagedState, String(args.componentId ?? ""));
+        let blocklyXml: string;
+        try {
+          blocklyXml = applyAssistantBlockTreeEdits(
+            component.blocklyXml || "",
+            (Array.isArray(args.operations) ? args.operations : []) as AssistantBlockTreeEditOperation[],
+          );
+        } catch (error) {
+          return buildToolError(
+            error instanceof Error ? error.message : "Invalid block tree edit operations.",
+            "invalid_block_tree_edit",
+          );
+        }
+
+        return stageOperation(execution, {
+          kind: "set_component_blockly_xml",
+          componentId: component.id,
           blocklyXml,
         });
       }

@@ -19,6 +19,10 @@ function buildModelLogic(
     editableWith === 'set_component_logic'
       ? ('set_component_block_program' as const)
       : ('set_object_block_program' as const);
+  const exactEditableWith =
+    editableWith === 'set_component_logic'
+      ? 'get_component_block_tree + edit_component_block_tree'
+      : 'get_object_block_tree + edit_object_block_tree';
   const logic = summarizeStoredBlocklyLogic(
     blocklyXml,
     editableWith,
@@ -29,6 +33,7 @@ function buildModelLogic(
     return {
       ...logic,
       fullEditableWith,
+      exactEditableWith,
       generatedCode: undefined,
       generatedCodeTruncated: undefined,
     };
@@ -37,6 +42,7 @@ function buildModelLogic(
   return {
     ...logic,
     fullEditableWith,
+    exactEditableWith,
     generatedCode: generatedJs,
     generatedCodeTruncated: false,
   };
