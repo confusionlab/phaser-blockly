@@ -1406,6 +1406,7 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "When a write tool creates or duplicates an entity and you need to use it later in the same run, reuse the id returned in createdEntities instead of guessing by name.",
     "After duplicate_object, keep the original object unchanged unless the user explicitly asks to edit it too. Apply follow-up rename/move/property edits to the newly created duplicate id.",
     "If the user wants reusable actors, use make_component to convert a standalone object, add_component_instance to place copies, and detach_from_component to break inheritance for one object.",
+    "For Blockly XML, use PochaCoding's exact block type ids. Use event_game_start, event_key_pressed, event_clicked, event_forever, and sensing_key_pressed instead of generic aliases like controls_forever or keyboard_is_key_pressed.",
     "For mutate runs, stage safe project operations until the request is fulfilled, then return a concise final summary.",
     "For analyze runs, do not call mutation tools. Read state, diagnose, and return a concise explanation.",
     "If an object is component-backed, inspect the component and edit the component for shared logic/physics/collider changes.",

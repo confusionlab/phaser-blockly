@@ -1,3 +1,5 @@
+import { normalizeBlocklyXml } from './blocklyXml';
+
 export type AssistantVariableType = 'string' | 'integer' | 'float' | 'boolean';
 
 export interface AssistantVariable {
@@ -645,7 +647,7 @@ function createComponentFromObject(
   return {
     id: componentId,
     name: name?.trim() || object.name,
-    blocklyXml: object.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(object.blocklyXml),
     costumes: cloneState(object.costumes || []),
     currentCostumeIndex: object.currentCostumeIndex,
     physics: cloneState(object.physics),
@@ -661,7 +663,7 @@ function toComponentBackedObjectFields(component: AssistantComponent): Pick<
 > {
   return {
     name: component.name,
-    blocklyXml: component.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(component.blocklyXml),
     costumes: cloneState(component.costumes || []),
     currentCostumeIndex: component.currentCostumeIndex,
     physics: cloneState(component.physics),
@@ -1422,6 +1424,7 @@ export function applyAssistantProjectOperations(
         break;
       }
       case 'set_object_blockly_xml': {
+        const normalizedBlocklyXml = normalizeBlocklyXml(operation.blocklyXml);
         const scene = ensureScene(state, operation.sceneId);
         ensureObject(scene, operation.objectId);
         state.scenes = state.scenes.map((candidate) =>
@@ -1429,7 +1432,7 @@ export function applyAssistantProjectOperations(
             ? normalizeScene({
                 ...candidate,
                 objects: candidate.objects.map((object) =>
-                  object.id === operation.objectId ? { ...object, blocklyXml: operation.blocklyXml } : object,
+                  object.id === operation.objectId ? { ...object, blocklyXml: normalizedBlocklyXml } : object,
                 ),
               })
             : candidate,
@@ -1590,10 +1593,11 @@ export function applyAssistantProjectOperations(
         break;
       }
       case 'set_component_blockly_xml': {
+        const normalizedBlocklyXml = normalizeBlocklyXml(operation.blocklyXml);
         ensureComponent(state, operation.componentId);
         state.components = state.components.map((component) =>
           component.id === operation.componentId
-            ? { ...component, blocklyXml: operation.blocklyXml }
+            ? { ...component, blocklyXml: normalizedBlocklyXml }
             : component,
         );
         state.scenes = state.scenes.map((scene) =>
@@ -1601,7 +1605,7 @@ export function applyAssistantProjectOperations(
             ...scene,
             objects: scene.objects.map((object) =>
               object.componentId === operation.componentId
-                ? { ...object, blocklyXml: operation.blocklyXml }
+                ? { ...object, blocklyXml: normalizedBlocklyXml }
                 : object,
             ),
           }),

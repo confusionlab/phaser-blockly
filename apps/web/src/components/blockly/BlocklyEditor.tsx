@@ -25,6 +25,7 @@ import {
   VALID_OBJECT_SPECIAL_VALUES,
   VARIABLE_REFERENCE_BLOCKS,
 } from '@/lib/blocklyReferenceMaps';
+import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
 import type { UndoRedoHandler } from '@/store/editorStore';
 import type { Variable } from '@/types';
 
@@ -761,7 +762,7 @@ export function BlocklyEditor() {
 
     if (blocklyXml) {
       try {
-        const xml = Blockly.utils.xml.textToDom(blocklyXml);
+        const xml = Blockly.utils.xml.textToDom(normalizeBlocklyXml(blocklyXml));
 
         // Debug: track expected typed_variable_get connections from XML
         const blocks = Array.from(xml.getElementsByTagName('block'));

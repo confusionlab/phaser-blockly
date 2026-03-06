@@ -9,6 +9,7 @@ import type {
   MessageDefinition,
 } from '../types';
 import type { AssistantChangeSet } from '../../../../packages/ui-shared/src/assistant';
+import { normalizeBlocklyXml } from '../../../../packages/ui-shared/src/blocklyXml';
 import {
   createDefaultProject,
   createDefaultScene,
@@ -165,7 +166,7 @@ function hasDuplicateVariableNames(variables: Variable[]): boolean {
 function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
   return {
     name: obj.name,
-    blocklyXml: obj.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(obj.blocklyXml),
     costumes: cloneCostumes(obj.costumes),
     currentCostumeIndex: obj.currentCostumeIndex,
     physics: clonePhysicsConfig(obj.physics),
@@ -182,7 +183,7 @@ function toComponentBackedObjectFields(component: ComponentDefinition): Componen
 
   return {
     name: component.name,
-    blocklyXml: component.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(component.blocklyXml),
     costumes,
     currentCostumeIndex: safeCostumeIndex,
     physics: clonePhysicsConfig(component.physics ?? null),
@@ -228,6 +229,7 @@ function normalizeProject(project: Project): Project {
   const normalizedGlobalVariables = normalizeVariableDefinitions(project.globalVariables || [], { scope: 'global' });
   const normalizedComponents = (Array.isArray(project.components) ? project.components : []).map((component) => ({
     ...component,
+    blocklyXml: normalizeBlocklyXml(component.blocklyXml || ''),
     localVariables: normalizeVariableDefinitions(component.localVariables || [], { scope: 'local' }),
   }));
 
@@ -246,6 +248,7 @@ function normalizeProject(project: Project): Project {
       const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
       const objects: GameObject[] = (Array.isArray(scene.objects) ? scene.objects : []).map((obj) => ({
         ...obj,
+        blocklyXml: normalizeBlocklyXml(obj.blocklyXml || ''),
         localVariables: normalizeVariableDefinitions(obj.localVariables || [], {
           scope: 'local',
           objectId: obj.componentId ? null : obj.id,
@@ -499,6 +502,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project) return state;
 
+      const normalizedUpdates: Partial<GameObject> = {
+        ...updates,
+        ...(updates.blocklyXml !== undefined
+          ? { blocklyXml: normalizeBlocklyXml(updates.blocklyXml) }
+          : {}),
+      };
+
       // Find the object to check if it's a component instance
       const scene = state.project.scenes.find(s => s.id === sceneId);
       const obj = scene?.objects.find(o => o.id === objectId);
@@ -528,16 +538,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         const syncedUpdates: Partial<ComponentDefinition> = {};
         const instanceUpdates: Partial<GameObject> = {};
 
-        for (const key of Object.keys(updates) as (keyof GameObject)[]) {
+        for (const key of Object.keys(normalizedUpdates) as (keyof GameObject)[]) {
           if (instanceOnlyKeys.has(key)) {
             // These are always instance-specific
-            (instanceUpdates as Record<string, unknown>)[key] = updates[key];
+            (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
           } else if ((componentSyncKeys as (keyof GameObject)[]).includes(key)) {
             // These sync to component definition + all instances
-            (syncedUpdates as Record<string, unknown>)[key] = updates[key];
+            (syncedUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
           } else {
             // Non-component fields remain instance-specific
-            (instanceUpdates as Record<string, unknown>)[key] = updates[key];
+            (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
           }
         }
 
@@ -614,7 +624,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
               ? normalizeSceneLayering({
                   ...s,
                   objects: s.objects.map(o =>
-                    o.id === objectId ? { ...o, ...updates } : o
+                    o.id === objectId ? { ...o, ...normalizedUpdates } : o
                   ),
                 })
               : s
@@ -652,6 +662,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       });
       duplicateBlocklyXml = remapVariableIdsInBlocklyXml(original.blocklyXml || '', variableIdMap);
     }
+    duplicateBlocklyXml = normalizeBlocklyXml(duplicateBlocklyXml);
 
     const duplicate: GameObject = {
       ...original,
@@ -1101,6 +1112,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (!componentExists) return state;
 
       const normalizedUpdates: Partial<ComponentDefinition> = { ...updates };
+      if (updates.blocklyXml !== undefined) {
+        normalizedUpdates.blocklyXml = normalizeBlocklyXml(updates.blocklyXml);
+      }
       if (updates.localVariables !== undefined) {
         const normalizedLocalVariables = normalizeVariableDefinitions(updates.localVariables, { scope: 'local' });
         if (hasDuplicateVariableNames(normalizedLocalVariables)) return state;

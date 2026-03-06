@@ -1,4 +1,5 @@
 import * as Blockly from 'blockly';
+import { normalizeBlocklyXml } from '../../../../packages/ui-shared/src/blocklyXml';
 import type { GameObject, Project, Scene } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
@@ -228,7 +229,7 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
       }
 
       try {
-        const xml = Blockly.utils.xml.textToDom(blocklyXml);
+        const xml = Blockly.utils.xml.textToDom(normalizeBlocklyXml(blocklyXml));
         const blocks = Array.from(xml.getElementsByTagName('block'));
         for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
           issues.push(
@@ -277,7 +278,7 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
     }
 
     try {
-      const xml = Blockly.utils.xml.textToDom(blocklyXml);
+      const xml = Blockly.utils.xml.textToDom(normalizeBlocklyXml(blocklyXml));
       const blocks = Array.from(xml.getElementsByTagName('block'));
       for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
         issues.push(

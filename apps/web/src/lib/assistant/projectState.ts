@@ -8,6 +8,7 @@ import type {
   AssistantScene,
   AssistantSceneFolder,
 } from '../../../../../packages/ui-shared/src/assistant';
+import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
 import type {
   ComponentDefinition,
   GameObject,
@@ -120,7 +121,7 @@ function cloneLocalVariables(object: GameObject): GameObject['localVariables'] {
 function toComponentBackedFieldsFromObject(object: GameObject): Omit<ComponentDefinition, 'id'> {
   return {
     name: object.name,
-    blocklyXml: object.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(object.blocklyXml),
     costumes: cloneProject(object.costumes || []),
     currentCostumeIndex: object.currentCostumeIndex,
     physics: cloneProject(object.physics),
@@ -136,7 +137,7 @@ function toComponentBackedObjectFields(component: ComponentDefinition): Pick<
 > {
   return {
     name: component.name,
-    blocklyXml: component.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(component.blocklyXml),
     costumes: cloneProject(component.costumes || []),
     currentCostumeIndex: component.currentCostumeIndex,
     physics: cloneProject(component.physics),
@@ -171,7 +172,7 @@ function toAssistantObject(object: GameObject): AssistantObject {
     componentId: object.componentId,
     physics: object.physics ? { ...object.physics } : null,
     collider: object.collider ? { ...object.collider } : null,
-    blocklyXml: object.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(object.blocklyXml),
     costumes: (object.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
@@ -194,7 +195,7 @@ function toAssistantComponent(component: ComponentDefinition): AssistantComponen
   return {
     id: component.id,
     name: component.name,
-    blocklyXml: component.blocklyXml,
+    blocklyXml: normalizeBlocklyXml(component.blocklyXml),
     costumes: (component.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
@@ -552,21 +553,24 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
         ),
       };
     case 'set_object_blockly_xml':
-      return {
-        ...project,
-        scenes: project.scenes.map((scene) =>
-          scene.id === operation.sceneId
-            ? normalizeSceneLayering({
-                ...scene,
-                objects: scene.objects.map((object) =>
-                  object.id === operation.objectId
-                    ? { ...object, blocklyXml: operation.blocklyXml }
-                    : object,
-                ),
-              })
-            : scene,
-        ),
-      };
+      {
+        const normalizedBlocklyXml = normalizeBlocklyXml(operation.blocklyXml);
+        return {
+          ...project,
+          scenes: project.scenes.map((scene) =>
+            scene.id === operation.sceneId
+              ? normalizeSceneLayering({
+                  ...scene,
+                  objects: scene.objects.map((object) =>
+                    object.id === operation.objectId
+                      ? { ...object, blocklyXml: normalizedBlocklyXml }
+                      : object,
+                  ),
+                })
+              : scene,
+          ),
+        };
+      }
     case 'make_component': {
       const scene = project.scenes.find((candidate) => candidate.id === operation.sceneId);
       const object = scene?.objects.find((candidate) => candidate.id === operation.objectId);
@@ -740,24 +744,27 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
         ),
       };
     case 'set_component_blockly_xml':
-      return {
-        ...project,
-        components: (project.components || []).map((component) =>
-          component.id === operation.componentId
-            ? { ...component, blocklyXml: operation.blocklyXml }
-            : component,
-        ),
-        scenes: project.scenes.map((scene) =>
-          normalizeSceneLayering({
-            ...scene,
-            objects: scene.objects.map((object) =>
-              object.componentId === operation.componentId
-                ? { ...object, blocklyXml: operation.blocklyXml }
-                : object,
-            ),
-          }),
-        ),
-      };
+      {
+        const normalizedBlocklyXml = normalizeBlocklyXml(operation.blocklyXml);
+        return {
+          ...project,
+          components: (project.components || []).map((component) =>
+            component.id === operation.componentId
+              ? { ...component, blocklyXml: normalizedBlocklyXml }
+              : component,
+          ),
+          scenes: project.scenes.map((scene) =>
+            normalizeSceneLayering({
+              ...scene,
+              objects: scene.objects.map((object) =>
+                object.componentId === operation.componentId
+                  ? { ...object, blocklyXml: normalizedBlocklyXml }
+                  : object,
+              ),
+            }),
+          ),
+        };
+      }
   }
 }
 

@@ -1,5 +1,6 @@
 import * as Blockly from 'blockly';
 import { javascriptGenerator, Order } from 'blockly/javascript';
+import { normalizeBlocklyXml } from '../../../../packages/ui-shared/src/blocklyXml';
 
 function asJsString(value: string | null | undefined): string {
   return JSON.stringify(value ?? '');
@@ -800,6 +801,7 @@ const HAT_BLOCKS = [
  */
 export function generateCodeForObject(blocklyXml: string, objectId: string): string {
   if (!blocklyXml) return '';
+  const normalizedBlocklyXml = normalizeBlocklyXml(blocklyXml);
 
   let workspace: Blockly.Workspace | null = null;
   try {
@@ -809,7 +811,7 @@ export function generateCodeForObject(blocklyXml: string, objectId: string): str
     // Parse XML
     let xmlDom;
     try {
-      xmlDom = Blockly.utils.xml.textToDom(blocklyXml);
+      xmlDom = Blockly.utils.xml.textToDom(normalizedBlocklyXml);
     } catch (parseError) {
       console.error('XML parsing error for object', objectId, parseError);
       return '';

@@ -6,6 +6,7 @@ import {
   materializeAssistantOperationIds,
   type AssistantChangeSet,
 } from '../../../packages/ui-shared/src/assistant';
+import { normalizeBlocklyXml } from '../../../packages/ui-shared/src/blocklyXml';
 import { applyAssistantChangeSetToProject, createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
 import {
   createDefaultGameObject,
@@ -328,6 +329,38 @@ test.describe('Assistant tool curation primitives', () => {
       height: 32,
       radius: 16,
     });
+  });
+
+  test('assistant blockly writes normalize common alias block types', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const aliasBlocklyXml = `
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="controls_forever">
+          <statement name="SUBSTACK">
+            <block type="keyboard_is_key_pressed">
+              <field name="KEY_OPTION">SPACE</field>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `.trim();
+
+    const expectedBlocklyXml = normalizeBlocklyXml(aliasBlocklyXml);
+
+    const result = applyAssistantProjectOperations(snapshot.state, [
+      {
+        kind: 'set_object_blockly_xml',
+        sceneId: fixture.sceneId,
+        objectId: fixture.heroId,
+        blocklyXml: aliasBlocklyXml,
+      },
+    ]);
+
+    const scene = result.state.scenes.find((candidate) => candidate.id === fixture.sceneId);
+    const hero = scene?.objects.find((candidate) => candidate.id === fixture.heroId);
+
+    expect(hero?.blocklyXml).toBe(expectedBlocklyXml);
   });
 
   test('applyAssistantChangeSetToProject supports duplicate_object end to end', () => {
