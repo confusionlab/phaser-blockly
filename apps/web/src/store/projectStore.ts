@@ -8,6 +8,7 @@ import type {
   SceneFolder,
   MessageDefinition,
 } from '../types';
+import type { AssistantChangeSet } from '../../../../packages/ui-shared/src/assistant';
 import {
   createDefaultProject,
   createDefaultScene,
@@ -30,10 +31,12 @@ import {
   normalizeVariableDefinitions,
   remapVariableIdsInBlocklyXml,
 } from '@/lib/variableUtils';
+import { applyAssistantChangeSetToProject } from '@/lib/assistant/projectState';
 import {
   recordHistoryChange,
   registerProjectHistoryBridge,
   resetHistory,
+  runInHistoryTransaction,
 } from '@/store/universalHistory';
 
 interface ProjectStore {
@@ -47,6 +50,7 @@ interface ProjectStore {
   closeProject: () => void;
   updateProjectName: (name: string) => void;
   updateProjectSettings: (settings: Partial<Project['settings']>) => void;
+  applyAssistantChangeSet: (changeSet: AssistantChangeSet) => Project | null;
   addMessage: (name: string) => MessageDefinition | null;
   updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => void;
 
@@ -304,6 +308,22 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       isDirty: true,
     }));
     recordHistoryChange({ source: 'project:update-settings', allowMerge: true });
+  },
+
+  applyAssistantChangeSet: (changeSet: AssistantChangeSet) => {
+    const currentProject = get().project;
+    if (!currentProject) return null;
+
+    let nextProject: Project | null = null;
+    runInHistoryTransaction('assistant:apply', () => {
+      nextProject = applyAssistantChangeSetToProject(currentProject, changeSet);
+      set({
+        project: nextProject,
+        isDirty: true,
+      });
+    });
+
+    return nextProject;
   },
 
   addMessage: (name: string) => {

@@ -8,6 +8,7 @@ import { ObjectPicker } from '../stage/ObjectPicker';
 import { BackgroundCanvasEditor } from '../stage/BackgroundCanvasEditor';
 import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
+import { AiAssistantPanel } from '../assistant/AiAssistantPanel';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { CURRENT_SCHEMA_VERSION, createAutoCheckpoint, loadProject, migrateAllLocalProjects } from '@/db/database';
@@ -44,6 +45,8 @@ export function EditorLayout() {
     costumeUndoHandler,
     backgroundEditorOpen,
     backgroundShortcutHandler,
+    assistantLockRunId,
+    assistantLockMessage,
   } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(60);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
@@ -203,6 +206,11 @@ export function EditorLayout() {
                      target.tagName === 'TEXTAREA' ||
                      target.isContentEditable;
     const isInBlocklyArea = !!target.closest('[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv');
+
+    if (assistantLockRunId) {
+      e.preventDefault();
+      return;
+    }
 
     if (backgroundEditorOpen) {
       const handled = backgroundShortcutHandler?.(e) ?? false;
@@ -388,6 +396,7 @@ export function EditorLayout() {
     costumeUndoHandler,
     backgroundEditorOpen,
     backgroundShortcutHandler,
+    assistantLockRunId,
   ]);
 
   useEffect(() => {
@@ -472,7 +481,7 @@ export function EditorLayout() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="relative flex flex-col h-screen bg-background">
       <Toolbar />
 
       <div className="flex flex-1 overflow-hidden">
@@ -535,6 +544,16 @@ export function EditorLayout() {
           </div>
         </div>
       )}
+
+      {assistantLockRunId && !isBlockingCloudSync ? (
+        <div className="fixed inset-0 z-[100250] bg-background/70 backdrop-blur-[1px] flex items-center justify-center">
+          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
+            {assistantLockMessage ?? 'Assistant is working. The editor is temporarily locked.'}
+          </div>
+        </div>
+      ) : null}
+
+      <AiAssistantPanel />
     </div>
   );
 }

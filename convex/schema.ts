@@ -180,4 +180,52 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_userId", ["userId"]),
+
+  assistantSnapshots: defineTable({
+    ownerUserId: v.optional(v.string()),
+    projectId: v.string(),
+    projectVersion: v.string(),
+    snapshotJson: v.string(),
+    source: v.union(v.literal("full"), v.literal("patch")),
+    baseSnapshotId: v.optional(v.id("assistantSnapshots")),
+    createdAt: v.number(),
+  }).index("by_ownerUserId_and_projectId_and_createdAt", ["ownerUserId", "projectId", "createdAt"]),
+
+  assistantRuns: defineTable({
+    ownerUserId: v.optional(v.string()),
+    projectId: v.string(),
+    mode: v.union(v.literal("mutate"), v.literal("analyze")),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+    ),
+    requestText: v.string(),
+    projectVersion: v.string(),
+    snapshotId: v.id("assistantSnapshots"),
+    finalSummary: v.optional(v.string()),
+    changeSetJson: v.optional(v.string()),
+    errorCode: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    tokenUsageJson: v.optional(v.string()),
+    stepCount: v.optional(v.number()),
+    model: v.optional(v.string()),
+    appliedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+  })
+    .index("by_ownerUserId_and_projectId_and_createdAt", ["ownerUserId", "projectId", "createdAt"])
+    .index("by_ownerUserId_and_projectId_and_status", ["ownerUserId", "projectId", "status"]),
+
+  assistantRunEvents: defineTable({
+    runId: v.id("assistantRuns"),
+    sequence: v.number(),
+    type: v.string(),
+    payloadJson: v.string(),
+    createdAt: v.number(),
+  }).index("by_runId_and_sequence", ["runId", "sequence"]),
 });

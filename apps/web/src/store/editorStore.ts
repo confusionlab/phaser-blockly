@@ -70,6 +70,8 @@ interface EditorStore {
   collapsedFolderIdsByScene: Record<string, string[]>;
   backgroundEditorOpen: boolean;
   backgroundEditorSceneId: string | null;
+  assistantLockRunId: string | null;
+  assistantLockMessage: string | null;
 
   // Object picker state
   objectPickerOpen: boolean;
@@ -102,6 +104,7 @@ interface EditorStore {
   setShowReusableLibrary: (show: boolean) => void;
   setShowPlayValidationDialog: (show: boolean) => void;
   setPlayValidationIssues: (issues: PlayValidationIssue[]) => void;
+  setAssistantLock: (runId: string | null, message?: string | null) => void;
   focusPlayValidationIssue: (issue: PlayValidationIssue) => void;
   toggleFolderCollapsed: (sceneId: string, folderId: string) => void;
   setFolderCollapsed: (sceneId: string, folderId: string, collapsed: boolean) => void;
@@ -173,6 +176,8 @@ export const useEditorStore = create<EditorStore>((set) => ({
   collapsedFolderIdsByScene: {},
   backgroundEditorOpen: false,
   backgroundEditorSceneId: null,
+  assistantLockRunId: null,
+  assistantLockMessage: null,
 
   // Object picker state
   objectPickerOpen: false,
@@ -287,6 +292,13 @@ export const useEditorStore = create<EditorStore>((set) => ({
 
   setPlayValidationIssues: (issues) => {
     set({ playValidationIssues: issues });
+  },
+
+  setAssistantLock: (runId, message = null) => {
+    set({
+      assistantLockRunId: runId,
+      assistantLockMessage: runId ? message : null,
+    });
   },
 
   focusPlayValidationIssue: (issue) => {
