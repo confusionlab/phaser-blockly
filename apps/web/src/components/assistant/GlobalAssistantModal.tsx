@@ -32,12 +32,10 @@ import {
   buildProgramContext,
   getLlmExposedBlocklyCapabilities,
   readProgramSummary,
-  runLlmBlocklyOrchestration,
-  summarizeProjectOps,
-  validateSemanticOpsPayload,
 } from '@/lib/llm';
 import { createTraceRecorder } from '@/lib/llm/liveTrace';
-import type { BlocklyEditScope, LLMProvider, OrchestratedCandidate, ProjectOp } from '@/lib/llm';
+import { runManagedAssistantRepairLoop } from '@/lib/llm/managedRepairLoop';
+import type { BlocklyEditScope, OrchestratedCandidate, ProjectOp } from '@/lib/llm';
 import { buildModelEditOverviewLines } from '@/lib/llm/traceSummary';
 
 type ProviderStatusSnapshot = {
@@ -464,28 +462,34 @@ export function GlobalAssistantModal() {
             });
           }
 
-          const turn = await (providerMode === 'codex_oauth'
-            ? (() => {
-                if (!isDesktopRuntime || !window.desktopAssistant) {
-                  throw new Error('Codex mode requires desktop app runtime.');
-                }
-                if (!runtimeUserId) {
-                  throw new Error('Missing signed-in user context for desktop provider.');
-                }
-                return window.desktopAssistant.provider.assistantTurn({
-                  userIntent,
-                  chatHistory: historyForTurn,
-                  capabilities,
-                  context,
-                  programRead,
-                  projectSnapshot,
-                  threadContext,
-                }, runtimeUserId);
-              })()
-            : (() => {
-                return (async () => {
-                  return assistantTurnAction({
-                    userIntent,
+          const repairResult = await runManagedAssistantRepairLoop({
+            project,
+            scope: assistantScope,
+            userIntent,
+            requestTurn: async ({ effectiveUserIntent, attempt }) => {
+              pushTrace(
+                attempt === 1
+                  ? 'Running managed assistant attempt 1.'
+                  : `Running managed repair attempt ${attempt}.`,
+                { phase: 'request' },
+              );
+              flush();
+              const turn = await (providerMode === 'codex_oauth'
+                ? (() => {
+                    if (!isDesktopRuntime || !window.desktopAssistant) throw new Error('Codex mode requires desktop app runtime.');
+                    if (!runtimeUserId) throw new Error('Missing signed-in user context for desktop provider.');
+                    return window.desktopAssistant.provider.assistantTurn({
+                      userIntent: effectiveUserIntent,
+                      chatHistory: historyForTurn,
+                      capabilities,
+                      context,
+                      programRead,
+                      projectSnapshot,
+                      threadContext,
+                    }, runtimeUserId);
+                  })()
+                : assistantTurnAction({
+                    userIntent: effectiveUserIntent,
                     chatHistory: historyForTurn,
                     providerMode,
                     threadContext,
@@ -493,17 +497,52 @@ export function GlobalAssistantModal() {
                     context,
                     programRead,
                     projectSnapshot,
-                  });
-                })();
-              })());
+                  }));
+              pushTrace(`Received assistant turn response payload for attempt ${attempt}.`, { phase: 'response' });
+              traceRecorder.pushDebugTrace(turn.debugTrace);
+              flush();
+              return turn;
+            },
+          });
           stopTraceSubscription();
-
           const turnCompletedAt = new Date().toISOString();
-          const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
-          pushTrace('Received assistant turn response payload.', { phase: 'response' });
-          traceRecorder.pushDebugTrace(turn.debugTrace);
-          flush();
 
+          if (repairResult.kind === 'failed') {
+            setStatusMessage('Assistant could not produce a valid edit plan.');
+            pushTrace(repairResult.message, { phase: 'validation' });
+            const provider = repairResult.turn?.provider || 'convex';
+            const model = repairResult.turn?.model || 'unknown';
+            const assistantText = traceRecorder.render({
+              finalLabel: 'Assistant response',
+              finalBody: repairResult.message,
+            });
+
+            await appendAssistantMessage({
+              threadId,
+              role: 'assistant',
+              content: assistantText,
+              createdAt: new Date().toISOString(),
+              meta: `Provider mode: ${providerMode} · Provider: ${provider}/${model} · Latency: ${formatDuration(startedAt, new Date().toISOString())}`,
+            });
+            await appendAssistantTurn({
+              threadId,
+              userIntent,
+              mode: 'error',
+              provider,
+              model,
+              debugTraceJson: JSON.stringify({
+                repairAttempts: repairResult.attempts,
+                upstreamTrace: repairResult.turn?.debugTrace ?? null,
+              }),
+              createdAt: new Date().toISOString(),
+            });
+
+            finalizeTrace('Assistant response', repairResult.message);
+            return;
+          }
+
+          const turn = repairResult.turn;
+          const turnProviderLabel = providerMode === 'codex_oauth' ? `desktop:${turn.provider}` : `convex:${turn.provider}`;
           if (turn.mode === 'chat') {
             if ((turn as { errorCode?: string }).errorCode === 'credits_exhausted') {
               setErrorMessage('Out of credits. Open Billing to upgrade or manage your plan.');
@@ -530,7 +569,10 @@ export function GlobalAssistantModal() {
               mode: 'chat',
               provider: turn.provider,
               model: turn.model,
-              debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
+              debugTraceJson: JSON.stringify({
+                repairAttempts: repairResult.attempts,
+                upstreamTrace: turn.debugTrace ?? null,
+              }),
               createdAt: turnCompletedAt,
             });
 
@@ -538,88 +580,21 @@ export function GlobalAssistantModal() {
             return;
           }
 
-          const parsedProposedEdits = validateSemanticOpsPayload(turn.proposedEdits);
-          if (!parsedProposedEdits.ok) {
-            const validationSummary = parsedProposedEdits.errors.slice(0, 4).join('; ');
-            const validationSuffix = parsedProposedEdits.errors.length > 4 ? '; ...' : '';
-            const fallbackMessage = [
-              'I could not generate executable edits because the model returned an invalid operation payload.',
-              `Validation: ${validationSummary}${validationSuffix}`,
-              'Please retry with concrete scene/object names (or IDs).',
-            ].join('\n');
-
-            setStatusMessage('Assistant returned an invalid edit payload. Showing guidance instead of applying edits.');
-            pushTrace('Panel-side proposed-edits validation failed.', { phase: 'validation' });
-            const assistantText = traceRecorder.render({
-              finalLabel: 'Assistant response',
-              finalBody: fallbackMessage,
-            });
-
-            await appendAssistantMessage({
-              threadId,
-              role: 'assistant',
-              content: assistantText,
-              createdAt: turnCompletedAt,
-              meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Latency: ${formatDuration(startedAt, turnCompletedAt)}`,
-            });
-            await appendAssistantTurn({
-              threadId,
-              userIntent,
-              mode: 'error',
-              provider: turn.provider,
-              model: turn.model,
-              debugTraceJson: JSON.stringify({
-                validationErrors: parsedProposedEdits.errors,
-                upstreamTrace: turn.debugTrace ?? null,
-              }),
-              createdAt: turnCompletedAt,
-            });
-
-            finalizeTrace('Assistant response', fallbackMessage);
-            return;
+          if (repairResult.kind !== 'edit') {
+            throw new Error('Assistant returned edit mode without a repair-loop edit result.');
           }
 
-          const proposedEdits = parsedProposedEdits.value;
+          const proposedEdits = repairResult.proposedEdits;
           const modelLatency = formatDuration(startedAt, turnCompletedAt);
-          let compileLatency = '-';
-          let intentMismatchWarning: string | null = null;
-
-          let semanticCandidate: OrchestratedCandidate | null = null;
-          if (proposedEdits.semanticOps.length > 0) {
-            if (assistantScope) {
-              const convexProvider: LLMProvider = {
-                name: `convex:${turn.provider}`,
-                model: turn.model,
-                proposeEdits: async () => proposedEdits,
-              };
-
-              pushTrace('Compiling Blockly diff candidate from semantic ops.', {
-                phase: 'compile',
-              });
-              semanticCandidate = await runLlmBlocklyOrchestration({
-                project,
-                scope: assistantScope,
-                userIntent,
-                provider: convexProvider,
-              });
-              compileLatency = formatDuration(semanticCandidate.requestStartedAt, semanticCandidate.requestCompletedAt);
-              intentMismatchWarning = detectIntentMismatchWarning(userIntent, semanticCandidate);
-              setCandidate(semanticCandidate);
-              pushTrace('Blockly diff compilation finished.', { phase: 'compile' });
-            } else {
-              setCandidate(null);
-            }
-          } else {
-            setCandidate(null);
-          }
-
-          const nextProjectOpsCandidate = proposedEdits.projectOps.length > 0
-            ? {
-                projectOps: proposedEdits.projectOps,
-                summaryLines: summarizeProjectOps(proposedEdits.projectOps),
-              }
+          const compileLatency = repairResult.orchestrated
+            ? formatDuration(repairResult.orchestrated.requestStartedAt, repairResult.orchestrated.requestCompletedAt)
+            : '-';
+          const semanticCandidate = proposedEdits.semanticOps.length > 0 ? repairResult.orchestrated : null;
+          const intentMismatchWarning = semanticCandidate
+            ? detectIntentMismatchWarning(userIntent, semanticCandidate)
             : null;
-          setProjectOpsCandidate(nextProjectOpsCandidate);
+          setCandidate(null);
+          setProjectOpsCandidate(null);
 
           setCandidateDebugInfo({
             userIntent,
@@ -627,67 +602,139 @@ export function GlobalAssistantModal() {
             modelName: turn.model,
             modelLatency,
             compileLatency,
-            trace: turn.debugTrace ?? null,
+            trace: {
+              repairAttempts: repairResult.attempts,
+              upstreamTrace: turn.debugTrace ?? null,
+            },
             intentMismatchWarning,
           });
 
-          const responseLines: string[] = [];
-          const modelEditOverview = buildModelEditOverviewLines(proposedEdits);
-          responseLines.push(...modelEditOverview);
-          if (semanticCandidate) {
-            responseLines.push('', 'Compiled diff summary:', ...semanticCandidate.build.diff.summaryLines);
-            if (!semanticCandidate.validation.pass) {
-              responseLines.push(
-                '',
-                `Blockly validation failed with ${semanticCandidate.validation.errors.length} issue(s). Review before applying.`,
-              );
-              pushTrace(`Blockly validation failed with ${semanticCandidate.validation.errors.length} issue(s).`, {
-                phase: 'validation',
-              });
-            } else if (intentMismatchWarning) {
-              responseLines.push('', `Apply blocked by intent mismatch: ${intentMismatchWarning}`);
-              pushTrace(`Intent mismatch blocked apply: ${intentMismatchWarning}`, {
-                phase: 'validation',
-              });
-            }
-          } else if (proposedEdits.semanticOps.length > 0 && !assistantScope) {
-            responseLines.push(
+          if (repairResult.attempts.length > 0) {
+            pushTrace(`Repair loop succeeded after ${repairResult.attemptCount} attempt(s).`, { phase: 'validation' });
+          }
+
+          if (intentMismatchWarning) {
+            const responseLines = [
+              ...buildModelEditOverviewLines(proposedEdits),
               '',
-              'Blockly edits were proposed, but no object/component is selected. Select scope and ask again to apply code edits.',
+              `Auto-apply blocked by intent mismatch: ${intentMismatchWarning}`,
+            ];
+            pushTrace(`Intent mismatch blocked auto-apply: ${intentMismatchWarning}`, {
+              phase: 'validation',
+            });
+            const assistantText = traceRecorder.render({
+              finalLabel: 'Assistant response',
+              finalBody: responseLines.join('\n'),
+            });
+
+            await appendAssistantMessage({
+              threadId,
+              role: 'assistant',
+              content: assistantText,
+              createdAt: new Date().toISOString(),
+              meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+            });
+            await appendAssistantTurn({
+              threadId,
+              userIntent,
+              mode: 'edit',
+              provider: turn.provider,
+              model: turn.model,
+              debugTraceJson: JSON.stringify({
+                repairAttempts: repairResult.attempts,
+                upstreamTrace: turn.debugTrace ?? null,
+              }),
+              createdAt: new Date().toISOString(),
+            });
+
+            finalizeTrace('Assistant response', responseLines.join('\n'));
+            return;
+          }
+
+          const statusParts: string[] = [];
+          const errorParts: string[] = [];
+
+          if (semanticCandidate) {
+            const semanticResult = applyOrchestratedCandidate({
+              orchestrated: semanticCandidate,
+              bindings: {
+                getProject: () => useProjectStore.getState().project,
+                addMessage,
+                addGlobalVariable,
+                addLocalVariable,
+                updateObject,
+                updateComponent,
+              },
+            });
+            statusParts.push(
+              `${semanticResult.message} Added ${semanticResult.createdMessageCount} message(s) and ${semanticResult.createdVariableCount} variable(s).`,
             );
           }
 
-          if (nextProjectOpsCandidate) {
-            responseLines.push('', 'Resolved project-op plan:', ...nextProjectOpsCandidate.summaryLines);
+          if (proposedEdits.projectOps.length > 0) {
+            const projectResult = await applyProjectOps({
+              projectOps: proposedEdits.projectOps,
+              bindings: {
+                getProject: () => useProjectStore.getState().project,
+                updateProjectName,
+                addScene,
+                reorderScenes,
+                updateScene,
+                addObject,
+                updateObject,
+              },
+            });
+
+            statusParts.push(
+              `Applied ${projectResult.appliedOpCount}/${proposedEdits.projectOps.length} project op(s).`,
+            );
+            if (projectResult.validationIssueCount > 0) {
+              statusParts.push(`Validation reported ${projectResult.validationIssueCount} issue(s).`);
+            }
+            if (projectResult.errors.length > 0) {
+              errorParts.push(...projectResult.errors);
+            }
           }
 
-          if (!semanticCandidate && !nextProjectOpsCandidate) {
-            responseLines.push('', 'No executable edits were returned.');
+          const responseLines: string[] = [
+            ...buildModelEditOverviewLines(proposedEdits),
+          ];
+          if (semanticCandidate) {
+            responseLines.push('', 'Compiled diff summary:', ...semanticCandidate.build.diff.summaryLines);
           }
+          if (statusParts.length > 0) {
+            responseLines.push('', ...statusParts);
+          }
+          responseLines.push('', 'Use Undo to roll back if the result is wrong.');
 
           const assistantText = traceRecorder.render({
-            finalLabel: 'Prepared edits',
+            finalLabel: 'Applied edits',
             finalBody: responseLines.join('\n'),
           });
 
           await appendAssistantMessage({
             threadId,
             role: 'assistant',
-            content: assistantText,
-            createdAt: new Date().toISOString(),
-            meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
-          });
+              content: assistantText,
+              createdAt: new Date().toISOString(),
+              meta: `Provider mode: ${providerMode} · Provider: ${turnProviderLabel}/${turn.model} · Model latency: ${modelLatency} · Compile/validate: ${compileLatency}`,
+            });
+          setStatusMessage(statusParts.join(' '));
+          setErrorMessage(errorParts.length > 0 ? errorParts.join('\n') : null);
           await appendAssistantTurn({
             threadId,
             userIntent,
             mode: 'edit',
             provider: turn.provider,
             model: turn.model,
-            debugTraceJson: JSON.stringify(turn.debugTrace ?? null),
+            debugTraceJson: JSON.stringify({
+              repairAttempts: repairResult.attempts,
+              upstreamTrace: turn.debugTrace ?? null,
+            }),
             createdAt: new Date().toISOString(),
           });
 
-          finalizeTrace('Prepared edits', responseLines.join('\n'));
+          finalizeTrace('Applied edits', responseLines.join('\n'));
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to run assistant request.';
           setErrorMessage(message);

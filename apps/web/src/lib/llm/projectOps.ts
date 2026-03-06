@@ -1,6 +1,8 @@
 import { validateProjectBeforePlay } from '@/lib/playValidation';
 import type { ProjectOp, Scalar } from '@/lib/llm/types';
 import {
+  createDefaultScene,
+  createDefaultGameObject,
   createDefaultColliderConfig,
   createDefaultPhysicsConfig,
   getEffectiveObjectProps,
@@ -33,6 +35,11 @@ export type ProjectOpsApplyResult = {
   errors: string[];
   validationIssueCount: number;
   validationIssueSample: string[];
+};
+
+export type ProjectOpsPreviewResult = ProjectOpsApplyResult & {
+  pass: boolean;
+  project: Project;
 };
 
 function normalize(value: string): string {
@@ -813,5 +820,77 @@ export async function applyProjectOps(args: {
     errors,
     validationIssueCount,
     validationIssueSample,
+  };
+}
+
+export async function previewProjectOps(args: {
+  projectOps: ProjectOp[];
+  project: Project;
+}): Promise<ProjectOpsPreviewResult> {
+  const previewProject = structuredClone(args.project);
+  const bindings: ProjectOpsBindings = {
+    getProject: () => previewProject,
+    updateProjectName: (name) => {
+      previewProject.name = name;
+      previewProject.updatedAt = new Date();
+    },
+    addScene: (name) => {
+      const order = previewProject.scenes.length;
+      previewProject.scenes.push(createDefaultScene(crypto.randomUUID(), name, order));
+      previewProject.updatedAt = new Date();
+    },
+    reorderScenes: (sceneIds) => {
+      const ordered = sceneIds
+        .map((sceneId) => previewProject.scenes.find((scene) => scene.id === sceneId))
+        .filter((scene): scene is Scene => !!scene);
+      previewProject.scenes = ordered.map((scene, index) => ({
+        ...scene,
+        order: index,
+      }));
+      previewProject.updatedAt = new Date();
+    },
+    updateScene: (sceneId, updates) => {
+      const sceneIndex = previewProject.scenes.findIndex((scene) => scene.id === sceneId);
+      if (sceneIndex < 0) return;
+      previewProject.scenes[sceneIndex] = {
+        ...previewProject.scenes[sceneIndex],
+        ...updates,
+      };
+      previewProject.updatedAt = new Date();
+    },
+    addObject: (sceneId, name) => {
+      const scene = previewProject.scenes.find((entry) => entry.id === sceneId);
+      if (!scene) {
+        throw new Error(`Scene "${sceneId}" not found.`);
+      }
+      const object = {
+        ...createDefaultGameObject(name),
+        order: scene.objects.length,
+      };
+      scene.objects.push(object);
+      previewProject.updatedAt = new Date();
+      return object;
+    },
+    updateObject: (sceneId, objectId, updates) => {
+      const scene = previewProject.scenes.find((entry) => entry.id === sceneId);
+      const objectIndex = scene?.objects.findIndex((object) => object.id === objectId) ?? -1;
+      if (!scene || objectIndex < 0) return;
+      scene.objects[objectIndex] = {
+        ...scene.objects[objectIndex],
+        ...updates,
+      };
+      previewProject.updatedAt = new Date();
+    },
+  };
+
+  const result = await applyProjectOps({
+    projectOps: args.projectOps,
+    bindings,
+  });
+
+  return {
+    ...result,
+    pass: result.errors.length === 0 && result.validationIssueCount === 0,
+    project: previewProject,
   };
 }
