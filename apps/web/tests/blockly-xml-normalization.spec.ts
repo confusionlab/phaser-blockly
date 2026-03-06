@@ -18,6 +18,112 @@ const ALIAS_BLOCKLY_XML = `
   </xml>
 `.trim();
 
+const MOVEMENT_ALIAS_BLOCKLY_XML = `
+  <xml xmlns="https://developers.google.com/blockly/xml">
+    <block type="event_whenstart" id="start_1" x="19" y="17">
+      <next>
+        <block type="event_forever" id="forever_1">
+          <statement name="DO">
+            <block type="controls_if" id="if_a">
+              <value name="IF0">
+                <block type="sensing_key_pressed" id="key_a">
+                  <field name="KEY">A</field>
+                </block>
+              </value>
+              <statement name="DO0">
+                <block type="motion_change_x" id="move_left">
+                  <field name="DIR">LEFT</field>
+                  <value name="NUM">
+                    <block type="math_number" id="num_5_left">
+                      <field name="NUM">5</field>
+                    </block>
+                  </value>
+                </block>
+              </statement>
+            </block>
+          </statement>
+        </block>
+      </next>
+    </block>
+  </xml>
+`.trim();
+
+const DIRECT_FIELD_MOVEMENT_BLOCKLY_XML = `
+  <xml xmlns="https://developers.google.com/blockly/xml">
+    <block type="motion_change_x" id="move_left" x="12" y="18">
+      <field name="DIR">LEFT</field>
+      <field name="VALUE">5</field>
+    </block>
+  </xml>
+`.trim();
+
+const LIVE_WASD_ALIAS_BLOCKLY_XML = `
+  <xml xmlns="https://developers.google.com/blockly/xml">
+    <block type="when_run" deletable="false" movable="false">
+      <statement name="STACK">
+        <block type="event_forever">
+          <statement name="STACK">
+            <block type="controls_if_else">
+              <value name="IF0">
+                <block type="key_pressed">
+                  <field name="KEY">w</field>
+                </block>
+              </value>
+              <statement name="DO0">
+                <block type="change_y_by">
+                  <field name="DELTA">5</field>
+                </block>
+              </statement>
+              <statement name="ELSE">
+                <block type="controls_if_else">
+                  <value name="IF0">
+                    <block type="key_pressed">
+                      <field name="KEY">s</field>
+                    </block>
+                  </value>
+                  <statement name="DO0">
+                    <block type="change_y_by">
+                      <field name="DELTA">-5</field>
+                    </block>
+                  </statement>
+                  <statement name="ELSE">
+                    <block type="controls_if_else">
+                      <value name="IF0">
+                        <block type="key_pressed">
+                          <field name="KEY">a</field>
+                        </block>
+                      </value>
+                      <statement name="DO0">
+                        <block type="change_x_by">
+                          <field name="DELTA">-5</field>
+                        </block>
+                      </statement>
+                      <statement name="ELSE">
+                        <block type="controls_if_else">
+                          <value name="IF0">
+                            <block type="key_pressed">
+                              <field name="KEY">d</field>
+                            </block>
+                          </value>
+                          <statement name="DO0">
+                            <block type="change_x_by">
+                              <field name="DELTA">5</field>
+                            </block>
+                          </statement>
+                        </block>
+                      </statement>
+                    </block>
+                  </statement>
+                </block>
+              </statement>
+            </block>
+          </statement>
+        </block>
+      </statement>
+    </block>
+  </xml>
+`.trim();
+
 test.describe('Blockly XML normalization', () => {
   test('normalizes assistant alias block types to PochaCoding block ids', () => {
     const normalized = normalizeBlocklyXml(ALIAS_BLOCKLY_XML);
@@ -68,6 +174,62 @@ test.describe('Blockly XML normalization', () => {
     );
 
     useProjectStore.getState().closeProject();
+  });
+
+  test('normalizes event and directional motion aliases from assistant XML', () => {
+    const normalized = normalizeBlocklyXml(MOVEMENT_ALIAS_BLOCKLY_XML);
+
+    expect(normalized).toContain('type="event_game_start"');
+    expect(normalized).toContain('<value name="VALUE">');
+    expect(normalized).toContain('<field name="NUM">-5</field>');
+    expect(normalized).not.toContain('<field name="DIR">LEFT</field>');
+    expect(normalized).not.toContain('event_whenstart');
+    expect(normalized).not.toContain('value name="NUM"');
+  });
+
+  test('converts direct motion VALUE fields into math_number inputs', () => {
+    const normalized = normalizeBlocklyXml(DIRECT_FIELD_MOVEMENT_BLOCKLY_XML);
+
+    expect(normalized).toContain('type="motion_change_x"');
+    expect(normalized).toContain('<value name="VALUE"><block type="math_number"><field name="NUM">-5</field></block></value>');
+    expect(normalized).not.toContain('<field name="VALUE">5</field>');
+    expect(normalized).not.toContain('<field name="DIR">LEFT</field>');
+  });
+
+  test('normalizes live assistant WASD alias XML into editor-valid blocks', async () => {
+    installBrowserShims();
+    const { validateProjectBeforePlay } = await import('../src/lib/playValidation');
+
+    const normalized = normalizeBlocklyXml(LIVE_WASD_ALIAS_BLOCKLY_XML);
+
+    expect(normalized).toContain('type="event_game_start"');
+    expect(normalized).toContain('<statement name="NEXT">');
+    expect(normalized).toContain('type="sensing_key_pressed"');
+    expect(normalized).toContain('type="motion_change_y"');
+    expect(normalized).toContain('type="motion_change_x"');
+    expect(normalized).toContain('<mutation else="1"></mutation>');
+    expect(normalized).toContain('<field name="KEY">W</field>');
+    expect(normalized).toContain('<field name="KEY">S</field>');
+    expect(normalized).toContain('<field name="KEY">A</field>');
+    expect(normalized).toContain('<field name="KEY">D</field>');
+    expect(normalized).toContain('<value name="VALUE"><block type="math_number"><field name="NUM">5</field></block></value>');
+    expect(normalized).toContain('<value name="VALUE"><block type="math_number"><field name="NUM">-5</field></block></value>');
+    expect(normalized).not.toContain('when_run');
+    expect(normalized).not.toContain('type="key_pressed"');
+    expect(normalized).not.toContain('type="change_y_by"');
+    expect(normalized).not.toContain('type="controls_if_else"');
+
+    const project = createDefaultProject('Live Assistant Alias Fixture');
+    const scene = project.scenes[0]!;
+    const object = createDefaultGameObject('Penguin');
+    object.blocklyXml = LIVE_WASD_ALIAS_BLOCKLY_XML;
+    scene.objects = [object];
+
+    const issues = validateProjectBeforePlay(project);
+
+    expect(
+      issues.filter((issue) => issue.message.includes('Missing block type')),
+    ).toEqual([]);
   });
 
 });

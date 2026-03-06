@@ -445,6 +445,58 @@ test.describe('Assistant tool curation primitives', () => {
     expect(object?.y).toBe(220);
   });
 
+  test('applyAssistantChangeSetToProject supports explicit ids for create-and-edit chains', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const sceneId = 'scene_penguin';
+    const objectId = 'object_penguin';
+    const blocklyXml = `
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="controls_forever">
+          <statement name="SUBSTACK">
+            <block type="keyboard_is_key_pressed">
+              <field name="KEY_OPTION">W</field>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `.trim();
+
+    const changeSet: AssistantChangeSet = {
+      baseProjectId: fixture.project.id,
+      baseProjectVersion: snapshot.projectVersion,
+      operations: [
+        {
+          kind: 'create_scene',
+          sceneId,
+          name: 'penguin',
+        },
+        {
+          kind: 'create_object',
+          sceneId,
+          objectId,
+          name: 'penguin',
+        },
+        {
+          kind: 'set_object_blockly_xml',
+          sceneId,
+          objectId,
+          blocklyXml,
+        },
+      ],
+      summary: 'Created penguin scene and object with movement logic',
+      affectedEntityIds: [sceneId, objectId],
+    };
+
+    const nextProject = applyAssistantChangeSetToProject(fixture.project, changeSet);
+    const penguinScene = nextProject.scenes.find((scene) => scene.id === sceneId);
+    const penguinObject = penguinScene?.objects.find((object) => object.id === objectId);
+
+    expect(penguinScene?.name).toBe('penguin');
+    expect(penguinObject?.name).toBe('penguin');
+    expect(penguinObject?.blocklyXml).toBe(normalizeBlocklyXml(blocklyXml));
+  });
+
   test('applyAssistantChangeSetToProject supports follow-up edits on a duplicated object', () => {
     const fixture = buildProjectFixture();
     const snapshot = createAssistantProjectSnapshot(fixture.project);

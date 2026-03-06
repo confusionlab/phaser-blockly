@@ -523,13 +523,14 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "create_scene",
-    description: "Create a new scene.",
+    description: "Create a new scene. Provide sceneId when you will reference the new scene later in the same run.",
     strict: true,
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         name: { type: "string" },
+        sceneId: { type: "string" },
         insertIndex: { type: "number" },
       },
       required: ["name"],
@@ -666,7 +667,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "create_folder",
-    description: "Create a folder inside a scene.",
+    description: "Create a folder inside a scene. Provide folderId when you will reference the new folder later in the same run.",
     strict: true,
     parameters: {
       type: "object",
@@ -674,6 +675,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
       properties: {
         sceneId: { type: "string" },
         name: { type: "string" },
+        folderId: { type: "string" },
         parentId: { anyOf: [{ type: "string" }, { type: "null" }] },
         index: { type: "number" },
       },
@@ -731,7 +733,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "create_object",
-    description: "Create a new object in a scene or folder.",
+    description: "Create a new object in a scene or folder. Provide objectId when you will reference the new object later in the same run.",
     strict: true,
     parameters: {
       type: "object",
@@ -739,6 +741,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
       properties: {
         sceneId: { type: "string" },
         name: { type: "string" },
+        objectId: { type: "string" },
         parentId: { anyOf: [{ type: "string" }, { type: "null" }] },
         index: { type: "number" },
         properties: {
@@ -770,6 +773,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
       properties: {
         sceneId: { type: "string" },
         objectId: { type: "string" },
+        duplicateObjectId: { type: "string" },
       },
       required: ["sceneId", "objectId"],
     },
@@ -810,7 +814,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "duplicate_object",
-    description: "Duplicate an object in place. Use follow-up rename, move, or property tools to customize the copy.",
+    description: "Duplicate an object in place. Provide duplicateObjectId when you will reference the copy later in the same run. Use follow-up rename, move, or property tools to customize the copy.",
     strict: true,
     parameters: {
       type: "object",
@@ -909,7 +913,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "make_component",
-    description: "Convert a standalone object into a reusable component while keeping the object as the first instance.",
+    description: "Convert a standalone object into a reusable component while keeping the object as the first instance. Provide componentId when you will reference the new component later in the same run.",
     strict: true,
     parameters: {
       type: "object",
@@ -917,6 +921,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
       properties: {
         sceneId: { type: "string" },
         objectId: { type: "string" },
+        componentId: { type: "string" },
         name: { type: "string" },
       },
       required: ["sceneId", "objectId"],
@@ -939,7 +944,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "add_component_instance",
-    description: "Create a new object instance from a reusable component inside a scene or folder.",
+    description: "Create a new object instance from a reusable component inside a scene or folder. Provide objectId when you will reference the new instance later in the same run.",
     strict: true,
     parameters: {
       type: "object",
@@ -947,6 +952,7 @@ const rawToolDefinitions: OpenAI.Responses.Tool[] = [
       properties: {
         sceneId: { type: "string" },
         componentId: { type: "string" },
+        objectId: { type: "string" },
         parentId: { anyOf: [{ type: "string" }, { type: "null" }] },
         index: { type: "number" },
         properties: {
@@ -1403,10 +1409,12 @@ function buildSystemInstructions(mode: AssistantRunMode) {
     "Use the domain tools only. Do not invent unsupported operations.",
     "Prefer the narrowest inspection tool that answers the question: get_scene/get_folder/get_object/get_component before broad search when you already know the target.",
     "Before deleting or moving scenes, folders, objects, or components when impact is unclear, call list_references first.",
+    "When you create a scene, folder, object, or component that you will reference again in the same run, provide a stable id in that create call and reuse it in follow-up calls.",
     "When a write tool creates or duplicates an entity and you need to use it later in the same run, reuse the id returned in createdEntities instead of guessing by name.",
     "After duplicate_object, keep the original object unchanged unless the user explicitly asks to edit it too. Apply follow-up rename/move/property edits to the newly created duplicate id.",
     "If the user wants reusable actors, use make_component to convert a standalone object, add_component_instance to place copies, and detach_from_component to break inheritance for one object.",
     "For Blockly XML, use PochaCoding's exact block type ids. Use event_game_start, event_key_pressed, event_clicked, event_forever, and sensing_key_pressed instead of generic aliases like controls_forever or keyboard_is_key_pressed.",
+    "For motion_change_x and motion_change_y, use the VALUE input with signed numbers. Do not use DIR/NUM scratch-style fields.",
     "For mutate runs, stage safe project operations until the request is fulfilled, then return a concise final summary.",
     "For analyze runs, do not call mutation tools. Read state, diagnose, and return a concise explanation.",
     "If an object is component-backed, inspect the component and edit the component for shared logic/physics/collider changes.",
@@ -1488,6 +1496,7 @@ async function executeToolCall(
     await appendRunEvent(ctx, execution.runId, "validation_failed", {
       runId: execution.runId,
       tool: toolCall.name,
+      args: parsedArgs,
       result: toolResult,
     });
   }
@@ -1600,6 +1609,7 @@ async function performTool(
         return stageOperation(execution, {
           kind: "create_scene",
           name: String(args.name ?? "Scene"),
+          sceneId: typeof args.sceneId === "string" ? args.sceneId : undefined,
           insertIndex: typeof args.insertIndex === "number" ? args.insertIndex : undefined,
         });
       case "delete_scene":
@@ -1629,6 +1639,7 @@ async function performTool(
           kind: "create_folder",
           sceneId: String(args.sceneId ?? ""),
           name: String(args.name ?? ""),
+          folderId: typeof args.folderId === "string" ? args.folderId : undefined,
           parentId: args.parentId === null ? null : typeof args.parentId === "string" ? args.parentId : undefined,
           index: typeof args.index === "number" ? args.index : undefined,
         });
@@ -1658,6 +1669,7 @@ async function performTool(
           kind: "create_object",
           sceneId: String(args.sceneId ?? ""),
           name: String(args.name ?? ""),
+          objectId: typeof args.objectId === "string" ? args.objectId : undefined,
           parentId: args.parentId === null ? null : typeof args.parentId === "string" ? args.parentId : undefined,
           index: typeof args.index === "number" ? args.index : undefined,
           properties: (args.properties ?? {}) as any,
@@ -1688,6 +1700,7 @@ async function performTool(
           kind: "duplicate_object",
           sceneId: String(args.sceneId ?? ""),
           objectId: String(args.objectId ?? ""),
+          duplicateObjectId: typeof args.duplicateObjectId === "string" ? args.duplicateObjectId : undefined,
         });
       case "update_object_properties": {
         const sceneId = String(args.sceneId ?? "");
@@ -1735,6 +1748,7 @@ async function performTool(
           kind: "make_component",
           sceneId: String(args.sceneId ?? ""),
           objectId: String(args.objectId ?? ""),
+          componentId: typeof args.componentId === "string" ? args.componentId : undefined,
           name: typeof args.name === "string" ? args.name : undefined,
         });
       case "delete_component":
@@ -1747,6 +1761,7 @@ async function performTool(
           kind: "add_component_instance",
           sceneId: String(args.sceneId ?? ""),
           componentId: String(args.componentId ?? ""),
+          objectId: typeof args.objectId === "string" ? args.objectId : undefined,
           parentId: args.parentId === null ? null : typeof args.parentId === "string" ? args.parentId : undefined,
           index: typeof args.index === "number" ? args.index : undefined,
           properties: (args.properties ?? {}) as any,

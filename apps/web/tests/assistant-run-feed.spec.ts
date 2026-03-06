@@ -10,18 +10,21 @@ test.describe('Assistant run feed', () => {
     const started = startToolRunFeedItem([], {
       id: 'evt-start',
       tool: 'create_object',
+      detail: 'sceneId=scene_penguin | objectId=object_penguin | name=\"penguin\"',
     });
 
     const completed = finishToolRunFeedItem(started, {
       eventId: 'evt-finish',
       tool: 'create_object',
       label: 'create_object: object: Crate',
+      detail: 'object:object_penguin',
     });
 
     expect(completed).toEqual([
       {
         id: 'evt-start',
         label: 'create_object: object: Crate',
+        detail: 'object:object_penguin',
         status: 'completed',
         tone: 'normal',
         tool: 'create_object',
@@ -39,6 +42,7 @@ test.describe('Assistant run feed', () => {
       eventId: 'evt-finish',
       tool: 'rename_object',
       label: 'rename_object: Affected 1 item(s).',
+      detail: 'sceneId=scene_penguin | objectId=object_penguin',
       tone: 'warning',
     });
 
@@ -52,6 +56,7 @@ test.describe('Assistant run feed', () => {
       {
         id: 'evt-finish',
         label: 'rename_object: Affected 1 item(s).',
+        detail: 'sceneId=scene_penguin | objectId=object_penguin',
         status: 'completed',
         tone: 'warning',
         tool: 'rename_object',

@@ -3,6 +3,7 @@ export type RunFeedTone = 'normal' | 'warning';
 export type RunFeedItem = {
   id: string;
   label: string;
+  detail?: string;
   status: 'running' | 'completed';
   tone?: RunFeedTone;
   tool?: string;
@@ -19,10 +20,12 @@ export function appendCompletedRunFeedItem(
   {
     id,
     label,
+    detail,
     tone = 'normal',
   }: {
     id: string;
     label: string;
+    detail?: string;
     tone?: RunFeedTone;
   },
 ): RunFeedItem[] {
@@ -31,6 +34,7 @@ export function appendCompletedRunFeedItem(
     {
       id,
       label,
+      detail,
       status: 'completed',
       tone,
     },
@@ -42,9 +46,11 @@ export function startToolRunFeedItem(
   {
     id,
     tool,
+    detail,
   }: {
     id: string;
     tool: string;
+    detail?: string;
   },
 ): RunFeedItem[] {
   return trimRunFeed([
@@ -52,6 +58,7 @@ export function startToolRunFeedItem(
     {
       id,
       label: `Running ${tool}...`,
+      detail,
       status: 'running',
       tone: 'normal',
       tool,
@@ -65,11 +72,13 @@ export function finishToolRunFeedItem(
     eventId,
     tool,
     label,
+    detail,
     tone = 'normal',
   }: {
     eventId: string;
     tool: string;
     label: string;
+    detail?: string;
     tone?: RunFeedTone;
   },
 ): RunFeedItem[] {
@@ -81,6 +90,7 @@ export function finishToolRunFeedItem(
       nextItems[index] = {
         ...item,
         label,
+        detail,
         status: 'completed',
         tone,
       };
@@ -93,6 +103,7 @@ export function finishToolRunFeedItem(
     {
       id: eventId,
       label,
+      detail,
       status: 'completed',
       tone,
       tool,

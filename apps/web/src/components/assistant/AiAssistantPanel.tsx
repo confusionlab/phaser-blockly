@@ -95,6 +95,86 @@ function summarizeToolResult(result: Record<string, unknown> | null): string | n
   return null;
 }
 
+function truncateDiagnosticText(text: string, maxLength = 180): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function formatDiagnosticValue(value: unknown): string {
+  if (typeof value === 'string') {
+    if (value.includes('<xml')) {
+      return `Blockly XML (${value.length} chars)`;
+    }
+    return truncateDiagnosticText(JSON.stringify(value), 96);
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return truncateDiagnosticText(JSON.stringify(value), 140);
+  }
+
+  if (typeof value === 'object' && value) {
+    return truncateDiagnosticText(JSON.stringify(value), 180);
+  }
+
+  return String(value);
+}
+
+function summarizeToolArgs(args: Record<string, unknown> | null): string | null {
+  if (!args) return null;
+  const entries = Object.entries(args);
+  if (entries.length === 0) return null;
+  return entries
+    .map(([key, value]) => `${key}=${formatDiagnosticValue(value)}`)
+    .join(' | ');
+}
+
+function summarizeToolDiagnostics(result: Record<string, unknown> | null): string | null {
+  if (!result) return null;
+
+  if (result.ok === false) {
+    const error = result.error as Record<string, unknown> | undefined;
+    const diagnostics: string[] = [];
+    if (typeof error?.code === 'string' && error.code.trim()) {
+      diagnostics.push(`code=${error.code}`);
+    }
+    if (error && 'details' in error && error.details !== null && error.details !== undefined) {
+      diagnostics.push(`details=${formatDiagnosticValue(error.details)}`);
+    }
+    return diagnostics.length > 0 ? diagnostics.join(' | ') : null;
+  }
+
+  const createdEntities = Array.isArray(result.createdEntities)
+    ? result.createdEntities as Array<Record<string, unknown>>
+    : [];
+  if (createdEntities.length > 0) {
+    return createdEntities
+      .map((entity) => `${String(entity.type ?? 'entity')}:${String(entity.id ?? 'unknown')}`)
+      .join(', ');
+  }
+
+  const validationIssues = Array.isArray(result.validationIssues)
+    ? result.validationIssues as Array<Record<string, unknown>>
+    : [];
+  if (validationIssues.length > 0) {
+    return validationIssues
+      .map((issue) => String(issue.message ?? issue.code ?? 'validation issue'))
+      .join(' | ');
+  }
+
+  const stateSummary = result.stateSummary as Record<string, unknown> | undefined;
+  if (stateSummary) {
+    const scenes = typeof stateSummary.sceneCount === 'number' ? `scenes=${stateSummary.sceneCount}` : null;
+    const objects = typeof stateSummary.objectCount === 'number' ? `objects=${stateSummary.objectCount}` : null;
+    return [scenes, objects].filter(Boolean).join(' | ') || null;
+  }
+
+  return null;
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -255,10 +335,12 @@ export function AiAssistantPanel() {
                 }
                 case 'tool_call_started': {
                   const tool = typeof payload?.tool === 'string' ? payload.tool : 'tool';
+                  const argsSummary = summarizeToolArgs(payload?.args as Record<string, unknown> | null);
                   setCurrentTool(tool);
                   feedUpdates.push((items) => startToolRunFeedItem(items, {
                     id: eventId,
                     tool,
+                    detail: argsSummary ?? undefined,
                   }));
                   break;
                 }
@@ -266,11 +348,13 @@ export function AiAssistantPanel() {
                   const tool = typeof payload?.tool === 'string' ? payload.tool : 'tool';
                   const result = payload?.result as Record<string, unknown> | null | undefined;
                   const summary = summarizeToolResult(result ?? null);
+                  const detail = summarizeToolDiagnostics(result ?? null);
                   setCurrentTool(null);
                   feedUpdates.push((items) => finishToolRunFeedItem(items, {
                     eventId,
                     tool,
                     label: summary ? `${tool}: ${summary}` : `${tool} finished.`,
+                    detail: detail ?? undefined,
                     tone: result?.ok === false ? 'warning' : 'normal',
                   }));
                   break;
@@ -281,11 +365,16 @@ export function AiAssistantPanel() {
                   const warning = typeof error?.message === 'string'
                     ? error.message
                     : 'Validation failed during staging.';
+                  const detail = [
+                    summarizeToolArgs(payload?.args as Record<string, unknown> | null),
+                    summarizeToolDiagnostics(result ?? null),
+                  ].filter(Boolean).join(' | ');
                   assistantText = `${assistantText}\nWarning: ${warning}`;
                   textChanged = true;
                   feedUpdates.push((items) => appendCompletedRunFeedItem(items, {
                     id: eventId,
                     label: warning,
+                    detail: detail || undefined,
                     tone: 'warning',
                   }));
                   break;
@@ -676,7 +765,11 @@ export function AiAssistantPanel() {
                                 const running = item.status === 'running';
                                 const warning = item.tone === 'warning';
                                 return (
-                                  <div key={item.id} className="flex gap-3" title={item.label}>
+                                  <div
+                                    key={item.id}
+                                    className="flex gap-3"
+                                    title={item.detail ? `${item.label}\n${item.detail}` : item.label}
+                                  >
                                     <div
                                       className={cn(
                                         'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
@@ -693,8 +786,15 @@ export function AiAssistantPanel() {
                                         <CheckCircle2 className="size-3.5" />
                                       )}
                                     </div>
-                                    <div className="min-w-0 pt-0.5 text-sm leading-5 text-slate-700 dark:text-slate-300">
-                                      {item.label}
+                                    <div className="min-w-0 pt-0.5">
+                                      <div className="text-sm leading-5 text-slate-700 dark:text-slate-300">
+                                        {item.label}
+                                      </div>
+                                      {item.detail ? (
+                                        <div className="mt-1 break-all font-mono text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                                          {item.detail}
+                                        </div>
+                                      ) : null}
                                     </div>
                                   </div>
                                 );
