@@ -325,6 +325,136 @@ body {
   --checkerboard-bg: oklch(0.28 0.006 56.04);
 }
 
+.assistant-panel-theme {
+  --aui-background: 36 45% 97%;
+  --aui-foreground: 223 27% 14%;
+  --aui-card: 0 0% 100%;
+  --aui-card-foreground: 223 27% 14%;
+  --aui-popover: 36 45% 97%;
+  --aui-popover-foreground: 223 27% 14%;
+  --aui-primary: 223 34% 17%;
+  --aui-primary-foreground: 40 33% 98%;
+  --aui-secondary: 35 33% 92%;
+  --aui-secondary-foreground: 223 27% 18%;
+  --aui-muted: 35 28% 93%;
+  --aui-muted-foreground: 215 13% 42%;
+  --aui-accent: 35 87% 93%;
+  --aui-accent-foreground: 223 27% 16%;
+  --aui-destructive: 0 72% 56%;
+  --aui-destructive-foreground: 0 0% 98%;
+  --aui-border: 34 26% 84%;
+  --aui-input: 34 26% 84%;
+  --aui-ring: 30 92% 55%;
+  --aui-radius: 1.1rem;
+  --aui-thread-max-width: 42rem;
+}
+
+.dark .assistant-panel-theme {
+  --aui-background: 224 21% 12%;
+  --aui-foreground: 42 31% 96%;
+  --aui-card: 224 21% 14%;
+  --aui-card-foreground: 42 31% 96%;
+  --aui-popover: 224 21% 13%;
+  --aui-popover-foreground: 42 31% 96%;
+  --aui-primary: 38 92% 63%;
+  --aui-primary-foreground: 223 31% 12%;
+  --aui-secondary: 222 15% 19%;
+  --aui-secondary-foreground: 42 31% 96%;
+  --aui-muted: 223 14% 18%;
+  --aui-muted-foreground: 219 12% 70%;
+  --aui-accent: 220 16% 21%;
+  --aui-accent-foreground: 42 31% 96%;
+  --aui-destructive: 0 69% 55%;
+  --aui-destructive-foreground: 0 0% 98%;
+  --aui-border: 221 13% 25%;
+  --aui-input: 221 13% 25%;
+  --aui-ring: 38 92% 63%;
+}
+
+.assistant-panel-chrome {
+  background:
+    radial-gradient(circle at top, hsl(35 90% 63% / 0.18), transparent 34%),
+    linear-gradient(180deg, hsl(38 50% 98% / 0.98), hsl(34 38% 96% / 0.94));
+}
+
+.dark .assistant-panel-chrome {
+  background:
+    radial-gradient(circle at top, hsl(37 90% 62% / 0.16), transparent 38%),
+    linear-gradient(180deg, hsl(222 23% 16% / 0.98), hsl(227 28% 10% / 0.96));
+}
+
+.assistant-panel-theme .aui-avatar-fallback {
+  background: linear-gradient(135deg, hsl(var(--aui-primary)), hsl(27 89% 60%));
+  color: hsl(var(--aui-primary-foreground));
+  box-shadow: 0 18px 40px -28px rgba(15, 23, 42, 0.65);
+}
+
+.dark .assistant-panel-theme .aui-avatar-fallback {
+  background: linear-gradient(135deg, hsl(38 92% 63%), hsl(27 89% 60%));
+}
+
+.assistant-panel-theme .aui-thread-viewport {
+  scrollbar-gutter: stable;
+}
+
+.assistant-panel-theme .aui-thread-welcome-message {
+  max-width: 32rem;
+  text-align: center;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: hsl(var(--aui-muted-foreground));
+}
+
+.assistant-panel-theme .aui-thread-welcome-suggestions,
+.assistant-panel-theme .aui-thread-followup-suggestions {
+  flex-wrap: wrap;
+}
+
+.assistant-panel-theme .aui-thread-welcome-suggestion,
+.assistant-panel-theme .aui-thread-followup-suggestion {
+  background-color: hsl(var(--aui-card) / 0.78);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 20px 45px -36px rgba(15, 23, 42, 0.45);
+}
+
+.assistant-panel-theme .aui-composer-root {
+  border-color: hsl(var(--aui-border) / 0.9);
+  background-color: hsl(var(--aui-background) / 0.82);
+  backdrop-filter: blur(18px);
+  box-shadow:
+    0 24px 60px -42px rgba(15, 23, 42, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.dark .assistant-panel-theme .aui-composer-root {
+  box-shadow:
+    0 24px 60px -42px rgba(2, 6, 23, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.assistant-panel-theme .aui-user-message-content {
+  background: linear-gradient(135deg, hsl(var(--aui-primary)), hsl(227 32% 28%));
+  color: hsl(var(--aui-primary-foreground));
+  box-shadow: 0 18px 36px -28px rgba(15, 23, 42, 0.55);
+}
+
+.dark .assistant-panel-theme .aui-user-message-content {
+  background: linear-gradient(135deg, hsl(38 92% 63%), hsl(31 89% 57%));
+  color: hsl(var(--aui-primary-foreground));
+}
+
+.assistant-panel-theme .aui-assistant-message-content {
+  padding-right: 0.5rem;
+}
+
+.assistant-panel-theme .aui-thread-viewport-footer {
+  background: linear-gradient(180deg, hsl(var(--aui-background) / 0), hsl(var(--aui-background) / 0.94) 24%);
+}
+
+.assistant-panel-theme .aui-text-running::after {
+  color: hsl(var(--aui-ring));
+}
+
 .checkerboard-bg {
   background-image:
     linear-gradient(45deg, var(--checkerboard-tile) 25%, transparent 25%),

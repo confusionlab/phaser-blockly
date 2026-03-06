@@ -7,12 +7,25 @@ import {
   type ChatModelRunOptions,
   type ChatModelRunResult,
 } from '@assistant-ui/react';
-import { Thread } from '@assistant-ui/react-ui';
+import { Composer, Thread, ThreadWelcome } from '@assistant-ui/react-ui';
+import {
+  Activity,
+  Bot,
+  CheckCircle2,
+  LoaderCircle,
+  Lock,
+  Sparkles,
+  TriangleAlert,
+  WandSparkles,
+  Wrench,
+  X,
+} from 'lucide-react';
 import { api } from '@convex-generated/api';
-import { Bot, LoaderCircle, Lock, WandSparkles, Wrench, X } from 'lucide-react';
 import type { AssistantChangeSet } from '../../../../../packages/ui-shared/src/assistant';
 import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { createAssistantProjectSnapshot, projectContainsObject, projectContainsScene } from '@/lib/assistant/projectState';
+import { cn } from '@/lib/utils';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 
@@ -22,7 +35,30 @@ type RunFeedItem = {
   tone?: 'normal' | 'warning';
 };
 
+type StatusTone = 'idle' | 'running' | 'success' | 'error';
+
 const assistantApi = (api as any).assistant;
+
+const PANEL_CARD_CLASS = [
+  'rounded-[24px] border border-white/55 bg-white/70 p-4 backdrop-blur-xl',
+  'shadow-[0_20px_45px_-36px_rgba(15,23,42,0.45)]',
+  'dark:border-white/10 dark:bg-white/5',
+].join(' ');
+
+const WELCOME_SUGGESTIONS = [
+  {
+    text: 'Add a coin score system with a visible HUD.',
+    prompt: 'Add a coin score system and show the score on screen.',
+  },
+  {
+    text: 'Give the player a smoother jump and landing feel.',
+    prompt: 'Improve the player movement with better jump and landing feel.',
+  },
+  {
+    text: 'Create a parallax background that moves with the camera.',
+    prompt: 'Add a parallax background that reacts to camera movement.',
+  },
+] as const;
 
 function parseEventPayload(payloadJson: string): Record<string, unknown> | null {
   try {
@@ -72,11 +108,27 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function getStatusTone({
+  assistantLockRunId,
+  errorMessage,
+  statusLabel,
+}: {
+  assistantLockRunId: string | null;
+  errorMessage: string | null;
+  statusLabel: string;
+}): StatusTone {
+  if (errorMessage) return 'error';
+  if (assistantLockRunId) return 'running';
+  if (statusLabel === 'Completed') return 'success';
+  return 'idle';
+}
+
 export function AiAssistantPanel() {
   const convex = useConvex();
   const convexRef = useRef(convex);
   const project = useProjectStore((state) => state.project);
   const assistantLockRunId = useEditorStore((state) => state.assistantLockRunId);
+  const assistantLockMessage = useEditorStore((state) => state.assistantLockMessage);
   const [isOpen, setIsOpen] = useState(false);
   const [recentFeed, setRecentFeed] = useState<RunFeedItem[]>([]);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
@@ -88,6 +140,19 @@ export function AiAssistantPanel() {
   useEffect(() => {
     convexRef.current = convex;
   }, [convex]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
 
   const runtime = useLocalRuntime(
     useMemo<ChatModelAdapter>(() => ({
@@ -327,94 +392,322 @@ export function AiAssistantPanel() {
     }), []),
   );
 
+  const objectCount = useMemo(
+    () => project?.scenes.reduce((total, scene) => total + scene.objects.length, 0) ?? 0,
+    [project],
+  );
+
+  const statusTone = getStatusTone({ assistantLockRunId, errorMessage, statusLabel });
+
+  const statusBadgeClass = cn(
+    'inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold',
+    statusTone === 'running' && 'bg-amber-100 text-amber-900 dark:bg-amber-400/15 dark:text-amber-200',
+    statusTone === 'success' && 'bg-emerald-100 text-emerald-900 dark:bg-emerald-400/15 dark:text-emerald-200',
+    statusTone === 'error' && 'bg-red-100 text-red-900 dark:bg-red-400/15 dark:text-red-200',
+    statusTone === 'idle' && 'bg-slate-900/6 text-slate-700 dark:bg-white/10 dark:text-slate-300',
+  );
+
+  const threadConfig = useMemo(
+    () => ({
+      assistantAvatar: { fallback: 'AI' },
+      welcome: {
+        message: project
+          ? 'Describe a change for the open project. I will stream progress, validate the result, and apply the update automatically.'
+          : 'Open a project first, then ask for scene, logic, art, or gameplay changes.',
+        suggestions: project ? [...WELCOME_SUGGESTIONS] : undefined,
+      },
+      composer: {
+        allowAttachments: false,
+      },
+      strings: {
+        composer: {
+          input: {
+            placeholder: project
+              ? 'Describe the change you want to make...'
+              : 'Open a project to start using the assistant...',
+          },
+        },
+        thread: {
+          scrollToBottom: {
+            tooltip: 'Jump to latest reply',
+          },
+        },
+      },
+    }),
+    [project],
+  );
+
   return (
     <>
-      <Button
-        className="fixed bottom-5 right-5 z-[100320] rounded-full px-4 py-2 shadow-xl"
-        onClick={() => setIsOpen((current) => !current)}
-        title="Open AI assistant"
-      >
-        <WandSparkles className="size-4" />
-        Assistant
-      </Button>
+      {!isOpen ? (
+        <Button
+          className={cn(
+            'fixed bottom-5 right-5 z-[100320] h-auto max-w-[calc(100vw-2rem)] rounded-full px-3 py-3 text-left',
+            'border border-slate-950/10 bg-slate-950 text-white shadow-[0_24px_60px_-24px_rgba(15,23,42,0.8)]',
+            'hover:bg-slate-900 dark:border-white/10 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100',
+          )}
+          onClick={() => setIsOpen(true)}
+          title="Open AI assistant"
+          aria-expanded={isOpen}
+        >
+          <span className="flex items-center gap-3">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/12 dark:bg-slate-900/8">
+              {assistantLockRunId ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <WandSparkles className="size-4" />
+              )}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold">Assistant</span>
+              <span className="block truncate text-[11px] text-white/75 dark:text-slate-950/65">
+                {assistantLockRunId ? currentTool ?? 'Updating the project...' : 'Polished workspace for AI edits'}
+              </span>
+            </span>
+          </span>
+        </Button>
+      ) : null}
 
       {isOpen ? (
-        <div className="fixed inset-3 z-[100330] overflow-hidden rounded-2xl border bg-card shadow-2xl">
-          <div className="flex h-full flex-col">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Bot className="size-4" />
-                AI Assistant
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => setIsOpen(false)}>
-                <X className="size-4" />
-              </Button>
-            </div>
+        <div className="fixed inset-0 z-[100330]">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/20 backdrop-blur-[3px]"
+            onClick={() => setIsOpen(false)}
+            aria-label="Close AI assistant"
+          />
 
-            <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[300px_1fr]">
-              <div className="overflow-y-auto border-r p-3">
-                <div className="space-y-3 text-xs">
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="mb-1 font-medium">Status</div>
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      {assistantLockRunId ? <LoaderCircle className="size-3 animate-spin" /> : null}
-                      {statusLabel}
-                    </div>
-                    {assistantLockRunId ? (
-                      <div className="mt-2 flex items-start gap-2 text-amber-700">
-                        <Lock className="mt-0.5 size-3 shrink-0" />
-                        <span>The editor is locked while the assistant run is active.</span>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="mb-1 font-medium">Current Tool</div>
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Wrench className="size-3" />
-                      {currentTool ?? 'Idle'}
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="mb-2 font-medium">Recent Activity</div>
-                    <div className="space-y-2">
-                      {recentFeed.length === 0 ? (
-                        <div className="text-muted-foreground">No activity yet.</div>
-                      ) : recentFeed.map((item) => (
-                        <div
-                          key={item.id}
-                          className={item.tone === 'warning' ? 'text-amber-700' : 'text-muted-foreground'}
-                        >
-                          {item.label}
+          <div className="absolute inset-3 animate-in fade-in zoom-in-95 slide-in-from-bottom-4 duration-200 sm:inset-4">
+            <AssistantRuntimeProvider runtime={runtime}>
+              <Thread.Root
+                config={threadConfig}
+                className={cn(
+                  'assistant-panel-theme assistant-panel-chrome h-full overflow-hidden rounded-[28px]',
+                  'border border-white/60 shadow-[0_40px_120px_-48px_rgba(15,23,42,0.65)]',
+                  'dark:border-white/10',
+                )}
+              >
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="border-b border-black/6 px-5 py-4 dark:border-white/10 sm:px-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0 flex items-start gap-3">
+                        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_18px_40px_-24px_rgba(15,23,42,0.8)] dark:bg-amber-300 dark:text-slate-950">
+                          <Bot className="size-5" />
                         </div>
-                      ))}
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-white/65 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-600 dark:bg-white/6 dark:text-slate-300">
+                              AI Assistant
+                            </span>
+                            <span className={statusBadgeClass}>
+                              {assistantLockRunId ? 'Live run' : statusLabel}
+                            </span>
+                          </div>
+                          <h2 className="mt-3 text-lg font-semibold tracking-tight text-slate-950 dark:text-white">
+                            Build changes in natural language
+                          </h2>
+                          <p className="mt-1 max-w-2xl text-sm text-slate-600 dark:text-slate-300">
+                            {project
+                              ? 'Describe the change you want. The assistant streams progress, edits the open project, and applies the result automatically.'
+                              : 'Open a project first, then describe the scene, logic, or asset changes you want.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        className="shrink-0 rounded-full bg-white/60 dark:bg-white/6"
+                        onClick={() => setIsOpen(false)}
+                        aria-label="Close AI assistant"
+                      >
+                        <X className="size-4" />
+                      </Button>
                     </div>
                   </div>
 
-                  {errorMessage ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-700">
-                      {errorMessage}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
+                  <div className="grid min-h-0 flex-1 gap-4 p-4 sm:p-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+                    <aside className="flex min-h-0 flex-col gap-3">
+                      <div className={PANEL_CARD_CLASS}>
+                        <div className="flex items-start gap-3">
+                          <div
+                            className={cn(
+                              'mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl',
+                              statusTone === 'running' && 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-200',
+                              statusTone === 'success' && 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-200',
+                              statusTone === 'error' && 'bg-red-100 text-red-700 dark:bg-red-400/15 dark:text-red-200',
+                              statusTone === 'idle' && 'bg-slate-900/6 text-slate-700 dark:bg-white/10 dark:text-slate-300',
+                            )}
+                          >
+                            {statusTone === 'running' ? (
+                              <LoaderCircle className="size-4 animate-spin" />
+                            ) : statusTone === 'success' ? (
+                              <CheckCircle2 className="size-4" />
+                            ) : statusTone === 'error' ? (
+                              <TriangleAlert className="size-4" />
+                            ) : (
+                              <WandSparkles className="size-4" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                              Run status
+                            </div>
+                            <div className="mt-1 text-base font-semibold text-slate-950 dark:text-white">
+                              {assistantLockRunId ? assistantLockMessage ?? 'Assistant is updating the project...' : statusLabel}
+                            </div>
+                            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                              {assistantLockRunId
+                                ? 'The editor is temporarily locked until this run finishes.'
+                                : project
+                                  ? 'Ready for the next request.'
+                                  : 'Open a project before asking for edits.'}
+                            </p>
+                          </div>
+                        </div>
 
-              <div className="min-h-0 p-3">
-                <AssistantRuntimeProvider runtime={runtime}>
-                  <Thread
-                    welcome={{
-                      message: project
-                        ? 'Ask for changes to the open project. The assistant will stream progress and auto-apply the result.'
-                        : 'Open a project first to use the assistant.',
-                    }}
-                    composer={{
-                      allowAttachments: false,
-                    }}
-                  />
-                </AssistantRuntimeProvider>
-              </div>
-            </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <div className="rounded-2xl bg-black/5 p-3 dark:bg-white/5">
+                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                              Current tool
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100">
+                              <Wrench className="size-3.5" />
+                              <span className="truncate">{currentTool ?? 'Idle'}</span>
+                            </div>
+                          </div>
+                          <div className="rounded-2xl bg-black/5 p-3 dark:bg-white/5">
+                            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                              Apply mode
+                            </div>
+                            <div className="mt-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+                              Auto-apply
+                            </div>
+                          </div>
+                        </div>
+
+                        {assistantLockRunId ? (
+                          <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-300/70 bg-amber-50/90 p-3 text-sm text-amber-900 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200">
+                            <Lock className="mt-0.5 size-4 shrink-0" />
+                            <span>{assistantLockMessage ?? 'The editor is locked while the assistant run is active.'}</span>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className={PANEL_CARD_CLASS}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                              Open project
+                            </div>
+                            <div className="mt-1 truncate text-base font-semibold text-slate-950 dark:text-white">
+                              {project?.name ?? 'No project open'}
+                            </div>
+                          </div>
+                          <Sparkles className="mt-1 size-4 shrink-0 text-amber-500" />
+                        </div>
+
+                        {project ? (
+                          <div className="mt-4 grid grid-cols-3 gap-2">
+                            <div className="rounded-2xl bg-black/5 p-3 text-center dark:bg-white/5">
+                              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Scenes</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{project.scenes.length}</div>
+                            </div>
+                            <div className="rounded-2xl bg-black/5 p-3 text-center dark:bg-white/5">
+                              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Objects</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{objectCount}</div>
+                            </div>
+                            <div className="rounded-2xl bg-black/5 p-3 text-center dark:bg-white/5">
+                              <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Messages</div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{project.messages.length}</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">
+                            The assistant needs an open project before it can stage and apply changes.
+                          </p>
+                        )}
+                      </div>
+
+                      <div className={cn(PANEL_CARD_CLASS, 'flex min-h-0 flex-1 flex-col')}>
+                        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                          <Activity className="size-4" />
+                          Recent activity
+                        </div>
+                        <ScrollArea className="min-h-0 flex-1 pr-2">
+                          {recentFeed.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-300/80 p-4 text-sm text-slate-500 dark:border-white/12 dark:text-slate-400">
+                              Run the assistant to see context loading, tool calls, validation warnings, and the final apply summary here.
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {recentFeed.map((item) => {
+                                const running = item.label.startsWith('Running ');
+                                const warning = item.tone === 'warning';
+                                return (
+                                  <div key={item.id} className="flex gap-3" title={item.label}>
+                                    <div
+                                      className={cn(
+                                        'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
+                                        warning && 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-200',
+                                        running && !warning && 'bg-sky-100 text-sky-700 dark:bg-sky-400/15 dark:text-sky-200',
+                                        !warning && !running && 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-200',
+                                      )}
+                                    >
+                                      {warning ? (
+                                        <TriangleAlert className="size-3.5" />
+                                      ) : running ? (
+                                        <LoaderCircle className="size-3.5 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="size-3.5" />
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 pt-0.5 text-sm leading-5 text-slate-700 dark:text-slate-300">
+                                      {item.label}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </ScrollArea>
+                      </div>
+
+                      {errorMessage ? (
+                        <div className="rounded-[24px] border border-red-200 bg-red-50/95 p-4 text-sm text-red-800 shadow-[0_20px_45px_-36px_rgba(127,29,29,0.35)] dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">
+                          {errorMessage}
+                        </div>
+                      ) : null}
+                    </aside>
+
+                    <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-white/60 bg-white/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_30px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/55">
+                      <div className="flex items-center justify-between gap-3 border-b border-black/5 px-4 py-3 dark:border-white/10 sm:px-5">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-950 dark:text-white">Conversation</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            Mutations are applied automatically after validation.
+                          </div>
+                        </div>
+                        <div className="hidden items-center gap-2 text-xs text-slate-500 dark:text-slate-400 sm:flex">
+                          <Wrench className="size-3.5" />
+                          <span className="max-w-[220px] truncate">{currentTool ?? 'Waiting for the next step'}</span>
+                        </div>
+                      </div>
+
+                      <Thread.Viewport className="min-h-0 flex-1 px-4 pt-5 sm:px-6 sm:pt-6">
+                        <ThreadWelcome />
+                        <Thread.Messages />
+                        <Thread.FollowupSuggestions />
+                        <Thread.ViewportFooter className="px-1 pt-6 sm:px-2">
+                          <Thread.ScrollToBottom className="border border-black/10 bg-white/90 text-slate-700 shadow-sm backdrop-blur dark:border-white/10 dark:bg-slate-900/90 dark:text-slate-200" />
+                          <Composer />
+                        </Thread.ViewportFooter>
+                      </Thread.Viewport>
+                    </section>
+                  </div>
+                </div>
+              </Thread.Root>
+            </AssistantRuntimeProvider>
           </div>
         </div>
       ) : null}
