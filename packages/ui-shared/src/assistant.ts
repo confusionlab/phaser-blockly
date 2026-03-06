@@ -147,6 +147,60 @@ export interface AssistantProjectSnapshot {
   state: AssistantProjectState;
 }
 
+export type AssistantReferenceEntityType = 'scene' | 'folder' | 'object' | 'component';
+
+export interface AssistantFolderObjectSummary {
+  id: string;
+  name: string;
+  order: number;
+  componentId?: string;
+}
+
+export interface AssistantFolderSummary {
+  scene: {
+    id: string;
+    name: string;
+  };
+  folder: AssistantSceneFolder;
+  parentFolder: AssistantSceneFolder | null;
+  childFolders: AssistantSceneFolder[];
+  childObjects: AssistantFolderObjectSummary[];
+}
+
+export interface AssistantReferenceLink {
+  relation:
+    | 'scene_contains_folder'
+    | 'scene_contains_object'
+    | 'folder_in_scene'
+    | 'folder_in_folder'
+    | 'folder_contains_folder'
+    | 'folder_contains_object'
+    | 'object_in_scene'
+    | 'object_in_folder'
+    | 'object_uses_component'
+    | 'scene_camera_follows_object'
+    | 'component_used_by_object';
+  sceneId?: string;
+  sceneName?: string;
+  folderId?: string;
+  folderName?: string;
+  objectId?: string;
+  objectName?: string;
+  componentId?: string;
+  componentName?: string;
+}
+
+export interface AssistantReferenceReport {
+  entityType: AssistantReferenceEntityType;
+  target: {
+    id: string;
+    name: string;
+    sceneId?: string;
+    sceneName?: string;
+  };
+  references: AssistantReferenceLink[];
+}
+
 export type AssistantObjectProperties = Partial<
   Pick<
     AssistantObject,
@@ -262,6 +316,12 @@ export type AssistantProjectOperation =
       index?: number;
     }
   | {
+      kind: 'duplicate_object';
+      sceneId: string;
+      objectId: string;
+      duplicateObjectId?: string;
+    }
+  | {
       kind: 'update_object_properties';
       sceneId: string;
       objectId: string;
@@ -312,6 +372,21 @@ export interface AssistantOperationResult {
 
 function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
+}
+
+export function materializeAssistantOperationIds<T extends AssistantProjectOperation>(operation: T): T {
+  switch (operation.kind) {
+    case 'create_scene':
+      return (operation.sceneId ? operation : { ...operation, sceneId: createId('scene') }) as T;
+    case 'create_folder':
+      return (operation.folderId ? operation : { ...operation, folderId: createId('folder') }) as T;
+    case 'create_object':
+      return (operation.objectId ? operation : { ...operation, objectId: createId('object') }) as T;
+    case 'duplicate_object':
+      return (operation.duplicateObjectId ? operation : { ...operation, duplicateObjectId: createId('object') }) as T;
+    default:
+      return operation;
+  }
 }
 
 function cloneState<T>(value: T): T {
@@ -430,6 +505,57 @@ function normalizeObjectTree(
   return sortByOrder(normalized);
 }
 
+function cloneLocalVariables(variables: AssistantVariable[]): AssistantVariable[] {
+  return variables.map((variable) => ({ ...variable }));
+}
+
+function remapVariableIdsInBlocklyXml(
+  blocklyXml: string,
+  variableIdMap: Map<string, string>,
+): string {
+  if (!blocklyXml.trim() || variableIdMap.size === 0) return blocklyXml;
+
+  return blocklyXml.replace(
+    /(<field\b[^>]*\bname=["']VAR["'][^>]*>)([^<]+)(<\/field>)/g,
+    (fullMatch, start, rawValue, end) => {
+      const value = String(rawValue ?? '').trim();
+      const remapped = variableIdMap.get(value);
+      if (!remapped || remapped === value) return fullMatch;
+      return `${start}${remapped}${end}`;
+    },
+  );
+}
+
+function createDuplicatedObject(original: AssistantObject, duplicateId = createId('object')): AssistantObject {
+  let duplicateBlocklyXml = original.blocklyXml;
+  let duplicateLocalVariables = cloneLocalVariables(original.localVariables || []);
+
+  if (!original.componentId) {
+    const variableIdMap = new Map<string, string>();
+    duplicateLocalVariables = (original.localVariables || []).map((variable) => {
+      const nextId = createId('variable');
+      variableIdMap.set(variable.id, nextId);
+      return {
+        ...variable,
+        id: nextId,
+        objectId: duplicateId,
+      };
+    });
+    duplicateBlocklyXml = remapVariableIdsInBlocklyXml(original.blocklyXml || '', variableIdMap);
+  }
+
+  return {
+    ...cloneState(original),
+    id: duplicateId,
+    name: original.componentId ? original.name : `${original.name} Copy`,
+    x: original.x + 50,
+    y: original.y + 50,
+    order: original.order + 1,
+    blocklyXml: duplicateBlocklyXml,
+    localVariables: duplicateLocalVariables,
+  };
+}
+
 function createDefaultScene(name: string, order: number, sceneId?: string): AssistantScene {
   return {
     id: sceneId ?? createId('scene'),
@@ -501,6 +627,218 @@ function ensureObject(scene: AssistantScene, objectId: string): AssistantObject 
   return object;
 }
 
+export function getAssistantFolderSummary(
+  state: AssistantProjectState,
+  sceneId: string,
+  folderId: string,
+): AssistantFolderSummary {
+  const scene = ensureScene(state, sceneId);
+  const folder = ensureFolder(scene, folderId);
+  const parentFolder = folder.parentId
+    ? scene.objectFolders.find((candidate) => candidate.id === folder.parentId) ?? null
+    : null;
+
+  return {
+    scene: {
+      id: scene.id,
+      name: scene.name,
+    },
+    folder,
+    parentFolder,
+    childFolders: sortByOrder(
+      scene.objectFolders.filter((candidate) => candidate.parentId === folderId),
+    ),
+    childObjects: sortByOrder(
+      scene.objects.filter((candidate) => candidate.parentId === folderId),
+    ).map((object) => ({
+      id: object.id,
+      name: object.name,
+      order: object.order,
+      componentId: object.componentId,
+    })),
+  };
+}
+
+export function listAssistantEntityReferences(
+  state: AssistantProjectState,
+  entityType: AssistantReferenceEntityType,
+  id: string,
+  sceneId?: string,
+): AssistantReferenceReport {
+  switch (entityType) {
+    case 'scene': {
+      const scene = ensureScene(state, id);
+      return {
+        entityType,
+        target: {
+          id: scene.id,
+          name: scene.name,
+        },
+        references: [
+          ...sortByOrder(scene.objectFolders).map((folder) => ({
+            relation: 'scene_contains_folder' as const,
+            sceneId: scene.id,
+            sceneName: scene.name,
+            folderId: folder.id,
+            folderName: folder.name,
+          })),
+          ...sortByOrder(scene.objects).map((object) => ({
+            relation: 'scene_contains_object' as const,
+            sceneId: scene.id,
+            sceneName: scene.name,
+            objectId: object.id,
+            objectName: object.name,
+          })),
+        ],
+      };
+    }
+    case 'folder': {
+      if (!sceneId) {
+        throw new Error('sceneId is required when listing references for a folder.');
+      }
+      const summary = getAssistantFolderSummary(state, sceneId, id);
+      return {
+        entityType,
+        target: {
+          id: summary.folder.id,
+          name: summary.folder.name,
+          sceneId: summary.scene.id,
+          sceneName: summary.scene.name,
+        },
+        references: [
+          {
+            relation: 'folder_in_scene',
+            sceneId: summary.scene.id,
+            sceneName: summary.scene.name,
+            folderId: summary.folder.id,
+            folderName: summary.folder.name,
+          },
+          ...(summary.parentFolder
+            ? [
+                {
+                  relation: 'folder_in_folder' as const,
+                  sceneId: summary.scene.id,
+                  sceneName: summary.scene.name,
+                  folderId: summary.parentFolder.id,
+                  folderName: summary.parentFolder.name,
+                },
+              ]
+            : []),
+          ...summary.childFolders.map((folder) => ({
+            relation: 'folder_contains_folder' as const,
+            sceneId: summary.scene.id,
+            sceneName: summary.scene.name,
+            folderId: folder.id,
+            folderName: folder.name,
+          })),
+          ...summary.childObjects.map((object) => ({
+            relation: 'folder_contains_object' as const,
+            sceneId: summary.scene.id,
+            sceneName: summary.scene.name,
+            folderId: summary.folder.id,
+            folderName: summary.folder.name,
+            objectId: object.id,
+            objectName: object.name,
+            componentId: object.componentId,
+          })),
+        ],
+      };
+    }
+    case 'object': {
+      if (!sceneId) {
+        throw new Error('sceneId is required when listing references for an object.');
+      }
+      const scene = ensureScene(state, sceneId);
+      const object = ensureObject(scene, id);
+      const parentFolder = object.parentId
+        ? scene.objectFolders.find((candidate) => candidate.id === object.parentId) ?? null
+        : null;
+      const linkedComponent = object.componentId
+        ? state.components.find((candidate) => candidate.id === object.componentId) ?? null
+        : null;
+
+      return {
+        entityType,
+        target: {
+          id: object.id,
+          name: object.name,
+          sceneId: scene.id,
+          sceneName: scene.name,
+        },
+        references: [
+          {
+            relation: 'object_in_scene',
+            sceneId: scene.id,
+            sceneName: scene.name,
+            objectId: object.id,
+            objectName: object.name,
+          },
+          ...(parentFolder
+            ? [
+                {
+                  relation: 'object_in_folder' as const,
+                  sceneId: scene.id,
+                  sceneName: scene.name,
+                  folderId: parentFolder.id,
+                  folderName: parentFolder.name,
+                  objectId: object.id,
+                  objectName: object.name,
+                },
+              ]
+            : []),
+          ...(linkedComponent
+            ? [
+                {
+                  relation: 'object_uses_component' as const,
+                  sceneId: scene.id,
+                  sceneName: scene.name,
+                  objectId: object.id,
+                  objectName: object.name,
+                  componentId: linkedComponent.id,
+                  componentName: linkedComponent.name,
+                },
+              ]
+            : []),
+          ...state.scenes
+            .filter((candidate) => candidate.cameraConfig.followTarget === object.id)
+            .map((candidate) => ({
+              relation: 'scene_camera_follows_object' as const,
+              sceneId: candidate.id,
+              sceneName: candidate.name,
+              objectId: object.id,
+              objectName: object.name,
+            })),
+        ],
+      };
+    }
+    case 'component': {
+      const component = ensureComponent(state, id);
+      return {
+        entityType,
+        target: {
+          id: component.id,
+          name: component.name,
+        },
+        references: state.scenes.flatMap((scene) =>
+          scene.objects
+            .filter((object) => object.componentId === component.id)
+            .map((object) => ({
+              relation: 'component_used_by_object' as const,
+              sceneId: scene.id,
+              sceneName: scene.name,
+              objectId: object.id,
+              objectName: object.name,
+              componentId: component.id,
+              componentName: component.name,
+            })),
+        ),
+      };
+    }
+  }
+
+  throw new Error(`Unsupported reference entity type "${entityType}".`);
+}
+
 function collectFolderDescendants(scene: AssistantScene, folderId: string): Set<string> {
   const descendants = new Set<string>([folderId]);
   let changed = true;
@@ -521,7 +859,7 @@ function collectAffectedEntitiesFromOperation(operation: AssistantProjectOperati
     case 'update_project_settings':
       return [];
     case 'create_scene':
-      return [];
+      return operation.sceneId ? [operation.sceneId] : [];
     case 'delete_scene':
     case 'rename_scene':
     case 'update_scene_properties':
@@ -529,19 +867,23 @@ function collectAffectedEntitiesFromOperation(operation: AssistantProjectOperati
     case 'reorder_scenes':
       return operation.sceneIds;
     case 'create_folder':
-      return [operation.sceneId];
+      return operation.folderId ? [operation.sceneId, operation.folderId] : [operation.sceneId];
     case 'delete_folder':
     case 'rename_folder':
     case 'move_folder':
       return [operation.sceneId, operation.folderId];
     case 'create_object':
-      return [operation.sceneId];
+      return operation.objectId ? [operation.sceneId, operation.objectId] : [operation.sceneId];
     case 'delete_object':
     case 'rename_object':
     case 'move_object':
     case 'update_object_properties':
     case 'set_object_blockly_xml':
       return [operation.sceneId, operation.objectId];
+    case 'duplicate_object':
+      return operation.duplicateObjectId
+        ? [operation.sceneId, operation.objectId, operation.duplicateObjectId]
+        : [operation.sceneId, operation.objectId];
     case 'rename_component':
     case 'update_component_properties':
     case 'set_component_blockly_xml':
@@ -938,6 +1280,27 @@ export function applyAssistantProjectOperations(
               })
             : candidate,
         );
+        break;
+      }
+      case 'duplicate_object': {
+        const scene = ensureScene(state, operation.sceneId);
+        const original = ensureObject(scene, operation.objectId);
+        const duplicate = createDuplicatedObject(original, operation.duplicateObjectId);
+        state.scenes = state.scenes.map((candidate) =>
+          candidate.id === scene.id
+            ? normalizeScene({
+                ...candidate,
+                objects: moveWithinSiblings(
+                  [...candidate.objects, duplicate],
+                  duplicate.id,
+                  original.parentId ?? null,
+                  original.order + 1,
+                ),
+              })
+            : candidate,
+        );
+        createdEntities.push({ type: 'object', id: duplicate.id, name: duplicate.name });
+        affectedEntityIds.add(duplicate.id);
         break;
       }
       case 'update_object_properties': {

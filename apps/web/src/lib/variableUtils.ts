@@ -277,13 +277,27 @@ export function remapVariableIdsInBlocklyXml(
   variableIdMap: Map<string, string>,
 ): string {
   if (!blocklyXml.trim() || variableIdMap.size === 0) return blocklyXml;
-  if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') return blocklyXml;
+
+  const fallbackRemap = () =>
+    blocklyXml.replace(
+      /(<field\b[^>]*\bname=["']VAR["'][^>]*>)([^<]+)(<\/field>)/g,
+      (fullMatch, start, rawValue, end) => {
+        const value = String(rawValue ?? '').trim();
+        const remapped = variableIdMap.get(value);
+        if (!remapped || remapped === value) return fullMatch;
+        return `${start}${remapped}${end}`;
+      },
+    );
+
+  if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') {
+    return fallbackRemap();
+  }
 
   try {
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(blocklyXml, 'text/xml');
     if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
-      return blocklyXml;
+      return fallbackRemap();
     }
 
     let changed = false;
@@ -315,6 +329,6 @@ export function remapVariableIdsInBlocklyXml(
 
     return new XMLSerializer().serializeToString(xmlDoc.documentElement);
   } catch {
-    return blocklyXml;
+    return fallbackRemap();
   }
 }
