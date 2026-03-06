@@ -88,6 +88,38 @@ const MAX_ASSISTANT_SNAPSHOT_BYTES = 900 * 1024;
 const ASSISTANT_SNAPSHOT_MISSING_ERROR = 'assistant_snapshot_missing_for_project_version';
 const assistantModelOptions = [...ASSISTANT_MODEL_MODE_OPTIONS];
 
+function isAssistantSnapshotMissingError(error: unknown): boolean {
+  if (!error) return false;
+  if (typeof error === 'string') {
+    return error.includes(ASSISTANT_SNAPSHOT_MISSING_ERROR);
+  }
+  if (error instanceof Error && error.message.includes(ASSISTANT_SNAPSHOT_MISSING_ERROR)) {
+    return true;
+  }
+
+  const errorRecord = typeof error === 'object' ? error as Record<string, unknown> : null;
+  const data = errorRecord?.data;
+  if (typeof data === 'string') {
+    return data.includes(ASSISTANT_SNAPSHOT_MISSING_ERROR);
+  }
+  if (data && typeof data === 'object') {
+    return JSON.stringify(data).includes(ASSISTANT_SNAPSHOT_MISSING_ERROR);
+  }
+
+  return String(error).includes(ASSISTANT_SNAPSHOT_MISSING_ERROR);
+}
+
+async function requestAssistantRunExecution(
+  convexClient: { action: (...args: any[]) => Promise<unknown> },
+  runId: string,
+) {
+  try {
+    await convexClient.action(assistantApi.executeRun, { runId });
+  } catch (error) {
+    console.warn('[Assistant] Failed to trigger run execution backstop:', error);
+  }
+}
+
 function parseEventPayload(payloadJson: string): Record<string, unknown> | null {
   try {
     return JSON.parse(payloadJson) as Record<string, unknown>;
@@ -321,8 +353,7 @@ export function AiAssistantPanel() {
             try {
               created = await createRun();
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              if (!message.includes(ASSISTANT_SNAPSHOT_MISSING_ERROR)) {
+              if (!isAssistantSnapshotMissingError(error)) {
                 throw error;
               }
 
@@ -335,8 +366,11 @@ export function AiAssistantPanel() {
           activeRunIdRef.current = runId;
           useEditorStore.getState().setAssistantLock(runId, 'Assistant is updating the project...');
           setStatusLabel('Working');
+          void requestAssistantRunExecution(convexClient, runId);
 
           const seenEventIds = new Set<string>();
+          let queuedSince = Date.now();
+          let requestedQueuedExecutionBackstop = false;
           while (true) {
             if (abortSignal.aborted) {
               throw new Error('Assistant request was cancelled.');
@@ -467,6 +501,15 @@ export function AiAssistantPanel() {
 
             if (!run) {
               throw new Error('Assistant run disappeared before completion.');
+            }
+
+            if (run.status === 'queued') {
+              if (!requestedQueuedExecutionBackstop && Date.now() - queuedSince >= 2000) {
+                requestedQueuedExecutionBackstop = true;
+                void requestAssistantRunExecution(convexClient, runId);
+              }
+            } else {
+              queuedSince = Date.now();
             }
 
             if (run.status === 'failed') {

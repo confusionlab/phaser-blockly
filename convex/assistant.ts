@@ -43,8 +43,9 @@ const internalAssistant = (internal as any).assistant;
 const ASSISTANT_SNAPSHOT_MISSING_ERROR = "assistant_snapshot_missing_for_project_version";
 const FAST_ASSISTANT_MODEL = "gpt-5-mini-2025-08-07";
 const SMART_ASSISTANT_MODEL = "gpt-5.4-2026-03-05";
-const STALE_QUEUED_RUN_TIMEOUT_MS = 2 * 60 * 1000;
+const STALE_QUEUED_RUN_TIMEOUT_MS = 15 * 1000;
 const STALE_RUNNING_RUN_TIMEOUT_MS = 15 * 60 * 1000;
+const ASSISTANT_EXECUTION_BACKSTOP_DELAY_MS = 2 * 1000;
 
 type AssistantRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 type AssistantRunMode = "mutate" | "analyze";
@@ -1453,6 +1454,9 @@ export const createRun = mutation({
     });
 
     await ctx.scheduler.runAfter(0, internalAssistant.executeRunInternal, { runId });
+    await ctx.scheduler.runAfter(ASSISTANT_EXECUTION_BACKSTOP_DELAY_MS, internalAssistant.executeRunInternal, {
+      runId,
+    });
 
 
     return { runId };
@@ -1580,6 +1584,7 @@ export const getRunContextInternal = internalQuery({
         _id: v.id("assistantRuns"),
         projectId: v.string(),
         mode: v.union(v.literal("mutate"), v.literal("analyze")),
+        modelMode: v.optional(v.union(v.literal("fast"), v.literal("smart"))),
         status: v.union(
           v.literal("queued"),
           v.literal("running"),
