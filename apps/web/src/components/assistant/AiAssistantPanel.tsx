@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useConvex } from 'convex/react';
 import {
+  AssistantRuntimeProvider,
   useLocalRuntime,
   type ChatModelAdapter,
   type ChatModelRunOptions,
@@ -20,6 +21,8 @@ type RunFeedItem = {
   label: string;
   tone?: 'normal' | 'warning';
 };
+
+const assistantApi = (api as any).assistant;
 
 function parseEventPayload(payloadJson: string): Record<string, unknown> | null {
   try {
@@ -71,20 +74,9 @@ function sleep(ms: number) {
 
 export function AiAssistantPanel() {
   const convex = useConvex();
-  const assistantApi = (api as any).assistant;
+  const convexRef = useRef(convex);
   const project = useProjectStore((state) => state.project);
-  const applyAssistantChangeSet = useProjectStore((state) => state.applyAssistantChangeSet);
-  const {
-    assistantLockRunId,
-    setAssistantLock,
-    selectedSceneId,
-    selectedObjectId,
-  } = useEditorStore((state) => ({
-    assistantLockRunId: state.assistantLockRunId,
-    setAssistantLock: state.setAssistantLock,
-    selectedSceneId: state.selectedSceneId,
-    selectedObjectId: state.selectedObjectId,
-  }));
+  const assistantLockRunId = useEditorStore((state) => state.assistantLockRunId);
   const [isOpen, setIsOpen] = useState(false);
   const [recentFeed, setRecentFeed] = useState<RunFeedItem[]>([]);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
@@ -92,6 +84,10 @@ export function AiAssistantPanel() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const activeRunIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    convexRef.current = convex;
+  }, [convex]);
 
   const runtime = useLocalRuntime(
     useMemo<ChatModelAdapter>(() => ({
@@ -126,7 +122,7 @@ export function AiAssistantPanel() {
         setRecentFeed([]);
         setCurrentTool(null);
         setStatusLabel('Preparing');
-        setAssistantLock('pending', 'Preparing assistant context...');
+        useEditorStore.getState().setAssistantLock('pending', 'Preparing assistant context...');
 
         let assistantText = 'Preparing run...';
         yield {
@@ -134,8 +130,9 @@ export function AiAssistantPanel() {
         };
 
         try {
+          const convexClient = convexRef.current;
           const snapshot = createAssistantProjectSnapshot(latestProject);
-          const created = await convex.mutation(assistantApi.createRun, {
+          const created = await convexClient.mutation(assistantApi.createRun, {
             projectId: latestProject.id,
             mode: 'mutate',
             requestText: userPrompt,
@@ -145,7 +142,7 @@ export function AiAssistantPanel() {
 
           const runId = String(created.runId);
           activeRunIdRef.current = runId;
-          setAssistantLock(runId, 'Assistant is updating the project...');
+          useEditorStore.getState().setAssistantLock(runId, 'Assistant is updating the project...');
           setStatusLabel('Working');
 
           const seenEventIds = new Set<string>();
@@ -155,8 +152,8 @@ export function AiAssistantPanel() {
             }
 
             const [run, events] = await Promise.all([
-              convex.query(assistantApi.getRun, { runId: created.runId }),
-              convex.query(assistantApi.listRunEvents, { runId: created.runId }),
+              convexClient.query(assistantApi.getRun, { runId: created.runId }),
+              convexClient.query(assistantApi.listRunEvents, { runId: created.runId }),
             ]);
 
             let textChanged = false;
@@ -253,7 +250,7 @@ export function AiAssistantPanel() {
             if (run.status === 'failed') {
               setStatusLabel('Failed');
               setErrorMessage(run.errorMessage ?? 'Assistant run failed.');
-              setAssistantLock(null);
+              useEditorStore.getState().setAssistantLock(null);
               activeRunIdRef.current = null;
               yield {
                 content: [{ type: 'text', text: assistantText.trim() }],
@@ -266,16 +263,21 @@ export function AiAssistantPanel() {
               setStatusLabel('Completed');
               if (run.changeSetJson) {
                 const changeSet = JSON.parse(run.changeSetJson) as AssistantChangeSet;
-                const nextProject = applyAssistantChangeSet(changeSet);
+                const nextProject = useProjectStore.getState().applyAssistantChangeSet(changeSet);
                 if (!nextProject) {
                   throw new Error('No open project was available when applying the assistant change-set.');
                 }
 
-                const nextSelectedSceneId = projectContainsScene(nextProject, selectedSceneId)
-                  ? selectedSceneId
+                const editorState = useEditorStore.getState();
+                const nextSelectedSceneId = projectContainsScene(nextProject, editorState.selectedSceneId)
+                  ? editorState.selectedSceneId
                   : nextProject.scenes[0]?.id ?? null;
-                const nextSelectedObjectId = projectContainsObject(nextProject, nextSelectedSceneId, selectedObjectId)
-                  ? selectedObjectId
+                const nextSelectedObjectId = projectContainsObject(
+                  nextProject,
+                  nextSelectedSceneId,
+                  editorState.selectedObjectId,
+                )
+                  ? editorState.selectedObjectId
                   : null;
 
                 useEditorStore.setState({
@@ -284,14 +286,14 @@ export function AiAssistantPanel() {
                   selectedObjectIds: nextSelectedObjectId ? [nextSelectedObjectId] : [],
                 });
 
-                await convex.mutation(assistantApi.markRunApplied, { runId: created.runId });
+                await convexClient.mutation(assistantApi.markRunApplied, { runId: created.runId });
                 assistantText = `${assistantText}\nChanges applied.`;
                 yield {
                   content: [{ type: 'text', text: assistantText.trim() }],
                 };
               }
 
-              setAssistantLock(null);
+              useEditorStore.getState().setAssistantLock(null);
               activeRunIdRef.current = null;
               yield {
                 content: [{ type: 'text', text: assistantText.trim() }],
@@ -312,7 +314,7 @@ export function AiAssistantPanel() {
           const message = error instanceof Error ? error.message : 'Assistant run failed.';
           setStatusLabel('Failed');
           setErrorMessage(message);
-          setAssistantLock(null);
+          useEditorStore.getState().setAssistantLock(null);
           activeRunIdRef.current = null;
           assistantText = `${assistantText}\nFailed: ${message}`;
           yield {
@@ -322,17 +324,7 @@ export function AiAssistantPanel() {
           return;
         }
       },
-    }), [
-      applyAssistantChangeSet,
-      assistantApi.createRun,
-      assistantApi.getRun,
-      assistantApi.listRunEvents,
-      assistantApi.markRunApplied,
-      convex,
-      selectedObjectId,
-      selectedSceneId,
-      setAssistantLock,
-    ]),
+    }), []),
   );
 
   return (
@@ -409,17 +401,18 @@ export function AiAssistantPanel() {
               </div>
 
               <div className="min-h-0 p-3">
-                <Thread
-                  runtime={runtime}
-                  welcome={{
-                    message: project
-                      ? 'Ask for changes to the open project. The assistant will stream progress and auto-apply the result.'
-                      : 'Open a project first to use the assistant.',
-                  }}
-                  composer={{
-                    allowAttachments: false,
-                  }}
-                />
+                <AssistantRuntimeProvider runtime={runtime}>
+                  <Thread
+                    welcome={{
+                      message: project
+                        ? 'Ask for changes to the open project. The assistant will stream progress and auto-apply the result.'
+                        : 'Open a project first to use the assistant.',
+                    }}
+                    composer={{
+                      allowAttachments: false,
+                    }}
+                  />
+                </AssistantRuntimeProvider>
               </div>
             </div>
           </div>

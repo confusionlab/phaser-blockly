@@ -49,17 +49,6 @@ type StoredRun = {
   failedAt?: number;
 };
 
-type StoredSnapshot = {
-  _id: Id<"assistantSnapshots">;
-  ownerUserId?: string;
-  projectId: string;
-  projectVersion: string;
-  snapshotJson: string;
-  source: "full" | "patch";
-  baseSnapshotId?: Id<"assistantSnapshots">;
-  createdAt: number;
-};
-
 const runValidator = v.object({
   _id: v.id("assistantRuns"),
   projectId: v.string(),
@@ -312,7 +301,7 @@ function createChangeSet(
   };
 }
 
-const toolDefinitions: OpenAI.Responses.Tool[] = [
+const rawToolDefinitions: OpenAI.Responses.Tool[] = [
   {
     type: "function",
     name: "emit_progress",
@@ -893,6 +882,15 @@ const toolDefinitions: OpenAI.Responses.Tool[] = [
   },
 ];
 
+const toolDefinitions: OpenAI.Responses.Tool[] = rawToolDefinitions.map((tool) =>
+  tool.type === "function"
+    ? {
+        ...tool,
+        strict: false,
+      }
+    : tool,
+);
+
 export const createRun = mutation({
   args: {
     projectId: v.string(),
@@ -1014,10 +1012,18 @@ export const listRunEvents = query({
     if (!run || run.ownerUserId !== ownerUserId) {
       return [];
     }
-    return await ctx.db
+    const events = await ctx.db
       .query("assistantRunEvents")
       .withIndex("by_runId_and_sequence", (q) => q.eq("runId", args.runId))
       .collect();
+    return events.map((event) => ({
+      _id: event._id,
+      runId: event.runId,
+      sequence: event.sequence,
+      type: event.type,
+      payloadJson: event.payloadJson,
+      createdAt: event.createdAt,
+    }));
   },
 });
 
