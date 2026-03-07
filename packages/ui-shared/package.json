@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "dependencies": {
+    "@xmldom/xmldom": "^0.8.11"
+  },
   "scripts": {
     "build": "echo 'No build step yet'",
     "lint": "echo 'No lint step yet'",
