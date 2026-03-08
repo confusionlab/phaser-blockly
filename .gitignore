@@ -29,7 +29,6 @@ test-results
 *.sln
 *.sw?
 .vercel
-platform/unified.config.json
 
 # iOS / Xcode (Capacitor)
 apps/web/ios/App/Pods/

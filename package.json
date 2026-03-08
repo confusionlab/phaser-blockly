@@ -17,11 +17,7 @@
     "preview": "pnpm --filter @pochacoding/web preview",
     "convex:dev": "pnpm exec convex dev",
     "convex:codegen": "pnpm exec convex codegen",
-    "convex:deploy": "pnpm exec convex deploy",
-    "platform:plan": "node scripts/platform-sync.mjs plan --config platform/unified.config.json",
-    "platform:plan:local-convex": "node scripts/platform-sync.mjs plan --config platform/unified.config.json --services local,convex",
-    "platform:apply": "node scripts/platform-sync.mjs apply --config platform/unified.config.json",
-    "platform:apply:local-convex": "node scripts/platform-sync.mjs apply --config platform/unified.config.json --services local,convex"
+    "convex:deploy": "pnpm exec convex deploy"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.12.15",
