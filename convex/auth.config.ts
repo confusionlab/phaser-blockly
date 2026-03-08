@@ -1,11 +1,12 @@
-const issuerDomains = (process.env.CLERK_JWT_ISSUER_DOMAIN ?? "")
-  .split(",")
-  .map((value) => value.trim())
-  .filter((value) => value.length > 0);
+const issuerDomain = (process.env.CLERK_JWT_ISSUER_DOMAIN ?? "").trim();
 
 export default {
-  providers: issuerDomains.map((domain) => ({
-    domain,
-    applicationID: "convex",
-  })),
+  providers: issuerDomain
+    ? [
+        {
+          domain: issuerDomain,
+          applicationID: "convex",
+        },
+      ]
+    : [],
 };
