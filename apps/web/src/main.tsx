@@ -63,7 +63,7 @@ if (!convexUrl || !clerkPublishableKey) {
         {!convexUrl ? (
           <>
             {' '}
-            Set `VITE_CONVEX_URL_DEV` for development and `VITE_CONVEX_URL_PROD` for production.
+            Set `VITE_CONVEX_URL`.
           </>
         ) : null}
         {!clerkPublishableKey

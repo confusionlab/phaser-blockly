@@ -15,12 +15,11 @@
 - `pnpm typecheck`: type-check all workspace packages.
 - `pnpm lint`: lint all workspace packages.
 
-## Convex Env Separation (Dev vs Prod)
+## Convex Env
 
 - `apps/web` now resolves env from the repo root (`envDir` points to `../../`).
-- Use mode-specific env vars to avoid accidentally using prod backend in local dev:
-  - `VITE_CONVEX_URL_DEV` / `VITE_CONVEX_SITE_URL_DEV` for development.
-  - `VITE_CONVEX_URL_PROD` / `VITE_CONVEX_SITE_URL_PROD` for production builds.
+- Set `VITE_CONVEX_URL` for the active environment.
+- `VITE_CONVEX_SITE_URL` is optional and only needed if you want to override the default `.site` URL derived from `VITE_CONVEX_URL`.
 - Clerk keys can also be mode-specific:
   - `VITE_CLERK_PUBLISHABLE_KEY_DEV` for development.
   - `VITE_CLERK_PUBLISHABLE_KEY_PROD` for production/desktop builds.
@@ -31,9 +30,7 @@
 - Desktop runtime can also force explicit hosted auth paths:
   - `VITE_DESKTOP_AUTH_SIGN_IN_URL` (default: `https://accounts.confusionlab.com/sign-in`)
   - `VITE_DESKTOP_AUTH_SIGN_UP_URL` (default: `https://accounts.confusionlab.com/sign-up`)
-- Optional fallback: `VITE_CONVEX_URL` / `VITE_CONVEX_SITE_URL` for development-only fallback.
-  - Production builds require `VITE_CONVEX_URL_PROD` (and `VITE_CONVEX_SITE_URL_PROD` when explicitly needed).
-  - Optional fallback for Clerk: `VITE_CLERK_PUBLISHABLE_KEY`.
+- Optional fallback for Clerk: `VITE_CLERK_PUBLISHABLE_KEY`.
 
 ## Desktop Packaging
 
