@@ -19,6 +19,7 @@ import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle, VectorHa
 import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CostumeCanvasHeader } from './CostumeCanvasHeader';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
+import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
 import {
   getBrushCursorStyle,
   getBrushPaintColor,
@@ -185,6 +186,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onSelectionStateChange,
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const textEditingHostRef = useRef<HTMLDivElement>(null);
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1708,6 +1710,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const isVectorSelectionMode = mode === 'vector' && tool === 'select';
     const isVectorPointMode = mode === 'vector' && tool === 'vector';
+    const isVectorTextMode = mode === 'vector' && tool === 'text';
     const floatingBitmapObject = bitmapFloatingObjectRef.current;
     const isBitmapFloatingSelectionMode =
       mode === 'bitmap' &&
@@ -1744,10 +1747,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvas.selectionLineWidth = 2;
     fabricCanvas.selectionDashArray = [];
     fabricCanvas.forEachObject((obj: any) => {
+      if (isTextEditableObject(obj)) {
+        attachTextEditingContainer(obj, textEditingHostRef.current);
+      }
+
       const selectable = isVectorSelectionMode
         ? true
         : isVectorPointMode
           ? isVectorPointSelectableObject(obj)
+          : isVectorTextMode
+            ? isTextEditableObject(obj)
           : (isBitmapFloatingSelectionMode && obj === floatingBitmapObject);
 
       obj.selectable = selectable;
@@ -1792,8 +1801,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         activeObject = null;
       }
       if (activeObject && !isVectorSelectionMode && !isVectorPointMode && activeObject !== floatingBitmapObject) {
-        fabricCanvas.discardActiveObject();
-        activeObject = null;
+        const keepActiveTextObject = isVectorTextMode && isTextEditableObject(activeObject);
+        if (!keepActiveTextObject) {
+          fabricCanvas.discardActiveObject();
+          activeObject = null;
+        }
       }
 
       if (activeObject && isVectorPointMode) {
@@ -1974,7 +1986,22 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
 
       if (tool === 'text' && mode === 'vector') {
-        const textObject = new IText('Text', {
+        if (opt.target && isTextEditableObject(opt.target)) {
+          const textObject = opt.target as any;
+          attachTextEditingContainer(textObject, textEditingHostRef.current);
+          queueMicrotask(() => {
+            const canvas = fabricCanvasRef.current;
+            if (!canvas) return;
+            if (!canvas.getObjects().includes(textObject)) return;
+            beginTextEditing(canvas as any, textObject, { event: opt.e });
+            syncTextStyleFromSelection();
+            syncTextSelectionState();
+            syncSelectionState();
+          });
+          return;
+        }
+
+        const textObject = new IText('text', {
           left: pointer.x,
           top: pointer.y,
           fill: brushColorRef.current,
@@ -1984,14 +2011,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           textAlign: textStyleRef.current.textAlign,
           opacity: textStyleRef.current.opacity,
         } as any);
+        attachTextEditingContainer(textObject as any, textEditingHostRef.current);
         textObject.on('editing:exited', () => {
           syncTextStyleFromSelection();
           saveHistory();
         });
         fabricCanvas.add(textObject);
-        fabricCanvas.setActiveObject(textObject);
-        textObject.enterEditing();
-        fabricCanvas.requestRenderAll();
+        beginTextEditing(fabricCanvas as any, textObject, { selectAll: true });
+        syncTextStyleFromSelection();
+        syncTextSelectionState();
+        syncSelectionState();
         saveHistory();
         return;
       }
@@ -2872,6 +2901,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           overscrollBehavior: 'contain',
         }}
       >
+        <div
+          ref={textEditingHostRef}
+          aria-hidden="true"
+          className="absolute inset-0 overflow-hidden pointer-events-none"
+        />
+
         <div
           className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg"
           style={{
