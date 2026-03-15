@@ -70,6 +70,7 @@ const ToolButton = memo(({ tool, icon, label, activeTool, onClick }: ToolButtonP
     className="size-8"
     onClick={() => onClick(tool)}
     title={label}
+    data-tool={tool}
   >
     {icon}
   </Button>

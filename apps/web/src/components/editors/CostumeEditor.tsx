@@ -11,8 +11,10 @@ import {
   type TextToolStyle,
   type VectorHandleType,
 } from './costume/CostumeToolbar';
+import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
 import { getEffectiveObjectProps, createDefaultColliderConfig } from '@/types';
 import type { Costume, ColliderConfig, CostumeEditorMode, CostumeBounds, CostumeVectorDocument } from '@/types';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'vector', 'rectangle', 'circle', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'line', 'collider']);
@@ -42,7 +44,7 @@ function areVectorDocumentsEqual(
 export function CostumeEditor() {
   const canvasRef = useRef<CostumeCanvasHandle>(null);
   const { project, updateObject } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, registerCostumeUndo } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, registerCostumeUndo, activeObjectTab } = useEditorStore();
 
   useEffect(() => {
     const handler: UndoRedoHandler = {
@@ -350,6 +352,38 @@ export function CostumeEditor() {
   const handleToolChange = useCallback((tool: DrawingTool) => {
     setActiveTool(ensureToolForMode(editorMode, tool));
   }, [editorMode]);
+
+  useEffect(() => {
+    if (activeObjectTab !== 'costumes') {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreGlobalKeyboardEvent(event)) {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      if (canvasRef.current?.isTextEditing()) {
+        return;
+      }
+
+      const nextTool = resolveCostumeToolShortcut(event.key, editorMode);
+      if (!nextTool) {
+        return;
+      }
+
+      event.preventDefault();
+      setActiveTool((prev) => {
+        const resolvedTool = ensureToolForMode(editorMode, nextTool);
+        return prev === resolvedTool ? prev : resolvedTool;
+      });
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeObjectTab, editorMode]);
 
   const handleMoveOrder = useCallback((action: MoveOrderAction) => {
     canvasRef.current?.moveSelectionOrder(action);
