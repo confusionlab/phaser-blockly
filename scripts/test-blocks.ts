@@ -159,6 +159,29 @@ const testCases: TestCase[] = [
     `,
     expectCodeContains: ['sprite.setSize(150)'],
   },
+  {
+    name: 'looks_change_axis_scale',
+    xml: `
+      <xml>
+        <block type="looks_change_axis_scale">
+          <field name="AXIS">VERTICAL</field>
+          <value name="SIZE"><block type="math_number"><field name="NUM">25</field></block></value>
+        </block>
+      </xml>
+    `,
+    expectCodeContains: ["sprite.changeAxisScale('VERTICAL', 25)"],
+  },
+  {
+    name: 'looks_flip_axis',
+    xml: `
+      <xml>
+        <block type="looks_flip_axis">
+          <field name="AXIS">HORIZONTAL</field>
+        </block>
+      </xml>
+    `,
+    expectCodeContains: ["sprite.flipAxis('HORIZONTAL')"],
+  },
   // Physics blocks
   {
     name: 'physics_enable',

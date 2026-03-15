@@ -50,6 +50,7 @@ test.describe('assistant block catalog', () => {
     const results = searchAssistantBlocks({ query: 'size' }).map((entry) => entry.type);
 
     expect(results).toContain('looks_change_size');
+    expect(results).toContain('looks_change_axis_scale');
     expect(results).toContain('looks_set_size');
   });
 
@@ -95,7 +96,10 @@ test.describe('assistant block catalog', () => {
           statements: {
             NEXT: [
               {
-                type: 'looks_change_size',
+                type: 'looks_change_axis_scale',
+                fields: {
+                  AXIS: 'VERTICAL',
+                },
                 values: {
                   SIZE: {
                     type: 'math_number',
@@ -113,7 +117,8 @@ test.describe('assistant block catalog', () => {
 
     expect(xml).toContain('<block type="event_game_start">');
     expect(xml).toContain('<statement name="NEXT">');
-    expect(xml).toContain('<block type="looks_change_size">');
+    expect(xml).toContain('<block type="looks_change_axis_scale">');
+    expect(xml).toContain('<field name="AXIS">VERTICAL</field>');
     expect(xml).toContain('<block type="math_number">');
   });
 
@@ -122,7 +127,10 @@ test.describe('assistant block catalog', () => {
       formatVersion: 1,
       blocks: [
         {
-          type: 'looks_change_size',
+          type: 'looks_change_axis_scale',
+          fields: {
+            AXIS: 'HORIZONTAL',
+          },
           values: {
             WRONG: {
               type: 'math_number',
@@ -135,6 +143,6 @@ test.describe('assistant block catalog', () => {
       ],
     });
 
-    expect(issues).toContain('blocks[0].values.WRONG is not valid for block "looks_change_size".');
+    expect(issues).toContain('blocks[0].values.WRONG is not valid for block "looks_change_axis_scale".');
   });
 });

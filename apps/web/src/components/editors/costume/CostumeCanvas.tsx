@@ -18,6 +18,7 @@ import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle, VectorHandleType } from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CostumeCanvasHeader } from './CostumeCanvasHeader';
+import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import {
   getBrushCursorStyle,
   getBrushPaintColor,
@@ -745,20 +746,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return false;
     if (editorModeRef.current !== 'vector') return false;
-
-    const activeObject = fabricCanvas.getActiveObject() as any;
-    if (!activeObject) return false;
-    if (isTextObject(activeObject) && (activeObject as any).isEditing) return false;
-
-    if (isActiveSelectionObject(activeObject) && typeof activeObject.getObjects === 'function') {
-      const selectedObjects = activeObject.getObjects() as any[];
-      selectedObjects.forEach((obj) => fabricCanvas.remove(obj));
-    } else {
-      fabricCanvas.remove(activeObject);
-    }
-
-    fabricCanvas.discardActiveObject();
-    fabricCanvas.requestRenderAll();
+    const deleted = deleteActiveCanvasSelection(fabricCanvas);
+    if (!deleted) return false;
     saveHistory();
     return true;
   }, [saveHistory]);

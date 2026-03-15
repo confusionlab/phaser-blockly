@@ -603,6 +603,10 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
       return [indentLine(indent, `set size to ${renderBlocklyExpression(getValue(node, 'SIZE'))}`)];
     case 'looks_change_size':
       return [indentLine(indent, `change size by ${renderBlocklyExpression(getValue(node, 'SIZE'))}`)];
+    case 'looks_change_axis_scale':
+      return [indentLine(indent, `change ${(getField(node, 'AXIS') ?? 'HORIZONTAL').toLowerCase()} scale by ${renderBlocklyExpression(getValue(node, 'SIZE'))}`)];
+    case 'looks_flip_axis':
+      return [indentLine(indent, `flip ${(getField(node, 'AXIS') ?? 'HORIZONTAL').toLowerCase()}`)];
     case 'looks_set_opacity':
       return [indentLine(indent, `set opacity to ${renderBlocklyExpression(getValue(node, 'OPACITY'))}`)];
     case 'looks_go_to_front':

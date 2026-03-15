@@ -203,6 +203,17 @@ export function registerCodeGenerators(): void {
     return `sprite.changeSize(${size});\n`;
   };
 
+  javascriptGenerator.forBlock['looks_change_axis_scale'] = function(block) {
+    const axis = block.getFieldValue('AXIS') || 'HORIZONTAL';
+    const size = javascriptGenerator.valueToCode(block, 'SIZE', Order.ATOMIC) || '10';
+    return `sprite.changeAxisScale(${asJsString(axis)}, ${size});\n`;
+  };
+
+  javascriptGenerator.forBlock['looks_flip_axis'] = function(block) {
+    const axis = block.getFieldValue('AXIS') || 'HORIZONTAL';
+    return `sprite.flipAxis(${asJsString(axis)});\n`;
+  };
+
   javascriptGenerator.forBlock['looks_set_opacity'] = function(block) {
     const opacity = javascriptGenerator.valueToCode(block, 'OPACITY', Order.ATOMIC) || '100';
     return `sprite.setOpacity(${opacity});\n`;

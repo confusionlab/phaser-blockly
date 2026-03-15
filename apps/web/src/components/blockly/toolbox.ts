@@ -838,6 +838,14 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
+            type: 'looks_change_axis_scale',
+            inputs: {
+              SIZE: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
+            }
+          },
+          { kind: 'block', type: 'looks_flip_axis' },
+          {
+            kind: 'block',
             type: 'looks_set_opacity',
             inputs: {
               OPACITY: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
@@ -1536,6 +1544,41 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
       this.setTooltip('Change size by amount');
+    }
+  };
+
+  Blockly.Blocks['looks_change_axis_scale'] = {
+    init: function() {
+      this.appendValueInput('SIZE')
+        .setCheck('Number')
+        .appendField('change')
+        .appendField(new Blockly.FieldDropdown([
+          ['horizontal', 'HORIZONTAL'],
+          ['vertical', 'VERTICAL'],
+        ]), 'AXIS')
+        .appendField('scale by');
+      this.appendDummyInput()
+        .appendField('%');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Change horizontal or vertical scale while preserving the current flip direction');
+    }
+  };
+
+  Blockly.Blocks['looks_flip_axis'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('flip')
+        .appendField(new Blockly.FieldDropdown([
+          ['horizontal', 'HORIZONTAL'],
+          ['vertical', 'VERTICAL'],
+        ]), 'AXIS');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Flip this object on one axis');
     }
   };
 

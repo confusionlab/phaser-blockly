@@ -20,6 +20,8 @@ class MockSprite {
   public y = 0;
   public visible = true;
   public size = 100;
+  public scaleX = 1;
+  public scaleY = 1;
   public opacity = 100;
   public rotation = 0;
   public velocityX = 0;
@@ -40,8 +42,38 @@ class MockSprite {
   pointTowards(x: number, y: number) { this.log('pointTowards', x, y); }
   show() { this.log('show'); this.visible = true; }
   hide() { this.log('hide'); this.visible = false; }
-  setSize(size: number) { this.log('setSize', size); this.size = size; }
-  changeSize(delta: number) { this.log('changeSize', delta); this.size += delta; }
+  setSize(size: number) {
+    this.log('setSize', size);
+    this.size = Math.max(1, Math.abs(size));
+    const scale = this.size / 100;
+    this.scaleX = (this.scaleX < 0 ? -1 : 1) * scale;
+    this.scaleY = (this.scaleY < 0 ? -1 : 1) * scale;
+  }
+  changeSize(delta: number) {
+    this.log('changeSize', delta);
+    this.size = Math.max(1, this.size + delta);
+    const scaleDelta = delta / 100;
+    this.scaleX = (this.scaleX < 0 ? -1 : 1) * Math.max(0.01, Math.abs(this.scaleX) + scaleDelta);
+    this.scaleY = (this.scaleY < 0 ? -1 : 1) * Math.max(0.01, Math.abs(this.scaleY) + scaleDelta);
+  }
+  changeAxisScale(axis: string, delta: number) {
+    this.log('changeAxisScale', axis, delta);
+    const scaleDelta = delta / 100;
+    if (axis === 'VERTICAL') {
+      this.scaleY = (this.scaleY < 0 ? -1 : 1) * Math.max(0.01, Math.abs(this.scaleY) + scaleDelta);
+    } else {
+      this.scaleX = (this.scaleX < 0 ? -1 : 1) * Math.max(0.01, Math.abs(this.scaleX) + scaleDelta);
+    }
+    this.size = ((Math.abs(this.scaleX) + Math.abs(this.scaleY)) / 2) * 100;
+  }
+  flipAxis(axis: string) {
+    this.log('flipAxis', axis);
+    if (axis === 'VERTICAL') {
+      this.scaleY = -Math.max(0.01, Math.abs(this.scaleY));
+    } else {
+      this.scaleX = -Math.max(0.01, Math.abs(this.scaleX));
+    }
+  }
   setOpacity(opacity: number) { this.log('setOpacity', opacity); this.opacity = opacity; }
   goToFront() { this.log('goToFront'); }
   goToBack() { this.log('goToBack'); }
@@ -325,6 +357,34 @@ const executionTests: ExecutionTest[] = [
     },
     verify: (runtime, sprite) => {
       return sprite.visible === false;
+    },
+  },
+  {
+    name: 'when game starts -> change vertical scale then flip horizontal',
+    xml: `
+      <xml>
+        <block type="event_game_start">
+          <statement name="NEXT">
+            <block type="looks_change_axis_scale">
+              <field name="AXIS">VERTICAL</field>
+              <value name="SIZE">
+                <block type="math_number"><field name="NUM">25</field></block>
+              </value>
+              <next>
+                <block type="looks_flip_axis">
+                  <field name="AXIS">HORIZONTAL</field>
+                </block>
+              </next>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `,
+    simulate: async (runtime) => {
+      await runtime.simulateStart();
+    },
+    verify: (runtime, sprite) => {
+      return sprite.scaleX === -1 && sprite.scaleY === 1.25;
     },
   },
   {

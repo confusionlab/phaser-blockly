@@ -4,6 +4,8 @@ import { setBodyGravityY } from './gravity';
 import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
 import type { RuntimeEngine } from './RuntimeEngine';
 
+const MIN_SCALE_MAGNITUDE = 0.01;
+
 function debugLog(type: 'info' | 'event' | 'action' | 'error', message: string) {
   appendRuntimeLog(type, message, {
     emitToConsole: true,
@@ -201,18 +203,67 @@ export class RuntimeSprite {
     this.container.setVisible(false);
   }
 
+  private getScaleSign(value: number): number {
+    return value < 0 ? -1 : 1;
+  }
+
+  private clampScaleMagnitude(value: number): number {
+    return Math.max(MIN_SCALE_MAGNITUDE, Math.abs(value));
+  }
+
+  private syncStoredSizeFromContainer(): void {
+    this._size = ((Math.abs(this.container.scaleX) + Math.abs(this.container.scaleY)) / 2) * 100;
+  }
+
   setSize(percent: number): void {
     if (this._stopped) return;
-    this._size = percent;
-    const scale = percent / 100;
-    this.container.setScale(scale, scale);
+    const scale = this.clampScaleMagnitude(percent / 100);
+    this.container.setScale(
+      this.getScaleSign(this.container.scaleX) * scale,
+      this.getScaleSign(this.container.scaleY) * scale,
+    );
+    this._size = scale * 100;
   }
 
   changeSize(delta: number): void {
     if (this._stopped) return;
-    this._size += delta;
-    const scale = this._size / 100;
-    this.container.setScale(scale, scale);
+    const deltaScale = delta / 100;
+    const nextScaleX = this.clampScaleMagnitude(Math.abs(this.container.scaleX) + deltaScale);
+    const nextScaleY = this.clampScaleMagnitude(Math.abs(this.container.scaleY) + deltaScale);
+    this.container.setScale(
+      this.getScaleSign(this.container.scaleX) * nextScaleX,
+      this.getScaleSign(this.container.scaleY) * nextScaleY,
+    );
+    this.syncStoredSizeFromContainer();
+  }
+
+  changeAxisScale(axis: string, delta: number): void {
+    if (this._stopped) return;
+    const deltaScale = delta / 100;
+    if (axis === 'VERTICAL') {
+      const nextScaleY = this.clampScaleMagnitude(Math.abs(this.container.scaleY) + deltaScale);
+      this.container.setScale(
+        this.container.scaleX,
+        this.getScaleSign(this.container.scaleY) * nextScaleY,
+      );
+    } else {
+      const nextScaleX = this.clampScaleMagnitude(Math.abs(this.container.scaleX) + deltaScale);
+      this.container.setScale(
+        this.getScaleSign(this.container.scaleX) * nextScaleX,
+        this.container.scaleY,
+      );
+    }
+    this.syncStoredSizeFromContainer();
+  }
+
+  flipAxis(axis: string): void {
+    if (this._stopped) return;
+    if (axis === 'VERTICAL') {
+      this.container.setScale(this.container.scaleX, -this.clampScaleMagnitude(this.container.scaleY));
+    } else {
+      this.container.setScale(-this.clampScaleMagnitude(this.container.scaleX), this.container.scaleY);
+    }
+    this.syncStoredSizeFromContainer();
   }
 
   getSize(): number {
