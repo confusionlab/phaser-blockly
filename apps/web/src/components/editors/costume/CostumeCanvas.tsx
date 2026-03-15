@@ -2904,7 +2904,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         <div
           ref={textEditingHostRef}
           aria-hidden="true"
-          className="absolute inset-0 overflow-hidden pointer-events-none"
+          className="fixed inset-0 overflow-hidden pointer-events-none"
         />
 
         <div
