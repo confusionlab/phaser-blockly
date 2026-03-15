@@ -679,7 +679,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                   }
 
                   // Update editor's selected scene to sync UI
-                  selectScene(targetSceneData.id);
+                  selectScene(targetSceneData.id, { recordHistory: false });
                 }
               }
             }

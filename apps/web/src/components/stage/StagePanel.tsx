@@ -52,7 +52,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     if (!exists) {
       return;
     }
-    selectObject(preserved.objectId);
+    selectObject(preserved.objectId, { recordHistory: false });
   }, [isCanvasFullscreen, project, selectObject]);
 
   const handleVerticalDividerDrag = (e: React.MouseEvent) => {

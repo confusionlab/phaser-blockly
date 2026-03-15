@@ -16,9 +16,8 @@ import { useCloudSync } from '@/hooks/useCloudSync';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
-import { runInHistoryTransaction } from '@/store/universalHistory';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
-import { deleteSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
+import { deleteSceneObjectsWithHistory, duplicateSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | 'stage' | null;
@@ -321,18 +320,12 @@ export function EditorLayout() {
 
       e.preventDefault();
 
-      runInHistoryTransaction('shortcut:duplicate', () => {
-        const duplicatedIds: string[] = [];
-        idsToDuplicate.forEach((objectId) => {
-          const duplicated = duplicateObject(selectedSceneId, objectId);
-          if (duplicated) {
-            duplicatedIds.push(duplicated.id);
-          }
-        });
-
-        if (duplicatedIds.length > 0) {
-          selectObjects(duplicatedIds, duplicatedIds[0]);
-        }
+      duplicateSceneObjectsWithHistory({
+        source: 'shortcut:duplicate',
+        sceneId: selectedSceneId,
+        objectIds: idsToDuplicate,
+        duplicateObject,
+        selectObjects,
       });
       return;
     }

@@ -68,7 +68,12 @@ import {
 } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
-import { deleteSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
+import {
+  addComponentInstanceWithHistory,
+  deleteComponentWithHistory,
+  deleteSceneObjectsWithHistory,
+  duplicateSceneObjectsWithHistory,
+} from '@/lib/editor/objectCommands';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -607,10 +612,13 @@ export function SpriteShelf() {
 
   const handleDuplicate = () => {
     if (!contextMenu || contextMenu.kind !== 'object') return;
-    const duplicated = duplicateObject(selectedSceneId, contextMenu.object.id);
-    if (duplicated) {
-      selectObject(duplicated.id);
-    }
+    duplicateSceneObjectsWithHistory({
+      source: 'sprite-shelf:duplicate-object',
+      sceneId: selectedSceneId,
+      objectIds: [contextMenu.object.id],
+      duplicateObject,
+      selectObjects,
+    });
     handleCloseContextMenu();
   };
 
@@ -912,10 +920,13 @@ export function SpriteShelf() {
     );
     if (!confirmed) return;
 
-    deleteComponent(componentId);
-    if (selectedComponentId === componentId) {
-      selectComponent(null);
-    }
+    deleteComponentWithHistory({
+      source: 'sprite-shelf:delete-component',
+      componentId,
+      selectedComponentId,
+      deleteComponent,
+      selectComponent,
+    });
   };
 
   const handleLibrarySelect = (data: {
@@ -953,10 +964,13 @@ export function SpriteShelf() {
   };
 
   const handleComponentLibrarySelect = (componentId: string) => {
-    const instance = addComponentInstance(selectedSceneId, componentId);
-    if (instance) {
-      selectObject(instance.id);
-    }
+    addComponentInstanceWithHistory({
+      source: 'sprite-shelf:add-component-instance',
+      sceneId: selectedSceneId,
+      componentId,
+      addComponentInstance,
+      selectObject,
+    });
   };
 
   const handleComponentLibraryDelete = (componentId: string) => {

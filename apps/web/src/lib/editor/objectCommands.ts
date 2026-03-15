@@ -1,4 +1,5 @@
 import { runInHistoryTransaction } from '@/store/universalHistory';
+import type { GameObject } from '@/types';
 
 type DeleteSceneObjectsWithHistoryArgs = {
   source: string;
@@ -41,5 +42,84 @@ export function deleteSceneObjectsWithHistory({
 
     const remainingSceneIds = orderedSceneObjectIds.filter((objectId) => !deleteSet.has(objectId));
     selectObject(remainingSceneIds[0] ?? null);
+  });
+}
+
+type DuplicateSceneObjectsWithHistoryArgs = {
+  source: string;
+  sceneId: string;
+  objectIds: string[];
+  duplicateObject: (sceneId: string, objectId: string) => GameObject | null;
+  selectObjects: (objectIds: string[], primaryObjectId?: string | null) => void;
+};
+
+export function duplicateSceneObjectsWithHistory({
+  source,
+  sceneId,
+  objectIds,
+  duplicateObject,
+  selectObjects,
+}: DuplicateSceneObjectsWithHistoryArgs): void {
+  const uniqueObjectIds = Array.from(new Set(objectIds));
+  if (uniqueObjectIds.length === 0) return;
+
+  runInHistoryTransaction(source, () => {
+    const duplicatedIds: string[] = [];
+    uniqueObjectIds.forEach((objectId) => {
+      const duplicated = duplicateObject(sceneId, objectId);
+      if (duplicated) {
+        duplicatedIds.push(duplicated.id);
+      }
+    });
+
+    if (duplicatedIds.length > 0) {
+      selectObjects(duplicatedIds, duplicatedIds[0]);
+    }
+  });
+}
+
+type AddComponentInstanceWithHistoryArgs = {
+  source: string;
+  sceneId: string;
+  componentId: string;
+  addComponentInstance: (sceneId: string, componentId: string) => GameObject | null;
+  selectObject: (objectId: string | null) => void;
+};
+
+export function addComponentInstanceWithHistory({
+  source,
+  sceneId,
+  componentId,
+  addComponentInstance,
+  selectObject,
+}: AddComponentInstanceWithHistoryArgs): void {
+  runInHistoryTransaction(source, () => {
+    const instance = addComponentInstance(sceneId, componentId);
+    if (instance) {
+      selectObject(instance.id);
+    }
+  });
+}
+
+type DeleteComponentWithHistoryArgs = {
+  source: string;
+  componentId: string;
+  selectedComponentId: string | null;
+  deleteComponent: (componentId: string) => void;
+  selectComponent: (componentId: string | null) => void;
+};
+
+export function deleteComponentWithHistory({
+  source,
+  componentId,
+  selectedComponentId,
+  deleteComponent,
+  selectComponent,
+}: DeleteComponentWithHistoryArgs): void {
+  runInHistoryTransaction(source, () => {
+    deleteComponent(componentId);
+    if (selectedComponentId === componentId) {
+      selectComponent(null);
+    }
   });
 }

@@ -1,8 +1,13 @@
 import { expect, test } from '@playwright/test';
 import type { AssistantChangeSet } from '../../../packages/ui-shared/src/assistant';
-import { deleteSceneObjectsWithHistory } from '../src/lib/editor/objectCommands';
+import {
+  addComponentInstanceWithHistory,
+  deleteComponentWithHistory,
+  deleteSceneObjectsWithHistory,
+  duplicateSceneObjectsWithHistory,
+} from '../src/lib/editor/objectCommands';
 import { createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
-import { createDefaultGameObject, createDefaultProject } from '../src/types';
+import { createDefaultGameObject, createDefaultProject, type ComponentDefinition } from '../src/types';
 
 type StoreModules = {
   useProjectStore: typeof import('../src/store/projectStore').useProjectStore;
@@ -73,19 +78,35 @@ function buildProjectFixture(updatedAt = new Date('2026-01-01T00:00:00.000Z')) {
   project.updatedAt = updatedAt;
 
   const scene = project.scenes[0]!;
+  const componentId = 'component_enemy';
   const hero = createDefaultGameObject('Hero');
   hero.id = 'object_hero';
   hero.order = 0;
   const enemy = createDefaultGameObject('Enemy');
   enemy.id = 'object_enemy';
   enemy.order = 1;
+  enemy.componentId = componentId;
   scene.objects = [hero, enemy];
+
+  const component: ComponentDefinition = {
+    id: componentId,
+    name: 'EnemyComponent',
+    blocklyXml: '<xml></xml>',
+    costumes: [],
+    currentCostumeIndex: 0,
+    physics: null,
+    collider: null,
+    sounds: [],
+    localVariables: [],
+  };
+  project.components = [component];
 
   return {
     project,
     sceneId: scene.id,
     heroId: hero.id,
     enemyId: enemy.id,
+    componentId,
   };
 }
 
@@ -232,5 +253,84 @@ test.describe('Object delete undo history', () => {
     expect(getSceneObjectIds(useProjectStore, fixture.sceneId)).toEqual([fixture.enemyId]);
     expect(useEditorStore.getState().selectedObjectId).toBeNull();
     expect(useEditorStore.getState().selectedObjectIds).toEqual([]);
+  });
+
+  test('shared duplicate command keeps duplicate and selection in one undo step', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const fixture = buildProjectFixture();
+
+    useProjectStore.getState().openProject(fixture.project);
+    useEditorStore.getState().selectScene(fixture.sceneId, { recordHistory: false });
+    useEditorStore.getState().selectObject(fixture.heroId, { recordHistory: false });
+
+    duplicateSceneObjectsWithHistory({
+      source: 'test:duplicate-object',
+      sceneId: fixture.sceneId,
+      objectIds: [fixture.heroId],
+      duplicateObject: useProjectStore.getState().duplicateObject,
+      selectObjects: useEditorStore.getState().selectObjects,
+    });
+
+    const idsAfterDuplicate = getSceneObjectIds(useProjectStore, fixture.sceneId);
+    expect(idsAfterDuplicate).toHaveLength(3);
+    expect(idsAfterDuplicate.filter((id) => id !== fixture.heroId && id !== fixture.enemyId)).toHaveLength(1);
+    expect(useEditorStore.getState().selectedObjectId).toBe(idsAfterDuplicate.find((id) => id !== fixture.heroId && id !== fixture.enemyId));
+    expect(canUndoHistory()).toBe(true);
+
+    useEditorStore.getState().undo();
+
+    expect(getSceneObjectIds(useProjectStore, fixture.sceneId)).toEqual([fixture.heroId, fixture.enemyId]);
+    expect(useEditorStore.getState().selectedObjectId).toBe(fixture.heroId);
+  });
+
+  test('adding a component instance is one undoable command', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const fixture = buildProjectFixture();
+
+    useProjectStore.getState().openProject(fixture.project);
+    useEditorStore.getState().selectScene(fixture.sceneId, { recordHistory: false });
+    useEditorStore.getState().selectObject(fixture.heroId, { recordHistory: false });
+
+    addComponentInstanceWithHistory({
+      source: 'test:add-component-instance',
+      sceneId: fixture.sceneId,
+      componentId: fixture.componentId,
+      addComponentInstance: useProjectStore.getState().addComponentInstance,
+      selectObject: useEditorStore.getState().selectObject,
+    });
+
+    expect(getSceneObjectIds(useProjectStore, fixture.sceneId)).toHaveLength(3);
+    expect(useEditorStore.getState().selectedObjectId).not.toBe(fixture.heroId);
+    expect(canUndoHistory()).toBe(true);
+
+    useEditorStore.getState().undo();
+
+    expect(getSceneObjectIds(useProjectStore, fixture.sceneId)).toEqual([fixture.heroId, fixture.enemyId]);
+    expect(useEditorStore.getState().selectedObjectId).toBe(fixture.heroId);
+  });
+
+  test('deleting a selected component is one undoable command', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const fixture = buildProjectFixture();
+
+    useProjectStore.getState().openProject(fixture.project);
+    useEditorStore.getState().selectComponent(fixture.componentId, { recordHistory: false });
+
+    deleteComponentWithHistory({
+      source: 'test:delete-component',
+      componentId: fixture.componentId,
+      selectedComponentId: useEditorStore.getState().selectedComponentId,
+      deleteComponent: useProjectStore.getState().deleteComponent,
+      selectComponent: useEditorStore.getState().selectComponent,
+    });
+
+    expect(useProjectStore.getState().project?.components).toEqual([]);
+    expect(useEditorStore.getState().selectedComponentId).toBeNull();
+    expect(canUndoHistory()).toBe(true);
+
+    useEditorStore.getState().undo();
+
+    expect(useProjectStore.getState().project?.components.map((component) => component.id)).toEqual([fixture.componentId]);
+    expect(useEditorStore.getState().selectedComponentId).toBe(fixture.componentId);
   });
 });
