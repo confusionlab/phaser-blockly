@@ -2,31 +2,49 @@ import { expect, test, type Page } from '@playwright/test';
 
 const APP_URL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? 'http://localhost:5173/';
 
-async function openEditorFromProjectList(page: Page): Promise<void> {
-  const projectsHeading = page.getByRole('heading', { name: /projects/i });
-  const hasProjectList = await projectsHeading.isVisible().catch(() => false);
-  if (!hasProjectList) return;
-
-  await page.getByRole('button', { name: /^new$/i }).first().click();
-  const nameInput = page.getByPlaceholder('My Awesome Game');
-  await expect(nameInput).toBeVisible({ timeout: 5000 });
-  await nameInput.fill(`Keyboard Test ${Date.now()}`);
-  await page.getByRole('button', { name: /create/i }).last().click();
+async function bootstrapEditorProject(page: Page, options: { projectName: string; addObject?: boolean }): Promise<void> {
+  await page.goto(APP_URL);
   await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(700);
+
+  await page.evaluate(async ({ projectName, addObject }) => {
+    const [{ useProjectStore }, { useEditorStore }] = await Promise.all([
+      import('/src/store/projectStore.ts'),
+      import('/src/store/editorStore.ts'),
+    ]);
+
+    useProjectStore.getState().newProject(projectName);
+    const projectState = useProjectStore.getState();
+    const project = projectState.project;
+    if (!project) {
+      throw new Error('Failed to create project');
+    }
+
+    const firstSceneId = project.scenes[0]?.id ?? null;
+    useEditorStore.getState().selectScene(firstSceneId, { recordHistory: false });
+
+    if (addObject && firstSceneId) {
+      const createdObject = projectState.addObject(firstSceneId, 'Object 1');
+      useEditorStore.getState().selectObject(createdObject.id, { recordHistory: false });
+    }
+
+    window.history.pushState({}, '', `/project/${project.id}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, options);
+
+  await page.waitForLoadState('networkidle');
 }
 
 test.describe('Keyboard shortcuts', () => {
   test('rename inputs suppress editor shortcuts and escape cancels rename', async ({ page }) => {
-    await page.goto(APP_URL);
-    await page.waitForLoadState('networkidle');
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, {
+      projectName: `Keyboard Test ${Date.now()}`,
+      addObject: true,
+    });
 
-    await page.locator('button[title="Add Object"]').click();
     await expect(page.getByText(/^Object 1$/)).toBeVisible();
 
     await page.getByText(/^Object 1$/).dblclick();
-    const renameInput = page.getByDisplayValue('Object 1');
+    const renameInput = page.locator('input[value="Object 1"]').first();
     await expect(renameInput).toBeVisible();
 
     await renameInput.fill('Renamed Object');
@@ -41,11 +59,10 @@ test.describe('Keyboard shortcuts', () => {
   });
 
   test('project name escape cancels without saving blur side effects', async ({ page }) => {
-    await page.goto(APP_URL);
-    await page.waitForLoadState('networkidle');
-    await openEditorFromProjectList(page);
+    const projectName = `Keyboard Test ${Date.now()}`;
+    await bootstrapEditorProject(page, { projectName });
 
-    const projectNameButton = page.getByRole('button', { name: /keyboard test/i }).first();
+    const projectNameButton = page.getByRole('button', { name: projectName }).first();
     const originalName = await projectNameButton.textContent();
     expect(originalName).toBeTruthy();
 
