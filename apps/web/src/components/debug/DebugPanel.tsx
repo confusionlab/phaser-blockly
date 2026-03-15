@@ -4,7 +4,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
 import { Checkbox } from '@/components/ui/checkbox';
-import { isTextEntryTarget } from '@/utils/keyboard';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { getEffectiveObjectProps } from '@/types';
 import type { Project } from '@/types';
 
@@ -13,7 +13,7 @@ export function DebugPanel() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || isTextEntryTarget(event.target)) {
+      if (shouldIgnoreGlobalKeyboardEvent(event)) {
         return;
       }
 

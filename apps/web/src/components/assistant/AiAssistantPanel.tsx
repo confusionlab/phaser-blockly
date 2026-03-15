@@ -37,7 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { isTextEntryTarget } from '@/utils/keyboard';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import {
   appendCompletedRunFeedItem,
   finishToolRunFeedItem,
@@ -251,7 +251,7 @@ export function AiAssistantPanel() {
     if (!isOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || isTextEntryTarget(event.target)) {
+      if (shouldIgnoreGlobalKeyboardEvent(event)) {
         return;
       }
 

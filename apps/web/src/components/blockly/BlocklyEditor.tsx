@@ -25,7 +25,7 @@ import {
   VALID_OBJECT_SPECIAL_VALUES,
   VARIABLE_REFERENCE_BLOCKS,
 } from '@/lib/blocklyReferenceMaps';
-import { isTextEntryTarget } from '@/utils/keyboard';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
 import type { UndoRedoHandler } from '@/store/editorStore';
 import type { Variable } from '@/types';
@@ -549,7 +549,7 @@ export function BlocklyEditor() {
   // Cmd+K to open block search, Cmd+C for cross-object copy
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing || isTextEntryTarget(e.target)) {
+      if (shouldIgnoreGlobalKeyboardEvent(e)) {
         return;
       }
 

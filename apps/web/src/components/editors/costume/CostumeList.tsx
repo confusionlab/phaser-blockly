@@ -12,6 +12,7 @@ import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
 import type { Costume, CostumeBounds, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { cn } from '@/lib/utils';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 interface CostumeListProps {
   costumes: Costume[];
@@ -40,6 +41,10 @@ export const CostumeList = memo(({
 
   useEffect(() => {
     const closeOnEscape = (e: KeyboardEvent) => {
+      if (shouldIgnoreGlobalKeyboardEvent(e)) {
+        return;
+      }
+
       if (e.key === 'Escape') {
         setContextMenu(null);
       }

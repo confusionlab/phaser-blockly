@@ -6,6 +6,7 @@ import { getEffectiveObjectProps } from '@/types';
 import type { GameObject, ComponentDefinition } from '@/types';
 import { Button } from '@/components/ui/button';
 import { X, Crosshair } from 'lucide-react';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 const EMPTY_COMPONENTS: ComponentDefinition[] = [];
 
@@ -90,6 +91,10 @@ export function ObjectPicker() {
 
     // Handle Escape key to close picker
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (shouldIgnoreGlobalKeyboardEvent(e)) {
+        return;
+      }
+
       if (e.key === 'Escape') {
         closeObjectPicker();
       }

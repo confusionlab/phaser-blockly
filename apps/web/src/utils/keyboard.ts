@@ -159,6 +159,10 @@ export function isBlocklyShortcutTarget(target: EventTarget | null): boolean {
   return typeof element?.closest === 'function' && !!element.closest(BLOCKLY_SELECTOR);
 }
 
+export function shouldIgnoreGlobalKeyboardEvent(event: KeyboardEvent): boolean {
+  return event.defaultPrevented || event.isComposing || isTextEntryTarget(event.target);
+}
+
 export function normalizeKeyboardCode(code: string): string {
   if (/^Key[A-Z]$/.test(code)) {
     return code.slice(3);

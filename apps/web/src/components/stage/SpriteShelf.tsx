@@ -221,6 +221,9 @@ export function SpriteShelf() {
   const [showComponentLibrary, setShowComponentLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const cancelObjectRenameOnBlurRef = useRef(false);
+  const cancelFolderRenameOnBlurRef = useRef(false);
+  const cancelSceneRenameOnBlurRef = useRef(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
@@ -710,6 +713,11 @@ export function SpriteShelf() {
   };
 
   const handleSaveFolderRename = () => {
+    if (cancelFolderRenameOnBlurRef.current) {
+      cancelFolderRenameOnBlurRef.current = false;
+      return;
+    }
+
     if (!editingFolderId || !folderEditName.trim()) {
       setEditingFolderId(null);
       setFolderEditName('');
@@ -801,9 +809,19 @@ export function SpriteShelf() {
   };
 
   const handleSaveObjectRename = () => {
+    if (cancelObjectRenameOnBlurRef.current) {
+      cancelObjectRenameOnBlurRef.current = false;
+      return;
+    }
+
     if (editingObjectId && editName.trim()) {
       updateObject(selectedSceneId, editingObjectId, { name: editName.trim() });
     }
+    setEditingObjectId(null);
+    setEditName('');
+  };
+
+  const handleCancelObjectRename = () => {
     setEditingObjectId(null);
     setEditName('');
   };
@@ -817,6 +835,11 @@ export function SpriteShelf() {
   };
 
   const handleSaveSceneRename = () => {
+    if (cancelSceneRenameOnBlurRef.current) {
+      cancelSceneRenameOnBlurRef.current = false;
+      return;
+    }
+
     if (!editingSceneId) return;
 
     const nextName = editName.trim();
@@ -1111,7 +1134,11 @@ export function SpriteShelf() {
                   onChange={(e) => setEditName(e.target.value)}
                   onBlur={handleSaveObjectRename}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === 'Escape') handleSaveObjectRename();
+                    if (e.key === 'Enter') handleSaveObjectRename();
+                    if (e.key === 'Escape') {
+                      cancelObjectRenameOnBlurRef.current = true;
+                      handleCancelObjectRename();
+                    }
                   }}
                   className="flex-1 h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
@@ -1126,6 +1153,7 @@ export function SpriteShelf() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveFolderRename();
                     if (e.key === 'Escape') {
+                      cancelFolderRenameOnBlurRef.current = true;
                       setEditingFolderId(null);
                       setFolderEditName('');
                     }
@@ -1186,6 +1214,7 @@ export function SpriteShelf() {
                         handleSaveSceneRename();
                       }
                       if (e.key === 'Escape') {
+                        cancelSceneRenameOnBlurRef.current = true;
                         setEditingSceneId(null);
                         setEditName('');
                         setSceneEditError(null);

@@ -20,6 +20,7 @@ export function Toolbar() {
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const projectNameInputRef = useRef<HTMLInputElement>(null);
+  const cancelProjectRenameOnBlurRef = useRef(false);
   const { syncProjectToCloud } = useCloudSync({
     currentProjectId: project?.id ?? null,
     currentProject: project,
@@ -78,6 +79,11 @@ export function Toolbar() {
   };
 
   const handleSaveProjectRename = () => {
+    if (cancelProjectRenameOnBlurRef.current) {
+      cancelProjectRenameOnBlurRef.current = false;
+      return;
+    }
+
     if (!project) return;
 
     const nextName = projectNameDraft.trim();
@@ -120,6 +126,7 @@ export function Toolbar() {
                       handleSaveProjectRename();
                     } else if (e.key === 'Escape') {
                       e.preventDefault();
+                      cancelProjectRenameOnBlurRef.current = true;
                       handleCancelProjectRename();
                     }
                   }}

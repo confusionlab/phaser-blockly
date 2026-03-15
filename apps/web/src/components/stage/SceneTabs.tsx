@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -19,6 +19,7 @@ export function SceneTabs() {
   const [editName, setEditName] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
   const [showBgColorPicker, setShowBgColorPicker] = useState(false);
+  const cancelEditOnBlurRef = useRef(false);
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const currentBgColor = !selectedScene?.background || selectedScene.background.type === 'image'
@@ -58,6 +59,11 @@ export function SceneTabs() {
   };
 
   const handleSaveEdit = () => {
+    if (cancelEditOnBlurRef.current) {
+      cancelEditOnBlurRef.current = false;
+      return;
+    }
+
     if (!editingId) return;
 
     const nextName = editName.trim();
@@ -121,6 +127,7 @@ export function SceneTabs() {
                   handleSaveEdit();
                 }
                 if (e.key === 'Escape') {
+                  cancelEditOnBlurRef.current = true;
                   setEditingId(null);
                   setEditName('');
                   setEditError(null);
