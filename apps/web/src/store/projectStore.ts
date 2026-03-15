@@ -288,8 +288,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { project } = get();
     if (!project) return;
 
-    await saveProject(project);
-    set({ isDirty: false });
+    const savedProject = await saveProject(project);
+    set({ project: normalizeProject(savedProject), isDirty: false });
   },
 
   closeProject: () => {

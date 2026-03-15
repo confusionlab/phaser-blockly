@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 // Project data schema version. Keep aligned with src/db/database.ts.
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 // Shared bounds validator
 const boundsValidator = v.object({
@@ -61,6 +61,18 @@ const variableValidator = v.object({
 });
 
 export default defineSchema({
+  projectAssets: defineTable({
+    ownerUserId: v.optional(v.string()),
+    assetId: v.string(),
+    kind: v.union(v.literal("image"), v.literal("audio"), v.literal("background")),
+    mimeType: v.string(),
+    size: v.number(),
+    storageId: v.id("_storage"),
+    createdAt: v.number(),
+  })
+    .index("by_ownerUserId_and_assetId", ["ownerUserId", "assetId"])
+    .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
+
   // Costume library - images for sprites
   costumeLibrary: defineTable({
     ownerUserId: v.optional(v.string()),

@@ -153,7 +153,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
     e.stopPropagation();
     const project = await loadProject(projectId);
     if (project) {
-      downloadProject(project);
+      await downloadProject(project);
     }
   };
 
@@ -189,10 +189,10 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file && file.name.endsWith('.json')) {
+    if (file && (file.name.endsWith('.json') || file.name.endsWith('.zip'))) {
       handleImportFile(file);
     } else {
-      setImportError('Please drop a .json file');
+      setImportError('Please drop a .json or .zip file');
     }
   };
 
@@ -267,7 +267,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
             type="file"
             ref={fileInputRef}
             onChange={handleFileInputChange}
-            accept=".json"
+            accept=".json,.zip"
             className="hidden"
           />
 
@@ -393,7 +393,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
               type="file"
               ref={fileInputRef}
               onChange={handleFileInputChange}
-              accept=".json"
+              accept=".json,.zip"
               className="hidden"
             />
             <Card
@@ -405,7 +405,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
               <Upload className="size-10 mx-auto mb-3 text-muted-foreground" />
               <p className="font-medium">Drop a project file here</p>
               <p className="text-sm text-muted-foreground mt-1">or click to browse</p>
-              <p className="text-xs text-muted-foreground mt-3">.pochacoding.json files</p>
+              <p className="text-xs text-muted-foreground mt-3">.zip bundles or legacy .json files</p>
             </Card>
             {importError && (
               <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">

@@ -163,8 +163,8 @@ export function Toolbar() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => downloadProject(project)}
-              title="Export project as JSON file"
+              onClick={() => void downloadProject(project)}
+              title="Export project bundle"
               disabled={isSyncingCloud}
             >
               <Upload className="size-4" />

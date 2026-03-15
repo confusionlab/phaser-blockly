@@ -1,5 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type {
+  BackgroundConfig,
   CostumeEditorMode,
   CostumeVectorDocument,
   MessageDefinition,
@@ -21,7 +23,7 @@ import { normalizeVariableDefinition } from '@/lib/variableUtils';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -84,14 +86,22 @@ export interface ProjectRevision {
   restoredFromRevisionId: string | null;
 }
 
+export type ManagedAssetKind = 'image' | 'audio' | 'background';
+
 interface AssetRecord {
   id: string;
-  name: string;
-  type: 'sprite' | 'background' | 'sound';
-  data: Blob;
-  thumbnail?: string;
-  frameWidth?: number;
-  frameHeight?: number;
+  hash: string;
+  kind: ManagedAssetKind;
+  mimeType: string;
+  size: number;
+  blob: Blob;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+interface PersistedProjectAssetRef {
+  assetId: string;
+  kind: ManagedAssetKind;
 }
 
 interface ReusableRecord {
@@ -184,17 +194,442 @@ function normalizeMessagesInProject(project: Project): Project {
   };
 }
 
-function serializeProjectData(project: Project): string {
-  const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
-  return JSON.stringify(rest);
+const MANAGED_ASSET_PREFIX = 'asset:';
+const MANAGED_ASSET_ID_PATTERN = /^asset:([0-9a-f]{64})$/i;
+const objectUrlCache = new Map<string, string>();
+const objectUrlToAssetId = new Map<string, string>();
+const sourceToManagedAssetIdCache = new Map<string, string>();
+
+function cloneValue<T>(value: T): T {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function deserializeProjectFromRecord(record: ProjectRecord): {
+function isManagedAssetId(value: unknown): value is string {
+  return typeof value === 'string' && MANAGED_ASSET_ID_PATTERN.test(value.trim());
+}
+
+function isLikelyAssetSource(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function toManagedAssetId(hash: string): string {
+  return `${MANAGED_ASSET_PREFIX}${hash}`;
+}
+
+async function computeSha256Hex(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  const view = new Uint8Array(digest);
+  return Array.from(view, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function fetchBlobFromSource(source: string): Promise<Blob> {
+  if (isManagedAssetId(source)) {
+    const record = await db.assets.get(source);
+    if (!record) {
+      throw new Error(`Missing managed asset ${source}`);
+    }
+    return record.blob;
+  }
+
+  const response = await fetch(source);
+  if (!response.ok) {
+    throw new Error(`Failed to load asset source (${response.status})`);
+  }
+  return await response.blob();
+}
+
+function defaultMimeTypeForKind(kind: ManagedAssetKind): string {
+  switch (kind) {
+    case 'audio':
+      return 'audio/webm';
+    case 'background':
+      return 'image/webp';
+    case 'image':
+    default:
+      return 'image/webp';
+  }
+}
+
+async function ensureAssetRecordFromBlob(
+  blob: Blob,
+  kind: ManagedAssetKind,
+  source?: string,
+): Promise<AssetRecord> {
+  const hash = await computeSha256Hex(blob);
+  const id = toManagedAssetId(hash);
+  const existing = await db.assets.get(id);
+  if (existing) {
+    if (source) {
+      sourceToManagedAssetIdCache.set(source, existing.id);
+    }
+    return existing;
+  }
+
+  const now = new Date();
+  const record: AssetRecord = {
+    id,
+    hash,
+    kind,
+    mimeType: blob.type || defaultMimeTypeForKind(kind),
+    size: blob.size,
+    blob,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await db.assets.put(record);
+  if (source) {
+    sourceToManagedAssetIdCache.set(source, id);
+  }
+  return record;
+}
+
+async function ensureAssetRecordFromSource(
+  source: string,
+  kind: ManagedAssetKind,
+): Promise<AssetRecord> {
+  if (isManagedAssetId(source)) {
+    const existing = await db.assets.get(source);
+    if (!existing) {
+      throw new Error(`Missing managed asset ${source}`);
+    }
+    return existing;
+  }
+
+  const cachedId = sourceToManagedAssetIdCache.get(source);
+  if (cachedId) {
+    const existing = await db.assets.get(cachedId);
+    if (existing) {
+      return existing;
+    }
+  }
+
+  const blob = await fetchBlobFromSource(source);
+  return await ensureAssetRecordFromBlob(blob, kind, source);
+}
+
+function cacheObjectUrl(assetId: string, objectUrl: string): string {
+  objectUrlCache.set(assetId, objectUrl);
+  objectUrlToAssetId.set(objectUrl, assetId);
+  sourceToManagedAssetIdCache.set(objectUrl, assetId);
+  return objectUrl;
+}
+
+async function resolveManagedAssetUrl(assetId: string): Promise<string | null> {
+  const cached = objectUrlCache.get(assetId);
+  if (cached) {
+    return cached;
+  }
+
+  const record = await db.assets.get(assetId);
+  if (!record) {
+    return null;
+  }
+
+  return cacheObjectUrl(assetId, URL.createObjectURL(record.blob));
+}
+
+async function storeManagedAssetBlob(
+  assetId: string,
+  blob: Blob,
+  kind: ManagedAssetKind,
+): Promise<AssetRecord> {
+  const hashMatch = assetId.match(MANAGED_ASSET_ID_PATTERN);
+  if (!hashMatch) {
+    throw new Error(`Invalid managed asset id: ${assetId}`);
+  }
+
+  const computedHash = await computeSha256Hex(blob);
+  if (computedHash !== hashMatch[1].toLowerCase()) {
+    throw new Error(`Asset hash mismatch for ${assetId}`);
+  }
+
+  const existing = await db.assets.get(assetId);
+  if (existing) {
+    return existing;
+  }
+
+  const now = new Date();
+  const record: AssetRecord = {
+    id: assetId,
+    hash: computedHash,
+    kind,
+    mimeType: blob.type || defaultMimeTypeForKind(kind),
+    size: blob.size,
+    blob,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.assets.put(record);
+  return record;
+}
+
+export async function hasManagedAsset(assetId: string): Promise<boolean> {
+  return (await db.assets.get(assetId)) !== undefined;
+}
+
+export async function getManagedAssetBlob(assetId: string): Promise<Blob | null> {
+  const record = await db.assets.get(assetId);
+  return record?.blob ?? null;
+}
+
+export async function getManagedAssetMetadata(assetId: string): Promise<{
+  assetId: string;
+  kind: ManagedAssetKind;
+  mimeType: string;
+  size: number;
+} | null> {
+  const record = await db.assets.get(assetId);
+  if (!record) {
+    return null;
+  }
+  return {
+    assetId: record.id,
+    kind: record.kind,
+    mimeType: record.mimeType,
+    size: record.size,
+  };
+}
+
+export async function storeManagedAsset(
+  assetId: string,
+  blob: Blob,
+  kind: ManagedAssetKind,
+): Promise<void> {
+  await storeManagedAssetBlob(assetId, blob, kind);
+}
+
+function rememberResolvedManagedAsset(assetId: string, source: string): void {
+  if (!source) return;
+  objectUrlToAssetId.set(source, assetId);
+  sourceToManagedAssetIdCache.set(source, assetId);
+}
+
+function addPersistedAssetRef(
+  refsById: Map<string, PersistedProjectAssetRef>,
+  assetId: string,
+  kind: ManagedAssetKind,
+): void {
+  if (!isManagedAssetId(assetId) || refsById.has(assetId)) {
+    return;
+  }
+  refsById.set(assetId, { assetId, kind });
+}
+
+async function normalizeProjectAssetsForStorage(
+  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
+): Promise<{
+  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  assetRefs: PersistedProjectAssetRef[];
+}> {
+  const nextProject = cloneValue(projectData);
+  const refsById = new Map<string, PersistedProjectAssetRef>();
+
+  const normalizeCostumeAsset = async (costume: { assetId: string }) => {
+    if (!isLikelyAssetSource(costume.assetId)) return;
+    const record = await ensureAssetRecordFromSource(costume.assetId, 'image');
+    addPersistedAssetRef(refsById, record.id, 'image');
+    costume.assetId = record.id;
+  };
+
+  const normalizeSoundAsset = async (sound: { assetId: string }) => {
+    if (!isLikelyAssetSource(sound.assetId)) return;
+    const record = await ensureAssetRecordFromSource(sound.assetId, 'audio');
+    addPersistedAssetRef(refsById, record.id, 'audio');
+    sound.assetId = record.id;
+  };
+
+  const normalizeBackground = async (background: BackgroundConfig | null | undefined) => {
+    if (!background) return;
+    if (background.type === 'image' && isLikelyAssetSource(background.value)) {
+      const record = await ensureAssetRecordFromSource(background.value, 'background');
+      addPersistedAssetRef(refsById, record.id, 'background');
+      background.value = record.id;
+      return;
+    }
+
+    if (background.type !== 'tiled' || !background.chunks) {
+      return;
+    }
+
+    const nextChunks: Record<string, string> = {};
+    for (const [chunkKey, source] of Object.entries(background.chunks)) {
+      if (!isLikelyAssetSource(source)) continue;
+      const record = await ensureAssetRecordFromSource(source, 'background');
+      addPersistedAssetRef(refsById, record.id, 'background');
+      nextChunks[chunkKey] = record.id;
+    }
+    background.chunks = nextChunks;
+  };
+
+  for (const scene of nextProject.scenes || []) {
+    await normalizeBackground(scene.background);
+    for (const object of scene.objects || []) {
+      for (const costume of object.costumes || []) {
+        await normalizeCostumeAsset(costume);
+      }
+      for (const sound of object.sounds || []) {
+        await normalizeSoundAsset(sound);
+      }
+    }
+  }
+
+  for (const component of nextProject.components || []) {
+    for (const costume of component.costumes || []) {
+      await normalizeCostumeAsset(costume);
+    }
+    for (const sound of component.sounds || []) {
+      await normalizeSoundAsset(sound);
+    }
+  }
+
+  return {
+    projectData: nextProject,
+    assetRefs: Array.from(refsById.values()),
+  };
+}
+
+async function hydrateProjectAssetsFromStorage(
+  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
+): Promise<Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>> {
+  const nextProject = cloneValue(projectData);
+
+  const hydrateCostumeAsset = async (costume: { assetId: string }) => {
+    if (!isManagedAssetId(costume.assetId)) {
+      return;
+    }
+    const objectUrl = await resolveManagedAssetUrl(costume.assetId);
+    if (objectUrl) {
+      rememberResolvedManagedAsset(costume.assetId, objectUrl);
+      costume.assetId = objectUrl;
+    }
+  };
+
+  const hydrateSoundAsset = async (sound: { assetId: string }) => {
+    if (!isManagedAssetId(sound.assetId)) {
+      return;
+    }
+    const objectUrl = await resolveManagedAssetUrl(sound.assetId);
+    if (objectUrl) {
+      rememberResolvedManagedAsset(sound.assetId, objectUrl);
+      sound.assetId = objectUrl;
+    }
+  };
+
+  const hydrateBackground = async (background: BackgroundConfig | null | undefined) => {
+    if (!background) return;
+    if (background.type === 'image' && isManagedAssetId(background.value)) {
+      const objectUrl = await resolveManagedAssetUrl(background.value);
+      if (objectUrl) {
+        rememberResolvedManagedAsset(background.value, objectUrl);
+        background.value = objectUrl;
+      }
+      return;
+    }
+
+    if (background.type !== 'tiled' || !background.chunks) {
+      return;
+    }
+
+    const nextChunks: Record<string, string> = {};
+    for (const [chunkKey, value] of Object.entries(background.chunks)) {
+      if (!isManagedAssetId(value)) {
+        nextChunks[chunkKey] = value;
+        continue;
+      }
+      const objectUrl = await resolveManagedAssetUrl(value);
+      if (objectUrl) {
+        rememberResolvedManagedAsset(value, objectUrl);
+        nextChunks[chunkKey] = objectUrl;
+      }
+    }
+    background.chunks = nextChunks;
+  };
+
+  for (const scene of nextProject.scenes || []) {
+    await hydrateBackground(scene.background);
+    for (const object of scene.objects || []) {
+      for (const costume of object.costumes || []) {
+        await hydrateCostumeAsset(costume);
+      }
+      for (const sound of object.sounds || []) {
+        await hydrateSoundAsset(sound);
+      }
+    }
+  }
+
+  for (const component of nextProject.components || []) {
+    for (const costume of component.costumes || []) {
+      await hydrateCostumeAsset(costume);
+    }
+    for (const sound of component.sounds || []) {
+      await hydrateSoundAsset(sound);
+    }
+  }
+
+  return nextProject;
+}
+
+function collectPersistedAssetRefsFromProjectData(
+  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
+): PersistedProjectAssetRef[] {
+  const refsById = new Map<string, PersistedProjectAssetRef>();
+
+  const collectBackground = (background: BackgroundConfig | null | undefined) => {
+    if (!background) return;
+    if (background.type === 'image') {
+      addPersistedAssetRef(refsById, background.value, 'background');
+      return;
+    }
+    if (background.type !== 'tiled' || !background.chunks) return;
+    Object.values(background.chunks).forEach((assetId) => addPersistedAssetRef(refsById, assetId, 'background'));
+  };
+
+  for (const scene of projectData.scenes || []) {
+    collectBackground(scene.background);
+    for (const object of scene.objects || []) {
+      for (const costume of object.costumes || []) {
+        addPersistedAssetRef(refsById, costume.assetId, 'image');
+      }
+      for (const sound of object.sounds || []) {
+        addPersistedAssetRef(refsById, sound.assetId, 'audio');
+      }
+    }
+  }
+
+  for (const component of projectData.components || []) {
+    for (const costume of component.costumes || []) {
+      addPersistedAssetRef(refsById, costume.assetId, 'image');
+    }
+    for (const sound of component.sounds || []) {
+      addPersistedAssetRef(refsById, sound.assetId, 'audio');
+    }
+  }
+
+  return Array.from(refsById.values());
+}
+
+export function collectPersistedAssetRefsFromSerializedProjectData(serializedData: string): PersistedProjectAssetRef[] {
+  const parsed = JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  return collectPersistedAssetRefsFromProjectData(parsed);
+}
+
+async function serializeProjectData(project: Project): Promise<string> {
+  const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
+  const { projectData } = await normalizeProjectAssetsForStorage(rest);
+  return JSON.stringify(projectData);
+}
+
+async function deserializeProjectFromRecord(record: ProjectRecord): Promise<{
   project: Project;
   sourceSchemaVersion: number;
   migrated: boolean;
-} {
-  const data = JSON.parse(record.data);
+}> {
+  const parsedData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
   const sourceSchemaVersion = normalizeSchemaVersion(record.schemaVersion);
 
   if (sourceSchemaVersion > CURRENT_SCHEMA_VERSION) {
@@ -208,7 +643,7 @@ function deserializeProjectFromRecord(record: ProjectRecord): {
     name: record.name,
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.updatedAt),
-    ...data,
+    ...(await hydrateProjectAssetsFromStorage(parsedData)),
   };
 
   let migrated = false;
@@ -229,8 +664,8 @@ function deserializeProjectFromRecord(record: ProjectRecord): {
   };
 }
 
-function toProjectRecord(project: Project, updatedAt: Date = new Date()): ProjectRecord {
-  const data = serializeProjectData(project);
+async function toProjectRecord(project: Project, updatedAt: Date = new Date()): Promise<ProjectRecord> {
+  const data = await serializeProjectData(project);
   return {
     id: project.id,
     name: project.name,
@@ -283,6 +718,14 @@ class GameMakerDatabase extends Dexie {
       assets: 'id, name, type',
       reusables: 'id, name, createdAt, *tags',
     });
+
+    this.version(4).stores({
+      projects: 'id, name, createdAt, updatedAt, schemaVersion',
+      projectRevisions:
+        'id, projectId, createdAt, [projectId+createdAt], [projectId+isCheckpoint+createdAt], [projectId+reason+createdAt], [projectId+contentHash]',
+      assets: 'id, hash, kind, mimeType, size, createdAt, updatedAt',
+      reusables: 'id, name, createdAt, *tags',
+    });
   }
 }
 
@@ -290,8 +733,11 @@ export const db = new GameMakerDatabase();
 
 // Project Repository
 
-export async function saveProject(project: Project): Promise<void> {
-  await db.projects.put(toProjectRecord(project));
+export async function saveProject(project: Project): Promise<Project> {
+  const record = await toProjectRecord(project);
+  await db.projects.put(record);
+  const { project: hydratedProject } = await deserializeProjectFromRecord(record);
+  return hydratedProject;
 }
 
 export async function loadProject(id: string): Promise<Project | null> {
@@ -303,10 +749,10 @@ export async function loadProject(id: string): Promise<Project | null> {
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
   };
 
-  const { project, migrated } = deserializeProjectFromRecord(normalizedRecord);
+  const { project, migrated } = await deserializeProjectFromRecord(normalizedRecord);
 
   if (migrated) {
-    await db.projects.put(toProjectRecord(project, project.updatedAt));
+    await db.projects.put(await toProjectRecord(project, project.updatedAt));
   }
 
   return project;
@@ -406,8 +852,8 @@ async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRe
   return candidates ?? null;
 }
 
-function buildRevisionData(project: Project): { serializedData: string; contentHash: string } {
-  const serializedData = serializeProjectData(project);
+async function buildRevisionData(project: Project): Promise<{ serializedData: string; contentHash: string }> {
+  const serializedData = await serializeProjectData(project);
   return {
     serializedData,
     contentHash: computeContentHash(serializedData),
@@ -448,7 +894,7 @@ export async function createRevision(
     throw new Error('Invalid project revision key: project.id must be a non-empty string.');
   }
 
-  const { serializedData, contentHash } = buildRevisionData(project);
+  const { serializedData, contentHash } = await buildRevisionData(project);
   const latestRevision = await getLatestRevision(project.id);
   if (reason !== 'manual_checkpoint' && reason !== 'restore' && latestRevision?.contentHash === contentHash) {
     return null;
@@ -496,7 +942,7 @@ export async function createManualCheckpoint(project: Project, checkpointName: s
 
 export async function createAutoCheckpoint(project: Project): Promise<ProjectRevision | null> {
   const latestCheckpoint = await getLatestCheckpointRevision(project.id);
-  const { contentHash } = buildRevisionData(project);
+  const { contentHash } = await buildRevisionData(project);
   if (latestCheckpoint?.contentHash === contentHash) {
     return null;
   }
@@ -570,7 +1016,7 @@ export async function restoreAsNewProject(projectId: string, revisionId: string)
     throw new Error('Only snapshot revisions are currently restorable.');
   }
 
-  const parsedData = parseRevisionProjectData(targetRevision.snapshotData);
+  const parsedData = await hydrateProjectAssetsFromStorage(parseRevisionProjectData(targetRevision.snapshotData));
   const restoreLabel = targetRevision.checkpointName
     ? targetRevision.checkpointName
     : formatRestoreTimestamp(new Date(targetRevision.createdAt));
@@ -756,8 +1202,8 @@ async function preserveLocalConflictCopy(existing: ProjectRecord, existingHash: 
   });
 }
 
-export function createProjectSyncPayload(project: Project): ProjectSyncPayload {
-  const data = serializeProjectData(project);
+export async function createProjectSyncPayload(project: Project): Promise<ProjectSyncPayload> {
+  const data = await serializeProjectData(project);
   return {
     localId: project.id,
     name: project.name,
@@ -807,20 +1253,10 @@ function revisionRecordToSyncPayload(record: ProjectRevisionRecord): ProjectRevi
 // Get all local projects for batch sync
 export async function getAllProjectsForSync(): Promise<ProjectSyncPayload[]> {
   const records = await db.projects.toArray();
-  const payloads: ProjectSyncPayload[] = [];
-
-  for (const record of records) {
-    try {
-      const project = await loadProject(record.id);
-      if (project) {
-        payloads.push(createProjectSyncPayload(project));
-      }
-    } catch (error) {
-      console.error(`[CloudSync] Failed to prepare project ${record.id} for sync:`, error);
-    }
-  }
-
-  return payloads;
+  return records.map((record) => recordToSyncPayload({
+    ...record,
+    schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+  }));
 }
 
 export async function getProjectRevisionsForSync(projectId: string): Promise<ProjectRevisionSyncPayload[]> {
@@ -894,7 +1330,14 @@ export async function syncProjectFromCloud(cloudProject: {
 
   incomingProject = normalizeMessagesInProject(incomingProject);
 
-  const serializedIncomingData = serializeProjectData(incomingProject);
+  const {
+    id: _incomingId,
+    name: _incomingName,
+    createdAt: _incomingCreatedAt,
+    updatedAt: _incomingUpdatedAt,
+    ...incomingDataForStorage
+  } = incomingProject;
+  const serializedIncomingData = JSON.stringify(incomingDataForStorage);
   const incomingRecord: ProjectRecord = {
     id: incomingProject.id,
     name: incomingProject.name,
@@ -1043,9 +1486,7 @@ export async function syncProjectRevisionsFromCloud(
 
 // Get single project record for sync
 export async function getProjectForSync(id: string): Promise<ProjectSyncPayload | null> {
-  const project = await loadProject(id);
-  if (!project) return null;
-  return createProjectSyncPayload(project);
+  return await getProjectForSyncFromRecord(id);
 }
 
 export async function getProjectForSyncFromRecord(id: string): Promise<ProjectSyncPayload | null> {
@@ -1087,6 +1528,10 @@ export async function migrateAllLocalProjects(): Promise<{
 
 // Export / Import
 
+const PROJECT_BUNDLE_TYPE = 'pochacoding-project-bundle';
+const PROJECT_BUNDLE_FORMAT_VERSION = 1;
+const PROJECT_BUNDLE_MANIFEST_PATH = 'manifest.json';
+
 // Supported file types for backwards compatibility
 const SUPPORTED_FILE_TYPES = ['pochacoding-project', 'phaserblockly-project'] as const;
 
@@ -1096,6 +1541,28 @@ export interface ExportedProject {
   exportedAt: string;
   appVersion?: string; // Optional: app version that created this file
   project: Project;
+}
+
+interface ExportedProjectBundleManifest {
+  formatVersion: number;
+  type: typeof PROJECT_BUNDLE_TYPE;
+  exportedAt: string;
+  schemaVersion: number;
+  appVersion?: string;
+  project: {
+    id: string;
+    name: string;
+    createdAt: string;
+    updatedAt: string;
+    data: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  };
+  assets: Array<{
+    assetId: string;
+    kind: ManagedAssetKind;
+    mimeType: string;
+    size: number;
+    path: string;
+  }>;
 }
 
 // Schema migration functions - add new migrations here as schema evolves
@@ -1395,25 +1862,84 @@ function migrateProject(project: Project, fromVersion: number): Project {
   return currentProject;
 }
 
-export function exportProject(project: Project): string {
-  const exportData: ExportedProject = {
-    schemaVersion: CURRENT_SCHEMA_VERSION,
-    type: 'pochacoding-project',
-    exportedAt: new Date().toISOString(),
-    appVersion: APP_VERSION,
-    project,
-  };
-  return JSON.stringify(exportData, null, 2);
+function getAssetArchiveExtension(mimeType: string): string {
+  if (mimeType.includes('png')) return '.png';
+  if (mimeType.includes('jpeg')) return '.jpg';
+  if (mimeType.includes('webp')) return '.webp';
+  if (mimeType.includes('svg')) return '.svg';
+  if (mimeType.includes('wav')) return '.wav';
+  if (mimeType.includes('mpeg')) return '.mp3';
+  if (mimeType.includes('ogg')) return '.ogg';
+  if (mimeType.includes('webm')) return '.webm';
+  return '';
 }
 
-export function downloadProject(project: Project): void {
-  const json = exportProject(project);
-  const blob = new Blob([json], { type: 'application/json' });
+function getAssetArchivePath(assetId: string, mimeType: string): string {
+  const safeAssetId = assetId.replace(/[^a-z0-9:_-]/gi, '_').replace(/:/g, '_');
+  return `assets/${safeAssetId}${getAssetArchiveExtension(mimeType)}`;
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
+export async function exportProject(project: Project): Promise<Blob> {
+  const record = await toProjectRecord(project, new Date(project.updatedAt));
+  const projectData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  const assetRefs = collectPersistedAssetRefsFromProjectData(projectData);
+  const archiveEntries: Record<string, Uint8Array> = {};
+  const manifestAssets: ExportedProjectBundleManifest['assets'] = [];
+
+  for (const assetRef of assetRefs) {
+    const blob = await getManagedAssetBlob(assetRef.assetId);
+    const metadata = await getManagedAssetMetadata(assetRef.assetId);
+    if (!blob || !metadata) {
+      throw new Error(`Missing export asset ${assetRef.assetId}`);
+    }
+
+    const path = getAssetArchivePath(assetRef.assetId, metadata.mimeType);
+    archiveEntries[path] = new Uint8Array(await blob.arrayBuffer());
+    manifestAssets.push({
+      assetId: assetRef.assetId,
+      kind: assetRef.kind,
+      mimeType: metadata.mimeType,
+      size: metadata.size,
+      path,
+    });
+  }
+
+  const manifest: ExportedProjectBundleManifest = {
+    formatVersion: PROJECT_BUNDLE_FORMAT_VERSION,
+    type: PROJECT_BUNDLE_TYPE,
+    exportedAt: new Date().toISOString(),
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    appVersion: APP_VERSION,
+    project: {
+      id: project.id,
+      name: project.name,
+      createdAt: project.createdAt.toISOString(),
+      updatedAt: project.updatedAt.toISOString(),
+      data: projectData,
+    },
+    assets: manifestAssets,
+  };
+
+  archiveEntries[PROJECT_BUNDLE_MANIFEST_PATH] = strToU8(JSON.stringify(manifest, null, 2));
+  const zipBytes = zipSync(archiveEntries, { level: 6 });
+  return new Blob([toArrayBuffer(zipBytes)], {
+    type: 'application/zip',
+  });
+}
+
+export async function downloadProject(project: Project): Promise<void> {
+  const blob = await exportProject(project);
   const url = URL.createObjectURL(blob);
 
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${project.name.replace(/[^a-z0-9]/gi, '_')}.pochacoding.json`;
+  a.download = `${project.name.replace(/[^a-z0-9]/gi, '_')}.pochacoding.zip`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1869,7 +2395,58 @@ export async function importProject(jsonString: string): Promise<Project> {
   return importedProject;
 }
 
+async function importProjectBundle(file: File): Promise<Project> {
+  const archiveBytes = new Uint8Array(await file.arrayBuffer());
+  const archiveEntries = unzipSync(archiveBytes);
+  const manifestEntry = archiveEntries[PROJECT_BUNDLE_MANIFEST_PATH];
+  if (!manifestEntry) {
+    throw new Error('Invalid project bundle: missing manifest');
+  }
+
+  const manifest = JSON.parse(strFromU8(manifestEntry)) as ExportedProjectBundleManifest;
+  if (manifest.type !== PROJECT_BUNDLE_TYPE) {
+    throw new Error('Invalid project bundle type');
+  }
+  if (manifest.schemaVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `This project bundle was created with a newer version of PochaCoding (schema v${manifest.schemaVersion}). ` +
+        `Please update the app to open this file.`,
+    );
+  }
+
+  for (const asset of manifest.assets) {
+    const assetEntry = archiveEntries[asset.path];
+    if (!assetEntry) {
+      throw new Error(`Invalid project bundle: missing asset ${asset.assetId}`);
+    }
+    const blob = new Blob([toArrayBuffer(assetEntry)], { type: asset.mimeType });
+    await storeManagedAsset(asset.assetId, blob, asset.kind);
+  }
+
+  const hydratedProjectData = await hydrateProjectAssetsFromStorage(manifest.project.data);
+  const runtimeProject: Project = {
+    ...hydratedProjectData,
+    id: manifest.project.id,
+    name: manifest.project.name,
+    createdAt: new Date(manifest.project.createdAt),
+    updatedAt: new Date(manifest.project.updatedAt),
+  };
+
+  return await importProject(JSON.stringify({
+    type: 'pochacoding-project',
+    exportedAt: new Date().toISOString(),
+    schemaVersion: manifest.schemaVersion,
+    appVersion: manifest.appVersion,
+    project: runtimeProject,
+  } satisfies ExportedProject));
+}
+
 export async function importProjectFromFile(file: File): Promise<Project> {
+  const isBundle = file.name.toLowerCase().endsWith('.zip');
+  if (isBundle) {
+    return await importProjectBundle(file);
+  }
+
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = async (e) => {

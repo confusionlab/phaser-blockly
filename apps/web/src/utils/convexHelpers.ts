@@ -52,14 +52,30 @@ export async function urlToDataUrl(url: string): Promise<string> {
 }
 
 /**
- * Upload a data URL to Convex storage
- * Returns the storage ID, size, and mime type
+ * Convert a local asset source string into a Blob.
+ * Supports data URLs, blob URLs, and regular fetchable URLs.
+ */
+export async function assetSourceToBlob(source: string): Promise<Blob> {
+  if (source.startsWith('data:')) {
+    return dataUrlToBlob(source);
+  }
+
+  const response = await fetch(source);
+  if (!response.ok) {
+    throw new Error(`Failed to read asset source: ${response.statusText}`);
+  }
+  return await response.blob();
+}
+
+/**
+ * Upload an asset source to Convex storage.
+ * Returns the storage ID, size, and mime type.
  */
 export async function uploadDataUrlToStorage(
   dataUrl: string,
   generateUploadUrl: () => Promise<string>
 ): Promise<{ storageId: string; size: number; mimeType: string }> {
-  const blob = dataUrlToBlob(dataUrl);
+  const blob = await assetSourceToBlob(dataUrl);
   const uploadUrl = await generateUploadUrl();
 
   const response = await fetch(uploadUrl, {
