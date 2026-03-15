@@ -674,9 +674,13 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor }: ScenePr
             Draw
           </Button>
           <ColorSwatch
-            value={scene.background?.value || '#87CEEB'}
+            value={!scene.background || scene.background.type === 'image'
+              ? '#87CEEB'
+              : scene.background.value}
             onChange={(color) => updateScene(scene.id, {
-              background: { type: 'color', value: color }
+              background: scene.background?.type === 'tiled'
+                ? { ...scene.background, value: color }
+                : { type: 'color', value: color }
             })}
           />
         </div>

@@ -21,14 +21,16 @@ export function SceneTabs() {
   const [showBgColorPicker, setShowBgColorPicker] = useState(false);
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
-  const currentBgColor = selectedScene?.background?.type === 'color'
-    ? selectedScene.background.value
-    : '#87CEEB';
+  const currentBgColor = !selectedScene?.background || selectedScene.background.type === 'image'
+    ? '#87CEEB'
+    : selectedScene.background.value;
 
   const handleBgColorChange = (color: string) => {
-    if (selectedSceneId) {
+    if (selectedSceneId && selectedScene) {
       updateScene(selectedSceneId, {
-        background: { type: 'color', value: color }
+        background: selectedScene.background?.type === 'tiled'
+          ? { ...selectedScene.background, value: color }
+          : { type: 'color', value: color }
       });
     }
   };

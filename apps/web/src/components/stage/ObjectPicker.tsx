@@ -53,7 +53,9 @@ export function ObjectPicker() {
       parent: container,
       width: container.clientWidth,
       height: container.clientHeight,
-      backgroundColor: selectedScene.background?.type === 'color' ? selectedScene.background.value : '#87CEEB',
+      backgroundColor: !selectedScene.background || selectedScene.background.type === 'image'
+        ? '#87CEEB'
+        : selectedScene.background.value,
       scale: {
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH,
