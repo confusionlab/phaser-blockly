@@ -27,10 +27,10 @@ export function ObjectEditor() {
     const sceneObjects = scene?.objects || [];
 
     if (sceneObjects.length > 0 && !selectedObjectId) {
-      selectObject(sceneObjects[0].id);
+      selectObject(sceneObjects[0].id, { recordHistory: false });
     }
     if (selectedObjectId && !sceneObjects.find((o) => o.id === selectedObjectId)) {
-      selectObject(sceneObjects.length > 0 ? sceneObjects[0].id : null);
+      selectObject(sceneObjects.length > 0 ? sceneObjects[0].id : null, { recordHistory: false });
     }
   }, [scene, selectedObjectId, selectedComponentId, selectObject]);
 

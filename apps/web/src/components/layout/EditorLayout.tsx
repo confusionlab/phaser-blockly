@@ -17,6 +17,8 @@ import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { runInHistoryTransaction } from '@/store/universalHistory';
+import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
+import { deleteSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | 'stage' | null;
@@ -356,9 +358,21 @@ export function EditorLayout() {
       }
 
       e.preventDefault();
-      runInHistoryTransaction('shortcut:delete', () => {
-        idsToDelete.forEach((objectId) => removeObject(selectedSceneId, objectId));
-        selectObjects([], null);
+      const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId);
+      const orderedSceneObjectIds = selectedScene
+        ? getSceneObjectsInLayerOrder(selectedScene).map((object) => object.id)
+        : [];
+
+      deleteSceneObjectsWithHistory({
+        source: 'shortcut:delete',
+        sceneId: selectedSceneId,
+        deleteIds: idsToDelete,
+        orderedSceneObjectIds,
+        selectedObjectId,
+        selectedObjectIds: idsToDelete.length > 0 ? idsToDelete : [],
+        removeObject,
+        selectObject: (objectId) => selectObjects(objectId ? [objectId] : [], objectId),
+        selectObjects,
       });
       return;
     }

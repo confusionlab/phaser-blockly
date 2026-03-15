@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
 import type { AssistantChangeSet } from '../../../packages/ui-shared/src/assistant';
+import { deleteSceneObjectsWithHistory } from '../src/lib/editor/objectCommands';
 import { createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
 import { createDefaultGameObject, createDefaultProject } from '../src/types';
 
 type StoreModules = {
   useProjectStore: typeof import('../src/store/projectStore').useProjectStore;
   useEditorStore: typeof import('../src/store/editorStore').useEditorStore;
-  runInHistoryTransaction: typeof import('../src/store/universalHistory').runInHistoryTransaction;
   canUndoHistory: typeof import('../src/store/universalHistory').canUndoHistory;
 };
 
@@ -60,11 +60,10 @@ async function loadStores(): Promise<StoreModules> {
   installBrowserShims();
   const { useProjectStore } = await import('../src/store/projectStore');
   const { useEditorStore } = await import('../src/store/editorStore');
-  const { runInHistoryTransaction, canUndoHistory } = await import('../src/store/universalHistory');
+  const { canUndoHistory } = await import('../src/store/universalHistory');
   return {
     useProjectStore,
     useEditorStore,
-    runInHistoryTransaction,
     canUndoHistory,
   };
 }
@@ -159,20 +158,28 @@ test.afterEach(async () => {
 });
 
 test.describe('Object delete undo history', () => {
-  test('manual object deletion stays undoable', async () => {
-    const { useProjectStore, useEditorStore, runInHistoryTransaction, canUndoHistory } = await loadStores();
+  test('shared object deletion command keeps delete and fallback selection in one undo step', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
     const fixture = buildProjectFixture();
 
     useProjectStore.getState().openProject(fixture.project);
     useEditorStore.getState().selectScene(fixture.sceneId, { recordHistory: false });
     useEditorStore.getState().selectObject(fixture.heroId, { recordHistory: false });
 
-    runInHistoryTransaction('test:delete-object', () => {
-      useProjectStore.getState().removeObject(fixture.sceneId, fixture.heroId);
-      useEditorStore.getState().selectObjects([], null);
+    deleteSceneObjectsWithHistory({
+      source: 'test:delete-object',
+      sceneId: fixture.sceneId,
+      deleteIds: [fixture.heroId],
+      orderedSceneObjectIds: [fixture.heroId, fixture.enemyId],
+      selectedObjectId: fixture.heroId,
+      selectedObjectIds: [fixture.heroId],
+      removeObject: useProjectStore.getState().removeObject,
+      selectObject: useEditorStore.getState().selectObject,
+      selectObjects: useEditorStore.getState().selectObjects,
     });
 
     expect(getSceneObjectIds(useProjectStore, fixture.sceneId)).toEqual([fixture.enemyId]);
+    expect(useEditorStore.getState().selectedObjectId).toBe(fixture.enemyId);
     expect(canUndoHistory()).toBe(true);
 
     useEditorStore.getState().undo();

@@ -68,6 +68,7 @@ import {
 } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
+import { deleteSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -679,20 +680,16 @@ export function SpriteShelf() {
       ? selectedIdsInScene
       : [contextMenu.object.id];
 
-    runInHistoryTransaction('sprite-shelf:delete-object', () => {
-      const deleteSet = new Set(deleteIds);
-      deleteIds.forEach((id) => removeObject(selectedSceneId, id));
-
-      const remainingSelectedIds = selectedIdsInScene.filter((id) => !deleteSet.has(id));
-      if (remainingSelectedIds.length > 0) {
-        const nextPrimary = selectedObjectId && remainingSelectedIds.includes(selectedObjectId)
-          ? selectedObjectId
-          : remainingSelectedIds[0];
-        selectObjects(remainingSelectedIds, nextPrimary);
-      } else {
-        const remainingSceneIds = orderedSceneObjectIds.filter((id) => !deleteSet.has(id));
-        selectObject(remainingSceneIds[0] ?? null);
-      }
+    deleteSceneObjectsWithHistory({
+      source: 'sprite-shelf:delete-object',
+      sceneId: selectedSceneId,
+      deleteIds,
+      orderedSceneObjectIds,
+      selectedObjectId,
+      selectedObjectIds: selectedIdsInScene,
+      removeObject,
+      selectObject,
+      selectObjects,
     });
 
     handleCloseContextMenu();
