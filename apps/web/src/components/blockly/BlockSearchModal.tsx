@@ -99,6 +99,7 @@ function getSearchLabel(config: ToolboxBlockConfig): string {
   if (config.type === 'event_clicked') return 'when this is clicked';
   if (config.type === 'event_forever') return 'forever';
   if (config.type === 'object_from_dropdown') return 'object';
+  if (config.type === 'target_camera') return 'camera';
   if (config.type === 'target_myself') return 'myself';
   if (config.type === 'target_mouse') return 'mouse pointer';
   if (config.type === 'target_ground') return 'ground';

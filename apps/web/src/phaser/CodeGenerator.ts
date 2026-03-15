@@ -19,7 +19,7 @@ export function registerCodeGenerators(): void {
   codeGeneratorsRegistered = true;
 
   const objectExprToId = (expr: string): string => {
-    return `((__obj) => (typeof __obj === 'string' ? __obj : __obj?.id))(${expr})`;
+    return `runtime.getTargetId(${expr})`;
   };
 
   // --- Events ---
@@ -132,13 +132,10 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['motion_point_towards_value'] = function(block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
-    const targetId = objectExprToId(target);
     return `{
-  const __target = ${targetId};
-  if (__target === 'MOUSE') {
-    sprite.pointTowards(runtime.getMouseWorldX(), runtime.getMouseWorldY());
-  } else if (__target) {
-    sprite.pointTowards(runtime.getSprite(__target)?.container.x ?? 0, runtime.getSprite(__target)?.container.y ?? 0);
+  const __targetPosition = runtime.getTargetPosition(${target});
+  if (__targetPosition) {
+    sprite.pointTowards(__targetPosition.x, __targetPosition.y);
   }
 }\n`;
   };
@@ -603,6 +600,10 @@ export function registerCodeGenerators(): void {
     return [asJsString('GROUND'), Order.ATOMIC];
   };
 
+  javascriptGenerator.forBlock['target_camera'] = function() {
+    return ['runtime.getCameraTarget()', Order.FUNCTION_CALL];
+  };
+
   javascriptGenerator.forBlock['sensing_my_type'] = function() {
     return ['runtime.getMyType(sprite.id)', Order.FUNCTION_CALL];
   };
@@ -623,17 +624,17 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['sensing_object_x'] = function(block) {
     const obj = javascriptGenerator.valueToCode(block, 'OBJECT', Order.ATOMIC) || 'null';
-    return [`(${obj}?.getX() ?? 0)`, Order.FUNCTION_CALL];
+    return [`runtime.getTargetX(${obj})`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_object_y'] = function(block) {
     const obj = javascriptGenerator.valueToCode(block, 'OBJECT', Order.ATOMIC) || 'null';
-    return [`(${obj}?.getY() ?? 0)`, Order.FUNCTION_CALL];
+    return [`runtime.getTargetY(${obj})`, Order.FUNCTION_CALL];
   };
 
   javascriptGenerator.forBlock['sensing_object_costume'] = function(block) {
     const obj = javascriptGenerator.valueToCode(block, 'OBJECT', Order.ATOMIC) || 'null';
-    return [`(${obj}?.getCostumeNumber() ?? 0)`, Order.FUNCTION_CALL];
+    return [`runtime.getTargetCostumeNumber(${obj})`, Order.FUNCTION_CALL];
   };
 
   // --- Messages ---

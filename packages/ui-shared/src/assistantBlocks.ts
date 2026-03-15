@@ -135,6 +135,7 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'sound_set_volume', category: 'Sound', kind: 'statement', summary: 'Set volume level (0-100)', inputNames: ['VOLUME'], statementInputNames: [], fieldNames: [] },
   { type: 'sound_stop_all', category: 'Sound', kind: 'statement', summary: 'Stop all playing sounds', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'target_ground', category: 'Targets', kind: 'reporter', summary: 'Ground target', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'target_camera', category: 'Targets', kind: 'reporter', summary: 'Camera target', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'target_mouse', category: 'Targets', kind: 'reporter', summary: 'Mouse pointer target', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'target_myself', category: 'Targets', kind: 'reporter', summary: 'Current object target', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'text', category: 'Operators', kind: 'reporter', summary: 'A text string', inputNames: [], statementInputNames: [], fieldNames: ['TEXT'] },

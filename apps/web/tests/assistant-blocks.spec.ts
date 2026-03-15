@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import {
   compileAssistantBlockProgram,
   getAssistantBlockCatalog,
@@ -6,26 +7,36 @@ import {
   validateAssistantBlockProgram,
 } from '../../../packages/ui-shared/src/assistantBlocks';
 
+function installToolboxTestGlobals(): void {
+  const globals = globalThis as {
+    __APP_VERSION__?: string;
+    localStorage?: { getItem: (key: string) => string | null };
+    document?: { documentElement: { classList: { toggle: (className: string, enabled?: boolean) => void } } };
+    window?: { matchMedia: (query: string) => { matches: boolean } };
+  };
+  globals.__APP_VERSION__ = 'test';
+  globals.localStorage = { getItem: () => null };
+  globals.document = {
+    documentElement: {
+      classList: {
+        toggle: () => undefined,
+      },
+    },
+  };
+  globals.window = {
+    matchMedia: () => ({ matches: false }),
+  };
+  const xmlGlobals = globalThis as {
+    DOMParser?: typeof DOMParser;
+    XMLSerializer?: typeof XMLSerializer;
+  };
+  xmlGlobals.DOMParser = DOMParser;
+  xmlGlobals.XMLSerializer = XMLSerializer;
+}
+
 test.describe('assistant block catalog', () => {
   test('stays in sync with the registered toolbox block types', async () => {
-    const globals = globalThis as {
-      __APP_VERSION__?: string;
-      localStorage?: { getItem: (key: string) => string | null };
-      document?: { documentElement: { classList: { toggle: (className: string, enabled?: boolean) => void } } };
-      window?: { matchMedia: (query: string) => { matches: boolean } };
-    };
-    globals.__APP_VERSION__ = 'test';
-    globals.localStorage = { getItem: () => null };
-    globals.document = {
-      documentElement: {
-        classList: {
-          toggle: () => undefined,
-        },
-      },
-    };
-    globals.window = {
-      matchMedia: () => ({ matches: false }),
-    };
+    installToolboxTestGlobals();
     const { getToolboxRegisteredBlockTypes } = await import('../src/components/blockly/toolbox');
     const catalogTypes = getAssistantBlockCatalog()
       .map((entry) => entry.type)
@@ -40,6 +51,39 @@ test.describe('assistant block catalog', () => {
 
     expect(results).toContain('looks_change_size');
     expect(results).toContain('looks_set_size');
+  });
+
+  test('camera target composes with generic x/y reporters', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    const { javascriptGenerator } = await import('blockly/javascript');
+    await import('../src/components/blockly/toolbox');
+    const { registerCodeGenerators } = await import('../src/phaser/CodeGenerator');
+
+    Blockly.utils.xml.injectDependencies({
+      document: new DOMParser().parseFromString('<xml></xml>', 'text/xml') as unknown as Document,
+      DOMParser,
+      XMLSerializer,
+    });
+    registerCodeGenerators();
+
+    const workspace = new Blockly.Workspace();
+    const cameraGoTo = workspace.newBlock('camera_go_to');
+    const cameraX = workspace.newBlock('sensing_object_x');
+    const cameraXTarget = workspace.newBlock('target_camera');
+    const cameraY = workspace.newBlock('sensing_object_y');
+    const cameraYTarget = workspace.newBlock('target_camera');
+
+    cameraX.getInput('OBJECT')?.connection?.connect(cameraXTarget.outputConnection);
+    cameraY.getInput('OBJECT')?.connection?.connect(cameraYTarget.outputConnection);
+    cameraGoTo.getInput('X')?.connection?.connect(cameraX.outputConnection);
+    cameraGoTo.getInput('Y')?.connection?.connect(cameraY.outputConnection);
+
+    const code = javascriptGenerator.workspaceToCode(workspace);
+    workspace.dispose();
+    expect(code).toContain('runtime.cameraGoTo(');
+    expect(code).toContain('runtime.getTargetX((runtime.getCameraTarget()))');
+    expect(code).toContain('runtime.getTargetY((runtime.getCameraTarget()))');
   });
 
   test('compiles typed block programs into Blockly XML', () => {

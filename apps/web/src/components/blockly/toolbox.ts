@@ -1064,6 +1064,7 @@ export function getToolboxConfig(): any {
         colour: '#5CB1D6',
         contents: [
           { kind: 'block', type: 'object_from_dropdown' },
+          { kind: 'block', type: 'target_camera' },
           { kind: 'block', type: 'target_myself' },
           { kind: 'block', type: 'target_mouse' },
           { kind: 'block', type: 'target_ground' },
@@ -2023,6 +2024,16 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Object');
       this.setColour('#5CB1D6');
       this.setTooltip('Current object target');
+    }
+  };
+
+  Blockly.Blocks['target_camera'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('camera');
+      this.setOutput(true, 'Object');
+      this.setColour('#5CB1D6');
+      this.setTooltip('Camera target');
     }
   };
 

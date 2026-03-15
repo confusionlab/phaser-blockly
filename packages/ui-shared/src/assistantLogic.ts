@@ -454,6 +454,8 @@ function renderBlocklyExpression(node?: BlocklyProjectionNode | null): string {
       return '"MOUSE"';
     case 'target_myself':
       return '"MYSELF"';
+    case 'target_camera':
+      return '"CAMERA"';
     case 'target_ground':
       return '"GROUND"';
     default:

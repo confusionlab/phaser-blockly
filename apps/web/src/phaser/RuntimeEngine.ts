@@ -144,6 +144,8 @@ interface ObjectTemplate {
   handlers: ObjectHandlers | null;
 }
 
+type RuntimeTargetValue = RuntimeSprite | string | null | undefined;
+
 /**
  * RuntimeEngine manages game execution, including sprites, events, and variables.
  * This is injected into generated Blockly code as the 'runtime' object.
@@ -362,12 +364,87 @@ export class RuntimeEngine {
     return this.sprites.get(spriteId)?.typeToken ?? '';
   }
 
-  getTypeOf(obj: RuntimeSprite | null): string {
-    return obj?.typeToken ?? '';
+  private resolveSpriteTarget(target: RuntimeTargetValue): RuntimeSprite | null {
+    if (target instanceof RuntimeSprite) {
+      return target;
+    }
+    if (typeof target === 'string') {
+      return this.sprites.get(target) ?? null;
+    }
+    return null;
+  }
+
+  getTypeOf(target: RuntimeTargetValue): string {
+    return this.resolveSpriteTarget(target)?.typeToken ?? '';
   }
 
   getSprite(id: string): RuntimeSprite | undefined {
     return this.sprites.get(id);
+  }
+
+  getCameraTarget(): string {
+    return 'CAMERA';
+  }
+
+  getTargetId(target: RuntimeTargetValue): string | null {
+    if (target instanceof RuntimeSprite) {
+      return target.id;
+    }
+    if (typeof target === 'string' && target.trim().length > 0) {
+      return target;
+    }
+    return null;
+  }
+
+  private getCameraWorldCenter(): { x: number; y: number } {
+    const camera = this.scene.cameras.main;
+    return {
+      x: camera.midPoint.x,
+      y: camera.midPoint.y,
+    };
+  }
+
+  getTargetPosition(target: RuntimeTargetValue): { x: number; y: number } | null {
+    const sprite = this.resolveSpriteTarget(target);
+    if (sprite) {
+      return {
+        x: sprite.container.x,
+        y: sprite.container.y,
+      };
+    }
+
+    if (target === 'MOUSE') {
+      return {
+        x: this.getMouseWorldX(),
+        y: this.getMouseWorldY(),
+      };
+    }
+
+    if (target === 'CAMERA') {
+      return this.getCameraWorldCenter();
+    }
+
+    if (target === 'GROUND') {
+      return this.userToPhaser(0, this._groundY);
+    }
+
+    return null;
+  }
+
+  getTargetX(target: RuntimeTargetValue): number {
+    const position = this.getTargetPosition(target);
+    if (!position) return 0;
+    return this.phaserToUser(position.x, position.y).x;
+  }
+
+  getTargetY(target: RuntimeTargetValue): number {
+    const position = this.getTargetPosition(target);
+    if (!position) return 0;
+    return this.phaserToUser(position.x, position.y).y;
+  }
+
+  getTargetCostumeNumber(target: RuntimeTargetValue): number {
+    return this.resolveSpriteTarget(target)?.getCostumeNumber() ?? 0;
   }
 
   getSpriteByName(name: string): RuntimeSprite | undefined {
@@ -1868,26 +1945,14 @@ export class RuntimeEngine {
     const sprite = this.sprites.get(spriteId);
     if (!sprite) return 0;
 
-    // Handle MOUSE special case
-    if (targetId === 'MOUSE') {
-      const mouseX = this.scene.input.activePointer.worldX;
-      const mouseY = this.scene.input.activePointer.worldY;
-      return Phaser.Math.Distance.Between(
-        sprite.container.x,
-        sprite.container.y,
-        mouseX,
-        mouseY
-      );
-    }
-
-    const target = this.sprites.get(targetId);
-    if (!target) return 0;
+    const targetPosition = this.getTargetPosition(targetId);
+    if (!targetPosition) return 0;
 
     return Phaser.Math.Distance.Between(
       sprite.container.x,
       sprite.container.y,
-      target.container.x,
-      target.container.y
+      targetPosition.x,
+      targetPosition.y
     );
   }
 
