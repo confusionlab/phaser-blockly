@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
+import { isBlocklyShortcutTarget, isTextEntryTarget } from '@/utils/keyboard';
 import { deleteSceneObjectsWithHistory, duplicateSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
 
 type HoveredPanel = 'code' | 'stage' | null;
@@ -203,10 +204,12 @@ export function EditorLayout() {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
-    const isTyping = target.tagName === 'INPUT' ||
-                     target.tagName === 'TEXTAREA' ||
-                     target.isContentEditable;
-    const isInBlocklyArea = !!target.closest('[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv');
+    const isTyping = isTextEntryTarget(e.target);
+    const isInBlocklyArea = isBlocklyShortcutTarget(e.target);
+
+    if (e.defaultPrevented || e.isComposing) {
+      return;
+    }
 
     if (assistantLockRunId) {
       e.preventDefault();
@@ -214,6 +217,10 @@ export function EditorLayout() {
     }
 
     if (backgroundEditorOpen) {
+      if (isTyping) {
+        return;
+      }
+
       const handled = backgroundShortcutHandler?.(e) ?? false;
       if (handled) {
         return;
@@ -256,7 +263,7 @@ export function EditorLayout() {
     }
 
     // Escape to exit fullscreen or stop playing
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && !isTyping) {
       e.preventDefault();
       if (fullscreenPanel) {
         setFullscreenPanel(null);
@@ -298,6 +305,10 @@ export function EditorLayout() {
 
     // Duplicate selected object(s): Cmd/Ctrl + D (disabled in Blockly area)
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+      if (isTyping) {
+        return;
+      }
+
       if (activeObjectTab === 'costumes') {
         e.preventDefault();
         void Promise.resolve(costumeUndoHandler?.duplicateSelection?.()).catch((error) => {

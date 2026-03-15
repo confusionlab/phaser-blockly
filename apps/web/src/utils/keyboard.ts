@@ -109,6 +109,56 @@ export const KEY_DROPDOWN_OPTIONS: ReadonlyArray<[string, string]> = [
   ['`', 'BACKQUOTE'],
 ];
 
+const TEXT_ENTRY_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable=""]',
+  '[contenteditable="true"]',
+  '[contenteditable="plaintext-only"]',
+  '[role="textbox"]',
+  '[data-hotkeys="ignore"]',
+].join(', ');
+
+const BLOCKLY_SELECTOR = '[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv';
+
+type ClosestCapableTarget = EventTarget & {
+  closest?: (selector: string) => Element | null;
+  tagName?: string;
+  isContentEditable?: boolean;
+};
+
+function asClosestCapableTarget(target: EventTarget | null): ClosestCapableTarget | null {
+  if (!target || typeof target !== 'object') {
+    return null;
+  }
+
+  return target as ClosestCapableTarget;
+}
+
+export function isTextEntryTarget(target: EventTarget | null): boolean {
+  const element = asClosestCapableTarget(target);
+  if (!element) {
+    return false;
+  }
+
+  const tagName = typeof element.tagName === 'string' ? element.tagName.toUpperCase() : '';
+  if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') {
+    return true;
+  }
+
+  if (element.isContentEditable) {
+    return true;
+  }
+
+  return typeof element.closest === 'function' && !!element.closest(TEXT_ENTRY_SELECTOR);
+}
+
+export function isBlocklyShortcutTarget(target: EventTarget | null): boolean {
+  const element = asClosestCapableTarget(target);
+  return typeof element?.closest === 'function' && !!element.closest(BLOCKLY_SELECTOR);
+}
+
 export function normalizeKeyboardCode(code: string): string {
   if (/^Key[A-Z]$/.test(code)) {
     return code.slice(3);
