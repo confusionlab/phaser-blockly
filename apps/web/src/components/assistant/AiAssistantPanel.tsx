@@ -52,8 +52,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   createAssistantProjectSnapshot,
   createAssistantProjectVersion,
-  projectContainsObject,
-  projectContainsScene,
 } from '@/lib/assistant/projectState';
 import { cn } from '@/lib/utils';
 import { useEditorStore } from '@/store/editorStore';
@@ -548,23 +546,7 @@ export function AiAssistantPanel() {
                   throw new Error('No open project was available when applying the assistant change-set.');
                 }
 
-                const editorState = useEditorStore.getState();
-                const nextSelectedSceneId = projectContainsScene(nextProject, editorState.selectedSceneId)
-                  ? editorState.selectedSceneId
-                  : nextProject.scenes[0]?.id ?? null;
-                const nextSelectedObjectId = projectContainsObject(
-                  nextProject,
-                  nextSelectedSceneId,
-                  editorState.selectedObjectId,
-                )
-                  ? editorState.selectedObjectId
-                  : null;
-
-                useEditorStore.setState({
-                  selectedSceneId: nextSelectedSceneId,
-                  selectedObjectId: nextSelectedObjectId,
-                  selectedObjectIds: nextSelectedObjectId ? [nextSelectedObjectId] : [],
-                });
+                useEditorStore.getState().reconcileSelectionToProject(nextProject, { recordHistory: false });
 
                 await convexClient.mutation(assistantApi.markRunApplied, { runId: created.runId });
                 assistantText = `${assistantText}\nChanges applied.`;

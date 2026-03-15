@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { PlayValidationIssue } from '@/lib/playValidation';
+import type { Project } from '@/types';
 import {
   canRedoHistory,
   canUndoHistory,
@@ -38,6 +39,22 @@ export type BackgroundEditorShortcutHandler = (event: KeyboardEvent) => boolean;
 type SelectionHistoryOptions = {
   recordHistory?: boolean;
 };
+
+function projectContainsScene(project: Project, sceneId: string | null): boolean {
+  if (!sceneId) return false;
+  return project.scenes.some((scene) => scene.id === sceneId);
+}
+
+function projectContainsObject(project: Project, sceneId: string | null, objectId: string | null): boolean {
+  if (!sceneId || !objectId) return false;
+  const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+  return !!scene?.objects.some((object) => object.id === objectId);
+}
+
+function projectContainsComponent(project: Project, componentId: string | null): boolean {
+  if (!componentId) return false;
+  return (project.components || []).some((component) => component.id === componentId);
+}
 
 interface EditorStore {
   // Selection state
@@ -89,6 +106,7 @@ interface EditorStore {
   selectObject: (objectId: string | null, options?: SelectionHistoryOptions) => void;
   selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
   selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
+  reconcileSelectionToProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
 
   startPlaying: () => void;
@@ -135,7 +153,7 @@ interface EditorStore {
   redo: () => void;
 }
 
-export const useEditorStore = create<EditorStore>((set) => ({
+export const useEditorStore = create<EditorStore>((set, get) => ({
   // Selection state
   selectedSceneId: null,
   selectedObjectId: null,
@@ -243,6 +261,42 @@ export const useEditorStore = create<EditorStore>((set) => ({
     });
     if (options?.recordHistory !== false) {
       recordHistoryChange({ source: 'selection:component' });
+    } else {
+      syncHistorySnapshot();
+    }
+  },
+
+  reconcileSelectionToProject: (project, options) => {
+    const state = get();
+    const fallbackSceneId = project?.scenes[0]?.id ?? null;
+    const nextSelectedSceneId = project && projectContainsScene(project, state.selectedSceneId)
+      ? state.selectedSceneId
+      : fallbackSceneId;
+    const nextSelectedComponentId = project && projectContainsComponent(project, state.selectedComponentId)
+      ? state.selectedComponentId
+      : null;
+    const validPrimaryObjectId = project && !nextSelectedComponentId && projectContainsObject(project, nextSelectedSceneId, state.selectedObjectId)
+      ? state.selectedObjectId
+      : null;
+    const validObjectIds = project && !nextSelectedComponentId
+      ? state.selectedObjectIds.filter((objectId) => projectContainsObject(project, nextSelectedSceneId, objectId))
+      : [];
+    const nextSelectedObjectIds = validObjectIds.length > 0
+      ? validObjectIds
+      : (validPrimaryObjectId ? [validPrimaryObjectId] : []);
+    const nextSelectedObjectId = validPrimaryObjectId && nextSelectedObjectIds.includes(validPrimaryObjectId)
+      ? validPrimaryObjectId
+      : nextSelectedObjectIds[0] ?? null;
+
+    set({
+      selectedSceneId: nextSelectedSceneId,
+      selectedObjectId: nextSelectedComponentId ? null : nextSelectedObjectId,
+      selectedObjectIds: nextSelectedComponentId ? [] : nextSelectedObjectIds,
+      selectedComponentId: nextSelectedComponentId,
+    });
+
+    if (options?.recordHistory !== false) {
+      recordHistoryChange({ source: 'selection:reconcile' });
     } else {
       syncHistorySnapshot();
     }

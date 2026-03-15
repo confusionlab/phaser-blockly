@@ -114,13 +114,15 @@ const COMPONENT_SYNC_KEYS: (keyof ComponentBackedObjectFields)[] = [
   'localVariables',
 ];
 
-function createUpdatedAt(): Date {
+function seedUpdatedAt(project: Pick<Project, 'updatedAt'> | null | undefined): void {
+  if (!(project?.updatedAt instanceof Date)) return;
+  lastUpdatedAtMs = Math.max(lastUpdatedAtMs, project.updatedAt.getTime());
+}
+
+function createUpdatedAt(previous: Date | null = null): Date {
   const now = Date.now();
-  if (now <= lastUpdatedAtMs) {
-    lastUpdatedAtMs += 1;
-  } else {
-    lastUpdatedAtMs = now;
-  }
+  const previousMs = previous instanceof Date ? previous.getTime() : 0;
+  lastUpdatedAtMs = Math.max(now, previousMs + 1, lastUpdatedAtMs + 1);
   return new Date(lastUpdatedAtMs);
 }
 
@@ -269,12 +271,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   // Project actions
   newProject: (name: string) => {
-    set({ project: createDefaultProject(name), isDirty: true });
+    const project = createDefaultProject(name);
+    seedUpdatedAt(project);
+    set({ project, isDirty: true });
     resetHistory();
   },
 
   openProject: (project: Project) => {
-    set({ project: normalizeProject(project), isDirty: false });
+    const normalizedProject = normalizeProject(project);
+    seedUpdatedAt(normalizedProject);
+    set({ project: normalizedProject, isDirty: false });
     resetHistory();
   },
 
@@ -319,7 +325,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     let nextProject: Project | null = null;
     runInHistoryTransaction('assistant:apply', () => {
-      nextProject = applyAssistantChangeSetToProject(currentProject, changeSet);
+      nextProject = {
+        ...applyAssistantChangeSetToProject(currentProject, changeSet),
+        updatedAt: createUpdatedAt(currentProject.updatedAt),
+      };
       set({
         project: nextProject,
         isDirty: true,
