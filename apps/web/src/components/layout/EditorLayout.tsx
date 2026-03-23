@@ -50,6 +50,7 @@ export function EditorLayout() {
     backgroundEditorOpen,
     worldBoundaryEditorOpen,
     backgroundShortcutHandler,
+    cycleViewMode,
     assistantLockRunId,
     assistantLockMessage,
   } = useEditorStore();
@@ -305,6 +306,21 @@ export function EditorLayout() {
       return;
     }
 
+    // Stage view toggle: C
+    if (
+      e.key.toLowerCase() === 'c' &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !isTyping &&
+      !isInBlocklyArea &&
+      !isPlaying
+    ) {
+      e.preventDefault();
+      cycleViewMode();
+      return;
+    }
+
     // Escape to exit fullscreen or stop playing
     if (e.key === 'Escape' && !isTyping) {
       e.preventDefault();
@@ -457,6 +473,7 @@ export function EditorLayout() {
     costumeUndoHandler,
     backgroundEditorOpen,
     backgroundShortcutHandler,
+    cycleViewMode,
     assistantLockRunId,
     isProjectLeaseBlocking,
   ]);

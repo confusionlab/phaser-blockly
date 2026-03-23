@@ -5,6 +5,7 @@ import { ObjectInspector } from './ObjectInspector';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import { Button } from '@/components/ui/button';
+import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
 import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 
@@ -112,6 +113,12 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     });
   };
 
+  const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
+  const editorStageSurfaceColor = getSceneBackgroundBaseColor(selectedScene?.background);
+  const stageShellStyle = viewMode === 'editor'
+    ? { backgroundColor: editorStageSurfaceColor }
+    : { backgroundColor: '#000000' };
+
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-[100001] bg-black flex items-center justify-center">
@@ -184,7 +191,10 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
       <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
         {canvasToolbar}
         <div className="flex-1 min-h-0 p-1">
-          <div className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">
+          <div
+            className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
+            style={stageShellStyle}
+          >
             <PhaserCanvas isPlaying={false} />
           </div>
         </div>
@@ -200,7 +210,10 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
         {canvasToolbar}
         {/* Canvas container */}
         <div className="flex-1 min-h-0 p-1">
-          <div className="relative w-full h-full bg-black rounded-lg shadow-sm overflow-hidden">
+          <div
+            className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
+            style={stageShellStyle}
+          >
             <PhaserCanvas isPlaying={false} />
           </div>
         </div>

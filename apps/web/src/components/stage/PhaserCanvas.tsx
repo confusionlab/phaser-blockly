@@ -21,7 +21,6 @@ import {
 } from '@/lib/background/compositor';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
-import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -815,8 +814,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                 setActiveRuntime,
               );
             } else {
-              // Get current viewMode and cycleViewMode from store
-              const { viewMode: currentViewMode, cycleViewMode: cycleFn } = useEditorStore.getState();
+              // Get current viewMode from store
+              const { viewMode: currentViewMode } = useEditorStore.getState();
               createEditorScene(
                 this,
                 selectedScene,
@@ -829,7 +828,6 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                 canvasHeight,
                 project.components || [],
                 currentViewMode,
-                cycleFn,
               );
             }
           },
@@ -1577,7 +1575,6 @@ function createEditorScene(
   canvasHeight: number,
   components: ComponentDefinition[] = [],
   viewMode: 'camera-masked' | 'camera-viewport' | 'editor' = 'editor',
-  cycleViewMode: () => void = () => {}
 ) {
   if (!sceneData) return;
   const getOrderedSceneObjectIds = () => getOrderedObjectIdsForActiveScene(
@@ -1679,18 +1676,6 @@ function createEditorScene(
   scene.scale.on('resize', handleScaleResize);
   scene.events.once('shutdown', () => {
     scene.scale.off('resize', handleScaleResize);
-  });
-
-  // Handle 'C' key to cycle view modes
-  scene.input.keyboard?.on('keydown-C', (event: KeyboardEvent) => {
-    if (shouldIgnoreGlobalKeyboardEvent(event)) {
-      return;
-    }
-
-    cycleViewMode();
-    // Get the new mode from store and apply it
-    const newMode = useEditorStore.getState().viewMode;
-    updateViewMode(newMode);
   });
 
   // Enable camera panning with middle mouse or right mouse drag
