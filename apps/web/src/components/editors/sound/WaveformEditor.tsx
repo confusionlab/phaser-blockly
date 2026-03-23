@@ -1,11 +1,11 @@
 import { type ChangeEvent, memo, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { formatAudioTime, generateWaveform, type WaveformData } from '@/lib/audioWaveform';
+import { generateWaveform, type WaveformData } from '@/lib/audioWaveform';
 import { EditorToolbar } from '@/components/editors/shared/EditorToolbar';
 import { WaveformViewport } from './WaveformViewport';
 import type { Sound } from '@/types';
-import { Mic, Play, RotateCcw, Square, Volume2, VolumeX } from 'lucide-react';
+import { Mic, Play, RotateCcw, Scissors, Square, Volume2, VolumeX } from 'lucide-react';
 
 interface WaveformEditorProps {
   sound: Sound | null;
@@ -27,6 +27,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
   const [trimEnd, setTrimEnd] = useState(0);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
+  const [isTrimming, setIsTrimming] = useState(false);
 
   trimStartRef.current = trimStart;
   trimEndRef.current = trimEnd;
@@ -41,6 +42,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
       setTrimStart(0);
       setTrimEnd(0);
       setIsPlaying(false);
+      setIsTrimming(false);
       return;
     }
 
@@ -59,6 +61,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
       setTrimStart(nextTrimStart);
       setTrimEnd(nextTrimEnd);
       setCurrentTime(nextTrimStart);
+      setIsTrimming(false);
       audio.currentTime = nextTrimStart;
     };
 
@@ -178,14 +181,14 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     }
   };
 
-  const resetTrim = () => {
-    setTrimStart(0);
-    setTrimEnd(duration);
-    setCurrentTime(0);
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
+  const handleTrimAction = () => {
+    if (!isTrimming) {
+      setIsTrimming(true);
+      return;
     }
-    onTrimChange(0, duration);
+
+    onTrimChange(trimStart, trimEnd);
+    setIsTrimming(false);
   };
 
   if (!sound) {
@@ -209,30 +212,29 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     <div className="flex flex-1 min-h-0 flex-col">
       <EditorToolbar contentClassName="grid min-w-full gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" className="rounded-full" onClick={resetTrim} disabled={!duration}>
-            <RotateCcw className="size-4" />
-            Reset Trim
+          <Button
+            variant={isTrimming ? 'default' : 'outline'}
+            className="rounded-full"
+            onClick={handleTrimAction}
+            disabled={!duration}
+          >
+            <Scissors className="size-4" />
+            {isTrimming ? 'Done' : 'Trim'}
           </Button>
-          <div className="rounded-full bg-white px-4 py-2 font-mono text-sm text-foreground shadow-sm ring-1 ring-border/70">
-            {formatAudioTime(trimStart, true)} to {formatAudioTime(trimEnd, true)}
-          </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button variant="outline" className="rounded-full" onClick={handleRestart}>
-            <RotateCcw className="size-4" />
-            Restart
-          </Button>
-          <Button className="rounded-full px-5" onClick={handleTogglePlay}>
+          <Button className="size-9 rounded-full" size="icon" onClick={handleTogglePlay} title={isPlaying ? 'Stop' : 'Play'}>
             {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
-            {isPlaying ? 'Stop' : 'Play'}
+          </Button>
+          <Button variant="outline" size="icon" className="size-9 rounded-full" onClick={handleRestart} title="Restart">
+            <RotateCcw className="size-4" />
           </Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 md:justify-self-end">
-          <Button variant="ghost" className="rounded-full" onClick={toggleMute}>
+          <Button variant="ghost" size="icon" className="size-9 rounded-full" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
             {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-            {isMuted ? 'Muted' : 'Volume'}
           </Button>
           <input
             type="range"
@@ -255,19 +257,14 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
               currentTime={currentTime}
               trimStart={trimStart}
               trimEnd={trimEnd}
+              showTrimControls={isTrimming}
               onSeek={handleSeek}
               onTrimCommit={(nextStart, nextEnd) => {
                 setTrimStart(nextStart);
                 setTrimEnd(nextEnd);
-                onTrimChange(nextStart, nextEnd);
               }}
               className={cn(isLoadingWaveform && 'opacity-70')}
             />
-
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
-              <span className="rounded-full bg-muted px-3 py-1">Full take {formatAudioTime(duration, true)}</span>
-            </div>
           </div>
         </div>
       </div>

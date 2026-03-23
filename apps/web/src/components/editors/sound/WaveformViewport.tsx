@@ -10,6 +10,7 @@ interface WaveformViewportProps {
   currentTime: number;
   trimStart: number;
   trimEnd: number;
+  showTrimControls?: boolean;
   onSeek?: (time: number) => void;
   onTrimCommit?: (trimStart: number, trimEnd: number) => void;
   className?: string;
@@ -53,6 +54,7 @@ export function WaveformViewport({
   currentTime,
   trimStart,
   trimEnd,
+  showTrimControls = true,
   onSeek,
   onTrimCommit,
   className,
@@ -192,7 +194,7 @@ export function WaveformViewport({
       }
       activePointerTargetRef.current = null;
 
-      if (interactionMode === 'trim-start' || interactionMode === 'trim-end') {
+      if ((interactionMode === 'trim-start' || interactionMode === 'trim-end') && showTrimControls) {
         onTrimCommitRef.current?.(draftTrimRef.current.trimStart, draftTrimRef.current.trimEnd);
       }
     };
@@ -204,7 +206,7 @@ export function WaveformViewport({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [updateTimeFromClientX]);
+  }, [showTrimControls, updateTimeFromClientX]);
 
   const displayedTrimStart = draftTrim.trimStart;
   const displayedTrimEnd = draftTrim.trimEnd;
@@ -264,12 +266,16 @@ export function WaveformViewport({
               <StaticWaveformBars bars={bars} fill="#5e7f6c" />
             </div>
 
-            <div className="pointer-events-none absolute inset-y-0 left-0 bg-black/16" style={{ width: `${startPercent}%` }} />
-            <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/16" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
-            <div
-              className="pointer-events-none absolute inset-y-3 rounded-[14px] border border-white/60 bg-white/15 shadow-[inset_0_0_0_1px_rgba(94,127,108,0.15)]"
-              style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
-            />
+            {showTrimControls ? (
+              <>
+                <div className="pointer-events-none absolute inset-y-0 left-0 bg-black/16" style={{ width: `${startPercent}%` }} />
+                <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/16" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
+                <div
+                  className="pointer-events-none absolute inset-y-3 rounded-[14px] border border-white/60 bg-white/15 shadow-[inset_0_0_0_1px_rgba(94,127,108,0.15)]"
+                  style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
+                />
+              </>
+            ) : null}
             <div
               className="pointer-events-none absolute inset-y-0 z-10 w-px bg-foreground/80 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]"
               style={{ left: `${playheadPercent}%` }}
@@ -281,41 +287,45 @@ export function WaveformViewport({
           </div>
         )}
 
-        <button
-          type="button"
-          className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
-          style={{ left: `${startPercent}%` }}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            activePointerIdRef.current = event.pointerId;
-            activePointerTargetRef.current = event.currentTarget;
-            event.currentTarget.setPointerCapture(event.pointerId);
-            interactionModeRef.current = 'trim-start';
-            draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
-          }}
-        >
-          <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
-          <span className="sr-only">Adjust start trim</span>
-        </button>
+        {showTrimControls ? (
+          <>
+            <button
+              type="button"
+              className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
+              style={{ left: `${startPercent}%` }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                activePointerIdRef.current = event.pointerId;
+                activePointerTargetRef.current = event.currentTarget;
+                event.currentTarget.setPointerCapture(event.pointerId);
+                interactionModeRef.current = 'trim-start';
+                draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
+              }}
+            >
+              <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
+              <span className="sr-only">Adjust start trim</span>
+            </button>
 
-        <button
-          type="button"
-          className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
-          style={{ left: `${endPercent}%` }}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            activePointerIdRef.current = event.pointerId;
-            activePointerTargetRef.current = event.currentTarget;
-            event.currentTarget.setPointerCapture(event.pointerId);
-            interactionModeRef.current = 'trim-end';
-            draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
-          }}
-        >
-          <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
-          <span className="sr-only">Adjust end trim</span>
-        </button>
+            <button
+              type="button"
+              className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
+              style={{ left: `${endPercent}%` }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                activePointerIdRef.current = event.pointerId;
+                activePointerTargetRef.current = event.currentTarget;
+                event.currentTarget.setPointerCapture(event.pointerId);
+                interactionModeRef.current = 'trim-end';
+                draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
+              }}
+            >
+              <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
+              <span className="sr-only">Adjust end trim</span>
+            </button>
+          </>
+        ) : null}
       </div>
     </div>
   );
