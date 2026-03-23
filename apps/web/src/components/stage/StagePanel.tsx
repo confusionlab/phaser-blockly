@@ -208,6 +208,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
 
       {/* Resizable vertical divider */}
       <div
+        data-testid="stage-panel-vertical-divider"
         className="h-1 bg-border hover:bg-primary cursor-row-resize transition-colors"
         onMouseDown={handleVerticalDividerDrag}
       />
@@ -221,6 +222,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
 
         {/* Resizable horizontal divider */}
         <div
+          data-testid="stage-panel-horizontal-divider"
           className="w-1 bg-border hover:bg-primary cursor-col-resize transition-colors"
           onMouseDown={handleHorizontalDividerDrag}
         />

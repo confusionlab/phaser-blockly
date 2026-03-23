@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { isBlocklyShortcutTarget, isTextEntryTarget, shouldIgnoreGlobalKeyboardEvent } from '../src/utils/keyboard';
+import {
+  acquireGlobalKeyboardCapture,
+  isBlocklyShortcutTarget,
+  isTextEntryTarget,
+  shouldIgnoreGlobalKeyboardEvent,
+} from '../src/utils/keyboard';
 
 function createTarget(options: {
   tagName?: string;
@@ -53,6 +58,25 @@ test.describe('keyboard target guards', () => {
       isComposing: false,
       target: createTarget(),
     } as KeyboardEvent)).toBe(true);
+
+    expect(shouldIgnoreGlobalKeyboardEvent({
+      defaultPrevented: false,
+      isComposing: false,
+      target: createTarget(),
+    } as KeyboardEvent)).toBe(false);
+  });
+
+  test('global shortcut guard ignores active keyboard capture sessions', () => {
+    const release = acquireGlobalKeyboardCapture();
+    try {
+      expect(shouldIgnoreGlobalKeyboardEvent({
+        defaultPrevented: false,
+        isComposing: false,
+        target: createTarget(),
+      } as KeyboardEvent)).toBe(true);
+    } finally {
+      release();
+    }
 
     expect(shouldIgnoreGlobalKeyboardEvent({
       defaultPrevented: false,

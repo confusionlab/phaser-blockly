@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
 import { blobToDataUrl } from '@/utils/convexHelpers';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
-import { formatAudioTime, generateWaveformFromBlob, type WaveformData } from '@/lib/audioWaveform';
-import { WaveformViewport } from './WaveformViewport';
+import { formatAudioTime, generateWaveformFromBlob } from '@/lib/audioWaveform';
 import type { Sound } from '@/types';
-import { Check, Loader2, Play, Square, Trash2 } from 'lucide-react';
+import { Check, Loader2, RotateCcw, Square } from 'lucide-react';
+import { SoundClipEditor } from './SoundClipEditor';
 
 interface RecordingStudioProps {
   onAddSound: (sound: Sound) => void;
@@ -16,7 +14,6 @@ interface RecordingStudioProps {
 type RecordingMode = 'idle' | 'recording' | 'review';
 
 const RECORD_BUTTON_CLASS_NAME = 'size-16 rounded-full bg-red-500 text-white shadow-[0_18px_40px_rgba(239,68,68,0.26)] hover:bg-red-500/90';
-const RECORD_BUTTON_WRAPPER_CLASS_NAME = 'mx-auto flex w-full justify-center';
 
 function buildDefaultRecordingName(): string {
   return `Recording ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
@@ -25,31 +22,19 @@ function buildDefaultRecordingName(): string {
 export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
-  const trimStartRef = useRef(0);
-  const trimEndRef = useRef(0);
   const disposedRef = useRef(false);
 
   const [mode, setMode] = useState<RecordingMode>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
-  const [waveform, setWaveform] = useState<WaveformData | null>(null);
+  const [recordingName, setRecordingName] = useState('');
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [name, setName] = useState('');
-  const [isPreviewing, setIsPreviewing] = useState(false);
-  const [isPreparing, setIsPreparing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  trimStartRef.current = trimStart;
-  trimEndRef.current = trimEnd;
-
-  const clipDuration = useMemo(() => Math.max(0, trimEnd - trimStart), [trimEnd, trimStart]);
 
   useEffect(() => {
     disposedRef.current = false;
@@ -64,7 +49,6 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
         recorderRef.current.stop();
       }
 
-      previewAudioRef.current?.pause();
       streamRef.current?.getTracks().forEach((track) => track.stop());
 
       if (recordedUrl) {
@@ -74,10 +58,6 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
   }, [recordedUrl]);
 
   const resetReviewState = () => {
-    previewAudioRef.current?.pause();
-    previewAudioRef.current = null;
-    setIsPreviewing(false);
-
     if (recordedUrl) {
       URL.revokeObjectURL(recordedUrl);
     }
@@ -86,11 +66,9 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
     setRecordingDuration(0);
     setRecordedBlob(null);
     setRecordedUrl(null);
-    setWaveform(null);
+    setRecordingName('');
     setTrimStart(0);
     setTrimEnd(0);
-    setCurrentTime(0);
-    setName('');
     setErrorMessage(null);
   };
 
@@ -144,23 +122,21 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
 
         setRecordedBlob(nextBlob);
         setRecordedUrl(nextUrl);
-        setName(buildDefaultRecordingName());
-        setCurrentTime(0);
-        setMode('review');
-        setIsPreparing(true);
+        setRecordingName(buildDefaultRecordingName());
 
         try {
           const nextWaveform = await generateWaveformFromBlob(nextBlob, nextUrl);
-          setWaveform(nextWaveform);
           setRecordingDuration(nextWaveform.duration);
           setTrimStart(0);
           setTrimEnd(nextWaveform.duration);
         } catch (error) {
           console.error('Failed to prepare recorded waveform:', error);
           setErrorMessage('The recording finished, but its waveform could not be prepared.');
-        } finally {
-          setIsPreparing(false);
+          setTrimStart(0);
+          setTrimEnd(recordingDuration);
         }
+
+        setMode('review');
 
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
@@ -186,49 +162,6 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
     }
   };
 
-  const togglePreview = () => {
-    if (!recordedUrl) {
-      return;
-    }
-
-    if (isPreviewing) {
-      previewAudioRef.current?.pause();
-      setIsPreviewing(false);
-      return;
-    }
-
-    previewAudioRef.current?.pause();
-
-    const previewAudio = new Audio(recordedUrl);
-    const previewStart = currentTime >= trimStartRef.current && currentTime < trimEndRef.current
-      ? currentTime
-      : trimStartRef.current;
-    previewAudio.currentTime = previewStart;
-    previewAudio.ontimeupdate = () => {
-      setCurrentTime(previewAudio.currentTime);
-      if (previewAudio.currentTime >= trimEndRef.current) {
-        previewAudio.pause();
-        previewAudio.currentTime = trimStartRef.current;
-        setCurrentTime(trimStartRef.current);
-        setIsPreviewing(false);
-      }
-    };
-    previewAudio.onended = () => {
-      setCurrentTime(trimStartRef.current);
-      setIsPreviewing(false);
-    };
-
-    void previewAudio.play().catch((error) => {
-      console.error('Failed to preview recording:', error);
-      setErrorMessage('Preview playback failed. Try again.');
-      setIsPreviewing(false);
-    });
-
-    previewAudioRef.current = previewAudio;
-    setCurrentTime(previewStart);
-    setIsPreviewing(true);
-  };
-
   const handleAdd = async () => {
     if (!recordedBlob) {
       return;
@@ -249,7 +182,7 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
 
       onAddSound({
         id: crypto.randomUUID(),
-        name: name.trim() || buildDefaultRecordingName(),
+        name: recordingName || buildDefaultRecordingName(),
         assetId: normalizedDataUrl,
         duration: resolvedDuration,
         trimStart: normalizedTrimStart,
@@ -265,20 +198,57 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
     }
   };
 
-  useEffect(() => {
-    if (!isPreviewing || !previewAudioRef.current) {
-      return;
+  const reviewSound = useMemo<Sound | null>(() => {
+    if (!recordedUrl || mode !== 'review') {
+      return null;
     }
 
-    const previewAudio = previewAudioRef.current;
-    if (previewAudio.currentTime < trimStart || previewAudio.currentTime > trimEnd) {
-      previewAudio.currentTime = trimStart;
-      setCurrentTime(trimStart);
-    }
-  }, [isPreviewing, trimEnd, trimStart]);
+    return {
+      id: 'draft-recording',
+      name: recordingName || 'Recording',
+      assetId: recordedUrl,
+      duration: recordingDuration > 0 ? recordingDuration : undefined,
+      trimStart: trimStart > 0.001 ? trimStart : undefined,
+      trimEnd: trimEnd > 0.001 ? trimEnd : undefined,
+    };
+  }, [mode, recordedUrl, recordingDuration, recordingName, trimEnd, trimStart]);
+
+  if (mode === 'review' && reviewSound) {
+    return (
+      <SoundClipEditor
+        sound={reviewSound}
+        onTrimChange={(nextStart, nextEnd) => {
+          setTrimStart(nextStart);
+          setTrimEnd(nextEnd);
+        }}
+        footer={
+          <div className="flex flex-col gap-4">
+            {errorMessage ? (
+              <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
+                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                  {errorMessage}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-4 shadow-sm">
+              <Button variant="outline" className="rounded-full" onClick={resetReviewState}>
+                <RotateCcw className="size-4" />
+                Re-record
+              </Button>
+              <Button className="rounded-full px-5" onClick={handleAdd} disabled={isSaving}>
+                {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                Save
+              </Button>
+            </div>
+          </div>
+        }
+      />
+    );
+  }
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4 md:p-5">
+    <div className="flex h-full flex-1 flex-col gap-4 p-4 md:p-5">
       {errorMessage ? (
         <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -288,111 +258,34 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
       ) : null}
 
       {mode === 'idle' ? (
-        <div className="flex flex-1 items-center justify-center">
-          <div className="w-full max-w-xl rounded-[32px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,247,247,1),rgba(239,239,239,0.98))] p-8 text-center shadow-sm">
-            <div className={RECORD_BUTTON_WRAPPER_CLASS_NAME}>
-              <div className="flex size-20 items-center justify-center">
-                <Button
-                  size="icon"
-                  className={RECORD_BUTTON_CLASS_NAME}
-                  onClick={startRecording}
-                  title="Record"
-                >
-                  <span className="size-5 rounded-full bg-current" />
-                </Button>
-              </div>
-            </div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-6">
+          <Button
+            size="icon"
+            className={RECORD_BUTTON_CLASS_NAME}
+            onClick={startRecording}
+            title="Record"
+          >
+            <span className="size-5 rounded-full bg-current" />
+          </Button>
+          <div className="font-mono text-4xl font-semibold text-foreground">
+            Press to record
           </div>
         </div>
       ) : null}
 
       {mode === 'recording' ? (
-        <div className="flex flex-1 items-center justify-center">
-          <div className="w-full max-w-xl rounded-[32px] border border-border/70 bg-[linear-gradient(180deg,rgba(255,250,250,0.98),rgba(248,242,242,0.96))] p-8 text-center shadow-sm">
-            <div className={RECORD_BUTTON_WRAPPER_CLASS_NAME}>
-              <div className="flex size-20 items-center justify-center">
-                <Button
-                  type="button"
-                  size="icon"
-                  onClick={stopRecording}
-                  className={RECORD_BUTTON_CLASS_NAME}
-                  title="Stop recording"
-                >
-                  <Square className="size-6 fill-current" />
-                </Button>
-              </div>
-            </div>
-            <div className="mt-6 font-mono text-4xl font-semibold text-foreground">
-              {formatAudioTime(recordingDuration, true)}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {mode === 'review' ? (
-        <div className="flex flex-1 flex-col gap-4 min-h-0">
-          <div className="rounded-[28px] border border-border/70 bg-card/90 p-5 shadow-sm">
-            <div className="flex flex-wrap items-center gap-3">
-              <Input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Name this recording"
-                className="h-11 max-w-sm rounded-2xl border-border/70 bg-background"
-              />
-              <div className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
-                {formatAudioTime(recordingDuration, true)}
-              </div>
-              <div className="rounded-full bg-[#efefef] px-3 py-1 text-xs font-medium text-[#5f5f5f]">
-                {formatAudioTime(clipDuration, true)}
-              </div>
-            </div>
-          </div>
-
-          <div className="flex-1 min-h-0 rounded-[28px] border border-border/70 bg-background/95 p-4 shadow-sm">
-            <WaveformViewport
-              waveform={waveform}
-              duration={recordingDuration}
-              currentTime={currentTime}
-              trimStart={trimStart}
-              trimEnd={trimEnd}
-              onSeek={(nextTime) => {
-                previewAudioRef.current?.pause();
-                setIsPreviewing(false);
-                const clamped = Math.max(trimStart, Math.min(trimEnd, nextTime));
-                if (previewAudioRef.current) {
-                  previewAudioRef.current.currentTime = clamped;
-                }
-                setCurrentTime(clamped);
-              }}
-              onTrimCommit={(nextStart, nextEnd) => {
-                setTrimStart(nextStart);
-                setTrimEnd(nextEnd);
-              }}
-              className={cn(isPreparing && 'opacity-70')}
-            />
-
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="rounded-full bg-muted px-3 py-1">Start {formatAudioTime(trimStart, true)}</span>
-              <span className="rounded-full bg-muted px-3 py-1">End {formatAudioTime(trimEnd, true)}</span>
-              <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-4 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" className="rounded-full" onClick={resetReviewState}>
-                <Trash2 className="size-4" />
-                Discard
-              </Button>
-              <Button variant="outline" className="rounded-full" onClick={togglePreview} disabled={isPreparing}>
-                {isPreviewing ? <Square className="size-4" /> : <Play className="size-4" />}
-                {isPreviewing ? 'Stop Preview' : 'Preview Clip'}
-              </Button>
-            </div>
-            <Button className="rounded-full px-5" onClick={handleAdd} disabled={isSaving || isPreparing}>
-              {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-              Add to Sounds
-            </Button>
+        <div className="flex flex-1 flex-col items-center justify-center gap-6">
+          <Button
+            type="button"
+            size="icon"
+            onClick={stopRecording}
+            className={RECORD_BUTTON_CLASS_NAME}
+            title="Stop recording"
+          >
+            <Square className="size-6 fill-current" />
+          </Button>
+          <div className="font-mono text-4xl font-semibold text-foreground">
+            {formatAudioTime(recordingDuration, true)}
           </div>
         </div>
       ) : null}

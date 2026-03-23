@@ -142,8 +142,13 @@ function createTiledBackgroundLayerState(
   const image = scene.add.image(0, 0, textureKey);
   image.setOrigin(0, 0);
   image.setDepth(TILED_BACKGROUND_LAYER_DEPTH);
-  let compositor!: TiledBackgroundCanvasCompositor;
-  const layer: TiledBackgroundLayerState = {
+  const layer = {} as TiledBackgroundLayerState;
+  const compositor = new TiledBackgroundCanvasCompositor({
+    onChange: () => {
+      layer.needsRedraw = true;
+    },
+  });
+  Object.assign(layer, {
     textureKey,
     canvas,
     texture,
@@ -156,13 +161,7 @@ function createTiledBackgroundLayerState(
     renderScale: 1,
     lastBackgroundRef: null,
     lastRenderSnapshot: null,
-  };
-  compositor = new TiledBackgroundCanvasCompositor({
-    onChange: () => {
-      layer.needsRedraw = true;
-    },
   });
-  layer.compositor = compositor;
   return layer;
 }
 
@@ -264,6 +263,13 @@ function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundL
   layer.image.setPosition(worldView.left, worldView.top);
   layer.image.setDisplaySize(worldView.width, worldView.height);
   layer.image.setVisible(true);
+}
+
+function refreshTiledBackgroundLayer(scene: Phaser.Scene): void {
+  const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+  if (!tiledBackgroundLayer) return;
+  tiledBackgroundLayer.needsRedraw = true;
+  updateTiledBackgroundLayer(scene, tiledBackgroundLayer);
 }
 
 function destroyEditorContainer(scene: Phaser.Scene, container: Phaser.GameObjects.Container): void {
@@ -926,6 +932,52 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     return () => cleanupPhaserInstance('effect-dispose');
   }, [project?.id, selectedSceneId, isPlaying, handleObjectDragEnd]);
 
+  useEffect(() => {
+    if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
+
+    let frameId: number | null = null;
+
+    const syncEditorCanvasSize = () => {
+      frameId = null;
+      const host = containerRef.current;
+      const game = gameRef.current;
+      if (!host || !game) return;
+
+      const nextWidth = Math.max(1, Math.round(host.clientWidth));
+      const nextHeight = Math.max(1, Math.round(host.clientHeight));
+      if (game.scale.width === nextWidth && game.scale.height === nextHeight) {
+        return;
+      }
+
+      game.scale.resize(nextWidth, nextHeight);
+
+      const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+      if (phaserScene) {
+        refreshTiledBackgroundLayer(phaserScene);
+      }
+    };
+
+    const scheduleSync = () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(syncEditorCanvasSize);
+    };
+
+    const observer = new ResizeObserver(() => {
+      scheduleSync();
+    });
+    observer.observe(containerRef.current);
+    scheduleSync();
+
+    return () => {
+      observer.disconnect();
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
+  }, [isPlaying, project?.id, selectedSceneId]);
+
   // Toggle collider debug rendering at runtime (without recreating game)
   useEffect(() => {
     if (!gameRef.current) return;
@@ -987,6 +1039,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
       camera.centerOn(canvasW / 2, canvasH / 2);
     }
+
+    refreshTiledBackgroundLayer(phaserScene);
   }, [viewMode, isPlaying]);
 
   // Update objects when they change (in editor mode only)
@@ -1330,7 +1384,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     const tiledBackgroundLayer = phaserScene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
     if (tiledBackgroundLayer) {
       tiledBackgroundLayer.background = selectedScene.background ?? null;
-      updateTiledBackgroundLayer(phaserScene, tiledBackgroundLayer);
+      refreshTiledBackgroundLayer(phaserScene);
     }
 
     // Update bounds graphics color to contrast with new background
@@ -1397,7 +1451,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     <div className="relative w-full h-full">
       <div
         ref={containerRef}
-        className={isPlaying ? "w-full h-full" : "w-full h-full min-h-[300px]"}
+        data-testid={isPlaying ? 'play-phaser-host' : 'stage-phaser-host'}
+        className="w-full h-full"
       />
       {isPlaying && isInventoryVisible && inventoryItems.length > 0 && (
         <>
@@ -1622,9 +1677,14 @@ function createEditorScene(
   updateViewMode(viewMode);
 
   // Keep camera viewport in sync with stage panel resizes.
-  scene.scale.on('resize', () => {
+  const handleScaleResize = () => {
     const currentMode = scene.data.get('viewMode') as 'camera-masked' | 'camera-viewport' | 'editor' | undefined;
     updateViewMode(currentMode ?? 'editor');
+    refreshTiledBackgroundLayer(scene);
+  };
+  scene.scale.on('resize', handleScaleResize);
+  scene.events.once('shutdown', () => {
+    scene.scale.off('resize', handleScaleResize);
   });
 
   // Handle 'C' key to cycle view modes

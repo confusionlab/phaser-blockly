@@ -121,6 +121,7 @@ const TEXT_ENTRY_SELECTOR = [
 ].join(', ');
 
 const BLOCKLY_SELECTOR = '[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv';
+let activeGlobalKeyboardCaptureCount = 0;
 
 type ClosestCapableTarget = EventTarget & {
   closest?: (selector: string) => Element | null;
@@ -159,8 +160,39 @@ export function isBlocklyShortcutTarget(target: EventTarget | null): boolean {
   return typeof element?.closest === 'function' && !!element.closest(BLOCKLY_SELECTOR);
 }
 
+export function acquireGlobalKeyboardCapture(): () => void {
+  activeGlobalKeyboardCaptureCount += 1;
+
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    activeGlobalKeyboardCaptureCount = Math.max(0, activeGlobalKeyboardCaptureCount - 1);
+  };
+}
+
+function hasActiveGlobalKeyboardCapture(): boolean {
+  return activeGlobalKeyboardCaptureCount > 0;
+}
+
+function getActiveElementTarget(): EventTarget | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  return document.activeElement;
+}
+
 export function shouldIgnoreGlobalKeyboardEvent(event: KeyboardEvent): boolean {
-  return event.defaultPrevented || event.isComposing || isTextEntryTarget(event.target);
+  return (
+    event.defaultPrevented
+    || event.isComposing
+    || hasActiveGlobalKeyboardCapture()
+    || isTextEntryTarget(event.target)
+    || isTextEntryTarget(getActiveElementTarget())
+  );
 }
 
 export function normalizeKeyboardCode(code: string): string {

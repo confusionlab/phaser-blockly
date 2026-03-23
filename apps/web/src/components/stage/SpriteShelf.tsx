@@ -1,4 +1,5 @@
 import { useState, useRef, useLayoutEffect } from 'react';
+import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
@@ -68,6 +69,7 @@ import {
 } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
+import { acquireGlobalKeyboardCapture } from '@/utils/keyboard';
 import {
   addComponentInstanceWithHistory,
   deleteComponentWithHistory,
@@ -234,10 +236,59 @@ export function SpriteShelf() {
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
   const dragPreviewLabelRef = useRef('Moving item');
 
+  const handleInlineRenameKeyDownCapture = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // Keep text-entry keystrokes inside the active editor instead of letting the
+    // surrounding tree/dropdown keyboard handlers consume them.
+    event.stopPropagation();
+  };
+
+  const focusInputCaretAtEnd = (input: HTMLInputElement | null) => {
+    if (!input) {
+      return;
+    }
+
+    input.focus();
+    const caretIndex = input.value.length;
+    input.setSelectionRange(caretIndex, caretIndex);
+  };
+
+  useLayoutEffect(() => {
+    if (!editingObjectId) {
+      return;
+    }
+
+    focusInputCaretAtEnd(inputRef.current);
+  }, [editingObjectId]);
+
+  useLayoutEffect(() => {
+    if (!editingFolderId) {
+      return;
+    }
+
+    focusInputCaretAtEnd(folderInputRef.current);
+  }, [editingFolderId]);
+
+  useLayoutEffect(() => {
+    if (!editingSceneId) {
+      return;
+    }
+
+    focusInputCaretAtEnd(sceneInputRef.current);
+  }, [editingSceneId]);
+
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
   const folders = selectedScene?.objectFolders ?? [];
   const objectNameById = new Map((selectedScene?.objects ?? []).map((obj) => [obj.id, obj.name]));
   const folderNameById = new Map(folders.map((folder) => [folder.id, folder.name]));
+  const isInlineRenaming = !!editingObjectId || !!editingFolderId || !!editingSceneId;
+
+  useLayoutEffect(() => {
+    if (!isInlineRenaming) {
+      return;
+    }
+
+    return acquireGlobalKeyboardCapture();
+  }, [isInlineRenaming]);
 
   useLayoutEffect(() => {
     if (!contextMenu || !contextMenuRef.current || !contextMenuPosition) return;
@@ -707,9 +758,11 @@ export function SpriteShelf() {
   };
 
   const handleStartFolderEdit = (folder: SceneFolder) => {
-    setEditingFolderId(folder.id);
-    setFolderEditName(folder.name);
-    setTimeout(() => folderInputRef.current?.focus(), 0);
+    flushSync(() => {
+      setEditingFolderId(folder.id);
+      setFolderEditName(folder.name);
+    });
+    focusInputCaretAtEnd(folderInputRef.current);
   };
 
   const handleSaveFolderRename = () => {
@@ -803,9 +856,11 @@ export function SpriteShelf() {
   };
 
   const handleStartObjectEdit = (objectId: string, currentName: string) => {
-    setEditingObjectId(objectId);
-    setEditName(currentName);
-    setTimeout(() => inputRef.current?.focus(), 0);
+    flushSync(() => {
+      setEditingObjectId(objectId);
+      setEditName(currentName);
+    });
+    focusInputCaretAtEnd(inputRef.current);
   };
 
   const handleSaveObjectRename = () => {
@@ -827,11 +882,14 @@ export function SpriteShelf() {
   };
 
   const handleStartSceneEdit = (sceneId: string, currentName: string, e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
-    setEditingSceneId(sceneId);
-    setEditName(currentName);
-    setSceneEditError(null);
-    setTimeout(() => sceneInputRef.current?.focus(), 0);
+    flushSync(() => {
+      setEditingSceneId(sceneId);
+      setEditName(currentName);
+      setSceneEditError(null);
+    });
+    focusInputCaretAtEnd(sceneInputRef.current);
   };
 
   const handleSaveSceneRename = () => {
@@ -1046,6 +1104,7 @@ export function SpriteShelf() {
               }`}
               style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
               onDoubleClick={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 if (item.type === 'object' && object) {
                   handleStartObjectEdit(object.id, object.name);
@@ -1133,6 +1192,7 @@ export function SpriteShelf() {
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   onBlur={handleSaveObjectRename}
+                  onKeyDownCapture={handleInlineRenameKeyDownCapture}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveObjectRename();
                     if (e.key === 'Escape') {
@@ -1140,6 +1200,7 @@ export function SpriteShelf() {
                       handleCancelObjectRename();
                     }
                   }}
+                  data-hotkeys="ignore"
                   className="flex-1 h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -1150,6 +1211,7 @@ export function SpriteShelf() {
                   value={folderEditName}
                   onChange={(e) => setFolderEditName(e.target.value)}
                   onBlur={handleSaveFolderRename}
+                  onKeyDownCapture={handleInlineRenameKeyDownCapture}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveFolderRename();
                     if (e.key === 'Escape') {
@@ -1158,6 +1220,7 @@ export function SpriteShelf() {
                       setFolderEditName('');
                     }
                   }}
+                  data-hotkeys="ignore"
                   className="flex-1 h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -1209,6 +1272,7 @@ export function SpriteShelf() {
                       setSceneEditError(null);
                     }}
                     onBlur={handleSaveSceneRename}
+                    onKeyDownCapture={handleInlineRenameKeyDownCapture}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         handleSaveSceneRename();
@@ -1220,6 +1284,7 @@ export function SpriteShelf() {
                         setSceneEditError(null);
                       }
                     }}
+                    data-hotkeys="ignore"
                     onClick={(e) => e.stopPropagation()}
                     className={`h-6 text-xs flex-1 ${sceneEditError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                     autoFocus
