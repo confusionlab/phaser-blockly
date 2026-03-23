@@ -431,6 +431,12 @@ function InventoryCostumePreview({
   );
 }
 
+function isClientPointInsideInventoryUI(clientX: number, clientY: number): boolean {
+  return document
+    .elementsFromPoint(clientX, clientY)
+    .some((element) => element instanceof HTMLElement && !!element.closest('[data-pocha-ui="inventory"]'));
+}
+
 interface PhaserCanvasProps {
   isPlaying: boolean;
 }
@@ -535,7 +541,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
     const handlePointerMove = (event: PointerEvent) => {
       const currentRuntime = runtimeRef.current;
-      const canDrop = currentRuntime
+      const isOverInventoryUI = isClientPointInsideInventoryUI(event.clientX, event.clientY);
+      const canDrop = !isOverInventoryUI && currentRuntime
         ? currentRuntime.canDropInventoryItemAtClientPosition(
             draggedInventoryItem.entry.entryId,
             event.clientX,
@@ -571,6 +578,15 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       });
       setDraggedInventoryCanDrop(false);
       setDraggedInventoryItem(null);
+      if (isClientPointInsideInventoryUI(event.clientX, event.clientY)) {
+        console.log('[InventoryDrop][UI] Drop released over inventory UI, ignoring', {
+          entryId,
+          label: currentDrag.entry.label,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
+        return;
+      }
       if (currentRuntime) {
         void currentRuntime.handleInventoryDropAtClientPosition(entryId, event.clientX, event.clientY);
       } else {
