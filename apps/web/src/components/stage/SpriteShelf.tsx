@@ -1271,7 +1271,7 @@ export function SpriteShelf() {
             type="button"
             disabled={!hasChildItems}
             aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-            className="h-4 w-4 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
+            className="shrink-0 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
             onClick={(e) => {
               e.stopPropagation();
               if (folder) {
@@ -1282,7 +1282,7 @@ export function SpriteShelf() {
             {hasChildItems ? (
               isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />
             ) : (
-              <span className="size-2.5" />
+              <span className="block h-2.5 w-2.5" />
             )}
           </button>
 
