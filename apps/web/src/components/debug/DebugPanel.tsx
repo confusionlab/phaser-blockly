@@ -4,7 +4,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
 import { Checkbox } from '@/components/ui/checkbox';
-import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
+import { isTextEntryTarget } from '@/utils/keyboard';
 import { getEffectiveObjectProps } from '@/types';
 import type { Project } from '@/types';
 
@@ -13,7 +13,7 @@ export function DebugPanel() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (shouldIgnoreGlobalKeyboardEvent(event)) {
+      if (event.isComposing || isTextEntryTarget(event.target)) {
         return;
       }
 
@@ -22,8 +22,8 @@ export function DebugPanel() {
       setIsOpen((prev) => !prev);
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, []);
 
   if (!isOpen) return null;

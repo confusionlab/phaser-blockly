@@ -469,6 +469,13 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       return;
     }
 
+    console.log('[InventoryDrop][UI] Drag started', {
+      entryId: draggedInventoryItem.entry.entryId,
+      label: draggedInventoryItem.entry.label,
+      sourceObjectId: draggedInventoryItem.entry.sourceObjectId,
+      sourceComponentId: draggedInventoryItem.entry.sourceComponentId,
+    });
+
     const handlePointerMove = (event: PointerEvent) => {
       setDraggedInventoryItem((current) => (
         current
@@ -484,13 +491,23 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     const handlePointerUp = (event: PointerEvent) => {
       const currentDrag = draggedInventoryItemRef.current;
       if (!currentDrag) {
+        console.warn('[InventoryDrop][UI] Pointer up fired without an active drag item');
         return;
       }
       const currentRuntime = runtimeRef.current;
       const entryId = currentDrag.entry.entryId;
+      console.log('[InventoryDrop][UI] Drag released', {
+        entryId,
+        label: currentDrag.entry.label,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        hasRuntime: !!currentRuntime,
+      });
       setDraggedInventoryItem(null);
       if (currentRuntime) {
         void currentRuntime.handleInventoryDropAtClientPosition(entryId, event.clientX, event.clientY);
+      } else {
+        console.warn('[InventoryDrop][UI] No active runtime available for inventory drop');
       }
     };
 
