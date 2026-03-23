@@ -10,6 +10,7 @@ import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
+import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import type { Costume, CostumeBounds, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { cn } from '@/lib/utils';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
@@ -178,62 +179,61 @@ export const CostumeList = memo(({
   };
 
   return (
-    <div className="flex flex-col h-full w-48 border-r bg-muted/30">
-      {/* Header */}
-      <div className="flex items-center justify-between px-2 py-2 border-b">
-        <span className="text-xs font-medium">Costumes</span>
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={handleAddBlank}
-            title="New blank costume"
-            disabled={isProcessing}
-          >
-            <Plus className="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={handleUploadClick}
-            title="Import image"
-            disabled={isProcessing}
-          >
-            {isProcessing ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <Upload className="size-3" />
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => setShowLibrary(true)}
-            title="Browse library"
-            disabled={isProcessing}
-          >
-            <Library className="size-3" />
-          </Button>
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={handleFileChange}
-          className="hidden"
-        />
-      </div>
-
-      {/* Costume List */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-2">
+    <>
+      <AssetSidebar
+        title="Costumes"
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={handleAddBlank}
+              title="New blank costume"
+              disabled={isProcessing}
+            >
+              <Plus className="size-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={handleUploadClick}
+              title="Import image"
+              disabled={isProcessing}
+            >
+              {isProcessing ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Upload className="size-3" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={() => setShowLibrary(true)}
+              title="Browse library"
+              disabled={isProcessing}
+            >
+              <Library className="size-3" />
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFileChange}
+              className="hidden"
+            />
+          </>
+        }
+        contentClassName="space-y-2"
+      >
         {costumes.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-center px-2">
+          <div className="flex h-full flex-col items-center justify-center px-2 text-center text-muted-foreground">
             <p className="text-xs">No costumes</p>
-            <p className="text-xs mt-1">Click + to add</p>
+            <p className="mt-1 text-xs">Click + to add</p>
           </div>
         ) : (
           costumes.map((costume, index) => (
@@ -255,12 +255,8 @@ export const CostumeList = memo(({
                   : 'hover:bg-accent'
               )}
             >
-              {/* Thumbnail - transparent areas remain transparent */}
-              <div
-                className="aspect-square rounded overflow-hidden relative"
-              >
+              <div className="relative aspect-square overflow-hidden rounded">
                 {costume.bounds && costume.bounds.width > 0 && costume.bounds.height > 0 ? (
-                  // Zoomed thumbnail using bounds
                   <div
                     className="absolute inset-0"
                     style={{
@@ -283,32 +279,29 @@ export const CostumeList = memo(({
                     }}
                   />
                 ) : (
-                  // Fallback: show full image
                   <img
                     src={costume.assetId}
                     alt={costume.name}
-                    className="w-full h-full object-contain"
+                    className="h-full w-full object-contain"
                     style={{ imageRendering: 'pixelated' }}
                   />
                 )}
               </div>
 
-              {/* Costume name */}
               <Input
                 value={costume.name}
                 onChange={(e) => onRenameCostume(index, e.target.value)}
                 onClick={(e) => e.stopPropagation()}
-                className="w-full h-4 mt-0.5 px-1 text-[10px] leading-none text-center bg-transparent border-none focus:bg-background"
+                className="mt-0.5 h-4 w-full border-none bg-transparent px-1 text-center text-[10px] leading-none shadow-none focus:bg-background"
               />
 
-              {/* Index number */}
-              <div className="absolute top-1 left-1 text-[10px] font-medium text-foreground/80">
+              <div className="absolute left-1 top-1 text-[10px] font-medium text-foreground/80">
                 {index + 1}
               </div>
             </Card>
           ))
         )}
-      </div>
+      </AssetSidebar>
 
       {contextMenu && (
         <>
@@ -371,7 +364,7 @@ export const CostumeList = memo(({
         onOpenChange={setShowLibrary}
         onSelect={handleLibrarySelect}
       />
-    </div>
+    </>
   );
 });
 
