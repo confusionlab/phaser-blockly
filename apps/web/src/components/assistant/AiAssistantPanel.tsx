@@ -657,27 +657,22 @@ export function AiAssistantPanel() {
       {!isOpen ? (
         <Button
           className={cn(
-            'fixed bottom-5 right-5 z-[100320] h-auto max-w-[calc(100vw-2rem)] rounded-full px-3 py-3 text-left',
+            'fixed bottom-5 right-5 z-[100320] size-14 rounded-full p-0',
             'border border-slate-950/10 bg-slate-950 text-white shadow-[0_24px_60px_-24px_rgba(15,23,42,0.8)]',
             'hover:bg-slate-900 dark:border-white/10 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100',
           )}
           onClick={() => setIsOpen(true)}
           title="Open AI assistant"
+          aria-label="Open AI assistant"
           aria-expanded={isOpen}
         >
-          <span className="flex items-center gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/12 dark:bg-slate-900/8">
+          <span className="flex size-full items-center justify-center">
+            <span className="flex size-9 items-center justify-center rounded-full bg-white/12 dark:bg-slate-900/8">
               {assistantLockRunId ? (
                 <LoaderCircle className="size-4 animate-spin" />
               ) : (
                 <WandSparkles className="size-4" />
               )}
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-semibold">Assistant</span>
-              <span className="block truncate text-[11px] text-white/75 dark:text-slate-950/65">
-                {assistantLockRunId ? currentTool ?? 'Updating the project...' : 'Polished workspace for AI edits'}
-              </span>
             </span>
           </span>
         </Button>
