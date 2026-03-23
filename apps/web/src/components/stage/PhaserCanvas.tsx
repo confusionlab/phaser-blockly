@@ -415,6 +415,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     x: number;
     y: number;
   } | null>(null);
+  const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
 
   const { project, updateObject } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -466,6 +467,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
 
   useEffect(() => {
     if (!draggedInventoryItem) {
+      setDraggedInventoryCanDrop(false);
       return;
     }
 
@@ -477,6 +479,15 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     });
 
     const handlePointerMove = (event: PointerEvent) => {
+      const currentRuntime = runtimeRef.current;
+      const canDrop = currentRuntime
+        ? currentRuntime.canDropInventoryItemAtClientPosition(
+            draggedInventoryItem.entry.entryId,
+            event.clientX,
+            event.clientY,
+          )
+        : false;
+      setDraggedInventoryCanDrop((current) => (current === canDrop ? current : canDrop));
       setDraggedInventoryItem((current) => (
         current
           ? {
@@ -503,6 +514,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         clientY: event.clientY,
         hasRuntime: !!currentRuntime,
       });
+      setDraggedInventoryCanDrop(false);
       setDraggedInventoryItem(null);
       if (currentRuntime) {
         void currentRuntime.handleInventoryDropAtClientPosition(entryId, event.clientX, event.clientY);
@@ -514,6 +526,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp, { once: true });
     return () => {
+      setDraggedInventoryCanDrop(false);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
@@ -1354,8 +1367,23 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                     <button
                       key={item.entryId}
                       type="button"
-                      className="group flex h-16 items-center justify-center rounded-xl border bg-background hover:border-primary/60 hover:bg-muted/70"
+                      disabled={item.isPendingUse}
+                      aria-disabled={item.isPendingUse}
+                      className={`group flex h-16 items-center justify-center rounded-xl border bg-background transition-opacity ${
+                        item.isPendingUse
+                          ? 'cursor-not-allowed opacity-50'
+                          : 'hover:border-primary/60 hover:bg-muted/70'
+                      }`}
                       onPointerDown={(event) => {
+                        if (item.isPendingUse) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          console.log('[InventoryDrop][UI] Drag blocked because item is pending use', {
+                            entryId: item.entryId,
+                            label: item.label,
+                          });
+                          return;
+                        }
                         if (event.button !== 0) return;
                         event.preventDefault();
                         event.stopPropagation();
@@ -1411,7 +1439,11 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
               className="fixed z-30 pointer-events-none -translate-x-1/2 -translate-y-1/2"
               style={{ left: draggedInventoryItem.x, top: draggedInventoryItem.y }}
             >
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl border bg-card/95 shadow-xl">
+              <div
+                className={`flex h-16 w-16 items-center justify-center rounded-xl border bg-card/95 shadow-xl transition-opacity ${
+                  draggedInventoryCanDrop ? 'opacity-100' : 'opacity-50'
+                }`}
+              >
                 {draggedInventoryItem.entry.costumeAssetId ? (
                   <img
                     src={draggedInventoryItem.entry.costumeAssetId}
