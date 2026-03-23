@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import Phaser from 'phaser';
+import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
@@ -770,6 +771,9 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         parent: container,
         width: isPlaying ? canvasWidth : container.clientWidth,
         height: isPlaying ? canvasHeight : container.clientHeight,
+        render: isPlaying ? undefined : {
+          preserveDrawingBuffer: true,
+        },
         // Keep canvas outside camera viewport black so letterboxing is always consistent.
         backgroundColor: isPlaying ? backgroundColor : editorBackgroundColor,
         scale: isPlaying ? {
@@ -982,11 +986,20 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
     if (isResizeFrozen) {
       try {
-        setFrozenStageFrame(canvas.toDataURL('image/png'));
+        const frozenFrame = canvas.width > 0 && canvas.height > 0
+          ? canvas.toDataURL('image/png')
+          : null;
+        if (frozenFrame) {
+          setFrozenStageFrame(frozenFrame);
+          canvas.style.visibility = 'hidden';
+          return;
+        }
+        setFrozenStageFrame(null);
+        canvas.style.visibility = 'visible';
       } catch {
         setFrozenStageFrame(null);
+        canvas.style.visibility = 'visible';
       }
-      canvas.style.visibility = 'hidden';
       return;
     }
 
@@ -1010,6 +1023,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       const customEvent = event as CustomEvent<{ active?: boolean }>;
       const active = !!customEvent.detail?.active;
       immediateResizeFreezeRef.current = active;
+
+      const canvas = gameRef.current?.canvas;
+      if (active && canvas) {
+        let frozenFrame: string | null = null;
+        try {
+          frozenFrame = canvas.width > 0 && canvas.height > 0
+            ? canvas.toDataURL('image/png')
+            : null;
+        } catch {
+          frozenFrame = null;
+        }
+
+        flushSync(() => {
+          setFrozenStageFrame(frozenFrame);
+          setManualResizeFreezeActive(true);
+        });
+        canvas.style.visibility = frozenFrame ? 'hidden' : 'visible';
+        return;
+      }
+
       setManualResizeFreezeActive(active);
     };
 

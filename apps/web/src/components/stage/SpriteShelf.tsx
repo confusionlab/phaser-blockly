@@ -249,15 +249,6 @@ export function SpriteShelf() {
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
 
-  const handleInlineRenameKeyDownCapture = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    // Keep text-entry keystrokes inside the active editor instead of letting the
-    // surrounding tree/dropdown keyboard handlers consume them.
-    event.stopPropagation();
-    if (typeof event.nativeEvent.stopImmediatePropagation === 'function') {
-      event.nativeEvent.stopImmediatePropagation();
-    }
-  };
-
   const focusInputCaretAtEnd = (input: HTMLInputElement | null) => {
     if (!input) {
       return;
@@ -540,6 +531,7 @@ export function SpriteShelf() {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     const dropPosition = getDropPositionForItem(item, event);
     setLayerDropTarget({ key: item.key, dropPosition });
   };
@@ -550,6 +542,7 @@ export function SpriteShelf() {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     const dropPosition = layerDropTarget?.key === item.key
       ? layerDropTarget.dropPosition
       : getDropPositionForItem(item, event);
@@ -563,7 +556,11 @@ export function SpriteShelf() {
   };
 
   const handleRootDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (draggedLayerKeys.length === 0 || selectedScene.objects.length === 0) {
+    if (draggedLayerKeys.length === 0 || treeItems.length === 0) {
+      return;
+    }
+
+    if (event.target !== event.currentTarget) {
       return;
     }
 
@@ -573,6 +570,10 @@ export function SpriteShelf() {
 
   const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
     if (draggedLayerKeys.length === 0) {
+      return;
+    }
+
+    if (event.target !== event.currentTarget) {
       return;
     }
 
@@ -1183,7 +1184,6 @@ export function SpriteShelf() {
     return (
       <div key={item.key}>
         <div
-          draggable={!isObjectEditing && !isFolderEditing}
           className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
             isSelected
               ? 'bg-primary/10 border-l-2 border-l-primary'
@@ -1213,10 +1213,8 @@ export function SpriteShelf() {
               handleFolderContextMenu(e, folder);
             }
           }}
-          onDragStart={(e) => handleLayerDragStart(e, item)}
           onDragOver={(e) => handleLayerDragOver(e, item)}
           onDrop={(e) => handleLayerDrop(e, item)}
-          onDragEnd={clearLayerDragState}
         >
           <button
             type="button"
@@ -1237,7 +1235,19 @@ export function SpriteShelf() {
             )}
           </button>
 
-          <GripVertical className="size-3 text-muted-foreground/70 shrink-0" />
+          <div
+            draggable={!isObjectEditing && !isFolderEditing}
+            className={`shrink-0 rounded p-0.5 text-muted-foreground/70 ${
+              isObjectEditing || isFolderEditing ? 'cursor-default opacity-40' : 'cursor-grab active:cursor-grabbing hover:bg-accent'
+            }`}
+            aria-label={`Drag ${item.name}`}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onDragStart={(e) => handleLayerDragStart(e, item)}
+            onDragEnd={clearLayerDragState}
+          >
+            <GripVertical className="size-3" />
+          </div>
 
           {item.type === 'folder' ? (
             isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
@@ -1285,30 +1295,28 @@ export function SpriteShelf() {
 
           <div className="flex-1 min-w-0">
             {isObjectEditing ? (
-              <Input
-                ref={inputRef}
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                onBlur={commitActiveInlineRename}
-                onKeyDownCapture={handleInlineRenameKeyDownCapture}
-                onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
-                data-hotkeys="ignore"
-                className="h-6 px-1 text-xs"
-                onClick={(e) => e.stopPropagation()}
+                <Input
+                  ref={inputRef}
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onBlur={commitActiveInlineRename}
+                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
+                  data-hotkeys="ignore"
+                  className="h-6 px-1 text-xs"
+                  onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => e.stopPropagation()}
                 autoFocus
               />
             ) : isFolderEditing ? (
-              <Input
-                ref={inputRef}
-                value={folderEditName}
-                onChange={(e) => setFolderEditName(e.target.value)}
-                onBlur={commitActiveInlineRename}
-                onKeyDownCapture={handleInlineRenameKeyDownCapture}
-                onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
-                data-hotkeys="ignore"
-                className="h-6 px-1 text-xs"
-                onClick={(e) => e.stopPropagation()}
+                <Input
+                  ref={inputRef}
+                  value={folderEditName}
+                  onChange={(e) => setFolderEditName(e.target.value)}
+                  onBlur={commitActiveInlineRename}
+                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
+                  data-hotkeys="ignore"
+                  className="h-6 px-1 text-xs"
+                  onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => e.stopPropagation()}
                 autoFocus
               />
@@ -1355,12 +1363,13 @@ export function SpriteShelf() {
                       setSceneEditError(null);
                     }}
                     onBlur={handleSaveSceneRename}
-                    onKeyDownCapture={handleInlineRenameKeyDownCapture}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
+                        e.preventDefault();
                         handleSaveSceneRename();
                       }
                       if (e.key === 'Escape') {
+                        e.preventDefault();
                         cancelSceneRenameOnBlurRef.current = true;
                         setEditingSceneId(null);
                         setEditName('');

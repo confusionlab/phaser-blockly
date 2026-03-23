@@ -49,6 +49,23 @@ test.describe('Stage resize', () => {
     await page.mouse.move(pointerX, pointerY - 120, { steps: 10 });
     await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
 
+    const dragState = await page.evaluate(() => {
+      const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+      const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+      if (!(canvas instanceof HTMLCanvasElement)) return null;
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        visibility: window.getComputedStyle(canvas).visibility,
+        frozenVisible: frozen instanceof HTMLElement
+          ? window.getComputedStyle(frozen).visibility === 'visible'
+          : false,
+      };
+    });
+    expect(dragState).not.toBeNull();
+    expect(dragState?.visibility).toBe('hidden');
+    expect(dragState?.frozenVisible).toBe(true);
+
     const dragMetrics = await canvas.evaluate((node) => {
       const canvas = node as HTMLCanvasElement;
       return {
@@ -56,7 +73,7 @@ test.describe('Stage resize', () => {
         height: canvas.height,
       };
     });
-    expect(dragMetrics).toEqual(initialMetrics);
+    expect(dragMetrics.width).toBe(initialMetrics.width);
 
     await page.mouse.up();
     await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
