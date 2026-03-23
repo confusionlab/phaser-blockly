@@ -13,6 +13,7 @@ import type * as costumeLibrary from "../costumeLibrary.js";
 import type * as http from "../http.js";
 import type * as objectLibrary from "../objectLibrary.js";
 import type * as projectAssets from "../projectAssets.js";
+import type * as projectEditorLeases from "../projectEditorLeases.js";
 import type * as projects from "../projects.js";
 import type * as soundLibrary from "../soundLibrary.js";
 import type * as userSettings from "../userSettings.js";
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   objectLibrary: typeof objectLibrary;
   projectAssets: typeof projectAssets;
+  projectEditorLeases: typeof projectEditorLeases;
   projects: typeof projects;
   soundLibrary: typeof soundLibrary;
   userSettings: typeof userSettings;

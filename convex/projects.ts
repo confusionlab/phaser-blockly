@@ -4,6 +4,9 @@ import type { Id } from "./_generated/dataModel";
 import { SCHEMA_VERSION } from "./schema";
 
 const schemaVersionValidator = v.union(v.number(), v.string());
+const managedAssetIdsValidator = v.array(v.string());
+const MANAGED_ASSET_ID_PATTERN = /^asset:[0-9a-f]{64}$/i;
+const PROJECT_ASSET_GC_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 
 const projectSummaryValidator = v.object({
   _id: v.id("projects"),
@@ -16,6 +19,7 @@ const projectSummaryValidator = v.object({
   contentHash: v.optional(v.string()),
   storageId: v.optional(v.id("_storage")),
   dataSizeBytes: v.optional(v.number()),
+  assetIds: v.optional(managedAssetIdsValidator),
 });
 
 const fullProjectValidator = v.object({
@@ -28,6 +32,7 @@ const fullProjectValidator = v.object({
   contentHash: v.optional(v.string()),
   storageId: v.optional(v.id("_storage")),
   dataSizeBytes: v.optional(v.number()),
+  assetIds: v.optional(managedAssetIdsValidator),
   data: v.optional(v.string()),
   dataUrl: v.union(v.string(), v.null()),
 });
@@ -56,6 +61,7 @@ const syncPayloadValidator = v.object({
   schemaVersion: v.optional(schemaVersionValidator),
   appVersion: v.optional(v.string()),
   contentHash: v.optional(v.string()),
+  assetIds: v.optional(managedAssetIdsValidator),
 });
 
 const revisionReasonValidator = v.union(
@@ -84,6 +90,7 @@ const revisionSyncPayloadValidator = v.object({
   checkpointName: v.optional(v.string()),
   isCheckpoint: v.boolean(),
   restoredFromRevisionId: v.optional(v.string()),
+  assetIds: v.optional(managedAssetIdsValidator),
 });
 
 const revisionSummaryValidator = v.object({
@@ -102,6 +109,7 @@ const revisionSummaryValidator = v.object({
   checkpointName: v.optional(v.string()),
   isCheckpoint: v.boolean(),
   restoredFromRevisionId: v.optional(v.string()),
+  assetIds: v.optional(managedAssetIdsValidator),
   data: v.optional(v.string()),
   dataUrl: v.union(v.string(), v.null()),
 });
@@ -119,6 +127,7 @@ type StoredProject = {
   schemaVersion: number | string;
   appVersion?: string;
   contentHash?: string;
+  assetIds?: string[];
 };
 
 type SyncPayload = {
@@ -132,6 +141,7 @@ type SyncPayload = {
   schemaVersion?: number | string;
   appVersion?: string;
   contentHash?: string;
+  assetIds?: string[];
 };
 
 async function requireAuthenticatedUserId(ctx: any): Promise<string> {
@@ -161,6 +171,7 @@ type StoredProjectRevision = {
   checkpointName?: string;
   isCheckpoint: boolean;
   restoredFromRevisionId?: string;
+  assetIds?: string[];
 };
 
 type RevisionSyncPayload = {
@@ -181,6 +192,7 @@ type RevisionSyncPayload = {
   checkpointName?: string;
   isCheckpoint: boolean;
   restoredFromRevisionId?: string;
+  assetIds?: string[];
 };
 
 const FNV64_OFFSET = 0xcbf29ce484222325n;
@@ -216,6 +228,17 @@ function normalizeSchemaVersion(version: number | string | undefined): number {
     }
   }
   return SCHEMA_VERSION;
+}
+
+function normalizeManagedAssetIds(assetIds: unknown): string[] {
+  if (!Array.isArray(assetIds)) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    assetIds.filter((assetId): assetId is string => typeof assetId === "string" && MANAGED_ASSET_ID_PATTERN.test(assetId.trim()))
+      .map((assetId) => assetId.trim()),
+  ));
 }
 
 function compareProjectPriority(a: StoredProject, b: StoredProject): number {
@@ -287,6 +310,32 @@ async function listRevisionsByProjectLocalId(
     .collect()) as StoredProjectRevision[];
 }
 
+async function listRevisionsForOwner(ctx: any, ownerUserId: string): Promise<StoredProjectRevision[]> {
+  return (await ctx.db
+    .query("projectRevisions")
+    .withIndex("by_ownerUserId_and_createdAt", (q: any) => q.eq("ownerUserId", ownerUserId))
+    .collect()) as StoredProjectRevision[];
+}
+
+type StoredProjectAsset = {
+  _id: Id<"projectAssets">;
+  ownerUserId?: string;
+  assetId: string;
+  kind: "image" | "audio" | "background";
+  mimeType: string;
+  size: number;
+  storageId: Id<"_storage">;
+  createdAt: number;
+  orphanedAt?: number;
+};
+
+async function listProjectAssetsForOwner(ctx: any, ownerUserId: string): Promise<StoredProjectAsset[]> {
+  return (await ctx.db
+    .query("projectAssets")
+    .withIndex("by_ownerUserId_and_createdAt", (q: any) => q.eq("ownerUserId", ownerUserId))
+    .collect()) as StoredProjectAsset[];
+}
+
 async function cleanupDuplicateProjects(
   ctx: any,
   projects: StoredProject[],
@@ -299,6 +348,7 @@ async function cleanupDuplicateProjects(
   const storageIdsToDelete = new Set<Id<"_storage">>();
   const keptProject = projects.find((project) => project._id === keepId) ?? null;
   const keptStorageId = keptProject?.storageId;
+  const removedAssetIds = new Set<string>();
   for (const project of projects) {
     if (project._id === keepId) {
       continue;
@@ -307,11 +357,89 @@ async function cleanupDuplicateProjects(
     if (project.storageId && project.storageId !== keptStorageId) {
       storageIdsToDelete.add(project.storageId);
     }
+    for (const assetId of normalizeManagedAssetIds(project.assetIds)) {
+      removedAssetIds.add(assetId);
+    }
     await ctx.db.delete(project._id);
   }
 
   for (const storageId of storageIdsToDelete) {
     await cleanupStorage(ctx, storageId);
+  }
+
+  if (keptProject?.ownerUserId) {
+    await garbageCollectProjectAssets(ctx, keptProject.ownerUserId, removedAssetIds);
+  }
+}
+
+async function garbageCollectProjectAssets(
+  ctx: any,
+  ownerUserId: string,
+  touchedAssetIds: Iterable<string> = [],
+) {
+  const projectAssets = await listProjectAssetsForOwner(ctx, ownerUserId);
+  const candidateIds = new Set<string>();
+
+  for (const assetId of touchedAssetIds) {
+    if (MANAGED_ASSET_ID_PATTERN.test(assetId)) {
+      candidateIds.add(assetId);
+    }
+  }
+
+  for (const row of projectAssets) {
+    if (row.orphanedAt !== undefined) {
+      candidateIds.add(row.assetId);
+    }
+  }
+
+  if (candidateIds.size === 0) {
+    return;
+  }
+
+  const referencedIds = new Set<string>();
+  const ownedProjects = await listProjectsForOwner(ctx, ownerUserId);
+  for (const project of ownedProjects) {
+    for (const assetId of normalizeManagedAssetIds(project.assetIds)) {
+      if (candidateIds.has(assetId)) {
+        referencedIds.add(assetId);
+      }
+    }
+  }
+
+  const ownedRevisions = await listRevisionsForOwner(ctx, ownerUserId);
+  for (const revision of ownedRevisions) {
+    for (const assetId of normalizeManagedAssetIds(revision.assetIds)) {
+      if (candidateIds.has(assetId)) {
+        referencedIds.add(assetId);
+      }
+    }
+  }
+
+  const now = Date.now();
+  for (const row of projectAssets) {
+    if (!candidateIds.has(row.assetId)) {
+      continue;
+    }
+
+    if (referencedIds.has(row.assetId)) {
+      if (row.orphanedAt !== undefined) {
+        const { orphanedAt: _orphanedAt, ...nextRow } = row;
+        await ctx.db.replace(row._id, nextRow);
+      }
+      continue;
+    }
+
+    if (row.orphanedAt === undefined) {
+      await ctx.db.patch(row._id, { orphanedAt: now });
+      continue;
+    }
+
+    if (now - row.orphanedAt < PROJECT_ASSET_GC_GRACE_PERIOD_MS) {
+      continue;
+    }
+
+    await ctx.db.delete(row._id);
+    await cleanupStorage(ctx, row.storageId);
   }
 }
 
@@ -327,6 +455,7 @@ function toSummary(project: StoredProject) {
     contentHash?: string;
     storageId?: Id<"_storage">;
     dataSizeBytes?: number;
+    assetIds?: string[];
   } = {
     _id: project._id,
     localId: project.localId,
@@ -348,6 +477,9 @@ function toSummary(project: StoredProject) {
   if (project.dataSizeBytes !== undefined) {
     summary.dataSizeBytes = project.dataSizeBytes;
   }
+  if (project.assetIds !== undefined) {
+    summary.assetIds = normalizeManagedAssetIds(project.assetIds);
+  }
 
   return summary;
 }
@@ -363,6 +495,7 @@ async function toFull(ctx: any, project: StoredProject) {
     contentHash?: string;
     storageId?: Id<"_storage">;
     dataSizeBytes?: number;
+    assetIds?: string[];
     data?: string;
     dataUrl: string | null;
   } = {
@@ -385,6 +518,9 @@ async function toFull(ctx: any, project: StoredProject) {
   }
   if (project.dataSizeBytes !== undefined) {
     result.dataSizeBytes = project.dataSizeBytes;
+  }
+  if (project.assetIds !== undefined) {
+    result.assetIds = normalizeManagedAssetIds(project.assetIds);
   }
   if (project.data !== undefined) {
     result.data = project.data;
@@ -410,6 +546,7 @@ async function toRevisionFull(ctx: any, revision: StoredProjectRevision) {
     checkpointName?: string;
     isCheckpoint: boolean;
     restoredFromRevisionId?: string;
+    assetIds?: string[];
     data?: string;
     dataUrl: string | null;
   } = {
@@ -441,6 +578,9 @@ async function toRevisionFull(ctx: any, revision: StoredProjectRevision) {
   if (revision.restoredFromRevisionId !== undefined) {
     result.restoredFromRevisionId = revision.restoredFromRevisionId;
   }
+  if (revision.assetIds !== undefined) {
+    result.assetIds = normalizeManagedAssetIds(revision.assetIds);
+  }
   if (revision.data !== undefined) {
     result.data = revision.data;
   }
@@ -468,6 +608,7 @@ function toRevisionDocument(ownerUserId: string, payload: RevisionSyncPayload) {
     checkpointName?: string;
     isCheckpoint: boolean;
     restoredFromRevisionId?: string;
+    assetIds?: string[];
   } = {
     ownerUserId,
     projectLocalId: payload.localProjectId,
@@ -489,6 +630,9 @@ function toRevisionDocument(ownerUserId: string, payload: RevisionSyncPayload) {
   }
   if (payload.appVersion !== undefined) {
     base.appVersion = payload.appVersion;
+  }
+  if (payload.assetIds !== undefined) {
+    base.assetIds = normalizeManagedAssetIds(payload.assetIds);
   }
 
   if (payload.storageId) {
@@ -520,6 +664,7 @@ async function upsertProjectRevision(ctx: any, ownerUserId: string, payload: Rev
 
   if (!existing) {
     await ctx.db.insert("projectRevisions", nextDocument);
+    await garbageCollectProjectAssets(ctx, ownerUserId, normalizeManagedAssetIds(nextDocument.assetIds));
     return { action: "created" as const };
   }
 
@@ -535,6 +680,10 @@ async function upsertProjectRevision(ctx: any, ownerUserId: string, payload: Rev
     const uploadedStorageId =
       payload.storageId && payload.storageId !== existing.storageId ? payload.storageId : undefined;
     await cleanupStorage(ctx, uploadedStorageId);
+    await garbageCollectProjectAssets(ctx, ownerUserId, [
+      ...normalizeManagedAssetIds(existing.assetIds),
+      ...normalizeManagedAssetIds(nextDocument.assetIds),
+    ]);
     return { action: "skipped" as const };
   }
 
@@ -546,6 +695,10 @@ async function upsertProjectRevision(ctx: any, ownerUserId: string, payload: Rev
 
   await ctx.db.replace(existing._id, nextDocument);
   await cleanupStorage(ctx, staleStorageId);
+  await garbageCollectProjectAssets(ctx, ownerUserId, [
+    ...normalizeManagedAssetIds(existing.assetIds),
+    ...normalizeManagedAssetIds(nextDocument.assetIds),
+  ]);
   return { action: "updated" as const };
 }
 
@@ -569,6 +722,7 @@ function toProjectDocument(
     appVersion?: string;
     contentHash?: string;
     dataSizeBytes?: number;
+    assetIds?: string[];
   } = {
     ownerUserId,
     localId: payload.localId,
@@ -586,6 +740,9 @@ function toProjectDocument(
   }
   if (payload.dataSizeBytes !== undefined) {
     base.dataSizeBytes = payload.dataSizeBytes;
+  }
+  if (payload.assetIds !== undefined) {
+    base.assetIds = normalizeManagedAssetIds(payload.assetIds);
   }
 
   if (payload.storageId) {
@@ -674,6 +831,11 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
         reason = "cloud project is newer";
       }
 
+      await garbageCollectProjectAssets(ctx, ownerUserId, [
+        ...normalizeManagedAssetIds(existing.assetIds),
+        ...normalizeManagedAssetIds(payload.assetIds),
+      ]);
+
       return {
         action: "skipped" as const,
         id: existing._id,
@@ -687,20 +849,21 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
         : undefined
       : existing.storageId;
 
-    await ctx.db.replace(
-      existing._id,
-      toProjectDocument(ownerUserId, payload, incomingSchemaVersion, existing.createdAt),
-    );
+    const nextDocument = toProjectDocument(ownerUserId, payload, incomingSchemaVersion, existing.createdAt);
+    await ctx.db.replace(existing._id, nextDocument);
 
     await cleanupStorage(ctx, staleStorageId);
+    await garbageCollectProjectAssets(ctx, ownerUserId, [
+      ...normalizeManagedAssetIds(existing.assetIds),
+      ...normalizeManagedAssetIds(nextDocument.assetIds),
+    ]);
 
     return { action: "updated" as const, id: existing._id };
   }
 
-  const id = await ctx.db.insert(
-    "projects",
-    toProjectDocument(ownerUserId, payload, incomingSchemaVersion, payload.createdAt),
-  );
+  const nextDocument = toProjectDocument(ownerUserId, payload, incomingSchemaVersion, payload.createdAt);
+  const id = await ctx.db.insert("projects", nextDocument);
+  await garbageCollectProjectAssets(ctx, ownerUserId, normalizeManagedAssetIds(nextDocument.assetIds));
 
   return { action: "created" as const, id };
 }
@@ -874,6 +1037,11 @@ export const remove = mutation({
     for (const storageId of revisionStorageIds) {
       await cleanupStorage(ctx, storageId);
     }
+
+    await garbageCollectProjectAssets(ctx, ownerUserId, [
+      ...projects.flatMap((project) => normalizeManagedAssetIds(project.assetIds)),
+      ...revisions.flatMap((revision) => normalizeManagedAssetIds(revision.assetIds)),
+    ]);
 
     return { deleted: true };
   },

@@ -41,6 +41,7 @@ interface ProjectRecord extends ProjectRecordV1 {
   schemaVersion: number;
   appVersion?: string;
   contentHash?: string;
+  assetIds?: string[];
 }
 
 export type ProjectRevisionReason =
@@ -68,6 +69,7 @@ interface ProjectRevisionRecord {
   checkpointName?: string;
   isCheckpoint: boolean;
   restoredFromRevisionId?: string;
+  assetIds?: string[];
 }
 
 export interface ProjectRevision {
@@ -97,6 +99,7 @@ interface AssetRecord {
   blob: Blob;
   createdAt: Date;
   updatedAt: Date;
+  orphanedAt?: Date;
 }
 
 interface PersistedProjectAssetRef {
@@ -196,6 +199,7 @@ function normalizeMessagesInProject(project: Project): Project {
 
 const MANAGED_ASSET_PREFIX = 'asset:';
 const MANAGED_ASSET_ID_PATTERN = /^asset:([0-9a-f]{64})$/i;
+const MANAGED_ASSET_GC_GRACE_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 const objectUrlCache = new Map<string, string>();
 const objectUrlToAssetId = new Map<string, string>();
 const sourceToManagedAssetIdCache = new Map<string, string>();
@@ -319,6 +323,16 @@ function cacheObjectUrl(assetId: string, objectUrl: string): string {
   return objectUrl;
 }
 
+function clearManagedAssetObjectUrl(assetId: string): void {
+  const objectUrl = objectUrlCache.get(assetId);
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+    objectUrlCache.delete(assetId);
+    objectUrlToAssetId.delete(objectUrl);
+    sourceToManagedAssetIdCache.delete(objectUrl);
+  }
+}
+
 async function resolveManagedAssetUrl(assetId: string): Promise<string | null> {
   const cached = objectUrlCache.get(assetId);
   if (cached) {
@@ -401,6 +415,118 @@ export async function storeManagedAsset(
   kind: ManagedAssetKind,
 ): Promise<void> {
   await storeManagedAssetBlob(assetId, blob, kind);
+}
+
+function getPersistedAssetIdsFromRecord(record: { assetIds?: string[] }, fallbackData?: string): string[] {
+  if (Array.isArray(record.assetIds)) {
+    return record.assetIds.filter((assetId): assetId is string => isManagedAssetId(assetId));
+  }
+  if (typeof fallbackData === 'string') {
+    try {
+      return collectPersistedAssetRefsFromSerializedProjectData(fallbackData).map((assetRef) => assetRef.assetId);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+async function collectReferencedManagedAssetIdsForCandidates(
+  candidateIds: Set<string>,
+): Promise<Set<string>> {
+  if (candidateIds.size === 0) {
+    return new Set();
+  }
+
+  const referencedIds = new Set<string>();
+  const projectRecords = await db.projects.toArray();
+  for (const record of projectRecords) {
+    for (const assetId of getPersistedAssetIdsFromRecord(record, record.data)) {
+      if (candidateIds.has(assetId)) {
+        referencedIds.add(assetId);
+      }
+    }
+  }
+
+  const revisionRecords = await db.projectRevisions.toArray();
+  for (const record of revisionRecords) {
+    const data = record.snapshotData ?? record.patch;
+    for (const assetId of getPersistedAssetIdsFromRecord(record, data)) {
+      if (candidateIds.has(assetId)) {
+        referencedIds.add(assetId);
+      }
+    }
+  }
+
+  return referencedIds;
+}
+
+async function garbageCollectManagedAssets(
+  touchedAssetIds: Iterable<string> = [],
+): Promise<{ deleted: number; markedOrphaned: number; restored: number }> {
+  const assetRecords = await db.assets.toArray();
+  const candidateIds = new Set<string>();
+
+  for (const assetId of touchedAssetIds) {
+    if (isManagedAssetId(assetId)) {
+      candidateIds.add(assetId);
+    }
+  }
+
+  for (const record of assetRecords) {
+    if (record.orphanedAt) {
+      candidateIds.add(record.id);
+    }
+  }
+
+  if (candidateIds.size === 0) {
+    return { deleted: 0, markedOrphaned: 0, restored: 0 };
+  }
+
+  const referencedIds = await collectReferencedManagedAssetIdsForCandidates(candidateIds);
+  const assetRecordById = new Map(assetRecords.map((record) => [record.id, record]));
+  const now = new Date();
+
+  let deleted = 0;
+  let markedOrphaned = 0;
+  let restored = 0;
+
+  await db.transaction('rw', db.assets, async () => {
+    for (const assetId of candidateIds) {
+      const record = assetRecordById.get(assetId);
+      if (!record) {
+        continue;
+      }
+
+      if (referencedIds.has(assetId)) {
+        if (record.orphanedAt) {
+          const { orphanedAt: _orphanedAt, ...nextRecord } = record;
+          await db.assets.put(nextRecord);
+          restored += 1;
+        }
+        continue;
+      }
+
+      if (!record.orphanedAt) {
+        await db.assets.put({
+          ...record,
+          orphanedAt: now,
+        });
+        markedOrphaned += 1;
+        continue;
+      }
+
+      if (now.getTime() - record.orphanedAt.getTime() < MANAGED_ASSET_GC_GRACE_PERIOD_MS) {
+        continue;
+      }
+
+      clearManagedAssetObjectUrl(assetId);
+      await db.assets.delete(assetId);
+      deleted += 1;
+    }
+  });
+
+  return { deleted, markedOrphaned, restored };
 }
 
 function rememberResolvedManagedAsset(assetId: string, source: string): void {
@@ -665,7 +791,9 @@ async function deserializeProjectFromRecord(record: ProjectRecord): Promise<{
 }
 
 async function toProjectRecord(project: Project, updatedAt: Date = new Date()): Promise<ProjectRecord> {
-  const data = await serializeProjectData(project);
+  const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
+  const { projectData, assetRefs } = await normalizeProjectAssetsForStorage(rest);
+  const data = JSON.stringify(projectData);
   return {
     id: project.id,
     name: project.name,
@@ -675,6 +803,7 @@ async function toProjectRecord(project: Project, updatedAt: Date = new Date()): 
     schemaVersion: CURRENT_SCHEMA_VERSION,
     appVersion: APP_VERSION,
     contentHash: computeContentHash(data),
+    assetIds: assetRefs.map((assetRef) => assetRef.assetId),
   };
 }
 
@@ -734,8 +863,14 @@ export const db = new GameMakerDatabase();
 // Project Repository
 
 export async function saveProject(project: Project): Promise<Project> {
+  const existing = await db.projects.get(project.id);
   const record = await toProjectRecord(project);
   await db.projects.put(record);
+  const touchedAssetIds = new Set<string>([
+    ...getPersistedAssetIdsFromRecord(record, record.data),
+    ...getPersistedAssetIdsFromRecord(existing ?? {}, existing?.data),
+  ]);
+  await garbageCollectManagedAssets(touchedAssetIds);
   const { project: hydratedProject } = await deserializeProjectFromRecord(record);
   return hydratedProject;
 }
@@ -772,11 +907,20 @@ export async function deleteProject(id: string): Promise<void> {
     return;
   }
 
+  const project = await db.projects.get(id);
   await db.projects.delete(id);
   const revisions = await db.projectRevisions.where('projectId').equals(id).toArray();
   await db.transaction('rw', db.projectRevisions, async () => {
     await Promise.all(revisions.map((revision) => db.projectRevisions.delete(revision.id)));
   });
+
+  const touchedAssetIds = new Set<string>([
+    ...getPersistedAssetIdsFromRecord(project ?? {}, project?.data),
+    ...revisions.flatMap((revision) =>
+      getPersistedAssetIdsFromRecord(revision, revision.snapshotData ?? revision.patch),
+    ),
+  ]);
+  await garbageCollectManagedAssets(touchedAssetIds);
 }
 
 const MAX_CHECKPOINT_NAME_LENGTH = 80;
@@ -865,11 +1009,12 @@ async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRe
   return candidates ?? null;
 }
 
-async function buildRevisionData(project: Project): Promise<{ serializedData: string; contentHash: string }> {
+async function buildRevisionData(project: Project): Promise<{ serializedData: string; contentHash: string; assetIds: string[] }> {
   const serializedData = await serializeProjectData(project);
   return {
     serializedData,
     contentHash: computeContentHash(serializedData),
+    assetIds: collectPersistedAssetRefsFromSerializedProjectData(serializedData).map((assetRef) => assetRef.assetId),
   };
 }
 
@@ -907,7 +1052,7 @@ export async function createRevision(
     throw new Error('Invalid project revision key: project.id must be a non-empty string.');
   }
 
-  const { serializedData, contentHash } = await buildRevisionData(project);
+  const { serializedData, contentHash, assetIds } = await buildRevisionData(project);
   const latestRevision = await getLatestRevision(project.id);
   if (reason !== 'manual_checkpoint' && reason !== 'restore' && latestRevision?.contentHash === contentHash) {
     return null;
@@ -936,6 +1081,7 @@ export async function createRevision(
     checkpointName,
     isCheckpoint,
     restoredFromRevisionId: options.restoredFromRevisionId,
+    assetIds,
   };
 
   await db.projectRevisions.put(record);
@@ -1142,6 +1288,7 @@ export interface ProjectSyncPayload {
   localId: string;
   name: string;
   data: string;
+  assetIds: string[];
   createdAt: number;
   updatedAt: number;
   schemaVersion: number;
@@ -1156,6 +1303,7 @@ export interface ProjectRevisionSyncPayload {
   kind: ProjectRevisionKind;
   baseRevisionId: string;
   data: string;
+  assetIds: string[];
   contentHash: string;
   createdAt: number;
   schemaVersion: number;
@@ -1221,6 +1369,7 @@ export async function createProjectSyncPayload(project: Project): Promise<Projec
     localId: project.id,
     name: project.name,
     data,
+    assetIds: collectPersistedAssetRefsFromSerializedProjectData(data).map((assetRef) => assetRef.assetId),
     createdAt: project.createdAt.getTime(),
     updatedAt: project.updatedAt.getTime(),
     schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -1235,6 +1384,7 @@ function recordToSyncPayload(record: ProjectRecord): ProjectSyncPayload {
     localId: record.id,
     name: record.name,
     data: record.data,
+    assetIds: getPersistedAssetIdsFromRecord(record, record.data),
     createdAt: record.createdAt.getTime(),
     updatedAt: record.updatedAt.getTime(),
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
@@ -1252,6 +1402,7 @@ function revisionRecordToSyncPayload(record: ProjectRevisionRecord): ProjectRevi
     kind: record.kind,
     baseRevisionId: record.baseRevisionId,
     data,
+    assetIds: getPersistedAssetIdsFromRecord(record, data),
     contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(data),
     createdAt: record.createdAt.getTime(),
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
@@ -1281,17 +1432,33 @@ export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Pro
   const cloudIdSet = new Set(cloudLocalIds);
   const localRecords = await db.projects.toArray();
   const isConflictCopyId = (id: string) => /-conflict-[0-9a-f]{8}$/i.test(id);
-  const localOnlyIds = localRecords
-    .map((record) => record.id)
-    .filter((localId) => !cloudIdSet.has(localId) && !isConflictCopyId(localId));
+  const localOnlyRecords = localRecords.filter((record) => !cloudIdSet.has(record.id) && !isConflictCopyId(record.id));
+  const localOnlyIds = localOnlyRecords.map((record) => record.id);
 
   if (localOnlyIds.length === 0) {
     return { deleted: 0 };
   }
 
+  const revisions = await db.projectRevisions
+    .where('projectId')
+    .anyOf(localOnlyIds)
+    .toArray();
+
   await db.transaction('rw', db.projects, async () => {
     await Promise.all(localOnlyIds.map((localId) => db.projects.delete(localId)));
   });
+
+  await db.transaction('rw', db.projectRevisions, async () => {
+    await Promise.all(revisions.map((revision) => db.projectRevisions.delete(revision.id)));
+  });
+
+  const touchedAssetIds = new Set<string>([
+    ...localOnlyRecords.flatMap((record) => getPersistedAssetIdsFromRecord(record, record.data)),
+    ...revisions.flatMap((revision) =>
+      getPersistedAssetIdsFromRecord(revision, revision.snapshotData ?? revision.patch),
+    ),
+  ]);
+  await garbageCollectManagedAssets(touchedAssetIds);
 
   return { deleted: localOnlyIds.length };
 }
@@ -1301,6 +1468,7 @@ export async function syncProjectFromCloud(cloudProject: {
   localId: string;
   name: string;
   data: string;
+  assetIds?: string[];
   createdAt: number;
   updatedAt: number;
   schemaVersion: number | string;
@@ -1360,12 +1528,20 @@ export async function syncProjectFromCloud(cloudProject: {
     schemaVersion: migrated ? CURRENT_SCHEMA_VERSION : cloudSchemaVersion,
     appVersion: cloudProject.appVersion,
     contentHash: normalizeContentHash(cloudProject.contentHash) ?? computeContentHash(serializedIncomingData),
+    assetIds: Array.from(
+      new Set(
+        (cloudProject.assetIds ?? collectPersistedAssetRefsFromSerializedProjectData(serializedIncomingData)
+          .map((assetRef) => assetRef.assetId))
+          .filter((assetId): assetId is string => isManagedAssetId(assetId)),
+      ),
+    ),
   };
 
   const existing = await db.projects.get(cloudProject.localId);
 
   if (!existing) {
     await db.projects.put(incomingRecord);
+    await garbageCollectManagedAssets(incomingRecord.assetIds ?? []);
     return { action: 'created', migrated };
   }
 
@@ -1418,6 +1594,10 @@ export async function syncProjectFromCloud(cloudProject: {
   }
 
   await db.projects.put(incomingRecord);
+  await garbageCollectManagedAssets(new Set<string>([
+    ...getPersistedAssetIdsFromRecord(existing, existing.data),
+    ...getPersistedAssetIdsFromRecord(incomingRecord, incomingRecord.data),
+  ]));
   return { action: 'updated', migrated, reason };
 }
 
@@ -1463,11 +1643,19 @@ export async function syncProjectRevisionsFromCloud(
       checkpointName: payload.checkpointName ? normalizeCheckpointName(payload.checkpointName) : undefined,
       isCheckpoint: Boolean(payload.isCheckpoint),
       restoredFromRevisionId: payload.restoredFromRevisionId,
+      assetIds: Array.from(
+        new Set(
+          (payload.assetIds ?? collectPersistedAssetRefsFromSerializedProjectData(payload.data)
+            .map((assetRef) => assetRef.assetId))
+            .filter((assetId): assetId is string => isManagedAssetId(assetId)),
+        ),
+      ),
     };
 
     const existing = await db.projectRevisions.get(incomingRecord.id);
     if (!existing) {
       await db.projectRevisions.put(incomingRecord);
+      await garbageCollectManagedAssets(incomingRecord.assetIds ?? []);
       created += 1;
       continue;
     }
@@ -1491,6 +1679,10 @@ export async function syncProjectRevisionsFromCloud(
     }
 
     await db.projectRevisions.put(incomingRecord);
+    await garbageCollectManagedAssets(new Set<string>([
+      ...getPersistedAssetIdsFromRecord(existing, existing.snapshotData ?? existing.patch),
+      ...getPersistedAssetIdsFromRecord(incomingRecord, incomingRecord.snapshotData ?? incomingRecord.patch),
+    ]));
     updated += 1;
   }
 

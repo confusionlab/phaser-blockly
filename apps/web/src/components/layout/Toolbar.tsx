@@ -27,6 +27,7 @@ export function Toolbar() {
     isDirty,
     syncOnUnmount: false,
     checkpointIntervalMs: 0,
+    backgroundSyncDebounceMs: 0,
   });
   const syncCurrentProjectToCloud = async (): Promise<boolean> => {
     if (!project) return true;

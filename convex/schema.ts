@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 // Project data schema version. Keep aligned with src/db/database.ts.
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 // Shared bounds validator
 const boundsValidator = v.object({
@@ -69,6 +69,7 @@ export default defineSchema({
     size: v.number(),
     storageId: v.id("_storage"),
     createdAt: v.number(),
+    orphanedAt: v.optional(v.number()),
   })
     .index("by_ownerUserId_and_assetId", ["ownerUserId", "assetId"])
     .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
@@ -146,6 +147,7 @@ export default defineSchema({
     schemaVersion: v.union(v.number(), v.string()),
     appVersion: v.optional(v.string()),
     contentHash: v.optional(v.string()),
+    assetIds: v.optional(v.array(v.string())),
   })
     .index("by_localId", ["localId"])
     .index("by_ownerUserId_and_localId", ["ownerUserId", "localId"])
@@ -176,15 +178,27 @@ export default defineSchema({
     checkpointName: v.optional(v.string()),
     isCheckpoint: v.boolean(),
     restoredFromRevisionId: v.optional(v.string()),
+    assetIds: v.optional(v.array(v.string())),
   })
     .index("by_projectLocalId_and_createdAt", ["projectLocalId", "createdAt"])
     .index("by_projectLocalId_and_isCheckpoint_and_createdAt", ["projectLocalId", "isCheckpoint", "createdAt"])
     .index("by_projectLocalId_and_revisionId", ["projectLocalId", "revisionId"])
     .index("by_projectLocalId_and_contentHash", ["projectLocalId", "contentHash"])
+    .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"])
     .index("by_ownerUserId_and_projectLocalId_and_createdAt", ["ownerUserId", "projectLocalId", "createdAt"])
     .index("by_ownerUserId_and_projectLocalId_and_isCheckpoint_and_createdAt", ["ownerUserId", "projectLocalId", "isCheckpoint", "createdAt"])
     .index("by_ownerUserId_and_projectLocalId_and_revisionId", ["ownerUserId", "projectLocalId", "revisionId"])
     .index("by_ownerUserId_and_projectLocalId_and_contentHash", ["ownerUserId", "projectLocalId", "contentHash"]),
+
+  projectEditorLeases: defineTable({
+    ownerUserId: v.string(),
+    projectLocalId: v.string(),
+    editorSessionId: v.string(),
+    acquiredAt: v.number(),
+    heartbeatAt: v.number(),
+  })
+    .index("by_ownerUserId_and_projectLocalId", ["ownerUserId", "projectLocalId"])
+    .index("by_ownerUserId_and_editorSessionId", ["ownerUserId", "editorSessionId"]),
 
   userSettings: defineTable({
     userId: v.string(),

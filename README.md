@@ -41,9 +41,12 @@
 
 ## Convex Cloud Sync (Current Behavior)
 
-- This is currently a **single-user app**. Convex project sync is deployment-level and not user-scoped/auth-scoped yet.
+- Convex sync is user-scoped via Clerk auth.
 - Local project edits are saved to IndexedDB automatically.
-- Cloud sync is optimized for bandwidth:
-  - Sync runs when leaving/closing the editor view (component unmount flow).
-  - A `sendBeacon` fallback sync runs on hard unload (refresh/tab close).
-  - Cloud sync does **not** run on every edit or when a tab is merely backgrounded.
+- Cloud sync is optimized to reduce conflicts without waiting until exit:
+  - Dirty projects sync in the background on a debounce after edits.
+  - Exit / page lifecycle sync is still used as a best-effort fallback.
+  - Project assets are uploaded before the project payload is mirrored to cloud storage.
+- Only one active editor lease is allowed per project:
+  - Opening the same project elsewhere shows an `Edit Here` takeover flow.
+  - Taking over a lease forces the previous editor into a blocked read-only state until it explicitly takes the lease back.

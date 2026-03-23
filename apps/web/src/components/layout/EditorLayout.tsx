@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Toolbar } from './Toolbar';
 import { ObjectEditor } from '../editors/ObjectEditor';
@@ -14,6 +14,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { CURRENT_SCHEMA_VERSION, createAutoCheckpoint, loadProject, migrateAllLocalProjects } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
+import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
@@ -27,7 +28,7 @@ type FullscreenPanel = 'code' | 'stage' | null;
 export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { project, isDirty, openProject, saveCurrentProject, duplicateObject, removeObject } = useProjectStore();
+  const { project, isDirty, openProject, saveCurrentProject, closeProject, duplicateObject, removeObject } = useProjectStore();
   const {
     isPlaying,
     selectedSceneId,
@@ -61,9 +62,20 @@ export function EditorLayout() {
   const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
   const isBlockingCloudSyncRef = useRef(false);
   const activeProjectId = project?.id ?? null;
+  const leaseProjectId = projectId ?? activeProjectId;
+  const {
+    leaseStatus,
+    activeEditorSessionId,
+    isWriteAllowed,
+    takeOverLease,
+    retryLease,
+  } = useProjectLease(leaseProjectId);
+  const isProjectLeaseBlocking = !!leaseProjectId && leaseStatus !== 'active' && leaseStatus !== 'idle';
+  const isCloudWriteEnabled = !leaseProjectId || isWriteAllowed;
 
   // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
-  const { syncProjectToCloud } = useCloudSync({
+  const { syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
+    enabled: isCloudWriteEnabled,
     currentProjectId: project?.id ?? null,
     currentProject: project,
     isDirty,
@@ -73,21 +85,21 @@ export function EditorLayout() {
 
 
   useEffect(() => {
-    if (!project || !isDirty) return;
+    if (!project || !isDirty || !isCloudWriteEnabled) return;
 
     const timeout = window.setTimeout(() => {
       void saveCurrentProject();
     }, 800);
 
     return () => window.clearTimeout(timeout);
-  }, [project, isDirty, saveCurrentProject]);
+  }, [project, isCloudWriteEnabled, isDirty, saveCurrentProject]);
 
   useEffect(() => {
     isBlockingCloudSyncRef.current = isBlockingCloudSync;
   }, [isBlockingCloudSync]);
 
   useEffect(() => {
-    if (!activeProjectId) return;
+    if (!activeProjectId || !isCloudWriteEnabled) return;
 
     const intervalId = window.setInterval(() => {
       const latestProject = useProjectStore.getState().project;
@@ -96,11 +108,11 @@ export function EditorLayout() {
     }, 2 * 60 * 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [activeProjectId]);
+  }, [activeProjectId, isCloudWriteEnabled]);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!project || isBlockingCloudSyncRef.current) {
+      if (!project || !isCloudWriteEnabled || isBlockingCloudSyncRef.current) {
         return;
       }
 
@@ -122,7 +134,7 @@ export function EditorLayout() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [project, saveCurrentProject, syncProjectToCloud]);
+  }, [isCloudWriteEnabled, project, saveCurrentProject, syncProjectToCloud]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {
@@ -204,6 +216,30 @@ export function EditorLayout() {
     setShowProjectDialog(false);
   }, [navigate, setShowProjectDialog]);
 
+  const handleTakeOverLease = useCallback(async () => {
+    const didAcquire = await takeOverLease();
+    if (!didAcquire || !leaseProjectId) {
+      return;
+    }
+
+    try {
+      await syncProjectFromCloud(leaseProjectId);
+      const refreshedProject = await loadProject(leaseProjectId);
+      if (refreshedProject) {
+        openProject(refreshedProject);
+      }
+    } catch (error) {
+      console.error('[ProjectLease] Failed to refresh project after takeover:', error);
+    }
+  }, [leaseProjectId, openProject, syncProjectFromCloud, takeOverLease]);
+
+  useEffect(() => {
+    if (!isProjectLeaseBlocking || !isPlaying) {
+      return;
+    }
+    stopPlaying();
+  }, [isPlaying, isProjectLeaseBlocking, stopPlaying]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
     const isTyping = isTextEntryTarget(e.target);
@@ -214,6 +250,11 @@ export function EditorLayout() {
     }
 
     if (assistantLockRunId) {
+      e.preventDefault();
+      return;
+    }
+
+    if (isProjectLeaseBlocking) {
       e.preventDefault();
       return;
     }
@@ -417,6 +458,7 @@ export function EditorLayout() {
     backgroundEditorOpen,
     backgroundShortcutHandler,
     assistantLockRunId,
+    isProjectLeaseBlocking,
   ]);
 
   useEffect(() => {
@@ -445,32 +487,84 @@ export function EditorLayout() {
     document.addEventListener('mouseup', handleMouseUp);
   };
 
+  const projectLeaseOverlay = isProjectLeaseBlocking ? (
+    <div className="fixed inset-0 z-[100240] bg-background/72 backdrop-blur-[1px] flex items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-xl border bg-background px-6 py-5 shadow-2xl">
+        <h2 className="text-lg font-semibold">
+          {leaseStatus === 'acquiring'
+            ? 'Checking active editor...'
+            : leaseStatus === 'lost'
+              ? 'Editing moved to another editor'
+              : leaseStatus === 'error'
+                ? 'Could not verify editor ownership'
+                : 'Another editor is active'}
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {leaseStatus === 'acquiring'
+            ? 'Please wait while we confirm whether this project is already being edited elsewhere.'
+            : leaseStatus === 'error'
+              ? 'We could not confirm the current editor lease for this project.'
+              : activeEditorSessionId
+                ? `Project ${leaseProjectId} is currently owned by another editor session.`
+                : 'This project is currently blocked from editing in this window.'}
+        </p>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              closeProject();
+              navigate('/');
+            }}
+          >
+            Go Back
+          </Button>
+          {leaseStatus === 'error' ? (
+            <Button onClick={() => void retryLease()}>
+              Retry
+            </Button>
+          ) : leaseStatus === 'acquiring' ? null : (
+            <Button onClick={() => void handleTakeOverLease()}>
+              Edit Here
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  const withProjectLeaseOverlay = (content: ReactNode) => (
+    <>
+      {content}
+      {projectLeaseOverlay}
+    </>
+  );
+
   if (isLoading) {
-    return (
+    return withProjectLeaseOverlay(
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-muted-foreground">Loading project...</p>
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (isPlaying) {
-    return <StagePanel fullscreen />;
+    return withProjectLeaseOverlay(<StagePanel fullscreen />);
   }
 
   if (backgroundEditorOpen) {
-    return <BackgroundCanvasEditor />;
+    return withProjectLeaseOverlay(<BackgroundCanvasEditor />);
   }
 
   if (worldBoundaryEditorOpen) {
-    return <WorldBoundaryEditor />;
+    return withProjectLeaseOverlay(<WorldBoundaryEditor />);
   }
 
   // Fullscreen code editor
   if (fullscreenPanel === 'code') {
-    return (
+    return withProjectLeaseOverlay(
       <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
         <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
           <span className="text-sm font-medium">Code Editor (Press ` or Esc to exit)</span>
@@ -481,13 +575,13 @@ export function EditorLayout() {
         <div className="flex-1 overflow-hidden">
           <ObjectEditor />
         </div>
-      </div>
+      </div>,
     );
   }
 
   // Fullscreen stage (canvas only, no properties)
   if (fullscreenPanel === 'stage') {
-    return (
+    return withProjectLeaseOverlay(
       <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
         <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
           <span className="text-sm font-medium">Stage (Press ` or Esc to exit)</span>
@@ -500,11 +594,11 @@ export function EditorLayout() {
             <PhaserCanvas isPlaying={false} />
           </div>
         </div>
-      </div>
+      </div>,
     );
   }
 
-  return (
+  return withProjectLeaseOverlay(
     <div className="relative flex flex-col h-screen bg-background">
       <Toolbar />
 
@@ -540,8 +634,8 @@ export function EditorLayout() {
             </div>
           </>
         ) : (
-          <ProjectDialog onProjectOpen={handleProjectOpen} mode="page" />
-        )}
+              <ProjectDialog onProjectOpen={handleProjectOpen} mode="page" />
+            )}
       </div>
 
       {project && showProjectDialog && (
@@ -578,6 +672,6 @@ export function EditorLayout() {
       ) : null}
 
       <AiAssistantPanel />
-    </div>
+    </div>,
   );
 }

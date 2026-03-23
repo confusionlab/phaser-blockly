@@ -68,6 +68,10 @@ export const upsert = mutation({
       .first();
 
     if (existing) {
+      if (existing.orphanedAt !== undefined) {
+        const { orphanedAt: _orphanedAt, ...nextRow } = existing;
+        await ctx.db.replace(existing._id, nextRow);
+      }
       if (existing.storageId !== args.storageId) {
         await ctx.storage.delete(args.storageId);
       }
