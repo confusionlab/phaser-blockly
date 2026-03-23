@@ -1,0 +1,322 @@
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { cn } from '@/lib/utils';
+import { getVisiblePeaks, type WaveformData } from '@/lib/audioWaveform';
+
+const MIN_TRIM_SECONDS = 0.1;
+
+interface WaveformViewportProps {
+  waveform: WaveformData | null;
+  duration: number;
+  currentTime: number;
+  trimStart: number;
+  trimEnd: number;
+  onSeek?: (time: number) => void;
+  onTrimCommit?: (trimStart: number, trimEnd: number) => void;
+  className?: string;
+}
+
+type InteractionMode = 'trim-start' | 'trim-end' | 'seek' | null;
+
+const StaticWaveformBars = memo(function StaticWaveformBars({
+  bars,
+  fill,
+}: {
+  bars: number[];
+  fill: string;
+}) {
+  return (
+    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      {bars.map((peak, index) => {
+        const x = (index / bars.length) * 100;
+        const width = 100 / bars.length;
+        const height = Math.max(peak * 76, 3);
+
+        return (
+          <rect
+            key={index}
+            x={x}
+            y={50 - height / 2}
+            width={Math.max(width * 0.72, 0.32)}
+            height={height}
+            rx={0.28}
+            fill={fill}
+          />
+        );
+      })}
+    </svg>
+  );
+});
+
+export function WaveformViewport({
+  waveform,
+  duration,
+  currentTime,
+  trimStart,
+  trimEnd,
+  onSeek,
+  onTrimCommit,
+  className,
+}: WaveformViewportProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const interactionModeRef = useRef<InteractionMode>(null);
+  const activePointerIdRef = useRef<number | null>(null);
+  const activePointerTargetRef = useRef<HTMLElement | null>(null);
+  const draftTrimRef = useRef({ trimStart, trimEnd });
+  const scrubRafRef = useRef<number | null>(null);
+  const durationRef = useRef(duration);
+  const onSeekRef = useRef(onSeek);
+  const onTrimCommitRef = useRef(onTrimCommit);
+
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [draftTrim, setDraftTrim] = useState({ trimStart, trimEnd });
+
+  durationRef.current = duration;
+  onSeekRef.current = onSeek;
+  onTrimCommitRef.current = onTrimCommit;
+
+  useEffect(() => {
+    if (interactionModeRef.current === 'trim-start' || interactionModeRef.current === 'trim-end') {
+      return;
+    }
+
+    const nextDraft = { trimStart, trimEnd };
+    draftTrimRef.current = nextDraft;
+    setDraftTrim(nextDraft);
+  }, [trimEnd, trimStart]);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width);
+    });
+
+    observer.observe(element);
+    setContainerWidth(element.getBoundingClientRect().width);
+
+    return () => observer.disconnect();
+  }, []);
+
+  const bars = useMemo(() => {
+    if (!waveform || duration <= 0) {
+      return [];
+    }
+
+    const barCount = Math.max(72, Math.floor(containerWidth / 4));
+    return getVisiblePeaks(waveform, 0, duration, barCount);
+  }, [containerWidth, duration, waveform]);
+
+  useEffect(() => {
+    return () => {
+      if (scrubRafRef.current !== null) {
+        window.cancelAnimationFrame(scrubRafRef.current);
+      }
+
+      activePointerTargetRef.current = null;
+      activePointerIdRef.current = null;
+    };
+  }, []);
+
+  const updateTimeFromClientX = useCallback((clientX: number): number | null => {
+    const element = containerRef.current;
+    if (!element || durationRef.current <= 0) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const clampedTime = Math.max(0, Math.min(durationRef.current, ((clientX - rect.left) / rect.width) * durationRef.current));
+    return clampedTime;
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const interactionMode = interactionModeRef.current;
+      if (!interactionMode || (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current)) {
+        return;
+      }
+
+      const nextTime = updateTimeFromClientX(event.clientX);
+      if (nextTime === null) {
+        return;
+      }
+
+      if (interactionMode === 'seek') {
+        if (!onSeekRef.current) {
+          return;
+        }
+
+        if (scrubRafRef.current !== null) {
+          window.cancelAnimationFrame(scrubRafRef.current);
+        }
+        scrubRafRef.current = window.requestAnimationFrame(() => {
+          onSeekRef.current?.(nextTime);
+        });
+        return;
+      }
+
+      const currentDraft = draftTrimRef.current;
+      const nextDraft = interactionMode === 'trim-start'
+        ? {
+            trimStart: Math.min(nextTime, currentDraft.trimEnd - MIN_TRIM_SECONDS),
+            trimEnd: currentDraft.trimEnd,
+          }
+        : {
+            trimStart: currentDraft.trimStart,
+            trimEnd: Math.max(nextTime, currentDraft.trimStart + MIN_TRIM_SECONDS),
+          };
+
+      draftTrimRef.current = nextDraft;
+      setDraftTrim(nextDraft);
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const interactionMode = interactionModeRef.current;
+      if (!interactionMode || (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current)) {
+        return;
+      }
+
+      if (scrubRafRef.current !== null) {
+        window.cancelAnimationFrame(scrubRafRef.current);
+        scrubRafRef.current = null;
+      }
+
+      interactionModeRef.current = null;
+      activePointerIdRef.current = null;
+
+      const captureTarget = activePointerTargetRef.current;
+      if (captureTarget?.hasPointerCapture(event.pointerId)) {
+        captureTarget.releasePointerCapture(event.pointerId);
+      }
+      activePointerTargetRef.current = null;
+
+      if (interactionMode === 'trim-start' || interactionMode === 'trim-end') {
+        onTrimCommitRef.current?.(draftTrimRef.current.trimStart, draftTrimRef.current.trimEnd);
+      }
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [updateTimeFromClientX]);
+
+  const displayedTrimStart = draftTrim.trimStart;
+  const displayedTrimEnd = draftTrim.trimEnd;
+  const startPercent = duration > 0 ? (displayedTrimStart / duration) * 100 : 0;
+  const endPercent = duration > 0 ? (displayedTrimEnd / duration) * 100 : 100;
+  const playheadPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const playedSelectedPercent = duration > 0
+    ? Math.max(0, Math.min(playheadPercent, endPercent) - startPercent)
+    : 0;
+
+  const beginScrub = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!onSeek) {
+      return;
+    }
+
+    const nextTime = updateTimeFromClientX(event.clientX);
+    if (nextTime === null) {
+      return;
+    }
+
+    activePointerIdRef.current = event.pointerId;
+    activePointerTargetRef.current = event.currentTarget;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    interactionModeRef.current = 'seek';
+    onSeek(nextTime);
+  };
+
+  return (
+    <div
+      className={cn(
+        'relative overflow-hidden rounded-[24px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,251,248,0.98),rgba(239,244,240,0.96))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]',
+        className,
+      )}
+    >
+      <div className="pointer-events-none absolute inset-x-6 top-0 h-20 rounded-full bg-[radial-gradient(circle_at_top,rgba(127,161,138,0.18),transparent_70%)]" />
+
+      <div
+        ref={containerRef}
+        className="relative h-52 overflow-hidden rounded-[18px] border border-border/60 bg-[linear-gradient(180deg,rgba(236,245,239,0.92),rgba(232,239,234,0.92))] touch-none select-none"
+        onPointerDown={(event) => {
+          if (event.button !== 0) {
+            return;
+          }
+          beginScrub(event);
+        }}
+      >
+        {bars.length > 0 ? (
+          <>
+            <StaticWaveformBars bars={bars} fill="#93b6a2" />
+
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{
+                clipPath: `inset(0 ${Math.max(0, 100 - (startPercent + playedSelectedPercent))}% 0 ${startPercent}%)`,
+              }}
+            >
+              <StaticWaveformBars bars={bars} fill="#5e7f6c" />
+            </div>
+
+            <div className="pointer-events-none absolute inset-y-0 left-0 bg-black/16" style={{ width: `${startPercent}%` }} />
+            <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/16" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
+            <div
+              className="pointer-events-none absolute inset-y-3 rounded-[14px] border border-white/60 bg-white/15 shadow-[inset_0_0_0_1px_rgba(94,127,108,0.15)]"
+              style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
+            />
+            <div
+              className="pointer-events-none absolute inset-y-0 z-10 w-px bg-foreground/80 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]"
+              style={{ left: `${playheadPercent}%` }}
+            />
+          </>
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Preparing waveform...
+          </div>
+        )}
+
+        <button
+          type="button"
+          className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
+          style={{ left: `${startPercent}%` }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            activePointerIdRef.current = event.pointerId;
+            activePointerTargetRef.current = event.currentTarget;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            interactionModeRef.current = 'trim-start';
+            draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
+          }}
+        >
+          <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
+          <span className="sr-only">Adjust start trim</span>
+        </button>
+
+        <button
+          type="button"
+          className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
+          style={{ left: `${endPercent}%` }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            activePointerIdRef.current = event.pointerId;
+            activePointerTargetRef.current = event.currentTarget;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            interactionModeRef.current = 'trim-end';
+            draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
+          }}
+        >
+          <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
+          <span className="sr-only">Adjust end trim</span>
+        </button>
+      </div>
+    </div>
+  );
+}

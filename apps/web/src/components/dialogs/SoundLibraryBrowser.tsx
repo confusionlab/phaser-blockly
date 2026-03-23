@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@convex-generated/api";
 import type { Id } from "@convex-generated/dataModel";
 import {
@@ -43,8 +43,9 @@ export function SoundLibraryBrowser({
   const [playingId, setPlayingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const { isAuthenticated } = useConvexAuth();
 
-  const items = useQuery(api.soundLibrary.list);
+  const items = useQuery(api.soundLibrary.list, isAuthenticated ? {} : "skip");
   const generateUploadUrl = useMutation(api.soundLibrary.generateUploadUrl);
   const createItem = useMutation(api.soundLibrary.create);
   const removeItem = useMutation(api.soundLibrary.remove);
@@ -153,7 +154,7 @@ export function SoundLibraryBrowser({
           <Button
             size="sm"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading || !isAuthenticated}
           >
             {uploading ? (
               <Loader2 className="size-4 animate-spin" />
@@ -173,7 +174,12 @@ export function SoundLibraryBrowser({
         </DialogHeader>
 
         <ScrollArea className="flex-1 mt-4">
-          {!items ? (
+          {!isAuthenticated ? (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+              <p className="mb-2">Sign in to use the cloud sound library</p>
+              <p className="text-sm">Importing and recording still work locally.</p>
+            </div>
+          ) : !items ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
             </div>
@@ -243,7 +249,7 @@ export function SoundLibraryBrowser({
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!selectedId || loadingSelect}
+            disabled={!isAuthenticated || !selectedId || loadingSelect}
           >
             {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
             Insert Sound

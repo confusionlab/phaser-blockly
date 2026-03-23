@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@convex-generated/api";
 import type { Id } from "@convex-generated/dataModel";
 import {
@@ -76,8 +76,9 @@ export function ObjectLibraryBrowser({
 }: ObjectLibraryBrowserProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loadingSelect, setLoadingSelect] = useState(false);
+  const { isAuthenticated } = useConvexAuth();
 
-  const items = useQuery(api.objectLibrary.list) as ObjectLibraryItem[] | undefined;
+  const items = useQuery(api.objectLibrary.list, isAuthenticated ? {} : "skip") as ObjectLibraryItem[] | undefined;
   const removeItem = useMutation(api.objectLibrary.remove);
 
   const handleDelete = async (id: Id<"objectLibrary">) => {
@@ -162,7 +163,12 @@ export function ObjectLibraryBrowser({
         </DialogHeader>
 
         <ScrollArea className="flex-1 mt-4">
-          {!items ? (
+          {!isAuthenticated ? (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+              <p className="mb-2">Sign in to use the object library</p>
+              <p className="text-sm">The editor still works locally without it.</p>
+            </div>
+          ) : !items ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
             </div>
@@ -235,7 +241,7 @@ export function ObjectLibraryBrowser({
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!selectedId || loadingSelect}
+            disabled={!isAuthenticated || !selectedId || loadingSelect}
           >
             {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
             Insert Object

@@ -3,6 +3,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { SoundList } from './sound/SoundList';
 import { WaveformEditor } from './sound/WaveformEditor';
+import { RecordingStudio } from './sound/RecordingStudio';
 import { getEffectiveObjectProps } from '@/types';
 import type { Sound } from '@/types';
 
@@ -10,6 +11,7 @@ export function SoundEditor() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedSoundIndex, setSelectedSoundIndex] = useState(0);
+  const [workspaceMode, setWorkspaceMode] = useState<'edit' | 'record'>('edit');
 
   const { project, updateObject } = useProjectStore();
   const { selectedSceneId, selectedObjectId } = useEditorStore();
@@ -37,6 +39,7 @@ export function SoundEditor() {
     }
     setPlayingId(null);
     setSelectedSoundIndex(index);
+    setWorkspaceMode('edit');
   }, []);
 
   const handleAddSound = useCallback(
@@ -46,6 +49,7 @@ export function SoundEditor() {
       updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
       // Select the newly added sound
       setSelectedSoundIndex(updatedSounds.length - 1);
+      setWorkspaceMode('edit');
     },
     [selectedSceneId, selectedObjectId, sounds, updateObject]
   );
@@ -104,7 +108,10 @@ export function SoundEditor() {
         setPlayingId(null);
       }
     };
-    audio.play();
+    void audio.play().catch((error) => {
+      console.error('Failed to play sound preview:', error);
+      setPlayingId(null);
+    });
     audioRef.current = audio;
     setPlayingId(sound.id);
   }, [playingId]);
@@ -143,6 +150,7 @@ export function SoundEditor() {
         sounds={sounds}
         selectedIndex={validSelectedIndex}
         playingId={playingId}
+        onOpenRecorder={() => setWorkspaceMode('record')}
         onSelectSound={handleSelectSound}
         onAddSound={handleAddSound}
         onDeleteSound={handleDeleteSound}
@@ -151,8 +159,18 @@ export function SoundEditor() {
         onStopSound={handleStopSound}
       />
 
-      {/* Right: Waveform Editor */}
-      <WaveformEditor sound={selectedSound} onTrimChange={handleTrimChange} />
+      {workspaceMode === 'record' ? (
+        <RecordingStudio
+          onAddSound={handleAddSound}
+          onCancel={() => setWorkspaceMode('edit')}
+        />
+      ) : (
+        <WaveformEditor
+          sound={selectedSound}
+          onTrimChange={handleTrimChange}
+          onCreateRecording={() => setWorkspaceMode('record')}
+        />
+      )}
     </div>
   );
 }
