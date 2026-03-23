@@ -779,8 +779,6 @@ export async function deleteProject(id: string): Promise<void> {
   });
 }
 
-const HISTORY_START_DATE = new Date(0);
-const HISTORY_END_DATE = new Date(8640000000000000);
 const MAX_CHECKPOINT_NAME_LENGTH = 80;
 
 type RevisionCreateOptions = {
@@ -795,6 +793,18 @@ function normalizeCheckpointName(name: string): string {
 
 function isNonEmptyStringKey(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+type RevisionRangeBound = Date | typeof Dexie.minKey | typeof Dexie.maxKey;
+
+function getProjectRevisionCreatedAtRange(projectId: string): [lower: [string, RevisionRangeBound], upper: [string, RevisionRangeBound]] {
+  return [[projectId, Dexie.minKey], [projectId, Dexie.maxKey]];
+}
+
+function getProjectCheckpointCreatedAtRange(
+  projectId: string,
+): [lower: [string, true, RevisionRangeBound], upper: [string, true, RevisionRangeBound]] {
+  return [[projectId, true, Dexie.minKey], [projectId, true, Dexie.maxKey]];
 }
 
 function toPublicRevision(record: ProjectRevisionRecord): ProjectRevision {
@@ -820,9 +830,10 @@ async function getProjectRevisionsAscending(projectId: string): Promise<ProjectR
     return [];
   }
 
+  const [lowerBound, upperBound] = getProjectRevisionCreatedAtRange(projectId);
   return await db.projectRevisions
     .where('[projectId+createdAt]')
-    .between([projectId, HISTORY_START_DATE], [projectId, HISTORY_END_DATE])
+    .between(lowerBound, upperBound)
     .sortBy('createdAt');
 }
 
@@ -831,9 +842,10 @@ async function getLatestRevision(projectId: string): Promise<ProjectRevisionReco
     return null;
   }
 
+  const [lowerBound, upperBound] = getProjectRevisionCreatedAtRange(projectId);
   const latest = await db.projectRevisions
     .where('[projectId+createdAt]')
-    .between([projectId, HISTORY_START_DATE], [projectId, HISTORY_END_DATE])
+    .between(lowerBound, upperBound)
     .reverse()
     .first();
   return latest ?? null;
@@ -844,9 +856,10 @@ async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRe
     return null;
   }
 
+  const [lowerBound, upperBound] = getProjectCheckpointCreatedAtRange(projectId);
   const candidates = await db.projectRevisions
     .where('[projectId+isCheckpoint+createdAt]')
-    .between([projectId, true, HISTORY_START_DATE], [projectId, true, HISTORY_END_DATE])
+    .between(lowerBound, upperBound)
     .reverse()
     .first();
   return candidates ?? null;
