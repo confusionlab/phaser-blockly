@@ -2,6 +2,7 @@ import { type ChangeEvent, memo, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatAudioTime, generateWaveform, type WaveformData } from '@/lib/audioWaveform';
+import { EditorToolbar } from '@/components/editors/shared/EditorToolbar';
 import { WaveformViewport } from './WaveformViewport';
 import type { Sound } from '@/types';
 import { Mic, Play, RotateCcw, Square, Volume2, VolumeX } from 'lucide-react';
@@ -205,67 +206,69 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4 md:p-5">
-      <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-4 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" className="rounded-full" onClick={resetTrim} disabled={!duration}>
-              <RotateCcw className="size-4" />
-              Reset Trim
-            </Button>
-            <div className="rounded-full bg-white/80 px-4 py-2 font-mono text-sm text-foreground shadow-sm ring-1 ring-border/70">
-              {formatAudioTime(trimStart, true)} to {formatAudioTime(trimEnd, true)}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button variant="outline" className="rounded-full" onClick={handleRestart}>
-              <RotateCcw className="size-4" />
-              Restart
-            </Button>
-            <Button className="rounded-full px-5" onClick={handleTogglePlay}>
-              {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
-              {isPlaying ? 'Stop' : 'Play'}
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 md:justify-self-end">
-            <Button variant="ghost" className="rounded-full" onClick={toggleMute}>
-              {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-              {isMuted ? 'Muted' : 'Volume'}
-            </Button>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={isMuted ? 0 : volume}
-              onChange={handleVolumeChange}
-              className="h-2 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
-            />
+    <div className="flex flex-1 min-h-0 flex-col">
+      <EditorToolbar contentClassName="grid min-w-full gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" className="rounded-full" onClick={resetTrim} disabled={!duration}>
+            <RotateCcw className="size-4" />
+            Reset Trim
+          </Button>
+          <div className="rounded-full bg-white px-4 py-2 font-mono text-sm text-foreground shadow-sm ring-1 ring-border/70">
+            {formatAudioTime(trimStart, true)} to {formatAudioTime(trimEnd, true)}
           </div>
         </div>
-      </div>
 
-      <div className="flex-1 min-h-0 rounded-[28px] border border-border/70 bg-background/95 p-4 shadow-sm">
-        <WaveformViewport
-          waveform={waveform}
-          duration={duration}
-          currentTime={currentTime}
-          trimStart={trimStart}
-          trimEnd={trimEnd}
-          onSeek={handleSeek}
-          onTrimCommit={(nextStart, nextEnd) => {
-            setTrimStart(nextStart);
-            setTrimEnd(nextEnd);
-            onTrimChange(nextStart, nextEnd);
-          }}
-          className={cn(isLoadingWaveform && 'opacity-70')}
-        />
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Button variant="outline" className="rounded-full" onClick={handleRestart}>
+            <RotateCcw className="size-4" />
+            Restart
+          </Button>
+          <Button className="rounded-full px-5" onClick={handleTogglePlay}>
+            {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
+            {isPlaying ? 'Stop' : 'Play'}
+          </Button>
+        </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
-          <span className="rounded-full bg-muted px-3 py-1">Full take {formatAudioTime(duration, true)}</span>
+        <div className="flex flex-wrap items-center gap-2 md:justify-self-end">
+          <Button variant="ghost" className="rounded-full" onClick={toggleMute}>
+            {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+            {isMuted ? 'Muted' : 'Volume'}
+          </Button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={isMuted ? 0 : volume}
+            onChange={handleVolumeChange}
+            className="h-2 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
+          />
+        </div>
+      </EditorToolbar>
+
+      <div className="flex-1 min-h-0 p-4 md:p-5">
+        <div className="flex h-full min-h-0 flex-col gap-4">
+          <div className="flex-1 min-h-0 rounded-[28px] border border-border/70 bg-background/95 p-4 shadow-sm">
+            <WaveformViewport
+              waveform={waveform}
+              duration={duration}
+              currentTime={currentTime}
+              trimStart={trimStart}
+              trimEnd={trimEnd}
+              onSeek={handleSeek}
+              onTrimCommit={(nextStart, nextEnd) => {
+                setTrimStart(nextStart);
+                setTrimEnd(nextEnd);
+                onTrimChange(nextStart, nextEnd);
+              }}
+              className={cn(isLoadingWaveform && 'opacity-70')}
+            />
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
+              <span className="rounded-full bg-muted px-3 py-1">Full take {formatAudioTime(duration, true)}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
