@@ -5,7 +5,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
-import type { Scene as SceneData, GameObject, ComponentDefinition, Variable, BackgroundConfig } from '@/types';
+import type { Scene as SceneData, GameObject, ComponentDefinition, Variable, BackgroundConfig, CostumeBounds } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
@@ -35,6 +35,8 @@ const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 const BACKGROUND_IMAGE_CACHE_LIMIT = 256;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
 const INVENTORY_PAGE_SIZE = 8;
+const COSTUME_CANVAS_SIZE = 1024;
+const INVENTORY_PREVIEW_SIZE = 40;
 
 const backgroundDecodeCache = new Map<string, HTMLImageElement>();
 const backgroundDecodePending = new Map<string, Promise<HTMLImageElement>>();
@@ -388,6 +390,55 @@ function resolveSceneByReference(scenes: SceneData[], sceneRef: string): SceneDa
 
   const byName = scenes.filter((scene) => scene.name === normalizedRef);
   return byName.length === 1 ? byName[0] : undefined;
+}
+
+function InventoryCostumePreview({
+  assetId,
+  bounds,
+  label,
+  size = INVENTORY_PREVIEW_SIZE,
+}: {
+  assetId: string;
+  bounds: CostumeBounds | null;
+  label: string;
+  size?: number;
+}) {
+  if (bounds && bounds.width > 0 && bounds.height > 0) {
+    const scale = Math.min(1, size / Math.max(bounds.width, bounds.height));
+    return (
+      <div
+        role="img"
+        aria-label={label}
+        className="relative pointer-events-none"
+        style={{ width: size, height: size }}
+      >
+        <div
+          className="absolute"
+          style={{
+            backgroundImage: `url(${assetId})`,
+            backgroundPosition: `${-bounds.x}px ${-bounds.y}px`,
+            backgroundSize: `${COSTUME_CANVAS_SIZE}px ${COSTUME_CANVAS_SIZE}px`,
+            backgroundRepeat: 'no-repeat',
+            imageRendering: 'pixelated',
+            width: bounds.width,
+            height: bounds.height,
+            left: '50%',
+            top: '50%',
+            transform: `translate(-50%, -50%) scale(${scale})`,
+            transformOrigin: 'center center',
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={assetId}
+      alt={label}
+      className="max-h-10 max-w-10 object-contain pointer-events-none"
+    />
+  );
 }
 
 interface PhaserCanvasProps {
@@ -1346,6 +1397,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     inventoryPage * INVENTORY_PAGE_SIZE,
     (inventoryPage + 1) * INVENTORY_PAGE_SIZE,
   );
+  const canGoToPreviousInventoryPage = totalInventoryPages > 1 && inventoryPage > 0;
+  const canGoToNextInventoryPage = totalInventoryPages > 1 && inventoryPage < totalInventoryPages - 1;
 
   return (
     <div className="relative w-full h-full">
@@ -1353,7 +1406,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         ref={containerRef}
         className={isPlaying ? "w-full h-full" : "w-full h-full min-h-[300px]"}
       />
-      {isPlaying && (
+      {isPlaying && inventoryItems.length > 0 && (
         <>
           <div
             data-pocha-ui="inventory"
@@ -1361,7 +1414,16 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
           >
             <div className="pointer-events-auto mx-auto max-w-4xl rounded-2xl border bg-card/92 backdrop-blur px-3 py-3 shadow-lg">
               <div className="flex items-center gap-2">
-                <div className="text-xs font-medium text-muted-foreground min-w-20">Inventory</div>
+                {canGoToPreviousInventoryPage ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setInventoryPage((page) => Math.max(0, page - 1))}
+                  >
+                    ←
+                  </Button>
+                ) : null}
                 <div className="flex-1 grid grid-cols-4 md:grid-cols-8 gap-2">
                   {visibleInventoryItems.map((item) => (
                     <button
@@ -1395,10 +1457,10 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                       }}
                     >
                       {item.costumeAssetId ? (
-                        <img
-                          src={item.costumeAssetId}
-                          alt={item.label}
-                          className="max-h-10 max-w-10 object-contain pointer-events-none"
+                        <InventoryCostumePreview
+                          assetId={item.costumeAssetId}
+                          bounds={item.costumeBounds}
+                          label={item.label}
                         />
                       ) : (
                         <span className="px-2 text-[11px] text-center text-foreground/80 pointer-events-none">
@@ -1408,29 +1470,16 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-1">
+                {canGoToNextInventoryPage ? (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={inventoryPage === 0}
-                    onClick={() => setInventoryPage((page) => Math.max(0, page - 1))}
-                  >
-                    Prev
-                  </Button>
-                  <div className="text-[11px] text-muted-foreground min-w-12 text-center">
-                    {totalInventoryPages <= 1 ? '1/1' : `${inventoryPage + 1}/${totalInventoryPages}`}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={inventoryPage >= totalInventoryPages - 1}
                     onClick={() => setInventoryPage((page) => Math.min(totalInventoryPages - 1, page + 1))}
                   >
-                    Next
+                    →
                   </Button>
-                </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1445,10 +1494,10 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                 }`}
               >
                 {draggedInventoryItem.entry.costumeAssetId ? (
-                  <img
-                    src={draggedInventoryItem.entry.costumeAssetId}
-                    alt={draggedInventoryItem.entry.label}
-                    className="max-h-10 max-w-10 object-contain"
+                  <InventoryCostumePreview
+                    assetId={draggedInventoryItem.entry.costumeAssetId}
+                    bounds={draggedInventoryItem.entry.costumeBounds}
+                    label={draggedInventoryItem.entry.label}
                   />
                 ) : (
                   <span className="px-2 text-[11px] text-center text-foreground/80">
