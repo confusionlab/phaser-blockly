@@ -10,10 +10,6 @@ import type { BackgroundConfig, WorldPoint } from '@/types';
 import { DEFAULT_BACKGROUND_CHUNK_SIZE, getChunkWorldBounds, parseChunkKey } from '@/lib/background/chunkMath';
 import {
   clampViewportZoom,
-  panCameraFromDrag,
-  panCameraFromWheel,
-  screenToWorldPoint,
-  zoomCameraAtClientPoint,
 } from '@/lib/viewportNavigation';
 
 const WORLD_BOUNDARY_EDITOR_PADDING = 160;
@@ -98,15 +94,12 @@ function clientToCanvasPoint(
 ) {
   const rect = stage.getBoundingClientRect();
   const viewBox = getViewBox(view, canvasWidth, canvasHeight);
-  const pixelsPerWorldUnit = Math.min(rect.width / viewBox.width, rect.height / viewBox.height);
-  return screenToWorldPoint(
-    clientX,
-    clientY,
-    rect,
-    { x: view.centerX, y: view.centerY },
-    pixelsPerWorldUnit,
-    'down',
-  );
+  const normalizedX = (clientX - rect.left) / rect.width;
+  const normalizedY = (clientY - rect.top) / rect.height;
+  return {
+    x: viewBox.minX + normalizedX * viewBox.width,
+    y: viewBox.minY + normalizedY * viewBox.height,
+  };
 }
 
 export function WorldBoundaryEditor() {
@@ -185,18 +178,12 @@ export function WorldBoundaryEditor() {
       if (!stage) return;
       const viewBox = getViewBox(viewRef.current, canvasWidth, canvasHeight);
       const rect = stage.getBoundingClientRect();
-      const pixelsPerWorldUnit = Math.min(rect.width / viewBox.width, rect.height / viewBox.height);
-      const nextCamera = panCameraFromDrag(
-        { x: panState.startCenterX, y: panState.startCenterY },
-        event.clientX - panState.startClientX,
-        event.clientY - panState.startClientY,
-        pixelsPerWorldUnit,
-        'down',
-      );
+      const scaleX = rect.width / viewBox.width;
+      const scaleY = rect.height / viewBox.height;
       setView((current) => ({
         ...current,
-        centerX: nextCamera.x,
-        centerY: nextCamera.y,
+        centerX: panState.startCenterX - (event.clientX - panState.startClientX) / scaleX,
+        centerY: panState.startCenterY - (event.clientY - panState.startClientY) / scaleY,
       }));
     };
 
@@ -254,12 +241,18 @@ export function WorldBoundaryEditor() {
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const currentViewBox = getViewBox(viewRef.current, canvasWidth, canvasHeight);
-    const currentPixelsPerWorldUnit = Math.min(
-      rect.width / currentViewBox.width,
-      rect.height / currentViewBox.height,
-    );
+    const normalizedX = (event.clientX - rect.left) / rect.width;
+    const normalizedY = (event.clientY - rect.top) / rect.height;
 
     if (event.ctrlKey || event.metaKey) {
+      const worldBefore = clientToCanvasPoint(
+        event.clientX,
+        event.clientY,
+        event.currentTarget,
+        viewRef.current,
+        canvasWidth,
+        canvasHeight,
+      );
       const zoomDelta = -event.deltaY * 0.01;
       const zoomFactor = Math.max(0.01, 1 + zoomDelta);
       const nextZoom = clampViewportZoom(
@@ -272,38 +265,20 @@ export function WorldBoundaryEditor() {
         canvasWidth,
         canvasHeight,
       );
-      const nextPixelsPerWorldUnit = Math.min(
-        rect.width / nextViewBox.width,
-        rect.height / nextViewBox.height,
-      );
-      const nextCamera = zoomCameraAtClientPoint(
-        event.clientX,
-        event.clientY,
-        rect,
-        { x: viewRef.current.centerX, y: viewRef.current.centerY },
-        currentPixelsPerWorldUnit,
-        nextPixelsPerWorldUnit,
-        'down',
-      );
       setView({
-        centerX: nextCamera.x,
-        centerY: nextCamera.y,
+        centerX: worldBefore.x - (normalizedX - 0.5) * nextViewBox.width,
+        centerY: worldBefore.y - (normalizedY - 0.5) * nextViewBox.height,
         zoom: nextZoom,
       });
       return;
     }
 
-    const nextCamera = panCameraFromWheel(
-      { x: viewRef.current.centerX, y: viewRef.current.centerY },
-      event.deltaX,
-      event.deltaY,
-      currentPixelsPerWorldUnit,
-      'down',
-    );
+    const scaleX = rect.width / currentViewBox.width;
+    const scaleY = rect.height / currentViewBox.height;
     setView((current) => ({
       ...current,
-      centerX: nextCamera.x,
-      centerY: nextCamera.y,
+      centerX: viewRef.current.centerX + event.deltaX / scaleX,
+      centerY: viewRef.current.centerY + event.deltaY / scaleY,
     }));
   };
 
@@ -367,6 +342,7 @@ export function WorldBoundaryEditor() {
           id="world-boundary-editor-stage"
           ref={stageRef}
           viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
+          preserveAspectRatio="none"
           className="absolute inset-0 h-full w-full cursor-crosshair"
           onPointerDown={handleStagePointerDown}
           onWheel={handleStageWheel}
