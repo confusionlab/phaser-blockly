@@ -616,15 +616,17 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
     case 'looks_go_to_back':
       return [indentLine(indent, 'go to back layer')];
     case 'looks_speak':
-      return [indentLine(indent, `speak ${renderBlocklyExpression(getValue(node, 'TEXT'))}`)];
+      return [indentLine(indent, `keep speaking ${renderBlocklyExpression(getValue(node, 'TEXT'))}`)];
+    case 'looks_speak_and_stop':
     case 'looks_speak_for_seconds':
-      return [indentLine(indent, `speak ${renderBlocklyExpression(getValue(node, 'TEXT'))} for ${renderBlocklyExpression(getValue(node, 'SECONDS'))} seconds`)];
+      return [indentLine(indent, `speak ${renderBlocklyExpression(getValue(node, 'TEXT'))} and stop`)];
     case 'looks_stop_speaking':
       return [indentLine(indent, 'stop speaking')];
     case 'looks_target_speak':
-      return [indentLine(indent, `make ${renderBlocklyExpression(getValue(node, 'TARGET'))} speak ${renderBlocklyExpression(getValue(node, 'TEXT'))}`)];
+      return [indentLine(indent, `make ${renderBlocklyExpression(getValue(node, 'TARGET'))} keep speaking ${renderBlocklyExpression(getValue(node, 'TEXT'))}`)];
+    case 'looks_target_speak_and_stop':
     case 'looks_target_speak_for_seconds':
-      return [indentLine(indent, `make ${renderBlocklyExpression(getValue(node, 'TARGET'))} speak ${renderBlocklyExpression(getValue(node, 'TEXT'))} for ${renderBlocklyExpression(getValue(node, 'SECONDS'))} seconds`)];
+      return [indentLine(indent, `make ${renderBlocklyExpression(getValue(node, 'TARGET'))} speak ${renderBlocklyExpression(getValue(node, 'TEXT'))} and stop`)];
     case 'looks_target_stop_speaking':
       return [indentLine(indent, `make ${renderBlocklyExpression(getValue(node, 'TARGET'))} stop speaking`)];
     case 'looks_next_costume':

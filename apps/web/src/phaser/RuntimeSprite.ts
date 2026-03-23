@@ -13,7 +13,7 @@ const SPEECH_BUBBLE_TAIL_HEIGHT = 14;
 const SPEECH_BUBBLE_FADE_DURATION_MS = 300;
 const SPEECH_WORD_REVEAL_STAGGER_MS = 110;
 const SPEECH_WORD_REVEAL_DURATION_MS = 180;
-const SPEECH_AUTO_STOP_HOLD_SECONDS = 0.8;
+const SPEECH_AUTO_STOP_HOLD_SECONDS = 1.3;
 const SPEECH_BUBBLE_TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontFamily: '"Trebuchet MS", "Verdana", sans-serif',
   fontSize: '20px',
@@ -336,6 +336,11 @@ export class RuntimeSprite {
     if (this._stopped) return;
 
     const text = String(rawText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (!/\S/.test(text)) {
+      await this.stopSpeaking();
+      return;
+    }
+
     this.keepSpeaking(text);
     const sessionId = this._speechSessionId;
     const totalDurationMs = this.getSpeechRevealDurationMs(text) + SPEECH_AUTO_STOP_HOLD_SECONDS * 1000;

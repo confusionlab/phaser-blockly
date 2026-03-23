@@ -905,10 +905,9 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
-            type: 'looks_speak_for_seconds',
+            type: 'looks_speak_and_stop',
             inputs: {
-              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } },
-              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '2' } } }
+              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } }
             }
           },
           { kind: 'block', type: 'looks_stop_speaking' },
@@ -924,13 +923,12 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
-            type: 'looks_target_speak_for_seconds',
+            type: 'looks_target_speak_and_stop',
             inputs: {
               TARGET: {
                 block: { kind: 'block', type: 'object_from_dropdown' },
               },
-              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } },
-              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '2' } } }
+              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } }
             }
           },
           {
@@ -1744,29 +1742,34 @@ function registerCustomBlocks() {
   Blockly.Blocks['looks_speak'] = {
     init: function() {
       this.appendValueInput('TEXT')
-        .appendField('speak');
+        .appendField('keep speaking');
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
-      this.setTooltip('Show a speech bubble above this object and fade in the text word by word');
+      this.setTooltip('Show a speech bubble above this object and keep it visible until something stops or replaces it');
     }
+  };
+
+  const initSpeakAndStopBlock = function(this: Blockly.Block) {
+    this.appendValueInput('TEXT')
+      .appendField('speak');
+    this.appendDummyInput()
+      .appendField('and stop');
+    this.setInputsInline(true);
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour('#9966FF');
+    this.setTooltip('Show a speech bubble above this object, reveal the words naturally, then stop speaking shortly after the last word');
+  };
+
+  Blockly.Blocks['looks_speak_and_stop'] = {
+    init: initSpeakAndStopBlock
   };
 
   Blockly.Blocks['looks_speak_for_seconds'] = {
     init: function() {
-      this.appendValueInput('TEXT')
-        .appendField('speak');
-      this.appendValueInput('SECONDS')
-        .setCheck('Number')
-        .appendField('for');
-      this.appendDummyInput()
-        .appendField('seconds');
-      this.setInputsInline(true);
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#9966FF');
-      this.setTooltip('Show a speech bubble above this object, animate the text word by word, then hide it after a delay');
+      initSpeakAndStopBlock.call(this);
     }
   };
 
@@ -1787,32 +1790,37 @@ function registerCustomBlocks() {
         .setCheck('Object')
         .appendField('make');
       this.appendValueInput('TEXT')
-        .appendField('speak');
+        .appendField('keep speaking');
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
-      this.setTooltip('Make another object show a speech bubble and fade in the text word by word');
+      this.setTooltip('Make another object keep showing a speech bubble until something stops or replaces it');
     }
+  };
+
+  const initTargetSpeakAndStopBlock = function(this: Blockly.Block) {
+    this.appendValueInput('TARGET')
+      .setCheck('Object')
+      .appendField('make');
+    this.appendValueInput('TEXT')
+      .appendField('speak');
+    this.appendDummyInput()
+      .appendField('and stop');
+    this.setInputsInline(true);
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour('#9966FF');
+    this.setTooltip('Make another object speak naturally and stop shortly after the last word');
+  };
+
+  Blockly.Blocks['looks_target_speak_and_stop'] = {
+    init: initTargetSpeakAndStopBlock
   };
 
   Blockly.Blocks['looks_target_speak_for_seconds'] = {
     init: function() {
-      this.appendValueInput('TARGET')
-        .setCheck('Object')
-        .appendField('make');
-      this.appendValueInput('TEXT')
-        .appendField('speak');
-      this.appendValueInput('SECONDS')
-        .setCheck('Number')
-        .appendField('for');
-      this.appendDummyInput()
-        .appendField('seconds');
-      this.setInputsInline(true);
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#9966FF');
-      this.setTooltip('Make another object speak for a limited time');
+      initTargetSpeakAndStopBlock.call(this);
     }
   };
 

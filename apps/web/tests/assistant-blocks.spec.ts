@@ -87,7 +87,7 @@ test.describe('assistant block catalog', () => {
     expect(code).toContain('runtime.getTargetY((runtime.getCameraTarget()))');
   });
 
-  test('looks speak generates a sprite speech call', async () => {
+  test('looks speak generates a keep-speaking sprite speech call', async () => {
     installToolboxTestGlobals();
     const Blockly = await import('blockly');
     const { javascriptGenerator } = await import('blockly/javascript');
@@ -110,11 +110,11 @@ test.describe('assistant block catalog', () => {
     const code = javascriptGenerator.workspaceToCode(workspace);
     workspace.dispose();
 
-    expect(code).toContain('sprite.speak(');
+    expect(code).toContain('sprite.keepSpeaking(');
     expect(code).toContain('Hello bubble');
   });
 
-  test('timed speech blocks generate awaited speech sessions', async () => {
+  test('speech-and-stop blocks generate awaited speech sessions', async () => {
     installToolboxTestGlobals();
     const Blockly = await import('blockly');
     const { javascriptGenerator } = await import('blockly/javascript');
@@ -130,30 +130,50 @@ test.describe('assistant block catalog', () => {
 
     const workspace = new Blockly.Workspace();
 
-    const speakFor = workspace.newBlock('looks_speak_for_seconds');
+    const speakAndStop = workspace.newBlock('looks_speak_and_stop');
     const text = workspace.newBlock('text');
-    const seconds = workspace.newBlock('math_number');
-    text.setFieldValue('Timed bubble', 'TEXT');
-    seconds.setFieldValue('3', 'NUM');
-    speakFor.getInput('TEXT')?.connection?.connect(text.outputConnection);
-    speakFor.getInput('SECONDS')?.connection?.connect(seconds.outputConnection);
+    text.setFieldValue('Auto stop bubble', 'TEXT');
+    speakAndStop.getInput('TEXT')?.connection?.connect(text.outputConnection);
 
-    const targetSpeakFor = workspace.newBlock('looks_target_speak_for_seconds');
+    const targetSpeakAndStop = workspace.newBlock('looks_target_speak_and_stop');
     const target = workspace.newBlock('object_from_dropdown');
     const targetText = workspace.newBlock('text');
-    const targetSeconds = workspace.newBlock('math_number');
     target.setFieldValue('hero-id', 'TARGET');
-    targetText.setFieldValue('Target timed bubble', 'TEXT');
-    targetSeconds.setFieldValue('2', 'NUM');
-    targetSpeakFor.getInput('TARGET')?.connection?.connect(target.outputConnection);
-    targetSpeakFor.getInput('TEXT')?.connection?.connect(targetText.outputConnection);
-    targetSpeakFor.getInput('SECONDS')?.connection?.connect(targetSeconds.outputConnection);
+    targetText.setFieldValue('Target auto stop bubble', 'TEXT');
+    targetSpeakAndStop.getInput('TARGET')?.connection?.connect(target.outputConnection);
+    targetSpeakAndStop.getInput('TEXT')?.connection?.connect(targetText.outputConnection);
 
     const code = javascriptGenerator.workspaceToCode(workspace);
     workspace.dispose();
 
-    expect(code).toContain('await sprite.speakFor(');
-    expect(code).toContain('await __targetSprite.speakFor(');
+    expect(code).toContain('await sprite.speakAndStop(');
+    expect(code).toContain('await __targetSprite.speakAndStop(');
+  });
+
+  test('legacy timed speech block ids still compile to auto-stop speech sessions', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    const { javascriptGenerator } = await import('blockly/javascript');
+    await import('../src/components/blockly/toolbox');
+    const { registerCodeGenerators } = await import('../src/phaser/CodeGenerator');
+
+    Blockly.utils.xml.injectDependencies({
+      document: new DOMParser().parseFromString('<xml></xml>', 'text/xml') as unknown as Document,
+      DOMParser,
+      XMLSerializer,
+    });
+    registerCodeGenerators();
+
+    const workspace = new Blockly.Workspace();
+    const legacySpeakFor = workspace.newBlock('looks_speak_for_seconds');
+    const text = workspace.newBlock('text');
+    text.setFieldValue('Legacy bubble', 'TEXT');
+    legacySpeakFor.getInput('TEXT')?.connection?.connect(text.outputConnection);
+
+    const code = javascriptGenerator.workspaceToCode(workspace);
+    workspace.dispose();
+
+    expect(code).toContain('await sprite.speakAndStop(');
   });
 
   test('targeted speech blocks generate target sprite speech calls', async () => {
@@ -187,7 +207,7 @@ test.describe('assistant block catalog', () => {
     const code = javascriptGenerator.workspaceToCode(workspace);
     workspace.dispose();
 
-    expect(code).toContain('runtime.getSprite(__targetId)?.speak(');
+    expect(code).toContain('runtime.getSprite(__targetId)?.keepSpeaking(');
     expect(code).toContain('runtime.getSprite(__targetId)?.stopSpeaking()');
   });
 
