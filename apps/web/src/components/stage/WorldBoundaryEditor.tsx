@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { runInHistoryTransaction } from '@/store/universalHistory';
-import type { WorldPoint } from '@/types';
+import type { BackgroundConfig, WorldPoint } from '@/types';
+import { DEFAULT_BACKGROUND_CHUNK_SIZE, getChunkWorldBounds, parseChunkKey } from '@/lib/background/chunkMath';
 import {
   clampViewportZoom,
   panCameraFromDrag,
@@ -23,6 +24,14 @@ interface WorldBoundaryEditorView {
   centerX: number;
   centerY: number;
   zoom: number;
+}
+
+function getFallbackBackgroundColor(background: BackgroundConfig | null | undefined): string {
+  const value = background?.value;
+  if (typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim())) {
+    return value.trim();
+  }
+  return '#87CEEB';
 }
 
 function userToCanvas(point: WorldPoint, canvasWidth: number, canvasHeight: number) {
@@ -310,6 +319,14 @@ export function WorldBoundaryEditor() {
     closeWorldBoundaryEditor();
   };
 
+  const backgroundBaseColor = getFallbackBackgroundColor(scene.background);
+  const tiledBackgroundChunks = scene.background?.type === 'tiled' && scene.background.chunks
+    ? Object.entries(scene.background.chunks)
+    : [];
+  const backgroundChunkSize = scene.background?.type === 'tiled' && Number.isFinite(scene.background.chunkSize)
+    ? Math.max(32, Math.floor(scene.background.chunkSize as number))
+    : DEFAULT_BACKGROUND_CHUNK_SIZE;
+
   return (
     <div className="fixed inset-0 z-[100001] bg-background flex flex-col overscroll-none">
       <div className="h-12 border-b bg-card px-3 flex items-center justify-between gap-3">
@@ -355,7 +372,35 @@ export function WorldBoundaryEditor() {
           onWheel={handleStageWheel}
           onContextMenu={(event) => event.preventDefault()}
         >
-          <rect x={viewBox.minX} y={viewBox.minY} width={viewBox.width} height={viewBox.height} fill="#111827" />
+          <rect x={viewBox.minX} y={viewBox.minY} width={viewBox.width} height={viewBox.height} fill={backgroundBaseColor} />
+          {scene.background?.type === 'image' && scene.background.value ? (
+            <image
+              href={scene.background.value}
+              x={0}
+              y={0}
+              width={canvasWidth}
+              height={canvasHeight}
+              preserveAspectRatio="none"
+            />
+          ) : null}
+          {tiledBackgroundChunks.map(([key, dataUrl]) => {
+            if (!dataUrl) return null;
+            const parsed = parseChunkKey(key);
+            if (!parsed) return null;
+            const bounds = getChunkWorldBounds(parsed.cx, parsed.cy, backgroundChunkSize);
+            const topLeft = userToCanvas({ x: bounds.left, y: bounds.top }, canvasWidth, canvasHeight);
+            return (
+              <image
+                key={key}
+                href={dataUrl}
+                x={topLeft.x}
+                y={topLeft.y}
+                width={backgroundChunkSize}
+                height={backgroundChunkSize}
+                preserveAspectRatio="none"
+              />
+            );
+          })}
           <rect
             x="1"
             y="1"
@@ -378,7 +423,7 @@ export function WorldBoundaryEditor() {
           {points.length >= 3 && (
             <polygon
               points={polygonPoints}
-              fill="rgba(96,165,250,0.2)"
+              fill="none"
               stroke="#60a5fa"
               strokeWidth="4"
               strokeLinejoin="round"
@@ -405,16 +450,6 @@ export function WorldBoundaryEditor() {
                     setPoints((current) => current.filter((_, pointIndex) => pointIndex !== index));
                   }}
                 />
-                <text
-                  x={canvasPoint.x}
-                  y={canvasPoint.y + 4}
-                  textAnchor="middle"
-                  fontSize="10"
-                  fill="#0f172a"
-                  pointerEvents="none"
-                >
-                  {index + 1}
-                </text>
               </g>
             );
           })}

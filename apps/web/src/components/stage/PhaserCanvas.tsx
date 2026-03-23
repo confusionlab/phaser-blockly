@@ -121,19 +121,7 @@ function drawWorldBoundary(
     graphics.lineTo(point.x, point.y);
   }
   graphics.closePath();
-  if (points.length >= 3) {
-    graphics.fillStyle(0x60a5fa, 0.12);
-    graphics.fillPath();
-  }
   graphics.strokePath();
-
-  for (const point of points) {
-    const canvasPoint = userToPhaser(point.x, point.y, canvasWidth, canvasHeight);
-    graphics.fillStyle(0xf8fafc, 1);
-    graphics.fillCircle(canvasPoint.x, canvasPoint.y, 5);
-    graphics.lineStyle(2, 0x2563eb, 1);
-    graphics.strokeCircle(canvasPoint.x, canvasPoint.y, 5);
-  }
 }
 
 function cacheDecodedBackgroundImage(dataUrl: string, image: HTMLImageElement): void {

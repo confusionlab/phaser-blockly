@@ -391,8 +391,6 @@ export function BackgroundCanvasEditor() {
       }
       if (worldBoundaryPoints.length >= 3) {
         ctx.closePath();
-        ctx.fillStyle = 'rgba(96, 165, 250, 0.12)';
-        ctx.fill();
       }
       ctx.strokeStyle = 'rgba(96, 165, 250, 0.9)';
       ctx.lineWidth = 2;
