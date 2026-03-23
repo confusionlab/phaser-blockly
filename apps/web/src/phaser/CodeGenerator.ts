@@ -231,14 +231,15 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['looks_speak'] = function(block) {
     const text = javascriptGenerator.valueToCode(block, 'TEXT', Order.ATOMIC) || "''";
-    return `sprite.speak(${text});\n`;
+    return `sprite.keepSpeaking(${text});\n`;
   };
 
-  javascriptGenerator.forBlock['looks_speak_for_seconds'] = function(block) {
+  const generateSpeakAndStop = function(block: Blockly.Block) {
     const text = javascriptGenerator.valueToCode(block, 'TEXT', Order.ATOMIC) || "''";
-    const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '2';
-    return `await sprite.speakFor(${text}, ${seconds});\n`;
+    return `await sprite.speakAndStop(${text});\n`;
   };
+  javascriptGenerator.forBlock['looks_speak_and_stop'] = generateSpeakAndStop;
+  javascriptGenerator.forBlock['looks_speak_for_seconds'] = generateSpeakAndStop;
 
   javascriptGenerator.forBlock['looks_stop_speaking'] = function() {
     return 'sprite.stopSpeaking();\n';
@@ -251,24 +252,25 @@ export function registerCodeGenerators(): void {
     return `{
   const __targetId = ${targetId};
   if (__targetId) {
-    runtime.getSprite(__targetId)?.speak(${text});
+    runtime.getSprite(__targetId)?.keepSpeaking(${text});
   }
 }\n`;
   };
 
-  javascriptGenerator.forBlock['looks_target_speak_for_seconds'] = function(block) {
+  const generateTargetSpeakAndStop = function(block: Blockly.Block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
     const targetId = objectExprToId(target);
     const text = javascriptGenerator.valueToCode(block, 'TEXT', Order.ATOMIC) || "''";
-    const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '2';
     return `{
   const __targetId = ${targetId};
   const __targetSprite = __targetId ? runtime.getSprite(__targetId) : null;
   if (__targetSprite) {
-    await __targetSprite.speakFor(${text}, ${seconds});
+    await __targetSprite.speakAndStop(${text});
   }
 }\n`;
   };
+  javascriptGenerator.forBlock['looks_target_speak_and_stop'] = generateTargetSpeakAndStop;
+  javascriptGenerator.forBlock['looks_target_speak_for_seconds'] = generateTargetSpeakAndStop;
 
   javascriptGenerator.forBlock['looks_target_stop_speaking'] = function(block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';

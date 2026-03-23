@@ -11,6 +11,9 @@ const SPEECH_BUBBLE_PADDING_Y = 12;
 const SPEECH_BUBBLE_RADIUS = 16;
 const SPEECH_BUBBLE_TAIL_HEIGHT = 14;
 const SPEECH_BUBBLE_FADE_DURATION_MS = 300;
+const SPEECH_WORD_REVEAL_STAGGER_MS = 110;
+const SPEECH_WORD_REVEAL_DURATION_MS = 180;
+const SPEECH_AUTO_STOP_HOLD_SECONDS = 0.8;
 const SPEECH_BUBBLE_TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontFamily: '"Trebuchet MS", "Verdana", sans-serif',
   fontSize: '20px',
@@ -302,7 +305,7 @@ export class RuntimeSprite {
     this.syncSpeechBubbleVisibility();
   }
 
-  speak(rawText: unknown): void {
+  keepSpeaking(rawText: unknown): void {
     if (this._stopped) return;
 
     const text = String(rawText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -319,30 +322,34 @@ export class RuntimeSprite {
     this.fadeSpeechBubbleIn();
   }
 
+  speak(rawText: unknown): void {
+    this.keepSpeaking(rawText);
+  }
+
   async stopSpeaking(): Promise<void> {
     if (this._stopped) return;
     this._speechSessionId += 1;
     await this.fadeOutAndClearSpeechBubble(this._speechSessionId);
   }
 
-  async speakFor(rawText: unknown, durationSeconds: unknown): Promise<void> {
+  async speakAndStop(rawText: unknown): Promise<void> {
     if (this._stopped) return;
 
-    this.speak(rawText);
+    const text = String(rawText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    this.keepSpeaking(text);
     const sessionId = this._speechSessionId;
+    const totalDurationMs = this.getSpeechRevealDurationMs(text) + SPEECH_AUTO_STOP_HOLD_SECONDS * 1000;
+    await this.waitForSeconds(totalDurationMs / 1000);
 
-    const secondsValue = Number(durationSeconds);
-    const safeSeconds = Number.isFinite(secondsValue) ? Math.max(0, secondsValue) : 0;
-    await this.waitForSeconds(safeSeconds);
-
-    if (this._stopped) {
+    if (this._stopped || this._speechSessionId !== sessionId) {
       return;
     }
 
-    if (this._speechSessionId === sessionId) {
-      this._speechSessionId += 1;
-      await this.fadeOutAndClearSpeechBubble(this._speechSessionId);
-    }
+    await this.stopSpeaking();
+  }
+
+  async speakFor(rawText: unknown, _durationSeconds: unknown): Promise<void> {
+    await this.speakAndStop(rawText);
   }
 
   private getScaleSign(value: number): number {
@@ -1192,6 +1199,19 @@ export class RuntimeSprite {
     return text.match(/\S+|\n|[ \t]+/g) ?? [];
   }
 
+  private countSpeechWords(text: string): number {
+    return this.tokenizeSpeechText(text).filter((token) => token !== '\n' && token.trim().length > 0).length;
+  }
+
+  private getSpeechRevealDurationMs(text: string): number {
+    const wordCount = this.countSpeechWords(text);
+    if (wordCount <= 0) {
+      return 0;
+    }
+
+    return ((wordCount - 1) * SPEECH_WORD_REVEAL_STAGGER_MS) + SPEECH_WORD_REVEAL_DURATION_MS;
+  }
+
   private renderSpeechBubble(text: string): void {
     if (!this._speechBubble || !this._speechBubbleBackground || !this._speechBubbleTextLayer) {
       return;
@@ -1289,9 +1309,9 @@ export class RuntimeSprite {
       const tween = this.scene.tweens.add({
         targets: word,
         alpha: 1,
-        duration: 180,
+        duration: SPEECH_WORD_REVEAL_DURATION_MS,
         ease: 'Quad.Out',
-        delay: index * 110,
+        delay: index * SPEECH_WORD_REVEAL_STAGGER_MS,
       });
       this._speechWordTweens.push(tween);
     });

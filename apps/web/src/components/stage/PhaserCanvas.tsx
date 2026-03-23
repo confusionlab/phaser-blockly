@@ -139,7 +139,7 @@ function createTiledBackgroundLayerState(
     throw new Error('Failed to create tiled background canvas texture.');
   }
   const image = scene.add.image(0, 0, textureKey);
-  image.setOrigin(0.5, 0.5);
+  image.setOrigin(0, 0);
   image.setDepth(TILED_BACKGROUND_LAYER_DEPTH);
   let compositor!: TiledBackgroundCanvasCompositor;
   const layer: TiledBackgroundLayerState = {
@@ -260,7 +260,7 @@ function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundL
     layer.lastRenderSnapshot = nextSnapshot;
   }
 
-  layer.image.setPosition(worldView.centerX, worldView.centerY);
+  layer.image.setPosition(worldView.left, worldView.top);
   layer.image.setDisplaySize(worldView.width, worldView.height);
   layer.image.setVisible(true);
 }
