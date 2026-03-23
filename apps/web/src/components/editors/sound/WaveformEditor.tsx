@@ -30,12 +30,6 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
   trimStartRef.current = trimStart;
   trimEndRef.current = trimEnd;
 
-  const activeDuration = useMemo(() => Math.max(0, trimEnd - trimStart), [trimEnd, trimStart]);
-  const isTrimmed = useMemo(
-    () => duration > 0 && (trimStart > 0.001 || trimEnd < duration - 0.001),
-    [duration, trimEnd, trimStart],
-  );
-
   useEffect(() => {
     if (!sound) {
       audioRef.current?.pause();
@@ -213,46 +207,17 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-5">
       <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-2xl font-semibold text-foreground">{sound.name}</h2>
-            {isTrimmed ? (
-              <span className="rounded-full bg-[#edf5ef] px-2.5 py-1 text-xs font-medium text-[#5e7f6c]">
-                Trimmed
-              </span>
-            ) : null}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" className="rounded-full" onClick={handleRestart}>
-              <RotateCcw className="size-4" />
-              Restart
-            </Button>
-            <Button className="rounded-full px-5" onClick={handleTogglePlay}>
-              {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
-              {isPlaying ? 'Stop' : 'Play'}
-            </Button>
-          </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" className="rounded-full" onClick={handleRestart}>
+            <RotateCcw className="size-4" />
+            Restart
+          </Button>
+          <Button className="rounded-full px-5" onClick={handleTogglePlay}>
+            {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
+            {isPlaying ? 'Stop' : 'Play'}
+          </Button>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <div className="rounded-[22px] border border-border/70 bg-white/80 p-4">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Start</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-foreground">{formatAudioTime(trimStart, true)}</div>
-          </div>
-          <div className="rounded-[22px] border border-border/70 bg-white/80 p-4">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Clip Length</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-foreground">{formatAudioTime(activeDuration, true)}</div>
-          </div>
-          <div className="rounded-[22px] border border-border/70 bg-white/80 p-4">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">End</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-foreground">{formatAudioTime(trimEnd, true)}</div>
-          </div>
-          <div className="rounded-[22px] border border-border/70 bg-white/80 p-4">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Original</div>
-            <div className="mt-1 font-mono text-lg font-semibold text-foreground">{formatAudioTime(duration, true)}</div>
-          </div>
-        </div>
       </div>
 
       <div className="flex-1 min-h-0 rounded-[28px] border border-border/70 bg-background/95 p-4 shadow-sm">
