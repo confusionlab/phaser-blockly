@@ -266,11 +266,9 @@ export function WorldBoundaryEditor() {
     closeWorldBoundaryEditor();
   };
 
-  const aspectRatio = `${canvasWidth} / ${canvasHeight}`;
-
   return (
-    <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
+    <div className="fixed inset-0 z-[100001] bg-background flex flex-col overscroll-none">
+      <div className="h-12 border-b bg-card px-3 flex items-center justify-between gap-3">
         <div>
           <div className="text-sm font-medium">World Boundary</div>
           <div className="text-xs text-muted-foreground">
@@ -303,87 +301,80 @@ export function WorldBoundaryEditor() {
         </div>
       </div>
 
-      <div className="flex-1 p-6 overflow-hidden">
-        <div className="h-full rounded-xl border bg-card/60 flex items-center justify-center">
-          <div
-            id="world-boundary-editor-stage"
-            className="relative w-full"
-            style={{ aspectRatio, maxWidth: 'min(1200px, 92vw)', maxHeight: '82vh' }}
-          >
-            <svg
-              ref={stageRef}
-              viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
-              className="w-full h-full rounded-lg bg-[#0b1220] cursor-crosshair"
-              onPointerDown={handleStagePointerDown}
-              onWheel={handleStageWheel}
-              onContextMenu={(event) => event.preventDefault()}
-            >
-              <rect x={viewBox.minX} y={viewBox.minY} width={viewBox.width} height={viewBox.height} fill="#111827" />
-              <rect
-                x="1"
-                y="1"
-                width={Math.max(0, canvasWidth - 2)}
-                height={Math.max(0, canvasHeight - 2)}
-                fill="none"
-                stroke="rgba(255,255,255,0.25)"
-                strokeWidth="2"
-                strokeDasharray="16 10"
-              />
-              {points.length >= 2 && (
-                <polyline
-                  points={polygonPoints}
-                  fill="none"
-                  stroke="#60a5fa"
+      <div className="flex-1 min-h-0 relative overflow-hidden bg-[#060a14]">
+        <svg
+          id="world-boundary-editor-stage"
+          ref={stageRef}
+          viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
+          className="absolute inset-0 h-full w-full cursor-crosshair"
+          onPointerDown={handleStagePointerDown}
+          onWheel={handleStageWheel}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <rect x={viewBox.minX} y={viewBox.minY} width={viewBox.width} height={viewBox.height} fill="#111827" />
+          <rect
+            x="1"
+            y="1"
+            width={Math.max(0, canvasWidth - 2)}
+            height={Math.max(0, canvasHeight - 2)}
+            fill="none"
+            stroke="rgba(255,255,255,0.25)"
+            strokeWidth="2"
+            strokeDasharray="16 10"
+          />
+          {points.length >= 2 && (
+            <polyline
+              points={polygonPoints}
+              fill="none"
+              stroke="#60a5fa"
+              strokeWidth="4"
+              strokeLinejoin="round"
+            />
+          )}
+          {points.length >= 3 && (
+            <polygon
+              points={polygonPoints}
+              fill="rgba(96,165,250,0.2)"
+              stroke="#60a5fa"
+              strokeWidth="4"
+              strokeLinejoin="round"
+            />
+          )}
+          {points.map((point, index) => {
+            const canvasPoint = userToCanvas(point, canvasWidth, canvasHeight);
+            return (
+              <g key={`${index}-${point.x}-${point.y}`}>
+                <circle
+                  cx={canvasPoint.x}
+                  cy={canvasPoint.y}
+                  r="10"
+                  fill="#f8fafc"
+                  stroke="#2563eb"
                   strokeWidth="4"
-                  strokeLinejoin="round"
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    event.stopPropagation();
+                    setDragIndex(index);
+                  }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    setPoints((current) => current.filter((_, pointIndex) => pointIndex !== index));
+                  }}
                 />
-              )}
-              {points.length >= 3 && (
-                <polygon
-                  points={polygonPoints}
-                  fill="rgba(96,165,250,0.2)"
-                  stroke="#60a5fa"
-                  strokeWidth="4"
-                  strokeLinejoin="round"
-                />
-              )}
-              {points.map((point, index) => {
-                const canvasPoint = userToCanvas(point, canvasWidth, canvasHeight);
-                return (
-                  <g key={`${index}-${point.x}-${point.y}`}>
-                    <circle
-                      cx={canvasPoint.x}
-                      cy={canvasPoint.y}
-                      r="10"
-                      fill="#f8fafc"
-                      stroke="#2563eb"
-                      strokeWidth="4"
-                      onPointerDown={(event) => {
-                        if (event.button !== 0) return;
-                        event.stopPropagation();
-                        setDragIndex(index);
-                      }}
-                      onDoubleClick={(event) => {
-                        event.stopPropagation();
-                        setPoints((current) => current.filter((_, pointIndex) => pointIndex !== index));
-                      }}
-                    />
-                    <text
-                      x={canvasPoint.x}
-                      y={canvasPoint.y + 4}
-                      textAnchor="middle"
-                      fontSize="10"
-                      fill="#0f172a"
-                      pointerEvents="none"
-                    >
-                      {index + 1}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-        </div>
+                <text
+                  x={canvasPoint.x}
+                  y={canvasPoint.y + 4}
+                  textAnchor="middle"
+                  fontSize="10"
+                  fill="#0f172a"
+                  pointerEvents="none"
+                >
+                  {index + 1}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
       </div>
     </div>
   );

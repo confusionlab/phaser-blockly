@@ -386,6 +386,25 @@ export function BackgroundCanvasEditor() {
       }
     }
 
+    const worldBoundaryPoints = scene?.worldBoundary?.enabled ? (scene.worldBoundary.points || []) : [];
+    if (worldBoundaryPoints.length >= 2) {
+      const first = worldToScreen(worldBoundaryPoints[0].x, worldBoundaryPoints[0].y);
+      ctx.beginPath();
+      ctx.moveTo(first.x, first.y);
+      for (let index = 1; index < worldBoundaryPoints.length; index += 1) {
+        const point = worldToScreen(worldBoundaryPoints[index].x, worldBoundaryPoints[index].y);
+        ctx.lineTo(point.x, point.y);
+      }
+      if (worldBoundaryPoints.length >= 3) {
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(96, 165, 250, 0.12)';
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(96, 165, 250, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
     const cameraTopLeft = worldToScreen(cameraBounds.left, cameraBounds.top);
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';
     ctx.lineWidth = 1;
@@ -427,6 +446,8 @@ export function BackgroundCanvasEditor() {
     tool,
     viewport.height,
     viewport.width,
+    scene?.worldBoundary?.enabled,
+    scene?.worldBoundary?.points,
     worldToScreen,
     zoom,
   ]);
