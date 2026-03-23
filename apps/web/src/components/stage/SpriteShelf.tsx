@@ -145,6 +145,33 @@ interface VisibleShelfTreeEntry {
   level: number;
 }
 
+let transparentDragImage: HTMLImageElement | null = null;
+
+function getTransparentDragImage(): HTMLImageElement | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  if (transparentDragImage) {
+    return transparentDragImage;
+  }
+
+  const image = document.createElement('img');
+  image.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+  image.alt = '';
+  image.width = 1;
+  image.height = 1;
+  image.setAttribute('aria-hidden', 'true');
+  image.style.position = 'fixed';
+  image.style.left = '-9999px';
+  image.style.top = '-9999px';
+  image.style.pointerEvents = 'none';
+  image.style.opacity = '0';
+  document.body.appendChild(image);
+  transparentDragImage = image;
+  return transparentDragImage;
+}
+
 function collectVisibleRenameableItems(
   items: ShelfTreeItem[],
   expandedKeys: Set<string>,
@@ -549,11 +576,9 @@ export function SpriteShelf() {
 
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragKeys.join(','));
-    if (typeof document !== 'undefined') {
-      const transparentDragImage = document.createElement('canvas');
-      transparentDragImage.width = 1;
-      transparentDragImage.height = 1;
-      event.dataTransfer.setDragImage(transparentDragImage, 0, 0);
+    const dragImage = getTransparentDragImage();
+    if (dragImage) {
+      event.dataTransfer.setDragImage(dragImage, 0, 0);
     }
   };
 
