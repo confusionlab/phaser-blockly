@@ -7,20 +7,22 @@ import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import { formatAudioTime, generateWaveformFromBlob, type WaveformData } from '@/lib/audioWaveform';
 import { WaveformViewport } from './WaveformViewport';
 import type { Sound } from '@/types';
-import { Check, Loader2, Mic, Play, Square, Trash2 } from 'lucide-react';
+import { Check, Loader2, Play, Square, Trash2 } from 'lucide-react';
 
 interface RecordingStudioProps {
   onAddSound: (sound: Sound) => void;
-  onCancel: () => void;
 }
 
 type RecordingMode = 'idle' | 'recording' | 'review';
+
+const RECORD_BUTTON_CLASS_NAME = 'size-16 rounded-full bg-red-500 text-white shadow-[0_18px_40px_rgba(239,68,68,0.26)] hover:bg-red-500/90';
+const RECORD_BUTTON_WRAPPER_CLASS_NAME = 'mx-auto flex w-full justify-center';
 
 function buildDefaultRecordingName(): string {
   return `Recording ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) {
+export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -277,29 +279,29 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
 
   return (
     <div className="flex h-full flex-col gap-4 p-4 md:p-5">
-      <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
-        <div className="flex flex-wrap items-start justify-end gap-3">
-          <Button variant="ghost" onClick={onCancel}>Back to sounds</Button>
-        </div>
-
-        {errorMessage ? (
-          <div className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+      {errorMessage ? (
+        <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             {errorMessage}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {mode === 'idle' ? (
         <div className="flex flex-1 items-center justify-center">
           <div className="w-full max-w-xl rounded-[32px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,247,247,1),rgba(239,239,239,0.98))] p-8 text-center shadow-sm">
-            <div className="mx-auto flex size-28 items-center justify-center rounded-full border border-black/10 bg-[radial-gradient(circle_at_top,rgba(150,150,150,0.28),rgba(78,78,78,0.95))] text-white shadow-[0_18px_40px_rgba(64,64,64,0.22)]">
-              <Mic className="size-11" />
+            <div className={RECORD_BUTTON_WRAPPER_CLASS_NAME}>
+              <div className="flex size-20 items-center justify-center">
+                <Button
+                  size="icon"
+                  className={RECORD_BUTTON_CLASS_NAME}
+                  onClick={startRecording}
+                  title="Record"
+                >
+                  <span className="size-5 rounded-full bg-current" />
+                </Button>
+              </div>
             </div>
-            <h3 className="mt-6 text-2xl font-semibold text-foreground">Ready to record</h3>
-            <Button className="mt-8 h-12 rounded-full px-6 text-base" onClick={startRecording}>
-              <Mic className="size-4" />
-              Start Recording
-            </Button>
           </div>
         </div>
       ) : null}
@@ -307,17 +309,20 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
       {mode === 'recording' ? (
         <div className="flex flex-1 items-center justify-center">
           <div className="w-full max-w-xl rounded-[32px] border border-border/70 bg-[linear-gradient(180deg,rgba(255,250,250,0.98),rgba(248,242,242,0.96))] p-8 text-center shadow-sm">
-            <div className="relative mx-auto flex size-28 items-center justify-center">
-              <span className="absolute inset-0 rounded-full bg-red-500/15 animate-ping" />
-              <button
-                type="button"
-                onClick={stopRecording}
-                className="relative flex size-28 items-center justify-center rounded-full bg-red-500 text-white shadow-[0_18px_40px_rgba(239,68,68,0.26)] transition-transform hover:scale-[1.02]"
-              >
-                <Square className="size-10 fill-current" />
-              </button>
+            <div className={RECORD_BUTTON_WRAPPER_CLASS_NAME}>
+              <div className="flex size-20 items-center justify-center">
+                <Button
+                  type="button"
+                  size="icon"
+                  onClick={stopRecording}
+                  className={RECORD_BUTTON_CLASS_NAME}
+                  title="Stop recording"
+                >
+                  <Square className="size-6 fill-current" />
+                </Button>
+              </div>
             </div>
-            <div className="mt-2 font-mono text-4xl font-semibold text-foreground">
+            <div className="mt-6 font-mono text-4xl font-semibold text-foreground">
               {formatAudioTime(recordingDuration, true)}
             </div>
           </div>

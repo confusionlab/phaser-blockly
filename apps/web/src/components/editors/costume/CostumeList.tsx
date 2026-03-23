@@ -3,7 +3,6 @@ import { useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import type { Id } from '@convex-generated/dataModel';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Plus, Upload, Loader2, Library, Copy, Trash2 } from 'lucide-react';
 import { processImage } from '@/utils/imageProcessor';
@@ -11,8 +10,8 @@ import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
+import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
 import type { Costume, CostumeBounds, CostumeEditorMode, CostumeVectorDocument } from '@/types';
-import { cn } from '@/lib/utils';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 interface CostumeListProps {
@@ -237,9 +236,13 @@ export const CostumeList = memo(({
           </div>
         ) : (
           costumes.map((costume, index) => (
-            <Card
+            <AssetSidebarTile
               key={costume.id}
+              index={index}
+              name={costume.name}
+              selected={index === selectedIndex}
               onClick={() => onSelectCostume(index)}
+              onNameChange={(name) => onRenameCostume(index, name)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenu({
@@ -248,15 +251,8 @@ export const CostumeList = memo(({
                   y: e.clientY,
                 });
               }}
-              className={cn(
-                'relative group cursor-pointer p-1.5 transition-colors',
-                index === selectedIndex
-                  ? 'ring-2 ring-primary bg-primary/5'
-                  : 'hover:bg-accent'
-              )}
-            >
-              <div className="relative aspect-square overflow-hidden rounded">
-                {costume.bounds && costume.bounds.width > 0 && costume.bounds.height > 0 ? (
+              media={
+                costume.bounds && costume.bounds.width > 0 && costume.bounds.height > 0 ? (
                   <div
                     className="absolute inset-0"
                     style={{
@@ -285,20 +281,9 @@ export const CostumeList = memo(({
                     className="h-full w-full object-contain"
                     style={{ imageRendering: 'pixelated' }}
                   />
-                )}
-              </div>
-
-              <Input
-                value={costume.name}
-                onChange={(e) => onRenameCostume(index, e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                className="mt-0.5 h-4 w-full border-none bg-transparent px-1 text-center text-[10px] leading-none shadow-none focus:bg-background"
-              />
-
-              <div className="absolute left-1 top-1 text-[10px] font-medium text-foreground/80">
-                {index + 1}
-              </div>
-            </Card>
+                )
+              }
+            />
           ))
         )}
       </AssetSidebar>

@@ -96,6 +96,10 @@ export async function generateWaveform(source: string): Promise<WaveformData> {
   return waveform;
 }
 
+export function getCachedWaveform(source: string): WaveformData | null {
+  return waveformCache.get(source) ?? null;
+}
+
 export async function generateWaveformFromBlob(blob: Blob, cacheKey?: string): Promise<WaveformData> {
   const key = cacheKey?.trim();
   if (key) {

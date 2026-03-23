@@ -3,62 +3,34 @@ import { useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import type { Id } from '@convex-generated/dataModel';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { SoundLibraryBrowser } from '@/components/dialogs/SoundLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
+import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
 import { uploadDataUrlToStorage } from '@/utils/convexHelpers';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
-import { formatAudioTime } from '@/lib/audioWaveform';
 import type { Sound } from '@/types';
-import { cn } from '@/lib/utils';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
-import { Library, Loader2, Mic, Play, Save, Square, Trash2, Upload, Volume2 } from 'lucide-react';
+import { Library, Loader2, Mic, Save, Trash2, Upload, Volume2 } from 'lucide-react';
 
 interface SoundListProps {
   sounds: Sound[];
   selectedIndex: number;
-  playingId: string | null;
   onOpenRecorder: () => void;
   onSelectSound: (index: number) => void;
   onAddSound: (sound: Sound) => void;
   onDeleteSound: (index: number) => void;
   onRenameSound: (index: number, name: string) => void;
-  onPlaySound: (sound: Sound) => void;
-  onStopSound: () => void;
-}
-
-function getActiveDuration(sound: Sound): number | undefined {
-  if (typeof sound.duration !== 'number') {
-    return undefined;
-  }
-
-  const start = sound.trimStart ?? 0;
-  const end = sound.trimEnd ?? sound.duration;
-  return Math.max(0, end - start);
-}
-
-function isTrimmed(sound: Sound): boolean {
-  if (typeof sound.duration !== 'number') {
-    return false;
-  }
-
-  const start = sound.trimStart ?? 0;
-  const end = sound.trimEnd ?? sound.duration;
-  return start > 0.001 || end < sound.duration - 0.001;
 }
 
 export const SoundList = memo(({
   sounds,
   selectedIndex,
-  playingId,
   onOpenRecorder,
   onSelectSound,
   onAddSound,
   onDeleteSound,
   onRenameSound,
-  onPlaySound,
-  onStopSound,
 }: SoundListProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -233,15 +205,16 @@ export const SoundList = memo(({
         ) : (
           <>
             {sounds.map((sound, index) => {
-              const activeDuration = getActiveDuration(sound);
-              const trimmed = isTrimmed(sound);
               const isSelected = index === selectedIndex;
-              const isPlaying = playingId === sound.id;
 
               return (
-                <Card
+                <AssetSidebarTile
                   key={sound.id}
+                  index={index}
+                  name={sound.name}
+                  selected={isSelected}
                   onClick={() => onSelectSound(index)}
+                  onNameChange={(name) => onRenameSound(index, name)}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setContextMenu({
@@ -250,60 +223,12 @@ export const SoundList = memo(({
                       y: event.clientY,
                     });
                   }}
-                  className={cn(
-                    'relative group cursor-pointer p-1.5 transition-colors',
-                    isSelected
-                      ? 'ring-2 ring-primary bg-primary/5'
-                      : 'hover:bg-accent',
-                  )}
-                >
-                  <div className="relative mb-1.5 aspect-square overflow-hidden rounded border bg-muted">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (isPlaying) {
-                          onStopSound();
-                        } else {
-                          onPlaySound(sound);
-                        }
-                      }}
-                      className={cn(
-                        'absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity hover:opacity-100',
-                      )}
-                    >
-                      {isPlaying ? (
-                        <Square className="size-6 fill-white text-white" />
-                      ) : (
-                        <Play className="size-6 fill-white text-white" />
-                      )}
-                    </button>
+                  media={
                     <div className="flex h-full items-center justify-center">
                       <Volume2 className="size-8 text-muted-foreground" />
                     </div>
-                  </div>
-
-                  <Input
-                    value={sound.name}
-                    onChange={(event) => onRenameSound(index, event.target.value)}
-                    onClick={(event) => event.stopPropagation()}
-                    className="mt-0.5 h-4 w-full border-none bg-transparent px-1 text-center text-[10px] leading-none shadow-none focus:bg-background"
-                  />
-
-                  <div className="mt-0.5 text-center text-[9px] text-muted-foreground">
-                    {activeDuration !== undefined ? formatAudioTime(activeDuration) : '--:--'}
-                  </div>
-
-                  <div className="absolute left-1 top-1 text-[10px] font-medium text-foreground/80">
-                    {index + 1}
-                  </div>
-
-                  {trimmed ? (
-                    <div className="absolute bottom-1 right-1 rounded bg-[#efefef] px-1 py-0.5 text-[8px] font-medium text-[#5f5f5f]">
-                      Trim
-                    </div>
-                  ) : null}
-                </Card>
+                  }
+                />
               );
             })}
           </>

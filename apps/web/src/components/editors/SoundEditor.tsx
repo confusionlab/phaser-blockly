@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { SoundList } from './sound/SoundList';
@@ -8,8 +8,6 @@ import { getEffectiveObjectProps } from '@/types';
 import type { Sound } from '@/types';
 
 export function SoundEditor() {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedSoundIndex, setSelectedSoundIndex] = useState(0);
   const [workspaceMode, setWorkspaceMode] = useState<'edit' | 'record'>('edit');
 
@@ -32,12 +30,6 @@ export function SoundEditor() {
   const selectedSound = sounds[validSelectedIndex] ?? null;
 
   const handleSelectSound = useCallback((index: number) => {
-    // Stop playback when switching sounds
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    setPlayingId(null);
     setSelectedSoundIndex(index);
     setWorkspaceMode('edit');
   }, []);
@@ -58,12 +50,6 @@ export function SoundEditor() {
     (index: number) => {
       if (!selectedSceneId || !selectedObjectId) return;
 
-      // Stop if this sound is playing
-      if (sounds[index]?.id === playingId) {
-        audioRef.current?.pause();
-        setPlayingId(null);
-      }
-
       const updatedSounds = sounds.filter((_, i) => i !== index);
       updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
 
@@ -72,7 +58,7 @@ export function SoundEditor() {
         setSelectedSoundIndex(validSelectedIndex - 1);
       }
     },
-    [selectedSceneId, selectedObjectId, sounds, playingId, validSelectedIndex, updateObject]
+    [selectedSceneId, selectedObjectId, sounds, validSelectedIndex, updateObject]
   );
 
   const handleRenameSound = useCallback(
@@ -85,44 +71,6 @@ export function SoundEditor() {
     },
     [selectedSceneId, selectedObjectId, sounds, updateObject]
   );
-
-  const handlePlaySound = useCallback((sound: Sound) => {
-    // Stop current audio if playing
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-
-    if (playingId === sound.id) {
-      setPlayingId(null);
-      return;
-    }
-
-    // Play new audio (respect trim settings)
-    const audio = new Audio(sound.assetId);
-    audio.currentTime = sound.trimStart ?? 0;
-    audio.onended = () => setPlayingId(null);
-    audio.ontimeupdate = () => {
-      if (sound.trimEnd && audio.currentTime >= sound.trimEnd) {
-        audio.pause();
-        setPlayingId(null);
-      }
-    };
-    void audio.play().catch((error) => {
-      console.error('Failed to play sound preview:', error);
-      setPlayingId(null);
-    });
-    audioRef.current = audio;
-    setPlayingId(sound.id);
-  }, [playingId]);
-
-  const handleStopSound = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    setPlayingId(null);
-  }, []);
 
   const handleTrimChange = useCallback(
     (trimStart: number, trimEnd: number) => {
@@ -149,21 +97,15 @@ export function SoundEditor() {
       <SoundList
         sounds={sounds}
         selectedIndex={validSelectedIndex}
-        playingId={playingId}
         onOpenRecorder={() => setWorkspaceMode('record')}
         onSelectSound={handleSelectSound}
         onAddSound={handleAddSound}
         onDeleteSound={handleDeleteSound}
         onRenameSound={handleRenameSound}
-        onPlaySound={handlePlaySound}
-        onStopSound={handleStopSound}
       />
 
       {workspaceMode === 'record' ? (
-        <RecordingStudio
-          onAddSound={handleAddSound}
-          onCancel={() => setWorkspaceMode('edit')}
-        />
+        <RecordingStudio onAddSound={handleAddSound} />
       ) : (
         <WaveformEditor
           sound={selectedSound}

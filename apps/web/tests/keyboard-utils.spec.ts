@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { isBlocklyShortcutTarget, isTextEntryTarget } from '../src/utils/keyboard';
+import { isBlocklyShortcutTarget, isTextEntryTarget, shouldIgnoreGlobalKeyboardEvent } from '../src/utils/keyboard';
 
 function createTarget(options: {
   tagName?: string;
@@ -32,5 +32,32 @@ test.describe('keyboard target guards', () => {
       closest: (selector) => (selector.includes('.blocklyWidgetDiv') ? ({} as Element) : null),
     }))).toBe(true);
     expect(isBlocklyShortcutTarget(createTarget())).toBe(false);
+  });
+
+  test('global shortcut guard ignores typing and composition states', () => {
+    const inputTarget = createTarget({ tagName: 'input' });
+    expect(shouldIgnoreGlobalKeyboardEvent({
+      defaultPrevented: false,
+      isComposing: false,
+      target: inputTarget,
+    } as KeyboardEvent)).toBe(true);
+
+    expect(shouldIgnoreGlobalKeyboardEvent({
+      defaultPrevented: false,
+      isComposing: true,
+      target: createTarget(),
+    } as KeyboardEvent)).toBe(true);
+
+    expect(shouldIgnoreGlobalKeyboardEvent({
+      defaultPrevented: true,
+      isComposing: false,
+      target: createTarget(),
+    } as KeyboardEvent)).toBe(true);
+
+    expect(shouldIgnoreGlobalKeyboardEvent({
+      defaultPrevented: false,
+      isComposing: false,
+      target: createTarget(),
+    } as KeyboardEvent)).toBe(false);
   });
 });

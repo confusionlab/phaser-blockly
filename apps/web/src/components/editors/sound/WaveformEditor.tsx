@@ -1,7 +1,6 @@
 import { type ChangeEvent, memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { generateWaveform, type WaveformData } from '@/lib/audioWaveform';
+import { generateWaveform, getCachedWaveform, type WaveformData } from '@/lib/audioWaveform';
 import { EditorToolbar } from '@/components/editors/shared/EditorToolbar';
 import { WaveformViewport } from './WaveformViewport';
 import type { Sound } from '@/types';
@@ -17,11 +16,11 @@ interface WaveformEditorProps {
 export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: WaveformEditorProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playheadRafRef = useRef<number | null>(null);
+  const waveformLoadIdRef = useRef(0);
   const trimStartRef = useRef(0);
   const trimEndRef = useRef(0);
 
   const [waveform, setWaveform] = useState<WaveformData | null>(null);
-  const [isLoadingWaveform, setIsLoadingWaveform] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -75,6 +74,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
 
   useEffect(() => {
     if (!sound) {
+      waveformLoadIdRef.current += 1;
       stopPlayheadLoop();
       audioRef.current?.pause();
       audioRef.current = null;
@@ -93,6 +93,20 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     audioRef.current?.pause();
     audioRef.current = audio;
     setIsPlaying(false);
+    setIsTrimming(false);
+
+    const hintedDuration = typeof sound.duration === 'number' && Number.isFinite(sound.duration)
+      ? sound.duration
+      : 0;
+    if (hintedDuration > 0) {
+      const hintedTrimStart = Math.max(0, Math.min(sound.trimStart ?? 0, hintedDuration));
+      const hintedTrimEnd = Math.max(hintedTrimStart, Math.min(sound.trimEnd ?? hintedDuration, hintedDuration));
+      setDuration(hintedDuration);
+      setTrimStart(hintedTrimStart);
+      setTrimEnd(hintedTrimEnd);
+      setCurrentTime(hintedTrimStart);
+      audio.currentTime = hintedTrimStart;
+    }
 
     const handleMetadata = () => {
       const nextDuration = Number.isFinite(sound.duration) && sound.duration ? sound.duration : audio.duration;
@@ -127,16 +141,38 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     audio.onplay = handlePlay;
     audio.onended = handleEnded;
 
-    setIsLoadingWaveform(true);
+    const waveformLoadId = waveformLoadIdRef.current + 1;
+    waveformLoadIdRef.current = waveformLoadId;
+    const cachedWaveform = getCachedWaveform(sound.assetId);
+
+    if (cachedWaveform) {
+      setWaveform(cachedWaveform);
+    }
+
     void generateWaveform(sound.assetId)
-      .then((nextWaveform) => setWaveform(nextWaveform))
+      .then((nextWaveform) => {
+        if (waveformLoadIdRef.current !== waveformLoadId) {
+          return;
+        }
+
+        setWaveform(nextWaveform);
+      })
       .catch((error) => {
+        if (waveformLoadIdRef.current !== waveformLoadId) {
+          return;
+        }
+
         console.error('Failed to generate waveform:', error);
         setWaveform(null);
       })
-      .finally(() => setIsLoadingWaveform(false));
+      .finally(() => {
+        if (waveformLoadIdRef.current !== waveformLoadId) {
+          return;
+        }
+      });
 
     return () => {
+      waveformLoadIdRef.current += 1;
       stopPlayheadLoop();
       audio.pause();
       audio.onloadedmetadata = null;
@@ -322,7 +358,6 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
                 setTrimStart(nextStart);
                 setTrimEnd(nextEnd);
               }}
-              className={cn(isLoadingWaveform && 'opacity-70')}
             />
           </div>
         </div>

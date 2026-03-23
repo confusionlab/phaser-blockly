@@ -21,6 +21,7 @@ import {
 } from '@/lib/background/compositor';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -1627,7 +1628,11 @@ function createEditorScene(
   });
 
   // Handle 'C' key to cycle view modes
-  scene.input.keyboard?.on('keydown-C', () => {
+  scene.input.keyboard?.on('keydown-C', (event: KeyboardEvent) => {
+    if (shouldIgnoreGlobalKeyboardEvent(event)) {
+      return;
+    }
+
     cycleViewMode();
     // Get the new mode from store and apply it
     const newMode = useEditorStore.getState().viewMode;

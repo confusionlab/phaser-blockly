@@ -260,7 +260,7 @@ export function WaveformViewport({
     <div
       ref={containerRef}
       className={cn(
-        'relative h-52 overflow-hidden rounded-[24px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,247,247,0.98),rgba(237,237,237,0.96))] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] touch-none select-none',
+        'relative h-52 overflow-visible rounded-[24px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,247,247,0.98),rgba(237,237,237,0.96))] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] touch-none select-none',
         className,
       )}
       onPointerDown={(event) => {
@@ -296,7 +296,7 @@ export function WaveformViewport({
             </>
           ) : null}
           <div
-            className="pointer-events-none absolute inset-y-0 z-10 -translate-x-1/2"
+            className="pointer-events-none absolute bottom-0 top-[-14px] z-10 -translate-x-1/2"
             style={{ left: `${playheadPercent}%` }}
           >
             <div className="mx-auto size-3 rounded-full border border-white/80 bg-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
