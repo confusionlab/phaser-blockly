@@ -372,6 +372,23 @@ async function cleanupDuplicateProjects(
   }
 }
 
+async function deleteProjectEditorLeases(
+  ctx: any,
+  ownerUserId: string,
+  projectLocalId: string,
+) {
+  const leases = await ctx.db
+    .query("projectEditorLeases")
+    .withIndex("by_ownerUserId_and_projectLocalId", (q: any) =>
+      q.eq("ownerUserId", ownerUserId).eq("projectLocalId", projectLocalId),
+    )
+    .collect();
+
+  for (const lease of leases as Array<{ _id: Id<"projectEditorLeases"> }>) {
+    await ctx.db.delete(lease._id);
+  }
+}
+
 async function garbageCollectProjectAssets(
   ctx: any,
   ownerUserId: string,
@@ -1016,7 +1033,10 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const ownerUserId = await requireAuthenticatedUserId(ctx);
     const projects = await listProjectsByLocalId(ctx, ownerUserId, args.localId);
-    if (projects.length === 0) {
+    const revisions = await listRevisionsByProjectLocalId(ctx, ownerUserId, args.localId);
+    const hadProjectArtifacts = projects.length > 0 || revisions.length > 0;
+    if (!hadProjectArtifacts) {
+      await deleteProjectEditorLeases(ctx, ownerUserId, args.localId);
       return { deleted: false };
     }
 
@@ -1032,7 +1052,6 @@ export const remove = mutation({
       await cleanupStorage(ctx, storageId);
     }
 
-    const revisions = await listRevisionsByProjectLocalId(ctx, ownerUserId, args.localId);
     const revisionStorageIds = new Set<Id<"_storage">>();
     for (const revision of revisions) {
       if (revision.storageId) {
@@ -1049,6 +1068,7 @@ export const remove = mutation({
       ...projects.flatMap((project) => normalizeManagedAssetIds(project.assetIds)),
       ...revisions.flatMap((revision) => normalizeManagedAssetIds(revision.assetIds)),
     ]);
+    await deleteProjectEditorLeases(ctx, ownerUserId, args.localId);
 
     return { deleted: true };
   },
