@@ -140,6 +140,11 @@ interface RenameableShelfItem {
   object?: GameObject;
 }
 
+interface VisibleShelfTreeEntry {
+  item: ShelfTreeItem;
+  level: number;
+}
+
 function collectVisibleRenameableItems(
   items: ShelfTreeItem[],
   expandedKeys: Set<string>,
@@ -165,6 +170,24 @@ function collectVisibleRenameableItems(
 
   visit(items);
   return visibleItems;
+}
+
+function collectVisibleTreeEntries(
+  items: ShelfTreeItem[],
+  expandedKeys: Set<string>,
+  level = 1,
+): VisibleShelfTreeEntry[] {
+  const visibleEntries: VisibleShelfTreeEntry[] = [];
+
+  for (const item of items) {
+    visibleEntries.push({ item, level });
+
+    if (item.children.length > 0 && expandedKeys.has(item.key)) {
+      visibleEntries.push(...collectVisibleTreeEntries(item.children, expandedKeys, level + 1));
+    }
+  }
+
+  return visibleEntries;
 }
 
 function collectFolderDescendants(folderId: string, folders: SceneFolder[]): Set<string> {
@@ -232,6 +255,10 @@ export function SpriteShelf() {
   const [sceneDropTarget, setSceneDropTarget] = useState<{ sceneId: string; position: 'before' | 'after' } | null>(null);
   const [draggedLayerKeys, setDraggedLayerKeys] = useState<string[]>([]);
   const [layerDropTarget, setLayerDropTarget] = useState<{ key: string | null; dropPosition: 'before' | 'after' | 'on' | null } | null>(null);
+  const [layerDragPreview, setLayerDragPreview] = useState<{
+    entries: VisibleShelfTreeEntry[];
+    width: number;
+  } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -248,7 +275,6 @@ export function SpriteShelf() {
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
   const inlineRenameSessionRef = useRef(0);
-  const layerRowRefs = useRef(new Map<string, HTMLDivElement>());
   const layerDragPreviewRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
@@ -364,6 +390,8 @@ export function SpriteShelf() {
       .filter((folder) => !collapsedFolderIds.has(folder.id))
       .map((folder) => getFolderNodeKey(folder.id)),
   );
+  const visibleTreeEntries = collectVisibleTreeEntries(treeItems, expandedKeys);
+  const visibleTreeEntryByKey = new Map(visibleTreeEntries.map((entry) => [entry.item.key, entry]));
   const visibleRenameTargets = collectVisibleRenameableItems(treeItems, expandedKeys);
 
   const commitFolderRename = () => {
@@ -512,62 +540,32 @@ export function SpriteShelf() {
   const clearLayerDragState = () => {
     setDraggedLayerKeys([]);
     setLayerDropTarget(null);
-    if (layerDragPreviewRef.current) {
-      layerDragPreviewRef.current.remove();
-      layerDragPreviewRef.current = null;
-    }
+    setLayerDragPreview(null);
   };
 
-  const buildLayerDragPreview = (dragKeys: string[], fallbackRow: HTMLDivElement) => {
-    const preview = document.createElement('div');
-    preview.style.position = 'fixed';
-    preview.style.top = '-10000px';
-    preview.style.left = '-10000px';
-    preview.style.pointerEvents = 'none';
-    preview.style.zIndex = '9999';
-    preview.style.display = 'flex';
-    preview.style.flexDirection = 'column';
-    preview.style.gap = '4px';
-    preview.style.padding = '4px';
-
-    const previewKeys = dragKeys.slice(0, 3);
-    for (const key of previewKeys) {
-      const sourceRow = layerRowRefs.current.get(key) ?? fallbackRow;
-      const rowClone = sourceRow.cloneNode(true) as HTMLDivElement;
-      rowClone.style.width = `${sourceRow.getBoundingClientRect().width}px`;
-      rowClone.style.boxSizing = 'border-box';
-      rowClone.style.background = 'hsl(var(--card))';
-      rowClone.style.borderRadius = '8px';
-      rowClone.style.boxShadow = '0 10px 30px rgba(0, 0, 0, 0.18)';
-      preview.appendChild(rowClone);
-    }
-
-    if (dragKeys.length > previewKeys.length) {
-      const overflowBadge = document.createElement('div');
-      overflowBadge.textContent = `+${dragKeys.length - previewKeys.length} more`;
-      overflowBadge.style.alignSelf = 'flex-start';
-      overflowBadge.style.padding = '2px 8px';
-      overflowBadge.style.borderRadius = '999px';
-      overflowBadge.style.fontSize = '11px';
-      overflowBadge.style.lineHeight = '16px';
-      overflowBadge.style.background = 'hsl(var(--muted))';
-      overflowBadge.style.color = 'hsl(var(--muted-foreground))';
-      preview.appendChild(overflowBadge);
-    }
-
-    document.body.appendChild(preview);
-    layerDragPreviewRef.current = preview;
-    return preview;
-  };
-
-  const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
+  const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem, level: number) => {
     const dragKeys = getDragKeysForItem(item);
-    setDraggedLayerKeys(dragKeys);
-    setLayerDropTarget(null);
+    const rowRect = event.currentTarget.getBoundingClientRect();
+    const previewEntries = dragKeys
+      .map((key) => visibleTreeEntryByKey.get(key))
+      .filter((entry): entry is VisibleShelfTreeEntry => !!entry);
+
+    flushSync(() => {
+      setDraggedLayerKeys(dragKeys);
+      setLayerDropTarget(null);
+      setLayerDragPreview({
+        entries: previewEntries.length > 0 ? previewEntries : [{ item, level }],
+        width: rowRect.width,
+      });
+    });
+
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragKeys.join(','));
-    const preview = buildLayerDragPreview(dragKeys, event.currentTarget);
-    event.dataTransfer.setDragImage(preview, 20, 20);
+    if (layerDragPreviewRef.current) {
+      const anchorX = Math.max(0, Math.min(rowRect.width - 1, event.clientX - rowRect.left));
+      const anchorY = Math.max(0, Math.min(rowRect.height - 1, event.clientY - rowRect.top));
+      event.dataTransfer.setDragImage(layerDragPreviewRef.current, anchorX, anchorY);
+    }
   };
 
   const getDropPositionForItem = (
@@ -1262,7 +1260,17 @@ export function SpriteShelf() {
     && selectedIdsInScene.includes(contextMenu.object.id);
   const deleteLabel = willDeleteSelection ? `Delete Selected (${selectedIdsInScene.length})` : 'Delete';
 
-  const renderTreeItem = (item: ShelfTreeItem, level = 1): React.ReactNode => {
+  const renderLayerRow = (
+    item: ShelfTreeItem,
+    level: number,
+    options?: {
+      interactive?: boolean;
+      showDropIndicators?: boolean;
+      rowKey?: string;
+    },
+  ): React.ReactNode => {
+    const interactive = options?.interactive ?? true;
+    const showDropIndicators = options?.showDropIndicators ?? true;
     const object = item.object;
     const folder = item.folder;
     const isObjectEditing = item.type === 'object' && editingObjectId === item.id;
@@ -1272,24 +1280,17 @@ export function SpriteShelf() {
     const hasChildItems = item.children.length > 0;
     const isExpanded = item.type === 'folder' && expandedKeys.has(item.key);
     const isSelected = item.type === 'object' && selectedIdsInScene.includes(item.id);
-    const dropPosition = layerDropTarget?.key === item.key ? layerDropTarget.dropPosition : null;
+    const dropPosition = showDropIndicators && layerDropTarget?.key === item.key ? layerDropTarget.dropPosition : null;
     const isDropOn = dropPosition === 'on';
     const isDropBefore = dropPosition === 'before';
     const isDropAfter = dropPosition === 'after';
 
     return (
-      <div key={item.key} className="relative">
+      <div key={options?.rowKey ?? item.key} className="relative">
         {isDropBefore ? (
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
-          ref={(node) => {
-            if (node) {
-              layerRowRefs.current.set(item.key, node);
-            } else {
-              layerRowRefs.current.delete(item.key);
-            }
-          }}
           className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
             isSelected
               ? 'bg-primary/10 border-l-2 border-l-primary'
@@ -1297,9 +1298,9 @@ export function SpriteShelf() {
                 ? 'bg-primary/15 border-l-2 border-l-primary/60'
                 : 'border-l-2 border-l-transparent hover:bg-accent'
           } ${isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
-          draggable={!isObjectEditing && !isFolderEditing}
+          draggable={interactive && !isObjectEditing && !isFolderEditing}
           style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
-          onDoubleClick={(e) => {
+          onDoubleClick={interactive ? ((e) => {
             e.preventDefault();
             e.stopPropagation();
             if (item.type === 'object' && object) {
@@ -1307,35 +1308,35 @@ export function SpriteShelf() {
             } else if (item.type === 'folder' && folder) {
               handleStartFolderEdit(folder);
             }
-          }}
-          onClick={(e) => {
+          }) : undefined}
+          onClick={interactive ? ((e) => {
             if (item.type === 'object' && object) {
               handleObjectRowClick(e, object.id);
             }
-          }}
-          onContextMenu={(e) => {
+          }) : undefined}
+          onContextMenu={interactive ? ((e) => {
             if (item.type === 'object' && object) {
               handleObjectContextMenu(e, object);
             } else if (item.type === 'folder' && folder) {
               handleFolderContextMenu(e, folder);
             }
-          }}
-          onDragOver={(e) => handleLayerDragOver(e, item)}
-          onDrop={(e) => handleLayerDrop(e, item)}
-          onDragStart={(e) => handleLayerDragStart(e, item)}
-          onDragEnd={clearLayerDragState}
+          }) : undefined}
+          onDragOver={interactive ? ((e) => handleLayerDragOver(e, item)) : undefined}
+          onDrop={interactive ? ((e) => handleLayerDrop(e, item)) : undefined}
+          onDragStart={interactive ? ((e) => handleLayerDragStart(e, item, level)) : undefined}
+          onDragEnd={interactive ? clearLayerDragState : undefined}
         >
           <button
             type="button"
             disabled={!hasChildItems}
             aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
             className="shrink-0 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
-            onClick={(e) => {
+            onClick={interactive ? ((e) => {
               e.stopPropagation();
               if (folder) {
                 handleToggleFolder(folder.id);
               }
-            }}
+            }) : undefined}
           >
             {hasChildItems ? (
               isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />
@@ -1428,7 +1429,16 @@ export function SpriteShelf() {
         {isDropAfter ? (
           <div className="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
+      </div>
+    );
+  };
 
+  const renderTreeItem = (item: ShelfTreeItem, level = 1): React.ReactNode => {
+    const isExpanded = item.type === 'folder' && expandedKeys.has(item.key);
+
+    return (
+      <div key={item.key}>
+        {renderLayerRow(item, level)}
         {isExpanded ? item.children.map((child) => renderTreeItem(child, level + 1)) : null}
       </div>
     );
@@ -1594,6 +1604,21 @@ export function SpriteShelf() {
           </div>
         )}
       </div>
+
+      {layerDragPreview ? (
+        <div className="fixed left-[-10000px] top-0 pointer-events-none z-[9999]">
+          <div
+            ref={layerDragPreviewRef}
+            style={{ width: `${layerDragPreview.width}px` }}
+          >
+            {layerDragPreview.entries.map((entry) => renderLayerRow(entry.item, entry.level, {
+              interactive: false,
+              showDropIndicators: false,
+              rowKey: `drag-preview-${entry.item.key}`,
+            }))}
+          </div>
+        </div>
+      ) : null}
 
       {contextMenu && (
         <>
