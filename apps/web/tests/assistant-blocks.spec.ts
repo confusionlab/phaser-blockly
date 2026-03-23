@@ -114,6 +114,41 @@ test.describe('assistant block catalog', () => {
     expect(code).toContain('Hello bubble');
   });
 
+  test('targeted speech blocks generate target sprite speech calls', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    const { javascriptGenerator } = await import('blockly/javascript');
+    await import('../src/components/blockly/toolbox');
+    const { registerCodeGenerators } = await import('../src/phaser/CodeGenerator');
+
+    Blockly.utils.xml.injectDependencies({
+      document: new DOMParser().parseFromString('<xml></xml>', 'text/xml') as unknown as Document,
+      DOMParser,
+      XMLSerializer,
+    });
+    registerCodeGenerators();
+
+    const workspace = new Blockly.Workspace();
+    const speak = workspace.newBlock('looks_target_speak');
+    const target = workspace.newBlock('object_from_dropdown');
+    const text = workspace.newBlock('text');
+    target.setFieldValue('hero-id', 'TARGET');
+    text.setFieldValue('Hi there', 'TEXT');
+    speak.getInput('TARGET')?.connection?.connect(target.outputConnection);
+    speak.getInput('TEXT')?.connection?.connect(text.outputConnection);
+
+    const stop = workspace.newBlock('looks_target_stop_speaking');
+    const stopTarget = workspace.newBlock('object_from_dropdown');
+    stopTarget.setFieldValue('hero-id', 'TARGET');
+    stop.getInput('TARGET')?.connection?.connect(stopTarget.outputConnection);
+
+    const code = javascriptGenerator.workspaceToCode(workspace);
+    workspace.dispose();
+
+    expect(code).toContain('runtime.getSprite(__targetId)?.speak(');
+    expect(code).toContain('runtime.getSprite(__targetId)?.stopSpeaking()');
+  });
+
   test('compiles typed block programs into Blockly XML', () => {
     const xml = compileAssistantBlockProgram({
       formatVersion: 1,

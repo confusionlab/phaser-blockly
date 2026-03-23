@@ -256,7 +256,7 @@ export class RuntimeSprite {
 
     const text = String(rawText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     if (!/\S/.test(text)) {
-      this.clearSpeechBubble();
+      this.stopSpeaking();
       return;
     }
 
@@ -264,6 +264,11 @@ export class RuntimeSprite {
     this.renderSpeechBubble(text);
     this.syncSpeechBubbleVisibility();
     this.updateSpeechBubblePosition();
+  }
+
+  stopSpeaking(): void {
+    if (this._stopped) return;
+    this.clearSpeechBubble();
   }
 
   private getScaleSign(value: number): number {

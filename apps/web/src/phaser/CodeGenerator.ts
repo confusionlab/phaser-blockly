@@ -230,6 +230,33 @@ export function registerCodeGenerators(): void {
     return `sprite.speak(${text});\n`;
   };
 
+  javascriptGenerator.forBlock['looks_stop_speaking'] = function() {
+    return 'sprite.stopSpeaking();\n';
+  };
+
+  javascriptGenerator.forBlock['looks_target_speak'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    const text = javascriptGenerator.valueToCode(block, 'TEXT', Order.ATOMIC) || "''";
+    return `{
+  const __targetId = ${targetId};
+  if (__targetId) {
+    runtime.getSprite(__targetId)?.speak(${text});
+  }
+}\n`;
+  };
+
+  javascriptGenerator.forBlock['looks_target_stop_speaking'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    return `{
+  const __targetId = ${targetId};
+  if (__targetId) {
+    runtime.getSprite(__targetId)?.stopSpeaking();
+  }
+}\n`;
+  };
+
   javascriptGenerator.forBlock['looks_set_size'] = function(block) {
     const size = javascriptGenerator.valueToCode(block, 'SIZE', Order.ATOMIC) || '100';
     return `sprite.setSize(${size});\n`;

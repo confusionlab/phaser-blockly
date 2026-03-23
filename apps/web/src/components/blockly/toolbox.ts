@@ -902,6 +902,26 @@ export function getToolboxConfig(): any {
               TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } }
             }
           },
+          { kind: 'block', type: 'looks_stop_speaking' },
+          {
+            kind: 'block',
+            type: 'looks_target_speak',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'looks_target_stop_speaking',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+            }
+          },
           { kind: 'block', type: 'looks_go_to_front' },
           { kind: 'block', type: 'looks_go_to_back' },
           {
@@ -1700,6 +1720,47 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
       this.setTooltip('Show a speech bubble above this object and fade in the text word by word');
+    }
+  };
+
+  Blockly.Blocks['looks_stop_speaking'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('stop speaking');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Hide this object\'s speech bubble');
+    }
+  };
+
+  Blockly.Blocks['looks_target_speak'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('make');
+      this.appendValueInput('TEXT')
+        .appendField('speak');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Make another object show a speech bubble and fade in the text word by word');
+    }
+  };
+
+  Blockly.Blocks['looks_target_stop_speaking'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('make');
+      this.appendDummyInput()
+        .appendField('stop speaking');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Hide another object\'s speech bubble');
     }
   };
 
