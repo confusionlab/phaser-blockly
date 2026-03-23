@@ -53,6 +53,8 @@ const sharedInventoryState: SharedInventoryState = {
   items: [],
   pendingEntryIds: new Set(),
   subscribers: new Set(),
+  visible: true,
+  visibilitySubscribers: new Set(),
 };
 
 function getInventorySnapshot(): InventoryItemEntry[] {
@@ -67,6 +69,10 @@ function notifyInventorySubscribers(): void {
   sharedInventoryState.subscribers.forEach((subscriber) => subscriber(snapshot));
 }
 
+function notifyInventoryVisibilitySubscribers(): void {
+  sharedInventoryState.visibilitySubscribers.forEach((subscriber) => subscriber(sharedInventoryState.visible));
+}
+
 /**
  * Clear shared global variables - call this when the play session ends, not on scene switch
  */
@@ -75,7 +81,9 @@ export function clearSharedGlobalVariables(): void {
   sharedTimerStartMs = null;
   sharedInventoryState.items = [];
   sharedInventoryState.pendingEntryIds.clear();
+  sharedInventoryState.visible = true;
   notifyInventorySubscribers();
+  notifyInventoryVisibilitySubscribers();
   debugLog('info', 'Shared global variables cleared');
 }
 
@@ -174,6 +182,8 @@ interface SharedInventoryState {
   items: Omit<InventoryItemEntry, 'isPendingUse'>[];
   pendingEntryIds: Set<string>;
   subscribers: Set<(items: InventoryItemEntry[]) => void>;
+  visible: boolean;
+  visibilitySubscribers: Set<(visible: boolean) => void>;
 }
 
 interface InventoryDropResolution {
@@ -552,6 +562,26 @@ export class RuntimeEngine {
     return getInventorySnapshot();
   }
 
+  subscribeToInventoryVisibility(subscriber: (visible: boolean) => void): () => void {
+    sharedInventoryState.visibilitySubscribers.add(subscriber);
+    subscriber(sharedInventoryState.visible);
+    return () => {
+      sharedInventoryState.visibilitySubscribers.delete(subscriber);
+    };
+  }
+
+  showInventory(): void {
+    if (sharedInventoryState.visible) return;
+    sharedInventoryState.visible = true;
+    notifyInventoryVisibilitySubscribers();
+  }
+
+  hideInventory(): void {
+    if (!sharedInventoryState.visible) return;
+    sharedInventoryState.visible = false;
+    notifyInventoryVisibilitySubscribers();
+  }
+
   moveSpriteToInventory(spriteId: string): void {
     const sprite = this.sprites.get(spriteId);
     if (!sprite) {
@@ -693,21 +723,6 @@ export class RuntimeEngine {
     }
 
     this._worldBoundaryGraphics.clear();
-
-    if (!this._worldBoundaryEnabled || !hasUsableWorldBoundary(this._worldBoundary)) {
-      return;
-    }
-
-    this._worldBoundaryGraphics.lineStyle(3, 0x1d4ed8, 0.65);
-    const first = this.userToPhaser(this._worldBoundary[0].x, this._worldBoundary[0].y);
-    this._worldBoundaryGraphics.beginPath();
-    this._worldBoundaryGraphics.moveTo(first.x, first.y);
-    for (let index = 1; index < this._worldBoundary.length; index += 1) {
-      const point = this.userToPhaser(this._worldBoundary[index].x, this._worldBoundary[index].y);
-      this._worldBoundaryGraphics.lineTo(point.x, point.y);
-    }
-    this._worldBoundaryGraphics.closePath();
-    this._worldBoundaryGraphics.strokePath();
   }
 
   private updateWorldBoundaryBodies(): void {

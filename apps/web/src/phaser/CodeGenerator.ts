@@ -732,6 +732,14 @@ export function registerCodeGenerators(): void {
     return 'runtime.useDroppedItem();\n';
   };
 
+  javascriptGenerator.forBlock['inventory_show'] = function() {
+    return 'runtime.showInventory();\n';
+  };
+
+  javascriptGenerator.forBlock['inventory_hide'] = function() {
+    return 'runtime.hideInventory();\n';
+  };
+
 
   // --- Scene Switching ---
 

@@ -450,6 +450,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
   const inventoryUnsubscribeRef = useRef<(() => void) | null>(null);
+  const inventoryVisibilityUnsubscribeRef = useRef<(() => void) | null>(null);
   const draggedInventoryItemRef = useRef<{
     entry: InventoryItemEntry;
     x: number;
@@ -460,6 +461,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const playModeInitialSceneRef = useRef<string | null>(null);
   const [activeRuntime, setActiveRuntime] = useState<RuntimeEngine | null>(null);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemEntry[]>([]);
+  const [isInventoryVisible, setIsInventoryVisible] = useState(true);
   const [inventoryPage, setInventoryPage] = useState(0);
   const [draggedInventoryItem, setDraggedInventoryItem] = useState<{
     entry: InventoryItemEntry;
@@ -490,9 +492,12 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
     inventoryUnsubscribeRef.current = null;
+    inventoryVisibilityUnsubscribeRef.current?.();
+    inventoryVisibilityUnsubscribeRef.current = null;
 
     if (!activeRuntime || !isPlaying) {
       setInventoryItems([]);
+      setIsInventoryVisible(true);
       setInventoryPage(0);
       return;
     }
@@ -500,10 +505,15 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     inventoryUnsubscribeRef.current = activeRuntime.subscribeToInventory((items) => {
       setInventoryItems(items);
     });
+    inventoryVisibilityUnsubscribeRef.current = activeRuntime.subscribeToInventoryVisibility((visible) => {
+      setIsInventoryVisible(visible);
+    });
 
     return () => {
       inventoryUnsubscribeRef.current?.();
       inventoryUnsubscribeRef.current = null;
+      inventoryVisibilityUnsubscribeRef.current?.();
+      inventoryVisibilityUnsubscribeRef.current = null;
     };
   }, [activeRuntime, isPlaying]);
 
@@ -1406,7 +1416,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         ref={containerRef}
         className={isPlaying ? "w-full h-full" : "w-full h-full min-h-[300px]"}
       />
-      {isPlaying && inventoryItems.length > 0 && (
+      {isPlaying && isInventoryVisible && inventoryItems.length > 0 && (
         <>
           <div
             data-pocha-ui="inventory"

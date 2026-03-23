@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -7,6 +7,16 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import type { WorldPoint } from '@/types';
+
+const WORLD_BOUNDARY_EDITOR_PADDING = 160;
+const WORLD_BOUNDARY_EDITOR_MIN_ZOOM = 0.15;
+const WORLD_BOUNDARY_EDITOR_MAX_ZOOM = 4;
+
+interface WorldBoundaryEditorView {
+  centerX: number;
+  centerY: number;
+  zoom: number;
+}
 
 function userToCanvas(point: WorldPoint, canvasWidth: number, canvasHeight: number) {
   return {
@@ -19,6 +29,64 @@ function canvasToUser(x: number, y: number, canvasWidth: number, canvasHeight: n
   return {
     x: x - canvasWidth / 2,
     y: canvasHeight / 2 - y,
+  };
+}
+
+function getViewBox(view: WorldBoundaryEditorView, canvasWidth: number, canvasHeight: number) {
+  const width = canvasWidth / view.zoom;
+  const height = canvasHeight / view.zoom;
+  return {
+    minX: view.centerX - width / 2,
+    minY: view.centerY - height / 2,
+    width,
+    height,
+  };
+}
+
+function getInitialView(points: WorldPoint[], canvasWidth: number, canvasHeight: number): WorldBoundaryEditorView {
+  const canvasPoints = points.map((point) => userToCanvas(point, canvasWidth, canvasHeight));
+  const xs = [0, canvasWidth, ...canvasPoints.map((point) => point.x)];
+  const ys = [0, canvasHeight, ...canvasPoints.map((point) => point.y)];
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const aspect = canvasWidth / canvasHeight;
+
+  let width = Math.max(1, maxX - minX + WORLD_BOUNDARY_EDITOR_PADDING * 2);
+  let height = Math.max(1, maxY - minY + WORLD_BOUNDARY_EDITOR_PADDING * 2);
+
+  if (width / height > aspect) {
+    height = width / aspect;
+  } else {
+    width = height * aspect;
+  }
+
+  return {
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2,
+    zoom: Math.max(
+      WORLD_BOUNDARY_EDITOR_MIN_ZOOM,
+      Math.min(WORLD_BOUNDARY_EDITOR_MAX_ZOOM, canvasWidth / width),
+    ),
+  };
+}
+
+function clientToCanvasPoint(
+  clientX: number,
+  clientY: number,
+  stage: SVGSVGElement,
+  view: WorldBoundaryEditorView,
+  canvasWidth: number,
+  canvasHeight: number,
+) {
+  const rect = stage.getBoundingClientRect();
+  const viewBox = getViewBox(view, canvasWidth, canvasHeight);
+  const normalizedX = (clientX - rect.left) / rect.width;
+  const normalizedY = (clientY - rect.top) / rect.height;
+  return {
+    x: viewBox.minX + normalizedX * viewBox.width,
+    y: viewBox.minY + normalizedY * viewBox.height,
   };
 }
 
@@ -37,26 +105,44 @@ export function WorldBoundaryEditor() {
   const [enabled, setEnabled] = useState(false);
   const [points, setPoints] = useState<WorldPoint[]>([]);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [view, setView] = useState<WorldBoundaryEditorView>(() => getInitialView([], canvasWidth, canvasHeight));
+  const [panState, setPanState] = useState<{
+    startClientX: number;
+    startClientY: number;
+    startCenterX: number;
+    startCenterY: number;
+  } | null>(null);
+  const stageRef = useRef<SVGSVGElement | null>(null);
+  const viewRef = useRef(view);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
 
   useEffect(() => {
     if (!scene) return;
     setEnabled(!!scene.worldBoundary?.enabled);
-    setPoints((scene.worldBoundary?.points || []).map((point) => ({ ...point })));
-  }, [scene]);
+    const nextPoints = (scene.worldBoundary?.points || []).map((point) => ({ ...point }));
+    setPoints(nextPoints);
+    setView(getInitialView(nextPoints, canvasWidth, canvasHeight));
+  }, [canvasHeight, canvasWidth, scene]);
 
   useEffect(() => {
     if (dragIndex === null) return;
 
     const handlePointerMove = (event: PointerEvent) => {
-      const stage = document.getElementById('world-boundary-editor-stage');
+      const stage = stageRef.current;
       if (!stage) return;
-      const rect = stage.getBoundingClientRect();
-      const scaleX = canvasWidth / rect.width;
-      const scaleY = canvasHeight / rect.height;
-      const nextX = Math.max(0, Math.min(canvasWidth, (event.clientX - rect.left) * scaleX));
-      const nextY = Math.max(0, Math.min(canvasHeight, (event.clientY - rect.top) * scaleY));
+      const nextPoint = clientToCanvasPoint(
+        event.clientX,
+        event.clientY,
+        stage,
+        viewRef.current,
+        canvasWidth,
+        canvasHeight,
+      );
       setPoints((current) => current.map((point, index) => (
-        index === dragIndex ? canvasToUser(nextX, nextY, canvasWidth, canvasHeight) : point
+        index === dragIndex ? canvasToUser(nextPoint.x, nextPoint.y, canvasWidth, canvasHeight) : point
       )));
     };
 
@@ -72,6 +158,37 @@ export function WorldBoundaryEditor() {
     };
   }, [canvasHeight, canvasWidth, dragIndex]);
 
+  useEffect(() => {
+    if (!panState) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const rect = stage.getBoundingClientRect();
+      const viewBox = getViewBox(viewRef.current, canvasWidth, canvasHeight);
+      const unitsPerPixelX = viewBox.width / rect.width;
+      const unitsPerPixelY = viewBox.height / rect.height;
+      const deltaX = (event.clientX - panState.startClientX) * unitsPerPixelX;
+      const deltaY = (event.clientY - panState.startClientY) * unitsPerPixelY;
+      setView((current) => ({
+        ...current,
+        centerX: panState.startCenterX - deltaX,
+        centerY: panState.startCenterY - deltaY,
+      }));
+    };
+
+    const handlePointerUp = () => {
+      setPanState(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [canvasHeight, canvasWidth, panState]);
+
   if (!scene) {
     return null;
   }
@@ -83,14 +200,58 @@ export function WorldBoundaryEditor() {
     })
     .join(' ');
 
-  const handleStageClick = (event: ReactPointerEvent<SVGSVGElement>) => {
-    if (dragIndex !== null) return;
+  const viewBox = getViewBox(view, canvasWidth, canvasHeight);
+
+  const handleStagePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.button === 1 || event.button === 2) {
+      event.preventDefault();
+      setPanState({
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startCenterX: viewRef.current.centerX,
+        startCenterY: viewRef.current.centerY,
+      });
+      return;
+    }
+
+    if (event.button !== 0 || dragIndex !== null) return;
+
+    const nextPoint = clientToCanvasPoint(
+      event.clientX,
+      event.clientY,
+      event.currentTarget,
+      viewRef.current,
+      canvasWidth,
+      canvasHeight,
+    );
+    setPoints((current) => [...current, canvasToUser(nextPoint.x, nextPoint.y, canvasWidth, canvasHeight)]);
+  };
+
+  const handleStageWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    const pointerCanvasPoint = clientToCanvasPoint(
+      event.clientX,
+      event.clientY,
+      event.currentTarget,
+      viewRef.current,
+      canvasWidth,
+      canvasHeight,
+    );
+    const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
+    const nextZoom = Math.max(
+      WORLD_BOUNDARY_EDITOR_MIN_ZOOM,
+      Math.min(WORLD_BOUNDARY_EDITOR_MAX_ZOOM, viewRef.current.zoom * zoomFactor),
+    );
     const rect = event.currentTarget.getBoundingClientRect();
-    const scaleX = canvasWidth / rect.width;
-    const scaleY = canvasHeight / rect.height;
-    const x = (event.clientX - rect.left) * scaleX;
-    const y = (event.clientY - rect.top) * scaleY;
-    setPoints((current) => [...current, canvasToUser(x, y, canvasWidth, canvasHeight)]);
+    const normalizedX = (event.clientX - rect.left) / rect.width;
+    const normalizedY = (event.clientY - rect.top) / rect.height;
+    const nextWidth = canvasWidth / nextZoom;
+    const nextHeight = canvasHeight / nextZoom;
+    setView({
+      centerX: pointerCanvasPoint.x - (normalizedX - 0.5) * nextWidth,
+      centerY: pointerCanvasPoint.y - (normalizedY - 0.5) * nextHeight,
+      zoom: nextZoom,
+    });
   };
 
   const handleSave = () => {
@@ -113,7 +274,7 @@ export function WorldBoundaryEditor() {
         <div>
           <div className="text-sm font-medium">World Boundary</div>
           <div className="text-xs text-muted-foreground">
-            Click to add points. Drag points to move them.
+            Click to add points. Drag points to move them. Wheel to zoom. Right or middle drag to pan.
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -150,11 +311,14 @@ export function WorldBoundaryEditor() {
             style={{ aspectRatio, maxWidth: 'min(1200px, 92vw)', maxHeight: '82vh' }}
           >
             <svg
-              viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+              ref={stageRef}
+              viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.width} ${viewBox.height}`}
               className="w-full h-full rounded-lg bg-[#0b1220] cursor-crosshair"
-              onPointerDown={handleStageClick}
+              onPointerDown={handleStagePointerDown}
+              onWheel={handleStageWheel}
+              onContextMenu={(event) => event.preventDefault()}
             >
-              <rect x="0" y="0" width={canvasWidth} height={canvasHeight} fill="#111827" />
+              <rect x={viewBox.minX} y={viewBox.minY} width={viewBox.width} height={viewBox.height} fill="#111827" />
               <rect
                 x="1"
                 y="1"
@@ -163,6 +327,7 @@ export function WorldBoundaryEditor() {
                 fill="none"
                 stroke="rgba(255,255,255,0.25)"
                 strokeWidth="2"
+                strokeDasharray="16 10"
               />
               {points.length >= 2 && (
                 <polyline
@@ -194,6 +359,7 @@ export function WorldBoundaryEditor() {
                       stroke="#2563eb"
                       strokeWidth="4"
                       onPointerDown={(event) => {
+                        if (event.button !== 0) return;
                         event.stopPropagation();
                         setDragIndex(index);
                       }}

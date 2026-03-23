@@ -742,6 +742,8 @@ export function getToolboxConfig(): any {
         contents: [
           { kind: 'block', type: 'event_any_inventory_item_dropped' },
           { kind: 'block', type: 'event_inventory_item_dropped' },
+          { kind: 'block', type: 'inventory_show' },
+          { kind: 'block', type: 'inventory_hide' },
           { kind: 'block', type: 'inventory_move_to_inventory' },
           { kind: 'block', type: 'inventory_use_dropped_item' },
         ],
@@ -2863,6 +2865,28 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
       this.setTooltip('Remove this object from the scene and put it into the shared inventory.');
+    }
+  };
+
+  Blockly.Blocks['inventory_show'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('show inventory');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Show the inventory UI.');
+    }
+  };
+
+  Blockly.Blocks['inventory_hide'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('hide inventory');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Hide the inventory UI.');
     }
   };
 

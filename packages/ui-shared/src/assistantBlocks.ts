@@ -121,6 +121,8 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'physics_set_velocity_x', category: 'Physics', kind: 'statement', summary: 'Set horizontal velocity', inputNames: ['VX'], statementInputNames: [], fieldNames: [] },
   { type: 'physics_set_velocity_y', category: 'Physics', kind: 'statement', summary: 'Set vertical velocity', inputNames: ['VY'], statementInputNames: [], fieldNames: [] },
   { type: 'inventory_move_to_inventory', category: 'Inventory', kind: 'statement', summary: 'Move this object into the shared inventory', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'inventory_show', category: 'Inventory', kind: 'statement', summary: 'Show the inventory UI', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'inventory_hide', category: 'Inventory', kind: 'statement', summary: 'Hide the inventory UI', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'inventory_use_dropped_item', category: 'Inventory', kind: 'statement', summary: 'Consume the inventory item that was just dropped here', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'sensing_all_touching_objects', category: 'Sensing', kind: 'reporter', summary: 'All objects touching this object', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'sensing_distance_to_value', category: 'Sensing', kind: 'reporter', summary: 'Distance to target', inputNames: ['TARGET'], statementInputNames: [], fieldNames: [] },
