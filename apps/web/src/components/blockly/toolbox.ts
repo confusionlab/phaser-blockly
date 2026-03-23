@@ -895,6 +895,13 @@ export function getToolboxConfig(): any {
         contents: [
           { kind: 'block', type: 'looks_show' },
           { kind: 'block', type: 'looks_hide' },
+          {
+            kind: 'block',
+            type: 'looks_speak',
+            inputs: {
+              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } }
+            }
+          },
           { kind: 'block', type: 'looks_go_to_front' },
           { kind: 'block', type: 'looks_go_to_back' },
           {
@@ -1681,6 +1688,18 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
       this.setTooltip('Hide this object');
+    }
+  };
+
+  Blockly.Blocks['looks_speak'] = {
+    init: function() {
+      this.appendValueInput('TEXT')
+        .appendField('speak');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Show a speech bubble above this object and fade in the text word by word');
     }
   };
 

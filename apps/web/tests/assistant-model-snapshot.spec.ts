@@ -142,4 +142,31 @@ test.describe('assistant model snapshot', () => {
     expect(prompt).toContain('Generated JS:');
     expect(prompt).toContain('runtime.forever');
   });
+
+  test('buildAssistantModelSnapshot marks translating objects as moving', () => {
+    const project = createDefaultProject('Motion Fixture');
+    const scene = project.scenes[0]!;
+    const hero = createDefaultGameObject('Hero');
+    hero.blocklyXml = `
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="event_game_start">
+          <statement name="NEXT">
+            <block type="motion_change_x">
+              <value name="VALUE">
+                <block type="math_number">
+                  <field name="NUM">10</field>
+                </block>
+              </value>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `.trim();
+    scene.objects = [hero];
+
+    const modelSnapshot = buildAssistantModelSnapshot(createAssistantProjectSnapshot(project));
+    const objectModel = modelSnapshot.state.scenes[0]!.objects[0]!;
+
+    expect(objectModel.motion).toEqual({ isMoving: true });
+  });
 });

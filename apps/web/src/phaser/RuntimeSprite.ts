@@ -5,6 +5,17 @@ import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
 import type { RuntimeEngine } from './RuntimeEngine';
 
 const MIN_SCALE_MAGNITUDE = 0.01;
+const SPEECH_BUBBLE_MAX_TEXT_WIDTH = 220;
+const SPEECH_BUBBLE_PADDING_X = 14;
+const SPEECH_BUBBLE_PADDING_Y = 12;
+const SPEECH_BUBBLE_RADIUS = 16;
+const SPEECH_BUBBLE_TAIL_HEIGHT = 14;
+const SPEECH_BUBBLE_TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: '"Trebuchet MS", "Verdana", sans-serif',
+  fontSize: '20px',
+  color: '#111827',
+  align: 'left',
+};
 
 function debugLog(type: 'info' | 'event' | 'action' | 'error', message: string) {
   appendRuntimeLog(type, message, {
@@ -39,6 +50,12 @@ export class RuntimeSprite {
 
   // Click handler for pixel-perfect detection
   private _clickHandler: (() => void) | null = null;
+  private _speechBubble: Phaser.GameObjects.Container | null = null;
+  private _speechBubbleBackground: Phaser.GameObjects.Graphics | null = null;
+  private _speechBubbleTextLayer: Phaser.GameObjects.Container | null = null;
+  private _speechMeasureText: Phaser.GameObjects.Text | null = null;
+  private _speechUpdateHandler: (() => void) | null = null;
+  private _speechWordTweens: Phaser.Tweens.Tween[] = [];
 
   // Ground collision tracking (set by RuntimeEngine)
   private _isTouchingGround: boolean = false;
@@ -225,11 +242,28 @@ export class RuntimeSprite {
   show(): void {
     if (this._stopped) return;
     this.container.setVisible(true);
+    this.syncSpeechBubbleVisibility();
   }
 
   hide(): void {
     if (this._stopped) return;
     this.container.setVisible(false);
+    this.syncSpeechBubbleVisibility();
+  }
+
+  speak(rawText: unknown): void {
+    if (this._stopped) return;
+
+    const text = String(rawText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (!/\S/.test(text)) {
+      this.clearSpeechBubble();
+      return;
+    }
+
+    this.ensureSpeechBubble();
+    this.renderSpeechBubble(text);
+    this.syncSpeechBubbleVisibility();
+    this.updateSpeechBubblePosition();
   }
 
   private getScaleSign(value: number): number {
@@ -887,6 +921,7 @@ export class RuntimeSprite {
 
   stop(): void {
     this._stopped = true;
+    this.stopSpeechTweens();
   }
 
   isStopped(): boolean {
@@ -913,6 +948,13 @@ export class RuntimeSprite {
 
   destroy(): void {
     this._stopped = true;
+    this.stopSpeechTweens();
+    this.clearSpeechBubble();
+
+    if (this._speechMeasureText) {
+      this._speechMeasureText.destroy();
+      this._speechMeasureText = null;
+    }
 
     // Remove Matter.js body from world before destroying container
     // This prevents the "body.destroy is not a function" error
@@ -925,5 +967,235 @@ export class RuntimeSprite {
     (this.container as unknown as { body?: MatterJS.BodyType }).body = undefined;
 
     this.container.destroy();
+  }
+
+  private ensureSpeechBubble(): void {
+    if (this._speechBubble) {
+      return;
+    }
+
+    const bubble = this.scene.add.container(this.container.x, this.container.y);
+    const background = this.scene.add.graphics();
+    const textLayer = this.scene.add.container(0, 0);
+    bubble.add([background, textLayer]);
+
+    this._speechBubble = bubble;
+    this._speechBubbleBackground = background;
+    this._speechBubbleTextLayer = textLayer;
+
+    if (!this._speechUpdateHandler) {
+      this._speechUpdateHandler = () => {
+        this.updateSpeechBubblePosition();
+        this.syncSpeechBubbleVisibility();
+      };
+      this.scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this._speechUpdateHandler);
+    }
+  }
+
+  private getSpeechMeasureText(): Phaser.GameObjects.Text {
+    if (!this._speechMeasureText) {
+      this._speechMeasureText = this.scene.add.text(-10000, -10000, '', SPEECH_BUBBLE_TEXT_STYLE);
+      this._speechMeasureText.setVisible(false);
+    }
+
+    this._speechMeasureText.setStyle(SPEECH_BUBBLE_TEXT_STYLE);
+    return this._speechMeasureText;
+  }
+
+  private stopSpeechTweens(): void {
+    this._speechWordTweens.forEach((tween) => tween.stop());
+    this._speechWordTweens = [];
+  }
+
+  private clearSpeechBubble(): void {
+    this.stopSpeechTweens();
+
+    if (this._speechUpdateHandler) {
+      this.scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this._speechUpdateHandler);
+      this._speechUpdateHandler = null;
+    }
+
+    if (this._speechBubble) {
+      this._speechBubble.destroy(true);
+      this._speechBubble = null;
+    }
+
+    this._speechBubbleBackground = null;
+    this._speechBubbleTextLayer = null;
+  }
+
+  private syncSpeechBubbleVisibility(): void {
+    if (!this._speechBubble) {
+      return;
+    }
+
+    this._speechBubble.setVisible(this.container.visible && this.container.active && !this._stopped);
+  }
+
+  private tokenizeSpeechText(text: string): string[] {
+    return text.match(/\S+|\n|[ \t]+/g) ?? [];
+  }
+
+  private renderSpeechBubble(text: string): void {
+    if (!this._speechBubble || !this._speechBubbleBackground || !this._speechBubbleTextLayer) {
+      return;
+    }
+
+    this.stopSpeechTweens();
+    this._speechBubbleTextLayer.removeAll(true);
+
+    const measureText = this.getSpeechMeasureText();
+    const lineHeight = Math.max(26, Math.ceil(measureText.setText('Ag').height * 1.2));
+    const tokens = this.tokenizeSpeechText(text);
+    const wordObjects: Phaser.GameObjects.Text[] = [];
+
+    let cursorX = 0;
+    let cursorY = 0;
+    let maxLineWidth = 0;
+
+    for (const token of tokens) {
+      if (token === '\n') {
+        maxLineWidth = Math.max(maxLineWidth, cursorX);
+        cursorX = 0;
+        cursorY += lineHeight;
+        continue;
+      }
+
+      const tokenWidth = Math.ceil(measureText.setText(token).width);
+      const isWhitespace = token.trim().length === 0;
+
+      if (!isWhitespace && cursorX > 0 && cursorX + tokenWidth > SPEECH_BUBBLE_MAX_TEXT_WIDTH) {
+        maxLineWidth = Math.max(maxLineWidth, cursorX);
+        cursorX = 0;
+        cursorY += lineHeight;
+      }
+
+      if (isWhitespace) {
+        cursorX += tokenWidth;
+        continue;
+      }
+
+      const word = this.scene.add.text(cursorX, cursorY, token, SPEECH_BUBBLE_TEXT_STYLE);
+      word.setOrigin(0, 0);
+      word.setAlpha(0);
+      this._speechBubbleTextLayer.add(word);
+      wordObjects.push(word);
+      cursorX += tokenWidth;
+      maxLineWidth = Math.max(maxLineWidth, cursorX);
+    }
+
+    const textWidth = Math.max(48, Math.min(SPEECH_BUBBLE_MAX_TEXT_WIDTH, Math.ceil(maxLineWidth)));
+    const lineCount = Math.max(1, Math.floor(cursorY / lineHeight) + 1);
+    const textHeight = lineCount * lineHeight;
+    const bubbleWidth = textWidth + SPEECH_BUBBLE_PADDING_X * 2;
+    const bubbleHeight = textHeight + SPEECH_BUBBLE_PADDING_Y * 2;
+
+    this._speechBubbleBackground.clear();
+    this._speechBubbleBackground.fillStyle(0xffffff, 0.96);
+    this._speechBubbleBackground.lineStyle(2, 0x111827, 0.18);
+    this._speechBubbleBackground.fillRoundedRect(
+      -bubbleWidth / 2,
+      -bubbleHeight / 2,
+      bubbleWidth,
+      bubbleHeight,
+      SPEECH_BUBBLE_RADIUS,
+    );
+    this._speechBubbleBackground.strokeRoundedRect(
+      -bubbleWidth / 2,
+      -bubbleHeight / 2,
+      bubbleWidth,
+      bubbleHeight,
+      SPEECH_BUBBLE_RADIUS,
+    );
+    this._speechBubbleBackground.fillTriangle(
+      -bubbleWidth * 0.18,
+      bubbleHeight / 2 - 1,
+      -bubbleWidth * 0.05,
+      bubbleHeight / 2 - 1,
+      -bubbleWidth * 0.12,
+      bubbleHeight / 2 + SPEECH_BUBBLE_TAIL_HEIGHT,
+    );
+    this._speechBubbleBackground.strokeTriangle(
+      -bubbleWidth * 0.18,
+      bubbleHeight / 2 - 1,
+      -bubbleWidth * 0.05,
+      bubbleHeight / 2 - 1,
+      -bubbleWidth * 0.12,
+      bubbleHeight / 2 + SPEECH_BUBBLE_TAIL_HEIGHT,
+    );
+
+    this._speechBubbleTextLayer.setPosition(
+      -bubbleWidth / 2 + SPEECH_BUBBLE_PADDING_X,
+      -bubbleHeight / 2 + SPEECH_BUBBLE_PADDING_Y,
+    );
+
+    wordObjects.forEach((word, index) => {
+      const tween = this.scene.tweens.add({
+        targets: word,
+        alpha: 1,
+        duration: 180,
+        ease: 'Quad.Out',
+        delay: index * 110,
+      });
+      this._speechWordTweens.push(tween);
+    });
+  }
+
+  private updateSpeechBubblePosition(): void {
+    if (!this._speechBubble) {
+      return;
+    }
+
+    const bounds = this.getVisibleSpeechAnchorBounds();
+    const bubbleHeight = this._speechBubble.getBounds().height;
+    this._speechBubble.setDepth(this.container.depth + 10000);
+    this._speechBubble.setPosition(
+      (bounds.left + bounds.right) / 2,
+      bounds.top - bubbleHeight / 2 - 10,
+    );
+  }
+
+  private getVisibleSpeechAnchorBounds(): { left: number; right: number; top: number; bottom: number } {
+    const costume = this._costumes[this._currentCostumeIndex];
+    const bounds = costume?.bounds;
+    if (!this._costumeImage || !bounds || bounds.width <= 0 || bounds.height <= 0) {
+      const fallback = this.container.getBounds();
+      return {
+        left: fallback.left,
+        right: fallback.right,
+        top: fallback.top,
+        bottom: fallback.bottom,
+      };
+    }
+
+    const imgWidth = this._costumeImage.width;
+    const imgHeight = this._costumeImage.height;
+    const left = bounds.x - imgWidth / 2;
+    const top = bounds.y - imgHeight / 2;
+    const right = left + bounds.width;
+    const bottom = top + bounds.height;
+
+    const matrix = this._costumeImage.getWorldTransformMatrix();
+    const corners = [
+      new Phaser.Math.Vector2(),
+      new Phaser.Math.Vector2(),
+      new Phaser.Math.Vector2(),
+      new Phaser.Math.Vector2(),
+    ];
+
+    matrix.transformPoint(left, top, corners[0]);
+    matrix.transformPoint(right, top, corners[1]);
+    matrix.transformPoint(left, bottom, corners[2]);
+    matrix.transformPoint(right, bottom, corners[3]);
+
+    const xs = corners.map((point) => point.x);
+    const ys = corners.map((point) => point.y);
+
+    return {
+      left: Math.min(...xs),
+      right: Math.max(...xs),
+      top: Math.min(...ys),
+      bottom: Math.max(...ys),
+    };
   }
 }

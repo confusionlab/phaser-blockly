@@ -613,6 +613,8 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
       return [indentLine(indent, 'go to front layer')];
     case 'looks_go_to_back':
       return [indentLine(indent, 'go to back layer')];
+    case 'looks_speak':
+      return [indentLine(indent, `speak ${renderBlocklyExpression(getValue(node, 'TEXT'))}`)];
     case 'looks_next_costume':
       return [indentLine(indent, 'next costume')];
     case 'looks_previous_costume':

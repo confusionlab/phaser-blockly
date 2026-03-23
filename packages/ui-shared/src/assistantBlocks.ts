@@ -77,6 +77,7 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'looks_set_opacity', category: 'Looks', kind: 'statement', summary: 'Set transparency (0-100)', inputNames: ['OPACITY'], statementInputNames: [], fieldNames: [] },
   { type: 'looks_set_size', category: 'Looks', kind: 'statement', summary: 'Set size percentage', inputNames: ['SIZE'], statementInputNames: [], fieldNames: [] },
   { type: 'looks_show', category: 'Looks', kind: 'statement', summary: 'Show this object', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'looks_speak', category: 'Looks', kind: 'statement', summary: 'Show a speech bubble and animate the text word by word', inputNames: ['TEXT'], statementInputNames: [], fieldNames: [] },
   { type: 'looks_switch_costume', category: 'Looks', kind: 'statement', summary: 'Switch to costume by name or number', inputNames: ['COSTUME'], statementInputNames: [], fieldNames: [] },
   { type: 'math_arithmetic', category: 'Operators', kind: 'reporter', summary: 'Arithmetic on two numbers', inputNames: ['A', 'B'], statementInputNames: [], fieldNames: ['OP'] },
   { type: 'math_number', category: 'Operators', kind: 'reporter', summary: 'A number', inputNames: [], statementInputNames: [], fieldNames: ['NUM'] },

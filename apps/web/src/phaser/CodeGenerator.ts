@@ -225,6 +225,11 @@ export function registerCodeGenerators(): void {
     return 'sprite.hide();\n';
   };
 
+  javascriptGenerator.forBlock['looks_speak'] = function(block) {
+    const text = javascriptGenerator.valueToCode(block, 'TEXT', Order.ATOMIC) || "''";
+    return `sprite.speak(${text});\n`;
+  };
+
   javascriptGenerator.forBlock['looks_set_size'] = function(block) {
     const size = javascriptGenerator.valueToCode(block, 'SIZE', Order.ATOMIC) || '100';
     return `sprite.setSize(${size});\n`;
