@@ -44,6 +44,14 @@ const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
 const EDITOR_RESIZE_FREEZE_EVENT = 'pocha-editor-resize-freeze';
 
+type FrozenStageFrame = {
+  src: string;
+  width: number;
+  height: number;
+  right: number;
+  top: number;
+};
+
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
 // Phaser space: (0,0) at top-left, +Y is down
@@ -450,7 +458,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     height: number;
   } | null>(null);
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
-  const [frozenStageFrame, setFrozenStageFrame] = useState<string | null>(null);
+  const [frozenStageFrame, setFrozenStageFrame] = useState<FrozenStageFrame | null>(null);
   const immediateResizeFreezeRef = useRef(false);
   const [manualResizeFreezeActive, setManualResizeFreezeActive] = useState(false);
 
@@ -473,6 +481,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
+
+  const captureFrozenStageFrame = useCallback((): FrozenStageFrame | null => {
+    const canvas = gameRef.current?.canvas;
+    const host = containerRef.current;
+    if (!canvas || !host || canvas.width <= 0 || canvas.height <= 0) {
+      return null;
+    }
+
+    const src = canvas.toDataURL('image/png');
+    const canvasRect = canvas.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+
+    return {
+      src,
+      width: canvasRect.width,
+      height: canvasRect.height,
+      right: hostRect.right - canvasRect.right,
+      top: canvasRect.top - hostRect.top,
+    };
+  }, []);
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -986,9 +1014,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
     if (isResizeFrozen) {
       try {
-        const frozenFrame = canvas.width > 0 && canvas.height > 0
-          ? canvas.toDataURL('image/png')
-          : null;
+        const frozenFrame = captureFrozenStageFrame();
         if (frozenFrame) {
           setFrozenStageFrame(frozenFrame);
           canvas.style.visibility = 'hidden';
@@ -1014,7 +1040,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     return () => {
       cancelAnimationFrame(revealCanvas);
     };
-  }, [isResizeFrozen, isPlaying]);
+  }, [captureFrozenStageFrame, isResizeFrozen, isPlaying]);
 
   useEffect(() => {
     if (isPlaying) return;
@@ -1026,11 +1052,9 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
       const canvas = gameRef.current?.canvas;
       if (active && canvas) {
-        let frozenFrame: string | null = null;
+        let frozenFrame: FrozenStageFrame | null = null;
         try {
-          frozenFrame = canvas.width > 0 && canvas.height > 0
-            ? canvas.toDataURL('image/png')
-            : null;
+          frozenFrame = captureFrozenStageFrame();
         } catch {
           frozenFrame = null;
         }
@@ -1050,7 +1074,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     return () => {
       window.removeEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
     };
-  }, [isPlaying]);
+  }, [captureFrozenStageFrame, isPlaying]);
 
   // Toggle collider debug rendering at runtime (without recreating game)
   useEffect(() => {
@@ -1536,11 +1560,20 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       />
       {!isPlaying && frozenStageFrame ? (
         <img
-          src={frozenStageFrame}
+          src={frozenStageFrame.src}
           alt=""
           aria-hidden="true"
           data-testid="stage-frozen-frame"
           className="pointer-events-none absolute inset-0 z-10 h-full w-full select-none"
+          style={{
+            inset: 'auto',
+            right: `${frozenStageFrame.right}px`,
+            top: `${frozenStageFrame.top}px`,
+            width: `${frozenStageFrame.width}px`,
+            height: `${frozenStageFrame.height}px`,
+            maxWidth: 'none',
+            maxHeight: 'none',
+          }}
           draggable={false}
         />
       ) : null}

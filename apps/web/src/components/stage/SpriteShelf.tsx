@@ -234,6 +234,7 @@ export function SpriteShelf() {
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [inlineRenameSessionId, setInlineRenameSessionId] = useState(0);
   const [editName, setEditName] = useState('');
   const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
@@ -245,6 +246,7 @@ export function SpriteShelf() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
+  const inlineRenameSessionRef = useRef(0);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
@@ -401,6 +403,21 @@ export function SpriteShelf() {
     if (editingFolderId) {
       commitFolderRename();
     }
+  };
+
+  const beginInlineRenameSession = () => {
+    const nextSessionId = inlineRenameSessionRef.current + 1;
+    inlineRenameSessionRef.current = nextSessionId;
+    setInlineRenameSessionId(nextSessionId);
+    return nextSessionId;
+  };
+
+  const handleInlineRenameBlur = (sessionId: number) => {
+    if (sessionId !== inlineRenameSessionRef.current) {
+      return;
+    }
+
+    commitActiveInlineRename();
   };
 
   const startRenameTarget = (target: RenameableShelfItem) => {
@@ -566,6 +583,31 @@ export function SpriteShelf() {
 
     event.preventDefault();
     setLayerDropTarget({ key: null, dropPosition: null });
+  };
+
+  const handleRootDropZoneDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedLayerKeys.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setLayerDropTarget({ key: null, dropPosition: null });
+  };
+
+  const handleRootDropZoneDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedLayerKeys.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const nextScene = moveSceneLayerNodes(selectedScene, draggedLayerKeys, {
+      key: null,
+      dropPosition: null,
+    });
+    updateScene(selectedSceneId, nextScene);
+    clearLayerDragState();
   };
 
   const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -876,6 +918,7 @@ export function SpriteShelf() {
 
   const handleStartFolderEdit = (folder: SceneFolder) => {
     flushSync(() => {
+      beginInlineRenameSession();
       setEditingFolderId(folder.id);
       setEditingObjectId(null);
       setFolderEditName(folder.name);
@@ -957,6 +1000,7 @@ export function SpriteShelf() {
 
   const handleStartObjectEdit = (objectId: string, currentName: string) => {
     flushSync(() => {
+      beginInlineRenameSession();
       setEditingObjectId(objectId);
       setEditingFolderId(null);
       setEditName(currentName);
@@ -1182,7 +1226,10 @@ export function SpriteShelf() {
     const isDropAfter = dropPosition === 'after';
 
     return (
-      <div key={item.key}>
+      <div key={item.key} className="relative">
+        {isDropBefore ? (
+          <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
+        ) : null}
         <div
           className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
             isSelected
@@ -1190,7 +1237,7 @@ export function SpriteShelf() {
               : isDropOn
                 ? 'bg-primary/15 border-l-2 border-l-primary/60'
                 : 'border-l-2 border-l-transparent hover:bg-accent'
-          } ${isDropBefore ? 'border-t-2 border-t-primary' : ''} ${isDropAfter ? 'border-b-2 border-b-primary' : ''}`}
+          }`}
           style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
           onDoubleClick={(e) => {
             e.preventDefault();
@@ -1296,10 +1343,11 @@ export function SpriteShelf() {
           <div className="flex-1 min-w-0">
             {isObjectEditing ? (
                 <Input
+                  key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  onBlur={commitActiveInlineRename}
+                  onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
                   onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
                   data-hotkeys="ignore"
                   className="h-6 px-1 text-xs"
@@ -1309,10 +1357,11 @@ export function SpriteShelf() {
               />
             ) : isFolderEditing ? (
                 <Input
+                  key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
                   value={folderEditName}
                   onChange={(e) => setFolderEditName(e.target.value)}
-                  onBlur={commitActiveInlineRename}
+                  onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
                   onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
                   data-hotkeys="ignore"
                   className="h-6 px-1 text-xs"
@@ -1328,6 +1377,9 @@ export function SpriteShelf() {
             )}
           </div>
         </div>
+        {isDropAfter ? (
+          <div className="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0 border-t-2 border-primary" />
+        ) : null}
 
         {isExpanded ? item.children.map((child) => renderTreeItem(child, level + 1)) : null}
       </div>
@@ -1480,11 +1532,17 @@ export function SpriteShelf() {
             <span className="text-xs text-center">No objects yet</span>
           </div>
         ) : (
-          <div role="tree" aria-label="Scene hierarchy" className="outline-none">
+          <div role="tree" aria-label="Scene hierarchy" className="relative outline-none">
             {treeItems.map((item) => renderTreeItem(item))}
-            {layerDropTarget?.key === null ? (
-              <div className="mx-2 my-0.5 h-0 border-t-2 rounded border-primary/80" />
-            ) : null}
+            <div
+              className="absolute inset-x-2 -bottom-2 z-10 h-4 rounded"
+              onDragOver={handleRootDropZoneDragOver}
+              onDrop={handleRootDropZoneDrop}
+            >
+              {layerDropTarget?.key === null ? (
+                <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 border-t-2 rounded border-primary/80" />
+              ) : null}
+            </div>
           </div>
         )}
       </div>
