@@ -291,8 +291,8 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
 
       {mode === 'idle' ? (
         <div className="flex flex-1 items-center justify-center">
-          <div className="w-full max-w-xl rounded-[32px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,251,248,1),rgba(240,244,241,0.98))] p-8 text-center shadow-sm">
-            <div className="mx-auto flex size-28 items-center justify-center rounded-full border border-[#9ab2a1]/50 bg-[radial-gradient(circle_at_top,rgba(121,160,138,0.28),rgba(84,116,96,0.9))] text-white shadow-[0_18px_40px_rgba(94,127,108,0.22)]">
+          <div className="w-full max-w-xl rounded-[32px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,247,247,1),rgba(239,239,239,0.98))] p-8 text-center shadow-sm">
+            <div className="mx-auto flex size-28 items-center justify-center rounded-full border border-black/10 bg-[radial-gradient(circle_at_top,rgba(150,150,150,0.28),rgba(78,78,78,0.95))] text-white shadow-[0_18px_40px_rgba(64,64,64,0.22)]">
               <Mic className="size-11" />
             </div>
             <h3 className="mt-6 text-2xl font-semibold text-foreground">Ready to record</h3>
@@ -337,7 +337,7 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
               <div className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
                 {formatAudioTime(recordingDuration, true)}
               </div>
-              <div className="rounded-full bg-[#edf5ef] px-3 py-1 text-xs font-medium text-[#5e7f6c]">
+              <div className="rounded-full bg-[#efefef] px-3 py-1 text-xs font-medium text-[#5f5f5f]">
                 {formatAudioTime(clipDuration, true)}
               </div>
             </div>

@@ -3,6 +3,9 @@ import { cn } from '@/lib/utils';
 import { getVisiblePeaks, type WaveformData } from '@/lib/audioWaveform';
 
 const MIN_TRIM_SECONDS = 0.1;
+const WAVEFORM_BASE_FILL = '#b8b8b8';
+const WAVEFORM_PLAYED_FILL = '#5f5f5f';
+const TRIM_ACCENT = '#6b6b6b';
 
 interface WaveformViewportProps {
   waveform: WaveformData | null;
@@ -234,6 +237,7 @@ export function WaveformViewport({
   const playedSelectedPercent = showTrimControls && duration > 0
     ? Math.max(0, Math.min((currentTime / duration) * 100, endPercent) - startPercent)
     : Math.max(0, Math.min(playheadPercent, 100));
+  const playedOverlayStartPercent = showTrimControls ? startPercent : 0;
 
   const beginScrub = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!onSeek) {
@@ -254,97 +258,96 @@ export function WaveformViewport({
 
   return (
     <div
+      ref={containerRef}
       className={cn(
-        'relative overflow-hidden rounded-[24px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,251,248,0.98),rgba(239,244,240,0.96))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]',
+        'relative h-52 overflow-hidden rounded-[24px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,247,247,0.98),rgba(237,237,237,0.96))] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] touch-none select-none',
         className,
       )}
+      onPointerDown={(event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        beginScrub(event);
+      }}
     >
-      <div className="pointer-events-none absolute inset-x-6 top-0 h-20 rounded-full bg-[radial-gradient(circle_at_top,rgba(127,161,138,0.18),transparent_70%)]" />
+      <div className="pointer-events-none absolute inset-x-6 top-0 h-20 rounded-full bg-[radial-gradient(circle_at_top,rgba(120,120,120,0.12),transparent_70%)]" />
 
-      <div
-        ref={containerRef}
-        className="relative h-52 overflow-hidden rounded-[18px] border border-border/60 bg-[linear-gradient(180deg,rgba(236,245,239,0.92),rgba(232,239,234,0.92))] touch-none select-none"
-        onPointerDown={(event) => {
-          if (event.button !== 0) {
-            return;
-          }
-          beginScrub(event);
-        }}
-      >
-        {bars.length > 0 ? (
-          <>
-            <StaticWaveformBars bars={bars} fill="#93b6a2" />
+      {bars.length > 0 ? (
+        <>
+          <StaticWaveformBars bars={bars} fill={WAVEFORM_BASE_FILL} />
 
-            <div
-              className="pointer-events-none absolute inset-0"
-              style={{
-                clipPath: `inset(0 ${Math.max(0, 100 - (startPercent + playedSelectedPercent))}% 0 ${startPercent}%)`,
-              }}
-            >
-              <StaticWaveformBars bars={bars} fill="#5e7f6c" />
-            </div>
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              clipPath: `inset(0 ${Math.max(0, 100 - (playedOverlayStartPercent + playedSelectedPercent))}% 0 ${playedOverlayStartPercent}%)`,
+            }}
+          >
+            <StaticWaveformBars bars={bars} fill={WAVEFORM_PLAYED_FILL} />
+          </div>
 
-            {showTrimControls ? (
-              <>
-                <div className="pointer-events-none absolute inset-y-0 left-0 bg-black/16" style={{ width: `${startPercent}%` }} />
-                <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/16" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
+          {showTrimControls ? (
+            <>
+              <div className="pointer-events-none absolute inset-y-0 left-0 bg-black/16" style={{ width: `${startPercent}%` }} />
+              <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/16" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
                 <div
-                  className="pointer-events-none absolute inset-y-3 rounded-[14px] border border-white/60 bg-white/15 shadow-[inset_0_0_0_1px_rgba(94,127,108,0.15)]"
+                className="pointer-events-none absolute inset-y-3 rounded-[14px] border border-white/60 bg-white/15 shadow-[inset_0_0_0_1px_rgba(90,90,90,0.12)]"
                   style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
                 />
-              </>
-            ) : null}
-            <div
-              className="pointer-events-none absolute inset-y-0 z-10 w-px bg-foreground/80 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]"
-              style={{ left: `${playheadPercent}%` }}
-            />
-          </>
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Preparing waveform...
+            </>
+          ) : null}
+          <div
+            className="pointer-events-none absolute inset-y-0 z-10 -translate-x-1/2"
+            style={{ left: `${playheadPercent}%` }}
+          >
+            <div className="mx-auto size-3 rounded-full border border-white/80 bg-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
+            <div className="mx-auto h-full w-0.5 bg-foreground/90 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
           </div>
-        )}
+        </>
+      ) : (
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          Preparing waveform...
+        </div>
+      )}
 
-        {showTrimControls ? (
-          <>
-            <button
-              type="button"
-              className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
-              style={{ left: `${startPercent}%` }}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                activePointerIdRef.current = event.pointerId;
-                activePointerTargetRef.current = event.currentTarget;
-                event.currentTarget.setPointerCapture(event.pointerId);
-                interactionModeRef.current = 'trim-start';
-                draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
-              }}
-            >
-              <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
-              <span className="sr-only">Adjust start trim</span>
-            </button>
+      {showTrimControls ? (
+        <>
+          <button
+            type="button"
+            className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 shadow-sm"
+            style={{ left: `${startPercent}%`, backgroundColor: TRIM_ACCENT }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              activePointerIdRef.current = event.pointerId;
+              activePointerTargetRef.current = event.currentTarget;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              interactionModeRef.current = 'trim-start';
+              draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
+            }}
+          >
+            <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
+            <span className="sr-only">Adjust start trim</span>
+          </button>
 
-            <button
-              type="button"
-              className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 bg-[#5e7f6c] shadow-sm"
-              style={{ left: `${endPercent}%` }}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                activePointerIdRef.current = event.pointerId;
-                activePointerTargetRef.current = event.currentTarget;
-                event.currentTarget.setPointerCapture(event.pointerId);
-                interactionModeRef.current = 'trim-end';
-                draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
-              }}
-            >
-              <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
-              <span className="sr-only">Adjust end trim</span>
-            </button>
-          </>
-        ) : null}
-      </div>
+          <button
+            type="button"
+            className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 shadow-sm"
+            style={{ left: `${endPercent}%`, backgroundColor: TRIM_ACCENT }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              activePointerIdRef.current = event.pointerId;
+              activePointerTargetRef.current = event.currentTarget;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              interactionModeRef.current = 'trim-end';
+              draftTrimRef.current = { trimStart: displayedTrimStart, trimEnd: displayedTrimEnd };
+            }}
+          >
+            <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
+            <span className="sr-only">Adjust end trim</span>
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }

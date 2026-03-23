@@ -299,7 +299,7 @@ export const SoundList = memo(({
                   </div>
 
                   {trimmed ? (
-                    <div className="absolute bottom-1 right-1 rounded bg-[#edf5ef] px-1 py-0.5 text-[8px] font-medium text-[#5e7f6c]">
+                    <div className="absolute bottom-1 right-1 rounded bg-[#efefef] px-1 py-0.5 text-[8px] font-medium text-[#5f5f5f]">
                       Trim
                     </div>
                   ) : null}

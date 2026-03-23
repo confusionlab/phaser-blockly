@@ -254,7 +254,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     return (
       <div className="flex flex-1 items-center justify-center p-6">
         <div className="w-full max-w-xl rounded-[32px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-8 text-center shadow-sm">
-          <div className="mx-auto flex size-24 items-center justify-center rounded-full bg-[#edf5ef] text-[#5e7f6c]">
+          <div className="mx-auto flex size-24 items-center justify-center rounded-full bg-[#efefef] text-[#5f5f5f]">
             <Volume2 className="size-11" />
           </div>
           <h3 className="mt-6 text-2xl font-semibold text-foreground">Select a sound</h3>
