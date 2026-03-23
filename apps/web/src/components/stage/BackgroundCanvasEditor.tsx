@@ -31,6 +31,14 @@ import {
   isEraseTool,
   type BitmapBrushTool,
 } from '@/lib/background/brushCore';
+import {
+  clampViewportZoom,
+  panCameraFromDrag,
+  panCameraFromWheel,
+  screenToWorldPoint,
+  worldToScreenPoint,
+  zoomCameraAtClientPoint,
+} from '@/lib/viewportNavigation';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 
 const MIN_ZOOM = 0.02;
@@ -57,10 +65,6 @@ type PanSession = {
   cameraStartX: number;
   cameraStartY: number;
 };
-
-function clampZoom(value: number): number {
-  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
-}
 
 function getFallbackColor(background: BackgroundConfig | null | undefined): string {
   const value = background?.value;
@@ -176,23 +180,13 @@ export function BackgroundCanvasEditor() {
   const screenToWorld = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const host = hostRef.current;
     if (!host) return camera;
-    const rect = host.getBoundingClientRect();
-    const sx = clientX - rect.left;
-    const sy = clientY - rect.top;
-    return {
-      x: camera.x + (sx - rect.width / 2) / zoom,
-      y: camera.y - (sy - rect.height / 2) / zoom,
-    };
+    return screenToWorldPoint(clientX, clientY, host.getBoundingClientRect(), camera, zoom, 'up');
   }, [camera, zoom]);
 
   const worldToScreen = useCallback((worldX: number, worldY: number): { x: number; y: number } => {
     const host = hostRef.current;
     if (!host) return { x: 0, y: 0 };
-    const rect = host.getBoundingClientRect();
-    return {
-      x: (worldX - camera.x) * zoom + rect.width / 2,
-      y: (camera.y - worldY) * zoom + rect.height / 2,
-    };
+    return worldToScreenPoint(worldX, worldY, host.getBoundingClientRect(), camera, zoom, 'up');
   }, [camera, zoom]);
 
   const fitToBounds = useCallback((bounds: { left: number; right: number; bottom: number; top: number }) => {
@@ -201,7 +195,7 @@ export function BackgroundCanvasEditor() {
     const host = hostRef.current;
     if (!host) return;
     const rect = host.getBoundingClientRect();
-    const nextZoom = clampZoom(Math.min(rect.width / width, rect.height / height) * 0.9);
+    const nextZoom = clampViewportZoom(Math.min(rect.width / width, rect.height / height) * 0.9, MIN_ZOOM, MAX_ZOOM);
     setZoom(nextZoom);
     setCamera({
       x: (bounds.left + bounds.right) * 0.5,
@@ -837,10 +831,13 @@ export function BackgroundCanvasEditor() {
     if (pan) {
       const dx = (event.clientX - pan.startX) / zoom;
       const dy = (event.clientY - pan.startY) / zoom;
-      setCamera({
-        x: pan.cameraStartX - dx,
-        y: pan.cameraStartY + dy,
-      });
+      setCamera(panCameraFromDrag(
+        { x: pan.cameraStartX, y: pan.cameraStartY },
+        dx * zoom,
+        dy * zoom,
+        zoom,
+        'up',
+      ));
       return;
     }
 
@@ -874,26 +871,25 @@ export function BackgroundCanvasEditor() {
     const host = hostRef.current;
     if (!host) return;
     const rect = host.getBoundingClientRect();
-    const localX = event.clientX - rect.left;
-    const localY = event.clientY - rect.top;
 
     if (event.ctrlKey || event.metaKey) {
-      const worldBefore = screenToWorld(event.clientX, event.clientY);
       const zoomDelta = -event.deltaY * 0.01;
-      const nextZoom = clampZoom(zoom * (1 + zoomDelta));
+      const nextZoom = clampViewportZoom(zoom * (1 + zoomDelta), MIN_ZOOM, MAX_ZOOM);
       setZoom(nextZoom);
-      setCamera({
-        x: worldBefore.x - (localX - rect.width / 2) / nextZoom,
-        y: worldBefore.y + (localY - rect.height / 2) / nextZoom,
-      });
+      setCamera(zoomCameraAtClientPoint(
+        event.clientX,
+        event.clientY,
+        rect,
+        camera,
+        zoom,
+        nextZoom,
+        'up',
+      ));
       return;
     }
 
-    setCamera((current) => ({
-      x: current.x + event.deltaX / zoom,
-      y: current.y - event.deltaY / zoom,
-    }));
-  }, [screenToWorld, zoom]);
+    setCamera((current) => panCameraFromWheel(current, event.deltaX, event.deltaY, zoom, 'up'));
+  }, [camera, zoom]);
 
   if (!scene) {
     return null;

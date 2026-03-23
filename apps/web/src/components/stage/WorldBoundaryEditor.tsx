@@ -7,6 +7,13 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import type { WorldPoint } from '@/types';
+import {
+  clampViewportZoom,
+  panCameraFromDrag,
+  panCameraFromWheel,
+  screenToWorldPoint,
+  zoomCameraAtClientPoint,
+} from '@/lib/viewportNavigation';
 
 const WORLD_BOUNDARY_EDITOR_PADDING = 160;
 const WORLD_BOUNDARY_EDITOR_MIN_ZOOM = 0.15;
@@ -82,12 +89,15 @@ function clientToCanvasPoint(
 ) {
   const rect = stage.getBoundingClientRect();
   const viewBox = getViewBox(view, canvasWidth, canvasHeight);
-  const normalizedX = (clientX - rect.left) / rect.width;
-  const normalizedY = (clientY - rect.top) / rect.height;
-  return {
-    x: viewBox.minX + normalizedX * viewBox.width,
-    y: viewBox.minY + normalizedY * viewBox.height,
-  };
+  const pixelsPerWorldUnit = Math.min(rect.width / viewBox.width, rect.height / viewBox.height);
+  return screenToWorldPoint(
+    clientX,
+    clientY,
+    rect,
+    { x: view.centerX, y: view.centerY },
+    pixelsPerWorldUnit,
+    'down',
+  );
 }
 
 export function WorldBoundaryEditor() {
@@ -164,16 +174,20 @@ export function WorldBoundaryEditor() {
     const handlePointerMove = (event: PointerEvent) => {
       const stage = stageRef.current;
       if (!stage) return;
-      const rect = stage.getBoundingClientRect();
       const viewBox = getViewBox(viewRef.current, canvasWidth, canvasHeight);
-      const unitsPerPixelX = viewBox.width / rect.width;
-      const unitsPerPixelY = viewBox.height / rect.height;
-      const deltaX = (event.clientX - panState.startClientX) * unitsPerPixelX;
-      const deltaY = (event.clientY - panState.startClientY) * unitsPerPixelY;
+      const rect = stage.getBoundingClientRect();
+      const pixelsPerWorldUnit = Math.min(rect.width / viewBox.width, rect.height / viewBox.height);
+      const nextCamera = panCameraFromDrag(
+        { x: panState.startCenterX, y: panState.startCenterY },
+        event.clientX - panState.startClientX,
+        event.clientY - panState.startClientY,
+        pixelsPerWorldUnit,
+        'down',
+      );
       setView((current) => ({
         ...current,
-        centerX: panState.startCenterX - deltaX,
-        centerY: panState.startCenterY - deltaY,
+        centerX: nextCamera.x,
+        centerY: nextCamera.y,
       }));
     };
 
@@ -229,29 +243,59 @@ export function WorldBoundaryEditor() {
 
   const handleStageWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
     event.preventDefault();
-    const pointerCanvasPoint = clientToCanvasPoint(
-      event.clientX,
-      event.clientY,
-      event.currentTarget,
-      viewRef.current,
-      canvasWidth,
-      canvasHeight,
-    );
-    const zoomFactor = event.deltaY > 0 ? 0.9 : 1.1;
-    const nextZoom = Math.max(
-      WORLD_BOUNDARY_EDITOR_MIN_ZOOM,
-      Math.min(WORLD_BOUNDARY_EDITOR_MAX_ZOOM, viewRef.current.zoom * zoomFactor),
-    );
     const rect = event.currentTarget.getBoundingClientRect();
-    const normalizedX = (event.clientX - rect.left) / rect.width;
-    const normalizedY = (event.clientY - rect.top) / rect.height;
-    const nextWidth = canvasWidth / nextZoom;
-    const nextHeight = canvasHeight / nextZoom;
-    setView({
-      centerX: pointerCanvasPoint.x - (normalizedX - 0.5) * nextWidth,
-      centerY: pointerCanvasPoint.y - (normalizedY - 0.5) * nextHeight,
-      zoom: nextZoom,
-    });
+    const currentViewBox = getViewBox(viewRef.current, canvasWidth, canvasHeight);
+    const currentPixelsPerWorldUnit = Math.min(
+      rect.width / currentViewBox.width,
+      rect.height / currentViewBox.height,
+    );
+
+    if (event.ctrlKey || event.metaKey) {
+      const zoomDelta = -event.deltaY * 0.01;
+      const zoomFactor = Math.max(0.01, 1 + zoomDelta);
+      const nextZoom = clampViewportZoom(
+        viewRef.current.zoom * zoomFactor,
+        WORLD_BOUNDARY_EDITOR_MIN_ZOOM,
+        WORLD_BOUNDARY_EDITOR_MAX_ZOOM,
+      );
+      const nextViewBox = getViewBox(
+        { ...viewRef.current, zoom: nextZoom },
+        canvasWidth,
+        canvasHeight,
+      );
+      const nextPixelsPerWorldUnit = Math.min(
+        rect.width / nextViewBox.width,
+        rect.height / nextViewBox.height,
+      );
+      const nextCamera = zoomCameraAtClientPoint(
+        event.clientX,
+        event.clientY,
+        rect,
+        { x: viewRef.current.centerX, y: viewRef.current.centerY },
+        currentPixelsPerWorldUnit,
+        nextPixelsPerWorldUnit,
+        'down',
+      );
+      setView({
+        centerX: nextCamera.x,
+        centerY: nextCamera.y,
+        zoom: nextZoom,
+      });
+      return;
+    }
+
+    const nextCamera = panCameraFromWheel(
+      { x: viewRef.current.centerX, y: viewRef.current.centerY },
+      event.deltaX,
+      event.deltaY,
+      currentPixelsPerWorldUnit,
+      'down',
+    );
+    setView((current) => ({
+      ...current,
+      centerX: nextCamera.x,
+      centerY: nextCamera.y,
+    }));
   };
 
   const handleSave = () => {
