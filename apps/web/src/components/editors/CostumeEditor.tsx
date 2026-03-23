@@ -460,34 +460,34 @@ export function CostumeEditor() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <CostumeToolbar
-        editorMode={editorMode}
-        activeTool={activeTool}
-        showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
-        brushColor={brushColor}
-        brushSize={brushSize}
-        textStyle={textStyle}
-        onEditorModeChange={handleEditorModeChange}
-        onToolChange={handleToolChange}
-        onMoveOrder={handleMoveOrder}
-        vectorHandleType={vectorHandleType}
-        onVectorHandleTypeChange={setVectorHandleType}
-        onAlign={handleAlign}
-        alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
-        onColorChange={setBrushColor}
-        onBrushSizeChange={setBrushSize}
-        onTextStyleChange={handleTextStyleChange}
+    <div className="flex h-full overflow-hidden">
+      <CostumeList
+        costumes={costumes}
+        selectedIndex={currentCostumeIndex}
+        onSelectCostume={handleSelectCostume}
+        onAddCostume={handleAddCostume}
+        onDeleteCostume={handleDeleteCostume}
+        onRenameCostume={handleRenameCostume}
       />
 
-      <div className="flex-1 flex overflow-hidden">
-        <CostumeList
-          costumes={costumes}
-          selectedIndex={currentCostumeIndex}
-          onSelectCostume={handleSelectCostume}
-          onAddCostume={handleAddCostume}
-          onDeleteCostume={handleDeleteCostume}
-          onRenameCostume={handleRenameCostume}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <CostumeToolbar
+          editorMode={editorMode}
+          activeTool={activeTool}
+          showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
+          brushColor={brushColor}
+          brushSize={brushSize}
+          textStyle={textStyle}
+          onEditorModeChange={handleEditorModeChange}
+          onToolChange={handleToolChange}
+          onMoveOrder={handleMoveOrder}
+          vectorHandleType={vectorHandleType}
+          onVectorHandleTypeChange={setVectorHandleType}
+          onAlign={handleAlign}
+          alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
+          onColorChange={setBrushColor}
+          onBrushSizeChange={setBrushSize}
+          onTextStyleChange={handleTextStyleChange}
         />
 
         <CostumeCanvas

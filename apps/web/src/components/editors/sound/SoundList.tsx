@@ -182,44 +182,44 @@ export const SoundList = memo(({
         title="Sounds"
         actions={
           <>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => fileInputRef.current?.click()}
-            title="Import sound"
-            disabled={isProcessing}
-          >
-            {isProcessing ? <Loader2 className="size-3 animate-spin" /> : <Upload className="size-3" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => setShowLibrary(true)}
-            title="Browse library"
-            disabled={isProcessing}
-          >
-            <Library className="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={onOpenRecorder}
-            title="Record sound"
-            disabled={isProcessing}
-          >
-            <Mic className="size-3" />
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="audio/*"
-            multiple
-            className="hidden"
-            onChange={handleFileChange}
-          />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={onOpenRecorder}
+              title="Record sound"
+              disabled={isProcessing}
+            >
+              <Mic className="size-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={() => fileInputRef.current?.click()}
+              title="Import sound"
+              disabled={isProcessing}
+            >
+              {isProcessing ? <Loader2 className="size-3 animate-spin" /> : <Upload className="size-3" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={() => setShowLibrary(true)}
+              title="Browse library"
+              disabled={isProcessing}
+            >
+              <Library className="size-3" />
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*"
+              multiple
+              className="hidden"
+              onChange={handleFileChange}
+            />
           </>
         }
         contentClassName="space-y-2"
