@@ -1,4 +1,4 @@
-import { type ChangeEvent, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, memo, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatAudioTime, generateWaveform, type WaveformData } from '@/lib/audioWaveform';
