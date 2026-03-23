@@ -423,8 +423,15 @@ async function garbageCollectProjectAssets(
 
     if (referencedIds.has(row.assetId)) {
       if (row.orphanedAt !== undefined) {
-        const { orphanedAt: _orphanedAt, ...nextRow } = row;
-        await ctx.db.replace(row._id, nextRow);
+        await ctx.db.replace(row._id, {
+          ownerUserId: row.ownerUserId,
+          assetId: row.assetId,
+          kind: row.kind,
+          mimeType: row.mimeType,
+          size: row.size,
+          storageId: row.storageId,
+          createdAt: row.createdAt,
+        });
       }
       continue;
     }
