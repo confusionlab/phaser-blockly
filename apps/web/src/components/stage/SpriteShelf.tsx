@@ -255,10 +255,6 @@ export function SpriteShelf() {
   const [sceneDropTarget, setSceneDropTarget] = useState<{ sceneId: string; position: 'before' | 'after' } | null>(null);
   const [draggedLayerKeys, setDraggedLayerKeys] = useState<string[]>([]);
   const [layerDropTarget, setLayerDropTarget] = useState<{ key: string | null; dropPosition: 'before' | 'after' | 'on' | null } | null>(null);
-  const [layerDragPreview, setLayerDragPreview] = useState<{
-    entries: VisibleShelfTreeEntry[];
-    width: number;
-  } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -275,7 +271,6 @@ export function SpriteShelf() {
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
   const inlineRenameSessionRef = useRef(0);
-  const layerDragPreviewRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
@@ -391,6 +386,9 @@ export function SpriteShelf() {
       .map((folder) => getFolderNodeKey(folder.id)),
   );
   const visibleTreeEntries = collectVisibleTreeEntries(treeItems, expandedKeys);
+  const visibleTreeEntryIndexByKey = new Map(
+    visibleTreeEntries.map((entry, index) => [entry.item.key, index]),
+  );
   const visibleRenameTargets = collectVisibleRenameableItems(treeItems, expandedKeys);
 
   const commitFolderRename = () => {
@@ -539,41 +537,23 @@ export function SpriteShelf() {
   const clearLayerDragState = () => {
     setDraggedLayerKeys([]);
     setLayerDropTarget(null);
-    setLayerDragPreview(null);
   };
 
-  const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem, level: number) => {
+  const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
     const dragKeys = getDragKeysForItem(item);
-    const rowRect = event.currentTarget.getBoundingClientRect();
-    const dragKeySet = new Set(dragKeys);
-    const previewEntries = visibleTreeEntries.filter((entry) => dragKeySet.has(entry.item.key));
-    const activePreviewIndex = previewEntries.findIndex((entry) => entry.item.key === item.key);
 
     flushSync(() => {
       setDraggedLayerKeys(dragKeys);
       setLayerDropTarget(null);
-      setLayerDragPreview({
-        entries: previewEntries.length > 0 ? previewEntries : [{ item, level }],
-        width: rowRect.width,
-      });
     });
 
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragKeys.join(','));
-    if (layerDragPreviewRef.current) {
-      const anchorX = Math.max(0, Math.min(rowRect.width - 1, event.clientX - rowRect.left));
-      const activePreviewRow = activePreviewIndex >= 0
-        ? layerDragPreviewRef.current.children[activePreviewIndex] as HTMLElement | undefined
-        : undefined;
-      const previewRowTop = activePreviewRow?.offsetTop ?? 0;
-      const anchorY = Math.max(
-        0,
-        Math.min(
-          layerDragPreviewRef.current.offsetHeight - 1,
-          previewRowTop + (event.clientY - rowRect.top),
-        ),
-      );
-      event.dataTransfer.setDragImage(layerDragPreviewRef.current, anchorX, anchorY);
+    if (typeof document !== 'undefined') {
+      const transparentDragImage = document.createElement('canvas');
+      transparentDragImage.width = 1;
+      transparentDragImage.height = 1;
+      event.dataTransfer.setDragImage(transparentDragImage, 0, 0);
     }
   };
 
@@ -1293,6 +1273,36 @@ export function SpriteShelf() {
     const isDropOn = dropPosition === 'on';
     const isDropBefore = dropPosition === 'before';
     const isDropAfter = dropPosition === 'after';
+    const visibleEntryIndex = visibleTreeEntryIndexByKey.get(item.key) ?? -1;
+    const previousVisibleItem = visibleEntryIndex > 0
+      ? visibleTreeEntries[visibleEntryIndex - 1]?.item ?? null
+      : null;
+    const nextVisibleItem = visibleEntryIndex >= 0 && visibleEntryIndex < visibleTreeEntries.length - 1
+      ? visibleTreeEntries[visibleEntryIndex + 1]?.item ?? null
+      : null;
+    const connectsToPrevious = isSelected
+      && previousVisibleItem?.type === 'object'
+      && selectedIdsInScene.includes(previousVisibleItem.id);
+    const connectsToNext = isSelected
+      && nextVisibleItem?.type === 'object'
+      && selectedIdsInScene.includes(nextVisibleItem.id);
+    const rowHighlightClass = isSelected
+      ? 'bg-sky-600/16 dark:bg-sky-300/22'
+      : isDropOn
+        ? 'bg-sky-500/10 dark:bg-sky-400/12'
+        : '';
+    const rowShapeClass = isSelected || isDropOn
+      ? connectsToPrevious
+        ? connectsToNext
+          ? 'rounded-none'
+          : 'rounded-t-none rounded-b-lg'
+        : connectsToNext
+          ? 'rounded-t-lg rounded-b-none'
+          : 'rounded-lg'
+      : 'rounded-lg';
+    const rowHighlightBridgeClass = isSelected || isDropOn
+      ? `${connectsToPrevious ? '-top-1' : 'top-0'} ${connectsToNext ? '-bottom-[5px]' : 'bottom-0'}`
+      : '';
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1300,13 +1310,9 @@ export function SpriteShelf() {
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
-          className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
-            isSelected
-              ? 'bg-primary/10 border-l-2 border-l-primary'
-              : isDropOn
-                ? 'bg-primary/15 border-l-2 border-l-primary/60'
-                : 'border-l-2 border-l-transparent hover:bg-accent'
-          } ${isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
+          className={`border-b px-2 py-1 select-none ${
+            isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
+          }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
           style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
           onDoubleClick={interactive ? ((e) => {
@@ -1332,74 +1338,81 @@ export function SpriteShelf() {
           }) : undefined}
           onDragOver={interactive ? ((e) => handleLayerDragOver(e, item)) : undefined}
           onDrop={interactive ? ((e) => handleLayerDrop(e, item)) : undefined}
-          onDragStart={interactive ? ((e) => handleLayerDragStart(e, item, level)) : undefined}
+          onDragStart={interactive ? ((e) => handleLayerDragStart(e, item)) : undefined}
           onDragEnd={interactive ? clearLayerDragState : undefined}
         >
-          <button
-            type="button"
-            disabled={!hasChildItems}
-            aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-            className="shrink-0 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
-            onClick={interactive ? ((e) => {
-              e.stopPropagation();
-              if (folder) {
-                handleToggleFolder(folder.id);
-              }
-            }) : undefined}
-          >
-            {hasChildItems ? (
-              isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />
-            ) : (
-              <span className="block h-2.5 w-2.5" />
-            )}
-          </button>
-
-          {item.type === 'folder' ? (
-            isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
-          ) : (
-            <div
-              className="w-8 h-8 rounded flex items-center justify-center overflow-hidden shrink-0 bg-muted relative"
+          <div className="relative">
+            {(isSelected || isDropOn) ? (
+              <div
+                className={`pointer-events-none absolute inset-x-0 z-0 ${rowShapeClass} ${rowHighlightBridgeClass} ${rowHighlightClass}`}
+              />
+            ) : null}
+            <div className={`relative z-10 flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${!isSelected && !isDropOn ? 'hover:bg-accent/70' : ''}`}>
+            <button
+              type="button"
+              disabled={!hasChildItems}
+              aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
+              className="shrink-0 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
+              onClick={interactive ? ((e) => {
+                e.stopPropagation();
+                if (folder) {
+                  handleToggleFolder(folder.id);
+                }
+              }) : undefined}
             >
-              {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
-                const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
-                const bounds = costume?.bounds;
-                if (bounds && bounds.width > 0 && bounds.height > 0) {
-                  const scale = Math.min(1, 32 / Math.max(bounds.width, bounds.height));
+              {hasChildItems ? (
+                isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />
+              ) : (
+                <span className="block h-2.5 w-2.5" />
+              )}
+            </button>
+
+            {item.type === 'folder' ? (
+              isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
+            ) : (
+              <div
+                className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md"
+              >
+                {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
+                  const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
+                  const bounds = costume?.bounds;
+                  if (bounds && bounds.width > 0 && bounds.height > 0) {
+                    const scale = Math.min(1, 32 / Math.max(bounds.width, bounds.height));
+                    return (
+                      <div
+                        className="absolute"
+                        style={{
+                          backgroundImage: `url(${costume.assetId})`,
+                          backgroundPosition: `${-bounds.x}px ${-bounds.y}px`,
+                          backgroundSize: '1024px 1024px',
+                          backgroundRepeat: 'no-repeat',
+                          transform: `scale(${scale})`,
+                          transformOrigin: 'top left',
+                          width: bounds.width,
+                          height: bounds.height,
+                          left: '50%',
+                          top: '50%',
+                          marginLeft: (-bounds.width * scale) / 2,
+                          marginTop: (-bounds.height * scale) / 2,
+                        }}
+                      />
+                    );
+                  }
                   return (
-                    <div
-                      className="absolute"
-                      style={{
-                        backgroundImage: `url(${costume.assetId})`,
-                        backgroundPosition: `${-bounds.x}px ${-bounds.y}px`,
-                        backgroundSize: '1024px 1024px',
-                        backgroundRepeat: 'no-repeat',
-                        transform: `scale(${scale})`,
-                        transformOrigin: 'top left',
-                        width: bounds.width,
-                        height: bounds.height,
-                        left: '50%',
-                        top: '50%',
-                        marginLeft: (-bounds.width * scale) / 2,
-                        marginTop: (-bounds.height * scale) / 2,
-                      }}
+                    <img
+                      src={costume?.assetId}
+                      alt={object?.name ?? 'Object'}
+                      className="w-full h-full object-contain"
                     />
                   );
-                }
-                return (
-                  <img
-                    src={costume?.assetId}
-                    alt={object?.name ?? 'Object'}
-                    className="w-full h-full object-contain"
-                  />
-                );
-              })() : (
-                <span className="text-sm">📦</span>
-              )}
-            </div>
-          )}
+                })() : (
+                  <span className="text-sm">📦</span>
+                )}
+              </div>
+            )}
 
-          <div className="flex-1 min-w-0">
-            {isObjectEditing ? (
+            <div className="flex-1 min-w-0">
+              {isObjectEditing ? (
                 <Input
                   key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
@@ -1410,10 +1423,10 @@ export function SpriteShelf() {
                   data-hotkeys="ignore"
                   className="h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-                autoFocus
-              />
-            ) : isFolderEditing ? (
+                  onPointerDown={(e) => e.stopPropagation()}
+                  autoFocus
+                />
+              ) : isFolderEditing ? (
                 <Input
                   key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
@@ -1424,15 +1437,17 @@ export function SpriteShelf() {
                   data-hotkeys="ignore"
                   className="h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-                autoFocus
-              />
-            ) : (
-              <span className={`text-xs truncate block ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : ''}`}>
-                {item.name}
-                {isComponentInstance && <Component className="inline-block size-3 ml-1 opacity-60" />}
-              </span>
-            )}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  autoFocus
+                />
+              ) : (
+                <span className={`block truncate text-xs ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : ''}`}>
+                  {item.name}
+                  {isComponentInstance && <Component className="ml-1 inline-block size-3 opacity-60" />}
+                </span>
+              )}
+            </div>
+            </div>
           </div>
         </div>
         {isDropAfter ? (
@@ -1613,21 +1628,6 @@ export function SpriteShelf() {
           </div>
         )}
       </div>
-
-      {layerDragPreview ? (
-        <div className="fixed left-[-10000px] top-0 pointer-events-none z-[9999]">
-          <div
-            ref={layerDragPreviewRef}
-            style={{ width: `${layerDragPreview.width}px` }}
-          >
-            {layerDragPreview.entries.map((entry) => renderLayerRow(entry.item, entry.level, {
-              interactive: false,
-              showDropIndicators: false,
-              rowKey: `drag-preview-${entry.item.key}`,
-            }))}
-          </div>
-        </div>
-      ) : null}
 
       {contextMenu && (
         <>
