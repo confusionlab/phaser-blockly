@@ -87,6 +87,11 @@ export function registerCodeGenerators(): void {
     return `runtime.onInventoryDropped(spriteId, ${asJsString(item)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
+  javascriptGenerator.forBlock['event_any_inventory_item_dropped'] = function(block) {
+    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    return `runtime.onAnyInventoryDropped(spriteId, async function(sprite) {\n${nextCode}});\n`;
+  };
+
   // --- Motion ---
 
   javascriptGenerator.forBlock['motion_move_steps'] = function(block) {
@@ -842,6 +847,7 @@ const HAT_BLOCKS = [
   'event_clicked',
   'event_world_clicked',
   'event_forever',
+  'event_any_inventory_item_dropped',
   'event_inventory_item_dropped',
   'event_when_receive',
   'event_when_touching',

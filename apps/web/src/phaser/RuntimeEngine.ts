@@ -136,6 +136,7 @@ interface ObjectHandlers {
   onTouching: Map<string, EventHandler[]>;
   onTouchingDirection: Map<string, EventHandler[]>;
   onMessage: Map<string, EventHandler[]>;
+  onAnyInventoryDropped: EventHandler[];
   onInventoryDropped: Map<InventoryReference, EventHandler[]>;
   forever: ForeverHandler[];
 }
@@ -165,7 +166,7 @@ export interface InventoryItemEntry {
 interface InventoryDropContext {
   entryId: string;
   consumed: boolean;
-  targetSpriteId: string;
+  targetSpriteId: string | null;
 }
 
 interface SharedInventoryState {
@@ -369,6 +370,7 @@ export class RuntimeEngine {
       onTouching: new Map(),
       onTouchingDirection: new Map(),
       onMessage: new Map(),
+      onAnyInventoryDropped: [],
       onInventoryDropped: new Map(),
       forever: [],
     });
@@ -436,6 +438,7 @@ export class RuntimeEngine {
         onTouching: new Map(handlers.onTouching),
         onTouchingDirection: new Map(handlers.onTouchingDirection),
         onMessage: new Map(handlers.onMessage),
+        onAnyInventoryDropped: [...handlers.onAnyInventoryDropped],
         onInventoryDropped: new Map(handlers.onInventoryDropped),
         forever: [...handlers.forever],
       };
@@ -936,29 +939,39 @@ export class RuntimeEngine {
       return false;
     }
 
-    const { targetSprite, matchingHandlers } = resolution;
-    if (!targetSprite) {
-      return false;
-    }
-
-    if (matchingHandlers.length === 0) {
-      inventoryDropConsole('Drop hit sprite but no handlers matched', {
-        entryId,
-        targetSpriteId: targetSprite.id,
-        targetSpriteName: targetSprite.name,
-      });
-      return false;
-    }
-
     this._currentDropContext = {
       entryId,
       consumed: false,
-      targetSpriteId: targetSprite.id,
+      targetSpriteId: resolution.targetSprite?.id ?? null,
     };
     sharedInventoryState.pendingEntryIds.add(entryId);
     notifyInventorySubscribers();
 
     try {
+      await this.triggerAnyInventoryDropped(resolution.worldPoint.x, resolution.worldPoint.y);
+
+      if (this._currentDropContext.consumed) {
+        inventoryDropConsole('Skipping target-specific handlers because item was already consumed', {
+          entryId,
+          targetSpriteId: resolution.targetSprite?.id ?? null,
+        });
+        return true;
+      }
+
+      const { targetSprite, matchingHandlers } = resolution;
+      if (!targetSprite) {
+        return this._currentDropContext.consumed;
+      }
+
+      if (matchingHandlers.length === 0) {
+        inventoryDropConsole('Drop hit sprite but no handlers matched', {
+          entryId,
+          targetSpriteId: targetSprite.id,
+          targetSpriteName: targetSprite.name,
+        });
+        return this._currentDropContext.consumed;
+      }
+
       inventoryDropConsole('Invoking inventory-drop handlers', {
         entryId,
         targetSpriteId: targetSprite.id,
@@ -1090,6 +1103,21 @@ export class RuntimeEngine {
     }
   }
 
+  onAnyInventoryDropped(spriteId: string, handler: EventHandler): void {
+    const h = this.handlers.get(spriteId);
+    if (!h) {
+      inventoryDropConsole('Failed to register any-inventory-drop handler: sprite has no handlers entry', {
+        spriteId,
+      });
+      return;
+    }
+    h.onAnyInventoryDropped.push(handler);
+    inventoryDropConsole('Registered any-inventory-drop handler', {
+      spriteId,
+      handlerCount: h.onAnyInventoryDropped.length,
+    });
+  }
+
   onInventoryDropped(spriteId: string, inventoryRef: InventoryReference, handler: EventHandler): void {
     const h = this.handlers.get(spriteId);
     if (!h) {
@@ -1189,6 +1217,47 @@ export class RuntimeEngine {
       h.onWorldClick.forEach((handler) => {
         this.invokeEventHandler(spriteId, sprite, handler, 'world click handler');
       });
+    }
+  }
+
+  private async triggerAnyInventoryDropped(worldX: number, worldY: number): Promise<void> {
+    if (!this._isRunning) {
+      return;
+    }
+
+    this.scene.input.activePointer.worldX = worldX;
+    this.scene.input.activePointer.worldY = worldY;
+
+    const pendingHandlers: Promise<void>[] = [];
+    let handlerCount = 0;
+
+    for (const [spriteId, h] of this.handlers) {
+      const sprite = this.sprites.get(spriteId);
+      if (!sprite || sprite.isStopped()) continue;
+      if (h.onAnyInventoryDropped.length === 0) continue;
+
+      h.onAnyInventoryDropped.forEach((handler) => {
+        handlerCount += 1;
+        const pending = this.invokeEventHandler(
+          spriteId,
+          sprite,
+          handler,
+          'any inventory item dropped handler',
+        );
+        if (pending) {
+          pendingHandlers.push(pending);
+        }
+      });
+    }
+
+    inventoryDropConsole('Triggered any-inventory-drop handlers', {
+      worldX,
+      worldY,
+      handlerCount,
+    });
+
+    if (pendingHandlers.length > 0) {
+      await Promise.allSettled(pendingHandlers);
     }
   }
 
@@ -2210,6 +2279,8 @@ export class RuntimeEngine {
       for (const [message, handlers] of sourceHandlers.onMessage) {
         cloneHandlers.onMessage.set(message, [...handlers]);
       }
+
+      cloneHandlers.onAnyInventoryDropped = [...sourceHandlers.onAnyInventoryDropped];
 
       for (const [inventoryRef, handlers] of sourceHandlers.onInventoryDropped) {
         cloneHandlers.onInventoryDropped.set(inventoryRef, [...handlers]);

@@ -659,7 +659,6 @@ export function getToolboxConfig(): any {
           { kind: 'block', type: 'event_world_clicked' },
           { kind: 'block', type: 'event_clicked' },
           { kind: 'block', type: 'event_forever' },
-          { kind: 'block', type: 'event_inventory_item_dropped' },
           { kind: 'block', type: 'event_when_receive' },
           { kind: 'block', type: 'control_broadcast' },
           { kind: 'block', type: 'control_broadcast_wait' },
@@ -734,6 +733,15 @@ export function getToolboxConfig(): any {
               },
             },
           },
+        ],
+      },
+      {
+        kind: 'category',
+        name: 'Inventory',
+        colour: '#FF8C42',
+        contents: [
+          { kind: 'block', type: 'event_any_inventory_item_dropped' },
+          { kind: 'block', type: 'event_inventory_item_dropped' },
           { kind: 'block', type: 'inventory_move_to_inventory' },
           { kind: 'block', type: 'inventory_use_dropped_item' },
         ],
@@ -1419,6 +1427,17 @@ function registerCustomBlocks() {
         .setCheck(null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when the selected inventory item is dropped on this object.');
+    }
+  };
+
+  Blockly.Blocks['event_any_inventory_item_dropped'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('🎒 when any inventory item is dropped');
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs whenever any inventory item is dropped, even if it is not over a valid target.');
     }
   };
 
