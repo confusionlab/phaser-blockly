@@ -10,12 +10,15 @@ import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import {
-  DEFAULT_BACKGROUND_CHUNK_SIZE,
-  getChunkCenterWorld,
-  getChunkRangeForWorldBounds,
   getProjectedChunkSizePx,
-  parseChunkKey,
 } from '@/lib/background/chunkMath';
+import {
+  getSceneBackgroundBaseColor,
+  getTiledBackgroundChunkSize,
+  isTiledBackground,
+  TiledBackgroundCanvasCompositor,
+  type UserSpaceViewport,
+} from '@/lib/background/compositor';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -32,16 +35,12 @@ const GIZMO_EDGE_LONG_PX = 16;
 const GIZMO_ROTATE_DISTANCE_PX = 24;
 const GIZMO_ROTATE_RADIUS_PX = 6;
 const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
-const BACKGROUND_IMAGE_CACHE_LIMIT = 256;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
 const GROUND_LAYER_DEPTH = -1000;
 const TILED_BACKGROUND_LAYER_DEPTH = -950;
 const INVENTORY_PAGE_SIZE = 8;
 const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
-
-const backgroundDecodeCache = new Map<string, HTMLImageElement>();
-const backgroundDecodePending = new Map<string, Promise<HTMLImageElement>>();
 
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
@@ -75,32 +74,6 @@ function getCostumeTextureKey(objectId: string, costumeId: string, assetId: stri
   return `costume_${objectId}_${costumeId}_${hashTextureInput(assetId)}`;
 }
 
-function getBackgroundTextureKey(dataUrl: string): string {
-  return `background_chunk_${hashTextureInput(dataUrl)}`;
-}
-
-function getSceneBackgroundBaseColor(background: BackgroundConfig | null | undefined): string {
-  if (typeof background?.value === 'string') {
-    const normalized = background.value.trim();
-    if (/^#[0-9a-fA-F]{6}$/.test(normalized)) {
-      return normalized;
-    }
-  }
-  return '#87CEEB';
-}
-
-function isTiledBackground(background: BackgroundConfig | null | undefined): background is BackgroundConfig & { type: 'tiled'; chunks: Record<string, string> } {
-  return !!background && background.type === 'tiled' && !!background.chunks && typeof background.chunks === 'object';
-}
-
-function getTiledBackgroundChunkSize(background: BackgroundConfig | null | undefined): number {
-  if (!background || background.type !== 'tiled') return DEFAULT_BACKGROUND_CHUNK_SIZE;
-  if (!Number.isFinite(background.chunkSize) || (background.chunkSize ?? 0) <= 0) {
-    return DEFAULT_BACKGROUND_CHUNK_SIZE;
-  }
-  return Math.max(32, Math.floor(background.chunkSize as number));
-}
-
 function drawWorldBoundary(
   graphics: Phaser.GameObjects.Graphics,
   sceneData: SceneData | undefined,
@@ -126,66 +99,29 @@ function drawWorldBoundary(
   graphics.strokePath();
 }
 
-function cacheDecodedBackgroundImage(dataUrl: string, image: HTMLImageElement): void {
-  if (backgroundDecodeCache.has(dataUrl)) {
-    backgroundDecodeCache.delete(dataUrl);
-  }
-  backgroundDecodeCache.set(dataUrl, image);
-  while (backgroundDecodeCache.size > BACKGROUND_IMAGE_CACHE_LIMIT) {
-    const oldestKey = backgroundDecodeCache.keys().next().value;
-    if (!oldestKey) break;
-    backgroundDecodeCache.delete(oldestKey);
-  }
-}
-
-function decodeBackgroundImage(dataUrl: string): Promise<HTMLImageElement> {
-  const cached = backgroundDecodeCache.get(dataUrl);
-  if (cached) {
-    cacheDecodedBackgroundImage(dataUrl, cached);
-    return Promise.resolve(cached);
-  }
-
-  const pending = backgroundDecodePending.get(dataUrl);
-  if (pending) return pending;
-
-  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => {
-      cacheDecodedBackgroundImage(dataUrl, image);
-      backgroundDecodePending.delete(dataUrl);
-      resolve(image);
-    };
-    image.onerror = () => {
-      backgroundDecodePending.delete(dataUrl);
-      reject(new Error('Failed to decode background chunk image.'));
-    };
-    image.src = dataUrl;
-  });
-
-  backgroundDecodePending.set(dataUrl, promise);
-  return promise;
-}
-
-async function ensureBackgroundTexture(scene: Phaser.Scene, dataUrl: string): Promise<string | null> {
-  const textureKey = getBackgroundTextureKey(dataUrl);
-  if (scene.textures.exists(textureKey)) return textureKey;
-  try {
-    const image = await decodeBackgroundImage(dataUrl);
-    if (!scene.textures.exists(textureKey)) {
-      scene.textures.addImage(textureKey, image);
-    }
-    return textureKey;
-  } catch {
-    return null;
-  }
+interface TiledBackgroundRenderSnapshot {
+  viewportWidth: number;
+  viewportHeight: number;
+  worldLeft: number;
+  worldTop: number;
+  worldWidth: number;
+  worldHeight: number;
+  zoom: number;
 }
 
 interface TiledBackgroundLayerState {
-  root: Phaser.GameObjects.Container;
-  sprites: Map<string, Phaser.GameObjects.Image>;
+  textureKey: string;
+  canvas: HTMLCanvasElement;
+  texture: Phaser.Textures.CanvasTexture;
+  image: Phaser.GameObjects.Image;
+  compositor: TiledBackgroundCanvasCompositor;
   background: BackgroundConfig | null;
   canvasWidth: number;
   canvasHeight: number;
+  needsRedraw: boolean;
+  renderScale: number;
+  lastBackgroundRef: BackgroundConfig | null;
+  lastRenderSnapshot: TiledBackgroundRenderSnapshot | null;
 }
 
 function createTiledBackgroundLayerState(
@@ -194,103 +130,139 @@ function createTiledBackgroundLayerState(
   canvasWidth: number,
   canvasHeight: number,
 ): TiledBackgroundLayerState {
-  const root = scene.add.container(0, 0);
-  root.setDepth(TILED_BACKGROUND_LAYER_DEPTH);
-  return {
-    root,
-    sprites: new Map<string, Phaser.GameObjects.Image>(),
+  const textureKey = `tiled_background_${scene.sys.settings.key}_${Math.random().toString(36).slice(2)}`;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const texture = scene.textures.addCanvas(textureKey, canvas);
+  if (!texture) {
+    throw new Error('Failed to create tiled background canvas texture.');
+  }
+  const image = scene.add.image(0, 0, textureKey);
+  image.setOrigin(0.5, 0.5);
+  image.setDepth(TILED_BACKGROUND_LAYER_DEPTH);
+  let compositor!: TiledBackgroundCanvasCompositor;
+  const layer: TiledBackgroundLayerState = {
+    textureKey,
+    canvas,
+    texture,
+    image,
+    compositor,
     background: background ?? null,
     canvasWidth,
     canvasHeight,
+    needsRedraw: true,
+    renderScale: 1,
+    lastBackgroundRef: null,
+    lastRenderSnapshot: null,
   };
+  compositor = new TiledBackgroundCanvasCompositor({
+    onChange: () => {
+      layer.needsRedraw = true;
+    },
+  });
+  layer.compositor = compositor;
+  return layer;
 }
 
-function clearTiledBackgroundSprites(layer: TiledBackgroundLayerState): void {
-  layer.sprites.forEach((sprite) => sprite.destroy());
-  layer.sprites.clear();
+function destroyTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundLayerState): void {
+  layer.compositor.dispose();
+  layer.image.destroy();
+  if (scene.textures.exists(layer.textureKey)) {
+    scene.textures.remove(layer.textureKey);
+  }
+}
+
+function hasTiledBackgroundSnapshotChanged(
+  previous: TiledBackgroundRenderSnapshot | null,
+  next: TiledBackgroundRenderSnapshot,
+): boolean {
+  if (!previous) return true;
+  const epsilon = 1e-3;
+  return (
+    previous.viewportWidth !== next.viewportWidth ||
+    previous.viewportHeight !== next.viewportHeight ||
+    Math.abs(previous.worldLeft - next.worldLeft) > epsilon ||
+    Math.abs(previous.worldTop - next.worldTop) > epsilon ||
+    Math.abs(previous.worldWidth - next.worldWidth) > epsilon ||
+    Math.abs(previous.worldHeight - next.worldHeight) > epsilon ||
+    Math.abs(previous.zoom - next.zoom) > epsilon
+  );
+}
+
+function getUserViewportFromPhaserWorldView(
+  worldView: Phaser.Geom.Rectangle,
+  canvasWidth: number,
+  canvasHeight: number,
+): UserSpaceViewport {
+  const cornerTopLeft = phaserToUser(worldView.left, worldView.top, canvasWidth, canvasHeight);
+  const cornerTopRight = phaserToUser(worldView.right, worldView.top, canvasWidth, canvasHeight);
+  const cornerBottomLeft = phaserToUser(worldView.left, worldView.bottom, canvasWidth, canvasHeight);
+  const cornerBottomRight = phaserToUser(worldView.right, worldView.bottom, canvasWidth, canvasHeight);
+
+  return {
+    left: Math.min(cornerTopLeft.x, cornerTopRight.x, cornerBottomLeft.x, cornerBottomRight.x),
+    right: Math.max(cornerTopLeft.x, cornerTopRight.x, cornerBottomLeft.x, cornerBottomRight.x),
+    bottom: Math.min(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y),
+    top: Math.max(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y),
+  };
 }
 
 function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundLayerState): void {
   const background = layer.background;
-  if (!isTiledBackground(background)) {
-    clearTiledBackgroundSprites(layer);
-    layer.root.setVisible(false);
+  if (layer.lastBackgroundRef !== background) {
+    layer.lastBackgroundRef = background;
+    layer.needsRedraw = true;
+  }
+
+  if (!isTiledBackground(background) || Object.keys(background.chunks).length === 0) {
+    layer.image.setVisible(false);
+    layer.lastRenderSnapshot = null;
     return;
   }
 
-  const chunkEntries = Object.entries(background.chunks);
-  if (chunkEntries.length === 0) {
-    clearTiledBackgroundSprites(layer);
-    layer.root.setVisible(false);
-    return;
-  }
-
-  layer.root.setVisible(true);
   const chunkSize = getTiledBackgroundChunkSize(background);
   const camera = scene.cameras.main;
   const projectedChunkSize = getProjectedChunkSizePx(chunkSize, camera.zoom);
 
   if (projectedChunkSize < BACKGROUND_MIN_PROJECTED_CHUNK_SIZE) {
-    clearTiledBackgroundSprites(layer);
+    layer.image.setVisible(false);
+    layer.lastRenderSnapshot = null;
     return;
   }
 
+  camera.preRender();
   const worldView = camera.worldView;
-  const cornerTopLeft = phaserToUser(worldView.left, worldView.top, layer.canvasWidth, layer.canvasHeight);
-  const cornerTopRight = phaserToUser(worldView.right, worldView.top, layer.canvasWidth, layer.canvasHeight);
-  const cornerBottomLeft = phaserToUser(worldView.left, worldView.bottom, layer.canvasWidth, layer.canvasHeight);
-  const cornerBottomRight = phaserToUser(worldView.right, worldView.bottom, layer.canvasWidth, layer.canvasHeight);
+  const viewportWidth = Math.max(1, Math.round(camera.width));
+  const viewportHeight = Math.max(1, Math.round(camera.height));
+  const nextSnapshot: TiledBackgroundRenderSnapshot = {
+    viewportWidth,
+    viewportHeight,
+    worldLeft: worldView.left,
+    worldTop: worldView.top,
+    worldWidth: worldView.width,
+    worldHeight: worldView.height,
+    zoom: camera.zoom,
+  };
 
-  const minX = Math.min(cornerTopLeft.x, cornerTopRight.x, cornerBottomLeft.x, cornerBottomRight.x);
-  const maxX = Math.max(cornerTopLeft.x, cornerTopRight.x, cornerBottomLeft.x, cornerBottomRight.x);
-  const minY = Math.min(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y);
-  const maxY = Math.max(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y);
-  const visibleRange = getChunkRangeForWorldBounds(minX, maxX, minY, maxY, chunkSize, 1);
+  if (layer.needsRedraw || hasTiledBackgroundSnapshotChanged(layer.lastRenderSnapshot, nextSnapshot)) {
+    const viewport = getUserViewportFromPhaserWorldView(worldView, layer.canvasWidth, layer.canvasHeight);
+    const { pending } = layer.compositor.render({
+      canvas: layer.canvas,
+      background,
+      viewport,
+      pixelWidth: viewportWidth * layer.renderScale,
+      pixelHeight: viewportHeight * layer.renderScale,
+    });
+    layer.texture.setSize(layer.canvas.width, layer.canvas.height);
+    layer.texture.refresh();
+    layer.needsRedraw = pending;
+    layer.lastRenderSnapshot = nextSnapshot;
+  }
 
-  const visibleKeys = new Set<string>();
-
-  chunkEntries.forEach(([key, dataUrl]) => {
-    if (!dataUrl) return;
-    const parsed = parseChunkKey(key);
-    if (!parsed) return;
-    if (
-      parsed.cx < visibleRange.minCx ||
-      parsed.cx > visibleRange.maxCx ||
-      parsed.cy < visibleRange.minCy ||
-      parsed.cy > visibleRange.maxCy
-    ) {
-      return;
-    }
-
-    visibleKeys.add(key);
-    const textureKey = getBackgroundTextureKey(dataUrl);
-    if (!scene.textures.exists(textureKey)) {
-      void ensureBackgroundTexture(scene, dataUrl);
-      return;
-    }
-
-    let sprite = layer.sprites.get(key);
-    if (!sprite || !sprite.active) {
-      sprite = scene.add.image(0, 0, textureKey);
-      sprite.setOrigin(0.5, 0.5);
-      layer.root.add(sprite);
-      layer.sprites.set(key, sprite);
-    } else if (sprite.texture.key !== textureKey) {
-      sprite.setTexture(textureKey);
-    }
-
-    const center = getChunkCenterWorld(parsed.cx, parsed.cy, chunkSize);
-    const centerPhaser = userToPhaser(center.x, center.y, layer.canvasWidth, layer.canvasHeight);
-    sprite.setPosition(centerPhaser.x, centerPhaser.y);
-    sprite.setDisplaySize(chunkSize, chunkSize);
-    sprite.setVisible(true);
-  });
-
-  layer.sprites.forEach((sprite, key) => {
-    if (visibleKeys.has(key)) return;
-    sprite.destroy();
-    layer.sprites.delete(key);
-  });
+  layer.image.setPosition(worldView.centerX, worldView.centerY);
+  layer.image.setDisplaySize(worldView.width, worldView.height);
+  layer.image.setVisible(true);
 }
 
 function destroyEditorContainer(scene: Phaser.Scene, container: Phaser.GameObjects.Container): void {
@@ -1612,8 +1584,7 @@ function createEditorScene(
   scene.data.set('canvasHeight', canvasHeight);
   scene.data.set('tiledBackgroundLayer', tiledBackgroundLayer);
   scene.events.once('shutdown', () => {
-    clearTiledBackgroundSprites(tiledBackgroundLayer);
-    tiledBackgroundLayer.root.destroy();
+    destroyTiledBackgroundLayer(scene, tiledBackgroundLayer);
   });
 
   // Function to update the view based on current mode
@@ -2600,8 +2571,7 @@ function createPlaySceneContent(
   updateTiledBackgroundLayer(scene, tiledBackgroundLayer);
   scene.data.set('tiledBackgroundLayer', tiledBackgroundLayer);
   scene.events.once('shutdown', () => {
-    clearTiledBackgroundSprites(tiledBackgroundLayer);
-    tiledBackgroundLayer.root.destroy();
+    destroyTiledBackgroundLayer(scene, tiledBackgroundLayer);
   });
 
   // Create runtime engine with canvas dimensions for coordinate conversion

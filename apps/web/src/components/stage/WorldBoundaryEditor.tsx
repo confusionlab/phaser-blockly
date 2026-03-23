@@ -4,8 +4,11 @@ import { Button } from '@/components/ui/button';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { runInHistoryTransaction } from '@/store/universalHistory';
-import type { BackgroundConfig, WorldPoint } from '@/types';
-import { DEFAULT_BACKGROUND_CHUNK_SIZE, getChunkWorldBounds, parseChunkKey } from '@/lib/background/chunkMath';
+import type { WorldPoint } from '@/types';
+import {
+  getUserSpaceViewportFromCanvasViewBox,
+  TiledBackgroundCanvasCompositor,
+} from '@/lib/background/compositor';
 import {
   clampViewportZoom,
 } from '@/lib/viewportNavigation';
@@ -27,14 +30,6 @@ interface BoundaryInsertionHandle {
 }
 
 const MIDPOINT_HOVER_RADIUS_PX = 100;
-
-function getFallbackBackgroundColor(background: BackgroundConfig | null | undefined): string {
-  const value = background?.value;
-  if (typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim())) {
-    return value.trim();
-  }
-  return '#87CEEB';
-}
 
 function getDefaultBoundaryPoints(canvasWidth: number, canvasHeight: number): WorldPoint[] {
   const halfWidth = canvasWidth / 2;
@@ -239,11 +234,29 @@ export function WorldBoundaryEditor() {
     startCenterY: number;
   } | null>(null);
   const stageRef = useRef<SVGSVGElement | null>(null);
+  const backgroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const backgroundCompositorRef = useRef<TiledBackgroundCanvasCompositor | null>(null);
   const viewRef = useRef(view);
+  const [backgroundRenderRevision, setBackgroundRenderRevision] = useState(0);
+
+  if (!backgroundCompositorRef.current) {
+    backgroundCompositorRef.current = new TiledBackgroundCanvasCompositor({
+      onChange: () => {
+        setBackgroundRenderRevision((current) => current + 1);
+      },
+    });
+  }
 
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => (
+    () => {
+      backgroundCompositorRef.current?.dispose();
+      backgroundCompositorRef.current = null;
+    }
+  ), []);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -388,6 +401,35 @@ export function WorldBoundaryEditor() {
     };
   }, [canvasHeight, canvasWidth, panState]);
 
+  const viewBox = getViewBox(view, canvasWidth, canvasHeight);
+
+  useEffect(() => {
+    const canvas = backgroundCanvasRef.current;
+    const compositor = backgroundCompositorRef.current;
+    if (!canvas || !compositor || !scene) {
+      return;
+    }
+
+    compositor.render({
+      canvas,
+      background: scene.background ?? null,
+      viewport: getUserSpaceViewportFromCanvasViewBox(viewBox, canvasWidth, canvasHeight),
+      pixelWidth: Math.max(1, Math.round(stageSize.width)),
+      pixelHeight: Math.max(1, Math.round(stageSize.height)),
+    });
+  }, [
+    backgroundRenderRevision,
+    canvasHeight,
+    canvasWidth,
+    scene,
+    stageSize.height,
+    stageSize.width,
+    viewBox.height,
+    viewBox.minX,
+    viewBox.minY,
+    viewBox.width,
+  ]);
+
   if (!scene) {
     return null;
   }
@@ -425,7 +467,6 @@ export function WorldBoundaryEditor() {
     return handles;
   }, [points]);
 
-  const viewBox = getViewBox(view, canvasWidth, canvasHeight);
   const pointHandleRadii = getScreenSpaceEllipseRadii(10, stageSize.width, stageSize.height, viewBox.width, viewBox.height);
   const pointHitRadii = getScreenSpaceEllipseRadii(16, stageSize.width, stageSize.height, viewBox.width, viewBox.height);
   const insertionHandleRadii = getScreenSpaceEllipseRadii(6, stageSize.width, stageSize.height, viewBox.width, viewBox.height);
@@ -584,14 +625,6 @@ export function WorldBoundaryEditor() {
     closeWorldBoundaryEditor();
   };
 
-  const backgroundBaseColor = getFallbackBackgroundColor(scene.background);
-  const tiledBackgroundChunks = scene.background?.type === 'tiled' && scene.background.chunks
-    ? Object.entries(scene.background.chunks)
-    : [];
-  const backgroundChunkSize = scene.background?.type === 'tiled' && Number.isFinite(scene.background.chunkSize)
-    ? Math.max(32, Math.floor(scene.background.chunkSize as number))
-    : DEFAULT_BACKGROUND_CHUNK_SIZE;
-
   return (
     <div className="fixed inset-0 z-[100001] bg-background flex flex-col overscroll-none">
       <div className="h-12 border-b bg-card px-3 flex items-center justify-between gap-3">
@@ -618,6 +651,11 @@ export function WorldBoundaryEditor() {
       </div>
 
       <div className="flex-1 min-h-0 relative overflow-hidden bg-[#060a14]">
+        <canvas
+          ref={backgroundCanvasRef}
+          className="absolute inset-0 h-full w-full pointer-events-none"
+          aria-hidden="true"
+        />
         <svg
           id="world-boundary-editor-stage"
           ref={stageRef}
@@ -630,7 +668,6 @@ export function WorldBoundaryEditor() {
           onWheel={handleStageWheel}
           onContextMenu={(event) => event.preventDefault()}
         >
-          <rect x={viewBox.minX} y={viewBox.minY} width={viewBox.width} height={viewBox.height} fill={backgroundBaseColor} />
           {scene.background?.type === 'image' && scene.background.value ? (
             <image
               href={scene.background.value}
@@ -641,24 +678,6 @@ export function WorldBoundaryEditor() {
               preserveAspectRatio="none"
             />
           ) : null}
-          {tiledBackgroundChunks.map(([key, dataUrl]) => {
-            if (!dataUrl) return null;
-            const parsed = parseChunkKey(key);
-            if (!parsed) return null;
-            const bounds = getChunkWorldBounds(parsed.cx, parsed.cy, backgroundChunkSize);
-            const topLeft = userToCanvas({ x: bounds.left, y: bounds.top }, canvasWidth, canvasHeight);
-            return (
-              <image
-                key={key}
-                href={dataUrl}
-                x={topLeft.x}
-                y={topLeft.y}
-                width={backgroundChunkSize}
-                height={backgroundChunkSize}
-                preserveAspectRatio="none"
-              />
-            );
-          })}
           <rect
             x="1"
             y="1"
