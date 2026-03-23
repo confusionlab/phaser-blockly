@@ -201,6 +201,23 @@ class PreservingMessageFieldDropdown extends Blockly.FieldDropdown {
 // Store reference to the field being picked for (so callback can update it)
 let pendingPickerField: Blockly.FieldDropdown | null = null;
 
+function isBlockAttachedToWorkspace(block: Blockly.Block | null | undefined): block is Blockly.Block {
+  if (!block || block.isDeadOrDying() || block.isDisposed()) {
+    return false;
+  }
+
+  const workspace = block.workspace;
+  return Boolean(workspace?.getBlockById(block.id));
+}
+
+function isLiveDropdownField(field: Blockly.FieldDropdown | null | undefined): field is Blockly.FieldDropdown {
+  if (!field || field.disposed) {
+    return false;
+  }
+
+  return isBlockAttachedToWorkspace(field.getSourceBlock());
+}
+
 function buildGroupBlockToggleIcon(collapsed: boolean): string {
   const vertical = collapsed
     ? '<line x1="6" y1="3" x2="6" y2="9" stroke="#555" stroke-width="1.5" stroke-linecap="round" />'
@@ -218,6 +235,7 @@ const GROUP_BLOCK_COLLAPSED_ICON = buildGroupBlockToggleIcon(true);
 const GROUP_BLOCK_COLOUR = '#9AA0A6';
 
 function syncGroupBlockToggleIcon(block: Blockly.Block): void {
+  if (!isBlockAttachedToWorkspace(block)) return;
   const toggleField = block.getField('TOGGLE');
   if (!(toggleField instanceof Blockly.FieldImage)) return;
 
@@ -228,6 +246,7 @@ function syncGroupBlockToggleIcon(block: Blockly.Block): void {
 }
 
 function updateCollapsedGroupRow(block: Blockly.Block): void {
+  if (!isBlockAttachedToWorkspace(block)) return;
   if (!block.isCollapsed()) return;
   const collapsedInput = block.getInput(Blockly.Block.COLLAPSED_INPUT_NAME);
   if (!collapsedInput) return;
@@ -258,6 +277,7 @@ function updateCollapsedGroupRow(block: Blockly.Block): void {
 }
 
 function setGroupBlockCollapsed(block: Blockly.Block, collapsed: boolean): void {
+  if (!isBlockAttachedToWorkspace(block)) return;
   block.setCollapsed(collapsed);
   syncGroupBlockToggleIcon(block);
   updateCollapsedGroupRow(block);
@@ -575,11 +595,11 @@ function createObjectPickerValidator(excludeCurrentObject: boolean = true) {
 
       // Open picker with callback
       useEditorStore.getState().openObjectPicker((pickedObjectId: string) => {
-        if (pendingPickerField) {
+        if (isLiveDropdownField(pendingPickerField)) {
           // Update the field value
           pendingPickerField.setValue(pickedObjectId);
-          pendingPickerField = null;
         }
+        pendingPickerField = null;
       }, excludeId);
 
       // Return null to prevent the field from changing to PICK_FROM_STAGE
@@ -611,6 +631,9 @@ function createMessageDropdownValidator() {
       newValue === CREATE_MESSAGE_OPTION ? 'create' : 'rename',
       selectedMessageId || null,
       (messageId: string) => {
+        if (!isLiveDropdownField(this)) {
+          return;
+        }
         this.setValue(messageId);
       },
     );

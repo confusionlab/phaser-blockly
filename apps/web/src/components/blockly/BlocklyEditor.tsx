@@ -333,6 +333,8 @@ export function BlocklyEditor() {
   const validationOriginalColoursRef = useRef<Map<string, string>>(new Map());
   const lastLoadedTargetRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
+  const loadingResetTimeoutRef = useRef<number | null>(null);
+  const deferredWorkspaceSyncRef = useRef(false);
   const pendingPersistRef = useRef<{
     sceneId: string | null;
     objectId: string | null;
@@ -348,6 +350,7 @@ export function BlocklyEditor() {
   const [messageDialogName, setMessageDialogName] = useState('');
   const [messageDialogError, setMessageDialogError] = useState<string | null>(null);
   const [messageDialogSelectedId, setMessageDialogSelectedId] = useState<string | null>(null);
+  const [dragSyncNonce, setDragSyncNonce] = useState(0);
 
   const { selectedSceneId, selectedObjectId, selectedComponentId, registerCodeUndo } = useEditorStore();
   const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage, updateComponent } = useProjectStore();
@@ -357,6 +360,16 @@ export function BlocklyEditor() {
   const messageDropdownStamp = project?.messages
     .map((message, index) => `${index}:${message.id}:${message.name}`)
     .join('|') ?? '';
+  const selectedScene = selectedSceneId ? project?.scenes.find((scene) => scene.id === selectedSceneId) : undefined;
+  const selectedObject = selectedObjectId ? selectedScene?.objects.find((object) => object.id === selectedObjectId) : undefined;
+  const explicitlySelectedComponent = selectedComponentId
+    ? (project?.components || []).find((component) => component.id === selectedComponentId)
+    : undefined;
+  const selectedLogicComponent = explicitlySelectedComponent
+    ?? (selectedObject?.componentId
+      ? (project?.components || []).find((component) => component.id === selectedObject.componentId)
+      : undefined);
+  const selectedBlocklyXml = selectedLogicComponent?.blocklyXml || selectedObject?.blocklyXml || '';
 
   // Keep refs in sync
   useEffect(() => {
@@ -372,6 +385,7 @@ export function BlocklyEditor() {
   ) => {
     const workspace = workspaceRef.current;
     if (!workspace) return;
+    if (workspace.isDragging()) return;
     if (
       currentSceneIdRef.current !== sceneId ||
       currentObjectIdRef.current !== objectId ||
@@ -580,6 +594,11 @@ export function BlocklyEditor() {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    if (loadingResetTimeoutRef.current !== null) {
+      window.clearTimeout(loadingResetTimeoutRef.current);
+      loadingResetTimeoutRef.current = null;
+    }
+
     if (workspaceRef.current) {
       workspaceRef.current.dispose();
     }
@@ -615,6 +634,25 @@ export function BlocklyEditor() {
 
     // Save on changes and validate references
     workspaceRef.current.addChangeListener((event) => {
+      if (event.type === Blockly.Events.BLOCK_DRAG) {
+        const dragEvent = event as Blockly.Events.BlockDrag;
+        if (!dragEvent.isStart) {
+          const sceneId = currentSceneIdRef.current;
+          const objectId = currentObjectIdRef.current;
+          const componentId = currentComponentIdRef.current;
+
+          if (workspaceRef.current && (objectId || componentId)) {
+            scheduleWorkspacePersist(sceneId, objectId, componentId);
+          }
+
+          if (deferredWorkspaceSyncRef.current) {
+            deferredWorkspaceSyncRef.current = false;
+            setDragSyncNonce((value) => value + 1);
+          }
+        }
+        return;
+      }
+
       // Debug: log typed variable getter disconnects
       if (event.type === Blockly.Events.BLOCK_MOVE && workspaceRef.current) {
         const moveEvent = event as Blockly.Events.BlockMove;
@@ -650,7 +688,9 @@ export function BlocklyEditor() {
         if (!workspaceRef.current) return;
         if (!objectId && !componentId) return;
 
-        scheduleWorkspacePersist(sceneId, objectId, componentId);
+        if (!(event.type === Blockly.Events.BLOCK_MOVE && workspaceRef.current.isDragging())) {
+          scheduleWorkspacePersist(sceneId, objectId, componentId);
+        }
 
         const state = useProjectStore.getState();
         const scene = sceneId ? state.project?.scenes.find((s) => s.id === sceneId) : undefined;
@@ -717,6 +757,11 @@ export function BlocklyEditor() {
 
     return () => {
       flushPendingWorkspacePersist();
+      if (loadingResetTimeoutRef.current !== null) {
+        window.clearTimeout(loadingResetTimeoutRef.current);
+        loadingResetTimeoutRef.current = null;
+      }
+      isLoadingRef.current = false;
       resizeObserver.disconnect();
       if (workspaceRef.current) {
         workspaceRef.current.dispose();
@@ -733,6 +778,11 @@ export function BlocklyEditor() {
 
     flushPendingWorkspacePersist();
 
+    if (loadingResetTimeoutRef.current !== null) {
+      window.clearTimeout(loadingResetTimeoutRef.current);
+      loadingResetTimeoutRef.current = null;
+    }
+
     // Get fresh object data from store
     const state = useProjectStore.getState();
     const scene = selectedSceneId ? state.project?.scenes.find((s) => s.id === selectedSceneId) : undefined;
@@ -746,8 +796,13 @@ export function BlocklyEditor() {
         : undefined);
 
     // Get effective blocklyXml (from explicitly selected component or from component instance if selected object is one)
-    const blocklyXml = component?.blocklyXml || obj?.blocklyXml || '';
+    const blocklyXml = selectedBlocklyXml;
     const effectiveSounds: Array<{ id: string }> = component?.sounds || obj?.sounds || [];
+
+    if (workspaceRef.current.isDragging()) {
+      deferredWorkspaceSyncRef.current = true;
+      return;
+    }
 
     const loadTargetKey = `${selectedSceneId ?? ''}:${selectedObjectId ?? ''}:${selectedComponentId ?? ''}`;
     const currentTopBlocks = workspaceRef.current.getTopBlocks(false);
@@ -864,11 +919,12 @@ export function BlocklyEditor() {
       );
     }
 
-    setTimeout(() => {
+    loadingResetTimeoutRef.current = window.setTimeout(() => {
       isLoadingRef.current = false;
+      loadingResetTimeoutRef.current = null;
     }, 50);
     lastLoadedTargetRef.current = loadTargetKey;
-  }, [selectedObjectId, selectedSceneId, selectedComponentId, project, flushPendingWorkspacePersist]);
+  }, [selectedObjectId, selectedSceneId, selectedComponentId, selectedBlocklyXml, flushPendingWorkspacePersist, dragSyncNonce]);
 
   // Blockly does not auto-rerender existing dropdown field labels when menu text changes.
   // Refresh scene reference fields so renamed scenes are reflected on already-selected values.
@@ -905,12 +961,11 @@ export function BlocklyEditor() {
   // Get current object name for local variable option
   const currentObjectName = (() => {
     if (!project) return undefined;
-    if (selectedSceneId && selectedObjectId) {
-      const scene = project.scenes.find((s) => s.id === selectedSceneId);
-      return scene?.objects.find((o) => o.id === selectedObjectId)?.name;
+    if (selectedObject) {
+      return selectedObject.name;
     }
-    if (selectedComponentId) {
-      return (project.components || []).find((component) => component.id === selectedComponentId)?.name;
+    if (explicitlySelectedComponent) {
+      return explicitlySelectedComponent.name;
     }
     return undefined;
   })();
