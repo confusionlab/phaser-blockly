@@ -902,6 +902,14 @@ export function getToolboxConfig(): any {
               TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } }
             }
           },
+          {
+            kind: 'block',
+            type: 'looks_speak_for_seconds',
+            inputs: {
+              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } },
+              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '2' } } }
+            }
+          },
           { kind: 'block', type: 'looks_stop_speaking' },
           {
             kind: 'block',
@@ -911,6 +919,17 @@ export function getToolboxConfig(): any {
                 block: { kind: 'block', type: 'object_from_dropdown' },
               },
               TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'looks_target_speak_for_seconds',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'object_from_dropdown' },
+              },
+              TEXT: { shadow: { type: 'text', fields: { TEXT: 'Hello!' } } },
+              SECONDS: { shadow: { type: 'math_number', fields: { NUM: '2' } } }
             }
           },
           {
@@ -1723,6 +1742,23 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['looks_speak_for_seconds'] = {
+    init: function() {
+      this.appendValueInput('TEXT')
+        .appendField('speak');
+      this.appendValueInput('SECONDS')
+        .setCheck('Number')
+        .appendField('for');
+      this.appendDummyInput()
+        .appendField('seconds');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Show a speech bubble above this object, animate the text word by word, then hide it after a delay');
+    }
+  };
+
   Blockly.Blocks['looks_stop_speaking'] = {
     init: function() {
       this.appendDummyInput()
@@ -1746,6 +1782,26 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#9966FF');
       this.setTooltip('Make another object show a speech bubble and fade in the text word by word');
+    }
+  };
+
+  Blockly.Blocks['looks_target_speak_for_seconds'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('make');
+      this.appendValueInput('TEXT')
+        .appendField('speak');
+      this.appendValueInput('SECONDS')
+        .setCheck('Number')
+        .appendField('for');
+      this.appendDummyInput()
+        .appendField('seconds');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#9966FF');
+      this.setTooltip('Make another object speak for a limited time');
     }
   };
 

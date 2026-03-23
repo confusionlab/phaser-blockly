@@ -230,6 +230,12 @@ export function registerCodeGenerators(): void {
     return `sprite.speak(${text});\n`;
   };
 
+  javascriptGenerator.forBlock['looks_speak_for_seconds'] = function(block) {
+    const text = javascriptGenerator.valueToCode(block, 'TEXT', Order.ATOMIC) || "''";
+    const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '2';
+    return `await sprite.speakFor(${text}, ${seconds});\n`;
+  };
+
   javascriptGenerator.forBlock['looks_stop_speaking'] = function() {
     return 'sprite.stopSpeaking();\n';
   };
@@ -242,6 +248,20 @@ export function registerCodeGenerators(): void {
   const __targetId = ${targetId};
   if (__targetId) {
     runtime.getSprite(__targetId)?.speak(${text});
+  }
+}\n`;
+  };
+
+  javascriptGenerator.forBlock['looks_target_speak_for_seconds'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const targetId = objectExprToId(target);
+    const text = javascriptGenerator.valueToCode(block, 'TEXT', Order.ATOMIC) || "''";
+    const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '2';
+    return `{
+  const __targetId = ${targetId};
+  const __targetSprite = __targetId ? runtime.getSprite(__targetId) : null;
+  if (__targetSprite) {
+    await __targetSprite.speakFor(${text}, ${seconds});
   }
 }\n`;
   };

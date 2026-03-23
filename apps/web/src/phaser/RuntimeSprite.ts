@@ -56,6 +56,7 @@ export class RuntimeSprite {
   private _speechMeasureText: Phaser.GameObjects.Text | null = null;
   private _speechUpdateHandler: (() => void) | null = null;
   private _speechWordTweens: Phaser.Tweens.Tween[] = [];
+  private _speechSessionId: number = 0;
 
   // Ground collision tracking (set by RuntimeEngine)
   private _isTouchingGround: boolean = false;
@@ -264,11 +265,33 @@ export class RuntimeSprite {
     this.renderSpeechBubble(text);
     this.syncSpeechBubbleVisibility();
     this.updateSpeechBubblePosition();
+    this._speechSessionId += 1;
   }
 
   stopSpeaking(): void {
     if (this._stopped) return;
+    this._speechSessionId += 1;
     this.clearSpeechBubble();
+  }
+
+  async speakFor(rawText: unknown, durationSeconds: unknown): Promise<void> {
+    if (this._stopped) return;
+
+    this.speak(rawText);
+    const sessionId = this._speechSessionId;
+
+    const secondsValue = Number(durationSeconds);
+    const safeSeconds = Number.isFinite(secondsValue) ? Math.max(0, secondsValue) : 0;
+    await this.waitForSeconds(safeSeconds);
+
+    if (this._stopped) {
+      return;
+    }
+
+    if (this._speechSessionId === sessionId) {
+      this._speechSessionId += 1;
+      this.clearSpeechBubble();
+    }
   }
 
   private getScaleSign(value: number): number {
@@ -925,6 +948,7 @@ export class RuntimeSprite {
   // --- Control ---
 
   stop(): void {
+    this._speechSessionId += 1;
     this._stopped = true;
     this.stopSpeechTweens();
   }
@@ -952,6 +976,7 @@ export class RuntimeSprite {
   }
 
   destroy(): void {
+    this._speechSessionId += 1;
     this._stopped = true;
     this.stopSpeechTweens();
     this.clearSpeechBubble();
@@ -1005,6 +1030,20 @@ export class RuntimeSprite {
 
     this._speechMeasureText.setStyle(SPEECH_BUBBLE_TEXT_STYLE);
     return this._speechMeasureText;
+  }
+
+  private waitForSeconds(seconds: number): Promise<void> {
+    if (seconds <= 0) {
+      return Promise.resolve();
+    }
+
+    if (this.runtime) {
+      return this.runtime.wait(seconds);
+    }
+
+    return new Promise((resolve) => {
+      this.scene.time.delayedCall(seconds * 1000, () => resolve());
+    });
   }
 
   private stopSpeechTweens(): void {
