@@ -84,7 +84,7 @@ function AuthenticatedShell() {
   const isHomeRoute = location.pathname === '/';
 
   return (
-    <>
+    <div className="app-shell h-full">
       {user && isHomeRoute ? (
         <div className="fixed right-4 top-3 z-[100300]">
           <UserButton />
@@ -95,7 +95,7 @@ function AuthenticatedShell() {
         <Route path="/project/:projectId" element={<EditorLayout />} />
       </Routes>
       {(location.pathname === '/' || location.pathname.startsWith('/project/')) ? <DebugPanel /> : null}
-    </>
+    </div>
   );
 }
 

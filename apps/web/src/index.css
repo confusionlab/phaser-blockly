@@ -23,6 +23,28 @@ body {
   font-family: var(--font-sans);
 }
 
+.app-shell {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell :is(
+  input,
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable="false"]),
+  [role="textbox"]
+) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.app-shell [data-allow-text-selection="true"],
+.app-shell [data-allow-text-selection="true"] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Blockly workspace styling */
 .blocklySvg {
   background-color: var(--blockly-workspace-bg) !important;

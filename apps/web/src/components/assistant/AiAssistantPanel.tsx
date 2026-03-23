@@ -960,7 +960,10 @@ export function AiAssistantPanel() {
                         </div>
                       </div>
 
-                      <Thread.Viewport className="min-h-0 flex-1 px-4 pt-5 sm:px-6 sm:pt-6">
+                      <Thread.Viewport
+                        className="min-h-0 flex-1 px-4 pt-5 sm:px-6 sm:pt-6"
+                        data-allow-text-selection="true"
+                      >
                         <ThreadWelcome />
                         <Thread.Messages />
                         <Thread.FollowupSuggestions />
