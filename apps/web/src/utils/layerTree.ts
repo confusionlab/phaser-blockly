@@ -3,6 +3,11 @@ import type { GameObject, Project, Scene, SceneFolder } from '@/types';
 export type LayerNodeKey = string;
 export type LayerNodeType = 'folder' | 'object';
 
+export interface LayerDropTarget {
+  key: LayerNodeKey | null;
+  dropPosition: 'before' | 'after' | 'on' | null;
+}
+
 const ROOT_KEY = '__root__';
 const FOLDER_PREFIX = 'folder:';
 const OBJECT_PREFIX = 'object:';
@@ -422,7 +427,7 @@ function folderAncestors(folderId: string, folderById: Map<string, SceneFolder>)
 export function moveSceneLayerNodes(
   scene: Scene,
   movedKeys: LayerNodeKey[],
-  target: { key: LayerNodeKey | null; dropPosition: 'before' | 'after' | 'on' | null },
+  target: LayerDropTarget,
 ): Scene {
   const normalizedScene = normalizeSceneLayering(scene);
   const { nodeByKey, siblingsByParent } = createIndexedNodes(normalizedScene);
@@ -556,6 +561,46 @@ export function moveSceneLayerNodes(
   };
 
   return applySiblingOrdering(nextScene);
+}
+
+export function normalizeSceneLayerDropTarget(
+  scene: Scene,
+  target: LayerDropTarget,
+): LayerDropTarget {
+  const normalizedScene = normalizeSceneLayering(scene);
+  const { nodeByKey, siblingsByParent } = createIndexedNodes(normalizedScene);
+  const targetNode = target.key ? nodeByKey.get(target.key) : null;
+
+  if (!targetNode || !target.dropPosition) {
+    return { key: null, dropPosition: null };
+  }
+
+  if (target.dropPosition === 'on') {
+    return targetNode.type === 'folder'
+      ? { key: targetNode.key, dropPosition: 'on' }
+      : { key: targetNode.key, dropPosition: 'after' };
+  }
+
+  const parentKey = parentToGroupKey(targetNode.parentId ?? null);
+  const siblings = siblingsByParent.get(parentKey) ?? [];
+  const targetIndex = siblings.indexOf(targetNode.key);
+
+  if (targetIndex < 0) {
+    return { key: null, dropPosition: null };
+  }
+
+  const destinationIndex = targetIndex + (target.dropPosition === 'after' ? 1 : 0);
+  const nextSiblingKey = siblings[destinationIndex];
+
+  if (nextSiblingKey) {
+    return { key: nextSiblingKey, dropPosition: 'before' };
+  }
+
+  if (parentKey === ROOT_KEY) {
+    return { key: null, dropPosition: null };
+  }
+
+  return { key: targetNode.key, dropPosition: 'after' };
 }
 
 export function getSceneTree(scene: Scene): LayerTreeNode[] {

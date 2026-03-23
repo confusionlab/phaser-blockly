@@ -53,6 +53,7 @@ import {
   getSceneObjectsInLayerOrder,
   getSceneTree,
   moveSceneLayerNodes,
+  normalizeSceneLayerDropTarget,
   type LayerTreeNode,
 } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
@@ -550,7 +551,7 @@ export function SpriteShelf() {
     event.preventDefault();
     event.stopPropagation();
     const dropPosition = getDropPositionForItem(item, event);
-    setLayerDropTarget({ key: item.key, dropPosition });
+    setLayerDropTarget(normalizeSceneLayerDropTarget(selectedScene, { key: item.key, dropPosition }));
   };
 
   const handleLayerDrop = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
@@ -560,14 +561,14 @@ export function SpriteShelf() {
 
     event.preventDefault();
     event.stopPropagation();
-    const dropPosition = layerDropTarget?.key === item.key
-      ? layerDropTarget.dropPosition
-      : getDropPositionForItem(item, event);
+    const resolvedTarget = layerDropTarget?.key === item.key
+      ? layerDropTarget
+      : normalizeSceneLayerDropTarget(selectedScene, {
+        key: item.key,
+        dropPosition: getDropPositionForItem(item, event),
+      });
 
-    const nextScene = moveSceneLayerNodes(selectedScene, draggedLayerKeys, {
-      key: item.key,
-      dropPosition,
-    });
+    const nextScene = moveSceneLayerNodes(selectedScene, draggedLayerKeys, resolvedTarget);
     updateScene(selectedSceneId, nextScene);
     clearLayerDragState();
   };
