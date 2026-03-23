@@ -391,7 +391,6 @@ export function SpriteShelf() {
       .map((folder) => getFolderNodeKey(folder.id)),
   );
   const visibleTreeEntries = collectVisibleTreeEntries(treeItems, expandedKeys);
-  const visibleTreeEntryByKey = new Map(visibleTreeEntries.map((entry) => [entry.item.key, entry]));
   const visibleRenameTargets = collectVisibleRenameableItems(treeItems, expandedKeys);
 
   const commitFolderRename = () => {
@@ -546,9 +545,9 @@ export function SpriteShelf() {
   const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem, level: number) => {
     const dragKeys = getDragKeysForItem(item);
     const rowRect = event.currentTarget.getBoundingClientRect();
-    const previewEntries = dragKeys
-      .map((key) => visibleTreeEntryByKey.get(key))
-      .filter((entry): entry is VisibleShelfTreeEntry => !!entry);
+    const dragKeySet = new Set(dragKeys);
+    const previewEntries = visibleTreeEntries.filter((entry) => dragKeySet.has(entry.item.key));
+    const activePreviewIndex = previewEntries.findIndex((entry) => entry.item.key === item.key);
 
     flushSync(() => {
       setDraggedLayerKeys(dragKeys);
@@ -563,7 +562,17 @@ export function SpriteShelf() {
     event.dataTransfer.setData('text/plain', dragKeys.join(','));
     if (layerDragPreviewRef.current) {
       const anchorX = Math.max(0, Math.min(rowRect.width - 1, event.clientX - rowRect.left));
-      const anchorY = Math.max(0, Math.min(rowRect.height - 1, event.clientY - rowRect.top));
+      const activePreviewRow = activePreviewIndex >= 0
+        ? layerDragPreviewRef.current.children[activePreviewIndex] as HTMLElement | undefined
+        : undefined;
+      const previewRowTop = activePreviewRow?.offsetTop ?? 0;
+      const anchorY = Math.max(
+        0,
+        Math.min(
+          layerDragPreviewRef.current.offsetHeight - 1,
+          previewRowTop + (event.clientY - rowRect.top),
+        ),
+      );
       event.dataTransfer.setDragImage(layerDragPreviewRef.current, anchorX, anchorY);
     }
   };
