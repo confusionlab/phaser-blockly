@@ -10,6 +10,7 @@ const SPEECH_BUBBLE_PADDING_X = 14;
 const SPEECH_BUBBLE_PADDING_Y = 12;
 const SPEECH_BUBBLE_RADIUS = 16;
 const SPEECH_BUBBLE_TAIL_HEIGHT = 14;
+const SPEECH_BUBBLE_FADE_DURATION_MS = 300;
 const SPEECH_BUBBLE_TEXT_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
   fontFamily: '"Trebuchet MS", "Verdana", sans-serif',
   fontSize: '20px',
@@ -56,6 +57,7 @@ export class RuntimeSprite {
   private _speechMeasureText: Phaser.GameObjects.Text | null = null;
   private _speechUpdateHandler: (() => void) | null = null;
   private _speechWordTweens: Phaser.Tweens.Tween[] = [];
+  private _speechBubbleTween: Phaser.Tweens.Tween | null = null;
   private _speechSessionId: number = 0;
 
   // Ground collision tracking (set by RuntimeEngine)
@@ -257,21 +259,22 @@ export class RuntimeSprite {
 
     const text = String(rawText ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     if (!/\S/.test(text)) {
-      this.stopSpeaking();
+      void this.stopSpeaking();
       return;
     }
 
+    this._speechSessionId += 1;
     this.ensureSpeechBubble();
     this.renderSpeechBubble(text);
     this.syncSpeechBubbleVisibility();
     this.updateSpeechBubblePosition();
-    this._speechSessionId += 1;
+    this.fadeSpeechBubbleIn();
   }
 
-  stopSpeaking(): void {
+  async stopSpeaking(): Promise<void> {
     if (this._stopped) return;
     this._speechSessionId += 1;
-    this.clearSpeechBubble();
+    await this.fadeOutAndClearSpeechBubble(this._speechSessionId);
   }
 
   async speakFor(rawText: unknown, durationSeconds: unknown): Promise<void> {
@@ -290,7 +293,7 @@ export class RuntimeSprite {
 
     if (this._speechSessionId === sessionId) {
       this._speechSessionId += 1;
-      this.clearSpeechBubble();
+      await this.fadeOutAndClearSpeechBubble(this._speechSessionId);
     }
   }
 
@@ -951,6 +954,7 @@ export class RuntimeSprite {
     this._speechSessionId += 1;
     this._stopped = true;
     this.stopSpeechTweens();
+    this.stopSpeechBubbleTween();
   }
 
   isStopped(): boolean {
@@ -979,6 +983,7 @@ export class RuntimeSprite {
     this._speechSessionId += 1;
     this._stopped = true;
     this.stopSpeechTweens();
+    this.stopSpeechBubbleTween();
     this.clearSpeechBubble();
 
     if (this._speechMeasureText) {
@@ -1008,6 +1013,7 @@ export class RuntimeSprite {
     const background = this.scene.add.graphics();
     const textLayer = this.scene.add.container(0, 0);
     bubble.add([background, textLayer]);
+    bubble.setAlpha(0);
 
     this._speechBubble = bubble;
     this._speechBubbleBackground = background;
@@ -1051,8 +1057,61 @@ export class RuntimeSprite {
     this._speechWordTweens = [];
   }
 
+  private stopSpeechBubbleTween(): void {
+    if (this._speechBubbleTween) {
+      this._speechBubbleTween.stop();
+      this._speechBubbleTween = null;
+    }
+  }
+
+  private fadeSpeechBubbleIn(): void {
+    if (!this._speechBubble) {
+      return;
+    }
+
+    this.stopSpeechBubbleTween();
+    this._speechBubble.setAlpha(0);
+    this._speechBubble.setVisible(this.container.visible && this.container.active && !this._stopped);
+    this._speechBubbleTween = this.scene.tweens.add({
+      targets: this._speechBubble,
+      alpha: 1,
+      duration: SPEECH_BUBBLE_FADE_DURATION_MS,
+      ease: 'Quad.Out',
+      onComplete: () => {
+        this._speechBubbleTween = null;
+      },
+    });
+  }
+
+  private fadeOutAndClearSpeechBubble(sessionId: number): Promise<void> {
+    if (!this._speechBubble) {
+      this.clearSpeechBubble();
+      return Promise.resolve();
+    }
+
+    this.stopSpeechBubbleTween();
+    this._speechBubble.setVisible(true);
+
+    return new Promise((resolve) => {
+      this._speechBubbleTween = this.scene.tweens.add({
+        targets: this._speechBubble,
+        alpha: 0,
+        duration: SPEECH_BUBBLE_FADE_DURATION_MS,
+        ease: 'Quad.Out',
+        onComplete: () => {
+          this._speechBubbleTween = null;
+          if (this._speechSessionId === sessionId || this._stopped) {
+            this.clearSpeechBubble();
+          }
+          resolve();
+        },
+      });
+    });
+  }
+
   private clearSpeechBubble(): void {
     this.stopSpeechTweens();
+    this.stopSpeechBubbleTween();
 
     if (this._speechUpdateHandler) {
       this.scene.events.off(Phaser.Scenes.Events.POST_UPDATE, this._speechUpdateHandler);
