@@ -248,6 +248,8 @@ export function SpriteShelf() {
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
   const inlineRenameSessionRef = useRef(0);
+  const layerRowRefs = useRef(new Map<string, HTMLDivElement>());
+  const layerDragPreviewRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
@@ -510,6 +512,52 @@ export function SpriteShelf() {
   const clearLayerDragState = () => {
     setDraggedLayerKeys([]);
     setLayerDropTarget(null);
+    if (layerDragPreviewRef.current) {
+      layerDragPreviewRef.current.remove();
+      layerDragPreviewRef.current = null;
+    }
+  };
+
+  const buildLayerDragPreview = (dragKeys: string[], fallbackRow: HTMLDivElement) => {
+    const preview = document.createElement('div');
+    preview.style.position = 'fixed';
+    preview.style.top = '-10000px';
+    preview.style.left = '-10000px';
+    preview.style.pointerEvents = 'none';
+    preview.style.zIndex = '9999';
+    preview.style.display = 'flex';
+    preview.style.flexDirection = 'column';
+    preview.style.gap = '4px';
+    preview.style.padding = '4px';
+
+    const previewKeys = dragKeys.slice(0, 3);
+    for (const key of previewKeys) {
+      const sourceRow = layerRowRefs.current.get(key) ?? fallbackRow;
+      const rowClone = sourceRow.cloneNode(true) as HTMLDivElement;
+      rowClone.style.width = `${sourceRow.getBoundingClientRect().width}px`;
+      rowClone.style.boxSizing = 'border-box';
+      rowClone.style.background = 'hsl(var(--card))';
+      rowClone.style.borderRadius = '8px';
+      rowClone.style.boxShadow = '0 10px 30px rgba(0, 0, 0, 0.18)';
+      preview.appendChild(rowClone);
+    }
+
+    if (dragKeys.length > previewKeys.length) {
+      const overflowBadge = document.createElement('div');
+      overflowBadge.textContent = `+${dragKeys.length - previewKeys.length} more`;
+      overflowBadge.style.alignSelf = 'flex-start';
+      overflowBadge.style.padding = '2px 8px';
+      overflowBadge.style.borderRadius = '999px';
+      overflowBadge.style.fontSize = '11px';
+      overflowBadge.style.lineHeight = '16px';
+      overflowBadge.style.background = 'hsl(var(--muted))';
+      overflowBadge.style.color = 'hsl(var(--muted-foreground))';
+      preview.appendChild(overflowBadge);
+    }
+
+    document.body.appendChild(preview);
+    layerDragPreviewRef.current = preview;
+    return preview;
   };
 
   const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
@@ -518,6 +566,8 @@ export function SpriteShelf() {
     setLayerDropTarget(null);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragKeys.join(','));
+    const preview = buildLayerDragPreview(dragKeys, event.currentTarget);
+    event.dataTransfer.setDragImage(preview, 20, 20);
   };
 
   const getDropPositionForItem = (
@@ -1232,6 +1282,13 @@ export function SpriteShelf() {
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
+          ref={(node) => {
+            if (node) {
+              layerRowRefs.current.set(item.key, node);
+            } else {
+              layerRowRefs.current.delete(item.key);
+            }
+          }}
           className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
             isSelected
               ? 'bg-primary/10 border-l-2 border-l-primary'
