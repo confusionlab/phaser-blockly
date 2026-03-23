@@ -6,6 +6,7 @@ import { StagePanel } from '../stage/StagePanel';
 import { PhaserCanvas } from '../stage/PhaserCanvas';
 import { ObjectPicker } from '../stage/ObjectPicker';
 import { BackgroundCanvasEditor } from '../stage/BackgroundCanvasEditor';
+import { WorldBoundaryEditor } from '../stage/WorldBoundaryEditor';
 import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { AiAssistantPanel } from '../assistant/AiAssistantPanel';
@@ -46,6 +47,7 @@ export function EditorLayout() {
     activeObjectTab,
     costumeUndoHandler,
     backgroundEditorOpen,
+    worldBoundaryEditorOpen,
     backgroundShortcutHandler,
     assistantLockRunId,
     assistantLockMessage,
@@ -460,6 +462,10 @@ export function EditorLayout() {
 
   if (backgroundEditorOpen) {
     return <BackgroundCanvasEditor />;
+  }
+
+  if (worldBoundaryEditorOpen) {
+    return <WorldBoundaryEditor />;
   }
 
   // Fullscreen code editor

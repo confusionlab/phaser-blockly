@@ -23,7 +23,7 @@ import { normalizeVariableDefinition } from '@/lib/variableUtils';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 8;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -1846,6 +1846,30 @@ const migrations: Record<number, MigrationFn> = {
       schemaVersion: 6,
     };
   },
+  // v8: Add world boundary scene defaults.
+  8: (project) => ({
+    ...project,
+    scenes: (project.scenes || []).map((scene) => ({
+      ...scene,
+      worldBoundary: scene.worldBoundary
+        ? {
+            enabled: !!scene.worldBoundary.enabled,
+            points: Array.isArray(scene.worldBoundary.points)
+              ? scene.worldBoundary.points
+                  .filter(
+                    (point): point is { x: number; y: number } =>
+                      !!point && Number.isFinite(point.x) && Number.isFinite(point.y),
+                  )
+                  .map((point) => ({ x: point.x, y: point.y }))
+              : [],
+          }
+        : {
+            enabled: false,
+            points: [],
+          },
+    })),
+    schemaVersion: 8,
+  }),
 };
 
 function migrateProject(project: Project, fromVersion: number): Project {

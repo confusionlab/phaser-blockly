@@ -243,7 +243,13 @@ function ScrubInput({
 
 export function ObjectInspector() {
   const { project, updateObject, updateScene } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectedObjectIds, openBackgroundEditor } = useEditorStore();
+  const {
+    selectedSceneId,
+    selectedObjectId,
+    selectedObjectIds,
+    openBackgroundEditor,
+    openWorldBoundaryEditor,
+  } = useEditorStore();
   const [activeTab, setActiveTab] = useState<string>('object');
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
@@ -282,6 +288,7 @@ export function ObjectInspector() {
             scene={scene}
             updateScene={updateScene}
             onOpenBackgroundEditor={openBackgroundEditor}
+            onOpenWorldBoundaryEditor={openWorldBoundaryEditor}
           />
         </TabsContent>
       </Tabs>
@@ -638,9 +645,10 @@ interface ScenePropertiesProps {
   scene: Scene | undefined;
   updateScene: (sceneId: string, updates: Partial<Scene>) => void;
   onOpenBackgroundEditor: (sceneId: string) => void;
+  onOpenWorldBoundaryEditor: (sceneId: string) => void;
 }
 
-function SceneProperties({ scene, updateScene, onOpenBackgroundEditor }: ScenePropertiesProps) {
+function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWorldBoundaryEditor }: ScenePropertiesProps) {
   if (!scene) {
     return (
       <div className="text-center text-muted-foreground text-sm py-4">
@@ -713,6 +721,43 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor }: ScenePr
                 onChange={(color) => updateGround({ color })}
               />
             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="world-boundary-toggle"
+              checked={!!scene.worldBoundary?.enabled}
+              onCheckedChange={(checked) => updateScene(scene.id, {
+                worldBoundary: {
+                  enabled: !!checked,
+                  points: scene.worldBoundary?.points || [],
+                },
+              })}
+            />
+            <Label htmlFor="world-boundary-toggle" className="text-xs text-muted-foreground cursor-pointer">
+              World Boundary
+            </Label>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 px-2 text-xs"
+            onClick={() => onOpenWorldBoundaryEditor(scene.id)}
+          >
+            Edit
+          </Button>
+        </div>
+        {scene.worldBoundary?.points?.length ? (
+          <div className="mt-2 text-[11px] text-muted-foreground">
+            {scene.worldBoundary.points.length} points
+          </div>
+        ) : (
+          <div className="mt-2 text-[11px] text-muted-foreground">
+            No boundary points yet
           </div>
         )}
       </div>

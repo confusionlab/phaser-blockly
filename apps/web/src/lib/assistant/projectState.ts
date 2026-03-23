@@ -251,6 +251,12 @@ function toAssistantScene(scene: Scene): AssistantScene {
       zoom: scene.cameraConfig.zoom,
     },
     ground: scene.ground ? { ...scene.ground } : undefined,
+    worldBoundary: scene.worldBoundary
+      ? {
+          enabled: !!scene.worldBoundary.enabled,
+          points: (scene.worldBoundary.points || []).map((point) => ({ ...point })),
+        }
+      : undefined,
     objectFolders: (scene.objectFolders || []).map(toAssistantFolder),
     objects: (scene.objects || []).map(toAssistantObject),
   };
@@ -330,6 +336,7 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
       if (operation.properties) {
         nextScene.cameraConfig = operation.properties.cameraConfig ?? nextScene.cameraConfig;
         nextScene.ground = operation.properties.ground ?? nextScene.ground;
+        nextScene.worldBoundary = operation.properties.worldBoundary ?? nextScene.worldBoundary;
       }
       const scenes = insertAtIndex(project.scenes, nextScene, operation.insertIndex).map((scene, index) => ({
         ...scene,
@@ -380,6 +387,7 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
                 ...scene,
                 cameraConfig: operation.properties.cameraConfig ?? scene.cameraConfig,
                 ground: operation.properties.ground ?? scene.ground,
+                worldBoundary: operation.properties.worldBoundary ?? scene.worldBoundary,
               })
             : scene,
         ),

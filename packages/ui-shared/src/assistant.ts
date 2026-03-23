@@ -78,6 +78,16 @@ export interface AssistantGroundConfig {
   color: string;
 }
 
+export interface AssistantWorldPoint {
+  x: number;
+  y: number;
+}
+
+export interface AssistantWorldBoundaryConfig {
+  enabled: boolean;
+  points: AssistantWorldPoint[];
+}
+
 export interface AssistantCameraConfig {
   followTarget: string | null;
   bounds: { x: number; y: number; width: number; height: number } | null;
@@ -139,6 +149,7 @@ export interface AssistantScene {
   background: AssistantBackgroundConfig | null;
   cameraConfig: AssistantCameraConfig;
   ground?: AssistantGroundConfig;
+  worldBoundary?: AssistantWorldBoundaryConfig;
   objectFolders: AssistantSceneFolder[];
   objects: AssistantObject[];
 }
@@ -260,7 +271,7 @@ export type AssistantComponentInstanceProperties = Partial<
 >;
 
 export type AssistantSceneProperties = Partial<
-  Pick<AssistantScene, 'cameraConfig' | 'ground'>
+  Pick<AssistantScene, 'cameraConfig' | 'ground' | 'worldBoundary'>
 >;
 
 export type AssistantProjectOperation =

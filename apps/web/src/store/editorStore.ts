@@ -87,6 +87,8 @@ interface EditorStore {
   collapsedFolderIdsByScene: Record<string, string[]>;
   backgroundEditorOpen: boolean;
   backgroundEditorSceneId: string | null;
+  worldBoundaryEditorOpen: boolean;
+  worldBoundaryEditorSceneId: string | null;
   assistantLockRunId: string | null;
   assistantLockMessage: string | null;
 
@@ -130,6 +132,8 @@ interface EditorStore {
   clearSceneUiState: (sceneId: string) => void;
   openBackgroundEditor: (sceneId: string) => void;
   closeBackgroundEditor: () => void;
+  openWorldBoundaryEditor: (sceneId: string) => void;
+  closeWorldBoundaryEditor: () => void;
 
   // Object picker actions
   openObjectPicker: (callback: ObjectPickerCallback, excludeId?: string | null) => void;
@@ -194,6 +198,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   collapsedFolderIdsByScene: {},
   backgroundEditorOpen: false,
   backgroundEditorSceneId: null,
+  worldBoundaryEditorOpen: false,
+  worldBoundaryEditorSceneId: null,
   assistantLockRunId: null,
   assistantLockMessage: null,
 
@@ -432,6 +438,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       backgroundEditorSceneId: null,
       backgroundUndoHandler: null,
       backgroundShortcutHandler: null,
+    });
+  },
+
+  openWorldBoundaryEditor: (sceneId) => {
+    set({
+      worldBoundaryEditorOpen: true,
+      worldBoundaryEditorSceneId: sceneId,
+    });
+  },
+
+  closeWorldBoundaryEditor: () => {
+    set({
+      worldBoundaryEditorOpen: false,
+      worldBoundaryEditorSceneId: null,
     });
   },
 

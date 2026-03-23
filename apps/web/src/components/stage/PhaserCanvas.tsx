@@ -1,9 +1,10 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import Phaser from 'phaser';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
+import { Button } from '@/components/ui/button';
 import type { Scene as SceneData, GameObject, ComponentDefinition, Variable, BackgroundConfig } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
@@ -16,6 +17,7 @@ import {
   parseChunkKey,
 } from '@/lib/background/chunkMath';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
+import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
 // Register code generators once at module load
 registerCodeGenerators();
@@ -32,6 +34,7 @@ const GIZMO_ROTATE_RADIUS_PX = 6;
 const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 const BACKGROUND_IMAGE_CACHE_LIMIT = 256;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
+const INVENTORY_PAGE_SIZE = 8;
 
 const backgroundDecodeCache = new Map<string, HTMLImageElement>();
 const backgroundDecodePending = new Map<string, Promise<HTMLImageElement>>();
@@ -92,6 +95,43 @@ function getTiledBackgroundChunkSize(background: BackgroundConfig | null | undef
     return DEFAULT_BACKGROUND_CHUNK_SIZE;
   }
   return Math.max(32, Math.floor(background.chunkSize as number));
+}
+
+function drawWorldBoundary(
+  graphics: Phaser.GameObjects.Graphics,
+  sceneData: SceneData | undefined,
+  canvasWidth: number,
+  canvasHeight: number,
+): void {
+  graphics.clear();
+
+  if (!sceneData?.worldBoundary?.enabled || !sceneData.worldBoundary.points || sceneData.worldBoundary.points.length < 2) {
+    return;
+  }
+
+  const points = sceneData.worldBoundary.points;
+  const first = userToPhaser(points[0].x, points[0].y, canvasWidth, canvasHeight);
+  graphics.lineStyle(3, 0x60a5fa, 0.8);
+  graphics.beginPath();
+  graphics.moveTo(first.x, first.y);
+  for (let index = 1; index < points.length; index += 1) {
+    const point = userToPhaser(points[index].x, points[index].y, canvasWidth, canvasHeight);
+    graphics.lineTo(point.x, point.y);
+  }
+  graphics.closePath();
+  if (points.length >= 3) {
+    graphics.fillStyle(0x60a5fa, 0.12);
+    graphics.fillPath();
+  }
+  graphics.strokePath();
+
+  for (const point of points) {
+    const canvasPoint = userToPhaser(point.x, point.y, canvasWidth, canvasHeight);
+    graphics.fillStyle(0xf8fafc, 1);
+    graphics.fillCircle(canvasPoint.x, canvasPoint.y, 5);
+    graphics.lineStyle(2, 0x2563eb, 1);
+    graphics.strokeCircle(canvasPoint.x, canvasPoint.y, 5);
+  }
 }
 
 function cacheDecodedBackgroundImage(dataUrl: string, image: HTMLImageElement): void {
@@ -358,9 +398,18 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
+  const inventoryUnsubscribeRef = useRef<(() => void) | null>(null);
   const creationIdRef = useRef(0); // Track which creation attempt is current
   // Track the initial scene when play mode starts - don't recreate game when scene changes during play
   const playModeInitialSceneRef = useRef<string | null>(null);
+  const [activeRuntime, setActiveRuntime] = useState<RuntimeEngine | null>(null);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItemEntry[]>([]);
+  const [inventoryPage, setInventoryPage] = useState(0);
+  const [draggedInventoryItem, setDraggedInventoryItem] = useState<{
+    entry: InventoryItemEntry;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const { project, updateObject } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -380,6 +429,65 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   }
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
+
+  useEffect(() => {
+    inventoryUnsubscribeRef.current?.();
+    inventoryUnsubscribeRef.current = null;
+
+    if (!activeRuntime || !isPlaying) {
+      setInventoryItems([]);
+      setInventoryPage(0);
+      return;
+    }
+
+    inventoryUnsubscribeRef.current = activeRuntime.subscribeToInventory((items) => {
+      setInventoryItems(items);
+    });
+
+    return () => {
+      inventoryUnsubscribeRef.current?.();
+      inventoryUnsubscribeRef.current = null;
+    };
+  }, [activeRuntime, isPlaying]);
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(inventoryItems.length / INVENTORY_PAGE_SIZE) - 1);
+    setInventoryPage((current) => Math.min(current, maxPage));
+  }, [inventoryItems.length]);
+
+  useEffect(() => {
+    if (!draggedInventoryItem) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      setDraggedInventoryItem((current) => (
+        current
+          ? {
+              ...current,
+              x: event.clientX,
+              y: event.clientY,
+            }
+          : null
+      ));
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const currentRuntime = runtimeRef.current;
+      const entryId = draggedInventoryItem.entry.entryId;
+      setDraggedInventoryItem(null);
+      if (currentRuntime) {
+        void currentRuntime.handleInventoryDropAtClientPosition(entryId, event.clientX, event.clientY);
+      }
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [draggedInventoryItem]);
 
   // Callback to update object position/scale/rotation after drag - convert from Phaser to user coordinates
   const handleObjectDragEnd = useCallback((objId: string, phaserX: number, phaserY: number, scaleX?: number, scaleY?: number, rotation?: number) => {
@@ -467,6 +575,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         setCurrentRuntime(null);
         runtimeRef.current = null;
       }
+      setActiveRuntime(null);
+      setInventoryItems([]);
+      setDraggedInventoryItem(null);
       if (gameRef.current) {
         // Stop all sounds before destroying to prevent AudioContext errors
         try {
@@ -521,6 +632,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       setCurrentRuntime(null);
       runtimeRef.current = null;
     }
+    setActiveRuntime(null);
     if (gameRef.current) {
       console.log('[PhaserCanvas] Destroying existing game');
       // Stop all sounds before destroying to prevent AudioContext errors
@@ -595,7 +707,19 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
             if (isPlaying) {
               // Collect all objects from all scenes for variable lookup
               const allObjects = project.scenes.flatMap(s => s.objects);
-              createPlayScene(this, effectiveScene, project.scenes, project.components || [], runtimeRef, canvasWidth, canvasHeight, project.globalVariables, allObjects, effectiveSceneId || undefined);
+              createPlayScene(
+                this,
+                effectiveScene,
+                project.scenes,
+                project.components || [],
+                runtimeRef,
+                canvasWidth,
+                canvasHeight,
+                project.globalVariables,
+                allObjects,
+                effectiveSceneId || undefined,
+                setActiveRuntime,
+              );
             } else {
               // Get current viewMode and cycleViewMode from store
               const { viewMode: currentViewMode, cycleViewMode: cycleFn } = useEditorStore.getState();
@@ -647,6 +771,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                     runtimeRef.current = existingRuntime;
                     existingRuntime.resume();
                     setCurrentRuntime(existingRuntime);
+                    setActiveRuntime(existingRuntime);
                   } else {
                     // Start new scene (or restart)
                     if (existingRuntime) {
@@ -671,7 +796,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                         canvasHeight,
                         project.globalVariables,
                         project.scenes.flatMap(s => s.objects),
-                        targetSceneData.id
+                        targetSceneData.id,
+                        setActiveRuntime,
                       ), true);
                     } else {
                       this.scene.start(targetSceneKey);
@@ -1160,11 +1286,119 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     }
   }, [selectedScene?.ground, isPlaying, project]);
 
+  useEffect(() => {
+    if (!gameRef.current || isPlaying || !project) return;
+
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
+    if (!phaserScene || !selectedScene) return;
+
+    const worldBoundaryGraphics = phaserScene.data.get('worldBoundaryGraphics') as Phaser.GameObjects.Graphics | undefined;
+    if (!worldBoundaryGraphics) return;
+
+    drawWorldBoundary(worldBoundaryGraphics, selectedScene, project.settings.canvasWidth, project.settings.canvasHeight);
+  }, [selectedScene?.worldBoundary, isPlaying, project]);
+
+  const totalInventoryPages = Math.max(1, Math.ceil(inventoryItems.length / INVENTORY_PAGE_SIZE));
+  const visibleInventoryItems = inventoryItems.slice(
+    inventoryPage * INVENTORY_PAGE_SIZE,
+    (inventoryPage + 1) * INVENTORY_PAGE_SIZE,
+  );
+
   return (
-    <div
-      ref={containerRef}
-      className={isPlaying ? "w-full h-full" : "w-full h-full min-h-[300px]"}
-    />
+    <div className="relative w-full h-full">
+      <div
+        ref={containerRef}
+        className={isPlaying ? "w-full h-full" : "w-full h-full min-h-[300px]"}
+      />
+      {isPlaying && (
+        <>
+          <div
+            data-pocha-ui="inventory"
+            className="absolute left-4 right-4 bottom-4 z-20 pointer-events-none"
+          >
+            <div className="pointer-events-auto mx-auto max-w-4xl rounded-2xl border bg-card/92 backdrop-blur px-3 py-3 shadow-lg">
+              <div className="flex items-center gap-2">
+                <div className="text-xs font-medium text-muted-foreground min-w-20">Inventory</div>
+                <div className="flex-1 grid grid-cols-4 md:grid-cols-8 gap-2">
+                  {visibleInventoryItems.map((item) => (
+                    <button
+                      key={item.entryId}
+                      type="button"
+                      className="group flex h-16 items-center justify-center rounded-xl border bg-background hover:border-primary/60 hover:bg-muted/70"
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setDraggedInventoryItem({
+                          entry: item,
+                          x: event.clientX,
+                          y: event.clientY,
+                        });
+                      }}
+                    >
+                      {item.costumeAssetId ? (
+                        <img
+                          src={item.costumeAssetId}
+                          alt={item.label}
+                          className="max-h-10 max-w-10 object-contain pointer-events-none"
+                        />
+                      ) : (
+                        <span className="px-2 text-[11px] text-center text-foreground/80 pointer-events-none">
+                          {item.label}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={inventoryPage === 0}
+                    onClick={() => setInventoryPage((page) => Math.max(0, page - 1))}
+                  >
+                    Prev
+                  </Button>
+                  <div className="text-[11px] text-muted-foreground min-w-12 text-center">
+                    {totalInventoryPages <= 1 ? '1/1' : `${inventoryPage + 1}/${totalInventoryPages}`}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={inventoryPage >= totalInventoryPages - 1}
+                    onClick={() => setInventoryPage((page) => Math.min(totalInventoryPages - 1, page + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+          {draggedInventoryItem && (
+            <div
+              className="fixed z-30 pointer-events-none -translate-x-1/2 -translate-y-1/2"
+              style={{ left: draggedInventoryItem.x, top: draggedInventoryItem.y }}
+            >
+              <div className="flex h-16 w-16 items-center justify-center rounded-xl border bg-card/95 shadow-xl">
+                {draggedInventoryItem.entry.costumeAssetId ? (
+                  <img
+                    src={draggedInventoryItem.entry.costumeAssetId}
+                    alt={draggedInventoryItem.entry.label}
+                    className="max-h-10 max-w-10 object-contain"
+                  />
+                ) : (
+                  <span className="px-2 text-[11px] text-center text-foreground/80">
+                    {draggedInventoryItem.entry.label}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1228,9 +1462,14 @@ function createEditorScene(
     groundGraphics.fillRect(-groundWidth / 2, phaserGroundY, groundWidth, groundHeight);
   }
 
+  const worldBoundaryGraphics = scene.add.graphics();
+  worldBoundaryGraphics.setDepth(-900);
+  drawWorldBoundary(worldBoundaryGraphics, sceneData, canvasWidth, canvasHeight);
+
   // Store references for dynamic updates
   scene.data.set('boundsGraphics', boundsGraphics);
   scene.data.set('groundGraphics', groundGraphics);
+  scene.data.set('worldBoundaryGraphics', worldBoundaryGraphics);
   scene.data.set('canvasWidth', canvasWidth);
   scene.data.set('canvasHeight', canvasHeight);
   scene.data.set('tiledBackgroundLayer', tiledBackgroundLayer);
@@ -2108,7 +2347,8 @@ function createPlaySceneConfig(
   canvasHeight: number,
   globalVariables: Variable[],
   allObjects: GameObject[],
-  sceneId: string
+  sceneId: string,
+  onRuntimeReady: (runtime: RuntimeEngine) => void,
 ): Phaser.Types.Scenes.CreateSceneFromObjectConfig {
   return {
     create: function(this: Phaser.Scene) {
@@ -2122,7 +2362,8 @@ function createPlaySceneConfig(
         canvasHeight,
         globalVariables,
         allObjects,
-        sceneId
+        sceneId,
+        onRuntimeReady,
       );
     },
     update: function(this: Phaser.Scene) {
@@ -2157,6 +2398,7 @@ function createPlaySceneConfig(
               runtimeRef.current = existingRuntime;
               existingRuntime.resume();
               setCurrentRuntime(existingRuntime);
+              onRuntimeReady(existingRuntime);
             } else {
               // Clean up and restart if needed
               if (existingRuntime) {
@@ -2177,7 +2419,8 @@ function createPlaySceneConfig(
                   canvasHeight,
                   globalVariables,
                   allObjects,
-                  targetSceneData.id
+                  targetSceneData.id,
+                  onRuntimeReady,
                 ), true);
               } else {
                 this.scene.start(targetSceneKey);
@@ -2203,7 +2446,8 @@ function createPlaySceneContent(
   canvasHeight: number,
   globalVariables: Variable[],
   allObjects: GameObject[],
-  sceneId: string
+  sceneId: string,
+  onRuntimeReady: (runtime: RuntimeEngine) => void,
 ) {
   // Set background
   const bgColorValue = getSceneBackgroundBaseColor(sceneData.background);
@@ -2226,6 +2470,7 @@ function createPlaySceneContent(
   const runtime = new RuntimeEngine(scene, canvasWidth, canvasHeight);
   runtimeRef.current = runtime;
   setCurrentRuntime(runtime);
+  onRuntimeReady(runtime);
 
   // Store runtime for this scene (for pause/resume)
   sceneRuntimes.set(sceneId, runtime);
@@ -2253,6 +2498,11 @@ function createPlaySceneContent(
       sceneData.ground.color
     );
   }
+
+  runtime.configureWorldBoundary(
+    !!sceneData.worldBoundary?.enabled,
+    sceneData.worldBoundary?.points || [],
+  );
 
   // Register component templates so they can be spawned even if no instance exists in scene.
   for (const component of components) {
@@ -2320,6 +2570,9 @@ function createPlaySceneContent(
         restitution: physics.bounce ?? 0,
         frictionAir: 0.01,
         friction: physics.friction ?? 0.1,
+        collisionFilter: {
+          mask: runtime.getPhysicsCollisionMaskForSprite(obj.id),
+        },
       };
 
       let body: MatterJS.BodyType;
@@ -2433,6 +2686,13 @@ function createPlaySceneContent(
   // Set up physics colliders
   runtime.setupPhysicsColliders();
 
+  scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    if (!pointer.leftButtonDown()) {
+      return;
+    }
+    runtime.queueWorldClick(pointer.worldX, pointer.worldY);
+  });
+
   // Start the runtime
   runtime.start();
 }
@@ -2472,7 +2732,8 @@ function createPlayScene(
   canvasHeight: number,
   globalVariables: Variable[],
   allObjects: GameObject[],
-  sceneId?: string
+  sceneId?: string,
+  onRuntimeReady: (runtime: RuntimeEngine) => void = () => {},
 ) {
   if (!sceneData) return;
 
@@ -2489,7 +2750,8 @@ function createPlayScene(
     canvasHeight,
     globalVariables,
     allObjects,
-    effectiveSceneId
+    effectiveSceneId,
+    onRuntimeReady,
   );
 }
 

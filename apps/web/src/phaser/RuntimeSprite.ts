@@ -108,9 +108,15 @@ export class RuntimeSprite {
     // Direction: 0 = up, 90 = right, 180 = down, 270 = left
     // In user space, 0 = up means -Y in Phaser, 90 = right means +X in Phaser
     const radians = Phaser.Math.DegToRad(this._direction - 90);
-    this.container.x += Math.cos(radians) * steps;
+    const nextX = this.container.x + Math.cos(radians) * steps;
     // Y is inverted: moving "up" in user space = negative Y in Phaser
-    this.container.y -= Math.sin(radians) * steps;
+    const nextY = this.container.y - Math.sin(radians) * steps;
+    if (this.runtime) {
+      const clamped = this.runtime.clampPhaserPositionForSprite(this.id, nextX, nextY);
+      this.container.setPosition(clamped.x, clamped.y);
+    } else {
+      this.container.setPosition(nextX, nextY);
+    }
     this.syncBodyToContainer();
   }
 
@@ -118,7 +124,8 @@ export class RuntimeSprite {
     if (this._stopped) return;
     if (this.runtime) {
       const phaser = this.runtime.userToPhaser(userX, userY);
-      this.container.setPosition(phaser.x, phaser.y);
+      const clamped = this.runtime.clampPhaserPositionForSprite(this.id, phaser.x, phaser.y);
+      this.container.setPosition(clamped.x, clamped.y);
     } else {
       this.container.setPosition(userX, userY);
     }
@@ -128,7 +135,13 @@ export class RuntimeSprite {
   setX(userX: number): void {
     if (this._stopped) return;
     if (this.runtime) {
-      this.container.x = userX + this.runtime.canvasWidth / 2;
+      const clamped = this.runtime.clampPhaserPositionForSprite(
+        this.id,
+        userX + this.runtime.canvasWidth / 2,
+        this.container.y,
+      );
+      this.container.x = clamped.x;
+      this.container.y = clamped.y;
     } else {
       this.container.x = userX;
     }
@@ -138,7 +151,13 @@ export class RuntimeSprite {
   setY(userY: number): void {
     if (this._stopped) return;
     if (this.runtime) {
-      this.container.y = this.runtime.canvasHeight / 2 - userY;
+      const clamped = this.runtime.clampPhaserPositionForSprite(
+        this.id,
+        this.container.x,
+        this.runtime.canvasHeight / 2 - userY,
+      );
+      this.container.x = clamped.x;
+      this.container.y = clamped.y;
     } else {
       this.container.y = userY;
     }
@@ -147,14 +166,24 @@ export class RuntimeSprite {
 
   changeX(dx: number): void {
     if (this._stopped) return;
-    this.container.x += dx;
+    if (this.runtime) {
+      const clamped = this.runtime.clampPhaserPositionForSprite(this.id, this.container.x + dx, this.container.y);
+      this.container.setPosition(clamped.x, clamped.y);
+    } else {
+      this.container.x += dx;
+    }
     this.syncBodyToContainer();
   }
 
   changeY(dy: number): void {
     if (this._stopped) return;
     // In user space, +Y is up, so changeY(10) means move up = decrease Phaser Y
-    this.container.y -= dy;
+    if (this.runtime) {
+      const clamped = this.runtime.clampPhaserPositionForSprite(this.id, this.container.x, this.container.y - dy);
+      this.container.setPosition(clamped.x, clamped.y);
+    } else {
+      this.container.y -= dy;
+    }
     this.syncBodyToContainer();
   }
 
@@ -306,6 +335,10 @@ export class RuntimeSprite {
     return this._currentCostumeIndex;
   }
 
+  getCurrentCostume(): Costume | null {
+    return this._costumes[this._currentCostumeIndex] ?? null;
+  }
+
   // For cloning - copy internal state
   copyStateFrom(other: RuntimeSprite): void {
     // Copy costumes
@@ -444,6 +477,35 @@ export class RuntimeSprite {
     }
   }
 
+  hitTest(worldX: number, worldY: number): boolean {
+    if (!this.container.visible || !this.container.active || this.container.alpha <= 0) {
+      return false;
+    }
+
+    if (this._costumeImage) {
+      const local = this._costumeImage
+        .getWorldTransformMatrix()
+        .applyInverse(worldX, worldY, new Phaser.Math.Vector2());
+      const localX = local.x + this._costumeImage.displayOriginX;
+      const localY = local.y + this._costumeImage.displayOriginY;
+      const spriteWidth = this._costumeImage.width;
+      const spriteHeight = this._costumeImage.height;
+      if (spriteWidth <= 0 || spriteHeight <= 0) return false;
+      if (localX < 0 || localY < 0 || localX >= spriteWidth || localY >= spriteHeight) return false;
+      const pixelX = Math.floor(Math.max(0, Math.min(spriteWidth - 1, localX)));
+      const pixelY = Math.floor(Math.max(0, Math.min(spriteHeight - 1, localY)));
+      const alpha = this.scene.textures.getPixelAlpha(
+        pixelX,
+        pixelY,
+        this._costumeImage.texture.key,
+        this._costumeImage.frame.name,
+      );
+      return alpha !== null && alpha !== undefined && alpha >= 1;
+    }
+
+    return this.container.getBounds().contains(worldX, worldY);
+  }
+
   nextCostume(): void {
     if (this._stopped) return;
     if (this._costumes.length === 0) return;
@@ -493,7 +555,7 @@ export class RuntimeSprite {
 
   // --- Physics (Matter.js) ---
 
-  private getMatterBody(): MatterJS.BodyType | null {
+  getMatterBody(): MatterJS.BodyType | null {
     const matterContainer = this.container as unknown as { body?: MatterJS.BodyType };
     const body = matterContainer.body || null;
     // Uncomment for deep debugging if body mismatch suspected
@@ -553,6 +615,9 @@ export class RuntimeSprite {
         restitution: physics?.bounce ?? 0,
         frictionAir: 0.01,
         friction: physics?.friction ?? 0.1,
+        collisionFilter: {
+          mask: this.runtime?.getPhysicsCollisionMaskForSprite(this.id) ?? 0xffff,
+        },
       };
 
       // Calculate collider offset

@@ -5,6 +5,7 @@ import { getEffectiveObjectProps } from '@/types';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import {
   COMPONENT_ANY_PREFIX,
+  INVENTORY_REFERENCE_BLOCKS,
   OBJECT_REFERENCE_BLOCKS,
   PICK_FROM_STAGE,
   SCENE_REFERENCE_BLOCKS,
@@ -62,11 +63,26 @@ function isTypeReporterElement(blockElement: Element | null): boolean {
   return TYPE_REPORTER_BLOCK_TYPES.has(blockType);
 }
 
+function isInsideDroppedItemHat(blockElement: Element): boolean {
+  let current: Element | null = blockElement.parentElement;
+  while (current) {
+    if (
+      (current.tagName === 'block' || current.tagName === 'shadow') &&
+      current.getAttribute('type') === 'event_inventory_item_dropped'
+    ) {
+      return true;
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
 function validateBlockElement(
   blockElement: Element,
   blockIndex: number,
   scene: SceneValidationContext,
   object: ObjectValidationContext,
+  allObjects: readonly GameObject[],
   soundIds: Set<string>,
   variableIds: Set<string>,
   sceneIds: Set<string>,
@@ -139,6 +155,23 @@ function validateBlockElement(
     }
   }
 
+  const inventoryFieldName = INVENTORY_REFERENCE_BLOCKS[blockType];
+  if (inventoryFieldName) {
+    const value = getFieldValue(blockElement, inventoryFieldName);
+    if (!value) {
+      pushIssue('Missing inventory item selection in dropdown.');
+    } else if (value.startsWith(COMPONENT_ANY_PREFIX)) {
+      const componentId = value.slice(COMPONENT_ANY_PREFIX.length);
+      const component = componentsById.get(componentId);
+      const hasInstanceInProject = allObjects.some((candidate) => candidate.componentId === componentId);
+      if (!component || !hasInstanceInProject) {
+        pushIssue('Selected inventory item type is missing in this project.');
+      }
+    } else if (!allObjects.some((candidate) => candidate.id === value)) {
+      pushIssue('Selected inventory item is missing in this project.');
+    }
+  }
+
   const sceneFieldName = SCENE_REFERENCE_BLOCKS[blockType];
   if (sceneFieldName) {
     const value = getFieldValue(blockElement, sceneFieldName);
@@ -178,6 +211,10 @@ function validateBlockElement(
         pushIssue('Invalid type comparison. Use "type of(object)" or "my type" when comparing to a type literal.');
       }
     }
+  }
+
+  if (blockType === 'inventory_use_dropped_item' && !isInsideDroppedItemHat(blockElement)) {
+    pushIssue('Use "use the dropped item" only inside "when inventory item ... is dropped on me".');
   }
 
   return issues;
@@ -238,6 +275,7 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
               blockIndex,
               scene,
               object,
+              allObjects,
               soundIds,
               variableIds,
               sceneIds,
@@ -282,14 +320,15 @@ export function validateProjectBeforePlay(project: Project): PlayValidationIssue
       const blocks = Array.from(xml.getElementsByTagName('block'));
       for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
         issues.push(
-          ...validateBlockElement(
-            blocks[blockIndex],
-            blockIndex,
-            componentValidationScene,
-            { id: '', name: `[Component] ${component.name}` },
-            soundIds,
-            variableIds,
-            sceneIds,
+            ...validateBlockElement(
+              blocks[blockIndex],
+              blockIndex,
+              componentValidationScene,
+              { id: '', name: `[Component] ${component.name}` },
+              allObjects,
+              soundIds,
+              variableIds,
+              sceneIds,
             sceneNameCounts,
             componentsById,
           )

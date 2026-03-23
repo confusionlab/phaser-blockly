@@ -41,6 +41,11 @@ export function registerCodeGenerators(): void {
     return `runtime.onClicked(spriteId, async function(sprite) {\n${nextCode}});\n`;
   };
 
+  javascriptGenerator.forBlock['event_world_clicked'] = function(block) {
+    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    return `runtime.onWorldClicked(spriteId, async function(sprite) {\n${nextCode}});\n`;
+  };
+
   javascriptGenerator.forBlock['event_forever'] = function(block) {
     const statements = javascriptGenerator.statementToCode(block, 'DO');
     // Use sprite.id instead of spriteId so that when this runs inside a clone's
@@ -76,6 +81,12 @@ export function registerCodeGenerators(): void {
     return `if (${targetId}) runtime.onTouchingDirection(spriteId, ${targetId}, ${asJsString(direction)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
+  javascriptGenerator.forBlock['event_inventory_item_dropped'] = function(block) {
+    const item = block.getFieldValue('ITEM');
+    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    return `runtime.onInventoryDropped(spriteId, ${asJsString(item)}, async function(sprite) {\n${nextCode}});\n`;
+  };
+
   // --- Motion ---
 
   javascriptGenerator.forBlock['motion_move_steps'] = function(block) {
@@ -95,6 +106,22 @@ export function registerCodeGenerators(): void {
     const seconds = javascriptGenerator.valueToCode(block, 'SECONDS', Order.ATOMIC) || '1';
     const easing = block.getFieldValue('EASING') || 'Linear';
     return `await runtime.glideTo(sprite.id, ${x}, ${y}, ${seconds}, ${asJsString(easing)});\n`;
+  };
+
+  javascriptGenerator.forBlock['motion_glide_to_speed'] = function(block) {
+    const x = javascriptGenerator.valueToCode(block, 'X', Order.ATOMIC) || '0';
+    const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '0';
+    const speed = javascriptGenerator.valueToCode(block, 'SPEED', Order.ATOMIC) || '200';
+    const easing = block.getFieldValue('EASING') || 'Linear';
+    return `await runtime.glideToAtSpeed(sprite.id, ${x}, ${y}, ${speed}, ${asJsString(easing)});\n`;
+  };
+
+  javascriptGenerator.forBlock['motion_limit_world_boundary_on'] = function() {
+    return 'runtime.setSpriteWorldBoundaryLimited(sprite.id, true);\n';
+  };
+
+  javascriptGenerator.forBlock['motion_limit_world_boundary_off'] = function() {
+    return 'runtime.setSpriteWorldBoundaryLimited(sprite.id, false);\n';
   };
 
   javascriptGenerator.forBlock['motion_change_x'] = function(block) {
@@ -692,6 +719,14 @@ export function registerCodeGenerators(): void {
     return `runtime.deleteObject(${obj});\n`;
   };
 
+  javascriptGenerator.forBlock['inventory_move_to_inventory'] = function() {
+    return 'runtime.moveSpriteToInventory(sprite.id);\n';
+  };
+
+  javascriptGenerator.forBlock['inventory_use_dropped_item'] = function() {
+    return 'runtime.useDroppedItem();\n';
+  };
+
 
   // --- Scene Switching ---
 
@@ -805,7 +840,9 @@ const HAT_BLOCKS = [
   'event_game_start',
   'event_key_pressed',
   'event_clicked',
+  'event_world_clicked',
   'event_forever',
+  'event_inventory_item_dropped',
   'event_when_receive',
   'event_when_touching',
   'event_when_touching_value',

@@ -258,6 +258,22 @@ function normalizeProject(project: Project): Project {
       }));
       return normalizeSceneLayering({
         ...scene,
+        worldBoundary: scene.worldBoundary
+          ? {
+              enabled: !!scene.worldBoundary.enabled,
+              points: Array.isArray(scene.worldBoundary.points)
+                ? scene.worldBoundary.points
+                    .filter(
+                      (point): point is { x: number; y: number } =>
+                        !!point && Number.isFinite(point.x) && Number.isFinite(point.y),
+                    )
+                    .map((point) => ({ x: point.x, y: point.y }))
+                : [],
+            }
+          : {
+              enabled: false,
+              points: [],
+            },
         objectFolders,
         objects,
       });

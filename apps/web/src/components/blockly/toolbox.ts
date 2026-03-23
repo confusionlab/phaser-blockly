@@ -360,6 +360,33 @@ function getAllObjectsDropdownOptions(includePicker: boolean = true): Array<[str
   return generateObjectDropdownOptions(undefined, includePicker);
 }
 
+function getInventoryReferenceDropdownOptions(): Array<[string, string]> {
+  const project = useProjectStore.getState().project;
+  if (!project) {
+    return [['(no inventory items)', '']];
+  }
+
+  const componentsById = new Map((project.components || []).map((component) => [component.id, component]));
+  const result: Array<[string, string]> = [];
+  const componentIdsWithObjects = new Set<string>();
+
+  for (const scene of project.scenes) {
+    for (const obj of scene.objects) {
+      result.push([`${scene.name} / ${obj.name}`, obj.id]);
+      if (obj.componentId) {
+        componentIdsWithObjects.add(obj.componentId);
+      }
+    }
+  }
+
+  for (const componentId of componentIdsWithObjects) {
+    const componentName = componentsById.get(componentId)?.name || 'Component';
+    result.push([`${componentName} (any)`, `${COMPONENT_ANY_PREFIX}${componentId}`]);
+  }
+
+  return result.length > 0 ? result : [['(no inventory items)', '']];
+}
+
 function getComponentTypeDropdownOptions(): Array<[string, string]> {
   const project = useProjectStore.getState().project;
   const components = project?.components || [];
@@ -606,8 +633,10 @@ export function getToolboxConfig(): any {
         contents: [
           { kind: 'block', type: 'event_game_start' },
           { kind: 'block', type: 'event_key_pressed' },
+          { kind: 'block', type: 'event_world_clicked' },
           { kind: 'block', type: 'event_clicked' },
           { kind: 'block', type: 'event_forever' },
+          { kind: 'block', type: 'event_inventory_item_dropped' },
           { kind: 'block', type: 'event_when_receive' },
           { kind: 'block', type: 'control_broadcast' },
           { kind: 'block', type: 'control_broadcast_wait' },
@@ -682,6 +711,8 @@ export function getToolboxConfig(): any {
               },
             },
           },
+          { kind: 'block', type: 'inventory_move_to_inventory' },
+          { kind: 'block', type: 'inventory_use_dropped_item' },
         ],
       },
       {
@@ -713,6 +744,17 @@ export function getToolboxConfig(): any {
               SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
+          {
+            kind: 'block',
+            type: 'motion_glide_to_speed',
+            inputs: {
+              X: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
+              Y: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
+              SPEED: { shadow: { type: 'math_number', fields: { NUM: '200' } } }
+            }
+          },
+          { kind: 'block', type: 'motion_limit_world_boundary_on' },
+          { kind: 'block', type: 'motion_limit_world_boundary_off' },
           {
             kind: 'block',
             type: 'motion_change_x',
@@ -1333,6 +1375,30 @@ function registerCustomBlocks() {
     }
   };
 
+  Blockly.Blocks['event_world_clicked'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('🌎 when world is clicked');
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs when the world is clicked, including clicks on objects but not UI.');
+    }
+  };
+
+  Blockly.Blocks['event_inventory_item_dropped'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('🎒 when inventory item')
+        .appendField(new PreservingFieldDropdown(getInventoryReferenceDropdownOptions), 'ITEM')
+        .appendField('is dropped on me');
+      this.appendStatementInput('NEXT')
+        .setCheck(null);
+      this.setColour('#FFAB19');
+      this.setTooltip('Runs when the selected inventory item is dropped on this object.');
+    }
+  };
+
   Blockly.Blocks['event_forever'] = {
     init: function() {
       this.appendDummyInput()
@@ -1408,6 +1474,61 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#4C97FF');
       this.setTooltip('Glide smoothly to position over time');
+    }
+  };
+
+  Blockly.Blocks['motion_glide_to_speed'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('glide to x:');
+      this.appendValueInput('X')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('y:');
+      this.appendValueInput('Y')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('at speed');
+      this.appendValueInput('SPEED')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('px/sec')
+        .appendField(new Blockly.FieldDropdown([
+          ['linear', 'Linear'],
+          ['ease in', 'Quad.easeIn'],
+          ['ease out', 'Quad.easeOut'],
+          ['ease in-out', 'Quad.easeInOut'],
+          ['bounce', 'Bounce.easeOut'],
+          ['elastic', 'Elastic.easeOut'],
+          ['back', 'Back.easeOut'],
+        ]), 'EASING');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Glide smoothly to position using speed instead of duration.');
+    }
+  };
+
+  Blockly.Blocks['motion_limit_world_boundary_on'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('limit myself inside world boundary');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Keep this object inside the scene world boundary.');
+    }
+  };
+
+  Blockly.Blocks['motion_limit_world_boundary_off'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField("don't limit myself inside world boundary");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Allow this object to ignore the scene world boundary.');
     }
   };
 
@@ -2689,6 +2810,28 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#FFBF00');
       this.setTooltip('Delete the specified object');
+    }
+  };
+
+  Blockly.Blocks['inventory_move_to_inventory'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('move myself to inventory');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Remove this object from the scene and put it into the shared inventory.');
+    }
+  };
+
+  Blockly.Blocks['inventory_use_dropped_item'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('use the dropped item');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#FFBF00');
+      this.setTooltip('Confirm the dropped inventory item was used and remove it from inventory.');
     }
   };
 

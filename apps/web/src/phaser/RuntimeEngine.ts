@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { RuntimeSprite } from './RuntimeSprite';
 import { applyCustomGravityForce } from './gravity';
 import { normalizeConfiguredKey, normalizeKeyboardCode } from '@/utils/keyboard';
+import { clampPointToPolygon, getPolygonSegments, hasUsableWorldBoundary } from '@/lib/worldBoundary';
+import type { WorldPoint } from '@/types';
 
 // Handlers receive sprite as parameter so they work correctly for clones
 type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
@@ -16,6 +18,7 @@ const TOUCH_DIRECTION_CONTACT_SLOP_PX = 4;
 const TOUCH_DIRECTION_SIDE_BIAS_PX = 2;
 const TOUCH_DIRECTION_SIDE_MIN_OVERLAP_PX = 4;
 const TOUCH_DIRECTION_SIDE_MIN_OVERLAP_RATIO = 0.3;
+const WORLD_BOUNDARY_COLLISION_CATEGORY = 0x0002;
 
 interface BoundsSnapshot {
   minX: number;
@@ -46,6 +49,15 @@ const MAX_LOG_ENTRIES = 200;
 // This is module-level so all RuntimeEngine instances share the same data
 const sharedGlobalVariables: Map<string, number | string | boolean> = new Map();
 let sharedTimerStartMs: number | null = null;
+const sharedInventoryState: SharedInventoryState = {
+  items: [],
+  subscribers: new Set(),
+};
+
+function notifyInventorySubscribers(): void {
+  const snapshot = sharedInventoryState.items.map((item) => ({ ...item }));
+  sharedInventoryState.subscribers.forEach((subscriber) => subscriber(snapshot));
+}
 
 /**
  * Clear shared global variables - call this when the play session ends, not on scene switch
@@ -53,6 +65,8 @@ let sharedTimerStartMs: number | null = null;
 export function clearSharedGlobalVariables(): void {
   sharedGlobalVariables.clear();
   sharedTimerStartMs = null;
+  sharedInventoryState.items = [];
+  notifyInventorySubscribers();
   debugLog('info', 'Shared global variables cleared');
 }
 
@@ -99,17 +113,46 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 interface ObjectHandlers {
   onStart: EventHandler[];
+  onWorldClick: EventHandler[];
   onKeyPressed: Map<string, EventHandler[]>;
   onClick: EventHandler[];
   onTouching: Map<string, EventHandler[]>;
   onTouchingDirection: Map<string, EventHandler[]>;
   onMessage: Map<string, EventHandler[]>;
+  onInventoryDropped: Map<InventoryReference, EventHandler[]>;
   forever: ForeverHandler[];
 }
 
 interface QueuedMessage {
   message: string;
   resolveWhenDone?: () => void;
+}
+
+interface QueuedWorldClick {
+  worldX: number;
+  worldY: number;
+}
+
+export type InventoryReference = string;
+
+export interface InventoryItemEntry {
+  entryId: string;
+  sourceObjectId: string;
+  sourceComponentId: string | null;
+  label: string;
+  costumeAssetId: string | null;
+  costumeName: string | null;
+}
+
+interface InventoryDropContext {
+  entryId: string;
+  consumed: boolean;
+  targetSpriteId: string;
+}
+
+interface SharedInventoryState {
+  items: InventoryItemEntry[];
+  subscribers: Set<(items: InventoryItemEntry[]) => void>;
 }
 
 type ComponentRegistrar = (runtime: RuntimeEngine, spriteId: string, sprite: RuntimeSprite) => void;
@@ -166,6 +209,7 @@ export class RuntimeEngine {
   private _hasStarted: boolean = false;
   private pressedKeys: Set<string> = new Set();
   private queuedKeyPresses: string[] = [];
+  private queuedWorldClicks: QueuedWorldClick[] = [];
   private inputListenersAttached: boolean = false;
   private keydownListener: ((event: KeyboardEvent) => void) | null = null;
   private keyupListener: ((event: KeyboardEvent) => void) | null = null;
@@ -178,6 +222,12 @@ export class RuntimeEngine {
   private _groundColor: string = '#8B4513';
   private _groundGraphics: Phaser.GameObjects.Graphics | null = null;
   private _groundBody: MatterJS.BodyType | null = null;
+  private _worldBoundary: WorldPoint[] = [];
+  private _worldBoundaryEnabled: boolean = false;
+  private _worldBoundaryGraphics: Phaser.GameObjects.Graphics | null = null;
+  private _worldBoundaryBodies: MatterJS.BodyType[] = [];
+  private _worldBoundaryLimitedSprites: Map<string, boolean> = new Map();
+  private _currentDropContext: InventoryDropContext | null = null;
 
   // Canvas dimensions for coordinate conversion
   private _canvasWidth: number = 800;
@@ -287,14 +337,17 @@ export class RuntimeEngine {
     this.sprites.set(id, sprite);
     this.handlers.set(id, {
       onStart: [],
+      onWorldClick: [],
       onKeyPressed: new Map(),
       onClick: [],
       onTouching: new Map(),
       onTouchingDirection: new Map(),
       onMessage: new Map(),
+      onInventoryDropped: new Map(),
       forever: [],
     });
     this.localVariables.set(id, new Map());
+    this._worldBoundaryLimitedSprites.set(id, true);
     return sprite;
   }
 
@@ -350,11 +403,13 @@ export class RuntimeEngine {
     if (handlers) {
       template.handlers = {
         onStart: [...handlers.onStart],
+        onWorldClick: [...handlers.onWorldClick],
         onKeyPressed: new Map(handlers.onKeyPressed),
         onClick: [...handlers.onClick],
         onTouching: new Map(handlers.onTouching),
         onTouchingDirection: new Map(handlers.onTouchingDirection),
         onMessage: new Map(handlers.onMessage),
+        onInventoryDropped: new Map(handlers.onInventoryDropped),
         forever: [...handlers.forever],
       };
     }
@@ -454,6 +509,250 @@ export class RuntimeEngine {
     return undefined;
   }
 
+  subscribeToInventory(subscriber: (items: InventoryItemEntry[]) => void): () => void {
+    sharedInventoryState.subscribers.add(subscriber);
+    subscriber(sharedInventoryState.items.map((item) => ({ ...item })));
+    return () => {
+      sharedInventoryState.subscribers.delete(subscriber);
+    };
+  }
+
+  getInventoryItems(): InventoryItemEntry[] {
+    return sharedInventoryState.items.map((item) => ({ ...item }));
+  }
+
+  moveSpriteToInventory(spriteId: string): void {
+    const sprite = this.sprites.get(spriteId);
+    if (!sprite) {
+      return;
+    }
+
+    const currentCostume = sprite.getCurrentCostume();
+    const entry: InventoryItemEntry = {
+      entryId: crypto.randomUUID(),
+      sourceObjectId: spriteId,
+      sourceComponentId: sprite.componentId,
+      label: sprite.name,
+      costumeAssetId: currentCostume?.assetId ?? null,
+      costumeName: currentCostume?.name ?? null,
+    };
+
+    sharedInventoryState.items = [...sharedInventoryState.items, entry];
+    notifyInventorySubscribers();
+    this.deleteSelf(spriteId);
+  }
+
+  useDroppedItem(): void {
+    if (!this._currentDropContext) {
+      debugLog('error', 'useDroppedItem called without an active dropped item context');
+      return;
+    }
+
+    if (this._currentDropContext.consumed) {
+      return;
+    }
+
+    sharedInventoryState.items = sharedInventoryState.items.filter(
+      (item) => item.entryId !== this._currentDropContext?.entryId,
+    );
+    this._currentDropContext.consumed = true;
+    notifyInventorySubscribers();
+  }
+
+  configureWorldBoundary(enabled: boolean, points: WorldPoint[]): void {
+    this._worldBoundaryEnabled = enabled && hasUsableWorldBoundary(points);
+    this._worldBoundary = this._worldBoundaryEnabled ? points.map((point) => ({ ...point })) : [];
+    this.updateWorldBoundaryVisual();
+    this.updateWorldBoundaryBodies();
+  }
+
+  isWorldBoundaryEnabled(): boolean {
+    return this._worldBoundaryEnabled;
+  }
+
+  setSpriteWorldBoundaryLimited(spriteId: string, limited: boolean): void {
+    this._worldBoundaryLimitedSprites.set(spriteId, limited);
+    this.applyWorldBoundaryCollisionMask(spriteId);
+  }
+
+  isSpriteLimitedInsideWorldBoundary(spriteId: string): boolean {
+    return this._worldBoundaryLimitedSprites.get(spriteId) ?? true;
+  }
+
+  getPhysicsCollisionMaskForSprite(spriteId: string): number {
+    if (!this.isSpriteLimitedInsideWorldBoundary(spriteId)) {
+      return 0xffff & ~WORLD_BOUNDARY_COLLISION_CATEGORY;
+    }
+    return 0xffff;
+  }
+
+  clampPhaserPositionForSprite(spriteId: string, phaserX: number, phaserY: number): { x: number; y: number } {
+    if (!this._worldBoundaryEnabled || !this.isSpriteLimitedInsideWorldBoundary(spriteId)) {
+      return { x: phaserX, y: phaserY };
+    }
+
+    const userPoint = this.phaserToUser(phaserX, phaserY);
+    const clamped = clampPointToPolygon(userPoint, this._worldBoundary);
+    return this.userToPhaser(clamped.x, clamped.y);
+  }
+
+  private applyWorldBoundaryCollisionMask(spriteId: string): void {
+    const sprite = this.sprites.get(spriteId);
+    const body = sprite?.getMatterBody();
+    if (!body) {
+      return;
+    }
+    body.collisionFilter.mask = this.getPhysicsCollisionMaskForSprite(spriteId);
+  }
+
+  private updateWorldBoundaryVisual(): void {
+    if (!this._worldBoundaryGraphics) {
+      this._worldBoundaryGraphics = this.scene.add.graphics();
+      this._worldBoundaryGraphics.setDepth(-950);
+    }
+
+    this._worldBoundaryGraphics.clear();
+
+    if (!this._worldBoundaryEnabled || !hasUsableWorldBoundary(this._worldBoundary)) {
+      return;
+    }
+
+    this._worldBoundaryGraphics.lineStyle(3, 0x1d4ed8, 0.65);
+    const first = this.userToPhaser(this._worldBoundary[0].x, this._worldBoundary[0].y);
+    this._worldBoundaryGraphics.beginPath();
+    this._worldBoundaryGraphics.moveTo(first.x, first.y);
+    for (let index = 1; index < this._worldBoundary.length; index += 1) {
+      const point = this.userToPhaser(this._worldBoundary[index].x, this._worldBoundary[index].y);
+      this._worldBoundaryGraphics.lineTo(point.x, point.y);
+    }
+    this._worldBoundaryGraphics.closePath();
+    this._worldBoundaryGraphics.strokePath();
+  }
+
+  private updateWorldBoundaryBodies(): void {
+    this._worldBoundaryBodies.forEach((body) => {
+      this.scene.matter?.world?.remove(body);
+    });
+    this._worldBoundaryBodies = [];
+
+    if (!this._worldBoundaryEnabled || !hasUsableWorldBoundary(this._worldBoundary) || !this.scene.matter?.add) {
+      return;
+    }
+
+    const thickness = 24;
+    const segments = getPolygonSegments(this._worldBoundary);
+    for (const segment of segments) {
+      const start = this.userToPhaser(segment.start.x, segment.start.y);
+      const end = this.userToPhaser(segment.end.x, segment.end.y);
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const length = Math.hypot(dx, dy);
+      if (length <= 1) continue;
+
+      const body = this.scene.matter.add.rectangle(
+        (start.x + end.x) / 2,
+        (start.y + end.y) / 2,
+        length,
+        thickness,
+        {
+          isStatic: true,
+          angle: Math.atan2(dy, dx),
+          label: 'world-boundary',
+        },
+      );
+      body.collisionFilter.category = WORLD_BOUNDARY_COLLISION_CATEGORY;
+      body.collisionFilter.mask = 0xffff;
+      this._worldBoundaryBodies.push(body);
+    }
+
+    for (const spriteId of this.sprites.keys()) {
+      this.applyWorldBoundaryCollisionMask(spriteId);
+    }
+  }
+
+  private findMatchingDroppedHandlers(
+    spriteId: string,
+    item: InventoryItemEntry,
+  ): EventHandler[] {
+    const handlers = this.handlers.get(spriteId)?.onInventoryDropped;
+    if (!handlers) {
+      return [];
+    }
+
+    const exactHandlers = handlers.get(item.sourceObjectId);
+    if (exactHandlers && exactHandlers.length > 0) {
+      return exactHandlers;
+    }
+
+    if (item.sourceComponentId) {
+      const anyHandlers = handlers.get(`COMPONENT_ANY:${item.sourceComponentId}`);
+      if (anyHandlers && anyHandlers.length > 0) {
+        return anyHandlers;
+      }
+    }
+
+    return [];
+  }
+
+  private pickTopSpriteAtWorldPoint(worldX: number, worldY: number): RuntimeSprite | null {
+    const sprites = Array.from(this.sprites.values())
+      .filter((sprite) => !sprite.isStopped())
+      .sort((a, b) => {
+        if (a.container.depth !== b.container.depth) {
+          return b.container.depth - a.container.depth;
+        }
+        return this.scene.children.getIndex(b.container) - this.scene.children.getIndex(a.container);
+      });
+
+    for (const sprite of sprites) {
+      if (sprite.hitTest(worldX, worldY)) {
+        return sprite;
+      }
+    }
+
+    return null;
+  }
+
+  async handleInventoryDropAtClientPosition(entryId: string, clientX: number, clientY: number): Promise<boolean> {
+    const entry = sharedInventoryState.items.find((item) => item.entryId === entryId);
+    const canvas = this.scene.game.canvas;
+    if (!entry || !canvas) {
+      return false;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+      return false;
+    }
+
+    const camera = this.scene.cameras.main;
+    const worldPoint = camera.getWorldPoint(clientX - rect.left, clientY - rect.top);
+    const targetSprite = this.pickTopSpriteAtWorldPoint(worldPoint.x, worldPoint.y);
+    if (!targetSprite) {
+      return false;
+    }
+
+    const matchingHandlers = this.findMatchingDroppedHandlers(targetSprite.id, entry);
+    if (matchingHandlers.length === 0) {
+      return false;
+    }
+
+    this._currentDropContext = {
+      entryId,
+      consumed: false,
+      targetSpriteId: targetSprite.id,
+    };
+
+    try {
+      for (const handler of matchingHandlers) {
+        await Promise.resolve(handler(targetSprite));
+      }
+      return this._currentDropContext.consumed;
+    } finally {
+      this._currentDropContext = null;
+    }
+  }
+
   // --- Event Registration ---
 
   onGameStart(spriteId: string, handler: EventHandler): void {
@@ -463,6 +762,13 @@ export class RuntimeEngine {
       h.onStart.push(handler);
     } else {
       debugLog('error', `No handlers found for sprite ${spriteId}`);
+    }
+  }
+
+  onWorldClicked(spriteId: string, handler: EventHandler): void {
+    const h = this.handlers.get(spriteId);
+    if (h) {
+      h.onWorldClick.push(handler);
     }
   }
 
@@ -557,6 +863,17 @@ export class RuntimeEngine {
     }
   }
 
+  onInventoryDropped(spriteId: string, inventoryRef: InventoryReference, handler: EventHandler): void {
+    const h = this.handlers.get(spriteId);
+    if (!h) {
+      return;
+    }
+    if (!h.onInventoryDropped.has(inventoryRef)) {
+      h.onInventoryDropped.set(inventoryRef, []);
+    }
+    h.onInventoryDropped.get(inventoryRef)!.push(handler);
+  }
+
   forever(spriteId: string, handler: ForeverHandler): void {
     debugLog('info', `Registering forever loop for sprite ${spriteId}`);
     const h = this.handlers.get(spriteId);
@@ -615,6 +932,27 @@ export class RuntimeEngine {
           this.invokeEventHandler(spriteId, sprite, handler, 'key handler');
         });
       }
+    }
+  }
+
+  queueWorldClick(worldX: number, worldY: number): void {
+    this.queuedWorldClicks.push({ worldX, worldY });
+  }
+
+  private triggerWorldClicked(worldX: number, worldY: number): void {
+    if (!this._isRunning) {
+      return;
+    }
+    this.scene.input.activePointer.worldX = worldX;
+    this.scene.input.activePointer.worldY = worldY;
+
+    for (const [spriteId, h] of this.handlers) {
+      const sprite = this.sprites.get(spriteId);
+      if (!sprite || sprite.isStopped()) continue;
+      if (h.onWorldClick.length === 0) continue;
+      h.onWorldClick.forEach((handler) => {
+        this.invokeEventHandler(spriteId, sprite, handler, 'world click handler');
+      });
     }
   }
 
@@ -704,6 +1042,13 @@ export class RuntimeEngine {
       const pending = this.queuedKeyPresses.splice(0);
       for (const key of pending) {
         this.triggerKeyPressed(key);
+      }
+    }
+
+    if (this.queuedWorldClicks.length > 0) {
+      const pending = this.queuedWorldClicks.splice(0);
+      for (const click of pending) {
+        this.triggerWorldClicked(click.worldX, click.worldY);
       }
     }
 
@@ -1237,9 +1582,12 @@ export class RuntimeEngine {
     this.inputListenersAttached = false;
     this.pressedKeys.clear();
     this.queuedKeyPresses = [];
+    this.queuedWorldClicks = [];
 
     // Remove physics listeners
     this.scene.matter?.world?.off('beforeupdate', this.applyCustomGravity);
+    this._worldBoundaryBodies.forEach((body) => this.scene.matter?.world?.remove(body));
+    this._worldBoundaryBodies = [];
 
     // Clear all handlers
     this.handlers.clear();
@@ -1248,6 +1596,7 @@ export class RuntimeEngine {
     // Note: Don't clear globalVariables here - they persist across scene switches
     // Use clearSharedGlobalVariables() when the entire play session ends
     this.localVariables.clear();
+    this._worldBoundaryLimitedSprites.clear();
 
     debugLog('info', 'RuntimeEngine cleanup complete');
   }
@@ -1591,6 +1940,8 @@ export class RuntimeEngine {
     const cloneHandlers = this.handlers.get(cloneId);
 
     if (sourceHandlers && cloneHandlers) {
+      cloneHandlers.onWorldClick = [...sourceHandlers.onWorldClick];
+
       // Copy key pressed handlers
       for (const [key, handlers] of sourceHandlers.onKeyPressed) {
         cloneHandlers.onKeyPressed.set(key, [...handlers]);
@@ -1622,6 +1973,10 @@ export class RuntimeEngine {
       // Copy onMessage handlers
       for (const [message, handlers] of sourceHandlers.onMessage) {
         cloneHandlers.onMessage.set(message, [...handlers]);
+      }
+
+      for (const [inventoryRef, handlers] of sourceHandlers.onInventoryDropped) {
+        cloneHandlers.onInventoryDropped.set(inventoryRef, [...handlers]);
       }
 
       // Copy onStart handlers
@@ -1675,6 +2030,7 @@ export class RuntimeEngine {
       this.activeForeverLoops.delete(spriteId);
       this.pendingForeverHandlers.delete(spriteId);
       this._groundTouchCounts.delete(spriteId);
+      this._worldBoundaryLimitedSprites.delete(spriteId);
     }
   }
 
@@ -1687,6 +2043,7 @@ export class RuntimeEngine {
     this.activeForeverLoops.delete(obj.id);
     this.pendingForeverHandlers.delete(obj.id);
     this._groundTouchCounts.delete(obj.id);
+    this._worldBoundaryLimitedSprites.delete(obj.id);
   }
 
   private getObjectColor(id: string): number {
@@ -2549,21 +2906,63 @@ export class RuntimeEngine {
         return;
       }
 
-      // Convert user coordinates to Phaser coordinates
-      const phaserX = userX + this._canvasWidth / 2;
-      const phaserY = this._canvasHeight / 2 - userY;
+      const phaserTarget = this.userToPhaser(userX, userY);
+      const clampedTarget = this.clampPhaserPositionForSprite(spriteId, phaserTarget.x, phaserTarget.y);
+      const durationMs = Math.max(0, durationSeconds * 1000);
 
       this.scene.tweens.add({
         targets: container,
-        x: phaserX,
-        y: phaserY,
-        duration: durationSeconds * 1000,
+        x: clampedTarget.x,
+        y: clampedTarget.y,
+        duration: durationMs,
         ease: easing,
+        onUpdate: () => {
+          const clampedCurrent = this.clampPhaserPositionForSprite(spriteId, container.x, container.y);
+          if (clampedCurrent.x !== container.x || clampedCurrent.y !== container.y) {
+            container.setPosition(clampedCurrent.x, clampedCurrent.y);
+          }
+          const body = sprite.getMatterBody();
+          if (body && this.scene?.matter?.body) {
+            const offsetX = container.getData('colliderOffsetX') ?? 0;
+            const offsetY = container.getData('colliderOffsetY') ?? 0;
+            this.scene.matter.body.setPosition(body, {
+              x: container.x + offsetX,
+              y: container.y + offsetY,
+            });
+            container.setData('_bodyMovedByCode', true);
+          }
+        },
         onComplete: () => resolve(),
       });
 
       debugLog('action', `Gliding "${sprite.name}" to (${userX}, ${userY}) over ${durationSeconds}s with ${easing}`);
     });
+  }
+
+  glideToAtSpeed(
+    spriteId: string,
+    userX: number,
+    userY: number,
+    speed: number,
+    easing: string = 'Linear',
+  ): Promise<void> {
+    const sprite = this.sprites.get(spriteId);
+    if (!sprite) {
+      debugLog('error', `glideToAtSpeed: sprite not found (${spriteId})`);
+      return Promise.resolve();
+    }
+
+    const phaserTarget = this.userToPhaser(userX, userY);
+    const clampedTarget = this.clampPhaserPositionForSprite(spriteId, phaserTarget.x, phaserTarget.y);
+    const distancePx = Phaser.Math.Distance.Between(
+      sprite.container.x,
+      sprite.container.y,
+      clampedTarget.x,
+      clampedTarget.y,
+    );
+    const normalizedSpeed = Math.max(0, speed);
+    const durationSeconds = normalizedSpeed <= 0 ? 0 : distancePx / normalizedSpeed;
+    return this.glideTo(spriteId, userX, userY, durationSeconds, easing);
   }
 
   /**

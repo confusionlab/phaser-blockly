@@ -30,6 +30,10 @@ export const VARIABLE_REFERENCE_BLOCKS: Readonly<Record<string, string>> = {
   typed_variable_change: 'VAR',
 };
 
+export const INVENTORY_REFERENCE_BLOCKS: Readonly<Record<string, string>> = {
+  event_inventory_item_dropped: 'ITEM',
+};
+
 export const SCENE_REFERENCE_BLOCKS: Readonly<Record<string, string>> = {
   control_switch_scene: 'SCENE',
 };

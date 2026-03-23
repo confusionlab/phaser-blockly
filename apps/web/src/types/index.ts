@@ -43,6 +43,7 @@ export interface Scene {
   objectFolders: SceneFolder[];
   cameraConfig: CameraConfig;
   ground?: GroundConfig;
+  worldBoundary?: WorldBoundaryConfig;
 }
 
 export interface SceneFolder {
@@ -56,6 +57,16 @@ export interface GroundConfig {
   enabled: boolean;
   y: number;
   color: string;
+}
+
+export interface WorldPoint {
+  x: number;
+  y: number;
+}
+
+export interface WorldBoundaryConfig {
+  enabled: boolean;
+  points: WorldPoint[];
 }
 
 export interface CameraConfig {
@@ -225,7 +236,7 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 6,
+    schemaVersion: 8,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     messages: [],
     globalVariables: [],
@@ -257,6 +268,10 @@ export function createDefaultScene(id: string, name: string, order: number): Sce
       followTarget: null,
       bounds: null,
       zoom: 1,
+    },
+    worldBoundary: {
+      enabled: false,
+      points: [],
     },
   };
 }
