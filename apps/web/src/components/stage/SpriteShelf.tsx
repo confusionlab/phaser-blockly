@@ -1238,7 +1238,8 @@ export function SpriteShelf() {
               : isDropOn
                 ? 'bg-primary/15 border-l-2 border-l-primary/60'
                 : 'border-l-2 border-l-transparent hover:bg-accent'
-          }`}
+          } ${isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
+          draggable={!isObjectEditing && !isFolderEditing}
           style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
           onDoubleClick={(e) => {
             e.preventDefault();
@@ -1263,12 +1264,14 @@ export function SpriteShelf() {
           }}
           onDragOver={(e) => handleLayerDragOver(e, item)}
           onDrop={(e) => handleLayerDrop(e, item)}
+          onDragStart={(e) => handleLayerDragStart(e, item)}
+          onDragEnd={clearLayerDragState}
         >
           <button
             type="button"
             disabled={!hasChildItems}
             aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-            className="h-5 w-5 rounded hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
+            className="h-4 w-4 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
             onClick={(e) => {
               e.stopPropagation();
               if (folder) {
@@ -1277,25 +1280,11 @@ export function SpriteShelf() {
             }}
           >
             {hasChildItems ? (
-              isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
+              isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />
             ) : (
-              <span className="size-3" />
+              <span className="size-2.5" />
             )}
           </button>
-
-          <div
-            draggable={!isObjectEditing && !isFolderEditing}
-            className={`shrink-0 rounded p-0.5 text-muted-foreground/70 ${
-              isObjectEditing || isFolderEditing ? 'cursor-default opacity-40' : 'cursor-grab active:cursor-grabbing hover:bg-accent'
-            }`}
-            aria-label={`Drag ${item.name}`}
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            onDragStart={(e) => handleLayerDragStart(e, item)}
-            onDragEnd={clearLayerDragState}
-          >
-            <GripVertical className="size-3" />
-          </div>
 
           {item.type === 'folder' ? (
             isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
