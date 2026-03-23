@@ -1,10 +1,11 @@
-import { type ChangeEvent, memo, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { generateWaveform, type WaveformData } from '@/lib/audioWaveform';
 import { EditorToolbar } from '@/components/editors/shared/EditorToolbar';
 import { WaveformViewport } from './WaveformViewport';
 import type { Sound } from '@/types';
+import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { Mic, Play, RotateCcw, Scissors, Square, Volume2, VolumeX } from 'lucide-react';
 
 interface WaveformEditorProps {
@@ -15,6 +16,7 @@ interface WaveformEditorProps {
 
 export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: WaveformEditorProps) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playheadRafRef = useRef<number | null>(null);
   const trimStartRef = useRef(0);
   const trimEndRef = useRef(0);
 
@@ -32,8 +34,48 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
   trimStartRef.current = trimStart;
   trimEndRef.current = trimEnd;
 
+  const stopPlayheadLoop = useCallback(() => {
+    if (playheadRafRef.current !== null) {
+      window.cancelAnimationFrame(playheadRafRef.current);
+      playheadRafRef.current = null;
+    }
+  }, []);
+
+  const startPlayheadLoop = useCallback(() => {
+    stopPlayheadLoop();
+
+    const tick = () => {
+      const audio = audioRef.current;
+      if (!audio) {
+        playheadRafRef.current = null;
+        return;
+      }
+
+      if (audio.currentTime >= trimEndRef.current) {
+        audio.pause();
+        audio.currentTime = trimStartRef.current;
+        setCurrentTime(trimStartRef.current);
+        setIsPlaying(false);
+        playheadRafRef.current = null;
+        return;
+      }
+
+      if (audio.paused || audio.ended) {
+        setCurrentTime(audio.currentTime);
+        playheadRafRef.current = null;
+        return;
+      }
+
+      setCurrentTime(audio.currentTime);
+      playheadRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    playheadRafRef.current = window.requestAnimationFrame(tick);
+  }, [stopPlayheadLoop]);
+
   useEffect(() => {
     if (!sound) {
+      stopPlayheadLoop();
       audioRef.current?.pause();
       audioRef.current = null;
       setWaveform(null);
@@ -65,27 +107,22 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
       audio.currentTime = nextTrimStart;
     };
 
-    const handleTimeUpdate = () => {
-      if (audio.currentTime >= trimEndRef.current) {
-        audio.pause();
-        audio.currentTime = trimStartRef.current;
-        setCurrentTime(trimStartRef.current);
-        setIsPlaying(false);
-        return;
-      }
-
+    const handlePause = () => {
+      stopPlayheadLoop();
+      setIsPlaying(false);
       setCurrentTime(audio.currentTime);
     };
-
-    const handlePause = () => setIsPlaying(false);
-    const handlePlay = () => setIsPlaying(true);
+    const handlePlay = () => {
+      setIsPlaying(true);
+      startPlayheadLoop();
+    };
     const handleEnded = () => {
+      stopPlayheadLoop();
       setIsPlaying(false);
       setCurrentTime(trimStartRef.current);
     };
 
     audio.onloadedmetadata = handleMetadata;
-    audio.ontimeupdate = handleTimeUpdate;
     audio.onpause = handlePause;
     audio.onplay = handlePlay;
     audio.onended = handleEnded;
@@ -100,14 +137,14 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
       .finally(() => setIsLoadingWaveform(false));
 
     return () => {
+      stopPlayheadLoop();
       audio.pause();
       audio.onloadedmetadata = null;
-      audio.ontimeupdate = null;
       audio.onpause = null;
       audio.onplay = null;
       audio.onended = null;
     };
-  }, [sound]);
+  }, [sound, startPlayheadLoop, stopPlayheadLoop]);
 
   useEffect(() => {
     if (!audioRef.current) {
@@ -127,7 +164,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     setCurrentTime(clamped);
   };
 
-  const handleTogglePlay = () => {
+  const handleTogglePlay = useCallback(() => {
     if (!audioRef.current) {
       return;
     }
@@ -146,7 +183,29 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
       console.error('Failed to play sound preview:', error);
       setIsPlaying(false);
     });
-  };
+  }, [isPlaying, trimEnd, trimStart]);
+
+  useEffect(() => {
+    if (!sound) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreGlobalKeyboardEvent(event)) {
+        return;
+      }
+
+      if (event.code !== 'Space' || event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      event.preventDefault();
+      handleTogglePlay();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleTogglePlay, sound]);
 
   const handleRestart = () => {
     if (!audioRef.current) {

@@ -66,6 +66,8 @@ export function WaveformViewport({
   const draftTrimRef = useRef({ trimStart, trimEnd });
   const scrubRafRef = useRef<number | null>(null);
   const durationRef = useRef(duration);
+  const visibleStartRef = useRef(0);
+  const visibleEndRef = useRef(duration);
   const onSeekRef = useRef(onSeek);
   const onTrimCommitRef = useRef(onTrimCommit);
 
@@ -75,6 +77,15 @@ export function WaveformViewport({
   durationRef.current = duration;
   onSeekRef.current = onSeek;
   onTrimCommitRef.current = onTrimCommit;
+
+  const displayedTrimStart = draftTrim.trimStart;
+  const displayedTrimEnd = draftTrim.trimEnd;
+  const visibleStart = showTrimControls ? 0 : displayedTrimStart;
+  const visibleEnd = showTrimControls ? duration : displayedTrimEnd;
+  const visibleDuration = Math.max(MIN_TRIM_SECONDS, visibleEnd - visibleStart);
+
+  visibleStartRef.current = visibleStart;
+  visibleEndRef.current = visibleEnd;
 
   useEffect(() => {
     if (interactionModeRef.current === 'trim-start' || interactionModeRef.current === 'trim-end') {
@@ -103,13 +114,13 @@ export function WaveformViewport({
   }, []);
 
   const bars = useMemo(() => {
-    if (!waveform || duration <= 0) {
+    if (!waveform || visibleDuration <= 0) {
       return [];
     }
 
     const barCount = Math.max(72, Math.floor(containerWidth / 4));
-    return getVisiblePeaks(waveform, 0, duration, barCount);
-  }, [containerWidth, duration, waveform]);
+    return getVisiblePeaks(waveform, visibleStart, visibleDuration, barCount);
+  }, [containerWidth, visibleDuration, visibleStart, waveform]);
 
   useEffect(() => {
     return () => {
@@ -129,7 +140,14 @@ export function WaveformViewport({
     }
 
     const rect = element.getBoundingClientRect();
-    const clampedTime = Math.max(0, Math.min(durationRef.current, ((clientX - rect.left) / rect.width) * durationRef.current));
+    const visibleDuration = visibleEndRef.current - visibleStartRef.current;
+    const clampedTime = Math.max(
+      visibleStartRef.current,
+      Math.min(
+        visibleEndRef.current,
+        visibleStartRef.current + ((clientX - rect.left) / rect.width) * visibleDuration,
+      ),
+    );
     return clampedTime;
   }, []);
 
@@ -208,14 +226,14 @@ export function WaveformViewport({
     };
   }, [showTrimControls, updateTimeFromClientX]);
 
-  const displayedTrimStart = draftTrim.trimStart;
-  const displayedTrimEnd = draftTrim.trimEnd;
   const startPercent = duration > 0 ? (displayedTrimStart / duration) * 100 : 0;
   const endPercent = duration > 0 ? (displayedTrimEnd / duration) * 100 : 100;
-  const playheadPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const playedSelectedPercent = duration > 0
-    ? Math.max(0, Math.min(playheadPercent, endPercent) - startPercent)
+  const playheadPercent = visibleDuration > 0
+    ? Math.max(0, Math.min(100, ((currentTime - visibleStart) / visibleDuration) * 100))
     : 0;
+  const playedSelectedPercent = showTrimControls && duration > 0
+    ? Math.max(0, Math.min((currentTime / duration) * 100, endPercent) - startPercent)
+    : Math.max(0, Math.min(playheadPercent, 100));
 
   const beginScrub = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!onSeek) {
