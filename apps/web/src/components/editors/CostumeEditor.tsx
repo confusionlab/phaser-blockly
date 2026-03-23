@@ -41,6 +41,10 @@ function areVectorDocumentsEqual(
   return a.version === b.version && a.fabricJson === b.fabricJson;
 }
 
+function getInitialCostumeEditorMode(costume: Costume | undefined): CostumeEditorMode {
+  return costume?.editorMode === 'bitmap' ? 'bitmap' : 'vector';
+}
+
 export function CostumeEditor() {
   const canvasRef = useRef<CostumeCanvasHandle>(null);
   const { project, updateObject } = useProjectStore();
@@ -59,25 +63,6 @@ export function CostumeEditor() {
     registerCostumeUndo(handler);
     return () => registerCostumeUndo(null);
   }, [registerCostumeUndo]);
-
-  const [editorMode, setEditorMode] = useState<CostumeEditorMode>('vector');
-  const [activeTool, setActiveTool] = useState<DrawingTool>('select');
-  const [brushColor, setBrushColor] = useState('#000000');
-  const [brushSize, setBrushSize] = useState(5);
-  const [vectorHandleType, setVectorHandleType] = useState<VectorHandleType>('corner');
-  const [textStyle, setTextStyle] = useState<TextToolStyle>({
-    fontFamily: 'Arial',
-    fontSize: 32,
-    fontWeight: 'normal',
-    textAlign: 'left',
-    opacity: 1,
-  });
-  const [hasTextSelection, setHasTextSelection] = useState(false);
-
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const [hasCanvasSelection, setHasCanvasSelection] = useState(false);
-  const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
 
   const currentCostumeIdRef = useRef<string | null>(null);
   const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null }>({
@@ -100,6 +85,40 @@ export function CostumeEditor() {
   const costumes = useMemo(() => effectiveProps?.costumes || [], [effectiveProps]);
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
+  const currentCostume = costumes[currentCostumeIndex];
+  const initialEditorMode: CostumeEditorMode = currentCostume
+    ? getInitialCostumeEditorMode(currentCostume)
+    : 'bitmap';
+
+  const [editorMode, setEditorMode] = useState<CostumeEditorMode>(initialEditorMode);
+  const [activeTool, setActiveTool] = useState<DrawingTool>('select');
+  const [brushColor, setBrushColor] = useState('#000000');
+  const [brushSize, setBrushSize] = useState(5);
+  const [vectorHandleType, setVectorHandleType] = useState<VectorHandleType>('corner');
+  const [textStyle, setTextStyle] = useState<TextToolStyle>({
+    fontFamily: 'Arial',
+    fontSize: 32,
+    fontWeight: 'normal',
+    textAlign: 'left',
+    opacity: 1,
+  });
+  const [hasTextSelection, setHasTextSelection] = useState(false);
+
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [hasCanvasSelection, setHasCanvasSelection] = useState(false);
+  const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
+
+  useEffect(() => {
+    setEditorMode((prev) => {
+      if (prev === initialEditorMode) return prev;
+      return currentCostumeIdRef.current === null ? initialEditorMode : prev;
+    });
+    setActiveTool((prev) => {
+      if (currentCostumeIdRef.current !== null) return prev;
+      return ensureToolForMode(initialEditorMode, prev);
+    });
+  }, [initialEditorMode]);
 
   const getUpdatedCostumesWithCanvasState = useCallback((sourceCostumes: Costume[], costumeIndex: number): Costume[] | null => {
     if (!canvasRef.current) return null;
@@ -210,7 +229,6 @@ export function CostumeEditor() {
     if (!canvasRef.current) return;
     if (justSavedRef.current) return;
 
-    const currentCostume = costumes[currentCostumeIndex];
     if (!currentCostume) {
       currentCostumeIdRef.current = null;
       const requestId = ++loadRequestIdRef.current;
@@ -234,7 +252,7 @@ export function CostumeEditor() {
       isLoadingRef.current = true;
       const requestId = ++loadRequestIdRef.current;
 
-      const initialMode: CostumeEditorMode = currentCostume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
+      const initialMode = getInitialCostumeEditorMode(currentCostume);
       setEditorMode(initialMode);
       setActiveTool((prev) => ensureToolForMode(initialMode, prev));
 
@@ -246,7 +264,7 @@ export function CostumeEditor() {
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
-  }, [costumes, currentCostumeIndex, selectedSceneId, selectedObjectId]);
+  }, [costumes, currentCostume, currentCostumeIndex, selectedSceneId, selectedObjectId]);
 
   useEffect(() => {
     return () => {
@@ -492,6 +510,7 @@ export function CostumeEditor() {
 
         <CostumeCanvas
           ref={canvasRef}
+          initialEditorMode={initialEditorMode}
           activeTool={activeTool}
           brushColor={brushColor}
           brushSize={brushSize}

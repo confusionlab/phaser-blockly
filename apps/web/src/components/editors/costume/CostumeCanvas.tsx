@@ -116,6 +116,7 @@ export interface CostumeCanvasHandle {
 }
 
 interface CostumeCanvasProps {
+  initialEditorMode: CostumeEditorMode;
   activeTool: DrawingTool;
   brushColor: string;
   brushSize: number;
@@ -171,6 +172,7 @@ function isVectorPointSelectableObject(obj: unknown): obj is Record<string, any>
 }
 
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
+  initialEditorMode,
   activeTool,
   brushColor,
   brushSize,
@@ -205,7 +207,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [cameraCenter, setCameraCenter] = useState({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [isViewportPanning, setIsViewportPanning] = useState(false);
-  const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>('vector');
+  const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -220,7 +222,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     cameraStartY: number;
   } | null>(null);
 
-  const editorModeRef = useRef<CostumeEditorMode>('vector');
+  const editorModeRef = useRef<CostumeEditorMode>(initialEditorMode);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
 
@@ -2201,7 +2203,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       drawBitmapSelectionOverlay();
     }
 
-    setEditorMode('vector');
     historyRef.current = [];
     historyIndexRef.current = -1;
     saveHistory();
