@@ -950,43 +950,40 @@ export class RuntimeEngine {
     notifyInventorySubscribers();
 
     try {
-      await this.triggerAnyInventoryDropped(resolution.worldPoint.x, resolution.worldPoint.y);
-
-      if (this._currentDropContext.consumed) {
-        inventoryDropConsole('Skipping target-specific handlers because item was already consumed', {
-          entryId,
-          targetSpriteId: resolution.targetSprite?.id ?? null,
-        });
-        return true;
-      }
+      const pendingHandlers: Promise<unknown>[] = [
+        this.triggerAnyInventoryDropped(resolution.worldPoint.x, resolution.worldPoint.y),
+      ];
 
       const { targetSprite, matchingHandlers } = resolution;
-      if (!targetSprite) {
-        return this._currentDropContext.consumed;
-      }
-
-      if (matchingHandlers.length === 0) {
+      if (targetSprite && matchingHandlers.length === 0) {
         inventoryDropConsole('Drop hit sprite but no handlers matched', {
           entryId,
           targetSpriteId: targetSprite.id,
           targetSpriteName: targetSprite.name,
         });
-        return this._currentDropContext.consumed;
       }
 
-      inventoryDropConsole('Invoking inventory-drop handlers', {
-        entryId,
-        targetSpriteId: targetSprite.id,
-        handlerCount: matchingHandlers.length,
-      });
-      for (const handler of matchingHandlers) {
-        await Promise.resolve(handler(targetSprite));
+      if (targetSprite && matchingHandlers.length > 0) {
+        inventoryDropConsole('Invoking inventory-drop handlers', {
+          entryId,
+          targetSpriteId: targetSprite.id,
+          handlerCount: matchingHandlers.length,
+        });
+        for (const handler of matchingHandlers) {
+          pendingHandlers.push(Promise.resolve(handler(targetSprite)));
+        }
       }
-      inventoryDropConsole('Inventory-drop handlers completed', {
-        entryId,
-        targetSpriteId: targetSprite.id,
-        consumed: this._currentDropContext.consumed,
-      });
+
+      await Promise.allSettled(pendingHandlers);
+
+      if (targetSprite && matchingHandlers.length > 0) {
+        inventoryDropConsole('Inventory-drop handlers completed', {
+          entryId,
+          targetSpriteId: targetSprite.id,
+          consumed: this._currentDropContext.consumed,
+        });
+      }
+
       return this._currentDropContext.consumed;
     } finally {
       sharedInventoryState.pendingEntryIds.delete(entryId);
