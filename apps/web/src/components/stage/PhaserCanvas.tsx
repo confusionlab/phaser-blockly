@@ -34,6 +34,8 @@ const GIZMO_ROTATE_RADIUS_PX = 6;
 const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 const BACKGROUND_IMAGE_CACHE_LIMIT = 256;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
+const GROUND_LAYER_DEPTH = -1000;
+const TILED_BACKGROUND_LAYER_DEPTH = -950;
 const INVENTORY_PAGE_SIZE = 8;
 const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
@@ -193,7 +195,7 @@ function createTiledBackgroundLayerState(
   canvasHeight: number,
 ): TiledBackgroundLayerState {
   const root = scene.add.container(0, 0);
-  root.setDepth(-3000);
+  root.setDepth(TILED_BACKGROUND_LAYER_DEPTH);
   return {
     root,
     sprites: new Map<string, Phaser.GameObjects.Image>(),
@@ -1559,7 +1561,7 @@ function createEditorScene(
 
   // Draw ground if enabled
   const groundGraphics = scene.add.graphics();
-  groundGraphics.setDepth(-1000); // Behind everything
+  groundGraphics.setDepth(GROUND_LAYER_DEPTH);
   if (sceneData.ground?.enabled) {
     const groundColor = Phaser.Display.Color.HexStringToColor(sceneData.ground.color || '#8B4513');
     const userGroundY = sceneData.ground.y ?? -200;
