@@ -348,6 +348,7 @@ export class RuntimeEngine {
     });
     this.localVariables.set(id, new Map());
     this._worldBoundaryLimitedSprites.set(id, true);
+    this.enforceWorldBoundaryForSprite(id, 'register');
     return sprite;
   }
 
@@ -573,6 +574,9 @@ export class RuntimeEngine {
   setSpriteWorldBoundaryLimited(spriteId: string, limited: boolean): void {
     this._worldBoundaryLimitedSprites.set(spriteId, limited);
     this.applyWorldBoundaryCollisionMask(spriteId);
+    if (limited) {
+      this.enforceWorldBoundaryForSprite(spriteId, 'enable-limit');
+    }
   }
 
   isSpriteLimitedInsideWorldBoundary(spriteId: string): boolean {
@@ -594,6 +598,35 @@ export class RuntimeEngine {
     const userPoint = this.phaserToUser(phaserX, phaserY);
     const clamped = clampPointToPolygon(userPoint, this._worldBoundary);
     return this.userToPhaser(clamped.x, clamped.y);
+  }
+
+  private enforceWorldBoundaryForSprite(
+    spriteId: string,
+    reason: 'register' | 'enable-limit',
+  ): void {
+    if (!this._worldBoundaryEnabled || !this.isSpriteLimitedInsideWorldBoundary(spriteId)) {
+      return;
+    }
+
+    const sprite = this.sprites.get(spriteId);
+    if (!sprite || sprite.isStopped()) {
+      return;
+    }
+
+    const beforeX = sprite.container.x;
+    const beforeY = sprite.container.y;
+    const clamped = this.clampPhaserPositionForSprite(spriteId, beforeX, beforeY);
+
+    if (Math.abs(clamped.x - beforeX) <= 0.01 && Math.abs(clamped.y - beforeY) <= 0.01) {
+      return;
+    }
+
+    const userPoint = this.phaserToUser(beforeX, beforeY);
+    sprite.goTo(userPoint.x, userPoint.y);
+    debugLog(
+      'action',
+      `Clamped "${sprite.name}" inside world boundary (${reason})`,
+    );
   }
 
   private applyWorldBoundaryCollisionMask(spriteId: string): void {
