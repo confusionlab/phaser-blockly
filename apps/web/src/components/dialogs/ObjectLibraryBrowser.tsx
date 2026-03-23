@@ -165,8 +165,7 @@ export function ObjectLibraryBrowser({
         <ScrollArea className="flex-1 mt-4">
           {!isAuthenticated ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p className="mb-2">Sign in to use the object library</p>
-              <p className="text-sm">The editor still works locally without it.</p>
+              <p>Sign in for the object library.</p>
             </div>
           ) : !items ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -174,8 +173,7 @@ export function ObjectLibraryBrowser({
             </div>
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p className="mb-2">No objects in library</p>
-              <p className="text-sm">Object saving is unavailable from the object right-click menu.</p>
+              <p>No objects in library</p>
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-4 pr-4">

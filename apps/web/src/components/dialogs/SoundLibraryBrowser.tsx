@@ -176,8 +176,7 @@ export function SoundLibraryBrowser({
         <ScrollArea className="flex-1 mt-4">
           {!isAuthenticated ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p className="mb-2">Sign in to use the cloud sound library</p>
-              <p className="text-sm">Importing and recording still work locally.</p>
+              <p>Sign in for the cloud sound library.</p>
             </div>
           ) : !items ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -185,8 +184,7 @@ export function SoundLibraryBrowser({
             </div>
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p className="mb-2">No sounds in library</p>
-              <p className="text-sm">Upload audio files to build your collection</p>
+              <p>No sounds in library</p>
             </div>
           ) : (
             <div className="flex flex-col gap-2 pr-4">

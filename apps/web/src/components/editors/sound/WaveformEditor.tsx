@@ -200,10 +200,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
           <div className="mx-auto flex size-24 items-center justify-center rounded-full bg-[#edf5ef] text-[#5e7f6c]">
             <Volume2 className="size-11" />
           </div>
-          <h3 className="mt-6 text-2xl font-semibold text-foreground">Select a sound to shape it</h3>
-          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-            The Tutumation-inspired editor lives here: dense waveform, direct trim handles, and transport controls that fit the rest of this app.
-          </p>
+          <h3 className="mt-6 text-2xl font-semibold text-foreground">Select a sound</h3>
           <Button className="mt-8 rounded-full px-5" onClick={onCreateRecording}>
             <Mic className="size-4" />
             Record a New Sound
@@ -217,12 +214,13 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     <div className="flex flex-1 flex-col gap-4 p-4 md:p-5">
       <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6b8b77]">Sound Studio</div>
-            <h2 className="mt-1 text-2xl font-semibold text-foreground">{sound.name}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Click the waveform to audition, then drag the sage handles to define the active clip.
-            </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-2xl font-semibold text-foreground">{sound.name}</h2>
+            {isTrimmed ? (
+              <span className="rounded-full bg-[#edf5ef] px-2.5 py-1 text-xs font-medium text-[#5e7f6c]">
+                Trimmed
+              </span>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -251,9 +249,8 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
             <div className="mt-1 font-mono text-lg font-semibold text-foreground">{formatAudioTime(trimEnd, true)}</div>
           </div>
           <div className="rounded-[22px] border border-border/70 bg-white/80 p-4">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Status</div>
-            <div className="mt-1 text-sm font-semibold text-foreground">{isTrimmed ? 'Edited clip' : 'Full clip'}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Original {formatAudioTime(duration, true)}</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Original</div>
+            <div className="mt-1 font-mono text-lg font-semibold text-foreground">{formatAudioTime(duration, true)}</div>
           </div>
         </div>
       </div>
@@ -274,12 +271,9 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
           className={cn(isLoadingWaveform && 'opacity-70')}
         />
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
-            <span className="rounded-full bg-muted px-3 py-1">Full take {formatAudioTime(duration, true)}</span>
-          </div>
-          <span>Trim updates are non-destructive and stay attached to the sound.</span>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
+          <span className="rounded-full bg-muted px-3 py-1">Full take {formatAudioTime(duration, true)}</span>
         </div>
       </div>
 
@@ -305,11 +299,8 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
             />
           </div>
 
-          <div className="text-right">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Selected range</div>
-            <div className="mt-1 font-mono text-sm text-foreground">
-              {formatAudioTime(trimStart, true)} to {formatAudioTime(trimEnd, true)}
-            </div>
+          <div className="rounded-full bg-white/80 px-4 py-2 font-mono text-sm text-foreground shadow-sm ring-1 ring-border/70">
+            {formatAudioTime(trimStart, true)} to {formatAudioTime(trimEnd, true)}
           </div>
         </div>
       </div>

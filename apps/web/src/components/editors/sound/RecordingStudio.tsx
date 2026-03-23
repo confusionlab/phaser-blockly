@@ -279,13 +279,7 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
     <div className="flex h-full flex-col gap-4 p-4 md:p-5">
       <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6b8b77]">Recording Studio</div>
-            <h2 className="mt-1 text-xl font-semibold text-foreground">Capture a new sound</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Record directly into this object, preview the take, and keep trim edits inside the same sound model the project already uses.
-            </p>
-          </div>
+          <h2 className="text-xl font-semibold text-foreground">New recording</h2>
           <Button variant="ghost" onClick={onCancel}>Back to sounds</Button>
         </div>
 
@@ -302,10 +296,7 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
             <div className="mx-auto flex size-28 items-center justify-center rounded-full border border-[#9ab2a1]/50 bg-[radial-gradient(circle_at_top,rgba(121,160,138,0.28),rgba(84,116,96,0.9))] text-white shadow-[0_18px_40px_rgba(94,127,108,0.22)]">
               <Mic className="size-11" />
             </div>
-            <h3 className="mt-6 text-2xl font-semibold text-foreground">Ready when you are</h3>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              This follows the Tutumation feel, but stays native to this editor: tap record, then trim and save the clip without leaving the sound workspace.
-            </p>
+            <h3 className="mt-6 text-2xl font-semibold text-foreground">Ready to record</h3>
             <Button className="mt-8 h-12 rounded-full px-6 text-base" onClick={startRecording}>
               <Mic className="size-4" />
               Start Recording
@@ -327,11 +318,9 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
                 <Square className="size-10 fill-current" />
               </button>
             </div>
-            <div className="mt-6 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-500">Recording</div>
             <div className="mt-2 font-mono text-4xl font-semibold text-foreground">
               {formatAudioTime(recordingDuration, true)}
             </div>
-            <p className="mt-3 text-sm text-muted-foreground">Tap the button again to stop and review the take.</p>
           </div>
         </div>
       ) : null}
@@ -347,10 +336,10 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
                 className="h-11 max-w-sm rounded-2xl border-border/70 bg-background"
               />
               <div className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
-                Full take {formatAudioTime(recordingDuration, true)}
+                {formatAudioTime(recordingDuration, true)}
               </div>
               <div className="rounded-full bg-[#edf5ef] px-3 py-1 text-xs font-medium text-[#5e7f6c]">
-                Clip length {formatAudioTime(clipDuration, true)}
+                {formatAudioTime(clipDuration, true)}
               </div>
             </div>
           </div>
@@ -378,13 +367,10 @@ export function RecordingStudio({ onAddSound, onCancel }: RecordingStudioProps) 
               className={cn(isPreparing && 'opacity-70')}
             />
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-muted px-3 py-1">Start {formatAudioTime(trimStart, true)}</span>
-                <span className="rounded-full bg-muted px-3 py-1">End {formatAudioTime(trimEnd, true)}</span>
-                <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
-              </div>
-              <span>Drag the sage handles to set the active range.</span>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className="rounded-full bg-muted px-3 py-1">Start {formatAudioTime(trimStart, true)}</span>
+              <span className="rounded-full bg-muted px-3 py-1">End {formatAudioTime(trimEnd, true)}</span>
+              <span className="rounded-full bg-muted px-3 py-1">Playhead {formatAudioTime(currentTime, true)}</span>
             </div>
           </div>
 

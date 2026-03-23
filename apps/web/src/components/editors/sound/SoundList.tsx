@@ -158,14 +158,8 @@ export const SoundList = memo(({
   return (
     <aside className="flex h-full min-h-0 w-[320px] shrink-0 flex-col border-r border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))]">
       <div className="border-b border-border/70 px-4 py-4">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6b8b77]">Sound Workspace</div>
-        <div className="mt-2 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-foreground">Sounds</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Import, record, preview, and keep trims close to the object they belong to.
-            </p>
-          </div>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="text-xl font-semibold text-foreground">Sounds</h2>
           <div className="rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm ring-1 ring-border/70">
             {sounds.length} clip{sounds.length === 1 ? '' : 's'}
           </div>
@@ -221,9 +215,6 @@ export const SoundList = memo(({
               <Volume2 className="size-7" />
             </div>
             <h3 className="mt-4 text-lg font-semibold text-foreground">No sounds yet</h3>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Bring in a file, pick one from the library, or record straight into the project.
-            </p>
             <Button className="mt-5 rounded-full px-5" onClick={onOpenRecorder}>
               <Mic className="size-4" />
               Record a Clip
