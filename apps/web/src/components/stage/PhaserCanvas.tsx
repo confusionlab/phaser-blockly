@@ -445,6 +445,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     entry: InventoryItemEntry;
     x: number;
     y: number;
+    width: number;
+    height: number;
   } | null>(null);
   const creationIdRef = useRef(0); // Track which creation attempt is current
   // Track the initial scene when play mode starts - don't recreate game when scene changes during play
@@ -457,6 +459,8 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     entry: InventoryItemEntry;
     x: number;
     y: number;
+    width: number;
+    height: number;
   } | null>(null);
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
 
@@ -1431,7 +1435,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                       type="button"
                       disabled={item.isPendingUse}
                       aria-disabled={item.isPendingUse}
-                      className={`group flex h-16 items-center justify-center rounded-xl border bg-background transition-opacity ${
+                      className={`group flex h-16 w-16 items-center justify-center rounded-xl border bg-background transition-opacity ${
                         item.isPendingUse
                           ? 'cursor-not-allowed opacity-50'
                           : 'hover:border-primary/60 hover:bg-muted/70'
@@ -1449,10 +1453,13 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
                         if (event.button !== 0) return;
                         event.preventDefault();
                         event.stopPropagation();
+                        const rect = event.currentTarget.getBoundingClientRect();
                         setDraggedInventoryItem({
                           entry: item,
                           x: event.clientX,
                           y: event.clientY,
+                          width: rect.width,
+                          height: rect.height,
                         });
                       }}
                     >
@@ -1489,9 +1496,13 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
               style={{ left: draggedInventoryItem.x, top: draggedInventoryItem.y }}
             >
               <div
-                className={`flex h-16 w-16 items-center justify-center rounded-xl border bg-card/95 shadow-xl transition-opacity ${
+                className={`flex items-center justify-center rounded-xl border bg-card/95 shadow-xl transition-opacity ${
                   draggedInventoryCanDrop ? 'opacity-100' : 'opacity-50'
                 }`}
+                style={{
+                  width: draggedInventoryItem.width,
+                  height: draggedInventoryItem.height,
+                }}
               >
                 {draggedInventoryItem.entry.costumeAssetId ? (
                   <InventoryCostumePreview
