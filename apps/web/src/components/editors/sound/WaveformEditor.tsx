@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import type { Sound } from '@/types';
 import { Mic, Volume2 } from 'lucide-react';
@@ -8,9 +8,10 @@ interface WaveformEditorProps {
   sound: Sound | null;
   onTrimChange: (trimStart: number, trimEnd: number) => void;
   onCreateRecording: () => void;
+  footer?: ReactNode;
 }
 
-export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: WaveformEditorProps) => {
+export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording, footer }: WaveformEditorProps) => {
   if (!sound) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
@@ -28,7 +29,7 @@ export const WaveformEditor = memo(({ sound, onTrimChange, onCreateRecording }: 
     );
   }
 
-  return <SoundClipEditor sound={sound} onTrimChange={onTrimChange} />;
+  return <SoundClipEditor sound={sound} onTrimChange={onTrimChange} footer={footer} />;
 });
 
 WaveformEditor.displayName = 'WaveformEditor';

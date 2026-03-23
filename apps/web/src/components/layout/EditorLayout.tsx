@@ -25,6 +25,10 @@ import { deleteSceneObjectsWithHistory, duplicateSceneObjectsWithHistory } from 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | 'stage' | null;
 
+function dispatchEditorResizeFreeze(active: boolean): void {
+  window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
+}
+
 export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -55,6 +59,7 @@ export function EditorLayout() {
     assistantLockMessage,
   } = useEditorStore();
   const [dividerPosition, setDividerPosition] = useState(60);
+  const [isMainDividerDragging, setIsMainDividerDragging] = useState(false);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -485,6 +490,8 @@ export function EditorLayout() {
 
   const handleDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();
+    dispatchEditorResizeFreeze(true);
+    setIsMainDividerDragging(true);
     const startX = e.clientX;
     const startPos = dividerPosition;
 
@@ -496,6 +503,8 @@ export function EditorLayout() {
     };
 
     const handleMouseUp = () => {
+      dispatchEditorResizeFreeze(false);
+      setIsMainDividerDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -635,6 +644,7 @@ export function EditorLayout() {
 
             {/* Resizable Divider */}
             <div
+              data-testid="editor-layout-divider"
               className="w-1 bg-border hover:bg-primary cursor-col-resize transition-colors"
               onMouseDown={handleDividerDrag}
             />
@@ -647,7 +657,7 @@ export function EditorLayout() {
               onMouseEnter={() => setHoveredPanel('stage')}
               onMouseLeave={() => setHoveredPanel(null)}
             >
-              <StagePanel />
+              <StagePanel deferEditorResize={isMainDividerDragging} />
             </div>
           </>
         ) : (

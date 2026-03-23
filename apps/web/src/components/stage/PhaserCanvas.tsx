@@ -41,6 +41,7 @@ const TILED_BACKGROUND_LAYER_DEPTH = -950;
 const INVENTORY_PAGE_SIZE = 8;
 const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
+const EDITOR_RESIZE_FREEZE_EVENT = 'pocha-editor-resize-freeze';
 
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
@@ -417,9 +418,10 @@ function isClientPointInsideInventoryUI(clientX: number, clientY: number): boole
 
 interface PhaserCanvasProps {
   isPlaying: boolean;
+  deferEditorResize?: boolean;
 }
 
-export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
+export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
@@ -447,6 +449,9 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     height: number;
   } | null>(null);
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
+  const [frozenStageFrame, setFrozenStageFrame] = useState<string | null>(null);
+  const immediateResizeFreezeRef = useRef(false);
+  const [manualResizeFreezeActive, setManualResizeFreezeActive] = useState(false);
 
   const { project, updateObject } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -466,6 +471,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   }
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
+  const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -935,6 +941,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
 
     const syncEditorCanvasSize = () => {
+      if (isResizeFrozen || immediateResizeFreezeRef.current) return;
       const host = containerRef.current;
       const game = gameRef.current;
       if (!host || !game) return;
@@ -962,7 +969,55 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     return () => {
       observer.disconnect();
     };
-  }, [isPlaying, project?.id, selectedSceneId]);
+  }, [isPlaying, project?.id, selectedSceneId, isResizeFrozen]);
+
+  useEffect(() => {
+    if (isPlaying) {
+      setFrozenStageFrame(null);
+      return;
+    }
+
+    const canvas = gameRef.current?.canvas;
+    if (!canvas) return;
+
+    if (isResizeFrozen) {
+      try {
+        setFrozenStageFrame(canvas.toDataURL('image/png'));
+      } catch {
+        setFrozenStageFrame(null);
+      }
+      canvas.style.visibility = 'hidden';
+      return;
+    }
+
+    const revealCanvas = requestAnimationFrame(() => {
+      const nextCanvas = gameRef.current?.canvas;
+      if (nextCanvas) {
+        nextCanvas.style.visibility = 'visible';
+      }
+      setFrozenStageFrame(null);
+    });
+
+    return () => {
+      cancelAnimationFrame(revealCanvas);
+    };
+  }, [isResizeFrozen, isPlaying]);
+
+  useEffect(() => {
+    if (isPlaying) return;
+
+    const handleResizeFreeze = (event: Event) => {
+      const customEvent = event as CustomEvent<{ active?: boolean }>;
+      const active = !!customEvent.detail?.active;
+      immediateResizeFreezeRef.current = active;
+      setManualResizeFreezeActive(active);
+    };
+
+    window.addEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
+    return () => {
+      window.removeEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
+    };
+  }, [isPlaying]);
 
   // Toggle collider debug rendering at runtime (without recreating game)
   useEffect(() => {
@@ -1446,6 +1501,16 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         className="w-full h-full"
         style={isPlaying ? undefined : { backgroundColor: editorStageBaseColor }}
       />
+      {!isPlaying && frozenStageFrame ? (
+        <img
+          src={frozenStageFrame}
+          alt=""
+          aria-hidden="true"
+          data-testid="stage-frozen-frame"
+          className="pointer-events-none absolute inset-0 z-10 h-full w-full select-none"
+          draggable={false}
+        />
+      ) : null}
       {isPlaying && isInventoryVisible && inventoryItems.length > 0 && (
         <>
           <div

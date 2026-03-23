@@ -11,14 +11,20 @@ import { tryStartPlaying } from '@/lib/playStartGuard';
 
 interface StagePanelProps {
   fullscreen?: boolean;
+  deferEditorResize?: boolean;
 }
 
-export function StagePanel({ fullscreen = false }: StagePanelProps) {
+function dispatchEditorResizeFreeze(active: boolean): void {
+  window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
+}
+
+export function StagePanel({ fullscreen = false, deferEditorResize = false }: StagePanelProps) {
   const { stopPlaying, viewMode, cycleViewMode, selectedSceneId, selectedObjectId, selectObject } = useEditorStore();
   const { project } = useProjectStore();
   const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
+  const [isPanelResizeDragging, setIsPanelResizeDragging] = useState(false);
   const fullscreenSelectionRef = useRef<{ sceneId: string | null; objectId: string | null } | null>(null);
 
   const toggleCanvasFullscreen = useCallback(() => {
@@ -61,6 +67,8 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     const container = e.currentTarget.parentElement;
     if (!container) return;
 
+    dispatchEditorResizeFreeze(true);
+    setIsPanelResizeDragging(true);
     const startY = e.clientY;
     const startHeight = bottomHeightPercent;
     const containerHeight = container.clientHeight;
@@ -73,6 +81,8 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     };
 
     const handleMouseUp = () => {
+      dispatchEditorResizeFreeze(false);
+      setIsPanelResizeDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -86,6 +96,8 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     const container = e.currentTarget.parentElement;
     if (!container) return;
 
+    dispatchEditorResizeFreeze(true);
+    setIsPanelResizeDragging(true);
     const startX = e.clientX;
     const startWidth = objectsWidth;
     const containerWidth = container.clientWidth;
@@ -98,6 +110,8 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
     };
 
     const handleMouseUp = () => {
+      dispatchEditorResizeFreeze(false);
+      setIsPanelResizeDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -195,7 +209,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
             className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
             style={stageShellStyle}
           >
-            <PhaserCanvas isPlaying={false} />
+            <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
           </div>
         </div>
       </div>
@@ -214,7 +228,7 @@ export function StagePanel({ fullscreen = false }: StagePanelProps) {
             className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
             style={stageShellStyle}
           >
-            <PhaserCanvas isPlaying={false} />
+            <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
           </div>
         </div>
       </div>

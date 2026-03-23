@@ -23,17 +23,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  Tree,
-  TreeItem,
-  TreeItemContent,
-  Collection,
-  useDragAndDrop,
-  Button as AriaButton,
-  DropIndicator,
-  type Selection,
-  type Key,
-} from 'react-aria-components';
-import {
   Plus,
   Pencil,
   Copy,
@@ -64,7 +53,6 @@ import {
   getSceneObjectsInLayerOrder,
   getSceneTree,
   moveSceneLayerNodes,
-  parseLayerNodeKey,
   type LayerTreeNode,
 } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
@@ -142,6 +130,42 @@ function toShelfTreeItems(nodes: LayerTreeNode[]): ShelfTreeItem[] {
   });
 }
 
+interface RenameableShelfItem {
+  key: string;
+  id: string;
+  type: 'folder' | 'object';
+  name: string;
+  folder?: SceneFolder;
+  object?: GameObject;
+}
+
+function collectVisibleRenameableItems(
+  items: ShelfTreeItem[],
+  expandedKeys: Set<string>,
+): RenameableShelfItem[] {
+  const visibleItems: RenameableShelfItem[] = [];
+
+  const visit = (nodes: ShelfTreeItem[]) => {
+    for (const node of nodes) {
+      visibleItems.push({
+        key: node.key,
+        id: node.id,
+        type: node.type,
+        name: node.name,
+        folder: node.folder,
+        object: node.object,
+      });
+
+      if (node.children.length > 0 && expandedKeys.has(node.key)) {
+        visit(node.children);
+      }
+    }
+  };
+
+  visit(items);
+  return visibleItems;
+}
+
 function collectFolderDescendants(folderId: string, folders: SceneFolder[]): Set<string> {
   const descendants = new Set<string>([folderId]);
   let changed = true;
@@ -157,13 +181,6 @@ function collectFolderDescendants(folderId: string, folders: SceneFolder[]): Set
   }
 
   return descendants;
-}
-
-function selectionToSet(selection: Selection): Set<Key> {
-  if (selection === 'all') {
-    return new Set<Key>();
-  }
-  return new Set(selection);
 }
 
 export function SpriteShelf() {
@@ -187,7 +204,6 @@ export function SpriteShelf() {
     selectedObjectId,
     selectedObjectIds,
     selectedComponentId,
-    activeObjectTab,
     selectObject,
     selectObjects,
     selectComponent,
@@ -213,6 +229,8 @@ export function SpriteShelf() {
   const [sceneDropdownOpen, setSceneDropdownOpen] = useState(false);
   const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
   const [sceneDropTarget, setSceneDropTarget] = useState<{ sceneId: string; position: 'before' | 'after' } | null>(null);
+  const [draggedLayerKeys, setDraggedLayerKeys] = useState<string[]>([]);
+  const [layerDropTarget, setLayerDropTarget] = useState<{ key: string | null; dropPosition: 'before' | 'after' | 'on' | null } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -223,18 +241,13 @@ export function SpriteShelf() {
   const [showComponentLibrary, setShowComponentLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const cancelObjectRenameOnBlurRef = useRef(false);
-  const cancelFolderRenameOnBlurRef = useRef(false);
   const cancelSceneRenameOnBlurRef = useRef(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
-  const suppressNextAriaSelectionRef = useRef(false);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
-  const dragPreviewLabelRef = useRef('Moving item');
 
   const handleInlineRenameKeyDownCapture = (event: React.KeyboardEvent<HTMLInputElement>) => {
     // Keep text-entry keystrokes inside the active editor instead of letting the
@@ -263,20 +276,12 @@ export function SpriteShelf() {
   };
 
   useLayoutEffect(() => {
-    if (!editingObjectId) {
+    if (!editingObjectId && !editingFolderId) {
       return;
     }
 
     stabilizeInlineRenameFocus(inputRef.current);
-  }, [editingObjectId]);
-
-  useLayoutEffect(() => {
-    if (!editingFolderId) {
-      return;
-    }
-
-    stabilizeInlineRenameFocus(folderInputRef.current);
-  }, [editingFolderId]);
+  }, [editingObjectId, editingFolderId]);
 
   useLayoutEffect(() => {
     if (!editingSceneId) {
@@ -288,8 +293,6 @@ export function SpriteShelf() {
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
   const folders = selectedScene?.objectFolders ?? [];
-  const objectNameById = new Map((selectedScene?.objects ?? []).map((obj) => [obj.id, obj.name]));
-  const folderNameById = new Map(folders.map((folder) => [folder.id, folder.name]));
   const isInlineRenaming = !!editingObjectId || !!editingFolderId || !!editingSceneId;
 
   useLayoutEffect(() => {
@@ -346,74 +349,6 @@ export function SpriteShelf() {
     }
   }, [sceneContextMenu, sceneContextMenuPosition]);
 
-  const { dragAndDropHooks } = useDragAndDrop<ShelfTreeItem>({
-    getItems(keys) {
-      const keyStrings = Array.from(keys).map((key) => String(key));
-      const names = keyStrings
-        .map((key) => {
-          const parsed = parseLayerNodeKey(key);
-          if (!parsed) return null;
-          if (parsed.type === 'object') return objectNameById.get(parsed.id) ?? 'Object';
-          return folderNameById.get(parsed.id) ?? 'Folder';
-        })
-        .filter((name): name is string => !!name);
-
-      dragPreviewLabelRef.current = names.length <= 1
-        ? (names[0] ?? 'Moving item')
-        : `${names.length} items`;
-
-      return keyStrings.map((key) => ({
-        'text/plain': String(key),
-      }));
-    },
-    renderDragPreview() {
-      return (
-        <div className="rounded border bg-background px-2 py-1 text-xs shadow-md">
-          {dragPreviewLabelRef.current}
-        </div>
-      );
-    },
-    getDropOperation() {
-      return 'move';
-    },
-    shouldAcceptItemDrop(target) {
-      const parsed = parseLayerNodeKey(String(target.key));
-      return parsed?.type === 'folder';
-    },
-    renderDropIndicator(target) {
-      return (
-        <DropIndicator
-          target={target}
-          className={({ isDropTarget }) =>
-            `mx-2 my-0.5 h-0 border-t-2 rounded border-primary/80 ${
-              isDropTarget ? 'opacity-100' : 'opacity-50'
-            }`
-          }
-        />
-      );
-    },
-    onMove(event) {
-      if (!selectedScene || !selectedSceneId) {
-        return;
-      }
-
-      const movedKeys = Array.from(event.keys).map((key) => String(key));
-      const targetKey = String(event.target.key);
-      const dropPosition = event.target.dropPosition;
-
-      const nextScene = moveSceneLayerNodes(
-        selectedScene,
-        movedKeys,
-        {
-          key: targetKey,
-          dropPosition,
-        },
-      );
-
-      updateScene(selectedSceneId, nextScene);
-    },
-  });
-
   if (!selectedScene || !selectedSceneId) return null;
 
   const layerTree = getSceneTree(selectedScene);
@@ -426,53 +361,228 @@ export function SpriteShelf() {
       ? selectedObjectIds
       : (selectedObjectId ? [selectedObjectId] : [])
   ).filter((id) => sceneObjectIdSet.has(id));
-  const selectedTreeKeys = new Set<Key>(selectedIdsInScene.map((id) => getObjectNodeKey(id)));
 
   const collapsedFolderIds = new Set(collapsedFolderIdsByScene[selectedSceneId] ?? []);
-  const expandedKeys = new Set<Key>(
+  const expandedKeys = new Set<string>(
     folders
       .filter((folder) => !collapsedFolderIds.has(folder.id))
       .map((folder) => getFolderNodeKey(folder.id)),
   );
+  const visibleRenameTargets = collectVisibleRenameableItems(treeItems, expandedKeys);
 
-  const handleExpandedChange = (nextExpandedSelection: Selection) => {
-    const nextExpanded = selectionToSet(nextExpandedSelection);
-    const nextCollapsed = folders
-      .filter((folder) => !nextExpanded.has(getFolderNodeKey(folder.id)))
-      .map((folder) => folder.id);
+  const commitFolderRename = () => {
+    const nextFolderId = editingFolderId;
+    const nextName = folderEditName.trim();
+
+    setEditingFolderId(null);
+    setFolderEditName('');
+
+    if (!nextFolderId || !nextName) {
+      return;
+    }
+
+    const nextFolders = folders.map((folder) =>
+      folder.id === nextFolderId ? { ...folder, name: nextName } : folder,
+    );
+    updateScene(selectedSceneId, { objectFolders: nextFolders });
+  };
+
+  const commitObjectRename = () => {
+    const nextObjectId = editingObjectId;
+    const nextName = editName.trim();
+
+    setEditingObjectId(null);
+    setEditName('');
+
+    if (!nextObjectId || !nextName) {
+      return;
+    }
+
+    updateObject(selectedSceneId, nextObjectId, { name: nextName });
+  };
+
+  const commitActiveInlineRename = () => {
+    if (editingObjectId) {
+      commitObjectRename();
+      return;
+    }
+
+    if (editingFolderId) {
+      commitFolderRename();
+    }
+  };
+
+  const startRenameTarget = (target: RenameableShelfItem) => {
+    if (target.type === 'object' && target.object) {
+      selectionAnchorObjectIdRef.current = target.object.id;
+      selectObject(target.object.id, { recordHistory: false });
+      handleStartObjectEdit(target.object.id, target.object.name);
+      return;
+    }
+
+    if (target.type === 'folder' && target.folder) {
+      handleStartFolderEdit(target.folder);
+    }
+  };
+
+  const moveInlineRename = (direction: -1 | 1) => {
+    const activeTargetId = editingObjectId ?? editingFolderId;
+    const activeTargetType = editingObjectId ? 'object' : (editingFolderId ? 'folder' : null);
+    if (!activeTargetId || !activeTargetType) {
+      return;
+    }
+
+    const currentIndex = visibleRenameTargets.findIndex(
+      (target) => target.id === activeTargetId && target.type === activeTargetType,
+    );
+    if (currentIndex === -1) {
+      commitActiveInlineRename();
+      return;
+    }
+
+    const nextIndex = currentIndex + direction;
+    commitActiveInlineRename();
+
+    const nextTarget = visibleRenameTargets[nextIndex];
+    if (!nextTarget) {
+      return;
+    }
+
+    startRenameTarget(nextTarget);
+  };
+
+  const handleInlineRenameKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>,
+    commitRename: () => void,
+  ) => {
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      const input = event.currentTarget;
+      input.setSelectionRange(0, 0);
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      const input = event.currentTarget;
+      const caretIndex = input.value.length;
+      input.setSelectionRange(caretIndex, caretIndex);
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      moveInlineRename(event.shiftKey ? -1 : 1);
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === 'Escape') {
+      event.preventDefault();
+      commitRename();
+    }
+  };
+
+  const handleToggleFolder = (folderId: string) => {
+    const isCollapsed = collapsedFolderIds.has(folderId);
+    const nextCollapsed = isCollapsed
+      ? Array.from(collapsedFolderIds).filter((id) => id !== folderId)
+      : [...collapsedFolderIds, folderId];
     setCollapsedFoldersForScene(selectedSceneId, nextCollapsed);
   };
 
-  const handleSelectionChange = (selection: Selection) => {
-    if (suppressNextAriaSelectionRef.current) {
-      suppressNextAriaSelectionRef.current = false;
+  const getDragKeysForItem = (item: ShelfTreeItem): string[] => {
+    if (item.type === 'object' && selectedIdsInScene.length > 1 && selectedIdsInScene.includes(item.id)) {
+      return selectedIdsInScene.map((id) => getObjectNodeKey(id));
+    }
+
+    return [item.key];
+  };
+
+  const clearLayerDragState = () => {
+    setDraggedLayerKeys([]);
+    setLayerDropTarget(null);
+  };
+
+  const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
+    const dragKeys = getDragKeysForItem(item);
+    setDraggedLayerKeys(dragKeys);
+    setLayerDropTarget(null);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', dragKeys.join(','));
+  };
+
+  const getDropPositionForItem = (
+    item: ShelfTreeItem,
+    event: React.DragEvent<HTMLDivElement>,
+  ): 'before' | 'after' | 'on' => {
+    if (item.type !== 'folder') {
+      const rect = event.currentTarget.getBoundingClientRect();
+      return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const relativeY = event.clientY - rect.top;
+    const topZone = rect.height * 0.25;
+    const bottomZone = rect.height * 0.75;
+
+    if (relativeY < topZone) {
+      return 'before';
+    }
+    if (relativeY > bottomZone) {
+      return 'after';
+    }
+    return 'on';
+  };
+
+  const handleLayerDragOver = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
+    if (draggedLayerKeys.length === 0) {
       return;
     }
 
-    const nextKeys = selectionToSet(selection);
-    const nextObjectIds = Array.from(nextKeys)
-      .map((key) => parseLayerNodeKey(String(key)))
-      .filter((entry): entry is { type: 'object'; id: string } => !!entry && entry.type === 'object')
-      .map((entry) => entry.id)
-      .filter((id) => sceneObjectIdSet.has(id))
-      .sort((a, b) => orderedSceneObjectIds.indexOf(a) - orderedSceneObjectIds.indexOf(b));
+    event.preventDefault();
+    const dropPosition = getDropPositionForItem(item, event);
+    setLayerDropTarget({ key: item.key, dropPosition });
+  };
 
-    if (nextObjectIds.length === 0) {
-      if (nextKeys.size > 0) {
-        return;
-      }
-      if (activeObjectTab === 'costumes') {
-        return;
-      }
-      selectObject(null);
+  const handleLayerDrop = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
+    if (draggedLayerKeys.length === 0) {
       return;
     }
 
-    const nextPrimary = selectedObjectId && nextObjectIds.includes(selectedObjectId)
-      ? selectedObjectId
-      : nextObjectIds[0];
-    selectionAnchorObjectIdRef.current = nextPrimary;
-    selectObjects(nextObjectIds, nextPrimary);
+    event.preventDefault();
+    const dropPosition = layerDropTarget?.key === item.key
+      ? layerDropTarget.dropPosition
+      : getDropPositionForItem(item, event);
+
+    const nextScene = moveSceneLayerNodes(selectedScene, draggedLayerKeys, {
+      key: item.key,
+      dropPosition,
+    });
+    updateScene(selectedSceneId, nextScene);
+    clearLayerDragState();
+  };
+
+  const handleRootDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedLayerKeys.length === 0 || selectedScene.objects.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    setLayerDropTarget({ key: null, dropPosition: null });
+  };
+
+  const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedLayerKeys.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const nextScene = moveSceneLayerNodes(selectedScene, draggedLayerKeys, {
+      key: null,
+      dropPosition: null,
+    });
+    updateScene(selectedSceneId, nextScene);
+    clearLayerDragState();
   };
 
   const handleObjectRowClick = (e: React.MouseEvent, objectId: string) => {
@@ -480,10 +590,6 @@ export function SpriteShelf() {
 
     e.preventDefault();
     e.stopPropagation();
-    suppressNextAriaSelectionRef.current = true;
-    queueMicrotask(() => {
-      suppressNextAriaSelectionRef.current = false;
-    });
 
     if (e.shiftKey) {
       const anchorId = selectionAnchorObjectIdRef.current ?? selectedObjectId ?? objectId;
@@ -770,28 +876,11 @@ export function SpriteShelf() {
   const handleStartFolderEdit = (folder: SceneFolder) => {
     flushSync(() => {
       setEditingFolderId(folder.id);
+      setEditingObjectId(null);
       setFolderEditName(folder.name);
+      setEditName('');
     });
-    stabilizeInlineRenameFocus(folderInputRef.current);
-  };
-
-  const handleSaveFolderRename = () => {
-    if (cancelFolderRenameOnBlurRef.current) {
-      cancelFolderRenameOnBlurRef.current = false;
-      return;
-    }
-
-    if (!editingFolderId || !folderEditName.trim()) {
-      setEditingFolderId(null);
-      setFolderEditName('');
-      return;
-    }
-    const nextFolders = folders.map((folder) =>
-      folder.id === editingFolderId ? { ...folder, name: folderEditName.trim() } : folder,
-    );
-    updateScene(selectedSceneId, { objectFolders: nextFolders });
-    setEditingFolderId(null);
-    setFolderEditName('');
+    stabilizeInlineRenameFocus(inputRef.current);
   };
 
   const handleDeleteFolder = (folderId: string) => {
@@ -868,27 +957,11 @@ export function SpriteShelf() {
   const handleStartObjectEdit = (objectId: string, currentName: string) => {
     flushSync(() => {
       setEditingObjectId(objectId);
+      setEditingFolderId(null);
       setEditName(currentName);
+      setFolderEditName('');
     });
     stabilizeInlineRenameFocus(inputRef.current);
-  };
-
-  const handleSaveObjectRename = () => {
-    if (cancelObjectRenameOnBlurRef.current) {
-      cancelObjectRenameOnBlurRef.current = false;
-      return;
-    }
-
-    if (editingObjectId && editName.trim()) {
-      updateObject(selectedSceneId, editingObjectId, { name: editName.trim() });
-    }
-    setEditingObjectId(null);
-    setEditName('');
-  };
-
-  const handleCancelObjectRename = () => {
-    setEditingObjectId(null);
-    setEditName('');
   };
 
   const handleStartSceneEdit = (sceneId: string, currentName: string, e: React.MouseEvent) => {
@@ -1092,166 +1165,164 @@ export function SpriteShelf() {
     && selectedIdsInScene.includes(contextMenu.object.id);
   const deleteLabel = willDeleteSelection ? `Delete Selected (${selectedIdsInScene.length})` : 'Delete';
 
-  const renderTreeItem = (item: ShelfTreeItem) => {
+  const renderTreeItem = (item: ShelfTreeItem, level = 1): React.ReactNode => {
     const object = item.object;
     const folder = item.folder;
     const isObjectEditing = item.type === 'object' && editingObjectId === item.id;
     const isFolderEditing = item.type === 'folder' && editingFolderId === item.id;
     const isComponentInstance = !!object?.componentId;
     const effectiveProps = object ? getEffectiveObjectProps(object, project?.components || []) : null;
+    const hasChildItems = item.children.length > 0;
+    const isExpanded = item.type === 'folder' && expandedKeys.has(item.key);
+    const isSelected = item.type === 'object' && selectedIdsInScene.includes(item.id);
+    const dropPosition = layerDropTarget?.key === item.key ? layerDropTarget.dropPosition : null;
+    const isDropOn = dropPosition === 'on';
+    const isDropBefore = dropPosition === 'before';
+    const isDropAfter = dropPosition === 'after';
 
     return (
-      <TreeItem key={item.key} id={item.key} textValue={item.name}>
-        <TreeItemContent>
-          {({ hasChildItems, isExpanded, isSelected, isDropTarget, level }) => (
+      <div key={item.key}>
+        <div
+          draggable={!isObjectEditing && !isFolderEditing}
+          className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
+            isSelected
+              ? 'bg-primary/10 border-l-2 border-l-primary'
+              : isDropOn
+                ? 'bg-primary/15 border-l-2 border-l-primary/60'
+                : 'border-l-2 border-l-transparent hover:bg-accent'
+          } ${isDropBefore ? 'border-t-2 border-t-primary' : ''} ${isDropAfter ? 'border-b-2 border-b-primary' : ''}`}
+          style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
+          onDoubleClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (item.type === 'object' && object) {
+              handleStartObjectEdit(object.id, object.name);
+            } else if (item.type === 'folder' && folder) {
+              handleStartFolderEdit(folder);
+            }
+          }}
+          onClick={(e) => {
+            if (item.type === 'object' && object) {
+              handleObjectRowClick(e, object.id);
+            }
+          }}
+          onContextMenu={(e) => {
+            if (item.type === 'object' && object) {
+              handleObjectContextMenu(e, object);
+            } else if (item.type === 'folder' && folder) {
+              handleFolderContextMenu(e, folder);
+            }
+          }}
+          onDragStart={(e) => handleLayerDragStart(e, item)}
+          onDragOver={(e) => handleLayerDragOver(e, item)}
+          onDrop={(e) => handleLayerDrop(e, item)}
+          onDragEnd={clearLayerDragState}
+        >
+          <button
+            type="button"
+            disabled={!hasChildItems}
+            aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
+            className="h-5 w-5 rounded hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (folder) {
+                handleToggleFolder(folder.id);
+              }
+            }}
+          >
+            {hasChildItems ? (
+              isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
+            ) : (
+              <span className="size-3" />
+            )}
+          </button>
+
+          <GripVertical className="size-3 text-muted-foreground/70 shrink-0" />
+
+          {item.type === 'folder' ? (
+            isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
+          ) : (
             <div
-              className={`flex items-center gap-1 px-2 py-1.5 border-b select-none ${
-                isSelected
-                  ? 'bg-primary/10 border-l-2 border-l-primary'
-                  : isDropTarget
-                    ? 'bg-primary/15 border-l-2 border-l-primary/60'
-                    : 'border-l-2 border-l-transparent hover:bg-accent'
-              }`}
-              style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
-              onDoubleClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (item.type === 'object' && object) {
-                  handleStartObjectEdit(object.id, object.name);
-                } else if (item.type === 'folder' && folder) {
-                  handleStartFolderEdit(folder);
-                }
-              }}
-              onClick={(e) => {
-                if (item.type === 'object' && object) {
-                  handleObjectRowClick(e, object.id);
-                }
-              }}
-              onContextMenu={(e) => {
-                if (item.type === 'object' && object) {
-                  handleObjectContextMenu(e, object);
-                } else if (item.type === 'folder' && folder) {
-                  handleFolderContextMenu(e, folder);
-                }
-              }}
+              className="w-8 h-8 rounded flex items-center justify-center overflow-hidden shrink-0 bg-muted relative"
             >
-              <AriaButton
-                slot="chevron"
-                isDisabled={!hasChildItems}
-                aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-                className="h-5 w-5 rounded hover:bg-accent flex items-center justify-center"
-              >
-                {hasChildItems ? (
-                  isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
-                ) : (
-                  <span className="size-3" />
-                )}
-              </AriaButton>
-
-              <AriaButton
-                slot="drag"
-                className="sr-only"
-                aria-label={`Drag ${item.name}`}
-              />
-
-              {item.type === 'folder' ? (
-                isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
-              ) : (
-                <div className="w-8 h-8 rounded flex items-center justify-center overflow-hidden shrink-0 bg-muted relative">
-                  {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
-                    const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
-                    const bounds = costume?.bounds;
-                    if (bounds && bounds.width > 0 && bounds.height > 0) {
-                      const scale = Math.min(1, 32 / Math.max(bounds.width, bounds.height));
-                      return (
-                        <div
-                          className="absolute"
-                          style={{
-                            backgroundImage: `url(${costume.assetId})`,
-                            backgroundPosition: `${-bounds.x}px ${-bounds.y}px`,
-                            backgroundSize: '1024px 1024px',
-                            backgroundRepeat: 'no-repeat',
-                            transform: `scale(${scale})`,
-                            transformOrigin: 'top left',
-                            width: bounds.width,
-                            height: bounds.height,
-                            left: '50%',
-                            top: '50%',
-                            marginLeft: (-bounds.width * scale) / 2,
-                            marginTop: (-bounds.height * scale) / 2,
-                          }}
-                        />
-                      );
-                    }
-                    return (
-                      <img
-                        src={costume?.assetId}
-                        alt={object?.name ?? 'Object'}
-                        className="w-full h-full object-contain"
-                      />
-                    );
-                  })() : (
-                    <span className="text-sm">📦</span>
-                  )}
-                </div>
+              {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
+                const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
+                const bounds = costume?.bounds;
+                if (bounds && bounds.width > 0 && bounds.height > 0) {
+                  const scale = Math.min(1, 32 / Math.max(bounds.width, bounds.height));
+                  return (
+                    <div
+                      className="absolute"
+                      style={{
+                        backgroundImage: `url(${costume.assetId})`,
+                        backgroundPosition: `${-bounds.x}px ${-bounds.y}px`,
+                        backgroundSize: '1024px 1024px',
+                        backgroundRepeat: 'no-repeat',
+                        transform: `scale(${scale})`,
+                        transformOrigin: 'top left',
+                        width: bounds.width,
+                        height: bounds.height,
+                        left: '50%',
+                        top: '50%',
+                        marginLeft: (-bounds.width * scale) / 2,
+                        marginTop: (-bounds.height * scale) / 2,
+                      }}
+                    />
+                  );
+                }
+                return (
+                  <img
+                    src={costume?.assetId}
+                    alt={object?.name ?? 'Object'}
+                    className="w-full h-full object-contain"
+                  />
+                );
+              })() : (
+                <span className="text-sm">📦</span>
               )}
-
-              {isObjectEditing ? (
-                <Input
-                  ref={inputRef}
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onBlur={handleSaveObjectRename}
-                  onKeyDownCapture={handleInlineRenameKeyDownCapture}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSaveObjectRename();
-                    if (e.key === 'Escape') {
-                      cancelObjectRenameOnBlurRef.current = true;
-                      handleCancelObjectRename();
-                    }
-                  }}
-                  data-hotkeys="ignore"
-                  className="flex-1 h-6 px-1 text-xs"
-                  onClick={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  autoFocus
-                />
-              ) : isFolderEditing ? (
-                <Input
-                  ref={folderInputRef}
-                  value={folderEditName}
-                  onChange={(e) => setFolderEditName(e.target.value)}
-                  onBlur={handleSaveFolderRename}
-                  onKeyDownCapture={handleInlineRenameKeyDownCapture}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSaveFolderRename();
-                    if (e.key === 'Escape') {
-                      cancelFolderRenameOnBlurRef.current = true;
-                      setEditingFolderId(null);
-                      setFolderEditName('');
-                    }
-                  }}
-                  data-hotkeys="ignore"
-                  className="flex-1 h-6 px-1 text-xs"
-                  onClick={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  autoFocus
-                />
-              ) : (
-                <span className={`flex-1 text-xs truncate ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : ''}`}>
-                  {item.name}
-                  {isComponentInstance && <Component className="inline-block size-3 ml-1 opacity-60" />}
-                </span>
-              )}
-
             </div>
           )}
-        </TreeItemContent>
 
-        {item.children.length > 0 ? (
-          <Collection items={item.children}>{(child) => renderTreeItem(child)}</Collection>
-        ) : null}
-      </TreeItem>
+          <div className="flex-1 min-w-0">
+            {isObjectEditing ? (
+              <Input
+                ref={inputRef}
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onBlur={commitActiveInlineRename}
+                onKeyDownCapture={handleInlineRenameKeyDownCapture}
+                onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
+                data-hotkeys="ignore"
+                className="h-6 px-1 text-xs"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                autoFocus
+              />
+            ) : isFolderEditing ? (
+              <Input
+                ref={inputRef}
+                value={folderEditName}
+                onChange={(e) => setFolderEditName(e.target.value)}
+                onBlur={commitActiveInlineRename}
+                onKeyDownCapture={handleInlineRenameKeyDownCapture}
+                onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
+                data-hotkeys="ignore"
+                className="h-6 px-1 text-xs"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                autoFocus
+              />
+            ) : (
+              <span className={`text-xs truncate block ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : ''}`}>
+                {item.name}
+                {isComponentInstance && <Component className="inline-block size-3 ml-1 opacity-60" />}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {isExpanded ? item.children.map((child) => renderTreeItem(child, level + 1)) : null}
+      </div>
     );
   };
 
@@ -1389,27 +1460,23 @@ export function SpriteShelf() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div
+        className="flex-1 overflow-y-auto"
+        onDragOver={handleRootDragOver}
+        onDrop={handleRootDrop}
+      >
         {selectedScene.objects.length === 0 && folders.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
             <span className="text-2xl mb-2">📦</span>
             <span className="text-xs text-center">No objects yet</span>
           </div>
         ) : (
-          <Tree
-            aria-label="Scene hierarchy"
-            items={treeItems}
-            selectionMode="multiple"
-            selectionBehavior="replace"
-            selectedKeys={selectedTreeKeys}
-            onSelectionChange={handleSelectionChange}
-            expandedKeys={expandedKeys}
-            onExpandedChange={handleExpandedChange}
-            dragAndDropHooks={dragAndDropHooks}
-            className="outline-none"
-          >
-            {(item) => renderTreeItem(item)}
-          </Tree>
+          <div role="tree" aria-label="Scene hierarchy" className="outline-none">
+            {treeItems.map((item) => renderTreeItem(item))}
+            {layerDropTarget?.key === null ? (
+              <div className="mx-2 my-0.5 h-0 border-t-2 rounded border-primary/80" />
+            ) : null}
+          </div>
         )}
       </div>
 
