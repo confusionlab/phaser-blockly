@@ -583,11 +583,12 @@ export function SpriteShelf() {
     const relativeY = event.clientY - rect.top;
     const topZone = rect.height * 0.25;
     const bottomZone = rect.height * 0.75;
+    const isExpandedFolder = item.children.length > 0 && expandedKeys.has(item.key);
 
     if (relativeY < topZone) {
       return 'before';
     }
-    if (relativeY > bottomZone) {
+    if (!isExpandedFolder && relativeY > bottomZone) {
       return 'after';
     }
     return 'on';
