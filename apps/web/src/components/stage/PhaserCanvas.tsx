@@ -399,6 +399,11 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
   const inventoryUnsubscribeRef = useRef<(() => void) | null>(null);
+  const draggedInventoryItemRef = useRef<{
+    entry: InventoryItemEntry;
+    x: number;
+    y: number;
+  } | null>(null);
   const creationIdRef = useRef(0); // Track which creation attempt is current
   // Track the initial scene when play mode starts - don't recreate game when scene changes during play
   const playModeInitialSceneRef = useRef<string | null>(null);
@@ -456,6 +461,10 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   }, [inventoryItems.length]);
 
   useEffect(() => {
+    draggedInventoryItemRef.current = draggedInventoryItem;
+  }, [draggedInventoryItem]);
+
+  useEffect(() => {
     if (!draggedInventoryItem) {
       return;
     }
@@ -473,8 +482,12 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     };
 
     const handlePointerUp = (event: PointerEvent) => {
+      const currentDrag = draggedInventoryItemRef.current;
+      if (!currentDrag) {
+        return;
+      }
       const currentRuntime = runtimeRef.current;
-      const entryId = draggedInventoryItem.entry.entryId;
+      const entryId = currentDrag.entry.entryId;
       setDraggedInventoryItem(null);
       if (currentRuntime) {
         void currentRuntime.handleInventoryDropAtClientPosition(entryId, event.clientX, event.clientY);
@@ -487,7 +500,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [draggedInventoryItem]);
+  }, [draggedInventoryItem?.entry.entryId]);
 
   // Callback to update object position/scale/rotation after drag - convert from Phaser to user coordinates
   const handleObjectDragEnd = useCallback((objId: string, phaserX: number, phaserY: number, scaleX?: number, scaleY?: number, rotation?: number) => {
