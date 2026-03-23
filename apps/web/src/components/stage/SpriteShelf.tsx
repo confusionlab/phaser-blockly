@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect } from 'react';
+import { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -347,6 +347,24 @@ export function SpriteShelf() {
     return acquireGlobalKeyboardCapture();
   }, [isInlineRenaming]);
 
+  useEffect(() => {
+    if (draggedLayerKeys.length === 0 || typeof document === 'undefined') {
+      return;
+    }
+
+    const { body, documentElement } = document;
+    const previousBodyCursor = body.style.cursor;
+    const previousDocumentCursor = documentElement.style.cursor;
+
+    body.style.cursor = 'grabbing';
+    documentElement.style.cursor = 'grabbing';
+
+    return () => {
+      body.style.cursor = previousBodyCursor;
+      documentElement.style.cursor = previousDocumentCursor;
+    };
+  }, [draggedLayerKeys.length]);
+
   useLayoutEffect(() => {
     if (!contextMenu || !contextMenuRef.current || !contextMenuPosition) return;
 
@@ -613,6 +631,7 @@ export function SpriteShelf() {
 
     event.preventDefault();
     event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
     const dropPosition = getDropPositionForItem(item, event);
     setLayerDropTarget(normalizeSceneLayerDropTarget(selectedScene, { key: item.key, dropPosition }));
   };
@@ -646,6 +665,7 @@ export function SpriteShelf() {
     }
 
     event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
     setLayerDropTarget({ key: null, dropPosition: null });
   };
 
@@ -656,6 +676,7 @@ export function SpriteShelf() {
 
     event.preventDefault();
     event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
     setLayerDropTarget({ key: null, dropPosition: null });
   };
 
