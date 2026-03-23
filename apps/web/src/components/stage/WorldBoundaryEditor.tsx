@@ -13,6 +13,7 @@ import {
 const WORLD_BOUNDARY_EDITOR_PADDING = 160;
 const WORLD_BOUNDARY_EDITOR_MIN_ZOOM = 0.15;
 const WORLD_BOUNDARY_EDITOR_MAX_ZOOM = 4;
+const POINT_DRAG_ACTIVATION_DISTANCE_PX = 4;
 
 interface WorldBoundaryEditorView {
   centerX: number;
@@ -220,6 +221,11 @@ export function WorldBoundaryEditor() {
   const [enabled, setEnabled] = useState(false);
   const [points, setPoints] = useState<WorldPoint[]>([]);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [pendingPointDrag, setPendingPointDrag] = useState<{
+    index: number;
+    startClientX: number;
+    startClientY: number;
+  } | null>(null);
   const [hoveredInsertionHandle, setHoveredInsertionHandle] = useState<BoundaryInsertionHandle | null>(null);
   const [view, setView] = useState<WorldBoundaryEditorView>(() => getInitialView([], canvasWidth, canvasHeight));
   const [stageSize, setStageSize] = useState(() => ({
@@ -302,10 +308,56 @@ export function WorldBoundaryEditor() {
   }, [canvasHeight, canvasWidth, dragIndex]);
 
   useEffect(() => {
-    if (dragIndex !== null || panState) {
+    if (dragIndex !== null || pendingPointDrag || panState) {
       setHoveredInsertionHandle(null);
     }
-  }, [dragIndex, panState]);
+  }, [dragIndex, pendingPointDrag, panState]);
+
+  useEffect(() => {
+    if (!pendingPointDrag || dragIndex !== null) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const distance = Math.hypot(
+        event.clientX - pendingPointDrag.startClientX,
+        event.clientY - pendingPointDrag.startClientY,
+      );
+      if (distance < POINT_DRAG_ACTIVATION_DISTANCE_PX) {
+        return;
+      }
+
+      const stage = stageRef.current;
+      if (!stage) {
+        return;
+      }
+
+      const nextPoint = clientToCanvasPoint(
+        event.clientX,
+        event.clientY,
+        stage,
+        viewRef.current,
+        canvasWidth,
+        canvasHeight,
+      );
+      setPendingPointDrag(null);
+      setDragIndex(pendingPointDrag.index);
+      setPoints((current) => current.map((point, index) => (
+        index === pendingPointDrag.index ? canvasToUser(nextPoint.x, nextPoint.y, canvasWidth, canvasHeight) : point
+      )));
+    };
+
+    const handlePointerUp = () => {
+      setPendingPointDrag(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [canvasHeight, canvasWidth, dragIndex, pendingPointDrag]);
 
   useEffect(() => {
     if (!panState) return;
@@ -454,11 +506,24 @@ export function WorldBoundaryEditor() {
 
   const handlePointDoubleClick = (index: number, event: ReactMouseEvent<SVGEllipseElement>) => {
     event.stopPropagation();
+    setPendingPointDrag(null);
     setPoints((current) => {
       if (current.length <= 3) {
         return current;
       }
       return current.filter((_, pointIndex) => pointIndex !== index);
+    });
+  };
+
+  const handlePointPointerDown = (index: number, event: ReactPointerEvent<SVGEllipseElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.stopPropagation();
+    setPendingPointDrag({
+      index,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
     });
   };
 
@@ -666,11 +731,7 @@ export function WorldBoundaryEditor() {
                   rx={pointHitRadii.rx}
                   ry={pointHitRadii.ry}
                   fill="transparent"
-                  onPointerDown={(event) => {
-                    if (event.button !== 0) return;
-                    event.stopPropagation();
-                    setDragIndex(index);
-                  }}
+                  onPointerDown={(event) => handlePointPointerDown(index, event)}
                   onDoubleClick={(event) => handlePointDoubleClick(index, event)}
                 />
                 <ellipse
@@ -682,11 +743,7 @@ export function WorldBoundaryEditor() {
                   stroke="#2563eb"
                   strokeWidth="4"
                   vectorEffect="non-scaling-stroke"
-                  onPointerDown={(event) => {
-                    if (event.button !== 0) return;
-                    event.stopPropagation();
-                    setDragIndex(index);
-                  }}
+                  onPointerDown={(event) => handlePointPointerDown(index, event)}
                   onDoubleClick={(event) => handlePointDoubleClick(index, event)}
                 />
               </g>
