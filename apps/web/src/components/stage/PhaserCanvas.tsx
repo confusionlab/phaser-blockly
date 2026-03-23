@@ -746,6 +746,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
     }
 
     const { canvasWidth, canvasHeight, backgroundColor } = project.settings;
+    const editorBackgroundColor = getSceneBackgroundBaseColor(selectedScene?.background);
     const container = containerRef.current;
 
     // Function to create the game
@@ -765,7 +766,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         width: isPlaying ? canvasWidth : container.clientWidth,
         height: isPlaying ? canvasHeight : container.clientHeight,
         // Keep canvas outside camera viewport black so letterboxing is always consistent.
-        backgroundColor: isPlaying ? backgroundColor : '#000000',
+        backgroundColor: isPlaying ? backgroundColor : editorBackgroundColor,
         scale: isPlaying ? {
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -935,10 +936,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   useEffect(() => {
     if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
 
-    let frameId: number | null = null;
-
     const syncEditorCanvasSize = () => {
-      frameId = null;
       const host = containerRef.current;
       const game = gameRef.current;
       if (!host || !game) return;
@@ -957,24 +955,14 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       }
     };
 
-    const scheduleSync = () => {
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-      }
-      frameId = requestAnimationFrame(syncEditorCanvasSize);
-    };
-
     const observer = new ResizeObserver(() => {
-      scheduleSync();
+      syncEditorCanvasSize();
     });
     observer.observe(containerRef.current);
-    scheduleSync();
+    syncEditorCanvasSize();
 
     return () => {
       observer.disconnect();
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-      }
     };
   }, [isPlaying, project?.id, selectedSceneId]);
 
@@ -1387,6 +1375,10 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
       refreshTiledBackgroundLayer(phaserScene);
     }
 
+    if (gameRef.current?.canvas) {
+      gameRef.current.canvas.style.backgroundColor = bgColorValue;
+    }
+
     // Update bounds graphics color to contrast with new background
     const boundsGraphics = phaserScene.data.get('boundsGraphics') as Phaser.GameObjects.Graphics | undefined;
     if (boundsGraphics) {
@@ -1446,6 +1438,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
   );
   const canGoToPreviousInventoryPage = totalInventoryPages > 1 && inventoryPage > 0;
   const canGoToNextInventoryPage = totalInventoryPages > 1 && inventoryPage < totalInventoryPages - 1;
+  const editorStageBaseColor = getSceneBackgroundBaseColor(selectedScene?.background);
 
   return (
     <div className="relative w-full h-full">
@@ -1453,6 +1446,7 @@ export function PhaserCanvas({ isPlaying }: PhaserCanvasProps) {
         ref={containerRef}
         data-testid={isPlaying ? 'play-phaser-host' : 'stage-phaser-host'}
         className="w-full h-full"
+        style={isPlaying ? undefined : { backgroundColor: editorStageBaseColor }}
       />
       {isPlaying && isInventoryVisible && inventoryItems.length > 0 && (
         <>

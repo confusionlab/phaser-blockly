@@ -267,7 +267,7 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
           >
             <span className="size-5 rounded-full bg-current" />
           </Button>
-          <div className="font-mono text-4xl font-semibold text-foreground">
+          <div className="text-2xl font-medium text-foreground">
             Press to record
           </div>
         </div>
@@ -284,7 +284,7 @@ export function RecordingStudio({ onAddSound }: RecordingStudioProps) {
           >
             <Square className="size-6 fill-current" />
           </Button>
-          <div className="font-mono text-4xl font-semibold text-foreground">
+          <div className="text-2xl font-medium text-foreground">
             {formatAudioTime(recordingDuration, true)}
           </div>
         </div>

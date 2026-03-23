@@ -240,6 +240,9 @@ export function SpriteShelf() {
     // Keep text-entry keystrokes inside the active editor instead of letting the
     // surrounding tree/dropdown keyboard handlers consume them.
     event.stopPropagation();
+    if (typeof event.nativeEvent.stopImmediatePropagation === 'function') {
+      event.nativeEvent.stopImmediatePropagation();
+    }
   };
 
   const focusInputCaretAtEnd = (input: HTMLInputElement | null) => {
@@ -252,12 +255,19 @@ export function SpriteShelf() {
     input.setSelectionRange(caretIndex, caretIndex);
   };
 
+  const stabilizeInlineRenameFocus = (input: HTMLInputElement | null) => {
+    focusInputCaretAtEnd(input);
+    queueMicrotask(() => {
+      focusInputCaretAtEnd(input);
+    });
+  };
+
   useLayoutEffect(() => {
     if (!editingObjectId) {
       return;
     }
 
-    focusInputCaretAtEnd(inputRef.current);
+    stabilizeInlineRenameFocus(inputRef.current);
   }, [editingObjectId]);
 
   useLayoutEffect(() => {
@@ -265,7 +275,7 @@ export function SpriteShelf() {
       return;
     }
 
-    focusInputCaretAtEnd(folderInputRef.current);
+    stabilizeInlineRenameFocus(folderInputRef.current);
   }, [editingFolderId]);
 
   useLayoutEffect(() => {
@@ -273,7 +283,7 @@ export function SpriteShelf() {
       return;
     }
 
-    focusInputCaretAtEnd(sceneInputRef.current);
+    stabilizeInlineRenameFocus(sceneInputRef.current);
   }, [editingSceneId]);
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
@@ -762,7 +772,7 @@ export function SpriteShelf() {
       setEditingFolderId(folder.id);
       setFolderEditName(folder.name);
     });
-    focusInputCaretAtEnd(folderInputRef.current);
+    stabilizeInlineRenameFocus(folderInputRef.current);
   };
 
   const handleSaveFolderRename = () => {
@@ -860,7 +870,7 @@ export function SpriteShelf() {
       setEditingObjectId(objectId);
       setEditName(currentName);
     });
-    focusInputCaretAtEnd(inputRef.current);
+    stabilizeInlineRenameFocus(inputRef.current);
   };
 
   const handleSaveObjectRename = () => {
@@ -889,7 +899,7 @@ export function SpriteShelf() {
       setEditName(currentName);
       setSceneEditError(null);
     });
-    focusInputCaretAtEnd(sceneInputRef.current);
+    stabilizeInlineRenameFocus(sceneInputRef.current);
   };
 
   const handleSaveSceneRename = () => {
@@ -1204,6 +1214,7 @@ export function SpriteShelf() {
                   className="flex-1 h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
+                  autoFocus
                 />
               ) : isFolderEditing ? (
                 <Input
@@ -1224,6 +1235,7 @@ export function SpriteShelf() {
                   className="flex-1 h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
+                  autoFocus
                 />
               ) : (
                 <span className={`flex-1 text-xs truncate ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : ''}`}>
