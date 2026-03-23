@@ -95,6 +95,7 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'motion_glide_to', category: 'Motion', kind: 'statement', summary: 'Glide smoothly to position over time', inputNames: ['X', 'Y', 'SECONDS'], statementInputNames: [], fieldNames: [] },
   { type: 'motion_glide_to_speed', category: 'Motion', kind: 'statement', summary: 'Glide smoothly to position at a speed', inputNames: ['X', 'Y', 'SPEED'], statementInputNames: [], fieldNames: [] },
   { type: 'motion_go_to', category: 'Motion', kind: 'statement', summary: 'Go to position', inputNames: ['X', 'Y'], statementInputNames: [], fieldNames: [] },
+  { type: 'motion_is_moving', category: 'Motion', kind: 'boolean', summary: 'Returns true while this object is translating', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'motion_limit_world_boundary_off', category: 'Motion', kind: 'statement', summary: 'Allow this object to ignore the world boundary', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'motion_limit_world_boundary_on', category: 'Motion', kind: 'statement', summary: 'Keep this object inside the world boundary', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'motion_move_steps', category: 'Motion', kind: 'statement', summary: 'Move forward', inputNames: ['STEPS'], statementInputNames: [], fieldNames: [] },

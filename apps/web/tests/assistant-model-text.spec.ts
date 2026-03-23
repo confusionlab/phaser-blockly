@@ -29,7 +29,6 @@ test.describe('assistant model text', () => {
     });
 
     expect(text).toContain('Object "Hero"');
-    expect(text).toContain('Motion: isMoving=false');
     expect(text).toContain('Logic owner: object');
     expect(text).toContain('Generated JS:');
     expect(text).toContain('runtime.forever');

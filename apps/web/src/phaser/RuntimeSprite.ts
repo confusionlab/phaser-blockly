@@ -30,6 +30,8 @@ function debugLog(type: 'info' | 'event' | 'action' | 'error', message: string) 
  * child-friendly methods for block-based programming.
  */
 export class RuntimeSprite {
+  private static readonly MOVEMENT_EPSILON = 0.01;
+
   public container: Phaser.GameObjects.Container;
   public scene: Phaser.Scene;
   public id: string;
@@ -59,6 +61,9 @@ export class RuntimeSprite {
   private _speechWordTweens: Phaser.Tweens.Tween[] = [];
   private _speechBubbleTween: Phaser.Tweens.Tween | null = null;
   private _speechSessionId: number = 0;
+  private _lastMotionSample: { x: number; y: number } | null = null;
+  private _activeTranslationTweens: number = 0;
+  private _motionSampleHandler: (() => void) | null = null;
 
   // Ground collision tracking (set by RuntimeEngine)
   private _isTouchingGround: boolean = false;
@@ -77,6 +82,13 @@ export class RuntimeSprite {
     this.container = container;
     this.id = id;
     this.name = name;
+    this._lastMotionSample = { x: container.x, y: container.y };
+    if (this.scene?.events) {
+      this._motionSampleHandler = () => {
+        this._lastMotionSample = { x: this.container.x, y: this.container.y };
+      };
+      this.scene.events.on(Phaser.Scenes.Events.POST_UPDATE, this._motionSampleHandler);
+    }
   }
 
   setRuntime(runtime: RuntimeEngine): void {
@@ -230,6 +242,42 @@ export class RuntimeSprite {
 
   getDirection(): number {
     return this._direction;
+  }
+
+  beginTranslationTween(): void {
+    this._activeTranslationTweens += 1;
+  }
+
+  endTranslationTween(): void {
+    this._activeTranslationTweens = Math.max(0, this._activeTranslationTweens - 1);
+  }
+
+  isMoving(): boolean {
+    if (this._stopped || !this.container.active) {
+      return false;
+    }
+
+    if (this._activeTranslationTweens > 0) {
+      return true;
+    }
+
+    const body = this.getMatterBody();
+    if (body) {
+      const velocityX = body.velocity.x ?? 0;
+      const velocityY = body.velocity.y ?? 0;
+      if (Math.abs(velocityX) > RuntimeSprite.MOVEMENT_EPSILON || Math.abs(velocityY) > RuntimeSprite.MOVEMENT_EPSILON) {
+        return true;
+      }
+    }
+
+    if (!this._lastMotionSample) {
+      return false;
+    }
+
+    return (
+      Math.abs(this.container.x - this._lastMotionSample.x) > RuntimeSprite.MOVEMENT_EPSILON
+      || Math.abs(this.container.y - this._lastMotionSample.y) > RuntimeSprite.MOVEMENT_EPSILON
+    );
   }
 
   pointTowards(targetX: number, targetY: number): void {
@@ -989,6 +1037,11 @@ export class RuntimeSprite {
     if (this._speechMeasureText) {
       this._speechMeasureText.destroy();
       this._speechMeasureText = null;
+    }
+
+    if (this._motionSampleHandler) {
+      this.scene.events?.off(Phaser.Scenes.Events.POST_UPDATE, this._motionSampleHandler);
+      this._motionSampleHandler = null;
     }
 
     // Remove Matter.js body from world before destroying container

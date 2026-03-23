@@ -3230,6 +3230,7 @@ export class RuntimeEngine {
       const phaserTarget = this.userToPhaser(userX, userY);
       const clampedTarget = this.clampPhaserPositionForSprite(spriteId, phaserTarget.x, phaserTarget.y);
       const durationMs = Math.max(0, durationSeconds * 1000);
+      sprite.beginTranslationTween();
 
       this.scene.tweens.add({
         targets: container,
@@ -3253,7 +3254,14 @@ export class RuntimeEngine {
             container.setData('_bodyMovedByCode', true);
           }
         },
-        onComplete: () => resolve(),
+        onComplete: () => {
+          sprite.endTranslationTween();
+          resolve();
+        },
+        onStop: () => {
+          sprite.endTranslationTween();
+          resolve();
+        },
       });
 
       debugLog('action', `Gliding "${sprite.name}" to (${userX}, ${userY}) over ${durationSeconds}s with ${easing}`);

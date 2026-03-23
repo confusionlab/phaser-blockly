@@ -221,7 +221,6 @@ function appendObjectDetail(lines: string[], object: AssistantModelObjectTextInp
   lines.push(
     `${indent}  Transform: position=(${formatNumber(object.x)}, ${formatNumber(object.y)}) scale=(${formatNumber(object.scaleX)}, ${formatNumber(object.scaleY)}) rotation=${formatNumber(object.rotation)} visible=${object.visible}`,
   );
-  lines.push(`${indent}  Motion: isMoving=${object.motion.isMoving}`);
   lines.push(`${indent}  Physics: ${formatPhysics(object.physics)}`);
   lines.push(`${indent}  Collider: ${formatCollider(object.collider)}`);
   lines.push(`${indent}  Costumes: ${formatNameList(object.costumes)}`);
@@ -244,7 +243,6 @@ function appendObjectDetail(lines: string[], object: AssistantModelObjectTextInp
 
 function appendComponentDetail(lines: string[], component: AssistantModelComponentTextInput, indent: string, heading: string) {
   lines.push(`${indent}${heading} "${component.name}" [id=${component.id}]`);
-  lines.push(`${indent}  Motion: isMoving=${component.motion.isMoving}`);
   lines.push(`${indent}  Physics: ${formatPhysics(component.physics)}`);
   lines.push(`${indent}  Collider: ${formatCollider(component.collider)}`);
   lines.push(`${indent}  Costumes: ${formatNameList(component.costumes)}`);

@@ -180,6 +180,10 @@ export function registerCodeGenerators(): void {
     return ['sprite.getY()', Order.FUNCTION_CALL];
   };
 
+  javascriptGenerator.forBlock['motion_is_moving'] = function() {
+    return ['sprite.isMoving()', Order.FUNCTION_CALL];
+  };
+
   // Rotate animation
   javascriptGenerator.forBlock['motion_rotate_tween'] = function(block) {
     const degrees = javascriptGenerator.valueToCode(block, 'DEGREES', Order.ATOMIC) || '90';

@@ -1,7 +1,6 @@
 import type {
   AssistantComponent,
   AssistantObject,
-  AssistantPhysicsConfig,
   AssistantProjectSnapshot,
   AssistantProjectState,
   AssistantScene,
@@ -9,20 +8,6 @@ import type {
 import { summarizeStoredBlocklyLogic } from './assistantLogic';
 
 type LogicCodeMode = 'preview' | 'full';
-
-const TRANSLATION_BLOCK_TYPES = new Set([
-  'motion_move_steps',
-  'motion_go_to',
-  'motion_glide_to',
-  'motion_glide_to_speed',
-  'motion_change_x',
-  'motion_change_y',
-  'motion_set_x',
-  'motion_set_y',
-  'physics_set_velocity',
-  'physics_set_velocity_x',
-  'physics_set_velocity_y',
-]);
 
 function buildModelLogic(
   blocklyXml: string,
@@ -63,33 +48,7 @@ function buildModelLogic(
   };
 }
 
-function hasConfiguredVelocity(physics: AssistantPhysicsConfig | null): boolean {
-  if (!physics?.enabled) {
-    return false;
-  }
-
-  return physics.velocityX !== 0 || physics.velocityY !== 0;
-}
-
-function buildMotionSummary(
-  blockTypes: readonly string[],
-  physics: AssistantPhysicsConfig | null,
-) {
-  const isTranslating = blockTypes.some((blockType) => TRANSLATION_BLOCK_TYPES.has(blockType));
-
-  return {
-    isMoving: isTranslating || hasConfiguredVelocity(physics),
-  };
-}
-
 function summarizeObjectForModel(object: AssistantObject, logicCodeMode: LogicCodeMode) {
-  const logic = buildModelLogic(
-    object.blocklyXml,
-    object.componentId ? 'set_component_logic' : 'set_object_logic',
-    logicCodeMode,
-    object.generatedJs,
-  );
-
   return {
     id: object.id,
     name: object.name,
@@ -104,29 +63,30 @@ function summarizeObjectForModel(object: AssistantObject, logicCodeMode: LogicCo
     componentId: object.componentId ?? null,
     physics: object.physics,
     collider: object.collider,
-    motion: buildMotionSummary(logic.blockTypes, object.physics),
     costumes: object.costumes,
     currentCostumeIndex: object.currentCostumeIndex,
     sounds: object.sounds,
     localVariables: object.localVariables,
-    logic,
+    logic: buildModelLogic(
+      object.blocklyXml,
+      object.componentId ? 'set_component_logic' : 'set_object_logic',
+      logicCodeMode,
+      object.generatedJs,
+    ),
   };
 }
 
 function summarizeComponentForModel(component: AssistantComponent, logicCodeMode: LogicCodeMode) {
-  const logic = buildModelLogic(component.blocklyXml, 'set_component_logic', logicCodeMode, component.generatedJs);
-
   return {
     id: component.id,
     name: component.name,
-    motion: buildMotionSummary(logic.blockTypes, component.physics),
     physics: component.physics,
     collider: component.collider,
     costumes: component.costumes,
     currentCostumeIndex: component.currentCostumeIndex,
     sounds: component.sounds,
     localVariables: component.localVariables,
-    logic,
+    logic: buildModelLogic(component.blocklyXml, 'set_component_logic', logicCodeMode, component.generatedJs),
   };
 }
 

@@ -848,6 +848,7 @@ export function getToolboxConfig(): any {
           { kind: 'sep', gap: '16' },
           { kind: 'block', type: 'motion_my_x' },
           { kind: 'block', type: 'motion_my_y' },
+          { kind: 'block', type: 'motion_is_moving' },
           {
             kind: 'block',
             type: 'sensing_object_x',
@@ -1704,6 +1705,16 @@ function registerCustomBlocks() {
       this.setOutput(true, 'Number');
       this.setColour('#4C97FF');
       this.setTooltip('Current y position');
+    }
+  };
+
+  Blockly.Blocks['motion_is_moving'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('is moving?');
+      this.setOutput(true, 'Boolean');
+      this.setColour('#4C97FF');
+      this.setTooltip('Returns true while this object is translating');
     }
   };
 

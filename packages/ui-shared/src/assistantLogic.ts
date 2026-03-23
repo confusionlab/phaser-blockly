@@ -349,6 +349,8 @@ function renderBlocklyExpression(node?: BlocklyProjectionNode | null): string {
       return 'my.x';
     case 'motion_my_y':
       return 'my.y';
+    case 'motion_is_moving':
+      return 'isMoving()';
     case 'looks_costume_number':
       return 'costumeNumber()';
     case 'control_current_item':
