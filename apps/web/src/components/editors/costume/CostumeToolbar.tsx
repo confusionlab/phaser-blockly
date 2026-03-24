@@ -230,6 +230,7 @@ interface CostumeToolbarProps {
   hasActiveSelection: boolean;
   showTextControls: boolean;
   isVectorPointEditing: boolean;
+  hasSelectedVectorPoints: boolean;
   brushColor: string;
   brushSize: number;
   textStyle: TextToolStyle;
@@ -319,6 +320,7 @@ export const CostumeToolbar = memo(({
   hasActiveSelection,
   showTextControls,
   isVectorPointEditing,
+  hasSelectedVectorPoints,
   brushColor,
   brushSize,
   textStyle,
@@ -370,6 +372,12 @@ export const CostumeToolbar = memo(({
     }
   }, [showContextualPropertyBar]);
 
+  useEffect(() => {
+    if (!hasSelectedVectorPoints && openMenu === 'vector-handles') {
+      setOpenMenu(null);
+    }
+  }, [hasSelectedVectorPoints, openMenu]);
+
   return (
     <>
       <FloatingBottomToolbarDock>
@@ -406,7 +414,7 @@ export const CostumeToolbar = memo(({
                     </div>
                   )}
 
-                  {editorMode === 'vector' && isVectorPointEditing && (
+                  {editorMode === 'vector' && isVectorPointEditing && hasSelectedVectorPoints && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                       <span className="whitespace-nowrap text-xs text-muted-foreground">Handles</span>
                       <DropdownMenu

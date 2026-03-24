@@ -157,6 +157,7 @@ export function CostumeEditor() {
     supportsFill: true,
   });
   const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
+  const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
 
   const [canUndo, setCanUndo] = useState(false);
@@ -692,6 +693,7 @@ export function CostumeEditor() {
           hasActiveSelection={editorMode === 'bitmap' ? hasBitmapFloatingSelection : hasCanvasSelection}
           showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
           isVectorPointEditing={isVectorPointEditing}
+          hasSelectedVectorPoints={hasSelectedVectorPoints}
           brushColor={brushColor}
           brushSize={brushSize}
           textStyle={textStyle}
@@ -732,6 +734,7 @@ export function CostumeEditor() {
           onVectorHandleModeSync={setVectorHandleMode}
           onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
           onVectorPointEditingChange={setIsVectorPointEditing}
+          onVectorPointSelectionChange={setHasSelectedVectorPoints}
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
         />
