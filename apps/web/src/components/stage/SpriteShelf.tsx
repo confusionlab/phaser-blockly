@@ -294,6 +294,7 @@ export function SpriteShelf() {
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const cancelSceneRenameOnBlurRef = useRef(false);
+  const sceneRenamePointerDownTargetRef = useRef<EventTarget | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
@@ -333,6 +334,23 @@ export function SpriteShelf() {
     }
 
     stabilizeInlineRenameFocus(sceneInputRef.current);
+  }, [editingSceneId]);
+
+  useEffect(() => {
+    if (!editingSceneId || typeof document === 'undefined') {
+      sceneRenamePointerDownTargetRef.current = null;
+      return;
+    }
+
+    const handlePointerDownCapture = (event: PointerEvent) => {
+      sceneRenamePointerDownTargetRef.current = event.target;
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownCapture, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDownCapture, true);
+      sceneRenamePointerDownTargetRef.current = null;
+    };
   }, [editingSceneId]);
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
@@ -1134,6 +1152,21 @@ export function SpriteShelf() {
     setSceneEditError(null);
   };
 
+  const handleSceneRenameBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+    const pointerTarget = sceneRenamePointerDownTargetRef.current;
+    sceneRenamePointerDownTargetRef.current = null;
+
+    const clickedOutside = pointerTarget instanceof Node && pointerTarget !== event.currentTarget;
+    if (!clickedOutside) {
+      queueMicrotask(() => {
+        stabilizeInlineRenameFocus(sceneInputRef.current);
+      });
+      return;
+    }
+
+    handleSaveSceneRename();
+  };
+
   const handleCloseSceneContextMenu = () => {
     setSceneContextMenu(null);
     setSceneContextMenuPosition(null);
@@ -1355,6 +1388,8 @@ export function SpriteShelf() {
     const rowHighlightBridgeClass = isSelected || isDropOn
       ? `${connectsToPrevious ? '-top-1' : 'top-0'} ${connectsToNext ? '-bottom-[5px]' : 'bottom-0'}`
       : '';
+    const rowPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
+    const rowContentPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1362,7 +1397,7 @@ export function SpriteShelf() {
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
-          className={`border-b px-2 py-1 select-none ${
+          className={`${rowPaddingClass} select-none ${
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
@@ -1399,7 +1434,7 @@ export function SpriteShelf() {
                 className={`pointer-events-none absolute inset-x-0 z-0 ${rowShapeClass} ${rowHighlightBridgeClass} ${rowHighlightClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${!isSelected && !isDropOn ? 'hover:bg-accent/70' : ''}`}>
+            <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors ${!isSelected && !isDropOn ? 'hover:bg-accent/70' : ''}`}>
             <button
               type="button"
               disabled={!hasChildItems}
@@ -1549,7 +1584,7 @@ export function SpriteShelf() {
                       setEditName(e.target.value);
                       setSceneEditError(null);
                     }}
-                    onBlur={handleSaveSceneRename}
+                    onBlur={handleSceneRenameBlur}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
@@ -1576,7 +1611,7 @@ export function SpriteShelf() {
                 <DropdownMenuItem
                   key={scene.id}
                   draggable
-                  onPointerMove={preventSceneMenuHoverFocus}
+                  onPointerMoveCapture={preventSceneMenuHoverFocus}
                   onClick={() => selectScene(scene.id)}
                   onDragStart={(e) => {
                     setDraggedSceneId(scene.id);
@@ -1635,7 +1670,7 @@ export function SpriteShelf() {
               )
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onPointerMove={preventSceneMenuHoverFocus} onClick={handleAddScene}>
+            <DropdownMenuItem onPointerMoveCapture={preventSceneMenuHoverFocus} onClick={handleAddScene}>
               <Plus className="size-4 mr-2" />
               New Scene
             </DropdownMenuItem>
