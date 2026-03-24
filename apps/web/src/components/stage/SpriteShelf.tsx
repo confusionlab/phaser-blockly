@@ -1385,9 +1385,6 @@ export function SpriteShelf() {
           ? 'rounded-t-lg rounded-b-none'
           : 'rounded-lg'
       : 'rounded-lg';
-    const rowHighlightBridgeClass = isSelected || isDropOn
-      ? `${connectsToPrevious ? '-top-1' : 'top-0'} ${connectsToNext ? '-bottom-[5px]' : 'bottom-0'}`
-      : '';
     const rowPaddingClass = 'px-1 py-1';
     const rowContentPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
     const indentDepth = Math.max(0, level - 1);
@@ -1431,7 +1428,12 @@ export function SpriteShelf() {
           <div className="relative">
             {(isSelected || isDropOn) ? (
               <div
-                className={`pointer-events-none absolute inset-x-0 z-0 ${rowShapeClass} ${rowHighlightBridgeClass} ${rowHighlightClass}`}
+                className={`pointer-events-none absolute inset-0 z-0 ${rowShapeClass} ${rowHighlightClass}`}
+              />
+            ) : null}
+            {isSelected && connectsToNext ? (
+              <div
+                className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
               />
             ) : null}
             <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors ${!isSelected && !isDropOn ? 'hover:bg-accent/70' : ''}`}>
