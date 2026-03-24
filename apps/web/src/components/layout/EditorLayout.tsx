@@ -633,7 +633,7 @@ export function EditorLayout() {
           <>
             {/* Object Editor - Left Panel */}
             <div
-              className="h-full"
+              className="h-full min-w-0 overflow-hidden"
               data-editor-panel="code"
               style={{ width: `${dividerPosition}%` }}
               onMouseEnter={() => setHoveredPanel('code')}

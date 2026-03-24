@@ -436,7 +436,7 @@ export function BlocklyEditor() {
   const [messageDialogSelectedId, setMessageDialogSelectedId] = useState<string | null>(null);
   const [dragSyncNonce, setDragSyncNonce] = useState(0);
 
-  const { selectedSceneId, selectedObjectId, selectedComponentId, registerCodeUndo } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, selectedComponentId, activeObjectTab, registerCodeUndo } = useEditorStore();
   const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage, updateComponent } = useProjectStore();
   const sceneDropdownStamp = project?.scenes
     .map((scene, index) => `${index}:${scene.id}:${scene.name}`)
@@ -724,6 +724,9 @@ export function BlocklyEditor() {
   // Cmd+K to open block search, Cmd+C for cross-object copy
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (activeObjectTab !== 'code') {
+        return;
+      }
       if (shouldIgnoreGlobalKeyboardEvent(e)) {
         return;
       }
@@ -748,7 +751,21 @@ export function BlocklyEditor() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedObjectId, selectedComponentId]);
+  }, [activeObjectTab, selectedObjectId, selectedComponentId]);
+
+  useEffect(() => {
+    if (activeObjectTab !== 'code' || !workspaceRef.current) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      if (workspaceRef.current) {
+        Blockly.svgResize(workspaceRef.current);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeObjectTab]);
 
 
   // Initialize Blockly workspace

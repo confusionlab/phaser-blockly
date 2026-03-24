@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { ObjectEditorTab } from '@/store/editorStore';
@@ -7,6 +7,7 @@ import { CostumeEditor } from './CostumeEditor';
 import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Code, Palette, Volume2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
   { value: 'code', label: 'Code', icon: <Code className="size-3.5" /> },
@@ -33,6 +34,11 @@ export function ObjectEditor() {
   const emptyStateMessage = isFolderSelected
     ? 'Folder selected'
     : (!hasCodeTarget ? 'Nothing selected' : null);
+  const [mountedTabs, setMountedTabs] = useState<Record<ObjectEditorTab, boolean>>({
+    code: true,
+    costumes: false,
+    sounds: false,
+  });
 
   useEffect(() => {
     if (selectedComponentId || selectedFolderId || !scene) return;
@@ -48,50 +54,85 @@ export function ObjectEditor() {
     }
   }, [selectedComponentId, selectedFolderId, selectedObjectId, activeObjectTab, setActiveObjectTab]);
 
+  useEffect(() => {
+    setMountedTabs((current) => (
+      current[activeObjectTab]
+        ? current
+        : { ...current, [activeObjectTab]: true }
+    ));
+  }, [activeObjectTab]);
+
+  const handleSectionChange = useCallback((nextTab: ObjectEditorTab) => {
+    setMountedTabs((current) => (
+      current[nextTab]
+        ? current
+        : { ...current, [nextTab]: true }
+    ));
+    setActiveObjectTab(nextTab);
+  }, [setActiveObjectTab]);
+
   const sectionOptions = objectEditorSections.map((section) => ({
     ...section,
     disabled: section.value !== 'code' && !hasObjectAssetTarget,
   }));
 
-  const activeEditor = (() => {
-    switch (activeObjectTab) {
-      case 'costumes':
-        return <CostumeEditor />;
-      case 'sounds':
-        return <SoundEditor />;
-      case 'code':
-      default:
-        return (
-          <div className="relative h-full">
-            <BlocklyEditor />
-            {emptyStateMessage ? (
-              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-card text-muted-foreground">
-                <Code className="size-12 mb-4 opacity-20" />
-                <p className="text-sm">{emptyStateMessage}</p>
-              </div>
-            ) : null}
-          </div>
-        );
-    }
-  })();
-
   return (
-    <div className="flex flex-col h-full bg-card">
-      <div className="flex h-full flex-col gap-0">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
+      <div className="flex h-full min-h-0 min-w-0 flex-col gap-0">
         {!emptyStateMessage ? (
-          <div className="border-b border-zinc-200/80 px-3 py-2 dark:border-white/10">
+          <div className="shrink-0 border-b border-zinc-200/80 px-3 py-2 dark:border-white/10">
             <SegmentedControl
               ariaLabel="Object editor sections"
               className="w-full"
               options={sectionOptions}
               value={activeObjectTab}
-              onValueChange={setActiveObjectTab}
+              onValueChange={handleSectionChange}
             />
           </div>
         ) : null}
 
-        <div className="min-h-0 flex-1">
-          {activeEditor}
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          <div
+            aria-hidden={activeObjectTab !== 'code'}
+            className={cn(
+              'h-full min-h-0 min-w-0',
+              activeObjectTab !== 'code' && 'hidden',
+            )}
+          >
+            <div className="relative h-full min-w-0">
+              <BlocklyEditor />
+              {emptyStateMessage ? (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-card text-muted-foreground">
+                  <Code className="mb-4 size-12 opacity-20" />
+                  <p className="text-sm">{emptyStateMessage}</p>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {mountedTabs.costumes ? (
+            <div
+              aria-hidden={activeObjectTab !== 'costumes'}
+              className={cn(
+                'h-full min-h-0 min-w-0',
+                activeObjectTab !== 'costumes' && 'hidden',
+              )}
+            >
+              <CostumeEditor />
+            </div>
+          ) : null}
+
+          {mountedTabs.sounds ? (
+            <div
+              aria-hidden={activeObjectTab !== 'sounds'}
+              className={cn(
+                'h-full min-h-0 min-w-0',
+                activeObjectTab !== 'sounds' && 'hidden',
+              )}
+            >
+              <SoundEditor />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
