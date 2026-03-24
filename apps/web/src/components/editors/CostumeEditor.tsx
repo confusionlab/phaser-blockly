@@ -659,6 +659,7 @@ export function CostumeEditor() {
         <CostumeToolbar
           editorMode={editorMode}
           activeTool={activeTool}
+          hasActiveSelection={editorMode === 'bitmap' ? hasBitmapFloatingSelection : hasCanvasSelection}
           showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
           brushColor={brushColor}
           brushSize={brushSize}

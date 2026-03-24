@@ -115,6 +115,7 @@ FloatingToolButton.displayName = 'FloatingToolButton';
 interface CostumeToolbarProps {
   editorMode: EditorMode;
   activeTool: DrawingTool;
+  hasActiveSelection: boolean;
   showTextControls: boolean;
   brushColor: string;
   brushSize: number;
@@ -192,6 +193,7 @@ function isShapeTool(tool: DrawingTool) {
 export const CostumeToolbar = memo(({
   editorMode,
   activeTool,
+  hasActiveSelection,
   showTextControls,
   brushColor,
   brushSize,
@@ -260,6 +262,7 @@ export const CostumeToolbar = memo(({
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = isShapeTool(activeTool);
+  const showSelectionActions = activeTool === 'select';
 
   return (
     <>
@@ -267,7 +270,7 @@ export const CostumeToolbar = memo(({
         <div className="flex max-w-full flex-col items-center gap-3">
           <div className={floatingPropertyBarClass} data-testid="costume-toolbar-properties">
             <div className="flex min-w-max items-center gap-2">
-              {editorMode === 'vector' && (
+              {editorMode === 'vector' && showSelectionActions && hasActiveSelection && (
                 <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -323,37 +326,38 @@ export const CostumeToolbar = memo(({
                 </div>
               )}
 
-              <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" disabled={alignDisabled}>
-                      Align
-                      <ChevronDown className="size-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" side="top" sideOffset={10} className="w-[140px] p-2">
-                    <div className="grid grid-cols-3 gap-1">
-                      {alignGrid.map((item) => (
-                        <DropdownMenuItem
-                          key={item.action}
-                          className="h-8 w-8 justify-center rounded border p-0 text-sm"
-                          title={item.title}
-                          onClick={() => onAlign(item.action)}
-                        >
-                          {item.label}
-                        </DropdownMenuItem>
-                      ))}
-                    </div>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+              {showSelectionActions && (
+                <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" disabled={alignDisabled}>
+                        Align
+                        <ChevronDown className="size-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="w-[140px] p-2">
+                      <div className="grid grid-cols-3 gap-1">
+                        {alignGrid.map((item) => (
+                          <DropdownMenuItem
+                            key={item.action}
+                            className="h-8 w-8 justify-center rounded border p-0 text-sm"
+                            title={item.title}
+                            onClick={() => onAlign(item.action)}
+                          >
+                            {item.label}
+                          </DropdownMenuItem>
+                        ))}
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
 
               <div className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                 <button
                   ref={colorButtonRef}
                   type="button"
-                  className="size-7 cursor-pointer rounded border"
-                  style={{ backgroundColor: brushColor }}
+                  className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
                   onClick={() => {
                     if (!showColorPicker) {
                       updateColorPickerPosition();
@@ -361,7 +365,14 @@ export const CostumeToolbar = memo(({
                     setShowColorPicker(!showColorPicker);
                   }}
                   title="Color"
-                />
+                >
+                  <span
+                    className="size-4 rounded border border-foreground/15"
+                    style={{ backgroundColor: brushColor }}
+                    aria-hidden="true"
+                  />
+                  <span>Color</span>
+                </button>
                 {showColorPicker && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowColorPicker(false)} />
