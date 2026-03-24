@@ -1112,6 +1112,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     const camera = phaserScene.cameras.main;
     const canvasW = phaserScene.data.get('canvasWidth') as number || 800;
     const canvasH = phaserScene.data.get('canvasHeight') as number || 600;
+    const shellBgColorValue = viewMode === 'camera-viewport' ? '#000000' : getSceneBackgroundBaseColor(selectedScene?.background);
 
     phaserScene.data.set('viewMode', viewMode);
 
@@ -1139,8 +1140,16 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       camera.centerOn(canvasW / 2, canvasH / 2);
     }
 
+    const renderer = phaserScene.game.renderer as { config?: { backgroundColor?: Phaser.Display.Color } };
+    if (renderer.config) {
+      renderer.config.backgroundColor = Phaser.Display.Color.ValueToColor(shellBgColorValue);
+    }
+    if (phaserScene.game.canvas) {
+      phaserScene.game.canvas.style.backgroundColor = shellBgColorValue;
+    }
+
     refreshTiledBackgroundLayer(phaserScene);
-  }, [viewMode, isPlaying]);
+  }, [viewMode, isPlaying, selectedScene?.background]);
 
   // Update objects when they change (in editor mode only)
   useEffect(() => {
