@@ -19,8 +19,12 @@ function dispatchEditorResizeFreeze(active: boolean): void {
 }
 
 export function StagePanel({ fullscreen = false, deferEditorResize = false }: StagePanelProps) {
-  const { stopPlaying, viewMode, cycleViewMode, selectedSceneId, selectedObjectId, selectObject } = useEditorStore();
-  const { project } = useProjectStore();
+  const stopPlaying = useEditorStore((state) => state.stopPlaying);
+  const viewMode = useEditorStore((state) => state.viewMode);
+  const cycleViewMode = useEditorStore((state) => state.cycleViewMode);
+  const selectedSceneId = useEditorStore((state) => state.selectedSceneId);
+  const selectObject = useEditorStore((state) => state.selectObject);
+  const project = useProjectStore((state) => state.project);
   const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
@@ -29,6 +33,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
 
   const toggleCanvasFullscreen = useCallback(() => {
     if (!isCanvasFullscreen) {
+      const { selectedSceneId, selectedObjectId } = useEditorStore.getState();
       fullscreenSelectionRef.current = {
         sceneId: selectedSceneId,
         objectId: selectedObjectId,
@@ -37,7 +42,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
       return;
     }
     setIsCanvasFullscreen(false);
-  }, [isCanvasFullscreen, selectedObjectId, selectedSceneId]);
+  }, [isCanvasFullscreen]);
 
   useEffect(() => {
     if (isCanvasFullscreen) {
