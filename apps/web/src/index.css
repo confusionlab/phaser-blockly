@@ -134,12 +134,12 @@ body {
 
 /* Cap flyout/toolbox content width */
 .blocklyFlyout {
-  max-width: 250px !important;
+  max-width: var(--blockly-flyout-width, 250px) !important;
 }
 
 .blocklyFlyoutBackground {
   fill: var(--blockly-flyout-bg) !important;
-  max-width: 250px !important;
+  max-width: var(--blockly-flyout-width, 250px) !important;
 }
 
 .blocklyFlyoutLabelText {

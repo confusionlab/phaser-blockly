@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  type CSSProperties,
+} from 'react';
 import * as Blockly from 'blockly';
 import { Pin } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
@@ -29,10 +35,13 @@ import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
 import {
   isPinnableContinuousToolbox,
+  PINNABLE_CONTINUOUS_FLYOUT,
   PINNABLE_CONTINUOUS_METRICS,
   PINNABLE_CONTINUOUS_TOOLBOX,
+  PINNED_TOOLBOX_FLYOUT_WIDTH,
   registerPinnableContinuousToolbox,
   setInitialPinnableToolboxPinnedState,
+  UNPINNED_TOOLBOX_FLYOUT_WIDTH,
 } from './pinnableContinuousToolbox';
 import type { UndoRedoHandler } from '@/store/editorStore';
 import type { Variable } from '@/types';
@@ -763,7 +772,7 @@ export function BlocklyEditor() {
       renderer: 'zelos',
       plugins: {
         toolbox: PINNABLE_CONTINUOUS_TOOLBOX,
-        flyoutsVerticalToolbox: 'ContinuousFlyout',
+        flyoutsVerticalToolbox: PINNABLE_CONTINUOUS_FLYOUT,
         metricsManager: PINNABLE_CONTINUOUS_METRICS,
       },
       trashcan: false,
@@ -1135,6 +1144,14 @@ export function BlocklyEditor() {
     return undefined;
   })();
 
+  const blocklyContainerStyle = {
+    '--blockly-flyout-width': `${
+      toolboxPinned
+        ? PINNED_TOOLBOX_FLYOUT_WIDTH
+        : UNPINNED_TOOLBOX_FLYOUT_WIDTH
+    }px`,
+  } as CSSProperties;
+
   const handleAddVariable = (variable: Variable) => {
     if (variable.scope === 'global') {
       addGlobalVariable(variable);
@@ -1160,7 +1177,12 @@ export function BlocklyEditor() {
   return (
     <>
       <div className="relative h-full w-full">
-        <div ref={containerRef} className="h-full w-full" data-blockly-editor="true" />
+        <div
+          ref={containerRef}
+          className="h-full w-full"
+          data-blockly-editor="true"
+          style={blocklyContainerStyle}
+        />
         {pinButtonPosition && (
           <button
             type="button"

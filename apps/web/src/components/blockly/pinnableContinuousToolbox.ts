@@ -6,11 +6,78 @@ import {
   registerContinuousToolbox,
 } from '@blockly/continuous-toolbox';
 
+const FLYOUT_WIDTH_CSS_VAR = '--blockly-flyout-width';
+const PINNABLE_FLYOUT_REGISTRATION = 'PochaContinuousFlyout';
 const PINNABLE_METRICS_REGISTRATION = 'PochaContinuousMetrics';
 const PINNABLE_TOOLBOX_REGISTRATION = 'PochaContinuousToolbox';
 
+export const PINNED_TOOLBOX_FLYOUT_WIDTH = 250;
+export const UNPINNED_TOOLBOX_FLYOUT_WIDTH = 350;
+
 let registered = false;
 let initialPinnedState = true;
+
+function getConfiguredFlyoutWidth(
+  workspace: Blockly.WorkspaceSvg | null,
+): number {
+  if (typeof window === 'undefined' || !workspace) {
+    return PINNED_TOOLBOX_FLYOUT_WIDTH;
+  }
+
+  const rawValue = window
+    .getComputedStyle(workspace.getInjectionDiv())
+    .getPropertyValue(FLYOUT_WIDTH_CSS_VAR)
+    .trim();
+  const parsedValue = Number.parseFloat(rawValue);
+  return Number.isFinite(parsedValue)
+    ? parsedValue
+    : PINNED_TOOLBOX_FLYOUT_WIDTH;
+}
+
+export class PinnableContinuousFlyout extends ContinuousFlyout {
+  protected override reflowInternal_(): void {
+    super.reflowInternal_();
+
+    const targetWorkspace = this.targetWorkspace;
+    if (!targetWorkspace) {
+      return;
+    }
+
+    const configuredWidth = getConfiguredFlyoutWidth(targetWorkspace);
+    if (this.getWidth() === configuredWidth) {
+      return;
+    }
+
+    if (this.RTL) {
+      for (const item of this.getContents()) {
+        const oldX = item.getElement().getBoundingRectangle().left;
+        const newX =
+          configuredWidth / this.workspace_.scale -
+          item.getElement().getBoundingRectangle().getWidth() -
+          this.MARGIN -
+          this.tabWidth_;
+        item.getElement().moveBy(newX - oldX, 0);
+      }
+    }
+
+    if (
+      !targetWorkspace.scrollbar &&
+      !this.autoClose &&
+      targetWorkspace.getFlyout() === this &&
+      this.toolboxPosition_ === Blockly.utils.toolbox.Position.LEFT
+    ) {
+      targetWorkspace.translate(
+        targetWorkspace.scrollX + configuredWidth,
+        targetWorkspace.scrollY,
+      );
+    }
+
+    this.width_ = configuredWidth;
+    this.position();
+    targetWorkspace.resizeContents();
+    targetWorkspace.recordDragTargets();
+  }
+}
 
 export class PinnableContinuousMetrics extends ContinuousMetrics {
   override getViewMetrics(
@@ -79,8 +146,8 @@ export class PinnableContinuousToolbox extends ContinuousToolbox {
     this.applyPinnedState(this.pinned, true);
   }
 
-  override getFlyout(): ContinuousFlyout {
-    return super.getFlyout() as ContinuousFlyout;
+  override getFlyout(): PinnableContinuousFlyout {
+    return super.getFlyout() as PinnableContinuousFlyout;
   }
 
   override updateFlyout_(
@@ -182,6 +249,13 @@ export function registerPinnableContinuousToolbox(): void {
   registerContinuousToolbox();
 
   Blockly.registry.register(
+    Blockly.registry.Type.FLYOUTS_VERTICAL_TOOLBOX,
+    PINNABLE_FLYOUT_REGISTRATION,
+    PinnableContinuousFlyout,
+    true,
+  );
+
+  Blockly.registry.register(
     Blockly.registry.Type.METRICS_MANAGER,
     PINNABLE_METRICS_REGISTRATION,
     PinnableContinuousMetrics,
@@ -204,5 +278,6 @@ export function isPinnableContinuousToolbox(
   return toolbox instanceof PinnableContinuousToolbox;
 }
 
+export const PINNABLE_CONTINUOUS_FLYOUT = PINNABLE_FLYOUT_REGISTRATION;
 export const PINNABLE_CONTINUOUS_METRICS = PINNABLE_METRICS_REGISTRATION;
 export const PINNABLE_CONTINUOUS_TOOLBOX = PINNABLE_TOOLBOX_REGISTRATION;
