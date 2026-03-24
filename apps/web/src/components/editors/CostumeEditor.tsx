@@ -23,6 +23,7 @@ import {
   type CostumeEditorSession,
   type CostumeEditorTarget,
 } from '@/lib/editor/costumeEditorSession';
+import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'vector', 'rectangle', 'circle', 'line', 'text', 'collider']);
@@ -605,7 +606,7 @@ export function CostumeEditor() {
   if (!object) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        Select an object to edit costumes
+        {NO_OBJECT_SELECTED_MESSAGE}
       </div>
     );
   }

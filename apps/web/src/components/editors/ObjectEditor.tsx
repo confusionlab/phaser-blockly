@@ -9,6 +9,7 @@ import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/s
 import { Code, Palette, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
+import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
   { value: 'code', label: 'Code', icon: <Code className="size-3" /> },
@@ -29,12 +30,9 @@ export function ObjectEditor() {
   } = useEditorStore();
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
-  const isFolderSelected = !!selectedFolderId;
   const hasCodeTarget = !!selectedObjectId || !!selectedComponentId;
   const hasObjectAssetTarget = !!selectedObjectId;
-  const emptyStateMessage = isFolderSelected
-    ? 'Folder selected'
-    : (!hasCodeTarget ? 'Nothing selected' : null);
+  const emptyStateMessage = !hasCodeTarget ? NO_OBJECT_SELECTED_MESSAGE : null;
   const [mountedTabs, setMountedTabs] = useState<Record<ObjectEditorTab, boolean>>({
     code: true,
     costumes: false,

@@ -9,6 +9,7 @@ import type { Sound } from '@/types';
 import { blobToDataUrl } from '@/utils/convexHelpers';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import { Button } from '@/components/ui/button';
+import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { Check, Loader2, RotateCcw } from 'lucide-react';
 
 interface DraftRecording {
@@ -210,7 +211,7 @@ export function SoundEditor() {
   if (!object) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        Select an object to edit sounds
+        {NO_OBJECT_SELECTED_MESSAGE}
       </div>
     );
   }

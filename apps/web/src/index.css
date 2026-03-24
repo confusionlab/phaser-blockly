@@ -244,6 +244,8 @@ body {
 
 .inspector-panel [data-slot="scroll-area-viewport"] {
   min-width: 0;
+  min-height: 0;
+  overflow-x: hidden !important;
 }
 
 .inspector-field-grid,

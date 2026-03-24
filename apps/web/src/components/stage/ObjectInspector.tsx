@@ -21,6 +21,7 @@ import {
   runInHistoryTransaction,
 } from '@/store/universalHistory';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
+import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
 
 type InspectorTab = 'object' | 'scene';
@@ -314,7 +315,7 @@ export function ObjectInspector() {
         >
           <div className="min-h-full min-w-0 px-4 py-3">
             {selectedFolderId ? (
-              <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
+              <div className="py-8 text-sm text-muted-foreground">{NO_OBJECT_SELECTED_MESSAGE}</div>
             ) : (
               <ObjectProperties
                 objects={selectedObjects}
@@ -375,7 +376,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
   if (!object || !sceneId) {
     return (
       <div className="text-center text-muted-foreground text-sm py-4">
-        Nothing selected
+        {NO_OBJECT_SELECTED_MESSAGE}
       </div>
     );
   }

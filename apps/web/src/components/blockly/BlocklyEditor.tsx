@@ -1209,7 +1209,8 @@ export function BlocklyEditor() {
       <div className="relative h-full w-full">
         <div
           ref={containerRef}
-          className="h-full w-full"
+          aria-hidden={!hasCodeTarget}
+          className={hasCodeTarget ? 'h-full w-full' : 'invisible h-full w-full'}
           data-blockly-editor="true"
           data-has-code-target={hasCodeTarget ? 'true' : 'false'}
           style={blocklyContainerStyle}
