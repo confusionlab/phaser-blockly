@@ -85,6 +85,7 @@ export function CostumeEditor() {
     objectId: null,
   });
   const loadRequestIdRef = useRef(0);
+  const loadingOverlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoadingRef = useRef(true);
   const loadedSessionRef = useRef<CostumeEditorSession | null>(null);
@@ -132,6 +133,7 @@ export function CostumeEditor() {
   const [hasCanvasSelection, setHasCanvasSelection] = useState(false);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
+  const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
 
   useEffect(() => {
     setEditorMode((prev) => {
@@ -169,11 +171,47 @@ export function CostumeEditor() {
     };
   }, []);
 
+  const clearLoadingOverlayDelay = useCallback(() => {
+    if (loadingOverlayTimeoutRef.current) {
+      clearTimeout(loadingOverlayTimeoutRef.current);
+      loadingOverlayTimeoutRef.current = null;
+    }
+  }, []);
+
+  const beginSessionLoad = useCallback((showBlocker: boolean) => {
+    clearLoadingOverlayDelay();
+    isLoadingRef.current = true;
+    setIsSessionLoading(showBlocker);
+    setShowSessionLoadingOverlay(false);
+
+    if (!showBlocker) {
+      return;
+    }
+
+    const requestId = loadRequestIdRef.current;
+    loadingOverlayTimeoutRef.current = setTimeout(() => {
+      if (!isLoadingRef.current || loadRequestIdRef.current !== requestId) {
+        return;
+      }
+      setShowSessionLoadingOverlay(true);
+    }, 120);
+  }, [clearLoadingOverlayDelay]);
+
+  const finishSessionLoad = useCallback(() => {
+    clearLoadingOverlayDelay();
+    isLoadingRef.current = false;
+    setIsSessionLoading(false);
+    setShowSessionLoadingOverlay(false);
+  }, [clearLoadingOverlayDelay]);
+
   const persistCanvasStateToSession = useCallback((
     session: CostumeEditorSession | null,
     options: { skipLoadingGuard?: boolean; recordHistory?: boolean } = {}
   ): boolean => {
-    if (!session) return false;
+    if (!session || !canvasRef.current) return false;
+    if (!canvasRef.current.hasUnsavedChanges(session.key)) {
+      return false;
+    }
 
     const persistedState = getCanvasPersistedStateForSession(session, options);
     if (!persistedState) {
@@ -186,6 +224,7 @@ export function CostumeEditor() {
     if (!didPersist) {
       return false;
     }
+    canvasRef.current.markPersisted(session.key);
     return true;
   }, [getCanvasPersistedStateForSession, updateCostumeFromEditor]);
 
@@ -224,7 +263,12 @@ export function CostumeEditor() {
       saveTimeoutRef.current = null;
     }
 
-    const persistedState = getCanvasPersistedStateForSession(loadedSession);
+    const canPersistLoadedSession =
+      !!loadedSession &&
+      !!canvasRef.current?.hasUnsavedChanges(loadedSession.key);
+    const persistedState = canPersistLoadedSession
+      ? getCanvasPersistedStateForSession(loadedSession)
+      : null;
     const persistedSession: CostumeEditorPersistedSession | undefined =
       loadedSession && persistedState
         ? {
@@ -233,10 +277,14 @@ export function CostumeEditor() {
           }
         : undefined;
 
-    return applyCostumeEditorOperation(currentObjectTarget, {
+    const didApply = applyCostumeEditorOperation(currentObjectTarget, {
       persistedSession,
       operation,
     });
+    if (didApply && loadedSession && persistedSession) {
+      canvasRef.current?.markPersisted(loadedSession.key);
+    }
+    return didApply;
   }, [applyCostumeEditorOperation, currentObjectTarget, getCanvasPersistedStateForSession, isCanvasReadyForSession]);
 
   const saveToCostume = useCallback((session: CostumeEditorSession | null) => {
@@ -266,15 +314,14 @@ export function CostumeEditor() {
 
       loadRequestIdRef.current += 1;
       currentCostumeIdRef.current = null;
-      isLoadingRef.current = true;
-      setIsSessionLoading(!!selectedObjectId);
+      beginSessionLoad(!!selectedObjectId);
     }
 
     previousSelectionRef.current = {
       sceneId: selectedSceneId,
       objectId: selectedObjectId,
     };
-  }, [selectedSceneId, selectedObjectId]);
+  }, [beginSessionLoad, selectedSceneId, selectedObjectId]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -282,8 +329,7 @@ export function CostumeEditor() {
     if (!currentCostume || !currentSession) {
       currentCostumeIdRef.current = null;
       const requestId = ++loadRequestIdRef.current;
-      isLoadingRef.current = true;
-      setIsSessionLoading(!!selectedObjectId);
+      beginSessionLoad(!!selectedObjectId);
       const fallbackMode: CostumeEditorMode = 'bitmap';
       setEditorMode(fallbackMode);
       setActiveTool((prev) => ensureToolForMode(fallbackMode, prev));
@@ -291,8 +337,7 @@ export function CostumeEditor() {
       canvasRef.current.loadFromDataURL('', null).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
         loadedSessionRef.current = null;
-        isLoadingRef.current = false;
-        setIsSessionLoading(false);
+        finishSessionLoad();
         const resolvedMode = canvasRef.current?.getEditorMode() ?? fallbackMode;
         setEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
@@ -303,9 +348,8 @@ export function CostumeEditor() {
     const loadedSessionKey = canvasRef.current.getLoadedSessionKey();
     if (currentCostumeIdRef.current !== currentCostume.id || loadedSessionKey !== currentSession.key) {
       currentCostumeIdRef.current = currentCostume.id;
-      isLoadingRef.current = true;
-      setIsSessionLoading(true);
       const requestId = ++loadRequestIdRef.current;
+      beginSessionLoad(true);
 
       const nextMode = getInitialCostumeEditorMode(currentCostume);
       setEditorMode(nextMode);
@@ -314,17 +358,17 @@ export function CostumeEditor() {
       canvasRef.current.loadCostume(currentSession.key, currentCostume).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
         loadedSessionRef.current = currentSession;
-        isLoadingRef.current = false;
-        setIsSessionLoading(false);
+        finishSessionLoad();
         const resolvedMode = canvasRef.current?.getEditorMode() ?? nextMode;
         setEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
-  }, [currentCostume, currentSession, selectedObjectId]);
+  }, [beginSessionLoad, currentCostume, currentSession, finishSessionLoad, selectedObjectId]);
 
   useEffect(() => {
     return () => {
+      clearLoadingOverlayDelay();
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
@@ -332,7 +376,7 @@ export function CostumeEditor() {
         skipLoadingGuard: true,
       });
     };
-  }, [persistCanvasStateToSession]);
+  }, [clearLoadingOverlayDelay, persistCanvasStateToSession]);
 
   const handleHistoryChange = useCallback(() => {
     if (isLoadingRef.current) {
@@ -595,8 +639,8 @@ export function CostumeEditor() {
       </div>
 
       {isSessionLoading && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 text-sm text-muted-foreground backdrop-blur-[1px]">
-          Switching costume editor to the selected object...
+        <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-background/70 text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>
+          {showSessionLoadingOverlay ? 'Switching costume editor to the selected object...' : null}
         </div>
       )}
     </div>

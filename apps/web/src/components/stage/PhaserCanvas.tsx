@@ -6,7 +6,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
-import type { Scene as SceneData, GameObject, ComponentDefinition, Variable, BackgroundConfig, CostumeBounds } from '@/types';
+import type { Scene as SceneData, GameObject, ComponentDefinition, Variable, BackgroundConfig, Costume, CostumeBounds } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
@@ -1304,24 +1304,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         );
 
         if (costumeChanged) {
-          // Costume changed - update the sprite
-          const existingSprite = targetContainer.getByName('sprite') as Phaser.GameObjects.Image | null;
-          const existingPlaceholder = targetContainer.getByName('placeholder') as Phaser.GameObjects.Graphics | null;
-
-          // Get the old texture key to remove it
-          const oldTextureKey = targetContainer.getData('textureKey') as string | undefined;
-
-          if (existingSprite) {
-            existingSprite.destroy();
-          }
-          if (existingPlaceholder) {
-            existingPlaceholder.destroy();
-          }
-
-          // Remove old texture to force reload with new content
-          if (oldTextureKey && phaserScene.textures.exists(oldTextureKey)) {
-            phaserScene.textures.remove(oldTextureKey);
-          }
+          const nextVisualVersion = ((targetContainer.getData('costumeVisualVersion') as number | undefined) ?? 0) + 1;
+          targetContainer.setData('costumeVisualVersion', nextVisualVersion);
 
           // Helper to update container with new sprite using bounds
           const updateWithSprite = (
@@ -1390,6 +1374,33 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             }
           };
 
+          const replaceCurrentVisual = (
+            applyNextVisual: () => void,
+            nextTextureKey?: string | null,
+          ) => {
+            const existingSprite = targetContainer.getByName('sprite') as Phaser.GameObjects.Image | null;
+            const existingPlaceholder = targetContainer.getByName('placeholder') as Phaser.GameObjects.Graphics | null;
+            const previousTextureKey = targetContainer.getData('textureKey') as string | undefined;
+
+            if (existingSprite) {
+              existingSprite.destroy();
+            }
+            if (existingPlaceholder) {
+              existingPlaceholder.destroy();
+            }
+
+            applyNextVisual();
+
+            if (
+              previousTextureKey &&
+              previousTextureKey !== nextTextureKey &&
+              previousTextureKey.startsWith('costume_') &&
+              phaserScene.textures.exists(previousTextureKey)
+            ) {
+              phaserScene.textures.remove(previousTextureKey);
+            }
+          };
+
           const applyPlaceholderVisual = () => {
             const graphics = phaserScene.add.graphics();
             graphics.setName('placeholder');
@@ -1418,33 +1429,53 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             }
           };
 
+          const commitCostumeSpriteVisual = (costume: Costume, textureKey: string) => {
+            if (!targetContainer.active || !targetContainer.scene) {
+              return;
+            }
+            if ((targetContainer.getData('costumeVisualVersion') as number | undefined) !== nextVisualVersion) {
+              return;
+            }
+            if (!phaserScene.textures.exists(textureKey)) {
+              return;
+            }
+
+            const sprite = phaserScene.add.image(0, 0, textureKey);
+            replaceCurrentVisual(() => {
+              targetContainer.setData('costumeId', costume.id);
+              targetContainer.setData('assetId', costume.assetId);
+              targetContainer.setData('textureKey', textureKey);
+              targetContainer.setData('bounds', costume.bounds);
+              updateWithSprite(sprite, targetContainer, costume.bounds);
+            }, textureKey);
+          };
+
           if (!hasCurrentCostumeAsset || !currentCostume) {
-            targetContainer.setData('costumeId', null);
-            targetContainer.setData('assetId', null);
-            targetContainer.setData('textureKey', null);
-            targetContainer.setData('bounds', null);
-            applyPlaceholderVisual();
+            replaceCurrentVisual(() => {
+              targetContainer.setData('costumeId', null);
+              targetContainer.setData('assetId', null);
+              targetContainer.setData('textureKey', null);
+              targetContainer.setData('bounds', null);
+              applyPlaceholderVisual();
+            }, null);
           } else {
             const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
-
-            // Always load fresh - we removed any existing texture above
-            const img = new Image();
-            img.onload = () => {
-              // Check if container still exists and this is still the expected costume
-              if (!targetContainer.active || !targetContainer.scene) return;
-              if (targetContainer.getData('assetId') !== currentCostume.assetId) return;
-              if (phaserScene.textures.exists(textureKey)) return;
-
-              phaserScene.textures.addImage(textureKey, img);
-              const sprite = phaserScene.add.image(0, 0, textureKey);
-              updateWithSprite(sprite, targetContainer, currentCostume.bounds);
-            };
-            img.src = currentCostume.assetId;
-
-            targetContainer.setData('costumeId', currentCostume.id);
-            targetContainer.setData('assetId', currentCostume.assetId);
-            targetContainer.setData('textureKey', textureKey);
-            targetContainer.setData('bounds', currentCostume.bounds);
+            if (phaserScene.textures.exists(textureKey)) {
+              commitCostumeSpriteVisual(currentCostume, textureKey);
+            } else {
+              const img = new Image();
+              img.onload = () => {
+                if (!targetContainer.active || !targetContainer.scene) return;
+                if ((targetContainer.getData('costumeVisualVersion') as number | undefined) !== nextVisualVersion) {
+                  return;
+                }
+                if (!phaserScene.textures.exists(textureKey)) {
+                  phaserScene.textures.addImage(textureKey, img);
+                }
+                commitCostumeSpriteVisual(currentCostume, textureKey);
+              };
+              img.src = currentCostume.assetId;
+            }
           }
         }
       }

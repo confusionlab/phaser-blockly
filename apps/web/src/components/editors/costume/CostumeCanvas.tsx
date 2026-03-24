@@ -101,6 +101,8 @@ export interface CostumeCanvasHandle {
   loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
   loadCostume: (sessionKey: string, costume: Costume) => Promise<void>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
+  hasUnsavedChanges: (sessionKey?: string | null) => boolean;
+  markPersisted: (sessionKey?: string | null) => void;
   setEditorMode: (mode: CostumeEditorMode) => Promise<void>;
   getEditorMode: () => CostumeEditorMode;
   getLoadedSessionKey: () => string | null;
@@ -170,6 +172,27 @@ function isVectorPointSelectableObject(obj: unknown): obj is Record<string, any>
   if (!obj || typeof obj !== 'object') return false;
   if (isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) return false;
   return true;
+}
+
+function areHistorySnapshotsEqual(
+  a: CanvasHistorySnapshot | null,
+  b: CanvasHistorySnapshot | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.mode === b.mode &&
+    a.bitmapDataUrl === b.bitmapDataUrl &&
+    a.vectorJson === b.vectorJson
+  );
+}
+
+function cloneHistorySnapshot(snapshot: CanvasHistorySnapshot): CanvasHistorySnapshot {
+  return {
+    mode: snapshot.mode,
+    bitmapDataUrl: snapshot.bitmapDataUrl,
+    vectorJson: snapshot.vectorJson,
+  };
 }
 
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
@@ -263,6 +286,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const historyRef = useRef<CanvasHistorySnapshot[]>([]);
   const historyIndexRef = useRef(-1);
+  const persistedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
+  const hasUnsavedChangesRef = useRef(false);
 
   const shapeDraftRef = useRef<{
     type: 'rectangle' | 'circle' | 'line';
@@ -448,6 +473,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return { mode, bitmapDataUrl, vectorJson };
   }, [getCanvasElement]);
 
+  const updateDirtyStateFromSnapshot = useCallback((snapshot: CanvasHistorySnapshot | null) => {
+    hasUnsavedChangesRef.current = !areHistorySnapshotsEqual(snapshot, persistedSnapshotRef.current);
+  }, []);
+
+  const markSnapshotPersisted = useCallback((snapshot: CanvasHistorySnapshot | null) => {
+    persistedSnapshotRef.current = snapshot ? cloneHistorySnapshot(snapshot) : null;
+    hasUnsavedChangesRef.current = false;
+  }, []);
+
+  const markCurrentSnapshotPersisted = useCallback((sessionKey?: string | null) => {
+    if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
+      return;
+    }
+
+    markSnapshotPersisted(createSnapshot());
+  }, [createSnapshot, markSnapshotPersisted]);
+
   const saveHistory = useCallback(() => {
     if (suppressHistoryRef.current) return;
     const snapshot = createSnapshot();
@@ -470,8 +512,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       historyIndexRef.current -= 1;
     }
 
+    updateDirtyStateFromSnapshot(snapshot);
     onHistoryChangeRef.current?.();
-  }, [createSnapshot]);
+  }, [createSnapshot, updateDirtyStateFromSnapshot]);
 
   const syncTextStyleFromSelection = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -678,9 +721,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
     } finally {
       suppressHistoryRef.current = false;
+      updateDirtyStateFromSnapshot(snapshot);
       onHistoryChangeRef.current?.();
     }
-  }, [loadBitmapLayer, setEditorMode]);
+  }, [loadBitmapLayer, setEditorMode, updateDirtyStateFromSnapshot]);
 
   const applyFill = useCallback(async (x: number, y: number) => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1009,7 +1053,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     historyRef.current = [];
     historyIndexRef.current = -1;
     saveHistory();
-  }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
+    markCurrentSnapshotPersisted(sessionKey);
+  }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, markCurrentSnapshotPersisted, saveHistory, setEditorMode]);
 
   const restoreOriginalControls = useCallback((obj: any) => {
     if (!obj || typeof obj !== 'object') return;
@@ -2744,11 +2789,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       historyRef.current = [];
       historyIndexRef.current = -1;
       saveHistory();
+      markCurrentSnapshotPersisted(sessionKey ?? null);
     },
 
     loadCostume,
 
     exportCostumeState,
+
+    hasUnsavedChanges: (sessionKey?: string | null) => {
+      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
+        return false;
+      }
+      return !areHistorySnapshotsEqual(createSnapshot(), persistedSnapshotRef.current);
+    },
+
+    markPersisted: (sessionKey?: string | null) => {
+      markCurrentSnapshotPersisted(sessionKey);
+    },
 
     setEditorMode: async (mode: CostumeEditorMode) => {
       await switchEditorMode(mode);
@@ -2799,6 +2856,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     configureCanvasForTool,
     exportCostumeState,
     getCanvasElement,
+    markCurrentSnapshotPersisted,
     loadBitmapLayer,
     loadCostume,
     saveHistory,
