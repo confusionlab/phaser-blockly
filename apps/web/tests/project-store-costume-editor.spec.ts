@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { createDefaultGameObject, createDefaultProject, type ComponentDefinition, type Project } from '../src/types';
+import {
+  createDefaultColliderConfig,
+  createDefaultGameObject,
+  createDefaultPhysicsConfig,
+  createDefaultProject,
+  type ComponentDefinition,
+  type Project,
+} from '../src/types';
 
 type StoreModules = {
   useProjectStore: typeof import('../src/store/projectStore').useProjectStore;
@@ -223,6 +230,82 @@ test.describe('project store costume editor boundary', () => {
     const nextProject = useProjectStore.getState().project;
     expect(nextProject?.components[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,UPDATED_COMPONENT');
     expect(nextProject?.scenes[0]?.objects[0]?.componentId).toBe(sharedComponent.id);
+  });
+
+  test('keeps object physics and collider in sync at the store boundary', async () => {
+    const project = createDefaultProject('Physics collider sync');
+    const scene = project.scenes[0];
+    const object = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
+    scene.objects = [object];
+
+    const useProjectStore = await openProject(project);
+
+    useProjectStore.getState().updateObject(scene.id, object.id, {
+      physics: createDefaultPhysicsConfig(),
+    });
+
+    let nextProject = useProjectStore.getState().project;
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(createDefaultPhysicsConfig());
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(createDefaultColliderConfig('circle'));
+
+    useProjectStore.getState().updateObject(scene.id, object.id, {
+      physics: null,
+    });
+
+    nextProject = useProjectStore.getState().project;
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toBeNull();
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toBeNull();
+
+    useProjectStore.getState().updateObject(scene.id, object.id, {
+      collider: createDefaultColliderConfig('box'),
+    });
+
+    nextProject = useProjectStore.getState().project;
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toBeNull();
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toBeNull();
+  });
+
+  test('keeps component physics and collider in sync across instances', async () => {
+    const project = createDefaultProject('Component physics collider sync');
+    const scene = project.scenes[0];
+    const sharedComponent: ComponentDefinition = {
+      id: 'component-hero',
+      name: 'Hero',
+      blocklyXml: '',
+      costumes: [],
+      currentCostumeIndex: 0,
+      physics: null,
+      collider: null,
+      sounds: [],
+      localVariables: [],
+    };
+    const instance = createObject('instance-a', 'instance-costume', 'data:image/png;base64,INSTANCE');
+    instance.componentId = sharedComponent.id;
+    instance.costumes = [];
+    scene.objects = [instance];
+    project.components = [sharedComponent];
+
+    const useProjectStore = await openProject(project);
+
+    useProjectStore.getState().updateComponent(sharedComponent.id, {
+      physics: createDefaultPhysicsConfig(),
+    });
+
+    let nextProject = useProjectStore.getState().project;
+    expect(nextProject?.components[0]?.physics).toEqual(createDefaultPhysicsConfig());
+    expect(nextProject?.components[0]?.collider).toEqual(createDefaultColliderConfig('circle'));
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(createDefaultPhysicsConfig());
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(createDefaultColliderConfig('circle'));
+
+    useProjectStore.getState().updateComponent(sharedComponent.id, {
+      physics: null,
+    });
+
+    nextProject = useProjectStore.getState().project;
+    expect(nextProject?.components[0]?.physics).toBeNull();
+    expect(nextProject?.components[0]?.collider).toBeNull();
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toBeNull();
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toBeNull();
   });
 
   test('opens the costume editor with a scoped collider edit request', async () => {

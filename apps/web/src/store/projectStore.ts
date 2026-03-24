@@ -11,7 +11,9 @@ import type {
 } from '../types';
 import type { AssistantChangeSet } from '../../../../packages/ui-shared/src/assistant';
 import { normalizeBlocklyXml } from '../../../../packages/ui-shared/src/blocklyXml';
+import { normalizePhysicsColliderState } from '../../../../packages/ui-shared/src/physicsCollider';
 import {
+  createDefaultColliderConfig,
   createDefaultProject,
   createDefaultScene,
   createDefaultGameObject,
@@ -175,6 +177,15 @@ function cloneColliderConfig(collider: GameObject['collider']): GameObject['coll
   return collider ? { ...collider } : null;
 }
 
+type PhysicsColliderEntity = {
+  physics: GameObject['physics'];
+  collider: GameObject['collider'];
+};
+
+function normalizePhysicsCollider<TEntity extends PhysicsColliderEntity>(entity: TEntity): TEntity {
+  return normalizePhysicsColliderState(entity, () => createDefaultColliderConfig());
+}
+
 function cloneVariableDefinitions(variables: GameObject['localVariables']): GameObject['localVariables'] {
   return (variables || []).map((variable) => ({ ...variable }));
 }
@@ -195,13 +206,18 @@ function hasDuplicateVariableNames(variables: Variable[]): boolean {
 }
 
 function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
+  const normalizedPhysicsCollider = normalizePhysicsCollider({
+    physics: clonePhysicsConfig(obj.physics),
+    collider: cloneColliderConfig(obj.collider),
+  });
+
   return {
     name: obj.name,
     blocklyXml: normalizeBlocklyXml(obj.blocklyXml),
     costumes: cloneCostumes(obj.costumes),
     currentCostumeIndex: obj.currentCostumeIndex,
-    physics: clonePhysicsConfig(obj.physics),
-    collider: cloneColliderConfig(obj.collider),
+    physics: normalizedPhysicsCollider.physics,
+    collider: normalizedPhysicsCollider.collider,
     sounds: cloneSounds(obj.sounds),
     localVariables: cloneVariableDefinitions(obj.localVariables),
   };
@@ -211,14 +227,18 @@ function toComponentBackedObjectFields(component: ComponentDefinition): Componen
   const costumes = cloneCostumes(component.costumes || []);
   const maxCostumeIndex = Math.max(0, costumes.length - 1);
   const safeCostumeIndex = Math.min(Math.max(component.currentCostumeIndex || 0, 0), maxCostumeIndex);
+  const normalizedPhysicsCollider = normalizePhysicsCollider({
+    physics: clonePhysicsConfig(component.physics ?? null),
+    collider: cloneColliderConfig(component.collider ?? null),
+  });
 
   return {
     name: component.name,
     blocklyXml: normalizeBlocklyXml(component.blocklyXml),
     costumes,
     currentCostumeIndex: safeCostumeIndex,
-    physics: clonePhysicsConfig(component.physics ?? null),
-    collider: cloneColliderConfig(component.collider ?? null),
+    physics: normalizedPhysicsCollider.physics,
+    collider: normalizedPhysicsCollider.collider,
     sounds: cloneSounds(component.sounds || []),
     localVariables: cloneVariableDefinitions(component.localVariables || []),
   };
@@ -277,6 +297,10 @@ function applyObjectUpdatesToProject(
 
   if (obj.componentId) {
     const componentId = obj.componentId;
+    const component = (project.components || []).find((candidate) => candidate.id === componentId);
+    if (!component) {
+      return null;
+    }
     const instanceOnlyKeys = new Set<keyof GameObject>([
       'x',
       'y',
@@ -289,7 +313,7 @@ function applyObjectUpdatesToProject(
       'folderId',
       'layer',
     ]);
-    const componentSyncKeys = COMPONENT_SYNC_KEYS as (keyof ComponentDefinition & keyof GameObject)[];
+    const componentSyncKeys = COMPONENT_SYNC_KEYS as (keyof ComponentBackedObjectFields)[];
 
     const syncedUpdates: Partial<ComponentDefinition> = {};
     const instanceUpdates: Partial<GameObject> = {};
@@ -297,7 +321,7 @@ function applyObjectUpdatesToProject(
     for (const key of Object.keys(normalizedUpdates) as (keyof GameObject)[]) {
       if (instanceOnlyKeys.has(key)) {
         (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
-      } else if ((componentSyncKeys as (keyof GameObject)[]).includes(key)) {
+      } else if (componentSyncKeys.includes(key as keyof ComponentBackedObjectFields)) {
         (syncedUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
       } else {
         (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
@@ -305,10 +329,23 @@ function applyObjectUpdatesToProject(
     }
 
     if (Object.keys(syncedUpdates).length > 0) {
+      const nextComponent = normalizePhysicsCollider({
+        ...component,
+        ...syncedUpdates,
+      });
+      const nextSyncedObjectFields = toComponentBackedObjectFields(nextComponent);
+      const syncedKeysToApply = new Set<keyof ComponentBackedObjectFields>(
+        Object.keys(syncedUpdates) as (keyof ComponentBackedObjectFields)[],
+      );
+      if (syncedUpdates.physics !== undefined || syncedUpdates.collider !== undefined) {
+        syncedKeysToApply.add('physics');
+        syncedKeysToApply.add('collider');
+      }
+
       return {
         ...project,
         components: (project.components || []).map((component) =>
-          component.id === componentId ? { ...component, ...syncedUpdates } : component
+          component.id === componentId ? nextComponent : component
         ),
         scenes: project.scenes.map((candidateScene) => ({
           ...normalizeSceneLayering({
@@ -320,17 +357,21 @@ function applyObjectUpdatesToProject(
 
               const syncedObjectUpdates: Partial<GameObject> = {};
               for (const syncKey of componentSyncKeys) {
-                const value = syncedUpdates[syncKey];
-                if (value !== undefined) {
+                if (!syncedKeysToApply.has(syncKey)) {
+                  continue;
+                }
+
+                const value = nextSyncedObjectFields[syncKey];
+                if (value !== undefined || syncKey === 'physics' || syncKey === 'collider') {
                   (syncedObjectUpdates as Record<string, unknown>)[syncKey] = value;
                 }
               }
 
               if (candidateObject.id === objectId) {
-                return { ...candidateObject, ...syncedObjectUpdates, ...instanceUpdates };
+                return normalizePhysicsCollider({ ...candidateObject, ...syncedObjectUpdates, ...instanceUpdates });
               }
 
-              return { ...candidateObject, ...syncedObjectUpdates };
+              return normalizePhysicsCollider({ ...candidateObject, ...syncedObjectUpdates });
             }),
           }),
         })),
@@ -346,7 +387,9 @@ function applyObjectUpdatesToProject(
             ? normalizeSceneLayering({
                 ...candidateScene,
                 objects: candidateScene.objects.map((candidateObject) =>
-                  candidateObject.id === objectId ? { ...candidateObject, ...instanceUpdates } : candidateObject
+                  candidateObject.id === objectId
+                    ? normalizePhysicsCollider({ ...candidateObject, ...instanceUpdates })
+                    : candidateObject
                 ),
               })
             : candidateScene
@@ -365,7 +408,9 @@ function applyObjectUpdatesToProject(
         ? normalizeSceneLayering({
             ...candidateScene,
             objects: candidateScene.objects.map((candidateObject) =>
-              candidateObject.id === objectId ? { ...candidateObject, ...normalizedUpdates } : candidateObject
+              candidateObject.id === objectId
+                ? normalizePhysicsCollider({ ...candidateObject, ...normalizedUpdates })
+                : candidateObject
             ),
           })
         : candidateScene
@@ -487,11 +532,13 @@ function getCostumeEditorOperationHistoryOptions(operation: CostumeEditorOperati
 
 function normalizeProject(project: Project): Project {
   const normalizedGlobalVariables = normalizeVariableDefinitions(project.globalVariables || [], { scope: 'global' });
-  const normalizedComponents = (Array.isArray(project.components) ? project.components : []).map((component) => ({
-    ...component,
-    blocklyXml: normalizeBlocklyXml(component.blocklyXml || ''),
-    localVariables: normalizeVariableDefinitions(component.localVariables || [], { scope: 'local' }),
-  }));
+  const normalizedComponents = (Array.isArray(project.components) ? project.components : []).map((component) =>
+    normalizePhysicsCollider({
+      ...component,
+      blocklyXml: normalizeBlocklyXml(component.blocklyXml || ''),
+      localVariables: normalizeVariableDefinitions(component.localVariables || [], { scope: 'local' }),
+    })
+  );
 
   return normalizeProjectLayering({
     ...project,
@@ -506,14 +553,16 @@ function normalizeProject(project: Project): Project {
     components: normalizedComponents,
     scenes: (Array.isArray(project.scenes) ? project.scenes : []).map((scene) => {
       const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
-      const objects: GameObject[] = (Array.isArray(scene.objects) ? scene.objects : []).map((obj) => ({
-        ...obj,
-        blocklyXml: normalizeBlocklyXml(obj.blocklyXml || ''),
-        localVariables: normalizeVariableDefinitions(obj.localVariables || [], {
-          scope: 'local',
-          objectId: obj.componentId ? null : obj.id,
-        }),
-      }));
+      const objects: GameObject[] = (Array.isArray(scene.objects) ? scene.objects : []).map((obj) =>
+        normalizePhysicsCollider({
+          ...obj,
+          blocklyXml: normalizeBlocklyXml(obj.blocklyXml || ''),
+          localVariables: normalizeVariableDefinitions(obj.localVariables || [], {
+            scope: 'local',
+            objectId: obj.componentId ? null : obj.id,
+          }),
+        })
+      );
       return normalizeSceneLayering({
         ...scene,
         worldBoundary: scene.worldBoundary
@@ -1366,8 +1415,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project) return state;
 
-      const componentExists = (state.project.components || []).some((component) => component.id === componentId);
-      if (!componentExists) return state;
+      const currentComponent = (state.project.components || []).find((component) => component.id === componentId);
+      if (!currentComponent) return state;
 
       const normalizedUpdates: Partial<ComponentDefinition> = { ...updates };
       if (updates.blocklyXml !== undefined) {
@@ -1387,20 +1436,45 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         }
       }
       const hasSyncedUpdates = Object.keys(syncedInstanceUpdates).length > 0;
+      const nextComponent = normalizePhysicsCollider({
+        ...currentComponent,
+        ...normalizedUpdates,
+      });
+      const nextSyncedObjectFields = toComponentBackedObjectFields(nextComponent);
+      const syncedKeysToApply = new Set<keyof ComponentBackedObjectFields>(
+        Object.keys(syncedInstanceUpdates) as (keyof ComponentBackedObjectFields)[],
+      );
+      if (normalizedUpdates.physics !== undefined || normalizedUpdates.collider !== undefined) {
+        syncedKeysToApply.add('physics');
+        syncedKeysToApply.add('collider');
+      }
 
       return {
         project: {
           ...state.project,
           components: (state.project.components || []).map((component) =>
-            component.id === componentId ? { ...component, ...normalizedUpdates } : component
+            component.id === componentId ? nextComponent : component
           ),
           scenes: hasSyncedUpdates
             ? state.project.scenes.map((scene) => ({
                 ...normalizeSceneLayering({
                   ...scene,
-                  objects: scene.objects.map((obj) =>
-                    obj.componentId === componentId ? { ...obj, ...syncedInstanceUpdates } : obj
-                  ),
+                  objects: scene.objects.map((obj) => {
+                    if (obj.componentId !== componentId) {
+                      return obj;
+                    }
+
+                    const nextObjectUpdates: Partial<ComponentBackedObjectFields> = {};
+                    for (const key of COMPONENT_SYNC_KEYS) {
+                      if (!syncedKeysToApply.has(key)) {
+                        continue;
+                      }
+
+                      (nextObjectUpdates as Record<string, unknown>)[key] = nextSyncedObjectFields[key];
+                    }
+
+                    return normalizePhysicsCollider({ ...obj, ...nextObjectUpdates });
+                  }),
                 }),
               }))
             : state.project.scenes,

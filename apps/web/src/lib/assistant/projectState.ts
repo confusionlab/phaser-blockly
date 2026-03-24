@@ -11,6 +11,7 @@ import type {
 } from '../../../../../packages/ui-shared/src/assistant';
 import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
 import { compileAssistantLogicProgram } from '../../../../../packages/ui-shared/src/assistantLogic';
+import { normalizePhysicsColliderState } from '../../../../../packages/ui-shared/src/physicsCollider';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import type {
   ComponentDefinition,
@@ -20,6 +21,7 @@ import type {
   SceneFolder,
 } from '@/types';
 import {
+  createDefaultColliderConfig,
   createDefaultGameObject,
   createDefaultScene,
 } from '@/types';
@@ -33,6 +35,15 @@ const ASSISTANT_SNAPSHOT_FORMAT_VERSION = 2;
 
 function cloneProject<T>(value: T): T {
   return structuredClone(value);
+}
+
+type PhysicsColliderEntity = {
+  physics: GameObject['physics'];
+  collider: GameObject['collider'];
+};
+
+function normalizePhysicsCollider<TEntity extends PhysicsColliderEntity>(entity: TEntity): TEntity {
+  return normalizePhysicsColliderState(entity, () => createDefaultColliderConfig());
 }
 
 function clampIndex(index: number, length: number): number {
@@ -124,13 +135,18 @@ function cloneLocalVariables(object: GameObject): GameObject['localVariables'] {
 }
 
 function toComponentBackedFieldsFromObject(object: GameObject): Omit<ComponentDefinition, 'id'> {
+  const normalizedPhysicsCollider = normalizePhysicsCollider({
+    physics: cloneProject(object.physics),
+    collider: cloneProject(object.collider),
+  });
+
   return {
     name: object.name,
     blocklyXml: normalizeBlocklyXml(object.blocklyXml),
     costumes: cloneProject(object.costumes || []),
     currentCostumeIndex: object.currentCostumeIndex,
-    physics: cloneProject(object.physics),
-    collider: cloneProject(object.collider),
+    physics: normalizedPhysicsCollider.physics,
+    collider: normalizedPhysicsCollider.collider,
     sounds: cloneProject(object.sounds || []),
     localVariables: cloneLocalVariables(object),
   };
@@ -140,13 +156,18 @@ function toComponentBackedObjectFields(component: ComponentDefinition): Pick<
   GameObject,
   'name' | 'blocklyXml' | 'costumes' | 'currentCostumeIndex' | 'physics' | 'collider' | 'sounds' | 'localVariables'
 > {
+  const normalizedPhysicsCollider = normalizePhysicsCollider({
+    physics: cloneProject(component.physics),
+    collider: cloneProject(component.collider),
+  });
+
   return {
     name: component.name,
     blocklyXml: normalizeBlocklyXml(component.blocklyXml),
     costumes: cloneProject(component.costumes || []),
     currentCostumeIndex: component.currentCostumeIndex,
-    physics: cloneProject(component.physics),
-    collider: cloneProject(component.collider),
+    physics: normalizedPhysicsCollider.physics,
+    collider: normalizedPhysicsCollider.collider,
     sounds: cloneProject(component.sounds || []),
     localVariables: cloneProject(component.localVariables || []),
   };
@@ -181,61 +202,63 @@ function toAssistantBackground(background: Scene['background']): AssistantBackgr
 }
 
 function toAssistantObject(object: GameObject): AssistantObject {
-  const blocklyXml = normalizeBlocklyXml(object.blocklyXml);
+  const normalizedObject = normalizePhysicsCollider(object);
+  const blocklyXml = normalizeBlocklyXml(normalizedObject.blocklyXml);
   return {
-    id: object.id,
-    name: object.name,
-    x: object.x,
-    y: object.y,
-    scaleX: object.scaleX,
-    scaleY: object.scaleY,
-    rotation: object.rotation,
-    visible: object.visible,
-    parentId: object.parentId ?? null,
-    order: object.order,
-    componentId: object.componentId,
-    physics: object.physics ? { ...object.physics } : null,
-    collider: object.collider ? { ...object.collider } : null,
+    id: normalizedObject.id,
+    name: normalizedObject.name,
+    x: normalizedObject.x,
+    y: normalizedObject.y,
+    scaleX: normalizedObject.scaleX,
+    scaleY: normalizedObject.scaleY,
+    rotation: normalizedObject.rotation,
+    visible: normalizedObject.visible,
+    parentId: normalizedObject.parentId ?? null,
+    order: normalizedObject.order,
+    componentId: normalizedObject.componentId,
+    physics: normalizedObject.physics ? { ...normalizedObject.physics } : null,
+    collider: normalizedObject.collider ? { ...normalizedObject.collider } : null,
     blocklyXml,
-    generatedJs: generateCodeForObject(blocklyXml, object.id) || undefined,
-    costumes: (object.costumes || []).map((costume) => ({
+    generatedJs: generateCodeForObject(blocklyXml, normalizedObject.id) || undefined,
+    costumes: (normalizedObject.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
     })),
-    currentCostumeIndex: object.currentCostumeIndex,
-    sounds: (object.sounds || []).map((sound) => ({
+    currentCostumeIndex: normalizedObject.currentCostumeIndex,
+    sounds: (normalizedObject.sounds || []).map((sound) => ({
       id: sound.id,
       name: sound.name,
       trimStart: sound.trimStart,
       trimEnd: sound.trimEnd,
       duration: sound.duration,
     })),
-    localVariables: (object.localVariables || []).map((variable) => ({ ...variable })),
+    localVariables: (normalizedObject.localVariables || []).map((variable) => ({ ...variable })),
   };
 }
 
 function toAssistantComponent(component: ComponentDefinition): AssistantComponent {
-  const blocklyXml = normalizeBlocklyXml(component.blocklyXml);
+  const normalizedComponent = normalizePhysicsCollider(component);
+  const blocklyXml = normalizeBlocklyXml(normalizedComponent.blocklyXml);
   return {
-    id: component.id,
-    name: component.name,
+    id: normalizedComponent.id,
+    name: normalizedComponent.name,
     blocklyXml,
-    generatedJs: generateCodeForObject(blocklyXml, component.id) || undefined,
-    costumes: (component.costumes || []).map((costume) => ({
+    generatedJs: generateCodeForObject(blocklyXml, normalizedComponent.id) || undefined,
+    costumes: (normalizedComponent.costumes || []).map((costume) => ({
       id: costume.id,
       name: costume.name,
     })),
-    currentCostumeIndex: component.currentCostumeIndex,
-    physics: component.physics ? { ...component.physics } : null,
-    collider: component.collider ? { ...component.collider } : null,
-    sounds: (component.sounds || []).map((sound) => ({
+    currentCostumeIndex: normalizedComponent.currentCostumeIndex,
+    physics: normalizedComponent.physics ? { ...normalizedComponent.physics } : null,
+    collider: normalizedComponent.collider ? { ...normalizedComponent.collider } : null,
+    sounds: (normalizedComponent.sounds || []).map((sound) => ({
       id: sound.id,
       name: sound.name,
       trimStart: sound.trimStart,
       trimEnd: sound.trimEnd,
       duration: sound.duration,
     })),
-    localVariables: (component.localVariables || []).map((variable) => ({ ...variable })),
+    localVariables: (normalizedComponent.localVariables || []).map((variable) => ({ ...variable })),
   };
 }
 
@@ -577,7 +600,7 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
                 ...scene,
                 objects: scene.objects.map((object) =>
                   object.id === operation.objectId
-                    ? { ...object, ...operation.properties }
+                    ? normalizePhysicsCollider({ ...object, ...operation.properties })
                     : object,
                 ),
               })
@@ -703,11 +726,12 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
           nextObject.x = 0;
           nextObject.y = 0;
           Object.assign(nextObject, toComponentBackedObjectFields(component), operation.properties ?? {});
+          const normalizedNextObject = normalizePhysicsCollider(nextObject);
           return normalizeSceneLayering({
             ...scene,
             objects: moveObjects(
-              [...scene.objects, nextObject],
-              nextObject.id,
+              [...scene.objects, normalizedNextObject],
+              normalizedNextObject.id,
               operation.parentId ?? null,
               operation.index,
             ),
@@ -770,30 +794,49 @@ function applyOperation(project: Project, operation: AssistantProjectOperation):
         ),
       };
     case 'update_component_properties':
-      return {
-        ...project,
-        components: (project.components || []).map((component) =>
-          component.id === operation.componentId
-            ? { ...component, ...operation.properties }
-            : component,
-        ),
-        scenes: project.scenes.map((scene) =>
-          normalizeSceneLayering({
-            ...scene,
-            objects: scene.objects.map((object) => {
-              if (object.componentId !== operation.componentId) return object;
-              const updates: Partial<GameObject> = {};
-              if (operation.properties.name !== undefined) updates.name = operation.properties.name;
-              if (operation.properties.physics !== undefined) updates.physics = cloneProject(operation.properties.physics);
-              if (operation.properties.collider !== undefined) updates.collider = cloneProject(operation.properties.collider);
-              if (operation.properties.currentCostumeIndex !== undefined) {
-                updates.currentCostumeIndex = operation.properties.currentCostumeIndex;
-              }
-              return { ...object, ...updates };
+      {
+        const currentComponent = (project.components || []).find((component) => component.id === operation.componentId);
+        if (!currentComponent) {
+          throw new Error(`Component "${operation.componentId}" was not found.`);
+        }
+
+        const nextComponent = normalizePhysicsCollider({
+          ...currentComponent,
+          ...operation.properties,
+        });
+        const nextSyncedFields = toComponentBackedObjectFields(nextComponent);
+        const syncedKeysToApply = new Set<keyof typeof nextSyncedFields>(
+          Object.keys(operation.properties) as (keyof typeof nextSyncedFields)[],
+        );
+        if (operation.properties.physics !== undefined || operation.properties.collider !== undefined) {
+          syncedKeysToApply.add('physics');
+          syncedKeysToApply.add('collider');
+        }
+
+        return {
+          ...project,
+          components: (project.components || []).map((component) =>
+            component.id === operation.componentId
+              ? nextComponent
+              : component,
+          ),
+          scenes: project.scenes.map((scene) =>
+            normalizeSceneLayering({
+              ...scene,
+              objects: scene.objects.map((object) => {
+                if (object.componentId !== operation.componentId) return object;
+
+                const updates: Partial<GameObject> = {};
+                for (const key of syncedKeysToApply) {
+                  (updates as Record<string, unknown>)[key] = nextSyncedFields[key];
+                }
+
+                return normalizePhysicsCollider({ ...object, ...updates });
+              }),
             }),
-          }),
-        ),
-      };
+          ),
+        };
+      }
     case 'set_component_blockly_xml':
       {
         const normalizedBlocklyXml = normalizeBlocklyXml(operation.blocklyXml);

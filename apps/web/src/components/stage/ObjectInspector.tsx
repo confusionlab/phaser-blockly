@@ -873,8 +873,7 @@ function PhysicsToggle({
   const togglePhysics = (checked: boolean) => {
     freezeEditorResizeForLayoutTransition();
     if (!checked) {
-      // Keep collider when physics is turned off (as per requirement)
-      updateObject(sceneId, object.id, { physics: null });
+      updateObject(sceneId, object.id, { physics: null, collider: null });
     } else {
       // Enable physics with default settings
       const updates: Partial<GameObject> = {
@@ -913,6 +912,7 @@ const colliderTypeOptions: Array<{ value: ColliderType; label: string }> = [
   { value: 'circle', label: 'Circle' },
   { value: 'capsule', label: 'Capsule' },
 ];
+const enabledColliderTypeOptions = colliderTypeOptions.filter((option) => option.value !== 'none');
 
 function isColliderType(value: string): value is ColliderType {
   return colliderTypeOptions.some((option) => option.value === value);
@@ -1071,7 +1071,7 @@ function PhysicsProperties({
                 <SelectValue placeholder="Select collider" />
               </SelectTrigger>
               <SelectContent>
-                {colliderTypeOptions.map((option) => (
+                {enabledColliderTypeOptions.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>

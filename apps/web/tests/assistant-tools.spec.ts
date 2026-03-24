@@ -19,7 +19,9 @@ import {
 } from '../../../packages/ui-shared/src/assistantLogic';
 import { applyAssistantChangeSetToProject, createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
 import {
+  createDefaultColliderConfig,
   createDefaultGameObject,
+  createDefaultPhysicsConfig,
   createDefaultProject,
   type ComponentDefinition,
   type Project,
@@ -339,6 +341,74 @@ test.describe('Assistant tool curation primitives', () => {
       height: 32,
       radius: 16,
     });
+  });
+
+  test('assistant object property updates normalize physics and collider together', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+
+    const withPhysics = applyAssistantProjectOperations(snapshot.state, [
+      {
+        kind: 'update_object_properties',
+        sceneId: fixture.sceneId,
+        objectId: fixture.heroId,
+        properties: {
+          physics: createDefaultPhysicsConfig(),
+        },
+      },
+    ]);
+
+    const nextScene = withPhysics.state.scenes.find((scene) => scene.id === fixture.sceneId);
+    const heroWithPhysics = nextScene?.objects.find((object) => object.id === fixture.heroId);
+    expect(heroWithPhysics?.physics).toEqual(createDefaultPhysicsConfig());
+    expect(heroWithPhysics?.collider).toEqual(createDefaultColliderConfig('circle'));
+
+    const withoutPhysics = applyAssistantProjectOperations(withPhysics.state, [
+      {
+        kind: 'update_object_properties',
+        sceneId: fixture.sceneId,
+        objectId: fixture.heroId,
+        properties: {
+          physics: null,
+        },
+      },
+    ]);
+
+    const finalScene = withoutPhysics.state.scenes.find((scene) => scene.id === fixture.sceneId);
+    const heroWithoutPhysics = finalScene?.objects.find((object) => object.id === fixture.heroId);
+    expect(heroWithoutPhysics?.physics).toBeNull();
+    expect(heroWithoutPhysics?.collider).toBeNull();
+  });
+
+  test('applyAssistantChangeSetToProject normalizes component physics and collider together', () => {
+    const fixture = buildProjectFixture();
+    const snapshot = createAssistantProjectSnapshot(fixture.project);
+
+    const changeSet: AssistantChangeSet = {
+      baseProjectId: fixture.project.id,
+      baseProjectVersion: snapshot.projectVersion,
+      operations: [
+        {
+          kind: 'update_component_properties',
+          componentId: fixture.componentId,
+          properties: {
+            physics: null,
+          },
+        },
+      ],
+      summary: 'Disable enemy component physics',
+      affectedEntityIds: [fixture.componentId],
+    };
+
+    const nextProject = applyAssistantChangeSetToProject(fixture.project, changeSet);
+    const enemyComponent = nextProject.components.find((component) => component.id === fixture.componentId);
+    const nextScene = nextProject.scenes.find((scene) => scene.id === fixture.sceneId);
+    const enemy = nextScene?.objects.find((object) => object.id === fixture.enemyId);
+
+    expect(enemyComponent?.physics).toBeNull();
+    expect(enemyComponent?.collider).toBeNull();
+    expect(enemy?.physics).toBeNull();
+    expect(enemy?.collider).toBeNull();
   });
 
   test('assistant blockly writes normalize common alias block types', () => {

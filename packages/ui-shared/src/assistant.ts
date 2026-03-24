@@ -11,6 +11,7 @@ import {
   compileAssistantLogicProgram,
   type AssistantLogicProgram,
 } from './assistantLogic';
+import { normalizePhysicsColliderState } from './physicsCollider';
 
 export type AssistantVariableType = 'string' | 'integer' | 'float' | 'boolean';
 
@@ -475,6 +476,26 @@ function cloneState<T>(value: T): T {
   return structuredClone(value);
 }
 
+function createDefaultAssistantCollider(): AssistantColliderConfig {
+  return {
+    type: 'circle',
+    offsetX: 0,
+    offsetY: 0,
+    width: 64,
+    height: 64,
+    radius: 32,
+  };
+}
+
+type PhysicsColliderEntity = {
+  physics: AssistantPhysicsConfig | null;
+  collider: AssistantColliderConfig | null;
+};
+
+function normalizePhysicsCollider<TEntity extends PhysicsColliderEntity>(entity: TEntity): TEntity {
+  return normalizePhysicsColliderState(entity, createDefaultAssistantCollider);
+}
+
 function sortByOrder<T extends { order: number; id: string }>(items: T[]): T[] {
   return [...items].sort((a, b) => {
     if (a.order !== b.order) return a.order - b.order;
@@ -560,7 +581,7 @@ function normalizeObjectTree(
 ): AssistantObject[] {
   const folderIds = new Set(folders.map((folder) => folder.id));
   const nextObjects = sortByOrder(objects).map((object) => ({
-    ...object,
+    ...normalizePhysicsCollider(object),
     parentId:
       typeof object.parentId === 'string' && folderIds.has(object.parentId)
         ? object.parentId
@@ -681,7 +702,7 @@ function createComponentFromObject(
   componentId = createId('component'),
   name?: string,
 ): AssistantComponent {
-  return {
+  return normalizePhysicsCollider({
     id: componentId,
     name: name?.trim() || object.name,
     blocklyXml: normalizeBlocklyXml(object.blocklyXml),
@@ -691,20 +712,25 @@ function createComponentFromObject(
     collider: cloneState(object.collider),
     sounds: cloneState(object.sounds || []),
     localVariables: cloneLocalVariables(object.localVariables || []),
-  };
+  });
 }
 
 function toComponentBackedObjectFields(component: AssistantComponent): Pick<
   AssistantObject,
   'name' | 'blocklyXml' | 'costumes' | 'currentCostumeIndex' | 'physics' | 'collider' | 'sounds' | 'localVariables'
 > {
+  const normalizedPhysicsCollider = normalizePhysicsCollider({
+    physics: cloneState(component.physics),
+    collider: cloneState(component.collider),
+  });
+
   return {
     name: component.name,
     blocklyXml: normalizeBlocklyXml(component.blocklyXml),
     costumes: cloneState(component.costumes || []),
     currentCostumeIndex: component.currentCostumeIndex,
-    physics: cloneState(component.physics),
-    collider: cloneState(component.collider),
+    physics: normalizedPhysicsCollider.physics,
+    collider: normalizedPhysicsCollider.collider,
     sounds: cloneState(component.sounds || []),
     localVariables: cloneLocalVariables(component.localVariables || []),
   };
@@ -716,14 +742,14 @@ function createObjectFromComponent(
   objectId?: string,
   properties?: AssistantComponentInstanceProperties,
 ): AssistantObject {
-  return {
+  return normalizePhysicsCollider({
     ...createDefaultObject(component.name, order, objectId),
     ...toComponentBackedObjectFields(component),
     componentId: component.id,
     x: 0,
     y: 0,
     ...properties,
-  };
+  });
 }
 
 function ensureScene(state: AssistantProjectState, sceneId: string): AssistantScene {
@@ -1487,7 +1513,9 @@ export function applyAssistantProjectOperations(
             ? normalizeScene({
                 ...candidate,
                 objects: candidate.objects.map((object) =>
-                  object.id === operation.objectId ? { ...object, ...operation.properties } : object,
+                  object.id === operation.objectId
+                    ? normalizePhysicsCollider({ ...object, ...operation.properties })
+                    : object,
                 ),
               })
             : candidate,
@@ -1671,27 +1699,38 @@ export function applyAssistantProjectOperations(
         break;
       }
       case 'update_component_properties': {
-        ensureComponent(state, operation.componentId);
+        const currentComponent = ensureComponent(state, operation.componentId);
+        const normalizedComponent = normalizePhysicsCollider({
+          ...currentComponent,
+          ...operation.properties,
+        });
         const nextComponents = state.components.map((component) =>
           component.id === operation.componentId
-            ? { ...component, ...operation.properties }
+            ? normalizedComponent
             : component,
         );
         const nextComponent = nextComponents.find((component) => component.id === operation.componentId)!;
         state.components = nextComponents;
+        const syncedKeysToApply = new Set<keyof AssistantObject>(
+          Object.keys(operation.properties) as (keyof AssistantObject)[],
+        );
+        if (operation.properties.physics !== undefined || operation.properties.collider !== undefined) {
+          syncedKeysToApply.add('physics');
+          syncedKeysToApply.add('collider');
+        }
         state.scenes = state.scenes.map((scene) =>
           normalizeScene({
             ...scene,
             objects: scene.objects.map((object) => {
               if (object.componentId !== operation.componentId) return object;
               const updates: Partial<AssistantObject> = {};
-              if (operation.properties.name !== undefined) updates.name = nextComponent.name;
-              if (operation.properties.physics !== undefined) updates.physics = cloneState(nextComponent.physics);
-              if (operation.properties.collider !== undefined) updates.collider = cloneState(nextComponent.collider);
-              if (operation.properties.currentCostumeIndex !== undefined) {
+              if (syncedKeysToApply.has('name')) updates.name = nextComponent.name;
+              if (syncedKeysToApply.has('physics')) updates.physics = cloneState(nextComponent.physics);
+              if (syncedKeysToApply.has('collider')) updates.collider = cloneState(nextComponent.collider);
+              if (syncedKeysToApply.has('currentCostumeIndex')) {
                 updates.currentCostumeIndex = nextComponent.currentCostumeIndex;
               }
-              return { ...object, ...updates };
+              return normalizePhysicsCollider({ ...object, ...updates });
             }),
           }),
         );

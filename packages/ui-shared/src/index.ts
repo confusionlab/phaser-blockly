@@ -4,3 +4,4 @@ export * from './assistantBlocks';
 export * from './assistantConversation';
 export * from './assistantModels';
 export * from './blocklyXml';
+export * from './physicsCollider';
