@@ -172,6 +172,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         className={cn(
           stageOverlayClasses.button,
           isCameraView && stageOverlayClasses.active,
+          isCameraView && 'hover:bg-inherit hover:text-inherit',
         )}
         onClick={cycleViewMode}
         title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
@@ -185,6 +186,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         className={cn(
           stageOverlayClasses.button,
           isCanvasFullscreen && stageOverlayClasses.active,
+          isCanvasFullscreen && 'hover:bg-inherit hover:text-inherit',
         )}
         onClick={toggleCanvasFullscreen}
         title={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}

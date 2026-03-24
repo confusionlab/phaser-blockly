@@ -2273,37 +2273,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'select') return;
     if (!target || !fabricCanvas.getObjects().includes(target)) return;
-    const closedShape = getFabricObjectType(target) === 'polygon' || isClosedPath(target);
-    const guideLineWidth = closedShape
-      ? VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH * 2
-      : VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH;
 
     ctx.save();
     try {
       ctx.strokeStyle = VECTOR_POINT_EDIT_GUIDE_STROKE;
-      ctx.lineWidth = guideLineWidth;
+      ctx.lineWidth = VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH;
       ctx.lineJoin = target.strokeLineJoin ?? 'round';
       ctx.lineCap = target.strokeLineCap ?? 'round';
       ctx.setLineDash([]);
 
-      if (closedShape) {
-        ctx.save();
-        if (!traceVectorPointEditingGuidePath(ctx, target)) {
-          ctx.restore();
-          return;
-        }
-        ctx.clip();
-        traceVectorPointEditingGuidePath(ctx, target);
-        ctx.stroke();
-        ctx.restore();
-      } else if (traceVectorPointEditingGuidePath(ctx, target)) {
+      if (traceVectorPointEditingGuidePath(ctx, target)) {
         ctx.stroke();
       }
     } finally {
       ctx.restore();
     }
 
-  }, [isClosedPath, traceVectorPointEditingGuidePath]);
+  }, [traceVectorPointEditingGuidePath]);
 
   const applyVectorPointControls = useCallback((obj: any): boolean => {
     if (!obj || typeof obj !== 'object') return false;
