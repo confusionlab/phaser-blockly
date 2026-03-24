@@ -42,6 +42,22 @@ import {
 import { cn } from '@/lib/utils';
 import Color from 'color';
 import type { CostumeEditorMode } from '@/types';
+import {
+  BITMAP_BRUSH_OPTIONS,
+  type BitmapBrushKind,
+} from '@/lib/background/brushCore';
+import {
+  BITMAP_FILL_TEXTURE_OPTIONS,
+  type BitmapFillTextureId,
+} from '@/lib/background/bitmapFillCore';
+import {
+  VECTOR_STROKE_BRUSH_OPTIONS,
+  type VectorStrokeBrushId,
+} from '@/lib/vector/vectorStrokeBrushCore';
+import {
+  VECTOR_FILL_TEXTURE_OPTIONS,
+  type VectorFillTextureId,
+} from '@/lib/vector/vectorFillTextureCore';
 
 export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
@@ -72,14 +88,20 @@ export interface TextToolStyle {
 
 export interface VectorToolStyle {
   fillColor: string;
+  fillTextureId: VectorFillTextureId;
   strokeColor: string;
   strokeWidth: number;
+  strokeBrushId: VectorStrokeBrushId;
 }
 
 export interface BitmapShapeStyle {
   fillColor: string;
   strokeColor: string;
   strokeWidth: number;
+}
+
+export interface BitmapFillStyle {
+  textureId: BitmapFillTextureId;
 }
 
 export interface VectorStyleCapabilities {
@@ -114,6 +136,10 @@ type ToolbarMenuId =
   | 'move-order'
   | 'vector-handles'
   | 'align'
+  | 'brush-kind'
+  | 'bitmap-fill-texture'
+  | 'vector-fill-texture'
+  | 'vector-stroke-brush'
   | ToolbarColorMenuId
   | 'font-family'
   | 'text-format'
@@ -380,8 +406,10 @@ interface CostumeToolbarProps {
   showTextControls: boolean;
   isVectorPointEditing: boolean;
   hasSelectedVectorPoints: boolean;
+  bitmapBrushKind: BitmapBrushKind;
   brushColor: string;
   brushSize: number;
+  bitmapFillStyle: BitmapFillStyle;
   bitmapShapeStyle: BitmapShapeStyle;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
@@ -394,7 +422,9 @@ interface CostumeToolbarProps {
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
+  onBitmapBrushKindChange: (kind: BitmapBrushKind) => void;
   onBrushSizeChange: (size: number) => void;
+  onBitmapFillStyleChange: (updates: Partial<BitmapFillStyle>) => void;
   onBitmapShapeStyleChange: (updates: Partial<BitmapShapeStyle>) => void;
   onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
   onVectorStyleChange: (updates: Partial<VectorToolStyle>) => void;
@@ -469,6 +499,18 @@ function getVectorHandleModeLabel(mode: VectorHandleMode) {
   return mode === 'curved' ? 'Curved' : 'Pointed';
 }
 
+function getVectorStrokeBrushLabel(brushId: VectorStrokeBrushId) {
+  return VECTOR_STROKE_BRUSH_OPTIONS.find((option) => option.value === brushId)?.label ?? 'Solid';
+}
+
+function getBitmapFillTextureLabel(textureId: BitmapFillTextureId) {
+  return BITMAP_FILL_TEXTURE_OPTIONS.find((option) => option.value === textureId)?.label ?? 'Solid';
+}
+
+function getVectorFillTextureLabel(textureId: VectorFillTextureId) {
+  return VECTOR_FILL_TEXTURE_OPTIONS.find((option) => option.value === textureId)?.label ?? 'Solid';
+}
+
 function isShapeTool(tool: DrawingTool) {
   return shapeTools.some((shapeTool) => shapeTool.tool === tool);
 }
@@ -480,8 +522,10 @@ export const CostumeToolbar = memo(({
   showTextControls,
   isVectorPointEditing,
   hasSelectedVectorPoints,
+  bitmapBrushKind,
   brushColor,
   brushSize,
+  bitmapFillStyle,
   bitmapShapeStyle,
   textStyle,
   vectorStyle,
@@ -494,7 +538,9 @@ export const CostumeToolbar = memo(({
   onAlign,
   alignDisabled,
   onColorChange,
+  onBitmapBrushKindChange,
   onBrushSizeChange,
+  onBitmapFillStyleChange,
   onBitmapShapeStyleChange,
   onTextStyleChange,
   onVectorStyleChange,
@@ -518,10 +564,12 @@ export const CostumeToolbar = memo(({
   const showContextualPropertyBar = isVectorPointEditing || !(showSelectionActions && !hasActiveSelection);
   const showBitmapShapeStyleControls = editorMode === 'bitmap' && shapeToolIsActive;
   const showBitmapShapeFillControl = showBitmapShapeStyleControls && activeTool !== 'line';
+  const showBitmapFillTextureControl = editorMode === 'bitmap' && activeTool === 'fill';
   const showBitmapBrushSizeControl =
     editorMode === 'bitmap' &&
     !shapeToolIsActive &&
     (activeTool === 'brush' || activeTool === 'eraser');
+  const showBitmapBrushTypeControl = editorMode === 'bitmap' && activeTool === 'brush' && !shapeToolIsActive;
   const showPrimaryColorControl = (editorMode === 'bitmap' && !showBitmapShapeStyleControls) || showTextControls;
   const showVectorStyleControls =
     editorMode === 'vector' &&
@@ -666,6 +714,72 @@ export const CostumeToolbar = memo(({
                     />
                   )}
 
+                  {showBitmapBrushTypeControl && (
+                    <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">Brush</span>
+                      <DropdownMenu
+                        open={openMenu === 'brush-kind'}
+                        onOpenChange={(open) => handleMenuOpenChange('brush-kind', open)}
+                      >
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 min-w-[128px] justify-between gap-2 px-2 text-xs"
+                          >
+                            <span>{BITMAP_BRUSH_OPTIONS.find((option) => option.value === bitmapBrushKind)?.label ?? 'Harsh Circle'}</span>
+                            <ChevronDown className="size-3 shrink-0" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
+                          <DropdownMenuRadioGroup
+                            value={bitmapBrushKind}
+                            onValueChange={(nextKind) => onBitmapBrushKindChange(nextKind as BitmapBrushKind)}
+                          >
+                            {BITMAP_BRUSH_OPTIONS.map((option) => (
+                              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                                {option.label}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  )}
+
+                  {showBitmapFillTextureControl && (
+                    <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">Texture</span>
+                      <DropdownMenu
+                        open={openMenu === 'bitmap-fill-texture'}
+                        onOpenChange={(open) => handleMenuOpenChange('bitmap-fill-texture', open)}
+                      >
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
+                          >
+                            <span>{getBitmapFillTextureLabel(bitmapFillStyle.textureId)}</span>
+                            <ChevronDown className="size-3 shrink-0" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
+                          <DropdownMenuRadioGroup
+                            value={bitmapFillStyle.textureId}
+                            onValueChange={(textureId) => onBitmapFillStyleChange({ textureId: textureId as BitmapFillTextureId })}
+                          >
+                            {BITMAP_FILL_TEXTURE_OPTIONS.map((option) => (
+                              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                                {option.label}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  )}
+
                   {showBitmapShapeStyleControls && (
                     <>
                       {showBitmapShapeFillControl && (
@@ -706,15 +820,79 @@ export const CostumeToolbar = memo(({
 
                   {showVectorStyleControls && (
                     <>
+                      <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+                        <span className="whitespace-nowrap text-xs text-muted-foreground">Brush</span>
+                        <DropdownMenu
+                          open={openMenu === 'vector-stroke-brush'}
+                          onOpenChange={(open) => handleMenuOpenChange('vector-stroke-brush', open)}
+                        >
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
+                            >
+                              <span>{getVectorStrokeBrushLabel(vectorStyle.strokeBrushId)}</span>
+                              <ChevronDown className="size-3 shrink-0" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
+                            <DropdownMenuRadioGroup
+                              value={vectorStyle.strokeBrushId}
+                              onValueChange={(strokeBrushId) => onVectorStyleChange({ strokeBrushId: strokeBrushId as VectorStrokeBrushId })}
+                            >
+                              {VECTOR_STROKE_BRUSH_OPTIONS.map((option) => (
+                                <DropdownMenuRadioItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </DropdownMenuRadioItem>
+                              ))}
+                            </DropdownMenuRadioGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+
                       {showVectorFillControl && (
-                        <ToolbarColorControl
-                          label="Fill"
-                          value={vectorStyle.fillColor}
-                          menuId="fill-color"
-                          openMenu={openMenu}
-                          onMenuOpenChange={handleMenuOpenChange}
-                          onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
-                        />
+                        <>
+                          <ToolbarColorControl
+                            label="Fill"
+                            value={vectorStyle.fillColor}
+                            menuId="fill-color"
+                            openMenu={openMenu}
+                            onMenuOpenChange={handleMenuOpenChange}
+                            onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                          />
+
+                          <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+                            <span className="whitespace-nowrap text-xs text-muted-foreground">Texture</span>
+                            <DropdownMenu
+                              open={openMenu === 'vector-fill-texture'}
+                              onOpenChange={(open) => handleMenuOpenChange('vector-fill-texture', open)}
+                            >
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
+                                >
+                                  <span>{getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
+                                  <ChevronDown className="size-3 shrink-0" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
+                                <DropdownMenuRadioGroup
+                                  value={vectorStyle.fillTextureId}
+                                  onValueChange={(fillTextureId) => onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId })}
+                                >
+                                  {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
+                                    <DropdownMenuRadioItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </DropdownMenuRadioItem>
+                                  ))}
+                                </DropdownMenuRadioGroup>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </>
                       )}
 
                       <ToolbarColorControl

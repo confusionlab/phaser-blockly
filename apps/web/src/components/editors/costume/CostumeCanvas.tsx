@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
 import {
   Canvas as FabricCanvas,
+  BaseBrush,
   PencilBrush,
   Path,
   Rect,
@@ -14,7 +15,6 @@ import {
   Point,
   controlsUtils,
 } from 'fabric';
-import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas, calculateBoundsFromImageData } from '@/utils/imageBounds';
 import {
   pathNodeHandleTypeToVectorHandleMode,
@@ -22,6 +22,7 @@ import {
 } from './CostumeToolbar';
 import type {
   AlignAction,
+  BitmapFillStyle,
   BitmapShapeStyle,
   DrawingTool,
   MoveOrderAction,
@@ -35,11 +36,31 @@ import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, Costume
 import { CostumeCanvasHeader } from './CostumeCanvasHeader';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
+import Color from 'color';
 import {
-  getBrushCursorStyle,
+  getBitmapBrushCursorStyle,
+  getBitmapBrushStampDefinition,
   getBrushPaintColor,
   getCompositeOperation,
+  type BitmapBrushKind,
 } from '@/lib/background/brushCore';
+import {
+  applyBitmapBucketFill,
+  getBitmapFillTexturePreset,
+  type BitmapFillTextureId,
+} from '@/lib/background/bitmapFillCore';
+import {
+  createVectorStrokeBrushStamp,
+  getVectorStrokeBrushPreset,
+  DEFAULT_VECTOR_STROKE_BRUSH_ID,
+  type VectorStrokeBrushId,
+} from '@/lib/vector/vectorStrokeBrushCore';
+import {
+  createVectorFillTextureTile,
+  getVectorFillTexturePreset,
+  DEFAULT_VECTOR_FILL_TEXTURE_ID,
+  type VectorFillTextureId,
+} from '@/lib/vector/vectorFillTextureCore';
 import {
   clampCameraToWorldRect,
   clampViewportZoom,
@@ -61,7 +82,14 @@ const VECTOR_SELECTION_CORNER_COLOR = '#ffffff';
 const VECTOR_SELECTION_CORNER_STROKE = '#005eff';
 const VECTOR_SELECTION_BORDER_OPACITY = 1;
 const VECTOR_SELECTION_BORDER_SCALE = 2;
-const VECTOR_JSON_EXTRA_PROPS = ['nodeHandleTypes', 'strokeUniform'];
+const VECTOR_JSON_EXTRA_PROPS = [
+  'nodeHandleTypes',
+  'strokeUniform',
+  'vectorFillTextureId',
+  'vectorFillColor',
+  'vectorStrokeBrushId',
+  'vectorStrokeColor',
+];
 const CIRCLE_CUBIC_KAPPA = 0.5522847498307936;
 const VECTOR_POINT_EDIT_GUIDE_STROKE = '#cbd5e1';
 const VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH = 6;
@@ -103,6 +131,43 @@ function getStrokedShapeBoundsFromPathBounds(
     width,
     height,
   };
+}
+
+function lerpNumber(start: number, end: number, amount: number) {
+  return start + (end - start) * amount;
+}
+
+function getDistanceBetweenPoints(a: Point, b: Point) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function hashNumberTriplet(a: number, b: number, c: number) {
+  const value = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453123;
+  return value - Math.floor(value);
+}
+
+function getQuadraticBezierPoint(start: Point, control: Point, end: Point, t: number) {
+  const inverse = 1 - t;
+  return new Point(
+    inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * end.x,
+    inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * end.y,
+  );
+}
+
+function getCubicBezierPoint(start: Point, control1: Point, control2: Point, end: Point, t: number) {
+  const inverse = 1 - t;
+  return new Point(
+    inverse * inverse * inverse * start.x +
+      3 * inverse * inverse * t * control1.x +
+      3 * inverse * t * t * control2.x +
+      t * t * t * end.x,
+    inverse * inverse * inverse * start.y +
+      3 * inverse * inverse * t * control1.y +
+      3 * inverse * t * t * control2.y +
+      t * t * t * end.y,
+  );
 }
 
 function buildTrianglePoints(width: number, height: number): Array<{ x: number; y: number }> {
@@ -191,6 +256,190 @@ class CompositePencilBrush extends PencilBrush {
     const path = super.createPath(pathData);
     path.set('globalCompositeOperation', this.compositeOperation);
     return path;
+  }
+}
+
+interface BitmapStampBrushCommitPayload {
+  alphaThreshold: number;
+  compositeOperation: GlobalCompositeOperation;
+  strokeCanvas: HTMLCanvasElement;
+}
+
+interface BitmapStampBrushOptions {
+  brushColor: string;
+  brushKind: Exclude<BitmapBrushKind, 'hard-round'>;
+  brushSize: number;
+  compositeOperation: GlobalCompositeOperation;
+  onCommit: (payload: BitmapStampBrushCommitPayload) => void;
+}
+
+class BitmapStampBrush extends BaseBrush {
+  private accumulatedDistance = 0;
+  private readonly compositeOperation: GlobalCompositeOperation;
+  private lastPoint: Point | null = null;
+  private readonly onCommit: (payload: BitmapStampBrushCommitPayload) => void;
+  private readonly stampDefinition: ReturnType<typeof getBitmapBrushStampDefinition>;
+  private strokeCanvas: HTMLCanvasElement | null = null;
+  private strokeCtx: CanvasRenderingContext2D | null = null;
+
+  constructor(canvas: FabricCanvas, options: BitmapStampBrushOptions) {
+    super(canvas as any);
+    this.color = options.brushColor;
+    this.width = options.brushSize;
+    this.compositeOperation = options.compositeOperation;
+    this.onCommit = options.onCommit;
+    this.stampDefinition = getBitmapBrushStampDefinition(
+      options.brushKind,
+      options.brushColor,
+      options.brushSize,
+    );
+  }
+
+  override needsFullRender() {
+    return true;
+  }
+
+  override onMouseDown(pointer: Point, { e }: any) {
+    if (!this.canvas._isMainEvent(e)) {
+      return;
+    }
+    this.prepareStroke();
+    this.lastPoint = new Point(pointer.x, pointer.y);
+    this.stampAtPoint(pointer);
+    this.renderPreview();
+  }
+
+  override onMouseMove(pointer: Point, { e }: any) {
+    if (!this.canvas._isMainEvent(e)) {
+      return;
+    }
+    if (this.limitedToCanvasSize === true && this._isOutSideCanvas(pointer)) {
+      return;
+    }
+    if (!this.lastPoint) {
+      this.onMouseDown(pointer, { e });
+      return;
+    }
+
+    this.stampSegment(this.lastPoint, pointer);
+    this.lastPoint = new Point(pointer.x, pointer.y);
+    this.renderPreview();
+  }
+
+  override onMouseUp({ e }: any) {
+    if (!this.canvas._isMainEvent(e)) {
+      return true;
+    }
+
+    const strokeCanvas = this.strokeCanvas;
+    const alphaThreshold = this.stampDefinition.alphaThreshold;
+    this.resetStrokeState();
+    this.canvas.clearContext(this.canvas.contextTop);
+
+    if (strokeCanvas) {
+      this.onCommit({
+        strokeCanvas,
+        compositeOperation: this.compositeOperation,
+        alphaThreshold,
+      });
+    }
+
+    return false;
+  }
+
+  override _render() {
+    this.renderPreview();
+  }
+
+  private prepareStroke() {
+    const width = this.canvas.getWidth();
+    const height = this.canvas.getHeight();
+    const strokeCanvas = document.createElement('canvas');
+    strokeCanvas.width = width;
+    strokeCanvas.height = height;
+    this.strokeCanvas = strokeCanvas;
+    this.strokeCtx = strokeCanvas.getContext('2d');
+    this.lastPoint = null;
+    this.accumulatedDistance = 0;
+  }
+
+  private resetStrokeState() {
+    this.strokeCanvas = null;
+    this.strokeCtx = null;
+    this.lastPoint = null;
+    this.accumulatedDistance = 0;
+  }
+
+  private stampSegment(from: Point, to: Point) {
+    const distanceX = to.x - from.x;
+    const distanceY = to.y - from.y;
+    const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
+    if (distance === 0) {
+      return;
+    }
+
+    const spacing = this.stampDefinition.spacing;
+    let cursor = Math.max(0, spacing - this.accumulatedDistance);
+    while (cursor <= distance) {
+      const progress = cursor / distance;
+      this.stampAtPoint(new Point(
+        from.x + distanceX * progress,
+        from.y + distanceY * progress,
+      ));
+      cursor += spacing;
+    }
+
+    this.accumulatedDistance = distance - (cursor - spacing);
+  }
+
+  private stampAtPoint(point: Point) {
+    const ctx = this.strokeCtx;
+    if (!ctx) {
+      return;
+    }
+
+    const {
+      opacity,
+      rotationJitter,
+      scaleJitter,
+      scatter,
+      stamp,
+    } = this.stampDefinition;
+    const scatterAngle = Math.random() * Math.PI * 2;
+    const scatterRadius = scatter > 0 ? Math.random() * scatter : 0;
+    const centerX = point.x + Math.cos(scatterAngle) * scatterRadius;
+    const centerY = point.y + Math.sin(scatterAngle) * scatterRadius;
+    const rotation = rotationJitter > 0 ? (Math.random() * 2 - 1) * rotationJitter : 0;
+    const scale = 1 + (scaleJitter > 0 ? (Math.random() * 2 - 1) * scaleJitter : 0);
+
+    ctx.save();
+    ctx.globalCompositeOperation = this.compositeOperation;
+    ctx.globalAlpha = opacity;
+    ctx.translate(centerX, centerY);
+    if (rotation !== 0) {
+      ctx.rotate(rotation);
+    }
+    if (scale !== 1) {
+      ctx.scale(scale, scale);
+    }
+    ctx.drawImage(stamp, -stamp.width / 2, -stamp.height / 2);
+    ctx.restore();
+  }
+
+  private renderPreview() {
+    const ctx = this.canvas.contextTop;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.restore();
+
+    if (!this.strokeCanvas) {
+      return;
+    }
+
+    this._saveAndTransform(ctx);
+    ctx.drawImage(this.strokeCanvas, 0, 0);
+    ctx.restore();
   }
 }
 
@@ -406,8 +655,10 @@ export interface CostumeCanvasHandle {
 interface CostumeCanvasProps {
   initialEditorMode: CostumeEditorMode;
   activeTool: DrawingTool;
+  bitmapBrushKind: BitmapBrushKind;
   brushColor: string;
   brushSize: number;
+  bitmapFillStyle: BitmapFillStyle;
   bitmapShapeStyle: BitmapShapeStyle;
   vectorHandleMode: VectorHandleMode;
   textStyle: TextToolStyle;
@@ -471,6 +722,129 @@ function getVectorStyleTargets(obj: unknown): any[] {
   ));
 }
 
+interface VectorBrushStylableObject {
+  fill?: unknown;
+  noScaleCache?: boolean;
+  set?: (props: Record<string, unknown>) => void;
+  stroke?: unknown;
+  strokeUniform?: boolean;
+  strokeWidth?: number;
+  vectorFillColor?: string;
+  vectorFillTextureId?: VectorFillTextureId;
+  vectorStrokeBrushId?: VectorStrokeBrushId;
+  vectorStrokeColor?: string;
+}
+
+function getVectorObjectFillTextureId(obj: unknown): VectorFillTextureId {
+  const textureId = (obj as VectorBrushStylableObject | null | undefined)?.vectorFillTextureId;
+  return typeof textureId === 'string' ? (textureId as VectorFillTextureId) : DEFAULT_VECTOR_FILL_TEXTURE_ID;
+}
+
+function getVectorObjectFillColor(obj: unknown): string | undefined {
+  const vectorFillColor = (obj as VectorBrushStylableObject | null | undefined)?.vectorFillColor;
+  if (typeof vectorFillColor === 'string' && vectorFillColor.length > 0) {
+    return vectorFillColor;
+  }
+  const fill = (obj as VectorBrushStylableObject | null | undefined)?.fill;
+  if (typeof fill === 'string' && fill.length > 0) {
+    return fill;
+  }
+  return undefined;
+}
+
+function getVectorObjectStrokeBrushId(obj: unknown): VectorStrokeBrushId {
+  const brushId = (obj as VectorBrushStylableObject | null | undefined)?.vectorStrokeBrushId;
+  return typeof brushId === 'string' ? (brushId as VectorStrokeBrushId) : DEFAULT_VECTOR_STROKE_BRUSH_ID;
+}
+
+function getVectorObjectStrokeColor(obj: unknown): string | undefined {
+  const vectorStrokeColor = (obj as VectorBrushStylableObject | null | undefined)?.vectorStrokeColor;
+  if (typeof vectorStrokeColor === 'string' && vectorStrokeColor.length > 0) {
+    return vectorStrokeColor;
+  }
+  const stroke = (obj as VectorBrushStylableObject | null | undefined)?.stroke;
+  if (typeof stroke === 'string' && stroke.length > 0) {
+    return stroke;
+  }
+  return undefined;
+}
+
+function getFabricStrokeValueForVectorBrush(brushId: VectorStrokeBrushId, strokeColor: string) {
+  return brushId === DEFAULT_VECTOR_STROKE_BRUSH_ID
+    ? strokeColor
+    : Color(strokeColor).alpha(0).rgb().string();
+}
+
+function getFabricFillValueForVectorTexture(textureId: VectorFillTextureId, fillColor: string) {
+  return textureId === DEFAULT_VECTOR_FILL_TEXTURE_ID
+    ? fillColor
+    : Color(fillColor).alpha(0).rgb().string();
+}
+
+function applyVectorFillStyleToObject(
+  obj: VectorBrushStylableObject | null | undefined,
+  style: Pick<VectorToolStyle, 'fillColor' | 'fillTextureId'>,
+): boolean {
+  if (!obj || typeof obj.set !== 'function') {
+    return false;
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (obj.vectorFillTextureId !== style.fillTextureId) {
+    updates.vectorFillTextureId = style.fillTextureId;
+  }
+  if (obj.vectorFillColor !== style.fillColor) {
+    updates.vectorFillColor = style.fillColor;
+  }
+  const renderFill = getFabricFillValueForVectorTexture(style.fillTextureId, style.fillColor);
+  if (obj.fill !== renderFill) {
+    updates.fill = renderFill;
+  }
+  if (Object.keys(updates).length === 0) {
+    return false;
+  }
+
+  obj.set(updates);
+  return true;
+}
+
+function applyVectorStrokeStyleToObject(
+  obj: VectorBrushStylableObject | null | undefined,
+  style: Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeWidth'>,
+): boolean {
+  if (!obj || typeof obj.set !== 'function') {
+    return false;
+  }
+
+  const strokeWidth = Math.max(0, style.strokeWidth);
+  const updates: Record<string, unknown> = {};
+  if (obj.vectorStrokeBrushId !== style.strokeBrushId) {
+    updates.vectorStrokeBrushId = style.strokeBrushId;
+  }
+  if (obj.vectorStrokeColor !== style.strokeColor) {
+    updates.vectorStrokeColor = style.strokeColor;
+  }
+  const renderStroke = getFabricStrokeValueForVectorBrush(style.strokeBrushId, style.strokeColor);
+  if (obj.stroke !== renderStroke) {
+    updates.stroke = renderStroke;
+  }
+  if (obj.strokeWidth !== strokeWidth) {
+    updates.strokeWidth = strokeWidth;
+  }
+  if (obj.strokeUniform !== true) {
+    updates.strokeUniform = true;
+  }
+  if (obj.noScaleCache !== false) {
+    updates.noScaleCache = false;
+  }
+  if (Object.keys(updates).length === 0) {
+    return false;
+  }
+
+  obj.set(updates);
+  return true;
+}
+
 function normalizeVectorObjectRendering(obj: unknown): boolean {
   if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
     return false;
@@ -491,6 +865,22 @@ function normalizeVectorObjectRendering(obj: unknown): boolean {
   }
   if (candidate.noScaleCache !== false) {
     updates.noScaleCache = false;
+  }
+  const strokeColor = getVectorObjectStrokeColor(candidate);
+  const brushId = getVectorObjectStrokeBrushId(candidate);
+  const fillColor = getVectorObjectFillColor(candidate);
+  const fillTextureId = getVectorObjectFillTextureId(candidate);
+  if (typeof strokeColor === 'string' && strokeColor.length > 0) {
+    const renderStroke = getFabricStrokeValueForVectorBrush(brushId, strokeColor);
+    if ((candidate as { stroke?: unknown }).stroke !== renderStroke) {
+      updates.stroke = renderStroke;
+    }
+  }
+  if (typeof fillColor === 'string' && fillColor.length > 0) {
+    const renderFill = getFabricFillValueForVectorTexture(fillTextureId, fillColor);
+    if ((candidate as { fill?: unknown }).fill !== renderFill) {
+      updates.fill = renderFill;
+    }
   }
   if (Object.keys(updates).length === 0) {
     return false;
@@ -592,8 +982,10 @@ function cloneHistorySnapshot(snapshot: CanvasHistorySnapshot): CanvasHistorySna
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
   initialEditorMode,
   activeTool,
+  bitmapBrushKind,
   brushColor,
   brushSize,
+  bitmapFillStyle,
   bitmapShapeStyle,
   vectorHandleMode,
   textStyle,
@@ -619,9 +1011,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const textEditingHostRef = useRef<HTMLDivElement>(null);
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
+  const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
   const colliderCanvasRef = useRef<HTMLCanvasElement>(null);
+  const vectorStrokeCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const bitmapSelectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const colliderCtxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -651,11 +1045,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
 
+  const bitmapBrushKindRef = useRef(bitmapBrushKind);
+  bitmapBrushKindRef.current = bitmapBrushKind;
+
   const brushColorRef = useRef(brushColor);
   brushColorRef.current = brushColor;
 
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
+
+  const bitmapFillStyleRef = useRef(bitmapFillStyle);
+  bitmapFillStyleRef.current = bitmapFillStyle;
 
   const bitmapShapeStyleRef = useRef(bitmapShapeStyle);
   bitmapShapeStyleRef.current = bitmapShapeStyle;
@@ -704,6 +1104,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   colliderRef.current = collider;
 
   const suppressHistoryRef = useRef(false);
+  const bitmapRasterCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const vectorStrokeTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
+  const vectorStrokeTexturePendingRef = useRef<Set<string>>(new Set());
 
   const historyRef = useRef<CanvasHistorySnapshot[]>([]);
   const historyIndexRef = useRef(-1);
@@ -834,8 +1237,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const displayScale = BASE_VIEW_SCALE * zoomRef.current;
-    const cursorStyle = getBrushCursorStyle(
+    const cursorStyle = getBitmapBrushCursorStyle(
       tool,
+      bitmapBrushKindRef.current,
       brushColorRef.current,
       brushSizeRef.current,
       displayScale,
@@ -844,6 +1248,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     overlay.style.height = `${cursorStyle.diameter}px`;
     overlay.style.border = `${cursorStyle.borderWidth}px solid ${cursorStyle.stroke}`;
     overlay.style.background = cursorStyle.fill;
+    overlay.style.boxShadow = cursorStyle.boxShadow ?? 'none';
 
     const pos = brushCursorPosRef.current;
     if (pos) {
@@ -947,16 +1352,454 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
   }, []);
 
+  const resolveVectorTextureSource = useCallback((texturePath?: string | null) => {
+    const normalizedTexturePath = texturePath?.trim();
+    if (!normalizedTexturePath) {
+      return null;
+    }
+
+    if (vectorStrokeTextureCacheRef.current.has(normalizedTexturePath)) {
+      return vectorStrokeTextureCacheRef.current.get(normalizedTexturePath) ?? null;
+    }
+
+    if (!vectorStrokeTexturePendingRef.current.has(normalizedTexturePath)) {
+      vectorStrokeTexturePendingRef.current.add(normalizedTexturePath);
+      const image = new Image();
+      image.onload = () => {
+        vectorStrokeTexturePendingRef.current.delete(normalizedTexturePath);
+        vectorStrokeTextureCacheRef.current.set(normalizedTexturePath, image);
+        fabricCanvasRef.current?.requestRenderAll();
+      };
+      image.onerror = () => {
+        vectorStrokeTexturePendingRef.current.delete(normalizedTexturePath);
+        vectorStrokeTextureCacheRef.current.set(normalizedTexturePath, null);
+        fabricCanvasRef.current?.requestRenderAll();
+      };
+      image.src = normalizedTexturePath;
+    }
+
+    return null;
+  }, []);
+
+  const resolveVectorStrokeTextureSource = useCallback((brushId: VectorStrokeBrushId) => {
+    const preset = getVectorStrokeBrushPreset(brushId);
+    const texturePath = preset.texturePath?.trim();
+    if (!texturePath) {
+      return null;
+    }
+    return resolveVectorTextureSource(texturePath);
+  }, [resolveVectorTextureSource]);
+
+  const resolveVectorFillTextureSource = useCallback((textureId: VectorFillTextureId) => {
+    const preset = getVectorFillTexturePreset(textureId);
+    const texturePath = preset.texturePath?.trim();
+    if (!texturePath) {
+      return null;
+    }
+    return resolveVectorTextureSource(texturePath);
+  }, [resolveVectorTextureSource]);
+
+  const resolveBitmapFillTextureSource = useCallback((textureId: BitmapFillTextureId) => {
+    const preset = getBitmapFillTexturePreset(textureId);
+    const texturePath = preset.texturePath?.trim();
+    if (!texturePath) {
+      return null;
+    }
+    return resolveVectorTextureSource(texturePath);
+  }, [resolveVectorTextureSource]);
+
+  const transformVectorLocalPointToScene = useCallback((obj: any, x: number, y: number, pathOffset?: Point | null) => {
+    const offsetX = pathOffset?.x ?? 0;
+    const offsetY = pathOffset?.y ?? 0;
+    return new Point(x - offsetX, y - offsetY).transform(obj.calcTransformMatrix());
+  }, []);
+
+  const getVectorObjectContourPaths = useCallback((obj: any): Array<{ closed: boolean; points: Point[] }> => {
+    if (!obj || typeof obj.calcTransformMatrix !== 'function') {
+      return [];
+    }
+
+    const objectType = getFabricObjectType(obj);
+    const transformPoint = (x: number, y: number, pathOffset?: Point | null) => (
+      transformVectorLocalPointToScene(obj, x, y, pathOffset)
+    );
+
+    if (objectType === 'line' && typeof obj.calcLinePoints === 'function') {
+      const points = obj.calcLinePoints();
+      return [{
+        closed: false,
+        points: [
+          transformPoint(points.x1, points.y1),
+          transformPoint(points.x2, points.y2),
+        ],
+      }];
+    }
+
+    if (objectType === 'rect') {
+      const halfWidth = (typeof obj.width === 'number' ? obj.width : 0) / 2;
+      const halfHeight = (typeof obj.height === 'number' ? obj.height : 0) / 2;
+      return [{
+        closed: true,
+        points: [
+          transformPoint(-halfWidth, -halfHeight),
+          transformPoint(halfWidth, -halfHeight),
+          transformPoint(halfWidth, halfHeight),
+          transformPoint(-halfWidth, halfHeight),
+        ],
+      }];
+    }
+
+    if (objectType === 'ellipse' || objectType === 'circle') {
+      const radiusX = typeof obj.rx === 'number' ? obj.rx : ((typeof obj.width === 'number' ? obj.width : 0) / 2);
+      const radiusY = typeof obj.ry === 'number' ? obj.ry : ((typeof obj.height === 'number' ? obj.height : 0) / 2);
+      const segments = Math.max(24, Math.ceil((Math.max(radiusX, radiusY) * Math.PI * 2) / 10));
+      const points: Point[] = [];
+      for (let index = 0; index < segments; index += 1) {
+        const angle = (index / segments) * Math.PI * 2;
+        points.push(transformPoint(Math.cos(angle) * radiusX, Math.sin(angle) * radiusY));
+      }
+      return [{ closed: true, points }];
+    }
+
+    if ((objectType === 'polygon' || objectType === 'polyline') && Array.isArray(obj.points) && obj.points.length > 1) {
+      const pathOffset = obj.pathOffset instanceof Point ? obj.pathOffset : new Point(obj.pathOffset?.x ?? 0, obj.pathOffset?.y ?? 0);
+      return [{
+        closed: objectType === 'polygon',
+        points: obj.points.map((point: { x: number; y: number }) => transformPoint(point.x, point.y, pathOffset)),
+      }];
+    }
+
+    if (objectType === 'path' && Array.isArray(obj.path) && obj.path.length > 0) {
+      const pathOffset = obj.pathOffset instanceof Point ? obj.pathOffset : new Point(obj.pathOffset?.x ?? 0, obj.pathOffset?.y ?? 0);
+      const sampledPoints: Point[] = [];
+      let currentPoint: Point | null = null;
+      let subpathStart: Point | null = null;
+      const targetSpacing = Math.max(4, (typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1) * 0.6);
+
+      const appendPoint = (point: Point) => {
+        const lastPoint = sampledPoints[sampledPoints.length - 1];
+        if (!lastPoint || getDistanceBetweenPoints(lastPoint, point) > 0.5) {
+          sampledPoints.push(point);
+        }
+      };
+
+      for (const command of obj.path) {
+        const commandType = getPathCommandType(command);
+        if (commandType === 'M') {
+          currentPoint = transformPoint(command[1], command[2], pathOffset);
+          subpathStart = currentPoint;
+          appendPoint(currentPoint);
+          continue;
+        }
+        if (!currentPoint) {
+          continue;
+        }
+        if (commandType === 'L') {
+          const endPoint = transformPoint(command[1], command[2], pathOffset);
+          appendPoint(endPoint);
+          currentPoint = endPoint;
+          continue;
+        }
+        if (commandType === 'Q') {
+          const control = transformPoint(command[1], command[2], pathOffset);
+          const endPoint = transformPoint(command[3], command[4], pathOffset);
+          const estimatedLength =
+            getDistanceBetweenPoints(currentPoint, control) +
+            getDistanceBetweenPoints(control, endPoint);
+          const segments = Math.max(8, Math.ceil(estimatedLength / targetSpacing));
+          for (let segmentIndex = 1; segmentIndex <= segments; segmentIndex += 1) {
+            appendPoint(getQuadraticBezierPoint(currentPoint, control, endPoint, segmentIndex / segments));
+          }
+          currentPoint = endPoint;
+          continue;
+        }
+        if (commandType === 'C') {
+          const control1 = transformPoint(command[1], command[2], pathOffset);
+          const control2 = transformPoint(command[3], command[4], pathOffset);
+          const endPoint = transformPoint(command[5], command[6], pathOffset);
+          const estimatedLength =
+            getDistanceBetweenPoints(currentPoint, control1) +
+            getDistanceBetweenPoints(control1, control2) +
+            getDistanceBetweenPoints(control2, endPoint);
+          const segments = Math.max(10, Math.ceil(estimatedLength / targetSpacing));
+          for (let segmentIndex = 1; segmentIndex <= segments; segmentIndex += 1) {
+            appendPoint(getCubicBezierPoint(currentPoint, control1, control2, endPoint, segmentIndex / segments));
+          }
+          currentPoint = endPoint;
+          continue;
+        }
+        if (commandType === 'Z' && subpathStart) {
+          appendPoint(subpathStart);
+          currentPoint = subpathStart;
+        }
+      }
+
+      return sampledPoints.length > 1
+        ? [{ closed: pathCommandsDescribeClosedShape(obj.path), points: sampledPoints }]
+        : [];
+    }
+
+    return [];
+  }, [transformVectorLocalPointToScene]);
+
+  const drawVectorStrokeBrushPath = useCallback((
+    ctx: CanvasRenderingContext2D,
+    points: Point[],
+    closed: boolean,
+    stampConfig: NonNullable<ReturnType<typeof createVectorStrokeBrushStamp>>,
+  ) => {
+    if (points.length < 2) {
+      return;
+    }
+
+    const pathPoints = closed ? [...points, points[0]] : points;
+
+    const renderStampAt = (point: Point, angle: number, stampIndex: number) => {
+      const scaleRandom = hashNumberTriplet(point.x, point.y, stampIndex * 0.17);
+      const rotationRandom = hashNumberTriplet(point.y, point.x, stampIndex * 0.41);
+      const scatterAngleRandom = hashNumberTriplet(point.x, angle, stampIndex * 0.83);
+      const scatterRadiusRandom = hashNumberTriplet(point.y, angle, stampIndex * 1.29);
+      const jitterScale = 1 + (((scaleRandom * 2) - 1) * stampConfig.scaleJitter);
+      const jitterRotation = ((rotationRandom * 2) - 1) * stampConfig.rotationJitter;
+      const scatterAngle = scatterAngleRandom * Math.PI * 2;
+      const scatterRadius = stampConfig.scatter > 0 ? scatterRadiusRandom * stampConfig.scatter : 0;
+      const renderX = point.x + Math.cos(scatterAngle) * scatterRadius;
+      const renderY = point.y + Math.sin(scatterAngle) * scatterRadius;
+
+      ctx.save();
+      ctx.globalAlpha = stampConfig.opacity;
+      ctx.translate(renderX, renderY);
+      ctx.rotate(angle + jitterRotation);
+      if (jitterScale !== 1) {
+        ctx.scale(jitterScale, jitterScale);
+      }
+      ctx.drawImage(
+        stampConfig.image,
+        -stampConfig.image.width / 2,
+        -stampConfig.image.height / 2,
+      );
+      ctx.restore();
+    };
+
+    let carry = 0;
+    let stampIndex = 0;
+    for (let index = 0; index < pathPoints.length - 1; index += 1) {
+      const start = pathPoints[index];
+      const end = pathPoints[index + 1];
+      const segmentLength = getDistanceBetweenPoints(start, end);
+      if (segmentLength === 0) {
+        continue;
+      }
+
+      const angle = Math.atan2(end.y - start.y, end.x - start.x);
+      let distanceAlong = index === 0 ? 0 : Math.max(0, stampConfig.advance - carry);
+      if (index === 0) {
+        renderStampAt(start, angle, stampIndex);
+        stampIndex += 1;
+        distanceAlong = stampConfig.advance;
+      }
+
+      while (distanceAlong <= segmentLength) {
+        const progress = distanceAlong / segmentLength;
+        renderStampAt(new Point(
+          lerpNumber(start.x, end.x, progress),
+          lerpNumber(start.y, end.y, progress),
+        ), angle, stampIndex);
+        stampIndex += 1;
+        distanceAlong += stampConfig.advance;
+      }
+
+      carry = segmentLength - (distanceAlong - stampConfig.advance);
+    }
+
+    if (!closed) {
+      const lastPoint = pathPoints[pathPoints.length - 1];
+      const previousPoint = pathPoints[pathPoints.length - 2];
+      renderStampAt(lastPoint, Math.atan2(lastPoint.y - previousPoint.y, lastPoint.x - previousPoint.x), stampIndex);
+    }
+  }, []);
+
+  const traceVectorObjectLocalPath = useCallback((ctx: CanvasRenderingContext2D, obj: any): boolean => {
+    const objectType = getFabricObjectType(obj);
+
+    if (objectType === 'rect') {
+      const width = typeof obj.width === 'number' ? obj.width : 0;
+      const height = typeof obj.height === 'number' ? obj.height : 0;
+      ctx.beginPath();
+      ctx.rect(-width / 2, -height / 2, width, height);
+      return true;
+    }
+
+    if (objectType === 'ellipse' || objectType === 'circle') {
+      const radiusX = typeof obj.rx === 'number' ? obj.rx : ((typeof obj.width === 'number' ? obj.width : 0) / 2);
+      const radiusY = typeof obj.ry === 'number' ? obj.ry : ((typeof obj.height === 'number' ? obj.height : 0) / 2);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
+      return true;
+    }
+
+    if (objectType === 'polygon' && Array.isArray(obj.points) && obj.points.length > 1) {
+      const pathOffset = obj.pathOffset instanceof Point ? obj.pathOffset : new Point(obj.pathOffset?.x ?? 0, obj.pathOffset?.y ?? 0);
+      ctx.beginPath();
+      obj.points.forEach((point: { x: number; y: number }, index: number) => {
+        const localX = point.x - pathOffset.x;
+        const localY = point.y - pathOffset.y;
+        if (index === 0) {
+          ctx.moveTo(localX, localY);
+        } else {
+          ctx.lineTo(localX, localY);
+        }
+      });
+      ctx.closePath();
+      return true;
+    }
+
+    if (objectType === 'path' && Array.isArray(obj.path) && pathCommandsDescribeClosedShape(obj.path)) {
+      const pathOffset = obj.pathOffset instanceof Point ? obj.pathOffset : new Point(obj.pathOffset?.x ?? 0, obj.pathOffset?.y ?? 0);
+      ctx.beginPath();
+      for (const command of obj.path as any[]) {
+        if (!Array.isArray(command) || typeof command[0] !== 'string') {
+          continue;
+        }
+        switch (command[0].toUpperCase()) {
+          case 'M':
+            ctx.moveTo(Number(command[1]) - pathOffset.x, Number(command[2]) - pathOffset.y);
+            break;
+          case 'L':
+            ctx.lineTo(Number(command[1]) - pathOffset.x, Number(command[2]) - pathOffset.y);
+            break;
+          case 'Q':
+            ctx.quadraticCurveTo(
+              Number(command[1]) - pathOffset.x,
+              Number(command[2]) - pathOffset.y,
+              Number(command[3]) - pathOffset.x,
+              Number(command[4]) - pathOffset.y,
+            );
+            break;
+          case 'C':
+            ctx.bezierCurveTo(
+              Number(command[1]) - pathOffset.x,
+              Number(command[2]) - pathOffset.y,
+              Number(command[3]) - pathOffset.x,
+              Number(command[4]) - pathOffset.y,
+              Number(command[5]) - pathOffset.x,
+              Number(command[6]) - pathOffset.y,
+            );
+            break;
+          case 'Z':
+            ctx.closePath();
+            break;
+        }
+      }
+      return true;
+    }
+
+    return false;
+  }, []);
+
+  const renderVectorBrushStrokeOverlay = useCallback((ctx: CanvasRenderingContext2D, options: { clear?: boolean } = {}) => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (options.clear !== false) {
+      ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    }
+    if (!fabricCanvas || editorModeRef.current !== 'vector') {
+      return;
+    }
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([]);
+
+    for (const obj of fabricCanvas.getObjects() as any[]) {
+      if (getVectorStyleTargets(obj).length === 0) {
+        continue;
+      }
+
+      const fillTextureId = getVectorObjectFillTextureId(obj);
+      const fillColor = getVectorObjectFillColor(obj);
+      if (vectorObjectSupportsFill(obj) && fillTextureId !== DEFAULT_VECTOR_FILL_TEXTURE_ID && fillColor) {
+        const textureTile = createVectorFillTextureTile(
+          fillTextureId,
+          fillColor,
+          resolveVectorFillTextureSource(fillTextureId),
+        );
+        if (textureTile && typeof obj.calcTransformMatrix === 'function') {
+          ctx.save();
+          const transform = obj.calcTransformMatrix();
+          ctx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5]);
+          if (traceVectorObjectLocalPath(ctx, obj)) {
+            const pattern = ctx.createPattern(textureTile, 'repeat');
+            if (pattern) {
+              ctx.fillStyle = pattern;
+              ctx.globalAlpha = typeof obj.opacity === 'number' ? obj.opacity : 1;
+              ctx.clip();
+              ctx.fillRect(-CANVAS_SIZE, -CANVAS_SIZE, CANVAS_SIZE * 2, CANVAS_SIZE * 2);
+            }
+          }
+          ctx.restore();
+        }
+      }
+
+      const brushId = getVectorObjectStrokeBrushId(obj);
+      if (brushId === DEFAULT_VECTOR_STROKE_BRUSH_ID) {
+        continue;
+      }
+      const strokeColor = getVectorObjectStrokeColor(obj);
+      const strokeWidth = typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 0;
+      if (!strokeColor || strokeWidth <= 0) {
+        continue;
+      }
+
+      const stampConfig = createVectorStrokeBrushStamp(
+        brushId,
+        strokeColor,
+        strokeWidth,
+        resolveVectorStrokeTextureSource(brushId),
+      );
+      if (!stampConfig) {
+        continue;
+      }
+      const objectOpacity = typeof obj.opacity === 'number' ? obj.opacity : 1;
+      const resolvedStampConfig = objectOpacity === 1
+        ? stampConfig
+        : {
+            ...stampConfig,
+            opacity: stampConfig.opacity * objectOpacity,
+          };
+
+      const contourPaths = getVectorObjectContourPaths(obj);
+      if (contourPaths.length === 0) {
+        continue;
+      }
+
+      for (const contour of contourPaths) {
+        drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedStampConfig);
+      }
+    }
+
+    ctx.restore();
+  }, [drawVectorStrokeBrushPath, getVectorObjectContourPaths, resolveVectorFillTextureSource, resolveVectorStrokeTextureSource, traceVectorObjectLocalPath]);
+
   const getCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     if (fabricCanvas) {
-      return fabricCanvas.toCanvasElement(1);
+      const baseCanvas = fabricCanvas.toCanvasElement(1);
+      const composed = document.createElement('canvas');
+      composed.width = CANVAS_SIZE;
+      composed.height = CANVAS_SIZE;
+      const composedCtx = composed.getContext('2d');
+      if (!composedCtx) {
+        return baseCanvas;
+      }
+      composedCtx.drawImage(baseCanvas, 0, 0);
+      renderVectorBrushStrokeOverlay(composedCtx, { clear: false });
+      return composed;
     }
     const fallback = document.createElement('canvas');
     fallback.width = CANVAS_SIZE;
     fallback.height = CANVAS_SIZE;
     return fallback;
-  }, []);
+  }, [renderVectorBrushStrokeOverlay]);
 
   const getSelectionMousePos = useCallback((event: MouseEvent) => {
     const canvas = bitmapSelectionCanvasRef.current;
@@ -1211,8 +2054,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
     const path = new Path(pathData, {
-      fill: shouldClose ? vectorStyleRef.current.fillColor : null,
-      stroke: vectorStyleRef.current.strokeColor,
+      fill: shouldClose
+        ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, vectorStyleRef.current.fillColor)
+        : null,
+      stroke: getFabricStrokeValueForVectorBrush(vectorStyleRef.current.strokeBrushId, vectorStyleRef.current.strokeColor),
       strokeWidth,
       strokeUniform: true,
       noScaleCache: false,
@@ -1223,6 +2068,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       hasControls: true,
       hasBorders: true,
       nodeHandleTypes: buildPenDraftNodeHandleTypes(draft.anchors),
+      vectorFillTextureId: shouldClose ? vectorStyleRef.current.fillTextureId : undefined,
+      vectorFillColor: shouldClose ? vectorStyleRef.current.fillColor : undefined,
+      vectorStrokeBrushId: vectorStyleRef.current.strokeBrushId,
+      vectorStrokeColor: vectorStyleRef.current.strokeColor,
     } as any);
 
     path.setCoords?.();
@@ -1465,9 +2314,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!vectorObject) return;
 
     onVectorStyleSyncRef.current?.({
-      fillColor: typeof vectorObject.fill === 'string' ? vectorObject.fill : undefined,
-      strokeColor: typeof vectorObject.stroke === 'string' ? vectorObject.stroke : undefined,
+      fillColor: getVectorObjectFillColor(vectorObject),
+      fillTextureId: getVectorObjectFillTextureId(vectorObject),
+      strokeColor: getVectorObjectStrokeColor(vectorObject),
       strokeWidth: typeof vectorObject.strokeWidth === 'number' ? vectorObject.strokeWidth : undefined,
+      strokeBrushId: getVectorObjectStrokeBrushId(vectorObject),
     });
   }, []);
 
@@ -1566,12 +2417,58 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
   }, [loadBitmapLayer, saveHistory]);
 
+  const queueBitmapRasterCommit = useCallback((
+    mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,
+  ) => {
+    const nextCommit = bitmapRasterCommitQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const fabricCanvas = fabricCanvasRef.current;
+        if (!fabricCanvas || editorModeRef.current !== 'bitmap') {
+          return;
+        }
+
+        const raster = fabricCanvas.toCanvasElement(1);
+        const rasterCtx = raster.getContext('2d', { willReadFrequently: true });
+        if (!rasterCtx) {
+          return;
+        }
+
+        if (mutateRaster) {
+          await mutateRaster(raster, rasterCtx);
+        }
+
+        const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
+        if (!loaded) {
+          return;
+        }
+        saveHistory();
+      })
+      .catch((error) => {
+        console.error('Failed to commit bitmap raster mutation:', error);
+      });
+
+    bitmapRasterCommitQueueRef.current = nextCommit;
+    return nextCommit;
+  }, [loadBitmapLayer, saveHistory]);
+
   const flattenBitmapLayer = useCallback(async () => {
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) return;
-    const rasterized = fabricCanvas.toCanvasElement(1).toDataURL('image/png');
-    await loadBitmapLayer(rasterized, false);
-  }, [loadBitmapLayer]);
+    await queueBitmapRasterCommit();
+  }, [queueBitmapRasterCommit]);
+
+  const commitBitmapStampBrushStroke = useCallback((payload: BitmapStampBrushCommitPayload) => {
+    void queueBitmapRasterCommit(async (_raster, rasterCtx) => {
+      const visibleBounds = calculateBoundsFromCanvas(payload.strokeCanvas, payload.alphaThreshold);
+      if (!visibleBounds) {
+        return;
+      }
+
+      rasterCtx.save();
+      rasterCtx.globalCompositeOperation = payload.compositeOperation;
+      rasterCtx.drawImage(payload.strokeCanvas, 0, 0);
+      rasterCtx.restore();
+    });
+  }, [queueBitmapRasterCommit]);
 
   const loadBitmapAsSingleVectorImage = useCallback(async (bitmapCanvas: HTMLCanvasElement, requestId?: number): Promise<boolean> => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1694,20 +2591,33 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!ctx) return;
 
     const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    const fillColor = hexToRgb(brushColorRef.current);
-    floodFill(imageData, Math.floor(x), Math.floor(y), fillColor, 32);
+    const didFill = applyBitmapBucketFill(
+      imageData,
+      Math.floor(x),
+      Math.floor(y),
+      {
+        fillColor: brushColorRef.current,
+        textureId: bitmapFillStyleRef.current.textureId,
+      },
+      {
+        textureSource: resolveBitmapFillTextureSource(bitmapFillStyleRef.current.textureId),
+      },
+    );
+    if (!didFill) {
+      return;
+    }
     ctx.putImageData(imageData, 0, 0);
     const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
     if (!loaded) return;
     saveHistory();
-  }, [loadBitmapLayer, saveHistory]);
+  }, [loadBitmapLayer, resolveBitmapFillTextureSource, saveHistory]);
 
   const switchEditorMode = useCallback(async (nextMode: CostumeEditorMode) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
     if (editorModeRef.current === nextMode) return;
 
-    const rasterizedCanvas = fabricCanvas.toCanvasElement(1);
+    const rasterizedCanvas = getCanvasElement();
     const rasterized = rasterizedCanvas.toDataURL('image/png');
 
     if (nextMode === 'bitmap') {
@@ -1721,7 +2631,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     saveHistory();
-  }, [loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
+  }, [getCanvasElement, loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
 
   const exportCostumeState = useCallback((sessionKey?: string | null): CostumeCanvasExportState | null => {
     if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
@@ -3491,10 +4401,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
     if (!pathData) return null;
 
-    const strokeValue = obj.stroke ?? obj.fill ?? '#000000';
+    const fillColor = getVectorObjectFillColor(obj) ?? (typeof obj.fill === 'string' ? obj.fill : '#000000');
+    const fillTextureId = getVectorObjectFillTextureId(obj);
+    const strokeColor = getVectorObjectStrokeColor(obj) ?? fillColor;
+    const strokeBrushId = getVectorObjectStrokeBrushId(obj);
     const path = new Path(pathData, {
-      fill: shouldFill ? (obj.fill ?? null) : null,
-      stroke: strokeValue,
+      fill: shouldFill ? getFabricFillValueForVectorTexture(fillTextureId, fillColor) : null,
+      stroke: getFabricStrokeValueForVectorBrush(strokeBrushId, strokeColor),
       strokeWidth: typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
       strokeUniform: true,
       noScaleCache: false,
@@ -3508,6 +4421,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       paintFirst: obj.paintFirst,
       shadow: obj.shadow ?? null,
       nodeHandleTypes: initialNodeHandleTypes,
+      vectorFillTextureId: shouldFill ? fillTextureId : undefined,
+      vectorFillColor: shouldFill ? fillColor : undefined,
+      vectorStrokeBrushId: strokeBrushId,
+      vectorStrokeColor: strokeColor,
       selectable: true,
       evented: true,
       hasControls: true,
@@ -4103,10 +5020,21 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const isBitmapBrush = mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
     if (isBitmapBrush) {
-      const brush = new CompositePencilBrush(fabricCanvas as any);
+      const compositeOperation = getCompositeOperation(tool);
+      const brush = tool === 'brush' && bitmapBrushKindRef.current !== 'hard-round'
+        ? new BitmapStampBrush(fabricCanvas, {
+            brushKind: bitmapBrushKindRef.current,
+            brushColor: brushColorRef.current,
+            brushSize: brushSizeRef.current,
+            compositeOperation,
+            onCommit: commitBitmapStampBrushStroke,
+          })
+        : new CompositePencilBrush(fabricCanvas as any);
       brush.width = brushSizeRef.current;
       brush.color = getBrushPaintColor(tool, brushColorRef.current);
-      brush.compositeOperation = getCompositeOperation(tool);
+      if (brush instanceof CompositePencilBrush) {
+        brush.compositeOperation = compositeOperation;
+      }
       (fabricCanvas as any).freeDrawingBrush = brush;
       fabricCanvas.isDrawingMode = true;
     } else {
@@ -4225,7 +5153,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyCanvasCursor(fabricCanvas, cursor);
     fabricCanvas.requestRenderAll();
     syncSelectionState();
-  }, [activateVectorPointEditing, applyVectorPointControls, applyVectorPointEditingAppearance, getZoomInvariantMetric, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, setVectorPointEditingTarget, syncBrushCursorOverlay, syncSelectionState]);
+  }, [activateVectorPointEditing, applyVectorPointControls, applyVectorPointEditingAppearance, commitBitmapStampBrushStroke, getZoomInvariantMetric, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, setVectorPointEditingTarget, syncBrushCursorOverlay, syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -4514,6 +5442,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         const fillColor = activeShapeStyle.fillColor;
         const strokeColor = activeShapeStyle.strokeColor;
         const strokeWidth = Math.max(0, activeShapeStyle.strokeWidth);
+        const vectorRenderFill = isVectorMode
+          ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, fillColor)
+          : fillColor;
+        const vectorRenderStroke = isVectorMode
+          ? getFabricStrokeValueForVectorBrush(vectorStyleRef.current.strokeBrushId, strokeColor)
+          : strokeColor;
         let object: any;
         if (tool === 'rectangle') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
@@ -4530,14 +5464,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             originY: 'top',
             width: 0,
             height: 0,
-            fill: fillColor,
-            stroke: strokeColor,
+            fill: vectorRenderFill,
+            stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
             noScaleCache: !isVectorMode ? undefined : false,
             selectable: false,
             evented: false,
-          });
+            vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
+            vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
+            vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+          } as any);
         } else if (tool === 'circle') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
             pointer.x,
@@ -4551,8 +5489,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             top: bounds.top,
             rx: 0,
             ry: 0,
-            fill: fillColor,
-            stroke: strokeColor,
+            fill: vectorRenderFill,
+            stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
             noScaleCache: !isVectorMode ? undefined : false,
@@ -4560,7 +5498,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             originY: 'top',
             selectable: false,
             evented: false,
-          });
+            vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
+            vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
+            vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+          } as any);
         } else if (tool === 'triangle' || tool === 'star') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
             pointer.x,
@@ -4577,24 +5519,30 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             top: bounds.top,
             originX: 'left',
             originY: 'top',
-            fill: fillColor,
-            stroke: strokeColor,
+            fill: vectorRenderFill,
+            stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
             noScaleCache: !isVectorMode ? undefined : false,
             selectable: false,
             evented: false,
-          });
+            vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
+            vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
+            vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+          } as any);
           object.setBoundingBox?.(true);
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-            stroke: strokeColor,
+            stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
             noScaleCache: !isVectorMode ? undefined : false,
             selectable: false,
             evented: false,
-          });
+            vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
+            vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+          } as any);
         }
         shapeDraftRef.current = {
           type: tool,
@@ -4791,7 +5739,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (editorModeRef.current === 'bitmap') {
         void (async () => {
           await flattenBitmapLayer();
-          saveHistory();
           configureCanvasForTool();
         })();
       } else {
@@ -4808,7 +5755,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
       void (async () => {
         await flattenBitmapLayer();
-        saveHistory();
       })();
     };
 
@@ -4855,6 +5801,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
 
     const onAfterRender = () => {
+      const vectorStrokeCtx = vectorStrokeCtxRef.current;
+      if (vectorStrokeCtx) {
+        renderVectorBrushStrokeOverlay(vectorStrokeCtx);
+      }
       renderVectorPointEditingGuide();
     };
 
@@ -4918,6 +5868,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (colliderCanvas) {
       colliderCtxRef.current = colliderCanvas.getContext('2d');
     }
+    const vectorStrokeCanvas = vectorStrokeCanvasRef.current;
+    if (vectorStrokeCanvas) {
+      vectorStrokeCtxRef.current = vectorStrokeCanvas.getContext('2d');
+    }
     const vectorGuideCanvas = vectorGuideCanvasRef.current;
     if (vectorGuideCanvas) {
       vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
@@ -4948,14 +5902,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.off('after:render', onAfterRender);
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
+      vectorStrokeCtxRef.current = null;
       vectorGuideCtxRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyPointSelectionMarqueeSession, applyPointSelectionTransformSession, applyVectorPointControls, beginPointSelectionTransformSession, clearSelectedPathAnchors, commitBitmapSelection, commitCurrentPenPlacement, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorIndices, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, isPointSelectionToggleModifierPressed, loadBitmapLayer, movePathAnchorByDelta, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, startPenAnchorPlacement, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint, updatePenAnchorPlacement]);
+  }, [activateVectorPointEditing, applyFill, applyPointSelectionMarqueeSession, applyPointSelectionTransformSession, applyVectorPointControls, beginPointSelectionTransformSession, clearSelectedPathAnchors, commitBitmapSelection, commitCurrentPenPlacement, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorIndices, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, isPointSelectionToggleModifierPressed, loadBitmapLayer, movePathAnchorByDelta, renderVectorBrushStrokeOverlay, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, startPenAnchorPlacement, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint, updatePenAnchorPlacement]);
 
   // Sync tool behavior.
   useEffect(() => {
     configureCanvasForTool();
-  }, [activeTool, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, configureCanvasForTool]);
+  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, configureCanvasForTool]);
 
   useEffect(() => {
     const activeAnchor = activePathAnchorRef.current;
@@ -5041,38 +5996,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (!vectorTargets.length) return;
 
       vectorTargets.forEach((target) => {
-        const updates: Record<string, unknown> = {};
         const shouldPreserveCenter =
           target.strokeUniform !== true ||
           target.strokeWidth !== strokeWidth;
         const centerPoint = shouldPreserveCenter && typeof target.getCenterPoint === 'function'
           ? target.getCenterPoint()
           : null;
-        if (target.strokeUniform !== true) {
-          changed = true;
-          updates.strokeUniform = true;
-        }
-        if (target.noScaleCache !== false) {
-          changed = true;
-          updates.noScaleCache = false;
-        }
-        if (target.fill !== vectorStyle.fillColor) {
-          changed = true;
-          updates.fill = vectorStyle.fillColor;
-        }
-        if (target.stroke !== vectorStyle.strokeColor) {
-          changed = true;
-          updates.stroke = vectorStyle.strokeColor;
-        }
-        if (target.strokeWidth !== strokeWidth) {
-          changed = true;
-          updates.strokeWidth = strokeWidth;
-        }
-        if (Object.keys(updates).length > 0) {
-          target.set(updates);
-          if (centerPoint && typeof target.setPositionByOrigin === 'function') {
-            target.setPositionByOrigin(centerPoint, 'center', 'center');
-          }
+        const fillChanged = vectorObjectSupportsFill(target)
+          ? applyVectorFillStyleToObject(target, {
+              fillColor: vectorStyle.fillColor,
+              fillTextureId: vectorStyle.fillTextureId,
+            })
+          : false;
+        const strokeChanged = applyVectorStrokeStyleToObject(target, {
+          strokeColor: vectorStyle.strokeColor,
+          strokeWidth,
+          strokeBrushId: vectorStyle.strokeBrushId,
+        });
+        changed = changed || fillChanged;
+        changed = changed || strokeChanged;
+        if (strokeChanged && centerPoint && typeof target.setPositionByOrigin === 'function') {
+          target.setPositionByOrigin(centerPoint, 'center', 'center');
         }
         target.setCoords?.();
       });
@@ -5816,7 +6760,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   useEffect(() => {
     syncBrushCursorOverlay();
-  }, [activeTool, brushColor, brushSize, editorModeState, zoom, syncBrushCursorOverlay]);
+  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, zoom, syncBrushCursorOverlay]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -5954,6 +6898,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           />
 
           <canvas
+            ref={vectorStrokeCanvasRef}
+            width={CANVAS_SIZE}
+            height={CANVAS_SIZE}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: CANVAS_SIZE,
+              height: CANVAS_SIZE,
+              pointerEvents: 'none',
+            }}
+          />
+
+          <canvas
             ref={vectorGuideCanvasRef}
             width={CANVAS_SIZE}
             height={CANVAS_SIZE}
@@ -6006,6 +6964,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             borderRadius: '9999px',
             border: '1.5px solid #111111',
             background: 'rgba(255,255,255,0.1)',
+            boxShadow: 'none',
             transform: 'translate(-9999px, -9999px)',
             opacity: 0,
             pointerEvents: 'none',

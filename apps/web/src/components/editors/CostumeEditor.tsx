@@ -4,6 +4,7 @@ import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import { CostumeList } from './costume/CostumeList';
 import { CostumeCanvas, type CostumeCanvasHandle } from './costume/CostumeCanvas';
 import {
+  type BitmapFillStyle,
   type BitmapShapeStyle,
   CostumeToolbar,
   type AlignAction,
@@ -37,6 +38,10 @@ import {
 } from '@/lib/editor/costumeEditorSession';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
+import type { BitmapBrushKind } from '@/lib/background/brushCore';
+import { DEFAULT_BITMAP_FILL_TEXTURE_ID } from '@/lib/background/bitmapFillCore';
+import { DEFAULT_VECTOR_STROKE_BRUSH_ID } from '@/lib/vector/vectorStrokeBrushCore';
+import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
@@ -137,8 +142,12 @@ export function CostumeEditor() {
   const [editorMode, setEditorMode] = useState<CostumeEditorMode>(initialEditorMode);
   const [pendingEditorMode, setPendingEditorMode] = useState<CostumeEditorMode | null>(null);
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
+  const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
+  const [bitmapFillStyle, setBitmapFillStyle] = useState<BitmapFillStyle>({
+    textureId: DEFAULT_BITMAP_FILL_TEXTURE_ID,
+  });
   const [bitmapShapeStyle, setBitmapShapeStyle] = useState<BitmapShapeStyle>({
     fillColor: '#000000',
     strokeColor: '#000000',
@@ -156,8 +165,10 @@ export function CostumeEditor() {
   });
   const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>({
     fillColor: '#000000',
+    fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
     strokeColor: '#000000',
     strokeWidth: 1,
+    strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
   });
   const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>({
     supportsFill: true,
@@ -643,8 +654,10 @@ export function CostumeEditor() {
       const next = { ...prev, ...updates };
       if (
         next.fillColor === prev.fillColor &&
+        next.fillTextureId === prev.fillTextureId &&
         next.strokeColor === prev.strokeColor &&
-        next.strokeWidth === prev.strokeWidth
+        next.strokeWidth === prev.strokeWidth &&
+        next.strokeBrushId === prev.strokeBrushId
       ) {
         return prev;
       }
@@ -660,6 +673,16 @@ export function CostumeEditor() {
         next.strokeColor === prev.strokeColor &&
         next.strokeWidth === prev.strokeWidth
       ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
+  const handleBitmapFillStyleChange = useCallback((updates: Partial<BitmapFillStyle>) => {
+    setBitmapFillStyle((prev) => {
+      const next = { ...prev, ...updates };
+      if (next.textureId === prev.textureId) {
         return prev;
       }
       return next;
@@ -714,8 +737,10 @@ export function CostumeEditor() {
           showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
           isVectorPointEditing={isVectorPointEditing}
           hasSelectedVectorPoints={hasSelectedVectorPoints}
+          bitmapBrushKind={bitmapBrushKind}
           brushColor={brushColor}
           brushSize={brushSize}
+          bitmapFillStyle={bitmapFillStyle}
           bitmapShapeStyle={bitmapShapeStyle}
           textStyle={textStyle}
           vectorStyle={vectorStyle}
@@ -728,7 +753,9 @@ export function CostumeEditor() {
           onAlign={handleAlign}
           alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
           onColorChange={setBrushColor}
+          onBitmapBrushKindChange={setBitmapBrushKind}
           onBrushSizeChange={setBrushSize}
+          onBitmapFillStyleChange={handleBitmapFillStyleChange}
           onBitmapShapeStyleChange={handleBitmapShapeStyleChange}
           onTextStyleChange={handleTextStyleChange}
           onVectorStyleChange={handleVectorStyleChange}
@@ -738,8 +765,10 @@ export function CostumeEditor() {
           ref={canvasRef}
           initialEditorMode={initialEditorMode}
           activeTool={activeTool}
+          bitmapBrushKind={bitmapBrushKind}
           brushColor={brushColor}
           brushSize={brushSize}
+          bitmapFillStyle={bitmapFillStyle}
           bitmapShapeStyle={bitmapShapeStyle}
           vectorHandleMode={vectorHandleMode}
           textStyle={textStyle}
