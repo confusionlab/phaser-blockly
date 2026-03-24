@@ -8,6 +8,13 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   ColorPicker,
   ColorPickerSelection,
   ColorPickerHue,
@@ -25,11 +32,22 @@ import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
 
 type InspectorTab = 'object' | 'scene';
+type PhysicsBodyType = PhysicsConfig['bodyType'];
+type ColliderType = NonNullable<GameObject['collider']>['type'];
 
 const inspectorTabs: SegmentedControlOption<InspectorTab>[] = [
   { value: 'object', label: 'Object' },
   { value: 'scene', label: 'Scene' },
 ];
+
+const bodyTypeOptions: Array<{ value: PhysicsBodyType; label: string }> = [
+  { value: 'dynamic', label: 'Dynamic' },
+  { value: 'static', label: 'Static' },
+];
+
+function isPhysicsBodyType(value: string): value is PhysicsBodyType {
+  return bodyTypeOptions.some((option) => option.value === value);
+}
 
 // Color swatch with popup picker
 interface ColorSwatchProps {
@@ -888,12 +906,16 @@ function PhysicsToggle({
   );
 }
 
-const colliderTypeOptions: Array<{ value: 'none' | 'box' | 'circle' | 'capsule'; label: string }> = [
+const colliderTypeOptions: Array<{ value: ColliderType; label: string }> = [
   { value: 'none', label: 'None' },
   { value: 'box', label: 'Box' },
   { value: 'circle', label: 'Circle' },
   { value: 'capsule', label: 'Capsule' },
 ];
+
+function isColliderType(value: string): value is ColliderType {
+  return colliderTypeOptions.some((option) => option.value === value);
+}
 
 function PhysicsProperties({
   object,
@@ -922,7 +944,7 @@ function PhysicsProperties({
     });
   };
 
-  const updateColliderType = (type: 'none' | 'box' | 'circle' | 'capsule') => {
+  const updateColliderType = (type: ColliderType) => {
     if (!enabled) {
       return;
     }
@@ -948,15 +970,26 @@ function PhysicsProperties({
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Body Type</div>
         <div className="inspector-select-row">
-          <div className="flex w-full min-w-0 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
-            <select
+          <div className="w-full min-w-0">
+            <Select
               value={resolvedPhysics.bodyType}
-              onChange={(e) => updatePhysics({ bodyType: e.target.value as 'dynamic' | 'static' })}
-              className="w-0 min-w-0 flex-1 cursor-pointer bg-transparent text-sm text-foreground outline-none"
+              onValueChange={(bodyType) => {
+                if (isPhysicsBodyType(bodyType)) {
+                  updatePhysics({ bodyType });
+                }
+              }}
             >
-              <option value="dynamic">Dynamic</option>
-              <option value="static">Static</option>
-            </select>
+              <SelectTrigger className="h-10 w-full rounded-lg border-0 bg-muted/50 px-3 shadow-none focus-visible:ring-2">
+                <SelectValue placeholder="Select body type" />
+              </SelectTrigger>
+              <SelectContent>
+                {bodyTypeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </div>
@@ -1024,18 +1057,26 @@ function PhysicsProperties({
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Collider</div>
         <div className="inspector-select-row">
-          <div className="flex w-full min-w-0 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
-            <select
+          <div className="w-full min-w-0">
+            <Select
               value={colliderType}
-              onChange={(e) => updateColliderType(e.target.value as 'none' | 'box' | 'circle' | 'capsule')}
-              className="w-0 min-w-0 flex-1 cursor-pointer bg-transparent text-sm text-foreground outline-none"
+              onValueChange={(value) => {
+                if (isColliderType(value)) {
+                  updateColliderType(value);
+                }
+              }}
             >
-              {colliderTypeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="h-10 w-full rounded-lg border-0 bg-muted/50 px-3 shadow-none focus-visible:ring-2">
+                <SelectValue placeholder="Select collider" />
+              </SelectTrigger>
+              <SelectContent>
+                {colliderTypeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Button
             variant="outline"

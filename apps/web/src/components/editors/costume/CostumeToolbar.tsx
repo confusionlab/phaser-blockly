@@ -73,7 +73,7 @@ interface FloatingToolButtonProps {
 }
 
 const floatingToolButtonBaseClass =
-  'h-11 rounded-[18px] border border-transparent bg-transparent text-muted-foreground shadow-none transition-[transform,background-color,color,box-shadow,border-color] duration-200 hover:-translate-y-px hover:bg-background/85 hover:text-foreground';
+  'h-11 rounded-[18px] border border-transparent bg-transparent text-muted-foreground shadow-none transition-[background-color,color,box-shadow,border-color] duration-200 hover:bg-background/85 hover:text-foreground';
 const floatingToolButtonActiveClass =
   'border-border/70 bg-background text-foreground shadow-[0_16px_32px_-24px_rgba(15,23,42,0.6),0_2px_6px_rgba(15,23,42,0.08)]';
 
@@ -204,6 +204,7 @@ export const CostumeToolbar = memo(({
 }: CostumeToolbarProps) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [colorPickerPosition, setColorPickerPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
+  const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const colorButtonRef = useRef<HTMLButtonElement>(null);
 
   const handleColorChange = useCallback((value: Parameters<typeof Color.rgb>[0]) => {
@@ -483,9 +484,9 @@ export const CostumeToolbar = memo(({
       </EditorToolbar>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
-        <div className="pointer-events-auto hide-scrollbar max-w-full overflow-x-auto rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(252,252,251,0.97),rgba(241,244,242,0.96))] p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl dark:bg-[linear-gradient(180deg,rgba(42,42,46,0.96),rgba(24,24,27,0.94))] dark:shadow-[0_28px_72px_-38px_rgba(0,0,0,0.8),0_8px_24px_-18px_rgba(0,0,0,0.6)]">
-          <div className="flex min-w-max items-center gap-2">
-            <div className="flex items-center gap-1 rounded-[22px] bg-black/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:bg-white/[0.05] dark:shadow-none">
+        <div className="pointer-events-auto hide-scrollbar max-w-full overflow-x-auto rounded-[28px] border border-border/70 bg-background/95 p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl dark:bg-background/90 dark:shadow-[0_28px_72px_-38px_rgba(0,0,0,0.8),0_8px_24px_-18px_rgba(0,0,0,0.6)]">
+          <div className="flex min-w-max items-center gap-3">
+            <div className="flex items-center gap-1">
               {leadingTools.map(({ tool, icon, label }) => (
                 <FloatingToolButton
                   key={tool}
@@ -497,23 +498,49 @@ export const CostumeToolbar = memo(({
                 />
               ))}
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+              <DropdownMenu open={shapeMenuOpen} onOpenChange={setShapeMenuOpen}>
+                <div
+                  className={cn(
+                    'flex items-center overflow-hidden rounded-[18px] border border-transparent bg-transparent',
+                    shapeToolIsActive && floatingToolButtonActiveClass,
+                  )}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setShapeMenuOpen(true);
+                  }}
+                >
                   <Button
                     variant="ghost"
                     size="sm"
                     className={cn(
                       floatingToolButtonBaseClass,
-                      'h-11 gap-2 px-3 text-sm',
-                      shapeToolIsActive && floatingToolButtonActiveClass,
+                      'h-11 rounded-r-none border-0 px-3 text-sm',
+                      shapeToolIsActive && 'bg-transparent shadow-none hover:bg-background/85',
                     )}
-                    title="Shapes"
+                    onClick={() => onToolChange(currentShapeTool.tool)}
+                    title={currentShapeTool.label}
                     aria-pressed={shapeToolIsActive}
                   >
                     {currentShapeTool.icon}
-                    <ChevronDown className="size-3.5 opacity-70" />
                   </Button>
-                </DropdownMenuTrigger>
+
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        floatingToolButtonBaseClass,
+                        'h-11 rounded-l-none border-0 border-l border-l-border/55 px-2.5 text-sm',
+                        shapeToolIsActive && 'bg-transparent shadow-none hover:bg-background/85',
+                      )}
+                      title="Open shape tools"
+                      aria-label="Open shape tools"
+                      aria-expanded={shapeMenuOpen}
+                    >
+                      <ChevronDown className="size-3.5 opacity-70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </div>
                 <DropdownMenuContent
                   side="top"
                   align="center"
@@ -527,7 +554,10 @@ export const CostumeToolbar = memo(({
                       <DropdownMenuItem
                         key={shapeTool.tool}
                         className="flex items-center justify-between rounded-xl px-3 py-2 text-sm"
-                        onClick={() => onToolChange(shapeTool.tool)}
+                        onClick={() => {
+                          onToolChange(shapeTool.tool);
+                          setShapeMenuOpen(false);
+                        }}
                       >
                         <span className="flex items-center gap-3">
                           {shapeTool.icon}
