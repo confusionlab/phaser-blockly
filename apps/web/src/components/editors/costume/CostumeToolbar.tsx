@@ -73,9 +73,9 @@ interface FloatingToolButtonProps {
 }
 
 const floatingToolButtonBaseClass =
-  'h-11 rounded-[18px] border border-transparent bg-transparent text-muted-foreground shadow-none transition-[background-color,color,box-shadow,border-color] duration-200 hover:bg-background/85 hover:text-foreground';
+  'h-11 rounded-[18px] bg-transparent text-muted-foreground shadow-none transition-colors duration-200 hover:!bg-transparent hover:text-foreground';
 const floatingToolButtonActiveClass =
-  'border-border/70 bg-background text-foreground shadow-[0_16px_32px_-24px_rgba(15,23,42,0.6),0_2px_6px_rgba(15,23,42,0.08)]';
+  '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
 
 const FloatingToolButton = memo(({
   tool,
@@ -501,7 +501,7 @@ export const CostumeToolbar = memo(({
               <DropdownMenu open={shapeMenuOpen} onOpenChange={setShapeMenuOpen}>
                 <div
                   className={cn(
-                    'flex items-center overflow-hidden rounded-[18px] border border-transparent bg-transparent',
+                    'flex items-center overflow-hidden rounded-[18px] bg-transparent',
                     shapeToolIsActive && floatingToolButtonActiveClass,
                   )}
                   onContextMenu={(event) => {
@@ -514,8 +514,8 @@ export const CostumeToolbar = memo(({
                     size="sm"
                     className={cn(
                       floatingToolButtonBaseClass,
-                      'h-11 rounded-r-none border-0 px-3 text-sm',
-                      shapeToolIsActive && 'bg-transparent shadow-none hover:bg-background/85',
+                      'h-11 rounded-r-none px-2.5 text-sm',
+                      shapeToolIsActive && 'bg-transparent shadow-none',
                     )}
                     onClick={() => onToolChange(currentShapeTool.tool)}
                     title={currentShapeTool.label}
@@ -530,8 +530,8 @@ export const CostumeToolbar = memo(({
                       size="sm"
                       className={cn(
                         floatingToolButtonBaseClass,
-                        'h-11 rounded-l-none border-0 border-l border-l-border/55 px-2.5 text-sm',
-                        shapeToolIsActive && 'bg-transparent shadow-none hover:bg-background/85',
+                        'h-11 rounded-l-none px-1.5 text-sm',
+                        shapeToolIsActive && 'bg-transparent shadow-none',
                       )}
                       title="Open shape tools"
                       aria-label="Open shape tools"
