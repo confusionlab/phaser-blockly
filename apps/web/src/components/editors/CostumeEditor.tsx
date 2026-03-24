@@ -12,6 +12,15 @@ import {
   type VectorHandleType,
 } from './costume/CostumeToolbar';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { getEffectiveObjectProps } from '@/types';
 import type { Costume, ColliderConfig, CostumeEditorMode } from '@/types';
 import {
@@ -123,6 +132,7 @@ export function CostumeEditor() {
     : 'bitmap';
 
   const [editorMode, setEditorMode] = useState<CostumeEditorMode>(initialEditorMode);
+  const [pendingEditorMode, setPendingEditorMode] = useState<CostumeEditorMode | null>(null);
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
@@ -450,7 +460,7 @@ export function CostumeEditor() {
     });
   }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
 
-  const handleEditorModeChange = useCallback((mode: CostumeEditorMode) => {
+  const applyEditorModeChange = useCallback((mode: CostumeEditorMode) => {
     if (isLoadingRef.current || !isCanvasReadyForSession(loadedSessionRef.current)) {
       return;
     }
@@ -461,6 +471,29 @@ export function CostumeEditor() {
       void canvasRef.current.setEditorMode(mode);
     }
   }, [isCanvasReadyForSession]);
+
+  const handleEditorModeChange = useCallback((mode: CostumeEditorMode) => {
+    if (isLoadingRef.current || !isCanvasReadyForSession(loadedSessionRef.current)) {
+      return;
+    }
+
+    if (editorMode === 'vector' && mode === 'bitmap') {
+      setPendingEditorMode(mode);
+      return;
+    }
+
+    applyEditorModeChange(mode);
+  }, [applyEditorModeChange, editorMode, isCanvasReadyForSession]);
+
+  const handleConfirmPendingEditorMode = useCallback(() => {
+    if (!pendingEditorMode) return;
+    applyEditorModeChange(pendingEditorMode);
+    setPendingEditorMode(null);
+  }, [applyEditorModeChange, pendingEditorMode]);
+
+  useEffect(() => {
+    setPendingEditorMode(null);
+  }, [currentCostume?.id, selectedObjectId, selectedSceneId]);
 
   const handleCanvasModeChange = useCallback((mode: CostumeEditorMode) => {
     setEditorMode(mode);
@@ -669,6 +702,26 @@ export function CostumeEditor() {
           {showSessionLoadingOverlay ? 'Switching costume editor to the selected object...' : null}
         </div>
       )}
+
+      <Dialog open={pendingEditorMode === 'bitmap'} onOpenChange={(open) => !open && setPendingEditorMode(null)}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Switch To Pixel?</DialogTitle>
+            <DialogDescription>
+              Switching from Vector to Pixel will flatten the full vector artwork into a single image.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingEditorMode(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmPendingEditorMode}>
+              Flatten To Pixel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
