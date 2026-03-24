@@ -5,8 +5,14 @@ import type { ObjectEditorTab } from '@/store/editorStore';
 import { BlocklyEditor } from '../blockly/BlocklyEditor';
 import { CostumeEditor } from './CostumeEditor';
 import { SoundEditor } from './SoundEditor';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Code, Palette, Volume2 } from 'lucide-react';
+import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
+import { Code } from 'lucide-react';
+
+const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
+  { value: 'code', label: 'Code' },
+  { value: 'costumes', label: 'Costume' },
+  { value: 'sounds', label: 'Sound' },
+];
 
 export function ObjectEditor() {
   const { project } = useProjectStore();
@@ -21,6 +27,12 @@ export function ObjectEditor() {
   } = useEditorStore();
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
+  const isFolderSelected = !!selectedFolderId;
+  const hasCodeTarget = !!selectedObjectId || !!selectedComponentId;
+  const hasObjectAssetTarget = !!selectedObjectId;
+  const emptyStateMessage = isFolderSelected
+    ? 'Folder selected'
+    : (!hasCodeTarget ? 'Nothing selected' : null);
 
   useEffect(() => {
     if (selectedComponentId || selectedFolderId || !scene) return;
@@ -36,61 +48,52 @@ export function ObjectEditor() {
     }
   }, [selectedComponentId, selectedFolderId, selectedObjectId, activeObjectTab, setActiveObjectTab]);
 
-  if (selectedFolderId) {
-    return (
-      <div className="flex flex-col h-full bg-card items-center justify-center text-muted-foreground">
-        <Code className="size-12 mb-4 opacity-20" />
-        <p className="text-sm">Folder selected</p>
-      </div>
-    );
-  }
+  const sectionOptions = objectEditorSections.map((section) => ({
+    ...section,
+    disabled: section.value !== 'code' && !hasObjectAssetTarget,
+  }));
 
-  // Show placeholder when no object is selected
-  if (!selectedObjectId && !selectedComponentId) {
-    return (
-      <div className="flex flex-col h-full bg-card items-center justify-center text-muted-foreground">
-        <Code className="size-12 mb-4 opacity-20" />
-        <p className="text-sm">Nothing selected</p>
-      </div>
-    );
-  }
+  const activeEditor = (() => {
+    switch (activeObjectTab) {
+      case 'costumes':
+        return <CostumeEditor />;
+      case 'sounds':
+        return <SoundEditor />;
+      case 'code':
+      default:
+        return (
+          <div className="relative h-full">
+            <BlocklyEditor />
+            {emptyStateMessage ? (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-card text-muted-foreground">
+                <Code className="size-12 mb-4 opacity-20" />
+                <p className="text-sm">{emptyStateMessage}</p>
+              </div>
+            ) : null}
+          </div>
+        );
+    }
+  })();
 
   return (
     <div className="flex flex-col h-full bg-card">
-      <Tabs
-        value={activeObjectTab}
-        onValueChange={(value) => setActiveObjectTab(value as ObjectEditorTab)}
-        className="flex h-full flex-col gap-0"
-      >
-        {/* Tab Header */}
-        <div className="flex items-center border-b px-2">
-          <TabsList variant="line">
-            <TabsTrigger value="code">
-              <Code className="size-4" />
-              Code
-            </TabsTrigger>
-            <TabsTrigger value="costumes" disabled={!selectedObjectId}>
-              <Palette className="size-4" />
-              Costumes
-            </TabsTrigger>
-            <TabsTrigger value="sounds" disabled={!selectedObjectId}>
-              <Volume2 className="size-4" />
-              Sounds
-            </TabsTrigger>
-          </TabsList>
-        </div>
+      <div className="flex h-full flex-col gap-0">
+        {!emptyStateMessage ? (
+          <div className="border-b border-zinc-200/80 px-3 py-3 dark:border-white/10">
+            <SegmentedControl
+              ariaLabel="Object editor sections"
+              className="max-w-[340px]"
+              options={sectionOptions}
+              value={activeObjectTab}
+              onValueChange={setActiveObjectTab}
+            />
+          </div>
+        ) : null}
 
-        {/* Tab Content */}
-        <TabsContent value="code" className="flex-1 min-h-0 mt-0">
-          <BlocklyEditor />
-        </TabsContent>
-        <TabsContent value="costumes" className="flex-1 min-h-0 mt-0">
-          <CostumeEditor />
-        </TabsContent>
-        <TabsContent value="sounds" className="flex-1 min-h-0 mt-0">
-          <SoundEditor />
-        </TabsContent>
-      </Tabs>
+        <div className="min-h-0 flex-1">
+          {activeEditor}
+        </div>
+      </div>
     </div>
   );
 }
