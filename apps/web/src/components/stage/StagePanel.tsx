@@ -209,9 +209,9 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
     return (
       <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
         {canvasToolbar}
-        <div className="flex-1 min-h-0 p-1">
+        <div className="flex-1 min-h-0">
           <div
-            className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
+            className="relative h-full w-full overflow-hidden"
             style={stageShellStyle}
           >
             <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
@@ -228,9 +228,9 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         {/* Toolbar above stage */}
         {canvasToolbar}
         {/* Canvas container */}
-        <div className="flex-1 min-h-0 p-1">
+        <div className="flex-1 min-h-0">
           <div
-            className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
+            className="relative h-full w-full overflow-hidden"
             style={stageShellStyle}
           >
             <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
