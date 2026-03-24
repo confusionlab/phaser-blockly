@@ -9,6 +9,7 @@ import {
   type DrawingTool,
   type MoveOrderAction,
   type TextToolStyle,
+  type VectorStyleCapabilities,
   type VectorToolStyle,
   type VectorHandleType,
 } from './costume/CostumeToolbar';
@@ -151,6 +152,9 @@ export function CostumeEditor() {
     fillColor: '#000000',
     strokeColor: '#000000',
     strokeWidth: 1,
+  });
+  const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>({
+    supportsFill: true,
   });
   const [hasTextSelection, setHasTextSelection] = useState(false);
 
@@ -689,6 +693,7 @@ export function CostumeEditor() {
           brushSize={brushSize}
           textStyle={textStyle}
           vectorStyle={vectorStyle}
+          vectorStyleCapabilities={vectorStyleCapabilities}
           onEditorModeChange={handleEditorModeChange}
           onToolChange={handleToolChange}
           onMoveOrder={handleMoveOrder}
@@ -721,6 +726,7 @@ export function CostumeEditor() {
           onModeChange={handleCanvasModeChange}
           onTextStyleSync={handleTextStyleChange}
           onVectorStyleSync={handleVectorStyleChange}
+          onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
         />

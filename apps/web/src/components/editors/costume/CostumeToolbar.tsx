@@ -69,6 +69,10 @@ export interface VectorToolStyle {
   strokeWidth: number;
 }
 
+export interface VectorStyleCapabilities {
+  supportsFill: boolean;
+}
+
 interface ToolDefinition {
   tool: DrawingTool;
   icon: React.ReactNode;
@@ -224,6 +228,7 @@ interface CostumeToolbarProps {
   brushSize: number;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
+  vectorStyleCapabilities: VectorStyleCapabilities;
   onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
@@ -314,6 +319,7 @@ export const CostumeToolbar = memo(({
   brushSize,
   textStyle,
   vectorStyle,
+  vectorStyleCapabilities,
   onEditorModeChange,
   onToolChange,
   onMoveOrder,
@@ -348,6 +354,9 @@ export const CostumeToolbar = memo(({
     editorMode === 'vector' &&
     !showTextControls &&
     (showSelectionActions || activeTool === 'vector' || shapeToolIsActive);
+  const showVectorFillControl =
+    showVectorStyleControls &&
+    (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line');
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
 
@@ -472,14 +481,16 @@ export const CostumeToolbar = memo(({
 
                   {showVectorStyleControls && (
                     <>
-                      <ToolbarColorControl
-                        label="Fill"
-                        value={vectorStyle.fillColor}
-                        menuId="fill-color"
-                        openMenu={openMenu}
-                        onMenuOpenChange={handleMenuOpenChange}
-                        onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
-                      />
+                      {showVectorFillControl && (
+                        <ToolbarColorControl
+                          label="Fill"
+                          value={vectorStyle.fillColor}
+                          menuId="fill-color"
+                          openMenu={openMenu}
+                          onMenuOpenChange={handleMenuOpenChange}
+                          onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                        />
+                      )}
 
                       <ToolbarColorControl
                         label="Stroke"

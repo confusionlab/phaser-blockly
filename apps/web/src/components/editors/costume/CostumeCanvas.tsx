@@ -15,7 +15,15 @@ import {
 } from 'fabric';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
-import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle, VectorHandleType, VectorToolStyle } from './CostumeToolbar';
+import type {
+  AlignAction,
+  DrawingTool,
+  MoveOrderAction,
+  TextToolStyle,
+  VectorHandleType,
+  VectorStyleCapabilities,
+  VectorToolStyle,
+} from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CostumeCanvasHeader } from './CostumeCanvasHeader';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
@@ -156,6 +164,7 @@ interface CostumeCanvasProps {
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
   onVectorStyleSync?: (updates: Partial<VectorToolStyle>) => void;
+  onVectorStyleCapabilitiesSync?: (capabilities: VectorStyleCapabilities) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
 }
@@ -233,6 +242,68 @@ function normalizeVectorObjectRendering(obj: unknown): boolean {
   return true;
 }
 
+function getPathCommandType(command: unknown): string {
+  if (!Array.isArray(command) || typeof command[0] !== 'string') return '';
+  return command[0].trim().toUpperCase();
+}
+
+function getPathCommandEndpoint(command: unknown): { x: number; y: number } | null {
+  if (!Array.isArray(command) || command.length < 3) return null;
+  const x = Number(command[command.length - 2]);
+  const y = Number(command[command.length - 1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+function pathCommandsDescribeClosedShape(path: unknown): boolean {
+  if (!Array.isArray(path) || path.length === 0) return false;
+  if (path.some((command) => getPathCommandType(command) === 'Z')) {
+    return true;
+  }
+
+  const start = getPathCommandEndpoint(path[0]);
+  if (!start) return false;
+
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    if (getPathCommandType(path[index]) === 'Z') {
+      continue;
+    }
+
+    const end = getPathCommandEndpoint(path[index]);
+    if (!end) return false;
+    return Math.abs(start.x - end.x) <= 0.0001 && Math.abs(start.y - end.y) <= 0.0001;
+  }
+
+  return false;
+}
+
+function vectorObjectSupportsFill(obj: unknown): boolean {
+  if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
+    return false;
+  }
+
+  const type = getFabricObjectType(obj);
+  if (type === 'line' || type === 'polyline') {
+    return false;
+  }
+  if (type === 'path') {
+    return pathCommandsDescribeClosedShape((obj as { path?: unknown }).path);
+  }
+
+  return true;
+}
+
+function getVectorStyleCapabilitiesForSelection(obj: unknown): VectorStyleCapabilities {
+  const targets = getVectorStyleTargets(obj);
+  if (targets.length === 0) {
+    return { supportsFill: true };
+  }
+
+  return {
+    supportsFill: targets.every((target) => vectorObjectSupportsFill(target)),
+  };
+}
+
 function isVectorPointSelectableObject(obj: unknown): obj is Record<string, any> {
   if (!obj || typeof obj !== 'object') return false;
   if (isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) return false;
@@ -278,6 +349,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onModeChange,
   onTextStyleSync,
   onVectorStyleSync,
+  onVectorStyleCapabilitiesSync,
   onTextSelectionChange,
   onSelectionStateChange,
 }, ref) => {
@@ -344,6 +416,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const onVectorStyleSyncRef = useRef(onVectorStyleSync);
   onVectorStyleSyncRef.current = onVectorStyleSync;
+
+  const onVectorStyleCapabilitiesSyncRef = useRef(onVectorStyleCapabilitiesSync);
+  onVectorStyleCapabilitiesSyncRef.current = onVectorStyleCapabilitiesSync;
 
   const onTextSelectionChangeRef = useRef(onTextSelectionChange);
   onTextSelectionChangeRef.current = onTextSelectionChange;
@@ -667,6 +742,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
     const activeObject = fabricCanvas.getActiveObject() as any;
+    onVectorStyleCapabilitiesSyncRef.current?.(getVectorStyleCapabilitiesForSelection(activeObject));
     const [vectorObject] = getVectorStyleTargets(activeObject);
     if (!vectorObject) return;
 
