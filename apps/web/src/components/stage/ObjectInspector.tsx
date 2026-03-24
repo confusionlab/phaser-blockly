@@ -173,6 +173,7 @@ function ScrubInput({
 
       const roundedValue = Number(newValue.toFixed(precision));
       const delta = Number((roundedValue - startValueRef.current).toFixed(precision));
+      setLocalValue(roundedValue.toFixed(precision));
       onChange(roundedValue, 'drag', delta);
     };
 

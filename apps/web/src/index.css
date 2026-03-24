@@ -282,9 +282,9 @@ body {
 }
 
 .inspector-split-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
 }
 
@@ -295,7 +295,9 @@ body {
 .inspector-inline-controls {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.5rem;
   flex-wrap: nowrap;
 }
@@ -305,9 +307,10 @@ body {
 }
 
 .inspector-inline-button {
-  min-width: 0;
+  min-width: 0 !important;
   max-width: 100%;
-  flex: 0 1 auto;
+  flex: 0 1 auto !important;
+  flex-shrink: 1 !important;
   overflow: hidden;
   text-overflow: ellipsis;
 }
