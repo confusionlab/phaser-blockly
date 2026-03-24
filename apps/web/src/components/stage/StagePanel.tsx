@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { PhaserCanvas } from './PhaserCanvas';
 import { SpriteShelf } from './SpriteShelf';
 import { ObjectInspector } from './ObjectInspector';
@@ -23,49 +23,15 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
   const viewMode = useEditorStore((state) => state.viewMode);
   const cycleViewMode = useEditorStore((state) => state.cycleViewMode);
   const selectedSceneId = useEditorStore((state) => state.selectedSceneId);
-  const selectObject = useEditorStore((state) => state.selectObject);
   const project = useProjectStore((state) => state.project);
   const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const [isPanelResizeDragging, setIsPanelResizeDragging] = useState(false);
-  const fullscreenSelectionRef = useRef<{ sceneId: string | null; objectId: string | null } | null>(null);
 
   const toggleCanvasFullscreen = useCallback(() => {
-    if (!isCanvasFullscreen) {
-      const { selectedSceneId, selectedObjectId } = useEditorStore.getState();
-      fullscreenSelectionRef.current = {
-        sceneId: selectedSceneId,
-        objectId: selectedObjectId,
-      };
-      setIsCanvasFullscreen(true);
-      return;
-    }
-    setIsCanvasFullscreen(false);
-  }, [isCanvasFullscreen]);
-
-  useEffect(() => {
-    if (isCanvasFullscreen) {
-      return;
-    }
-    const preserved = fullscreenSelectionRef.current;
-    if (!preserved?.sceneId || !preserved.objectId) {
-      return;
-    }
-    const storeState = useEditorStore.getState();
-    if (storeState.selectedObjectId) {
-      return;
-    }
-    const scene = project?.scenes.find((candidate) => candidate.id === preserved.sceneId);
-    if (!scene) {
-      return;
-    }
-    const exists = scene.objects.some((obj) => obj.id === preserved.objectId);
-    if (!exists) {
-      return;
-    }
-    selectObject(preserved.objectId, { recordHistory: false });
-  }, [isCanvasFullscreen, project, selectObject]);
+    setIsCanvasFullscreen((current) => !current);
+  }, []);
 
   const handleVerticalDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();

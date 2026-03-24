@@ -2205,7 +2205,9 @@ function createEditorScene(
     const maxY = Math.max(marqueeStartY, pointerWorldY);
 
     if (!marqueeHasMoved) {
-      // Keep current selection on empty clicks.
+      if (marqueeMode === 'replace') {
+        useEditorStore.getState().clearSelection();
+      }
       isMarqueeSelecting = false;
       marqueePointerId = null;
       return;
@@ -2478,7 +2480,7 @@ function createEditorScene(
     if (currentMode !== 'editor') {
       const event = pointer.event as MouseEvent | PointerEvent | undefined;
       if (!(event?.metaKey || event?.ctrlKey || event?.shiftKey)) {
-        // Keep current selection on empty clicks.
+        useEditorStore.getState().clearSelection();
       }
       return;
     }

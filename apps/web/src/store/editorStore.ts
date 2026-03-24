@@ -134,6 +134,7 @@ interface EditorStore {
   selectObject: (objectId: string | null, options?: SelectionHistoryOptions) => void;
   selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
   selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
+  clearSelection: (options?: SelectionHistoryOptions) => void;
   reconcileSelectionToProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
   openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
@@ -350,6 +351,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   selectObject: (objectId, options) => {
+    if (objectId === null) {
+      get().clearSelection(options);
+      return;
+    }
+
     const recordHistory = options?.recordHistory !== false;
     const state = get();
     const nextSelectedFolderId = null;
@@ -395,6 +401,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   selectObjects: (objectIds, primaryObjectId = null, options) => {
     const uniqueIds = Array.from(new Set(objectIds));
+    if (uniqueIds.length === 0) {
+      get().clearSelection(options);
+      return;
+    }
+
     const primary = primaryObjectId && uniqueIds.includes(primaryObjectId)
       ? primaryObjectId
       : uniqueIds[0] ?? null;
@@ -481,6 +492,52 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     runInHistoryTransaction('selection:component', () => {
       beforeSelectionChange?.({ source: 'selection:component', recordHistory: true });
+      applySelection();
+    });
+  },
+
+  clearSelection: (options) => {
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedFolderId = null;
+    const nextSelectedObjectId = null;
+    const nextSelectedObjectIds: string[] = [];
+    const nextSelectedComponentId = null;
+    const didChange =
+      state.selectedFolderId !== nextSelectedFolderId ||
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId ||
+      state.activeObjectTab !== 'code';
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
+    }
+
+    const applySelection = () => {
+      set({
+        selectedFolderId: nextSelectedFolderId,
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+        activeObjectTab: 'code',
+        costumeColliderEditorRequest: null,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:clear', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:clear', () => {
+      beforeSelectionChange?.({ source: 'selection:clear', recordHistory: true });
       applySelection();
     });
   },

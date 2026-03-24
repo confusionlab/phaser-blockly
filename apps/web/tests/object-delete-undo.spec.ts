@@ -172,6 +172,7 @@ test.afterEach(async () => {
   useProjectStore.getState().closeProject();
   useEditorStore.setState({
     selectedSceneId: null,
+    selectedFolderId: null,
     selectedObjectId: null,
     selectedObjectIds: [],
     selectedComponentId: null,
@@ -179,6 +180,30 @@ test.afterEach(async () => {
 });
 
 test.describe('Object delete undo history', () => {
+  test('clear selection preserves the scene and restores on undo', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const fixture = buildProjectFixture();
+
+    useProjectStore.getState().openProject(fixture.project);
+    useEditorStore.getState().selectScene(fixture.sceneId, { recordHistory: false });
+    useEditorStore.getState().selectObject(fixture.heroId, { recordHistory: false });
+
+    useEditorStore.getState().clearSelection();
+
+    expect(useEditorStore.getState().selectedSceneId).toBe(fixture.sceneId);
+    expect(useEditorStore.getState().selectedFolderId).toBeNull();
+    expect(useEditorStore.getState().selectedObjectId).toBeNull();
+    expect(useEditorStore.getState().selectedObjectIds).toEqual([]);
+    expect(useEditorStore.getState().selectedComponentId).toBeNull();
+    expect(canUndoHistory()).toBe(true);
+
+    useEditorStore.getState().undo();
+
+    expect(useEditorStore.getState().selectedSceneId).toBe(fixture.sceneId);
+    expect(useEditorStore.getState().selectedObjectId).toBe(fixture.heroId);
+    expect(useEditorStore.getState().selectedObjectIds).toEqual([fixture.heroId]);
+  });
+
   test('shared object deletion command keeps delete and fallback selection in one undo step', async () => {
     const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
     const fixture = buildProjectFixture();

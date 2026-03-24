@@ -261,6 +261,7 @@ export function SpriteShelf() {
     selectFolder,
     selectComponent,
     selectScene,
+    clearSelection,
     setActiveObjectTab,
     collapsedFolderIdsByScene,
     setCollapsedFoldersForScene,
@@ -752,6 +753,15 @@ export function SpriteShelf() {
     });
     updateScene(selectedSceneId, nextScene);
     clearLayerDragState();
+  };
+
+  const handleEmptyShelfClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || draggedLayerKeys.length > 0) {
+      return;
+    }
+
+    selectionAnchorObjectIdRef.current = null;
+    clearSelection();
   };
 
   const handleObjectRowClick = (e: React.MouseEvent, objectId: string) => {
@@ -1762,14 +1772,24 @@ export function SpriteShelf() {
         className="flex-1 overflow-y-auto"
         onDragOver={handleRootDragOver}
         onDrop={handleRootDrop}
+        onClick={handleEmptyShelfClick}
+        data-testid="sprite-shelf-scroll-area"
       >
         {selectedScene.objects.length === 0 && folders.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+          <div
+            className="flex flex-col items-center justify-center h-full text-muted-foreground p-4"
+            onClick={handleEmptyShelfClick}
+          >
             <span className="text-2xl mb-2">📦</span>
             <span className="text-xs text-center">No objects yet</span>
           </div>
         ) : (
-          <div role="tree" aria-label="Scene hierarchy" className="relative outline-none">
+          <div
+            role="tree"
+            aria-label="Scene hierarchy"
+            className="relative outline-none"
+            onClick={handleEmptyShelfClick}
+          >
             {treeItems.map((item) => renderTreeItem(item))}
             <div
               className="absolute inset-x-2 -bottom-2 z-10 h-4 rounded"

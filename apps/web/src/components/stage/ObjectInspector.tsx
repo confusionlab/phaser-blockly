@@ -331,7 +331,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
   if (!object || !sceneId) {
     return (
       <div className="text-center text-muted-foreground text-sm py-4">
-        Select an object to view its properties
+        Nothing selected
       </div>
     );
   }
