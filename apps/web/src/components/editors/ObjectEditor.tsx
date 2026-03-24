@@ -10,9 +10,9 @@ import { Code, Palette, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
-  { value: 'code', label: 'Code', icon: <Code className="size-3.5" /> },
-  { value: 'costumes', label: 'Costume', icon: <Palette className="size-3.5" /> },
-  { value: 'sounds', label: 'Sound', icon: <Volume2 className="size-3.5" /> },
+  { value: 'code', label: 'Code', icon: <Code className="size-3" /> },
+  { value: 'costumes', label: 'Costume', icon: <Palette className="size-3" /> },
+  { value: 'sounds', label: 'Sound', icon: <Volume2 className="size-3" /> },
 ];
 
 export function ObjectEditor() {
