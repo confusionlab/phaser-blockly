@@ -245,6 +245,7 @@ export function ObjectInspector() {
   const { project, updateObject, updateScene } = useProjectStore();
   const {
     selectedSceneId,
+    selectedFolderId,
     selectedObjectId,
     selectedObjectIds,
     openBackgroundEditor,
@@ -263,10 +264,10 @@ export function ObjectInspector() {
 
   // Switch to object tab when an object is selected
   useEffect(() => {
-    if (selectedObjectId || selectedObjectIds.length > 0) {
+    if (selectedFolderId || selectedObjectId || selectedObjectIds.length > 0) {
       setActiveTab('object');
     }
-  }, [selectedObjectId, selectedObjectIds.length]);
+  }, [selectedFolderId, selectedObjectId, selectedObjectIds.length]);
 
   return (
     <div className="bg-card border-t">
@@ -277,11 +278,15 @@ export function ObjectInspector() {
         </TabsList>
 
         <TabsContent value="object" className="px-4 py-3 mt-0">
-          <ObjectProperties
-            objects={selectedObjects}
-            sceneId={selectedSceneId}
-            updateObject={updateObject}
-          />
+          {selectedFolderId ? (
+            <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
+          ) : (
+            <ObjectProperties
+              objects={selectedObjects}
+              sceneId={selectedSceneId}
+              updateObject={updateObject}
+            />
+          )}
         </TabsContent>
         <TabsContent value="scene" className="px-4 py-3 mt-0">
           <SceneProperties

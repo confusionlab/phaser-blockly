@@ -254,9 +254,11 @@ export function SpriteShelf() {
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
+    selectedFolderId,
     selectedComponentId,
     selectObject,
     selectObjects,
+    selectFolder,
     selectComponent,
     selectScene,
     setActiveObjectTab,
@@ -520,6 +522,7 @@ export function SpriteShelf() {
     }
 
     if (target.type === 'folder' && target.folder) {
+      selectFolder(target.folder.id, { recordHistory: false });
       handleStartFolderEdit(target.folder);
     }
   };
@@ -602,6 +605,11 @@ export function SpriteShelf() {
       }
 
       return [item.key];
+    }
+
+    if (selectedFolderId !== item.id) {
+      selectionAnchorObjectIdRef.current = null;
+      selectFolder(item.id, { recordHistory: false });
     }
 
     if (selectedIdsInScene.length > 0 || selectedComponentId) {
@@ -793,6 +801,15 @@ export function SpriteShelf() {
 
     selectionAnchorObjectIdRef.current = objectId;
     selectObject(objectId);
+  };
+
+  const handleFolderRowClick = (e: React.MouseEvent, folderId: string) => {
+    if (e.button !== 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    selectionAnchorObjectIdRef.current = null;
+    selectFolder(folderId);
   };
 
   const handleAddObject = () => {
@@ -1367,7 +1384,9 @@ export function SpriteShelf() {
     const effectiveProps = object ? getEffectiveObjectProps(object, project?.components || []) : null;
     const hasChildItems = item.children.length > 0;
     const isExpanded = item.type === 'folder' && expandedKeys.has(item.key);
-    const isSelected = item.type === 'object' && selectedIdsInScene.includes(item.id);
+    const isSelected = item.type === 'object'
+      ? selectedIdsInScene.includes(item.id)
+      : selectedFolderId === item.id;
     const dropPosition = showDropIndicators && layerDropTarget?.key === item.key ? layerDropTarget.dropPosition : null;
     const isDropOn = dropPosition === 'on';
     const isDropBefore = dropPosition === 'before';
@@ -1427,6 +1446,8 @@ export function SpriteShelf() {
           onClick={interactive ? ((e) => {
             if (item.type === 'object' && object) {
               handleObjectRowClick(e, object.id);
+            } else if (item.type === 'folder' && folder) {
+              handleFolderRowClick(e, folder.id);
             }
           }) : undefined}
           onContextMenu={interactive ? ((e) => {

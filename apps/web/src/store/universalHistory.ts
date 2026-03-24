@@ -2,6 +2,7 @@ import type { Project } from '@/types';
 
 export type SelectionSnapshot = {
   selectedSceneId: string | null;
+  selectedFolderId: string | null;
   selectedObjectId: string | null;
   selectedObjectIds: string[];
   selectedComponentId: string | null;
@@ -66,6 +67,7 @@ function cloneProject(project: Project | null): Project | null {
 function cloneSelection(selection: SelectionSnapshot): SelectionSnapshot {
   return {
     selectedSceneId: selection.selectedSceneId,
+    selectedFolderId: selection.selectedFolderId,
     selectedObjectId: selection.selectedObjectId,
     selectedObjectIds: [...selection.selectedObjectIds],
     selectedComponentId: selection.selectedComponentId,
@@ -80,6 +82,7 @@ function getProjectStamp(project: Project | null): number | null {
 function getSelectionStamp(selection: SelectionSnapshot): string {
   return [
     selection.selectedSceneId ?? '',
+    selection.selectedFolderId ?? '',
     selection.selectedObjectId ?? '',
     selection.selectedObjectIds.join(','),
     selection.selectedComponentId ?? '',

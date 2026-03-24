@@ -51,6 +51,12 @@ function projectContainsObject(project: Project, sceneId: string | null, objectI
   return !!scene?.objects.some((object) => object.id === objectId);
 }
 
+function projectContainsFolder(project: Project, sceneId: string | null, folderId: string | null): boolean {
+  if (!sceneId || !folderId) return false;
+  const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+  return !!scene?.objectFolders?.some((folder) => folder.id === folderId);
+}
+
 function projectContainsComponent(project: Project, componentId: string | null): boolean {
   if (!componentId) return false;
   return (project.components || []).some((component) => component.id === componentId);
@@ -59,6 +65,7 @@ function projectContainsComponent(project: Project, componentId: string | null):
 interface EditorStore {
   // Selection state
   selectedSceneId: string | null;
+  selectedFolderId: string | null;
   selectedObjectId: string | null;
   selectedObjectIds: string[];
   selectedComponentId: string | null;
@@ -105,6 +112,7 @@ interface EditorStore {
 
   // Actions
   selectScene: (sceneId: string | null, options?: SelectionHistoryOptions) => void;
+  selectFolder: (folderId: string | null, options?: SelectionHistoryOptions) => void;
   selectObject: (objectId: string | null, options?: SelectionHistoryOptions) => void;
   selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
   selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
@@ -160,6 +168,7 @@ interface EditorStore {
 export const useEditorStore = create<EditorStore>((set, get) => ({
   // Selection state
   selectedSceneId: null,
+  selectedFolderId: null,
   selectedObjectId: null,
   selectedObjectIds: [],
   selectedComponentId: null,
@@ -218,6 +227,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   selectScene: (sceneId, options) => {
     set({
       selectedSceneId: sceneId,
+      selectedFolderId: null,
       selectedObjectId: null,
       selectedObjectIds: [],
       selectedComponentId: null,
@@ -229,8 +239,23 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
   },
 
+  selectFolder: (folderId, options) => {
+    set({
+      selectedFolderId: folderId,
+      selectedObjectId: null,
+      selectedObjectIds: [],
+      selectedComponentId: null,
+    });
+    if (options?.recordHistory !== false) {
+      recordHistoryChange({ source: 'selection:folder' });
+    } else {
+      syncHistorySnapshot();
+    }
+  },
+
   selectObject: (objectId, options) => {
     set({
+      selectedFolderId: null,
       selectedObjectId: objectId,
       selectedObjectIds: objectId ? [objectId] : [],
       selectedComponentId: null,
@@ -248,6 +273,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       ? primaryObjectId
       : uniqueIds[0] ?? null;
     set({
+      selectedFolderId: null,
       selectedObjectId: primary,
       selectedObjectIds: uniqueIds,
       selectedComponentId: null,
@@ -262,6 +288,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   selectComponent: (componentId, options) => {
     set({
       selectedComponentId: componentId,
+      selectedFolderId: null,
       selectedObjectId: null,
       selectedObjectIds: [],
     });
@@ -281,6 +308,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedComponentId = project && projectContainsComponent(project, state.selectedComponentId)
       ? state.selectedComponentId
       : null;
+    const nextSelectedFolderId = project && !nextSelectedComponentId && projectContainsFolder(project, nextSelectedSceneId, state.selectedFolderId)
+      ? state.selectedFolderId
+      : null;
     const validPrimaryObjectId = project && !nextSelectedComponentId && projectContainsObject(project, nextSelectedSceneId, state.selectedObjectId)
       ? state.selectedObjectId
       : null;
@@ -296,6 +326,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     set({
       selectedSceneId: nextSelectedSceneId,
+      selectedFolderId: nextSelectedComponentId ? null : nextSelectedFolderId,
       selectedObjectId: nextSelectedComponentId ? null : nextSelectedObjectId,
       selectedObjectIds: nextSelectedComponentId ? [] : nextSelectedObjectIds,
       selectedComponentId: nextSelectedComponentId,
@@ -364,6 +395,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   focusPlayValidationIssue: (issue) => {
     set({
       selectedSceneId: issue.sceneId,
+      selectedFolderId: null,
       selectedObjectId: issue.objectId,
       selectedObjectIds: issue.objectId ? [issue.objectId] : [],
       selectedComponentId: null,
@@ -574,6 +606,7 @@ registerSelectionHistoryBridge(
     const state = useEditorStore.getState();
     return {
       selectedSceneId: state.selectedSceneId,
+      selectedFolderId: state.selectedFolderId,
       selectedObjectId: state.selectedObjectId,
       selectedObjectIds: [...state.selectedObjectIds],
       selectedComponentId: state.selectedComponentId,
@@ -582,6 +615,7 @@ registerSelectionHistoryBridge(
   (selection) => {
     useEditorStore.setState({
       selectedSceneId: selection.selectedSceneId,
+      selectedFolderId: selection.selectedFolderId ?? null,
       selectedObjectId: selection.selectedObjectId,
       selectedObjectIds: [...selection.selectedObjectIds],
       selectedComponentId: selection.selectedComponentId ?? null,

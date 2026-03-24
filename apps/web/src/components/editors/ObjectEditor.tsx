@@ -12,6 +12,7 @@ export function ObjectEditor() {
   const { project } = useProjectStore();
   const {
     selectedSceneId,
+    selectedFolderId,
     selectedObjectId,
     selectedComponentId,
     selectObject,
@@ -22,7 +23,7 @@ export function ObjectEditor() {
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
 
   useEffect(() => {
-    if (selectedComponentId) return;
+    if (selectedComponentId || selectedFolderId) return;
 
     const sceneObjects = scene?.objects || [];
 
@@ -32,13 +33,22 @@ export function ObjectEditor() {
     if (selectedObjectId && !sceneObjects.find((o) => o.id === selectedObjectId)) {
       selectObject(sceneObjects.length > 0 ? sceneObjects[0].id : null, { recordHistory: false });
     }
-  }, [scene, selectedObjectId, selectedComponentId, selectObject]);
+  }, [scene, selectedObjectId, selectedComponentId, selectedFolderId, selectObject]);
 
   useEffect(() => {
-    if (selectedComponentId && activeObjectTab !== 'code') {
+    if ((selectedComponentId || selectedFolderId) && activeObjectTab !== 'code') {
       setActiveObjectTab('code');
     }
-  }, [selectedComponentId, activeObjectTab, setActiveObjectTab]);
+  }, [selectedComponentId, selectedFolderId, activeObjectTab, setActiveObjectTab]);
+
+  if (selectedFolderId) {
+    return (
+      <div className="flex flex-col h-full bg-card items-center justify-center text-muted-foreground">
+        <Code className="size-12 mb-4 opacity-20" />
+        <p className="text-sm">Folder selected</p>
+      </div>
+    );
+  }
 
   // Show placeholder when no object is selected
   if (!selectedObjectId && !selectedComponentId) {
