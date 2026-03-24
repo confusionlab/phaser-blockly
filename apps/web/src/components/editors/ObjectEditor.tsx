@@ -82,7 +82,7 @@ export function ObjectEditor() {
           <div className="border-b border-zinc-200/80 px-3 py-2 dark:border-white/10">
             <SegmentedControl
               ariaLabel="Object editor sections"
-              className="max-w-[320px]"
+              className="w-full"
               options={sectionOptions}
               value={activeObjectTab}
               onValueChange={setActiveObjectTab}

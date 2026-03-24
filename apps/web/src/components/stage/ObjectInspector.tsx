@@ -288,7 +288,7 @@ export function ObjectInspector() {
         <div className="border-b border-zinc-200/80 px-3 py-2 dark:border-white/10">
           <SegmentedControl
             ariaLabel="Inspector sections"
-            className="max-w-[220px]"
+            className="w-full"
             options={inspectorTabs}
             value={activeTab}
             onValueChange={setActiveTab}
