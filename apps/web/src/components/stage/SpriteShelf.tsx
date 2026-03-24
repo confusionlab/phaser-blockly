@@ -1478,7 +1478,7 @@ export function SpriteShelf() {
                 className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors`}>
+            <div className={`relative z-10 flex items-center rounded-lg ${rowContentPaddingClass} transition-colors`}>
             {indentDepth > 0 ? (
               <div aria-hidden="true" className="flex shrink-0">
                 {Array.from({ length: indentDepth }).map((_, index) => (
@@ -1506,18 +1506,18 @@ export function SpriteShelf() {
             </button>
 
             {item.type === 'folder' ? (
-              <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md">
-                {isExpanded ? <FolderOpen className="size-4 shrink-0" /> : <Folder className="size-4 shrink-0" />}
+              <div className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
+                {isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />}
               </div>
             ) : (
               <div
-                className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md"
+                className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md"
               >
                 {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
                   const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
                   const bounds = costume?.bounds;
                   if (bounds && bounds.width > 0 && bounds.height > 0) {
-                    const scale = Math.min(1, 32 / Math.max(bounds.width, bounds.height));
+                    const scale = Math.min(1, 24 / Math.max(bounds.width, bounds.height));
                     return (
                       <div
                         className="absolute"
@@ -1551,7 +1551,7 @@ export function SpriteShelf() {
               </div>
             )}
 
-            <div className="flex-1 min-w-0">
+            <div className="ml-1 flex-1 min-w-0">
               {isObjectEditing ? (
                 <InlineRenameField
                   key={`rename-${inlineRenameSessionId}`}
