@@ -3059,10 +3059,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     zoomToBounds(selectionSnapshot.bounds, 72);
   }, [getSelectionBoundsSnapshot, zoomToBounds]);
 
-  const handleZoomFocus = useCallback(() => {
-    containerRef.current?.focus();
-  }, []);
-
   const currentViewScale = BASE_VIEW_SCALE * zoom;
   const canvasLeft = viewportSize.width / 2 - cameraCenter.x * currentViewScale;
   const canvasTop = viewportSize.height / 2 - cameraCenter.y * currentViewScale;
@@ -3082,7 +3078,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         onZoomToActualSize={handleZoomToActualSize}
         onZoomToFit={handleZoomToFit}
         onZoomToSelection={handleZoomToSelection}
-        onZoomFocus={handleZoomFocus}
         canZoomToSelection={canZoomToSelection}
       />
 

@@ -23,7 +23,6 @@ interface CostumeCanvasHeaderProps {
   onZoomToActualSize: () => void;
   onZoomToFit: () => void;
   onZoomToSelection: () => void;
-  onZoomFocus: () => void;
   canZoomToSelection: boolean;
 }
 
@@ -40,7 +39,6 @@ export function CostumeCanvasHeader({
   onZoomToActualSize,
   onZoomToFit,
   onZoomToSelection,
-  onZoomFocus,
   canZoomToSelection,
 }: CostumeCanvasHeaderProps) {
   const overlayButtonClassName = 'text-foreground/78 hover:!bg-transparent hover:text-foreground';
@@ -84,10 +82,6 @@ export function CostumeCanvasHeader({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="min-w-[220px]">
-            <DropdownMenuItem onClick={onZoomFocus} className="justify-between">
-              <span>Zoom</span>
-              <DropdownMenuShortcut>Z</DropdownMenuShortcut>
-            </DropdownMenuItem>
             <DropdownMenuItem onClick={onZoomIn} disabled={zoom >= maxZoom} className="justify-between">
               <span>Zoom In</span>
               <DropdownMenuShortcut>⌘+</DropdownMenuShortcut>
