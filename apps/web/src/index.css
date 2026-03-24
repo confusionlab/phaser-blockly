@@ -256,6 +256,7 @@ body {
 :root {
   --radius: 0.625rem;
   --divider-size: 2px;
+  --resize-hit-size: calc(var(--divider-size) * 2.5);
   --background: oklch(1 0 0);
   --foreground: oklch(0.147 0.004 49.25);
   --card: oklch(1 0 0);
@@ -523,25 +524,45 @@ body {
 }
 
 .app-resize-divider-x {
-  width: calc(var(--divider-size) * 2.5);
-  min-width: calc(var(--divider-size) * 2.5);
+  position: relative;
+  width: var(--resize-hit-size);
+  min-width: var(--resize-hit-size);
+  margin-left: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
+  margin-right: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
   flex-shrink: 0;
   color: var(--border);
-  background-image: linear-gradient(currentColor, currentColor);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: var(--divider-size) 100%;
 }
 
 .app-resize-divider-y {
-  height: calc(var(--divider-size) * 2.5);
-  min-height: calc(var(--divider-size) * 2.5);
+  position: relative;
+  height: var(--resize-hit-size);
+  min-height: var(--resize-hit-size);
+  margin-top: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
+  margin-bottom: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
   flex-shrink: 0;
   color: var(--border);
-  background-image: linear-gradient(currentColor, currentColor);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% var(--divider-size);
+}
+
+.app-resize-divider-x::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--divider-size);
+  transform: translateX(-50%);
+  background-color: currentColor;
+}
+
+.app-resize-divider-y::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: var(--divider-size);
+  transform: translateY(-50%);
+  background-color: currentColor;
 }
 
 @layer base {
