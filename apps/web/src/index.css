@@ -151,19 +151,19 @@ body {
   visibility: hidden !important;
 }
 
-/* Make main workspace scrollbars smaller and closer to edge */
+/* Keep Blockly scrollbars aligned with the app-wide scrollbar size */
 .blocklyScrollbarHorizontal {
-  height: 6px !important;
+  height: var(--scrollbar-size) !important;
 }
 
 .blocklyScrollbarVertical {
-  width: 6px !important;
+  width: var(--scrollbar-size) !important;
 }
 
 .blocklyScrollbarHandle {
   fill: var(--blockly-scrollbar-thumb) !important;
-  rx: 3px !important;
-  ry: 3px !important;
+  rx: calc(var(--scrollbar-size) / 2) !important;
+  ry: calc(var(--scrollbar-size) / 2) !important;
 }
 
 .blocklyWidgetDiv,
@@ -188,18 +188,18 @@ body {
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 
 ::-webkit-scrollbar-track {
   background: var(--scrollbar-track);
-  border-radius: 4px;
+  border-radius: calc(var(--scrollbar-size) / 2);
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 4px;
+  border-radius: calc(var(--scrollbar-size) / 2);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -292,6 +292,7 @@ body {
   --sidebar-border: oklch(0.923 0.003 48.717);
   --sidebar-ring: oklch(0.709 0.01 56.259);
 
+  --scrollbar-size: 12px;
   --scrollbar-track: oklch(0.96 0.001 106.42);
   --scrollbar-thumb: oklch(0.81 0.003 56.04);
   --scrollbar-thumb-hover: oklch(0.71 0.006 56.04);

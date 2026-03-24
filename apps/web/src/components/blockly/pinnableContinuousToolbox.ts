@@ -148,7 +148,10 @@ export class PinnableContinuousToolbox extends ContinuousToolbox {
 
   private applyPinnedState(pinned: boolean, initializing: boolean): void {
     const flyout = this.getFlyout();
-    flyout.setAutoClose(false);
+    // In pinned mode the always-open flyout should act as the delete area.
+    // In unpinned mode, hand deletion back to the toolbox rail so dropping
+    // onto the category column while the flyout is collapsed disposes blocks.
+    flyout.setAutoClose(!pinned);
 
     if (pinned) {
       flyout.show(this.getInitialFlyoutContents_());
