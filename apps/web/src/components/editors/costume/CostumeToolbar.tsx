@@ -26,8 +26,11 @@ import {
 } from 'lucide-react';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
@@ -53,6 +56,8 @@ export interface TextToolStyle {
   fontFamily: string;
   fontSize: number;
   fontWeight: 'normal' | 'bold';
+  fontStyle: 'normal' | 'italic';
+  underline: boolean;
   textAlign: 'left' | 'center' | 'right';
   opacity: number;
 }
@@ -76,7 +81,7 @@ const floatingToolButtonBaseClass =
 const floatingToolButtonActiveClass =
   '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
 const floatingBarChromeClass =
-  'pointer-events-auto hide-scrollbar max-w-full overflow-x-auto border border-border/70 bg-background/95 backdrop-blur-xl dark:bg-background/90';
+  'pointer-events-auto max-w-full border border-border/70 bg-background/95 backdrop-blur-xl dark:bg-background/90';
 const floatingPropertyBarClass =
   `${floatingBarChromeClass} rounded-[24px] px-3 py-2 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45),0_6px_18px_-14px_rgba(15,23,42,0.24)] dark:shadow-[0_24px_64px_-38px_rgba(0,0,0,0.8),0_6px_18px_-14px_rgba(0,0,0,0.52)]`;
 const floatingToolBarClass =
@@ -167,6 +172,16 @@ const fontFamilyOptions = [
   'Courier New',
 ];
 
+const textAlignOptions: Array<{
+  value: TextToolStyle['textAlign'];
+  label: string;
+  Icon: typeof AlignLeft;
+}> = [
+  { value: 'left', label: 'Left', Icon: AlignLeft },
+  { value: 'center', label: 'Center', Icon: AlignCenter },
+  { value: 'right', label: 'Right', Icon: AlignRight },
+];
+
 const alignGrid: Array<{ action: AlignAction; label: string; title: string }> = [
   { action: 'top-left', label: '↖', title: 'Top Left' },
   { action: 'top-center', label: '↑', title: 'Top Center' },
@@ -210,10 +225,8 @@ export const CostumeToolbar = memo(({
   onTextStyleChange,
 }: CostumeToolbarProps) => {
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [colorPickerPosition, setColorPickerPosition] = useState<{ left: number; top: number }>({ left: 0, top: 0 });
   const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
-  const colorButtonRef = useRef<HTMLButtonElement>(null);
-  const colorPickerPanelRef = useRef<HTMLDivElement>(null);
+  const colorControlRef = useRef<HTMLDivElement>(null);
 
   const handleColorChange = useCallback((value: Parameters<typeof Color.rgb>[0]) => {
     try {
@@ -224,52 +237,45 @@ export const CostumeToolbar = memo(({
     }
   }, [onColorChange]);
 
-  const updateColorPickerPosition = useCallback(() => {
-    const button = colorButtonRef.current;
-    if (!button) return;
-    const rect = button.getBoundingClientRect();
-    const pickerWidth = colorPickerPanelRef.current?.offsetWidth ?? 212;
-    const pickerHeight = colorPickerPanelRef.current?.offsetHeight ?? 220;
-    const viewportPadding = 8;
-    const left = Math.max(
-      viewportPadding,
-      Math.min(rect.left, window.innerWidth - pickerWidth - viewportPadding),
-    );
-    const spaceAbove = rect.top - viewportPadding;
-    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
-    const openAbove = spaceAbove >= pickerHeight || spaceAbove > spaceBelow;
-    setColorPickerPosition({
-      left,
-      top: openAbove
-        ? Math.max(viewportPadding, rect.top - pickerHeight - 8)
-        : Math.min(rect.bottom + 8, window.innerHeight - pickerHeight - viewportPadding),
-    });
-  }, []);
-
   useEffect(() => {
     if (!showColorPicker) return;
-    updateColorPickerPosition();
-    const onViewportChange = () => updateColorPickerPosition();
-    window.addEventListener('resize', onViewportChange);
-    window.addEventListener('scroll', onViewportChange, true);
-    return () => {
-      window.removeEventListener('resize', onViewportChange);
-      window.removeEventListener('scroll', onViewportChange, true);
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (colorControlRef.current?.contains(target)) return;
+      setShowColorPicker(false);
     };
-  }, [showColorPicker, updateColorPickerPosition]);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowColorPicker(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showColorPicker]);
 
   const leadingTools = editorMode === 'vector' ? vectorPrimaryTools : bitmapPrimaryTools;
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = isShapeTool(activeTool);
   const showSelectionActions = activeTool === 'select';
+  const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
+  const ActiveTextAlignIcon = activeTextAlign.Icon;
 
   return (
     <>
       <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
         <div className="flex max-w-full flex-col items-center gap-3">
           <div className={floatingPropertyBarClass} data-testid="costume-toolbar-properties">
-            <div className="flex min-w-max items-center gap-2">
+            <div className="hide-scrollbar max-w-full overflow-x-auto overflow-y-visible">
+              <div className="flex min-w-max items-center gap-2">
               {editorMode === 'vector' && showSelectionActions && hasActiveSelection && (
                 <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
                   <DropdownMenu>
@@ -353,18 +359,17 @@ export const CostumeToolbar = memo(({
                 </div>
               )}
 
-              <div className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+              <div
+                ref={colorControlRef}
+                className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0"
+              >
                 <button
-                  ref={colorButtonRef}
                   type="button"
                   className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
-                  onClick={() => {
-                    if (!showColorPicker) {
-                      updateColorPickerPosition();
-                    }
-                    setShowColorPicker(!showColorPicker);
-                  }}
+                  onClick={() => setShowColorPicker((prev) => !prev)}
                   title="Color"
+                  aria-expanded={showColorPicker}
+                  aria-haspopup="dialog"
                 >
                   <span
                     className="size-4 rounded border border-foreground/15"
@@ -374,22 +379,12 @@ export const CostumeToolbar = memo(({
                   <span>Color</span>
                 </button>
                 {showColorPicker && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowColorPicker(false)} />
-                    <div
-                      ref={colorPickerPanelRef}
-                      className="fixed z-50 rounded-lg border bg-popover p-3 shadow-lg"
-                      style={{
-                        left: colorPickerPosition.left,
-                        top: colorPickerPosition.top,
-                      }}
-                    >
-                      <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
-                        <ColorPickerSelection className="mb-2 h-32 rounded" />
-                        <ColorPickerHue />
-                      </ColorPicker>
-                    </div>
-                  </>
+                  <div className="absolute bottom-full left-0 z-50 mb-2 rounded-lg border bg-popover p-3 shadow-lg">
+                    <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
+                      <ColorPickerSelection className="mb-2 h-32 rounded" />
+                      <ColorPickerHue />
+                    </ColorPicker>
+                  </div>
                 )}
               </div>
 
@@ -415,35 +410,30 @@ export const CostumeToolbar = memo(({
 
               {editorMode === 'vector' && showTextControls && (
                 <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                  <Select.Root
-                    value={textStyle.fontFamily}
-                    onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
-                  >
-                    <Select.Trigger className="inline-flex h-8 min-w-[120px] items-center justify-between gap-1 rounded border bg-background px-2 text-xs hover:bg-accent">
-                      <Select.Value />
-                      <Select.Icon>
-                        <ChevronDown className="size-3" />
-                      </Select.Icon>
-                    </Select.Trigger>
-                    <Select.Portal>
-                      <Select.Content className="z-50 rounded-md border bg-popover shadow-md">
-                        <Select.Viewport className="p-1">
-                          {fontFamilyOptions.map((family) => (
-                            <Select.Item
-                              key={family}
-                              value={family}
-                              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs outline-none hover:bg-accent data-[highlighted]:bg-accent"
-                            >
-                              <Select.ItemIndicator>
-                                <Check className="size-3" />
-                              </Select.ItemIndicator>
-                              <Select.ItemText>{family}</Select.ItemText>
-                            </Select.Item>
-                          ))}
-                        </Select.Viewport>
-                      </Select.Content>
-                    </Select.Portal>
-                  </Select.Root>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 min-w-[120px] justify-between gap-2 px-2 text-xs"
+                      >
+                        <span className="truncate">{textStyle.fontFamily}</span>
+                        <ChevronDown className="size-3 shrink-0" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="min-w-[156px]">
+                      <DropdownMenuRadioGroup
+                        value={textStyle.fontFamily}
+                        onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
+                      >
+                        {fontFamilyOptions.map((family) => (
+                          <DropdownMenuRadioItem key={family} value={family}>
+                            {family}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
 
                   <div className="flex min-w-[90px] items-center gap-1">
                     <span className="text-xs text-muted-foreground">Sz</span>
@@ -463,57 +453,90 @@ export const CostumeToolbar = memo(({
                     <span className="w-6 text-right text-xs text-muted-foreground">{textStyle.fontSize}</span>
                   </div>
 
-                  <Button
-                    size="sm"
-                    variant={textStyle.fontWeight === 'bold' ? 'default' : 'outline'}
-                    className="h-8 px-2 text-xs font-bold"
-                    onClick={() => onTextStyleChange({ fontWeight: textStyle.fontWeight === 'bold' ? 'normal' : 'bold' })}
-                  >
-                    B
-                  </Button>
-
-                  <div className="flex items-center gap-0.5">
-                    {(['left', 'center', 'right'] as const).map((align) => (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
                       <Button
-                        key={align}
-                        size="icon"
-                        variant={textStyle.textAlign === align ? 'default' : 'outline'}
-                        className="size-8"
-                        onClick={() => onTextStyleChange({ textAlign: align })}
-                        title={`Align ${align}`}
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-2 px-2 text-xs"
                       >
-                        {align === 'left' && <AlignLeft className="size-3.5" />}
-                        {align === 'center' && <AlignCenter className="size-3.5" />}
-                        {align === 'right' && <AlignRight className="size-3.5" />}
+                        <span className={cn('font-semibold', textStyle.fontWeight === 'bold' && 'text-foreground')}>
+                          B
+                        </span>
+                        <span className={cn('italic', textStyle.fontStyle === 'italic' && 'text-foreground')}>
+                          I
+                        </span>
+                        <span className={cn('underline underline-offset-2', textStyle.underline && 'text-foreground')}>
+                          U
+                        </span>
+                        <ChevronDown className="size-3" />
                       </Button>
-                    ))}
-                  </div>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="min-w-[156px]">
+                      <DropdownMenuCheckboxItem
+                        checked={textStyle.fontWeight === 'bold'}
+                        onCheckedChange={(checked) => onTextStyleChange({ fontWeight: checked ? 'bold' : 'normal' })}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        B
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem
+                        checked={textStyle.fontStyle === 'italic'}
+                        onCheckedChange={(checked) => onTextStyleChange({ fontStyle: checked ? 'italic' : 'normal' })}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        I
+                      </DropdownMenuCheckboxItem>
+                      <DropdownMenuCheckboxItem
+                        checked={textStyle.underline}
+                        onCheckedChange={(checked) => onTextStyleChange({ underline: checked === true })}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        U
+                      </DropdownMenuCheckboxItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
 
-                  <div className="flex min-w-[110px] items-center gap-1">
-                    <span className="text-xs text-muted-foreground">Op</span>
-                    <Slider.Root
-                      className="relative flex h-4 w-16 touch-none items-center"
-                      value={[Math.round(textStyle.opacity * 100)]}
-                      onValueChange={([value]) => onTextStyleChange({ opacity: value / 100 })}
-                      min={10}
-                      max={100}
-                      step={1}
-                    >
-                      <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
-                        <Slider.Range className="absolute h-full rounded-full bg-primary" />
-                      </Slider.Track>
-                      <Slider.Thumb className="block size-3 rounded-full border border-primary/50 bg-background shadow" />
-                    </Slider.Root>
-                    <span className="w-8 text-right text-xs text-muted-foreground">{Math.round(textStyle.opacity * 100)}%</span>
-                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 min-w-[110px] justify-between gap-2 px-2 text-xs"
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <ActiveTextAlignIcon className="size-3.5" />
+                          <span>{activeTextAlign.label}</span>
+                        </span>
+                        <ChevronDown className="size-3 shrink-0" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="min-w-[148px]">
+                      <DropdownMenuRadioGroup
+                        value={textStyle.textAlign}
+                        onValueChange={(textAlign) => onTextStyleChange({ textAlign: textAlign as TextToolStyle['textAlign'] })}
+                      >
+                        {textAlignOptions.map(({ value, label, Icon }) => (
+                          <DropdownMenuRadioItem key={value} value={value}>
+                            <span className="inline-flex items-center gap-2">
+                              <Icon className="size-3.5" />
+                              <span>{label}</span>
+                            </span>
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               )}
+              </div>
             </div>
           </div>
 
           <div className={floatingToolBarClass} data-testid="costume-toolbar-tools">
-            <div className="flex min-w-max items-center gap-3">
-              <div className="flex items-center gap-1">
+            <div className="hide-scrollbar max-w-full overflow-x-auto overflow-y-visible">
+              <div className="flex min-w-max items-center gap-3">
+                <div className="flex items-center gap-1">
                 {leadingTools.map(({ tool, icon, label }) => (
                   <FloatingToolButton
                     key={tool}
@@ -606,19 +629,20 @@ export const CostumeToolbar = memo(({
                     onClick={onToolChange}
                   />
                 ))}
-              </div>
+                </div>
 
-              <div className="h-10 w-px bg-border/65" />
+                <div className="h-10 w-px bg-border/65" />
 
-              <div className="w-[164px] rounded-[20px] bg-black/[0.045] p-1 dark:bg-white/[0.05]">
-                <SegmentedControl
-                  ariaLabel="Costume editor mode"
-                  options={modeOptions}
-                  value={editorMode}
-                  onValueChange={onEditorModeChange}
-                  className="w-full rounded-[16px] bg-background/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] dark:bg-black/30"
-                  optionClassName="min-h-[40px] rounded-[14px] px-3 text-[13px] font-medium"
-                />
+                <div className="w-[164px] rounded-[20px] bg-black/[0.045] p-1 dark:bg-white/[0.05]">
+                  <SegmentedControl
+                    ariaLabel="Costume editor mode"
+                    options={modeOptions}
+                    value={editorMode}
+                    onValueChange={onEditorModeChange}
+                    className="w-full rounded-[16px] bg-background/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] dark:bg-black/30"
+                    optionClassName="min-h-[40px] rounded-[14px] px-3 text-[13px] font-medium"
+                  />
+                </div>
               </div>
             </div>
           </div>

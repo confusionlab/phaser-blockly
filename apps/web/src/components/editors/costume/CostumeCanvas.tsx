@@ -600,6 +600,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fontFamily: typeof textObj.fontFamily === 'string' ? textObj.fontFamily : undefined,
       fontSize: typeof textObj.fontSize === 'number' ? textObj.fontSize : undefined,
       fontWeight: textObj.fontWeight === 'bold' ? 'bold' : 'normal',
+      fontStyle: textObj.fontStyle === 'italic' ? 'italic' : 'normal',
+      underline: textObj.underline === true,
       textAlign: textObj.textAlign === 'center' || textObj.textAlign === 'right' ? textObj.textAlign : 'left',
       opacity: typeof textObj.opacity === 'number' ? textObj.opacity : undefined,
     });
@@ -2120,6 +2122,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           fontFamily: textStyleRef.current.fontFamily,
           fontSize: textStyleRef.current.fontSize,
           fontWeight: textStyleRef.current.fontWeight,
+          fontStyle: textStyleRef.current.fontStyle,
+          underline: textStyleRef.current.underline,
           textAlign: textStyleRef.current.textAlign,
           opacity: textStyleRef.current.opacity,
         } as any);
@@ -2363,6 +2367,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (textObject.fontFamily !== textStyle.fontFamily) changed = true;
       if (textObject.fontSize !== textStyle.fontSize) changed = true;
       if (textObject.fontWeight !== textStyle.fontWeight) changed = true;
+      if (textObject.fontStyle !== textStyle.fontStyle) changed = true;
+      if (textObject.underline !== textStyle.underline) changed = true;
       if (textObject.textAlign !== textStyle.textAlign) changed = true;
       if (textObject.opacity !== textStyle.opacity) changed = true;
       textObject.set({
@@ -2370,6 +2376,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         fontFamily: textStyle.fontFamily,
         fontSize: textStyle.fontSize,
         fontWeight: textStyle.fontWeight,
+        fontStyle: textStyle.fontStyle,
+        underline: textStyle.underline,
         textAlign: textStyle.textAlign,
         opacity: textStyle.opacity,
       });

@@ -141,6 +141,8 @@ export function CostumeEditor() {
     fontFamily: 'Arial',
     fontSize: 32,
     fontWeight: 'normal',
+    fontStyle: 'normal',
+    underline: false,
     textAlign: 'left',
     opacity: 1,
   });
@@ -606,6 +608,8 @@ export function CostumeEditor() {
         next.fontFamily === prev.fontFamily &&
         next.fontSize === prev.fontSize &&
         next.fontWeight === prev.fontWeight &&
+        next.fontStyle === prev.fontStyle &&
+        next.underline === prev.underline &&
         next.textAlign === prev.textAlign &&
         next.opacity === prev.opacity
       ) {
