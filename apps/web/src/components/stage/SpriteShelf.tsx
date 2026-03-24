@@ -280,6 +280,7 @@ export function SpriteShelf() {
   } | null>(null);
   const [sceneContextMenuPosition, setSceneContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [sceneDropdownOpen, setSceneDropdownOpen] = useState(false);
+  const [isShelfHovered, setIsShelfHovered] = useState(false);
   const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
   const [sceneDropTarget, setSceneDropTarget] = useState<{ sceneId: string; position: 'before' | 'after' } | null>(null);
   const [draggedLayerKeys, setDraggedLayerKeys] = useState<string[]>([]);
@@ -1490,7 +1491,9 @@ export function SpriteShelf() {
               type="button"
               disabled={!hasChildItems}
               aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-              className={`shrink-0 rounded p-0 flex items-center justify-center disabled:pointer-events-none ${controlHoverClass}`}
+              className={`-m-1 shrink-0 rounded p-1 flex items-center justify-center transition-opacity disabled:pointer-events-none ${
+                isShelfHovered ? 'opacity-100' : 'opacity-0'
+              } ${controlHoverClass}`}
               onClick={interactive ? ((e) => {
                 e.stopPropagation();
                 if (folder) {
@@ -1611,7 +1614,11 @@ export function SpriteShelf() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-card border-r">
+    <div
+      className="h-full flex flex-col bg-card border-r"
+      onPointerEnter={() => setIsShelfHovered(true)}
+      onPointerLeave={() => setIsShelfHovered(false)}
+    >
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
           <DropdownMenuTrigger asChild>
@@ -1719,7 +1726,7 @@ export function SpriteShelf() {
                     variant="ghost"
                     size="icon-sm"
                     onClick={(e) => handleStartSceneEdit(scene.id, scene.name, e)}
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 hover:opacity-100"
+                    className={`h-6 w-6 transition-opacity ${isShelfHovered ? 'opacity-100' : 'opacity-0'}`}
                   >
                     <Pencil className="size-3" />
                   </Button>
