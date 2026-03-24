@@ -5,7 +5,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
 import {
   Dialog,
@@ -1139,6 +1139,12 @@ export function SpriteShelf() {
     setSceneContextMenuPosition(null);
   };
 
+  const preventSceneMenuHoverFocus = editingSceneId
+    ? (event: React.PointerEvent) => {
+      event.preventDefault();
+    }
+    : undefined;
+
   const handleDeleteScene = (sceneId: string) => {
     if (!project || project.scenes.length <= 1) return;
 
@@ -1459,7 +1465,7 @@ export function SpriteShelf() {
 
             <div className="flex-1 min-w-0">
               {isObjectEditing ? (
-                <Input
+                <InlineRenameField
                   key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
                   value={editName}
@@ -1467,13 +1473,12 @@ export function SpriteShelf() {
                   onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
                   onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
                   data-hotkeys="ignore"
-                  className="h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                   autoFocus
                 />
               ) : isFolderEditing ? (
-                <Input
+                <InlineRenameField
                   key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
                   value={folderEditName}
@@ -1481,7 +1486,6 @@ export function SpriteShelf() {
                   onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
                   onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
                   data-hotkeys="ignore"
-                  className="h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                   autoFocus
@@ -1532,10 +1536,13 @@ export function SpriteShelf() {
               editingSceneId === scene.id ? (
                 <div
                   key={scene.id}
-                  className="flex items-center px-2 py-1.5"
+                  className={`flex items-center gap-2 rounded-sm px-2 py-1.5 ${
+                    scene.id === selectedSceneId ? 'bg-accent' : ''
+                  }`}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
-                  <Input
+                  <GripVertical className="size-3 shrink-0 text-muted-foreground/70" />
+                  <InlineRenameField
                     ref={sceneInputRef}
                     value={editName}
                     onChange={(e) => {
@@ -1558,14 +1565,18 @@ export function SpriteShelf() {
                     }}
                     data-hotkeys="ignore"
                     onClick={(e) => e.stopPropagation()}
-                    className={`h-6 text-xs flex-1 ${sceneEditError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                    invalid={!!sceneEditError}
+                    className="flex-1 min-w-0"
+                    inputClassName="text-sm leading-5 text-foreground"
                     autoFocus
                   />
+                  <div className="h-6 w-6 shrink-0 opacity-0" aria-hidden="true" />
                 </div>
               ) : (
                 <DropdownMenuItem
                   key={scene.id}
                   draggable
+                  onPointerMove={preventSceneMenuHoverFocus}
                   onClick={() => selectScene(scene.id)}
                   onDragStart={(e) => {
                     setDraggedSceneId(scene.id);
@@ -1624,7 +1635,7 @@ export function SpriteShelf() {
               )
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleAddScene}>
+            <DropdownMenuItem onPointerMove={preventSceneMenuHoverFocus} onClick={handleAddScene}>
               <Plus className="size-4 mr-2" />
               New Scene
             </DropdownMenuItem>
