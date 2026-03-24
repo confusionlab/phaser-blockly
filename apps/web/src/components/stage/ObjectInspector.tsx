@@ -20,6 +20,7 @@ import {
   endHistoryTransaction,
   runInHistoryTransaction,
 } from '@/store/universalHistory';
+import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 
 type InspectorTab = 'object' | 'scene';
 
@@ -279,23 +280,29 @@ export function ObjectInspector() {
   }, [selectedFolderId, selectedObjectId, selectedObjectIds.length]);
 
   const handleTabChange = useCallback((value: string) => {
+    freezeEditorResizeForLayoutTransition();
     setActiveTab(value === 'scene' ? 'scene' : 'object');
   }, []);
 
+  const handleSegmentedTabChange = useCallback((value: InspectorTab) => {
+    freezeEditorResizeForLayoutTransition();
+    setActiveTab(value);
+  }, []);
+
   return (
-    <div className="bg-card">
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <div className="border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
+    <div className="flex h-full min-h-0 flex-col bg-card">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="flex h-full min-h-0 flex-col w-full">
+        <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
           <SegmentedControl
             ariaLabel="Inspector sections"
             className="w-full"
             options={inspectorTabs}
             value={activeTab}
-            onValueChange={setActiveTab}
+            onValueChange={handleSegmentedTabChange}
           />
         </div>
 
-        <TabsContent value="object" className="px-4 py-3 mt-0">
+        <TabsContent forceMount value="object" className="mt-0 min-h-0 overflow-y-scroll px-4 py-3 scrollbar-gutter-stable data-[state=inactive]:hidden">
           {selectedFolderId ? (
             <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
           ) : (
@@ -307,7 +314,7 @@ export function ObjectInspector() {
             />
           )}
         </TabsContent>
-        <TabsContent value="scene" className="px-4 py-3 mt-0">
+        <TabsContent forceMount value="scene" className="mt-0 min-h-0 overflow-y-scroll px-4 py-3 scrollbar-gutter-stable data-[state=inactive]:hidden">
           <SceneProperties
             scene={scene}
             updateScene={updateScene}

@@ -65,6 +65,7 @@ import {
   deleteSceneObjectsWithHistory,
   duplicateSceneObjectsWithHistory,
 } from '@/lib/editor/objectCommands';
+import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -587,6 +588,7 @@ export function SpriteShelf() {
   };
 
   const handleToggleFolder = (folderId: string) => {
+    freezeEditorResizeForLayoutTransition();
     const isCollapsed = collapsedFolderIds.has(folderId);
     const nextCollapsed = isCollapsed
       ? Array.from(collapsedFolderIds).filter((id) => id !== folderId)
@@ -1769,7 +1771,7 @@ export function SpriteShelf() {
       </div>
 
       <div
-        className="flex-1 overflow-y-auto scrollbar-gutter-stable"
+        className="flex-1 overflow-y-scroll scrollbar-gutter-stable"
         onDragOver={handleRootDragOver}
         onDrop={handleRootDrop}
         onClick={handleEmptyShelfClick}

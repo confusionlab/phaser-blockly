@@ -8,6 +8,7 @@ import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Code, Palette, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
   { value: 'code', label: 'Code', icon: <Code className="size-3" /> },
@@ -63,6 +64,7 @@ export function ObjectEditor() {
   }, [activeObjectTab]);
 
   const handleSectionChange = useCallback((nextTab: ObjectEditorTab) => {
+    freezeEditorResizeForLayoutTransition();
     setMountedTabs((current) => (
       current[nextTab]
         ? current

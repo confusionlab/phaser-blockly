@@ -246,7 +246,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
       {/* Bottom panel: Objects list (left) + Properties (right) */}
       <div className="flex" style={{ height: `${bottomHeightPercent}%` }}>
         {/* Objects list */}
-        <div className="overflow-auto scrollbar-gutter-stable" style={{ width: `${objectsWidth}%` }}>
+        <div className="overflow-hidden" style={{ width: `${objectsWidth}%` }}>
           <SpriteShelf />
         </div>
 
@@ -258,7 +258,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         />
 
         {/* Properties panel */}
-        <div className="flex-1 overflow-auto scrollbar-gutter-stable">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <ObjectInspector />
         </div>
       </div>
