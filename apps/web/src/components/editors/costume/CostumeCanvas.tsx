@@ -1300,6 +1300,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const original = originalControlsRef.current.get(obj);
     if (!original) return;
     obj.controls = original;
+    if (typeof obj.setCoords === 'function') {
+      obj.setCoords();
+    }
     originalControlsRef.current.delete(obj);
   }, []);
 
@@ -1806,6 +1809,24 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return converted;
   }, [convertObjectToVectorPath, restoreOriginalControls]);
 
+  const applyVectorPointEditingAppearance = useCallback((obj: any) => {
+    if (!obj || typeof obj !== 'object') return;
+    obj.hasControls = true;
+    obj.hasBorders = false;
+    obj.borderColor = VECTOR_SELECTION_COLOR;
+    obj.cornerStyle = 'circle';
+    obj.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
+    obj.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
+    obj.cornerSize = HANDLE_SIZE;
+    obj.transparentCorners = false;
+    obj.padding = 0;
+    obj.lockMovementX = true;
+    obj.lockMovementY = true;
+    obj.lockRotation = true;
+    obj.lockScalingX = true;
+    obj.lockScalingY = true;
+  }, []);
+
   const applyVectorPointControls = useCallback((obj: any): boolean => {
     if (!obj || typeof obj !== 'object') return false;
     if (isImageObject(obj) || isTextObject(obj)) return false;
@@ -1826,7 +1847,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         controlPointStyle: {
           controlFill: '#0ea5e9',
           controlStroke: '#ffffff',
-          connectionDashArray: [4, 3],
         },
       });
       removeDuplicateClosedPathAnchorControl(obj, controls);
@@ -1908,6 +1928,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           obj.setControlVisible(key, true);
         }
       }
+      if (typeof obj.setCoords === 'function') {
+        obj.setCoords();
+      }
       return true;
     }
 
@@ -1920,6 +1943,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         for (const key of Object.keys(obj.controls || {})) {
           obj.setControlVisible(key, true);
         }
+      }
+      if (typeof obj.setCoords === 'function') {
+        obj.setCoords();
       }
       return true;
     }
@@ -1972,24 +1998,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const applied = applyVectorPointControls(activeObject);
     if (!applied) return false;
 
-    setVectorPointEditingTarget(activeObject);
     fabricCanvas.setActiveObject(activeObject);
-    activeObject.hasControls = true;
-    activeObject.hasBorders = false;
-    activeObject.borderColor = VECTOR_SELECTION_COLOR;
-    activeObject.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
-    activeObject.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
-    activeObject.cornerSize = 12;
-    activeObject.transparentCorners = false;
-    activeObject.padding = 0;
-    activeObject.lockMovementX = true;
-    activeObject.lockMovementY = true;
-    activeObject.lockRotation = true;
-    activeObject.lockScalingX = true;
-    activeObject.lockScalingY = true;
+    setVectorPointEditingTarget(activeObject);
+    applyVectorPointEditingAppearance(activeObject);
     fabricCanvas.requestRenderAll();
     return true;
-  }, [applyVectorPointControls, ensurePathLikeObjectForVectorTool, saveHistory, setVectorPointEditingTarget]);
+  }, [applyVectorPointControls, applyVectorPointEditingAppearance, ensurePathLikeObjectForVectorTool, saveHistory, setVectorPointEditingTarget]);
 
   const configureCanvasForTool = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -2078,14 +2092,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         if (isPointEditingTarget) {
           const objAny = obj as any;
           applyVectorPointControls(objAny);
-          objAny.hasControls = true;
-          objAny.hasBorders = false;
-          objAny.padding = 0;
-          objAny.lockMovementX = true;
-          objAny.lockMovementY = true;
-          objAny.lockRotation = true;
-          objAny.lockScalingX = true;
-          objAny.lockScalingY = true;
+          applyVectorPointEditingAppearance(objAny);
         } else {
           restoreOriginalControls(obj);
           const objAny = obj as any;
@@ -2101,6 +2108,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
 
     let activeObject = fabricCanvas.getActiveObject() as any;
+    if (
+      isVectorPointMode &&
+      vectorPointEditingTargetRef.current &&
+      activeObject !== vectorPointEditingTargetRef.current
+    ) {
+      fabricCanvas.setActiveObject(vectorPointEditingTargetRef.current);
+      activeObject = vectorPointEditingTargetRef.current;
+    }
     if (activeObject) {
       if (isVectorPointMode && !isVectorPointSelectableObject(activeObject)) {
         fabricCanvas.discardActiveObject();
@@ -2134,7 +2149,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyCanvasCursor(fabricCanvas, cursor);
     fabricCanvas.requestRenderAll();
     syncSelectionState();
-  }, [activateVectorPointEditing, applyVectorPointControls, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, setVectorPointEditingTarget, syncBrushCursorOverlay, syncSelectionState]);
+  }, [activateVectorPointEditing, applyVectorPointControls, applyVectorPointEditingAppearance, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, setVectorPointEditingTarget, syncBrushCursorOverlay, syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -2501,6 +2516,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         !bitmapSelectionBusyRef.current
       ) {
         void commitBitmapSelection();
+        return;
+      }
+      if (
+        vectorPointEditingTargetRef.current &&
+        editorModeRef.current === 'vector' &&
+        activeToolRef.current === 'select'
+      ) {
+        const pointEditingTarget = vectorPointEditingTargetRef.current;
+        queueMicrotask(() => {
+          const canvas = fabricCanvasRef.current;
+          if (!canvas) return;
+          if (vectorPointEditingTargetRef.current !== pointEditingTarget) return;
+          if (!canvas.getObjects().includes(pointEditingTarget)) {
+            restoreAllOriginalControls();
+            setVectorPointEditingTarget(null);
+            configureCanvasForTool();
+            return;
+          }
+          canvas.setActiveObject(pointEditingTarget);
+          configureCanvasForTool();
+        });
         return;
       }
       if (vectorPointEditingTargetRef.current) {

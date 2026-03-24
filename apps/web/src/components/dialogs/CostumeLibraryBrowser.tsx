@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useUser } from "@clerk/clerk-react";
 import { api } from "@convex-generated/api";
 import type { Id } from "@convex-generated/dataModel";
 import {
@@ -37,12 +38,14 @@ export function CostumeLibraryBrowser({
   onOpenChange,
   onSelect,
 }: CostumeLibraryBrowserProps) {
+  const { user } = useUser();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [loadingSelect, setLoadingSelect] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canAccessLibrary = !!user;
 
-  const items = useQuery(api.costumeLibrary.list);
+  const items = useQuery(api.costumeLibrary.list, open && canAccessLibrary ? {} : "skip");
   const generateUploadUrl = useMutation(api.costumeLibrary.generateUploadUrl);
   const createItem = useMutation(api.costumeLibrary.create);
   const removeItem = useMutation(api.costumeLibrary.remove);
@@ -137,7 +140,7 @@ export function CostumeLibraryBrowser({
           <Button
             size="sm"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={!canAccessLibrary || uploading}
           >
             {uploading ? (
               <Loader2 className="size-4 animate-spin" />
@@ -157,7 +160,12 @@ export function CostumeLibraryBrowser({
         </DialogHeader>
 
         <ScrollArea className="flex-1 mt-4">
-          {!items ? (
+          {!canAccessLibrary ? (
+            <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
+              <p className="mb-2">Sign in to use the costume library</p>
+              <p className="text-sm">You can still create and edit local costumes without it.</p>
+            </div>
+          ) : !items ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
             </div>
@@ -209,7 +217,7 @@ export function CostumeLibraryBrowser({
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!selectedId || loadingSelect}
+            disabled={!canAccessLibrary || !selectedId || loadingSelect}
           >
             {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
             Insert Costume
