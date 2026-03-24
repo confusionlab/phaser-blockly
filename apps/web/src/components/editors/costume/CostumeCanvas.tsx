@@ -56,6 +56,8 @@ const VECTOR_SELECTION_BORDER_OPACITY = 1;
 const VECTOR_SELECTION_BORDER_SCALE = 2;
 const VECTOR_JSON_EXTRA_PROPS = ['nodeHandleTypes', 'strokeUniform'];
 const CIRCLE_CUBIC_KAPPA = 0.5522847498307936;
+const VECTOR_POINT_EDIT_GUIDE_STROKE = '#cbd5e1';
+const VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH = 6;
 
 function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
   fabricCanvas.defaultCursor = cursor;
@@ -359,8 +361,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const textEditingHostRef = useRef<HTMLDivElement>(null);
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
+  const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
   const colliderCanvasRef = useRef<HTMLCanvasElement>(null);
+  const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const bitmapSelectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const colliderCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
@@ -1298,12 +1302,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const restoreOriginalControls = useCallback((obj: any) => {
     if (!obj || typeof obj !== 'object') return;
     const original = originalControlsRef.current.get(obj);
-    if (!original) return;
-    obj.controls = original;
+    if (original) {
+      obj.controls = original;
+      originalControlsRef.current.delete(obj);
+    }
     if (typeof obj.setCoords === 'function') {
       obj.setCoords();
     }
-    originalControlsRef.current.delete(obj);
   }, []);
 
   const restoreAllOriginalControls = useCallback(() => {
@@ -1826,6 +1831,115 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     obj.lockScalingX = true;
     obj.lockScalingY = true;
   }, []);
+
+  const traceVectorPointEditingGuidePath = useCallback((ctx: CanvasRenderingContext2D, target: any): boolean => {
+    const type = getFabricObjectType(target);
+    if (type === 'path' && Array.isArray(target.path)) {
+      ctx.beginPath();
+      for (const command of target.path as any[]) {
+        if (!Array.isArray(command) || typeof command[0] !== 'string') continue;
+        switch (command[0].toUpperCase()) {
+          case 'M':
+            ctx.moveTo(Number(command[1]), Number(command[2]));
+            break;
+          case 'L':
+            ctx.lineTo(Number(command[1]), Number(command[2]));
+            break;
+          case 'C':
+            ctx.bezierCurveTo(
+              Number(command[1]),
+              Number(command[2]),
+              Number(command[3]),
+              Number(command[4]),
+              Number(command[5]),
+              Number(command[6]),
+            );
+            break;
+          case 'Q':
+            ctx.quadraticCurveTo(
+              Number(command[1]),
+              Number(command[2]),
+              Number(command[3]),
+              Number(command[4]),
+            );
+            break;
+          case 'Z':
+            ctx.closePath();
+            break;
+        }
+      }
+      return true;
+    }
+
+    if (type !== 'polyline' && type !== 'polygon') {
+      return false;
+    }
+
+    const points = Array.isArray(target.points) ? target.points : null;
+    if (!points || points.length === 0) {
+      return false;
+    }
+
+    const pathOffset = target.pathOffset ?? { x: 0, y: 0 };
+    ctx.beginPath();
+    points.forEach((point: { x: number; y: number }, index: number) => {
+      const canvasPoint = toCanvasPoint(target, point.x - pathOffset.x, point.y - pathOffset.y);
+      const x = canvasPoint.x;
+      const y = canvasPoint.y;
+      if (index === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    if (type === 'polygon') {
+      ctx.closePath();
+    }
+
+    return true;
+  }, [toCanvasPoint]);
+
+  const renderVectorPointEditingGuide = useCallback(() => {
+    const ctx = vectorGuideCtxRef.current;
+    const fabricCanvas = fabricCanvasRef.current;
+    const target = vectorPointEditingTargetRef.current as any;
+    if (!fabricCanvas || !ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'select') return;
+    if (!target || !fabricCanvas.getObjects().includes(target)) return;
+    const closedShape = getFabricObjectType(target) === 'polygon' || isClosedPath(target);
+    const guideLineWidth = closedShape
+      ? VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH * 2
+      : VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH;
+
+    ctx.save();
+    try {
+      ctx.strokeStyle = VECTOR_POINT_EDIT_GUIDE_STROKE;
+      ctx.lineWidth = guideLineWidth;
+      ctx.lineJoin = target.strokeLineJoin ?? 'round';
+      ctx.lineCap = target.strokeLineCap ?? 'round';
+      ctx.setLineDash([]);
+
+      if (closedShape) {
+        ctx.save();
+        if (!traceVectorPointEditingGuidePath(ctx, target)) {
+          ctx.restore();
+          return;
+        }
+        ctx.clip();
+        traceVectorPointEditingGuidePath(ctx, target);
+        ctx.stroke();
+        ctx.restore();
+      } else if (traceVectorPointEditingGuidePath(ctx, target)) {
+        ctx.stroke();
+      }
+    } finally {
+      ctx.restore();
+    }
+
+    target.drawControls?.(ctx);
+  }, [isClosedPath, traceVectorPointEditingGuidePath]);
 
   const applyVectorPointControls = useCallback((obj: any): boolean => {
     if (!obj || typeof obj !== 'object') return false;
@@ -2508,6 +2622,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       saveHistory();
     };
 
+    const onAfterRender = () => {
+      renderVectorPointEditingGuide();
+    };
+
     const onSelectionCleared = () => {
       if (
         editorModeRef.current === 'bitmap' &&
@@ -2561,10 +2679,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvas.on('selection:cleared', onSelectionCleared);
     fabricCanvas.on('text:changed', onTextChanged);
     fabricCanvas.on('text:editing:exited', onTextChanged);
+    fabricCanvas.on('after:render', onAfterRender);
 
     const colliderCanvas = colliderCanvasRef.current;
     if (colliderCanvas) {
       colliderCtxRef.current = colliderCanvas.getContext('2d');
+    }
+    const vectorGuideCanvas = vectorGuideCanvasRef.current;
+    if (vectorGuideCanvas) {
+      vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
     }
     const bitmapSelectionCanvas = bitmapSelectionCanvasRef.current;
     if (bitmapSelectionCanvas) {
@@ -2589,10 +2712,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.off('selection:cleared', onSelectionCleared);
       fabricCanvas.off('text:changed', onTextChanged);
       fabricCanvas.off('text:editing:exited', onTextChanged);
+      fabricCanvas.off('after:render', onAfterRender);
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
+      vectorGuideCtxRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, loadBitmapLayer, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorStyleFromSelection]);
+  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, loadBitmapLayer, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -3419,6 +3544,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               position: 'absolute',
               top: 0,
               left: 0,
+            }}
+          />
+
+          <canvas
+            ref={vectorGuideCanvasRef}
+            width={CANVAS_SIZE}
+            height={CANVAS_SIZE}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: CANVAS_SIZE,
+              height: CANVAS_SIZE,
+              pointerEvents: 'none',
             }}
           />
 

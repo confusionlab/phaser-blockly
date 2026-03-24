@@ -80,11 +80,13 @@ export function ObjectEditor() {
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
       <div className="flex h-full min-h-0 min-w-0 flex-col gap-0">
         {!emptyStateMessage ? (
-          <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
+          <div className="flex shrink-0 justify-center border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
             <SegmentedControl
               ariaLabel="Object editor sections"
-              className="w-full"
+              className="max-w-full"
+              layout="content"
               options={sectionOptions}
+              size="large"
               value={activeObjectTab}
               onValueChange={handleSectionChange}
             />

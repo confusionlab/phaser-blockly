@@ -5,6 +5,10 @@ import { Button } from '@/components/ui/button';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
+  FloatingBottomToolbar,
+  FloatingBottomToolbarDock,
+} from '@/components/editors/shared/FloatingBottomToolbar';
+import {
   ColorPicker,
   ColorPickerSelection,
   ColorPickerHue,
@@ -102,12 +106,6 @@ const floatingToolButtonBaseClass =
   'h-11 rounded-[18px] bg-transparent text-muted-foreground shadow-none transition-colors duration-200 hover:!bg-transparent hover:text-foreground';
 const floatingToolButtonActiveClass =
   '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
-const floatingBarChromeClass =
-  'pointer-events-auto max-w-full border border-border/70 bg-background/95 backdrop-blur-xl dark:bg-background/90';
-const floatingPropertyBarClass =
-  `${floatingBarChromeClass} rounded-[24px] px-3 py-2 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45),0_6px_18px_-14px_rgba(15,23,42,0.24)] dark:shadow-[0_24px_64px_-38px_rgba(0,0,0,0.8),0_6px_18px_-14px_rgba(0,0,0,0.52)]`;
-const floatingToolBarClass =
-  `${floatingBarChromeClass} rounded-[28px] p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] dark:shadow-[0_28px_72px_-38px_rgba(0,0,0,0.8),0_8px_24px_-18px_rgba(0,0,0,0.6)]`;
 const toolbarPopupSideOffset = 10;
 
 const FloatingToolButton = memo(({
@@ -368,11 +366,9 @@ export const CostumeToolbar = memo(({
 
   return (
     <>
-      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
-        <div className="flex max-w-full flex-col items-center gap-3">
+      <FloatingBottomToolbarDock>
           {showContextualPropertyBar && (
-            <div className={floatingPropertyBarClass} data-testid="costume-toolbar-properties">
-              <div className="hide-scrollbar max-w-full overflow-x-auto overflow-y-visible">
+            <FloatingBottomToolbar variant="property" testId="costume-toolbar-properties">
                 <div className="flex min-w-max items-center gap-2">
                   {editorMode === 'vector' && showSelectionActions && hasActiveSelection && (
                     <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
@@ -672,12 +668,10 @@ export const CostumeToolbar = memo(({
                     </div>
                   )}
                 </div>
-              </div>
-            </div>
+            </FloatingBottomToolbar>
           )}
 
-          <div className={floatingToolBarClass} data-testid="costume-toolbar-tools">
-            <div className="hide-scrollbar max-w-full overflow-x-auto overflow-y-visible">
+          <FloatingBottomToolbar variant="tool" testId="costume-toolbar-tools">
               <div className="flex min-w-max items-center gap-3">
                 <div className="flex items-center gap-1">
                   {leadingTools.map(({ tool, icon, label }) => (
@@ -779,21 +773,20 @@ export const CostumeToolbar = memo(({
 
                 <div className="h-10 w-px bg-border/65" />
 
-                <div className="w-[164px] rounded-[20px] bg-black/[0.045] p-1 dark:bg-white/[0.05]">
+                <div className="w-[164px]">
                   <SegmentedControl
                     ariaLabel="Costume editor mode"
                     options={modeOptions}
+                    size="large"
                     value={editorMode}
                     onValueChange={onEditorModeChange}
-                    className="w-full rounded-[16px] bg-background/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] dark:bg-black/30"
-                    optionClassName="min-h-[40px] rounded-[14px] px-3 text-[13px] font-medium"
+                    className="w-full"
+                    optionClassName="min-h-[40px] px-3 text-[13px]"
                   />
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
+          </FloatingBottomToolbar>
+      </FloatingBottomToolbarDock>
     </>
   );
 });

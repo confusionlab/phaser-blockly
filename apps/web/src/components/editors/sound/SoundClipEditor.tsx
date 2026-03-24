@@ -1,7 +1,10 @@
 import { type ChangeEvent, memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { generateWaveform, getCachedWaveform, type WaveformData } from '@/lib/audioWaveform';
-import { EditorToolbar } from '@/components/editors/shared/EditorToolbar';
+import {
+  FloatingBottomToolbar,
+  FloatingBottomToolbarDock,
+} from '@/components/editors/shared/FloatingBottomToolbar';
 import type { Sound } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { Play, RotateCcw, Scissors, Square, Volume2, VolumeX } from 'lucide-react';
@@ -265,46 +268,8 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
   };
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col">
-      <EditorToolbar contentClassName="grid min-w-full gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant={isTrimming ? 'default' : 'outline'}
-            className="rounded-full"
-            onClick={handleTrimAction}
-            disabled={!duration}
-          >
-            <Scissors className="size-4" />
-            {isTrimming ? 'Done' : 'Trim'}
-          </Button>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button className="size-9 rounded-full" size="icon" onClick={handleTogglePlay} title={isPlaying ? 'Stop' : 'Play'}>
-            {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
-          </Button>
-          <Button variant="outline" size="icon" className="size-9 rounded-full" onClick={handleRestart} title="Restart">
-            <RotateCcw className="size-4" />
-          </Button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 md:justify-self-end">
-          <Button variant="ghost" size="icon" className="size-9 rounded-full" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
-            {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-          </Button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={isMuted ? 0 : volume}
-            onChange={handleVolumeChange}
-            className="h-2 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
-          />
-        </div>
-      </EditorToolbar>
-
-      <div className="flex-1 min-h-0 p-4 md:p-5">
+    <div className="relative flex flex-1 min-h-0 flex-col">
+      <div className="flex-1 min-h-0 px-4 pb-28 pt-4 md:px-5 md:pb-32 md:pt-5">
         <div className="flex h-full min-h-0 flex-col gap-4">
           <div className="flex-1 min-h-0 rounded-[28px] border border-border/70 bg-background/95 p-4 shadow-sm">
             <WaveformViewport
@@ -325,6 +290,48 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
           {footer ? footer : null}
         </div>
       </div>
+
+      <FloatingBottomToolbarDock>
+        <FloatingBottomToolbar variant="tool">
+          <div className="grid min-w-full gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={isTrimming ? 'default' : 'outline'}
+                className="rounded-full"
+                onClick={handleTrimAction}
+                disabled={!duration}
+              >
+                <Scissors className="size-4" />
+                {isTrimming ? 'Done' : 'Trim'}
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button className="size-9 rounded-full" size="icon" onClick={handleTogglePlay} title={isPlaying ? 'Stop' : 'Play'}>
+                {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
+              </Button>
+              <Button variant="outline" size="icon" className="size-9 rounded-full" onClick={handleRestart} title="Restart">
+                <RotateCcw className="size-4" />
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 md:justify-self-end">
+              <Button variant="ghost" size="icon" className="size-9 rounded-full" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
+                {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
+              </Button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={isMuted ? 0 : volume}
+                onChange={handleVolumeChange}
+                className="h-2 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
+              />
+            </div>
+          </div>
+        </FloatingBottomToolbar>
+      </FloatingBottomToolbarDock>
     </div>
   );
 });
