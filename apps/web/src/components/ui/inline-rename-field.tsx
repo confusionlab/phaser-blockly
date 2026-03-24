@@ -6,15 +6,17 @@ type InlineRenameFieldProps = Omit<React.ComponentProps<'input'>, 'className'> &
   invalid?: boolean;
   className?: string;
   inputClassName?: string;
+  outlineClassName?: string;
 };
 
 const InlineRenameField = React.forwardRef<HTMLInputElement, InlineRenameFieldProps>(
-  ({ invalid = false, className, inputClassName, ...props }, ref) => (
+  ({ invalid = false, className, inputClassName, outlineClassName, ...props }, ref) => (
     <div className={cn('group relative flex min-w-0 items-center', className)}>
       <div
         aria-hidden="true"
         className={cn(
           'pointer-events-none absolute inset-x-[-6px] inset-y-[-3px] rounded-md border bg-background/95 shadow-xs transition-colors',
+          outlineClassName,
           invalid ? 'border-red-500' : 'border-border/80 group-focus-within:border-ring',
         )}
       />

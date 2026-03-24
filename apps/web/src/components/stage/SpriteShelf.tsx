@@ -1542,6 +1542,8 @@ export function SpriteShelf() {
                   data-hotkeys="ignore"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
+                  className="flex-1 min-w-0"
+                  outlineClassName="inset-x-0"
                   autoFocus
                 />
               ) : isFolderEditing ? (
@@ -1555,6 +1557,8 @@ export function SpriteShelf() {
                   data-hotkeys="ignore"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
+                  className="flex-1 min-w-0"
+                  outlineClassName="inset-x-0"
                   autoFocus
                 />
               ) : (
