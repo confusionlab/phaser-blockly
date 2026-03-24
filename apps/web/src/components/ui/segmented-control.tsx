@@ -107,7 +107,7 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'relative inline-grid w-full items-center rounded-[12px] bg-zinc-100 p-[2px] dark:bg-zinc-900',
+        'relative inline-grid w-full items-center rounded-[12px] bg-zinc-100 p-[2px] dark:bg-zinc-950',
         className,
       )}
       style={{
@@ -118,7 +118,7 @@ export function SegmentedControl<T extends string>({
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-[2px] left-[2px] rounded-[10px] bg-white shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-zinc-950 dark:shadow-[0_6px_14px_-14px_rgba(0,0,0,0.95),0_1px_3px_rgba(0,0,0,0.45)]"
+        className="pointer-events-none absolute inset-y-[2px] left-[2px] rounded-[10px] border border-transparent bg-white shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-white/14 dark:bg-zinc-700 dark:shadow-[0_16px_32px_-18px_rgba(0,0,0,0.92),0_2px_6px_rgba(0,0,0,0.5)]"
         style={thumbStyle}
       />
 

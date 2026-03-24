@@ -314,16 +314,12 @@ export function ObjectInspector() {
           )}
         >
           <div className="min-h-full min-w-0 px-4 py-3">
-            {selectedFolderId ? (
-              <div className="py-8 text-sm text-muted-foreground">{NO_OBJECT_SELECTED_MESSAGE}</div>
-            ) : (
-              <ObjectProperties
-                objects={selectedObjects}
-                sceneId={selectedSceneId}
-                updateObject={updateObject}
-                openCostumeColliderEditor={openCostumeColliderEditor}
-              />
-            )}
+            <ObjectProperties
+              objects={selectedObjects}
+              sceneId={selectedSceneId}
+              updateObject={updateObject}
+              openCostumeColliderEditor={openCostumeColliderEditor}
+            />
           </div>
         </ScrollArea>
 
