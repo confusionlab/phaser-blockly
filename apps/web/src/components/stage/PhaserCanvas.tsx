@@ -781,6 +781,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
     const { canvasWidth, canvasHeight, backgroundColor } = project.settings;
     const editorBackgroundColor = getSceneBackgroundBaseColor(selectedScene?.background);
+    const editorShellBackgroundColor = viewMode === 'camera-viewport' ? '#000000' : editorBackgroundColor;
     const container = containerRef.current;
 
     // Function to create the game
@@ -803,7 +804,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           preserveDrawingBuffer: true,
         },
         // Keep canvas outside camera viewport black so letterboxing is always consistent.
-        backgroundColor: isPlaying ? backgroundColor : editorBackgroundColor,
+        backgroundColor: isPlaying ? backgroundColor : editorShellBackgroundColor,
         scale: isPlaying ? {
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -1466,7 +1467,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         }
       }
     });
-  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, project?.components]);
+  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, project?.components, viewMode]);
 
   // Update background color when it changes (in editor mode only)
   useEffect(() => {
@@ -1476,6 +1477,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     if (!phaserScene || !selectedScene) return;
 
     const bgColorValue = getSceneBackgroundBaseColor(selectedScene.background);
+    const shellBgColorValue = viewMode === 'camera-viewport' ? '#000000' : bgColorValue;
 
     phaserScene.cameras.main.setBackgroundColor(bgColorValue);
 
@@ -1486,7 +1488,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }
 
     if (gameRef.current?.canvas) {
-      gameRef.current.canvas.style.backgroundColor = bgColorValue;
+      gameRef.current.canvas.style.backgroundColor = shellBgColorValue;
     }
 
     // Update bounds graphics color to contrast with new background
@@ -1503,7 +1505,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       boundsGraphics.lineStyle(1, borderColor, 0.5);
       boundsGraphics.strokeRect(0, 0, canvasWidth, canvasHeight);
     }
-  }, [selectedScene?.background, isPlaying]);
+  }, [selectedScene?.background, isPlaying, viewMode]);
 
   // Update ground when it changes (in editor mode only)
   useEffect(() => {
@@ -1549,6 +1551,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   const canGoToPreviousInventoryPage = totalInventoryPages > 1 && inventoryPage > 0;
   const canGoToNextInventoryPage = totalInventoryPages > 1 && inventoryPage < totalInventoryPages - 1;
   const editorStageBaseColor = getSceneBackgroundBaseColor(selectedScene?.background);
+  const editorStageShellColor = viewMode === 'camera-viewport' ? '#000000' : editorStageBaseColor;
 
   return (
     <div className="relative w-full h-full">
@@ -1556,7 +1559,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         ref={containerRef}
         data-testid={isPlaying ? 'play-phaser-host' : 'stage-phaser-host'}
         className="w-full h-full"
-        style={isPlaying ? undefined : { backgroundColor: editorStageBaseColor }}
+        style={isPlaying ? undefined : { backgroundColor: editorStageShellColor }}
       />
       {!isPlaying && frozenStageFrame ? (
         <img
