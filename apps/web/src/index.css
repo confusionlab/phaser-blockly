@@ -548,9 +548,8 @@ body {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
+  left: calc((var(--resize-hit-size) - var(--divider-size)) / 2);
   width: var(--divider-size);
-  transform: translateX(-50%);
   background-color: currentColor;
 }
 
@@ -559,9 +558,8 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  top: 50%;
+  top: calc((var(--resize-hit-size) - var(--divider-size)) / 2);
   height: var(--divider-size);
-  transform: translateY(-50%);
   background-color: currentColor;
 }
 
