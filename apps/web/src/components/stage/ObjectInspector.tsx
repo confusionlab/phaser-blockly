@@ -80,6 +80,7 @@ interface ScrubInputProps {
   label: string;
   value: number;
   onChange: (value: number, source?: 'input' | 'drag', delta?: number) => void;
+  className?: string;
   step?: number;
   precision?: number;
   min?: number;
@@ -94,6 +95,7 @@ function ScrubInput({
   label,
   value,
   onChange,
+  className,
   step = 1,
   precision = 2,
   min,
@@ -229,7 +231,11 @@ function ScrubInput({
   return (
     <div
       ref={containerRef}
-      className={`flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1 min-w-0 ${isDragging ? 'ring-1 ring-primary' : ''}`}
+      className={cn(
+        'flex w-full min-w-0 flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2',
+        isDragging && 'ring-1 ring-primary',
+        className,
+      )}
       style={{ cursor: isAltHover || isDragging ? 'ew-resize' : 'default' }}
       onMouseDown={handleMouseDown}
       onMouseEnter={handleMouseEnter}
@@ -244,7 +250,7 @@ function ScrubInput({
         onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
-        className="flex-1 min-w-0 bg-transparent text-sm outline-none text-foreground"
+        className="w-0 min-w-0 flex-1 bg-transparent text-sm outline-none text-foreground"
         style={{ cursor: isAltHover || isDragging ? 'ew-resize' : 'text' }}
       />
     </div>
@@ -286,7 +292,7 @@ export function ObjectInspector() {
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
+    <div className="inspector-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
       <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
         <SegmentedControl
           ariaLabel="Inspector sections"
@@ -297,15 +303,15 @@ export function ObjectInspector() {
         />
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <ScrollArea
           aria-hidden={activeTab !== 'object'}
           className={cn(
-            'absolute inset-0 h-full min-h-0',
+            'absolute inset-0 h-full min-h-0 min-w-0',
             activeTab !== 'object' && 'pointer-events-none invisible',
           )}
         >
-          <div className="min-h-full px-4 py-3">
+          <div className="min-h-full min-w-0 px-4 py-3">
             {selectedFolderId ? (
               <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
             ) : (
@@ -322,11 +328,11 @@ export function ObjectInspector() {
         <ScrollArea
           aria-hidden={activeTab !== 'scene'}
           className={cn(
-            'absolute inset-0 h-full min-h-0',
+            'absolute inset-0 h-full min-h-0 min-w-0',
             activeTab !== 'scene' && 'pointer-events-none invisible',
           )}
         >
-          <div className="min-h-full px-4 py-3">
+          <div className="min-h-full min-w-0 px-4 py-3">
             <SceneProperties
               scene={scene}
               updateScene={updateScene}
@@ -535,12 +541,12 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
   const visibleToggleId = isMultiSelection ? 'visible-toggle-multi' : 'visible-toggle';
 
   return (
-    <div className="space-y-4">
+    <div className="w-full min-w-0 space-y-4">
       {/* Component indicator */}
       {anyComponentInstance && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/50">
           <Component className="size-4 text-purple-600" />
-          <span className="text-xs text-muted-foreground">Component - code and physics sync across all instances</span>
+          <span className="min-w-0 text-xs text-muted-foreground">Component - code and physics sync across all instances</span>
         </div>
       )}
 
@@ -559,8 +565,9 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
       {/* Position */}
       <div>
         <div className="text-xs text-muted-foreground mb-2">Position</div>
-        <div className="flex gap-2">
+        <div className="inspector-field-grid">
           <ScrubInput
+            className="min-w-0"
             label="X"
             value={xField.value}
             mixed={xField.mixed}
@@ -570,6 +577,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             onDragEnd={() => clearDragStart('x')}
           />
           <ScrubInput
+            className="min-w-0"
             label="Y"
             value={yField.value}
             mixed={yField.mixed}
@@ -584,8 +592,9 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
       {/* Scale (Dimensions) */}
       <div>
         <div className="text-xs text-muted-foreground mb-2">Scale</div>
-        <div className="flex gap-2 items-center">
+        <div className="inspector-scale-row">
           <ScrubInput
+            className="min-w-0"
             label="W"
             value={scaleXField.value}
             mixed={scaleXField.mixed}
@@ -597,6 +606,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             onDragEnd={() => clearDragStart('scaleX')}
           />
           <ScrubInput
+            className="min-w-0"
             label="H"
             value={scaleYField.value}
             mixed={scaleYField.mixed}
@@ -611,7 +621,10 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             variant="ghost"
             size="icon-sm"
             onClick={() => setLinkScale(!linkScale)}
-            className={linkScale ? 'text-primary' : 'text-muted-foreground'}
+            className={cn(
+              'inspector-inline-icon-action',
+              linkScale ? 'text-primary' : 'text-muted-foreground',
+            )}
             title={linkScale ? 'Unlink scale' : 'Link scale'}
           >
             {linkScale ? <Link className="size-4" /> : <Unlink className="size-4" />}
@@ -622,8 +635,9 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
       {/* Rotation */}
       <div>
         <div className="text-xs text-muted-foreground mb-2">Rotation</div>
-        <div className="flex gap-2 items-center">
+        <div className="inspector-rotation-row">
           <ScrubInput
+            className="inspector-rotation-input min-w-0"
             label="↻"
             value={rotationField.value}
             mixed={rotationField.mixed}
@@ -636,6 +650,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
           <Button
             variant="ghost"
             size="icon-sm"
+            className="inspector-inline-icon-action"
             onClick={handleRotate90}
             title="Rotate 90°"
           >
@@ -646,7 +661,10 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             size="icon-sm"
             onClick={handleFlipH}
             title="Flip horizontal"
-            className={allFlippedH ? 'text-primary' : ''}
+            className={cn(
+              'inspector-inline-icon-action',
+              allFlippedH && 'text-primary',
+            )}
           >
             <FlipHorizontal className="size-4" />
           </Button>
@@ -655,7 +673,10 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             size="icon-sm"
             onClick={handleFlipV}
             title="Flip vertical"
-            className={allFlippedV ? 'text-primary' : ''}
+            className={cn(
+              'inspector-inline-icon-action',
+              allFlippedV && 'text-primary',
+            )}
           >
             <FlipVertical className="size-4" />
           </Button>
@@ -712,15 +733,15 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
   };
 
   return (
-    <div className="space-y-4">
+    <div className="w-full min-w-0 space-y-4">
       {/* Background Color */}
-      <div className="flex items-center justify-between">
+      <div className="inspector-split-row">
         <span className="text-xs text-muted-foreground">Background</span>
-        <div className="flex items-center gap-2">
+        <div className="inspector-inline-controls">
           <Button
             variant="outline"
             size="sm"
-            className="h-8 px-2 text-xs"
+            className="inspector-inline-button h-8 px-2 text-xs"
             onClick={() => onOpenBackgroundEditor(scene.id)}
             title="Draw background"
           >
@@ -755,8 +776,9 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
 
         {ground.enabled && (
           <div className="space-y-3">
-            <div className="flex gap-2 items-center">
+            <div className="inspector-select-row">
               <ScrubInput
+                className="min-w-0"
                 label="Y"
                 value={ground.y}
                 onChange={(y) => updateGround({ y })}
@@ -772,8 +794,8 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
       </div>
 
       <div className="border-t pt-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <div className="inspector-split-row">
+          <div className="inspector-inline-controls">
             <Checkbox
               id="world-boundary-toggle"
               checked={!!scene.worldBoundary?.enabled}
@@ -791,7 +813,7 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
           <Button
             variant="outline"
             size="sm"
-            className="h-8 px-2 text-xs"
+            className="inspector-inline-button h-8 px-2 text-xs"
             onClick={() => onOpenWorldBoundaryEditor(scene.id)}
           >
             Edit
@@ -920,19 +942,19 @@ function PhysicsProperties({
     <div
       aria-hidden={!enabled}
       className={cn(
-        'mt-3 space-y-4',
+        'mt-3 w-full min-w-0 space-y-4',
         !enabled && 'hidden',
       )}
     >
       {/* Body Type */}
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Body Type</div>
-        <div className="flex gap-2">
-          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1">
+        <div className="inspector-select-row">
+          <div className="flex w-full min-w-0 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
             <select
               value={resolvedPhysics.bodyType}
               onChange={(e) => updatePhysics({ bodyType: e.target.value as 'dynamic' | 'static' })}
-              className="flex-1 bg-transparent text-sm outline-none text-foreground cursor-pointer"
+              className="w-0 min-w-0 flex-1 cursor-pointer bg-transparent text-sm text-foreground outline-none"
             >
               <option value="dynamic">Dynamic</option>
               <option value="static">Static</option>
@@ -944,8 +966,9 @@ function PhysicsProperties({
       {/* Gravity */}
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Gravity</div>
-        <div className="flex gap-2">
+        <div className="inspector-field-grid">
           <ScrubInput
+            className="min-w-0"
             label="Y"
             value={resolvedPhysics.gravityY}
             onChange={(gravityY) => updatePhysics({ gravityY })}
@@ -957,8 +980,9 @@ function PhysicsProperties({
       {/* Bounce */}
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Bounce</div>
-        <div className="flex gap-2">
+        <div className="inspector-field-grid">
           <ScrubInput
+            className="min-w-0"
             label=""
             value={resolvedPhysics.bounce ?? 0.2}
             onChange={(bounce) => updatePhysics({ bounce })}
@@ -973,8 +997,9 @@ function PhysicsProperties({
       {/* Friction */}
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Friction</div>
-        <div className="flex gap-2">
+        <div className="inspector-field-grid">
           <ScrubInput
+            className="min-w-0"
             label=""
             value={resolvedPhysics.friction ?? 0.1}
             onChange={(friction) => updatePhysics({ friction })}
@@ -1000,12 +1025,12 @@ function PhysicsProperties({
 
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Collider</div>
-        <div className="flex gap-2 items-center">
-          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1">
+        <div className="inspector-select-row">
+          <div className="flex w-full min-w-0 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
             <select
               value={colliderType}
               onChange={(e) => updateColliderType(e.target.value as 'none' | 'box' | 'circle' | 'capsule')}
-              className="flex-1 bg-transparent text-sm outline-none text-foreground cursor-pointer"
+              className="w-0 min-w-0 flex-1 cursor-pointer bg-transparent text-sm text-foreground outline-none"
             >
               {colliderTypeOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -1017,7 +1042,7 @@ function PhysicsProperties({
           <Button
             variant="outline"
             size="sm"
-            className="h-10 px-3 text-xs"
+            className="inspector-inline-button h-10 px-3 text-xs"
             onClick={onEditCollider}
             disabled={colliderType === 'none'}
           >

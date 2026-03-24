@@ -651,7 +651,7 @@ export function EditorLayout() {
 
             {/* Stage Panel - Right Panel */}
             <div
-              className="h-full overflow-hidden"
+              className="h-full min-w-0 overflow-hidden"
               data-editor-panel="stage"
               style={{ width: `${100 - dividerPosition}%` }}
               onMouseEnter={() => setHoveredPanel('stage')}

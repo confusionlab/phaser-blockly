@@ -220,7 +220,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex h-full min-w-0 flex-col bg-background">
       {/* Phaser canvas */}
       <div className="min-h-0 flex flex-col" style={{ height: `${100 - bottomHeightPercent}%` }}>
         {/* Toolbar above stage */}
@@ -244,7 +244,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
       />
 
       {/* Bottom panel: Objects list (left) + Properties (right) */}
-      <div className="flex" style={{ height: `${bottomHeightPercent}%` }}>
+      <div className="flex min-w-0" style={{ height: `${bottomHeightPercent}%` }}>
         {/* Objects list */}
         <div className="overflow-hidden" style={{ width: `${objectsWidth}%` }}>
           <SpriteShelf />
@@ -258,7 +258,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         />
 
         {/* Properties panel */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
           <ObjectInspector />
         </div>
       </div>
