@@ -15,12 +15,17 @@ import {
 } from 'fabric';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
+import {
+  pathNodeHandleTypeToVectorHandleMode,
+  vectorHandleModeToPathNodeHandleType,
+} from './CostumeToolbar';
 import type {
   AlignAction,
   DrawingTool,
   MoveOrderAction,
   TextToolStyle,
-  VectorHandleType,
+  VectorHandleMode,
+  VectorPathNodeHandleType,
   VectorStyleCapabilities,
   VectorToolStyle,
 } from './CostumeToolbar';
@@ -155,7 +160,7 @@ interface CostumeCanvasProps {
   activeTool: DrawingTool;
   brushColor: string;
   brushSize: number;
-  vectorHandleType: VectorHandleType;
+  vectorHandleMode: VectorHandleMode;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
   canUndo: boolean;
@@ -168,7 +173,7 @@ interface CostumeCanvasProps {
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
   onVectorStyleSync?: (updates: Partial<VectorToolStyle>) => void;
-  onVectorHandleTypeSync?: (handleType: VectorHandleType) => void;
+  onVectorHandleModeSync?: (handleMode: VectorHandleMode) => void;
   onVectorStyleCapabilitiesSync?: (capabilities: VectorStyleCapabilities) => void;
   onVectorPointEditingChange?: (isEditing: boolean) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
@@ -342,7 +347,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   activeTool,
   brushColor,
   brushSize,
-  vectorHandleType,
+  vectorHandleMode,
   textStyle,
   vectorStyle,
   canUndo,
@@ -355,7 +360,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onModeChange,
   onTextStyleSync,
   onVectorStyleSync,
-  onVectorHandleTypeSync,
+  onVectorHandleModeSync,
   onVectorStyleCapabilitiesSync,
   onVectorPointEditingChange,
   onTextSelectionChange,
@@ -403,8 +408,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
 
-  const vectorHandleTypeRef = useRef<VectorHandleType>(vectorHandleType);
-  vectorHandleTypeRef.current = vectorHandleType;
+  const vectorHandleModeRef = useRef<VectorHandleMode>(vectorHandleMode);
+  vectorHandleModeRef.current = vectorHandleMode;
 
   const textStyleRef = useRef(textStyle);
   textStyleRef.current = textStyle;
@@ -426,8 +431,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const onVectorStyleSyncRef = useRef(onVectorStyleSync);
   onVectorStyleSyncRef.current = onVectorStyleSync;
-  const onVectorHandleTypeSyncRef = useRef(onVectorHandleTypeSync);
-  onVectorHandleTypeSyncRef.current = onVectorHandleTypeSync;
+  const onVectorHandleModeSyncRef = useRef(onVectorHandleModeSync);
+  onVectorHandleModeSyncRef.current = onVectorHandleModeSync;
 
   const onVectorStyleCapabilitiesSyncRef = useRef(onVectorStyleCapabilitiesSync);
   onVectorStyleCapabilitiesSyncRef.current = onVectorStyleCapabilitiesSync;
@@ -1387,10 +1392,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return anchorIndex;
   }, [getCommandEndpoint, getLastDrawableCommandIndex, getPathCommands, isClosedPath, isNearlyEqual]);
 
-  const getPathNodeHandleTypes = useCallback((pathObj: any): Record<string, VectorHandleType> => {
+  const getPathNodeHandleTypes = useCallback((pathObj: any): Record<string, VectorPathNodeHandleType> => {
     const raw = pathObj?.nodeHandleTypes;
     if (!raw || typeof raw !== 'object') return {};
-    const out: Record<string, VectorHandleType> = {};
+    const out: Record<string, VectorPathNodeHandleType> = {};
     for (const [key, value] of Object.entries(raw)) {
       if (value === 'linear' || value === 'corner' || value === 'smooth' || value === 'symmetric') {
         out[key] = value;
@@ -1399,24 +1404,26 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return out;
   }, []);
 
-  const setPathNodeHandleType = useCallback((pathObj: any, anchorIndex: number, type: VectorHandleType) => {
+  const setPathNodeHandleType = useCallback((pathObj: any, anchorIndex: number, type: VectorPathNodeHandleType) => {
     const normalized = normalizeAnchorIndex(pathObj, anchorIndex);
     const next = getPathNodeHandleTypes(pathObj);
     next[String(normalized)] = type;
     pathObj.set?.('nodeHandleTypes', next);
   }, [getPathNodeHandleTypes, normalizeAnchorIndex]);
 
-  const getPathNodeHandleType = useCallback((pathObj: any, anchorIndex: number): VectorHandleType | null => {
+  const getPathNodeHandleType = useCallback((pathObj: any, anchorIndex: number): VectorPathNodeHandleType | null => {
     const normalized = normalizeAnchorIndex(pathObj, anchorIndex);
     const map = getPathNodeHandleTypes(pathObj);
     return map[String(normalized)] ?? null;
   }, [getPathNodeHandleTypes, normalizeAnchorIndex]);
 
-  const syncVectorHandleTypeFromSelection = useCallback(() => {
+  const syncVectorHandleModeFromSelection = useCallback(() => {
     const activeAnchor = activePathAnchorRef.current;
     if (!activeAnchor || getFabricObjectType(activeAnchor.path) !== 'path') return;
-    onVectorHandleTypeSyncRef.current?.(
-      getPathNodeHandleType(activeAnchor.path, activeAnchor.anchorIndex) ?? 'corner',
+    onVectorHandleModeSyncRef.current?.(
+      pathNodeHandleTypeToVectorHandleMode(
+        getPathNodeHandleType(activeAnchor.path, activeAnchor.anchorIndex) ?? 'linear',
+      ),
     );
   }, [getPathNodeHandleType]);
 
@@ -1724,7 +1731,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fromIndex: number,
     delta: number,
   ) => {
-    const next: Record<string, VectorHandleType> = {};
+    const next: Record<string, VectorPathNodeHandleType> = {};
     for (const [key, value] of Object.entries(getPathNodeHandleTypes(pathObj))) {
       const numericKey = Number(key);
       if (!Number.isFinite(numericKey)) continue;
@@ -2090,7 +2097,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const type = getFabricObjectType(obj);
     let pathData = '';
     let shouldFill = false;
-    let initialNodeHandleTypes: Record<string, VectorHandleType> = {};
+    let initialNodeHandleTypes: Record<string, VectorPathNodeHandleType> = {};
     if (type === 'ellipse' || type === 'circle') {
       pathData = createFourPointEllipsePathData(obj) ?? '';
       shouldFill = true;
@@ -2324,9 +2331,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
               const existingType = getPathNodeHandleType(pathObj, resolved.anchorIndex);
               if (!existingType) {
-                setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
+                setPathNodeHandleType(
+                  pathObj,
+                  resolved.anchorIndex,
+                  vectorHandleModeToPathNodeHandleType(vectorHandleModeRef.current),
+                );
               }
-              syncVectorHandleTypeFromSelection();
+              syncVectorHandleModeFromSelection();
             }
           }
           if (typeof originalMouseDownHandler === 'function') {
@@ -2379,10 +2390,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           if (resolved) {
             const existingType = getPathNodeHandleType(pathObj, resolved.anchorIndex);
             if (!existingType) {
-              setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
+              setPathNodeHandleType(
+                pathObj,
+                resolved.anchorIndex,
+                vectorHandleModeToPathNodeHandleType(vectorHandleModeRef.current),
+              );
             }
             activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
-            syncVectorHandleTypeFromSelection();
+            syncVectorHandleModeFromSelection();
             enforcePathAnchorHandleType(pathObj, resolved.anchorIndex, resolved.changed, dragState);
           }
           return performed;
@@ -2391,7 +2406,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       obj.controls = controls;
       if (typeof obj.setControlVisible === 'function') {
         for (const key of Object.keys(obj.controls || {})) {
-          obj.setControlVisible(key, true);
+          obj.setControlVisible(key, !/_CP_/i.test(key));
         }
       }
       if (typeof obj.setCoords === 'function') {
@@ -2430,7 +2445,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
     setPathNodeHandleType,
-    syncVectorHandleTypeFromSelection,
+    syncVectorHandleModeFromSelection,
   ]);
 
   const activateVectorPointEditing = useCallback((target: any, saveConversionToHistory: boolean): boolean => {
@@ -2769,7 +2784,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             fabricCanvas.setActiveObject(pointEditingTarget);
             applyVectorPointControls(pointEditingTarget);
             applyVectorPointEditingAppearance(pointEditingTarget);
-            syncVectorHandleTypeFromSelection();
+            syncVectorHandleModeFromSelection();
             syncVectorStyleFromSelection();
             syncSelectionState();
             fabricCanvas.requestRenderAll();
@@ -3092,7 +3107,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvasRef.current = null;
       vectorGuideCtxRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, insertPathPointAtScenePosition, loadBitmapLayer, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleTypeFromSelection, syncVectorStyleFromSelection]);
+  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, insertPathPointAtScenePosition, loadBitmapLayer, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -3108,12 +3123,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const activeObject = fabricCanvas.getActiveObject() as any;
     if (!activeObject || activeObject !== activeAnchor.path) return;
     if (getFabricObjectType(activeObject) !== 'path') return;
+    const currentHandleMode = pathNodeHandleTypeToVectorHandleMode(
+      getPathNodeHandleType(activeObject, activeAnchor.anchorIndex) ?? 'linear',
+    );
+    if (currentHandleMode === vectorHandleMode) return;
 
-    setPathNodeHandleType(activeObject, activeAnchor.anchorIndex, vectorHandleType);
+    setPathNodeHandleType(
+      activeObject,
+      activeAnchor.anchorIndex,
+      vectorHandleModeToPathNodeHandleType(vectorHandleMode),
+    );
     enforcePathAnchorHandleType(activeObject, activeAnchor.anchorIndex, null);
     fabricCanvas.requestRenderAll();
     saveHistory();
-  }, [enforcePathAnchorHandleType, saveHistory, setPathNodeHandleType, vectorHandleType]);
+  }, [enforcePathAnchorHandleType, getPathNodeHandleType, saveHistory, setPathNodeHandleType, vectorHandleMode]);
 
   // Sync selected vector object style when controls change.
   useEffect(() => {

@@ -9,9 +9,9 @@ import {
   type DrawingTool,
   type MoveOrderAction,
   type TextToolStyle,
+  type VectorHandleMode,
   type VectorStyleCapabilities,
   type VectorToolStyle,
-  type VectorHandleType,
 } from './costume/CostumeToolbar';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
 import { Button } from '@/components/ui/button';
@@ -138,7 +138,7 @@ export function CostumeEditor() {
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
-  const [vectorHandleType, setVectorHandleType] = useState<VectorHandleType>('corner');
+  const [vectorHandleMode, setVectorHandleMode] = useState<VectorHandleMode>('pointed');
   const [textStyle, setTextStyle] = useState<TextToolStyle>({
     fontFamily: 'Arial',
     fontSize: 32,
@@ -700,8 +700,8 @@ export function CostumeEditor() {
           onEditorModeChange={handleEditorModeChange}
           onToolChange={handleToolChange}
           onMoveOrder={handleMoveOrder}
-          vectorHandleType={vectorHandleType}
-          onVectorHandleTypeChange={setVectorHandleType}
+          vectorHandleMode={vectorHandleMode}
+          onVectorHandleModeChange={setVectorHandleMode}
           onAlign={handleAlign}
           alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
           onColorChange={setBrushColor}
@@ -716,7 +716,7 @@ export function CostumeEditor() {
           activeTool={activeTool}
           brushColor={brushColor}
           brushSize={brushSize}
-          vectorHandleType={vectorHandleType}
+          vectorHandleMode={vectorHandleMode}
           textStyle={textStyle}
           vectorStyle={vectorStyle}
           canUndo={canUndo}
@@ -729,7 +729,7 @@ export function CostumeEditor() {
           onModeChange={handleCanvasModeChange}
           onTextStyleSync={handleTextStyleChange}
           onVectorStyleSync={handleVectorStyleChange}
-          onVectorHandleTypeSync={setVectorHandleType}
+          onVectorHandleModeSync={setVectorHandleMode}
           onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
           onVectorPointEditingChange={setIsVectorPointEditing}
           onTextSelectionChange={setHasTextSelection}

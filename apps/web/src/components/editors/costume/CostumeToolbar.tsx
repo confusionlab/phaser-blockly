@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import * as Slider from '@radix-ui/react-slider';
-import * as Select from '@radix-ui/react-select';
 import { Button } from '@/components/ui/button';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
@@ -44,7 +43,8 @@ import type { CostumeEditorMode } from '@/types';
 export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'vector' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
-export type VectorHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';
+export type VectorHandleMode = 'pointed' | 'curved';
+export type VectorPathNodeHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';
 export type AlignAction =
   | 'top-left'
   | 'top-center'
@@ -74,6 +74,14 @@ export interface VectorToolStyle {
 
 export interface VectorStyleCapabilities {
   supportsFill: boolean;
+}
+
+export function vectorHandleModeToPathNodeHandleType(mode: VectorHandleMode): VectorPathNodeHandleType {
+  return mode === 'curved' ? 'smooth' : 'linear';
+}
+
+export function pathNodeHandleTypeToVectorHandleMode(type: VectorPathNodeHandleType | null | undefined): VectorHandleMode {
+  return type === 'smooth' || type === 'symmetric' ? 'curved' : 'pointed';
 }
 
 interface ToolDefinition {
@@ -230,8 +238,8 @@ interface CostumeToolbarProps {
   onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
-  vectorHandleType: VectorHandleType;
-  onVectorHandleTypeChange: (type: VectorHandleType) => void;
+  vectorHandleMode: VectorHandleMode;
+  onVectorHandleModeChange: (mode: VectorHandleMode) => void;
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
@@ -296,11 +304,9 @@ const alignGrid: Array<{ action: AlignAction; label: string; title: string }> = 
   { action: 'bottom-right', label: '↘', title: 'Bottom Right' },
 ];
 
-const vectorHandleTypeOptions: Array<{ value: VectorHandleType; label: string }> = [
-  { value: 'linear', label: 'Linear' },
-  { value: 'corner', label: 'Corner' },
-  { value: 'smooth', label: 'Smooth' },
-  { value: 'symmetric', label: 'Symmetric' },
+const vectorHandleModeOptions: Array<{ value: VectorHandleMode; label: string }> = [
+  { value: 'pointed', label: 'Pointed' },
+  { value: 'curved', label: 'Curved' },
 ];
 
 function isShapeTool(tool: DrawingTool) {
@@ -321,8 +327,8 @@ export const CostumeToolbar = memo(({
   onEditorModeChange,
   onToolChange,
   onMoveOrder,
-  vectorHandleType,
-  onVectorHandleTypeChange,
+  vectorHandleMode,
+  onVectorHandleModeChange,
   onAlign,
   alignDisabled,
   onColorChange,
@@ -403,34 +409,33 @@ export const CostumeToolbar = memo(({
                   {editorMode === 'vector' && isVectorPointEditing && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                       <span className="whitespace-nowrap text-xs text-muted-foreground">Handles</span>
-                      <Select.Root
+                      <DropdownMenu
                         open={openMenu === 'vector-handles'}
                         onOpenChange={(open) => handleMenuOpenChange('vector-handles', open)}
-                        value={vectorHandleType}
-                        onValueChange={(value) => onVectorHandleTypeChange(value as VectorHandleType)}
                       >
-                        <Select.Trigger className="flex h-8 min-w-[120px] items-center justify-between gap-2 rounded-md border bg-background px-2 text-xs">
-                          <Select.Value />
-                        </Select.Trigger>
-                        <Select.Portal>
-                          <Select.Content className="z-[70] rounded-md border bg-popover shadow-md">
-                            <Select.Viewport className="p-1">
-                              {vectorHandleTypeOptions.map((option) => (
-                                <Select.Item
-                                  key={option.value}
-                                  value={option.value}
-                                  className="flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted"
-                                >
-                                  <Select.ItemText>{option.label}</Select.ItemText>
-                                  <Select.ItemIndicator>
-                                    <Check className="size-3" />
-                                  </Select.ItemIndicator>
-                                </Select.Item>
-                              ))}
-                            </Select.Viewport>
-                          </Select.Content>
-                        </Select.Portal>
-                      </Select.Root>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 min-w-[120px] justify-between gap-2 px-2 text-xs"
+                          >
+                            <span>{vectorHandleMode === 'curved' ? 'Curved' : 'Pointed'}</span>
+                            <ChevronDown className="size-3 shrink-0" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[140px]">
+                          <DropdownMenuRadioGroup
+                            value={vectorHandleMode}
+                            onValueChange={(value) => onVectorHandleModeChange(value as VectorHandleMode)}
+                          >
+                            {vectorHandleModeOptions.map((option) => (
+                              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                                {option.label}
+                              </DropdownMenuRadioItem>
+                            ))}
+                          </DropdownMenuRadioGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   )}
 

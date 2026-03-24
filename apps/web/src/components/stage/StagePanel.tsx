@@ -19,18 +19,6 @@ function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
 }
 
-function isLightHexColor(hexColor: string): boolean {
-  const normalized = hexColor.trim();
-  if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) return false;
-
-  const red = Number.parseInt(normalized.slice(1, 3), 16);
-  const green = Number.parseInt(normalized.slice(3, 5), 16);
-  const blue = Number.parseInt(normalized.slice(5, 7), 16);
-  const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
-
-  return luminance >= 0.58;
-}
-
 const stageOverlayToneClasses = {
   dark: {
     button:
@@ -46,7 +34,7 @@ const stageOverlayToneClasses = {
     button:
       'inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-slate-950/8 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18',
     active:
-      'bg-white/82 text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.78),0_8px_18px_-14px_rgba(15,23,42,0.35)]',
+      'bg-white/42 text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_8px_18px_-14px_rgba(15,23,42,0.22)]',
     play:
       'text-emerald-700 hover:bg-emerald-500/12 hover:text-emerald-800',
     stop:
@@ -56,6 +44,7 @@ const stageOverlayToneClasses = {
 
 export function StagePanel({ fullscreen = false, deferEditorResize = false }: StagePanelProps) {
   const stopPlaying = useEditorStore((state) => state.stopPlaying);
+  const isDarkMode = useEditorStore((state) => state.isDarkMode);
   const viewMode = useEditorStore((state) => state.viewMode);
   const cycleViewMode = useEditorStore((state) => state.cycleViewMode);
   const selectedSceneId = useEditorStore((state) => state.selectedSceneId);
@@ -136,7 +125,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
   const editorStageSurfaceColor = getSceneBackgroundBaseColor(selectedScene?.background);
-  const stageOverlayTone = viewMode === 'editor' && isLightHexColor(editorStageSurfaceColor) ? 'light' : 'dark';
+  const stageOverlayTone = isDarkMode ? 'dark' : 'light';
   const stageOverlayClasses = stageOverlayToneClasses[stageOverlayTone];
   const stageShellStyle = viewMode === 'editor'
     ? { backgroundColor: editorStageSurfaceColor }
