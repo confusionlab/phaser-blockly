@@ -1388,8 +1388,9 @@ export function SpriteShelf() {
     const rowHighlightBridgeClass = isSelected || isDropOn
       ? `${connectsToPrevious ? '-top-1' : 'top-0'} ${connectsToNext ? '-bottom-[5px]' : 'bottom-0'}`
       : '';
-    const rowPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
+    const rowPaddingClass = 'px-1 py-1';
     const rowContentPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
+    const indentDepth = Math.max(0, level - 1);
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1401,7 +1402,6 @@ export function SpriteShelf() {
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
-          style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
           onDoubleClick={interactive ? ((e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1435,6 +1435,13 @@ export function SpriteShelf() {
               />
             ) : null}
             <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors ${!isSelected && !isDropOn ? 'hover:bg-accent/70' : ''}`}>
+            {indentDepth > 0 ? (
+              <div aria-hidden="true" className="flex shrink-0">
+                {Array.from({ length: indentDepth }).map((_, index) => (
+                  <span key={`${item.key}-indent-${index}`} className="block w-4 shrink-0" />
+                ))}
+              </div>
+            ) : null}
             <button
               type="button"
               disabled={!hasChildItems}
