@@ -1399,8 +1399,8 @@ export function SpriteShelf() {
           ? 'rounded-t-lg rounded-b-none'
           : 'rounded-lg'
       : 'rounded-lg';
-    const rowPaddingClass = 'px-1 py-1';
-    const rowContentPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
+    const rowPaddingClass = 'px-1 pt-1';
+    const rowContentPaddingClass = 'py-1';
     const indentDepth = Math.max(0, level - 1);
     const rowHoverClass = 'bg-[#E7EAEE] dark:bg-[#434A58]';
     const controlHoverClass = 'hover:bg-[#DDE1E7] dark:hover:bg-[#4B5363]';
@@ -1485,7 +1485,9 @@ export function SpriteShelf() {
             </button>
 
             {item.type === 'folder' ? (
-              isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
+              <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md">
+                {isExpanded ? <FolderOpen className="size-4 shrink-0" /> : <Folder className="size-4 shrink-0" />}
+              </div>
             ) : (
               <div
                 className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md"
