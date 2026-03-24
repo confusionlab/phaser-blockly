@@ -1,9 +1,9 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import * as Slider from '@radix-ui/react-slider';
 import * as Select from '@radix-ui/react-select';
 import { Button } from '@/components/ui/button';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
+import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
   ColorPicker,
   ColorPickerSelection,
@@ -97,6 +97,7 @@ const floatingPropertyBarClass =
   `${floatingBarChromeClass} rounded-[24px] px-3 py-2 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45),0_6px_18px_-14px_rgba(15,23,42,0.24)] dark:shadow-[0_24px_64px_-38px_rgba(0,0,0,0.8),0_6px_18px_-14px_rgba(0,0,0,0.52)]`;
 const floatingToolBarClass =
   `${floatingBarChromeClass} rounded-[28px] p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] dark:shadow-[0_28px_72px_-38px_rgba(0,0,0,0.8),0_8px_24px_-18px_rgba(0,0,0,0.6)]`;
+const toolbarPopupSideOffset = 10;
 
 const FloatingToolButton = memo(({
   tool,
@@ -236,10 +237,7 @@ export const CostumeToolbar = memo(({
   onTextStyleChange,
 }: CostumeToolbarProps) => {
   const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
-  const [colorPickerPosition, setColorPickerPosition] = useState({ left: 0, top: 0 });
-  const colorControlRef = useRef<HTMLDivElement>(null);
   const colorButtonRef = useRef<HTMLButtonElement>(null);
-  const colorPickerPanelRef = useRef<HTMLDivElement>(null);
 
   const handleColorChange = useCallback((value: Parameters<typeof Color.rgb>[0]) => {
     try {
@@ -257,63 +255,8 @@ export const CostumeToolbar = memo(({
     });
   }, []);
 
-  const updateColorPickerPosition = useCallback(() => {
-    const button = colorButtonRef.current;
-    if (!button) return;
-
-    const rect = button.getBoundingClientRect();
-    const panelWidth = colorPickerPanelRef.current?.offsetWidth ?? 212;
-    const panelHeight = colorPickerPanelRef.current?.offsetHeight ?? 220;
-    const viewportPadding = 12;
-    const left = Math.max(
-      viewportPadding,
-      Math.min(rect.left, window.innerWidth - panelWidth - viewportPadding),
-    );
-    const top = rect.top >= panelHeight + viewportPadding + 8
-      ? rect.top - panelHeight - 8
-      : Math.min(rect.bottom + 8, window.innerHeight - panelHeight - viewportPadding);
-
-    setColorPickerPosition({
-      left,
-      top: Math.max(viewportPadding, top),
-    });
-  }, []);
-
   const isColorPickerOpen = openMenu === 'color';
   const isShapeMenuOpen = openMenu === 'shape-tools';
-
-  useEffect(() => {
-    if (!isColorPickerOpen) return;
-
-    updateColorPickerPosition();
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      if (colorControlRef.current?.contains(target)) return;
-      if (colorPickerPanelRef.current?.contains(target)) return;
-      setOpenMenu((current) => (current === 'color' ? null : current));
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpenMenu((current) => (current === 'color' ? null : current));
-      }
-    };
-
-    const handleViewportChange = () => updateColorPickerPosition();
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('resize', handleViewportChange);
-    window.addEventListener('scroll', handleViewportChange, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('resize', handleViewportChange);
-      window.removeEventListener('scroll', handleViewportChange, true);
-    };
-  }, [isColorPickerOpen, updateColorPickerPosition]);
 
   const leadingTools = editorMode === 'vector' ? vectorPrimaryTools : bitmapPrimaryTools;
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
@@ -350,7 +293,7 @@ export const CostumeToolbar = memo(({
                         <ChevronDown className="size-3" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="min-w-[160px]">
+                    <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">
                       <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
                         Move Forward
                       </DropdownMenuItem>
@@ -414,7 +357,7 @@ export const CostumeToolbar = memo(({
                         <ChevronDown className="size-3" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="w-[140px] p-2">
+                    <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="w-[140px] p-2">
                       <div className="grid grid-cols-3 gap-1">
                         {alignGrid.map((item) => (
                           <DropdownMenuItem
@@ -432,10 +375,7 @@ export const CostumeToolbar = memo(({
                 </div>
               )}
 
-              <div
-                ref={colorControlRef}
-                className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0"
-              >
+              <div className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                 <button
                   ref={colorButtonRef}
                   type="button"
@@ -490,7 +430,7 @@ export const CostumeToolbar = memo(({
                         <ChevronDown className="size-3 shrink-0" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="min-w-[156px]">
+                    <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
                       <DropdownMenuRadioGroup
                         value={textStyle.fontFamily}
                         onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
@@ -544,7 +484,7 @@ export const CostumeToolbar = memo(({
                         <ChevronDown className="size-3" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="min-w-[156px]">
+                    <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
                       <DropdownMenuCheckboxItem
                         checked={textStyle.fontWeight === 'bold'}
                         onCheckedChange={(checked) => onTextStyleChange({ fontWeight: checked ? 'bold' : 'normal' })}
@@ -586,7 +526,7 @@ export const CostumeToolbar = memo(({
                         <ChevronDown className="size-3 shrink-0" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" side="top" sideOffset={10} className="min-w-[148px]">
+                    <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
                       <DropdownMenuRadioGroup
                         value={textStyle.textAlign}
                         onValueChange={(textAlign) => onTextStyleChange({ textAlign: textAlign as TextToolStyle['textAlign'] })}
@@ -672,7 +612,7 @@ export const CostumeToolbar = memo(({
                   <DropdownMenuContent
                     side="top"
                     align="center"
-                    sideOffset={12}
+                    sideOffset={toolbarPopupSideOffset}
                     className="min-w-[180px] rounded-2xl border p-2"
                   >
                     {shapeTools.map((shapeTool) => {
@@ -727,21 +667,21 @@ export const CostumeToolbar = memo(({
           </div>
         </div>
       </div>
-      {showContextualPropertyBar && isColorPickerOpen && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={colorPickerPanelRef}
-          className="fixed z-[100060] rounded-lg border bg-popover p-3 shadow-lg"
-          style={{
-            left: colorPickerPosition.left,
-            top: colorPickerPosition.top,
-          }}
+      {showContextualPropertyBar && (
+        <AnchoredPopupSurface
+          open={isColorPickerOpen}
+          anchorRef={colorButtonRef}
+          onClose={() => handleMenuOpenChange('color', false)}
+          side="top"
+          align="center"
+          sideOffset={toolbarPopupSideOffset}
+          className="w-[212px] p-3"
         >
           <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
             <ColorPickerSelection className="mb-2 h-32 rounded" />
             <ColorPickerHue />
           </ColorPicker>
-        </div>,
-        document.body,
+        </AnchoredPopupSurface>
       )}
     </>
   );
