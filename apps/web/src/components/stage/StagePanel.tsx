@@ -140,7 +140,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
 
   if (fullscreen) {
     return (
-      <div className="fixed inset-0 z-[100001] bg-black flex items-center justify-center">
+      <div className="fixed inset-0 z-[100001] overflow-hidden bg-black">
         <div className="absolute top-4 right-4 z-10">
           <div className="inline-flex items-center gap-1 rounded-full bg-black/60 border border-white/15 p-1">
             <button
@@ -163,7 +163,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
             </button>
           </div>
         </div>
-        <div className="w-full h-full flex items-center justify-center">
+        <div className="h-full w-full">
           <PhaserCanvas isPlaying={true} />
         </div>
       </div>
