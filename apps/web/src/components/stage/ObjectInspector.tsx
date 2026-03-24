@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Label } from '@/components/ui/label';
@@ -22,6 +21,7 @@ import {
   runInHistoryTransaction,
 } from '@/store/universalHistory';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
+import { cn } from '@/lib/utils';
 
 type InspectorTab = 'object' | 'scene';
 
@@ -280,58 +280,62 @@ export function ObjectInspector() {
     }
   }, [selectedFolderId, selectedObjectId, selectedObjectIds.length]);
 
-  const handleTabChange = useCallback((value: string) => {
-    freezeEditorResizeForLayoutTransition();
-    setActiveTab(value === 'scene' ? 'scene' : 'object');
-  }, []);
-
   const handleSegmentedTabChange = useCallback((value: InspectorTab) => {
     freezeEditorResizeForLayoutTransition();
     setActiveTab(value);
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-card">
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="flex h-full min-h-0 flex-col w-full">
-        <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
-          <SegmentedControl
-            ariaLabel="Inspector sections"
-            className="w-full"
-            options={inspectorTabs}
-            value={activeTab}
-            onValueChange={handleSegmentedTabChange}
-          />
-        </div>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
+      <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
+        <SegmentedControl
+          ariaLabel="Inspector sections"
+          className="w-full"
+          options={inspectorTabs}
+          value={activeTab}
+          onValueChange={handleSegmentedTabChange}
+        />
+      </div>
 
-        <TabsContent forceMount value="object" className="mt-0 min-h-0 data-[state=inactive]:hidden">
-          <ScrollArea className="h-full">
-            <div className="px-4 py-3">
-              {selectedFolderId ? (
-                <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
-              ) : (
-                <ObjectProperties
-                  objects={selectedObjects}
-                  sceneId={selectedSceneId}
-                  updateObject={updateObject}
-                  openCostumeColliderEditor={openCostumeColliderEditor}
-                />
-              )}
-            </div>
-          </ScrollArea>
-        </TabsContent>
-        <TabsContent forceMount value="scene" className="mt-0 min-h-0 data-[state=inactive]:hidden">
-          <ScrollArea className="h-full">
-            <div className="px-4 py-3">
-              <SceneProperties
-                scene={scene}
-                updateScene={updateScene}
-                onOpenBackgroundEditor={openBackgroundEditor}
-                onOpenWorldBoundaryEditor={openWorldBoundaryEditor}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <ScrollArea
+          aria-hidden={activeTab !== 'object'}
+          className={cn(
+            'absolute inset-0 h-full min-h-0',
+            activeTab !== 'object' && 'pointer-events-none invisible',
+          )}
+        >
+          <div className="min-h-full px-4 py-3">
+            {selectedFolderId ? (
+              <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
+            ) : (
+              <ObjectProperties
+                objects={selectedObjects}
+                sceneId={selectedSceneId}
+                updateObject={updateObject}
+                openCostumeColliderEditor={openCostumeColliderEditor}
               />
-            </div>
-          </ScrollArea>
-        </TabsContent>
-      </Tabs>
+            )}
+          </div>
+        </ScrollArea>
+
+        <ScrollArea
+          aria-hidden={activeTab !== 'scene'}
+          className={cn(
+            'absolute inset-0 h-full min-h-0',
+            activeTab !== 'scene' && 'pointer-events-none invisible',
+          )}
+        >
+          <div className="min-h-full px-4 py-3">
+            <SceneProperties
+              scene={scene}
+              updateScene={updateScene}
+              onOpenBackgroundEditor={openBackgroundEditor}
+              onOpenWorldBoundaryEditor={openWorldBoundaryEditor}
+            />
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -668,16 +672,15 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             physics={effectivePhysics}
             collider={effectiveCollider}
           />
-          {effectivePhysics?.enabled && (
-            <PhysicsProperties
-              object={object}
-              sceneId={sceneId}
-              updateObject={updateObject}
-              physics={effectivePhysics}
-              collider={effectiveCollider}
-              onEditCollider={() => openCostumeColliderEditor(sceneId, object.id)}
-            />
-          )}
+          <PhysicsProperties
+            object={object}
+            sceneId={sceneId}
+            updateObject={updateObject}
+            physics={effectivePhysics}
+            collider={effectiveCollider}
+            enabled={!!effectivePhysics?.enabled}
+            onEditCollider={() => openCostumeColliderEditor(sceneId, object.id)}
+          />
         </>
       )}
     </div>
@@ -829,6 +832,7 @@ function PhysicsToggle({
   const hasPhysics = physics?.enabled ?? false;
 
   const togglePhysics = (checked: boolean) => {
+    freezeEditorResizeForLayoutTransition();
     if (!checked) {
       // Keep collider when physics is turned off (as per requirement)
       updateObject(sceneId, object.id, { physics: null });
@@ -877,22 +881,31 @@ function PhysicsProperties({
   updateObject,
   physics,
   collider,
+  enabled,
   onEditCollider,
 }: FieldProps & {
-  physics: PhysicsConfig;
+  physics: PhysicsConfig | null;
   collider: GameObject['collider'];
+  enabled: boolean;
   onEditCollider: () => void;
 }) {
   const syncedLabelClass = object.componentId ? 'text-purple-600' : 'text-muted-foreground';
+  const resolvedPhysics = physics ?? createDefaultPhysicsConfig();
   const colliderType = collider?.type ?? 'none';
 
   const updatePhysics = (updates: Partial<PhysicsConfig>) => {
+    if (!enabled) {
+      return;
+    }
     updateObject(sceneId, object.id, {
-      physics: { ...physics, ...updates }
+      physics: { ...resolvedPhysics, ...updates }
     });
   };
 
   const updateColliderType = (type: 'none' | 'box' | 'circle' | 'capsule') => {
+    if (!enabled) {
+      return;
+    }
     if (type === 'none') {
       updateObject(sceneId, object.id, { collider: null });
       return;
@@ -904,14 +917,20 @@ function PhysicsProperties({
   };
 
   return (
-    <div className="space-y-4 mt-3">
+    <div
+      aria-hidden={!enabled}
+      className={cn(
+        'mt-3 space-y-4',
+        !enabled && 'hidden',
+      )}
+    >
       {/* Body Type */}
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Body Type</div>
         <div className="flex gap-2">
           <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1">
             <select
-              value={physics.bodyType}
+              value={resolvedPhysics.bodyType}
               onChange={(e) => updatePhysics({ bodyType: e.target.value as 'dynamic' | 'static' })}
               className="flex-1 bg-transparent text-sm outline-none text-foreground cursor-pointer"
             >
@@ -928,7 +947,7 @@ function PhysicsProperties({
         <div className="flex gap-2">
           <ScrubInput
             label="Y"
-            value={physics.gravityY}
+            value={resolvedPhysics.gravityY}
             onChange={(gravityY) => updatePhysics({ gravityY })}
             precision={0}
           />
@@ -941,7 +960,7 @@ function PhysicsProperties({
         <div className="flex gap-2">
           <ScrubInput
             label=""
-            value={physics.bounce ?? 0.2}
+            value={resolvedPhysics.bounce ?? 0.2}
             onChange={(bounce) => updatePhysics({ bounce })}
             step={0.1}
             precision={2}
@@ -957,7 +976,7 @@ function PhysicsProperties({
         <div className="flex gap-2">
           <ScrubInput
             label=""
-            value={physics.friction ?? 0.1}
+            value={resolvedPhysics.friction ?? 0.1}
             onChange={(friction) => updatePhysics({ friction })}
             step={0.05}
             precision={2}
@@ -971,7 +990,7 @@ function PhysicsProperties({
       <div className="flex items-center gap-2">
         <Checkbox
           id="allow-rotation"
-          checked={physics.allowRotation ?? false}
+          checked={resolvedPhysics.allowRotation ?? false}
           onCheckedChange={(checked) => updatePhysics({ allowRotation: !!checked })}
         />
         <Label htmlFor="allow-rotation" className={`text-xs cursor-pointer ${syncedLabelClass}`}>

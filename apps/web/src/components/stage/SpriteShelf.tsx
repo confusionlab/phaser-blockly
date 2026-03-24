@@ -772,6 +772,7 @@ export function SpriteShelf() {
 
     e.preventDefault();
     e.stopPropagation();
+    freezeEditorResizeForLayoutTransition();
 
     if (e.shiftKey) {
       const anchorId = selectionAnchorObjectIdRef.current ?? selectedObjectId ?? objectId;
@@ -822,6 +823,7 @@ export function SpriteShelf() {
 
     e.preventDefault();
     e.stopPropagation();
+    freezeEditorResizeForLayoutTransition();
     selectionAnchorObjectIdRef.current = null;
     selectFolder(folderId);
   };
