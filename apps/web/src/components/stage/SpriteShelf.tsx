@@ -589,9 +589,24 @@ export function SpriteShelf() {
     setCollapsedFoldersForScene(selectedSceneId, nextCollapsed);
   };
 
-  const getDragKeysForItem = (item: ShelfTreeItem): string[] => {
-    if (item.type === 'object' && selectedIdsInScene.length > 1 && selectedIdsInScene.includes(item.id)) {
-      return selectedIdsInScene.map((id) => getObjectNodeKey(id));
+  const syncSelectionForLayerDrag = (item: ShelfTreeItem): string[] => {
+    if (item.type === 'object') {
+      if (selectedIdsInScene.length > 1 && selectedIdsInScene.includes(item.id)) {
+        return selectedIdsInScene.map((id) => getObjectNodeKey(id));
+      }
+
+      const isOnlySelectedObject = selectedIdsInScene.length === 1 && selectedIdsInScene[0] === item.id;
+      if (!isOnlySelectedObject) {
+        selectionAnchorObjectIdRef.current = item.id;
+        selectObject(item.id, { recordHistory: false });
+      }
+
+      return [item.key];
+    }
+
+    if (selectedIdsInScene.length > 0 || selectedComponentId) {
+      selectionAnchorObjectIdRef.current = null;
+      selectObject(null, { recordHistory: false });
     }
 
     return [item.key];
@@ -603,15 +618,14 @@ export function SpriteShelf() {
   };
 
   const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
-    const dragKeys = getDragKeysForItem(item);
-
     flushSync(() => {
+      const dragKeys = syncSelectionForLayerDrag(item);
       setDraggedLayerKeys(dragKeys);
       setLayerDropTarget(null);
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', dragKeys.join(','));
     });
 
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', dragKeys.join(','));
     const dragImage = getTransparentDragImage();
     if (dragImage) {
       event.dataTransfer.setDragImage(dragImage, 0, 0);
