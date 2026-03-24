@@ -37,7 +37,7 @@ import {
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
-const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'vector', 'rectangle', 'circle', 'line', 'text', 'collider']);
+const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'rectangle', 'circle', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'line', 'collider']);
 
 function ensureToolForMode(mode: CostumeEditorMode, tool: DrawingTool): DrawingTool {
@@ -156,6 +156,7 @@ export function CostumeEditor() {
   const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>({
     supportsFill: true,
   });
+  const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
 
   const [canUndo, setCanUndo] = useState(false);
@@ -511,6 +512,7 @@ export function CostumeEditor() {
     setEditorMode(mode);
     setActiveTool((prev) => ensureToolForMode(mode, prev));
     if (mode !== 'vector') {
+      setIsVectorPointEditing(false);
       setHasTextSelection(false);
     }
   }, []);
@@ -689,6 +691,7 @@ export function CostumeEditor() {
           activeTool={activeTool}
           hasActiveSelection={editorMode === 'bitmap' ? hasBitmapFloatingSelection : hasCanvasSelection}
           showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
+          isVectorPointEditing={isVectorPointEditing}
           brushColor={brushColor}
           brushSize={brushSize}
           textStyle={textStyle}
@@ -727,6 +730,7 @@ export function CostumeEditor() {
           onTextStyleSync={handleTextStyleChange}
           onVectorStyleSync={handleVectorStyleChange}
           onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
+          onVectorPointEditingChange={setIsVectorPointEditing}
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
         />

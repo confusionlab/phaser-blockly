@@ -9,7 +9,6 @@ const UNIVERSAL_COSTUME_TOOL_SHORTCUTS: Record<string, DrawingTool> = {
 };
 
 const VECTOR_COSTUME_TOOL_SHORTCUTS: Record<string, DrawingTool> = {
-  a: 'vector',
   t: 'text',
 };
 

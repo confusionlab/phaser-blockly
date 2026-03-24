@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/color-picker';
 import {
   MousePointer2,
-  PenTool,
   Pencil,
   Eraser,
   PaintBucket,
@@ -224,6 +223,7 @@ interface CostumeToolbarProps {
   activeTool: DrawingTool;
   hasActiveSelection: boolean;
   showTextControls: boolean;
+  isVectorPointEditing: boolean;
   brushColor: string;
   brushSize: number;
   textStyle: TextToolStyle;
@@ -251,7 +251,6 @@ const bitmapPrimaryTools: ToolDefinition[] = [
 
 const vectorPrimaryTools: ToolDefinition[] = [
   { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
-  { tool: 'vector', icon: <PenTool className="size-[18px]" />, label: 'Vector Point' },
 ];
 
 const vectorTrailingTools: ToolDefinition[] = [
@@ -315,6 +314,7 @@ export const CostumeToolbar = memo(({
   activeTool,
   hasActiveSelection,
   showTextControls,
+  isVectorPointEditing,
   brushColor,
   brushSize,
   textStyle,
@@ -347,13 +347,13 @@ export const CostumeToolbar = memo(({
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = isShapeTool(activeTool);
-  const showSelectionActions = activeTool === 'select';
-  const showContextualPropertyBar = !(showSelectionActions && !hasActiveSelection);
+  const showSelectionActions = activeTool === 'select' && !isVectorPointEditing;
+  const showContextualPropertyBar = isVectorPointEditing || !(showSelectionActions && !hasActiveSelection);
   const showPrimaryColorControl = editorMode === 'bitmap' || showTextControls;
   const showVectorStyleControls =
     editorMode === 'vector' &&
     !showTextControls &&
-    (showSelectionActions || activeTool === 'vector' || shapeToolIsActive);
+    (showSelectionActions || isVectorPointEditing || shapeToolIsActive);
   const showVectorFillControl =
     showVectorStyleControls &&
     (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line');
@@ -404,7 +404,7 @@ export const CostumeToolbar = memo(({
                     </div>
                   )}
 
-                  {editorMode === 'vector' && activeTool === 'vector' && (
+                  {editorMode === 'vector' && isVectorPointEditing && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                       <span className="whitespace-nowrap text-xs text-muted-foreground">Handles</span>
                       <Select.Root
