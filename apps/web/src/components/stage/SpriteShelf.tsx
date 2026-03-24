@@ -1551,7 +1551,7 @@ export function SpriteShelf() {
               </div>
             )}
 
-            <div className="ml-1 flex-1 min-w-0">
+            <div className="ml-1.5 flex-1 min-w-0">
               {isObjectEditing ? (
                 <InlineRenameField
                   key={`rename-${inlineRenameSessionId}`}
