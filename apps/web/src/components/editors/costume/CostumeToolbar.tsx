@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import * as Slider from '@radix-ui/react-slider';
 import * as Select from '@radix-ui/react-select';
 import { Button } from '@/components/ui/button';
@@ -75,6 +76,16 @@ interface FloatingToolButtonProps {
   activeTool: DrawingTool;
   onClick: (tool: DrawingTool) => void;
 }
+
+type ToolbarMenuId =
+  | 'move-order'
+  | 'vector-handles'
+  | 'align'
+  | 'color'
+  | 'font-family'
+  | 'text-format'
+  | 'text-align'
+  | 'shape-tools';
 
 const floatingToolButtonBaseClass =
   'h-11 rounded-[18px] bg-transparent text-muted-foreground shadow-none transition-colors duration-200 hover:!bg-transparent hover:text-foreground';
@@ -224,9 +235,11 @@ export const CostumeToolbar = memo(({
   onBrushSizeChange,
   onTextStyleChange,
 }: CostumeToolbarProps) => {
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
+  const [colorPickerPosition, setColorPickerPosition] = useState({ left: 0, top: 0 });
   const colorControlRef = useRef<HTMLDivElement>(null);
+  const colorButtonRef = useRef<HTMLButtonElement>(null);
+  const colorPickerPanelRef = useRef<HTMLDivElement>(null);
 
   const handleColorChange = useCallback((value: Parameters<typeof Color.rgb>[0]) => {
     try {
@@ -237,48 +250,100 @@ export const CostumeToolbar = memo(({
     }
   }, [onColorChange]);
 
+  const handleMenuOpenChange = useCallback((menu: ToolbarMenuId, open: boolean) => {
+    setOpenMenu((current) => {
+      if (open) return menu;
+      return current === menu ? null : current;
+    });
+  }, []);
+
+  const updateColorPickerPosition = useCallback(() => {
+    const button = colorButtonRef.current;
+    if (!button) return;
+
+    const rect = button.getBoundingClientRect();
+    const panelWidth = colorPickerPanelRef.current?.offsetWidth ?? 212;
+    const panelHeight = colorPickerPanelRef.current?.offsetHeight ?? 220;
+    const viewportPadding = 12;
+    const left = Math.max(
+      viewportPadding,
+      Math.min(rect.left, window.innerWidth - panelWidth - viewportPadding),
+    );
+    const top = rect.top >= panelHeight + viewportPadding + 8
+      ? rect.top - panelHeight - 8
+      : Math.min(rect.bottom + 8, window.innerHeight - panelHeight - viewportPadding);
+
+    setColorPickerPosition({
+      left,
+      top: Math.max(viewportPadding, top),
+    });
+  }, []);
+
+  const isColorPickerOpen = openMenu === 'color';
+  const isShapeMenuOpen = openMenu === 'shape-tools';
+
   useEffect(() => {
-    if (!showColorPicker) return;
+    if (!isColorPickerOpen) return;
+
+    updateColorPickerPosition();
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
       if (colorControlRef.current?.contains(target)) return;
-      setShowColorPicker(false);
+      if (colorPickerPanelRef.current?.contains(target)) return;
+      setOpenMenu((current) => (current === 'color' ? null : current));
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setShowColorPicker(false);
+        setOpenMenu((current) => (current === 'color' ? null : current));
       }
     };
 
+    const handleViewportChange = () => updateColorPickerPosition();
+
     document.addEventListener('pointerdown', handlePointerDown);
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
     };
-  }, [showColorPicker]);
+  }, [isColorPickerOpen, updateColorPickerPosition]);
 
   const leadingTools = editorMode === 'vector' ? vectorPrimaryTools : bitmapPrimaryTools;
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = isShapeTool(activeTool);
   const showSelectionActions = activeTool === 'select';
+  const showContextualPropertyBar = !(showSelectionActions && !hasActiveSelection);
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
+
+  useEffect(() => {
+    if (!showContextualPropertyBar) {
+      setOpenMenu(null);
+    }
+  }, [showContextualPropertyBar]);
 
   return (
     <>
       <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
         <div className="flex max-w-full flex-col items-center gap-3">
-          <div className={floatingPropertyBarClass} data-testid="costume-toolbar-properties">
-            <div className="hide-scrollbar max-w-full overflow-x-auto overflow-y-visible">
-              <div className="flex min-w-max items-center gap-2">
+          {showContextualPropertyBar && (
+            <div className={floatingPropertyBarClass} data-testid="costume-toolbar-properties">
+              <div className="hide-scrollbar max-w-full overflow-x-auto overflow-y-visible">
+                <div className="flex min-w-max items-center gap-2">
               {editorMode === 'vector' && showSelectionActions && hasActiveSelection && (
                 <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={openMenu === 'move-order'}
+                    onOpenChange={(open) => handleMenuOpenChange('move-order', open)}
+                  >
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
                         Move Order
@@ -306,7 +371,12 @@ export const CostumeToolbar = memo(({
               {editorMode === 'vector' && activeTool === 'vector' && (
                 <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                   <span className="whitespace-nowrap text-xs text-muted-foreground">Handles</span>
-                  <Select.Root value={vectorHandleType} onValueChange={(value) => onVectorHandleTypeChange(value as VectorHandleType)}>
+                  <Select.Root
+                    open={openMenu === 'vector-handles'}
+                    onOpenChange={(open) => handleMenuOpenChange('vector-handles', open)}
+                    value={vectorHandleType}
+                    onValueChange={(value) => onVectorHandleTypeChange(value as VectorHandleType)}
+                  >
                     <Select.Trigger className="flex h-8 min-w-[120px] items-center justify-between gap-2 rounded-md border bg-background px-2 text-xs">
                       <Select.Value />
                     </Select.Trigger>
@@ -334,7 +404,10 @@ export const CostumeToolbar = memo(({
 
               {showSelectionActions && (
                 <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={openMenu === 'align'}
+                    onOpenChange={(open) => handleMenuOpenChange('align', open)}
+                  >
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" disabled={alignDisabled}>
                         Align
@@ -364,11 +437,12 @@ export const CostumeToolbar = memo(({
                 className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0"
               >
                 <button
+                  ref={colorButtonRef}
                   type="button"
                   className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
-                  onClick={() => setShowColorPicker((prev) => !prev)}
+                  onClick={() => setOpenMenu((current) => (current === 'color' ? null : 'color'))}
                   title="Color"
-                  aria-expanded={showColorPicker}
+                  aria-expanded={isColorPickerOpen}
                   aria-haspopup="dialog"
                 >
                   <span
@@ -378,14 +452,6 @@ export const CostumeToolbar = memo(({
                   />
                   <span>Color</span>
                 </button>
-                {showColorPicker && (
-                  <div className="absolute bottom-full left-0 z-50 mb-2 rounded-lg border bg-popover p-3 shadow-lg">
-                    <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
-                      <ColorPickerSelection className="mb-2 h-32 rounded" />
-                      <ColorPickerHue />
-                    </ColorPicker>
-                  </div>
-                )}
               </div>
 
               {editorMode === 'bitmap' && (
@@ -410,7 +476,10 @@ export const CostumeToolbar = memo(({
 
               {editorMode === 'vector' && showTextControls && (
                 <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={openMenu === 'font-family'}
+                    onOpenChange={(open) => handleMenuOpenChange('font-family', open)}
+                  >
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="outline"
@@ -453,7 +522,10 @@ export const CostumeToolbar = memo(({
                     <span className="w-6 text-right text-xs text-muted-foreground">{textStyle.fontSize}</span>
                   </div>
 
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={openMenu === 'text-format'}
+                    onOpenChange={(open) => handleMenuOpenChange('text-format', open)}
+                  >
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="outline"
@@ -497,7 +569,10 @@ export const CostumeToolbar = memo(({
                     </DropdownMenuContent>
                   </DropdownMenu>
 
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={openMenu === 'text-align'}
+                    onOpenChange={(open) => handleMenuOpenChange('text-align', open)}
+                  >
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="outline"
@@ -529,9 +604,10 @@ export const CostumeToolbar = memo(({
                   </DropdownMenu>
                 </div>
               )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           <div className={floatingToolBarClass} data-testid="costume-toolbar-tools">
             <div className="hide-scrollbar max-w-full overflow-x-auto overflow-y-visible">
@@ -548,7 +624,10 @@ export const CostumeToolbar = memo(({
                   />
                 ))}
 
-                <DropdownMenu open={shapeMenuOpen} onOpenChange={setShapeMenuOpen}>
+                <DropdownMenu
+                  open={isShapeMenuOpen}
+                  onOpenChange={(open) => handleMenuOpenChange('shape-tools', open)}
+                >
                   <div
                     className={cn(
                       'flex items-center gap-1 rounded-[18px] bg-transparent',
@@ -556,7 +635,7 @@ export const CostumeToolbar = memo(({
                     )}
                     onContextMenu={(event) => {
                       event.preventDefault();
-                      setShapeMenuOpen(true);
+                      setOpenMenu('shape-tools');
                     }}
                   >
                     <Button
@@ -584,7 +663,7 @@ export const CostumeToolbar = memo(({
                         )}
                         title="Open shape tools"
                         aria-label="Open shape tools"
-                        aria-expanded={shapeMenuOpen}
+                        aria-expanded={isShapeMenuOpen}
                       >
                         <ChevronDown className="size-3.5 opacity-70" />
                       </Button>
@@ -605,7 +684,7 @@ export const CostumeToolbar = memo(({
                           className="flex items-center justify-between rounded-xl px-3 py-2 text-sm"
                           onClick={() => {
                             onToolChange(shapeTool.tool);
-                            setShapeMenuOpen(false);
+                            setOpenMenu((current) => (current === 'shape-tools' ? null : current));
                           }}
                         >
                           <span className="flex items-center gap-3">
@@ -648,6 +727,22 @@ export const CostumeToolbar = memo(({
           </div>
         </div>
       </div>
+      {showContextualPropertyBar && isColorPickerOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={colorPickerPanelRef}
+          className="fixed z-[100060] rounded-lg border bg-popover p-3 shadow-lg"
+          style={{
+            left: colorPickerPosition.left,
+            top: colorPickerPosition.top,
+          }}
+        >
+          <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
+            <ColorPickerSelection className="mb-2 h-32 rounded" />
+            <ColorPickerHue />
+          </ColorPicker>
+        </div>,
+        document.body,
+      )}
     </>
   );
 });
