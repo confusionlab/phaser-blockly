@@ -2476,6 +2476,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
       vectorTargets.forEach((target) => {
         const updates: Record<string, unknown> = {};
+        const shouldPreserveCenter =
+          target.strokeUniform !== true ||
+          target.strokeWidth !== strokeWidth;
+        const centerPoint = shouldPreserveCenter && typeof target.getCenterPoint === 'function'
+          ? target.getCenterPoint()
+          : null;
         if (target.strokeUniform !== true) {
           changed = true;
           updates.strokeUniform = true;
@@ -2494,6 +2500,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         }
         if (Object.keys(updates).length > 0) {
           target.set(updates);
+          if (centerPoint && typeof target.setPositionByOrigin === 'function') {
+            target.setPositionByOrigin(centerPoint, 'center', 'center');
+          }
         }
         target.setCoords?.();
       });
