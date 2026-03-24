@@ -1769,7 +1769,7 @@ export function SpriteShelf() {
       </div>
 
       <div
-        className="flex-1 overflow-y-auto"
+        className="flex-1 overflow-y-auto scrollbar-gutter-stable"
         onDragOver={handleRootDragOver}
         onDrop={handleRootDrop}
         onClick={handleEmptyShelfClick}

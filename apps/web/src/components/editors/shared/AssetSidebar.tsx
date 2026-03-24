@@ -23,7 +23,7 @@ export function AssetSidebar({
         {actions ? <div className="flex gap-1">{actions}</div> : null}
       </div>
 
-      <div className={cn('flex-1 overflow-y-auto p-2', contentClassName)}>
+      <div className={cn('scrollbar-gutter-stable flex-1 overflow-y-auto p-2', contentClassName)}>
         {children}
       </div>
     </aside>

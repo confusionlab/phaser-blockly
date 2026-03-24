@@ -1838,7 +1838,10 @@ function createEditorScene(
   });
 
   // Function to update the view based on current mode
-  const updateViewMode = (mode: 'camera-masked' | 'camera-viewport' | 'editor') => {
+  const updateViewMode = (
+    mode: 'camera-masked' | 'camera-viewport' | 'editor',
+    options: { preserveEditorCamera?: boolean } = {},
+  ) => {
     scene.data.set('viewMode', mode);
 
     const containerWidth = scene.scale.width;
@@ -1860,9 +1863,18 @@ function createEditorScene(
       camera.centerOn(canvasWidth / 2, canvasHeight / 2);
     } else {
       // Editor mode - full viewport, free pan
+      const previousZoom = camera.zoom;
+      const previousScrollX = camera.scrollX;
+      const previousScrollY = camera.scrollY;
       camera.setViewport(0, 0, containerWidth, containerHeight);
-      camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
-      camera.centerOn(canvasWidth / 2, canvasHeight / 2);
+      if (options.preserveEditorCamera) {
+        camera.setZoom(previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM);
+        camera.scrollX = previousScrollX;
+        camera.scrollY = previousScrollY;
+      } else {
+        camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
+        camera.centerOn(canvasWidth / 2, canvasHeight / 2);
+      }
     }
   };
 
@@ -1873,7 +1885,9 @@ function createEditorScene(
   // Keep camera viewport in sync with stage panel resizes.
   const handleScaleResize = () => {
     const currentMode = scene.data.get('viewMode') as 'camera-masked' | 'camera-viewport' | 'editor' | undefined;
-    updateViewMode(currentMode ?? 'editor');
+    updateViewMode(currentMode ?? 'editor', {
+      preserveEditorCamera: (currentMode ?? 'editor') === 'editor',
+    });
     refreshTiledBackgroundLayer(scene);
   };
   scene.scale.on('resize', handleScaleResize);
