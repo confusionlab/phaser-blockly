@@ -52,6 +52,12 @@ type FrozenStageFrame = {
   top: number;
 };
 
+type PendingCostumeVisualTarget = {
+  costumeId: string | null;
+  assetId: string | null;
+  textureKey: string | null;
+};
+
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
 // Phaser space: (0,0) at top-left, +Y is down
@@ -82,6 +88,12 @@ function hashTextureInput(value: string): string {
 
 function getCostumeTextureKey(objectId: string, costumeId: string, assetId: string): string {
   return `costume_${objectId}_${costumeId}_${hashTextureInput(assetId)}`;
+}
+
+function getPendingCostumeVisualTarget(
+  container: Phaser.GameObjects.Container,
+): PendingCostumeVisualTarget | undefined {
+  return container.getData('pendingVisualTarget') as PendingCostumeVisualTarget | undefined;
 }
 
 function drawWorldBoundary(
@@ -1291,15 +1303,18 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         const currentCostume = costumes[currentCostumeIndex];
         const storedCostumeId = targetContainer.getData('costumeId');
         const storedAssetId = targetContainer.getData('assetId');
+        const pendingVisualTarget = getPendingCostumeVisualTarget(targetContainer);
+        const resolvedCostumeId = pendingVisualTarget?.costumeId ?? storedCostumeId;
+        const resolvedAssetId = pendingVisualTarget?.assetId ?? storedAssetId;
 
         const hasCurrentCostumeAsset = !!currentCostume?.assetId;
-        const hadStoredCostumeAsset = !!storedAssetId;
+        const hadResolvedCostumeAsset = !!resolvedAssetId;
 
         // Update when costume content changes or when switching between placeholder <-> costume
-        const costumeChanged = hasCurrentCostumeAsset !== hadStoredCostumeAsset || (
+        const costumeChanged = hasCurrentCostumeAsset !== hadResolvedCostumeAsset || (
           hasCurrentCostumeAsset && (
-            currentCostume.id !== storedCostumeId ||
-            currentCostume.assetId !== storedAssetId
+            currentCostume.id !== resolvedCostumeId ||
+            currentCostume.assetId !== resolvedAssetId
           )
         );
 
@@ -1390,6 +1405,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             }
 
             applyNextVisual();
+            targetContainer.setData('pendingVisualTarget', undefined);
 
             if (
               previousTextureKey &&
@@ -1460,6 +1476,11 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             }, null);
           } else {
             const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
+            targetContainer.setData('pendingVisualTarget', {
+              costumeId: currentCostume.id,
+              assetId: currentCostume.assetId,
+              textureKey,
+            } satisfies PendingCostumeVisualTarget);
             if (phaserScene.textures.exists(textureKey)) {
               commitCostumeSpriteVisual(currentCostume, textureKey);
             } else {
@@ -1467,6 +1488,14 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
               img.onload = () => {
                 if (!targetContainer.active || !targetContainer.scene) return;
                 if ((targetContainer.getData('costumeVisualVersion') as number | undefined) !== nextVisualVersion) {
+                  return;
+                }
+                const currentPendingTarget = getPendingCostumeVisualTarget(targetContainer);
+                if (
+                  currentPendingTarget?.costumeId !== currentCostume.id ||
+                  currentPendingTarget?.assetId !== currentCostume.assetId ||
+                  currentPendingTarget?.textureKey !== textureKey
+                ) {
                   return;
                 }
                 if (!phaserScene.textures.exists(textureKey)) {
