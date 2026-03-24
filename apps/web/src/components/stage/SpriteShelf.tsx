@@ -1509,7 +1509,7 @@ export function SpriteShelf() {
 
             {item.type === 'folder' ? (
               <div className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center rounded-md">
-                {isExpanded ? <FolderOpen className="size-6 shrink-0" /> : <Folder className="size-6 shrink-0" />}
+                {isExpanded ? <FolderOpen className="size-[1.125rem] shrink-0" /> : <Folder className="size-[1.125rem] shrink-0" />}
               </div>
             ) : (
               <div
