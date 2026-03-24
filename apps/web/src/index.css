@@ -219,10 +219,6 @@ body {
   scrollbar-gutter: stable both-edges;
 }
 
-.inspector-panel {
-  container-type: inline-size;
-}
-
 .inspector-panel [data-slot="scroll-area-viewport"] {
   min-width: 0;
 }
@@ -292,56 +288,33 @@ body {
   gap: 0.75rem;
 }
 
+.inspector-split-row > * {
+  min-width: 0;
+}
+
 .inspector-inline-controls {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: nowrap;
 }
 
-.inspector-inline-button,
+.inspector-inline-controls > * {
+  min-width: 0;
+}
+
+.inspector-inline-button {
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .inspector-inline-icon-action {
   flex: 0 0 auto;
   max-width: 100%;
-}
-
-@container (max-width: 20rem) {
-  .inspector-field-grid,
-  .inspector-scale-row,
-  .inspector-rotation-row,
-  .inspector-select-row {
-    flex-wrap: wrap;
-  }
-
-  .inspector-field-grid > * {
-    flex-basis: 100%;
-  }
-
-  .inspector-scale-row > :not(.inspector-inline-icon-action),
-  .inspector-rotation-input,
-  .inspector-select-row > :first-child {
-    flex-basis: 100%;
-  }
-
-  .inspector-select-row > .inspector-inline-button {
-    width: 100%;
-  }
-
-  .inspector-split-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .inspector-inline-controls {
-    width: 100%;
-    justify-content: space-between;
-  }
-}
-
-@container (max-width: 15rem) {
-  .inspector-inline-controls {
-    flex-wrap: wrap;
-  }
 }
 
 @theme inline {
