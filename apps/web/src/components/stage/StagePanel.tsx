@@ -19,8 +19,12 @@ function dispatchEditorResizeFreeze(active: boolean): void {
 }
 
 export function StagePanel({ fullscreen = false, deferEditorResize = false }: StagePanelProps) {
-  const { stopPlaying, viewMode, cycleViewMode, selectedSceneId, selectedObjectId, selectObject } = useEditorStore();
-  const { project } = useProjectStore();
+  const stopPlaying = useEditorStore((state) => state.stopPlaying);
+  const viewMode = useEditorStore((state) => state.viewMode);
+  const cycleViewMode = useEditorStore((state) => state.cycleViewMode);
+  const selectedSceneId = useEditorStore((state) => state.selectedSceneId);
+  const selectObject = useEditorStore((state) => state.selectObject);
+  const project = useProjectStore((state) => state.project);
   const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
   const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
@@ -29,6 +33,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
 
   const toggleCanvasFullscreen = useCallback(() => {
     if (!isCanvasFullscreen) {
+      const { selectedSceneId, selectedObjectId } = useEditorStore.getState();
       fullscreenSelectionRef.current = {
         sceneId: selectedSceneId,
         objectId: selectedObjectId,
@@ -37,7 +42,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
       return;
     }
     setIsCanvasFullscreen(false);
-  }, [isCanvasFullscreen, selectedObjectId, selectedSceneId]);
+  }, [isCanvasFullscreen]);
 
   useEffect(() => {
     if (isCanvasFullscreen) {
@@ -135,7 +140,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
 
   if (fullscreen) {
     return (
-      <div className="fixed inset-0 z-[100001] bg-black flex items-center justify-center">
+      <div className="fixed inset-0 z-[100001] overflow-hidden bg-black">
         <div className="absolute top-4 right-4 z-10">
           <div className="inline-flex items-center gap-1 rounded-full bg-black/60 border border-white/15 p-1">
             <button
@@ -158,7 +163,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
             </button>
           </div>
         </div>
-        <div className="w-full h-full flex items-center justify-center">
+        <div className="h-full w-full">
           <PhaserCanvas isPlaying={true} />
         </div>
       </div>
@@ -200,17 +205,49 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
     </div>
   );
 
+  const fullscreenCanvasControls = (
+    <div className="absolute top-4 right-4 z-10">
+      <div className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/60 p-1">
+        <Button
+          variant={isCameraView ? 'secondary' : 'ghost'}
+          size="sm"
+          className="h-9 w-9 rounded-full p-0 text-white hover:bg-white/15 hover:text-white"
+          onClick={cycleViewMode}
+          title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
+        >
+          <Camera className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-9 w-9 rounded-full p-0 text-white hover:bg-white/15 hover:text-white"
+          onClick={toggleCanvasFullscreen}
+          title="Exit fullscreen stage"
+        >
+          <Minimize2 className="size-4" />
+        </Button>
+        <button
+          type="button"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-green-400 transition-colors hover:bg-white/15 hover:text-green-300"
+          onClick={tryStartPlaying}
+          title="Play"
+          aria-label="Play"
+        >
+          <Play className="size-5 fill-current" />
+        </button>
+      </div>
+    </div>
+  );
+
   if (isCanvasFullscreen) {
     return (
-      <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
-        {canvasToolbar}
-        <div className="flex-1 min-h-0 p-1">
-          <div
-            className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
-            style={stageShellStyle}
-          >
-            <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
-          </div>
+      <div className="fixed inset-0 z-[100001] overflow-hidden bg-background">
+        {fullscreenCanvasControls}
+        <div
+          className="relative h-full w-full overflow-hidden"
+          style={stageShellStyle}
+        >
+          <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
         </div>
       </div>
     );
@@ -223,9 +260,9 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         {/* Toolbar above stage */}
         {canvasToolbar}
         {/* Canvas container */}
-        <div className="flex-1 min-h-0 p-1">
+        <div className="flex-1 min-h-0">
           <div
-            className="relative w-full h-full rounded-lg shadow-sm overflow-hidden"
+            className="relative h-full w-full overflow-hidden"
             style={stageShellStyle}
           >
             <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
@@ -236,7 +273,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
       {/* Resizable vertical divider */}
       <div
         data-testid="stage-panel-vertical-divider"
-        className="h-1 bg-border hover:bg-primary cursor-row-resize transition-colors"
+        className="app-resize-divider-y hover:text-primary cursor-row-resize transition-colors"
         onMouseDown={handleVerticalDividerDrag}
       />
 
@@ -250,7 +287,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         {/* Resizable horizontal divider */}
         <div
           data-testid="stage-panel-horizontal-divider"
-          className="w-1 bg-border hover:bg-primary cursor-col-resize transition-colors"
+          className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
           onMouseDown={handleHorizontalDividerDrag}
         />
 

@@ -5,7 +5,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
 import {
   Dialog,
@@ -254,9 +254,11 @@ export function SpriteShelf() {
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
+    selectedFolderId,
     selectedComponentId,
     selectObject,
     selectObjects,
+    selectFolder,
     selectComponent,
     selectScene,
     setActiveObjectTab,
@@ -278,6 +280,7 @@ export function SpriteShelf() {
   } | null>(null);
   const [sceneContextMenuPosition, setSceneContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [sceneDropdownOpen, setSceneDropdownOpen] = useState(false);
+  const [isShelfHovered, setIsShelfHovered] = useState(false);
   const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
   const [sceneDropTarget, setSceneDropTarget] = useState<{ sceneId: string; position: 'before' | 'after' } | null>(null);
   const [draggedLayerKeys, setDraggedLayerKeys] = useState<string[]>([]);
@@ -294,6 +297,7 @@ export function SpriteShelf() {
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const cancelSceneRenameOnBlurRef = useRef(false);
+  const sceneRenamePointerDownTargetRef = useRef<EventTarget | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
@@ -333,6 +337,23 @@ export function SpriteShelf() {
     }
 
     stabilizeInlineRenameFocus(sceneInputRef.current);
+  }, [editingSceneId]);
+
+  useEffect(() => {
+    if (!editingSceneId || typeof document === 'undefined') {
+      sceneRenamePointerDownTargetRef.current = null;
+      return;
+    }
+
+    const handlePointerDownCapture = (event: PointerEvent) => {
+      sceneRenamePointerDownTargetRef.current = event.target;
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownCapture, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDownCapture, true);
+      sceneRenamePointerDownTargetRef.current = null;
+    };
   }, [editingSceneId]);
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
@@ -502,6 +523,7 @@ export function SpriteShelf() {
     }
 
     if (target.type === 'folder' && target.folder) {
+      selectFolder(target.folder.id, { recordHistory: false });
       handleStartFolderEdit(target.folder);
     }
   };
@@ -571,9 +593,29 @@ export function SpriteShelf() {
     setCollapsedFoldersForScene(selectedSceneId, nextCollapsed);
   };
 
-  const getDragKeysForItem = (item: ShelfTreeItem): string[] => {
-    if (item.type === 'object' && selectedIdsInScene.length > 1 && selectedIdsInScene.includes(item.id)) {
-      return selectedIdsInScene.map((id) => getObjectNodeKey(id));
+  const syncSelectionForLayerDrag = (item: ShelfTreeItem): string[] => {
+    if (item.type === 'object') {
+      if (selectedIdsInScene.length > 1 && selectedIdsInScene.includes(item.id)) {
+        return selectedIdsInScene.map((id) => getObjectNodeKey(id));
+      }
+
+      const isOnlySelectedObject = selectedIdsInScene.length === 1 && selectedIdsInScene[0] === item.id;
+      if (!isOnlySelectedObject) {
+        selectionAnchorObjectIdRef.current = item.id;
+        selectObject(item.id, { recordHistory: false });
+      }
+
+      return [item.key];
+    }
+
+    if (selectedFolderId !== item.id) {
+      selectionAnchorObjectIdRef.current = null;
+      selectFolder(item.id, { recordHistory: false });
+    }
+
+    if (selectedIdsInScene.length > 0 || selectedComponentId) {
+      selectionAnchorObjectIdRef.current = null;
+      selectObject(null, { recordHistory: false });
     }
 
     return [item.key];
@@ -585,15 +627,14 @@ export function SpriteShelf() {
   };
 
   const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
-    const dragKeys = getDragKeysForItem(item);
-
     flushSync(() => {
+      const dragKeys = syncSelectionForLayerDrag(item);
       setDraggedLayerKeys(dragKeys);
       setLayerDropTarget(null);
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', dragKeys.join(','));
     });
 
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', dragKeys.join(','));
     const dragImage = getTransparentDragImage();
     if (dragImage) {
       event.dataTransfer.setDragImage(dragImage, 0, 0);
@@ -761,6 +802,15 @@ export function SpriteShelf() {
 
     selectionAnchorObjectIdRef.current = objectId;
     selectObject(objectId);
+  };
+
+  const handleFolderRowClick = (e: React.MouseEvent, folderId: string) => {
+    if (e.button !== 0) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    selectionAnchorObjectIdRef.current = null;
+    selectFolder(folderId);
   };
 
   const handleAddObject = () => {
@@ -1134,10 +1184,31 @@ export function SpriteShelf() {
     setSceneEditError(null);
   };
 
+  const handleSceneRenameBlur = (event: React.FocusEvent<HTMLInputElement>) => {
+    const pointerTarget = sceneRenamePointerDownTargetRef.current;
+    sceneRenamePointerDownTargetRef.current = null;
+
+    const clickedOutside = pointerTarget instanceof Node && pointerTarget !== event.currentTarget;
+    if (!clickedOutside) {
+      queueMicrotask(() => {
+        stabilizeInlineRenameFocus(sceneInputRef.current);
+      });
+      return;
+    }
+
+    handleSaveSceneRename();
+  };
+
   const handleCloseSceneContextMenu = () => {
     setSceneContextMenu(null);
     setSceneContextMenuPosition(null);
   };
+
+  const preventSceneMenuHoverFocus = editingSceneId
+    ? (event: React.PointerEvent) => {
+      event.preventDefault();
+    }
+    : undefined;
 
   const handleDeleteScene = (sceneId: string) => {
     if (!project || project.scenes.length <= 1) return;
@@ -1314,7 +1385,9 @@ export function SpriteShelf() {
     const effectiveProps = object ? getEffectiveObjectProps(object, project?.components || []) : null;
     const hasChildItems = item.children.length > 0;
     const isExpanded = item.type === 'folder' && expandedKeys.has(item.key);
-    const isSelected = item.type === 'object' && selectedIdsInScene.includes(item.id);
+    const isSelected = item.type === 'object'
+      ? selectedIdsInScene.includes(item.id)
+      : selectedFolderId === item.id;
     const dropPosition = showDropIndicators && layerDropTarget?.key === item.key ? layerDropTarget.dropPosition : null;
     const isDropOn = dropPosition === 'on';
     const isDropBefore = dropPosition === 'before';
@@ -1333,9 +1406,9 @@ export function SpriteShelf() {
       && nextVisibleItem?.type === 'object'
       && selectedIdsInScene.includes(nextVisibleItem.id);
     const rowHighlightClass = isSelected
-      ? 'bg-sky-600/16 dark:bg-sky-300/22'
+      ? 'bg-[#C6E2FF] dark:bg-[#4A5879]'
       : isDropOn
-        ? 'bg-sky-500/10 dark:bg-sky-400/12'
+        ? 'bg-[#EEF7FF] dark:bg-[#183955]'
         : '';
     const rowShapeClass = isSelected || isDropOn
       ? connectsToPrevious
@@ -1346,9 +1419,10 @@ export function SpriteShelf() {
           ? 'rounded-t-lg rounded-b-none'
           : 'rounded-lg'
       : 'rounded-lg';
-    const rowHighlightBridgeClass = isSelected || isDropOn
-      ? `${connectsToPrevious ? '-top-1' : 'top-0'} ${connectsToNext ? '-bottom-[5px]' : 'bottom-0'}`
-      : '';
+    const rowPaddingClass = 'px-1 pt-1';
+    const rowContentPaddingClass = 'py-1';
+    const indentDepth = Math.max(0, level - 1);
+    const rowHoverClass = 'bg-[#E7EAEE] dark:bg-[#434A58]';
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1356,11 +1430,10 @@ export function SpriteShelf() {
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
-          className={`border-b px-2 py-1 select-none ${
+          className={`group/layer-row ${rowPaddingClass} select-none ${
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
-          style={{ paddingLeft: `${8 + Math.max(0, level - 1) * 16}px` }}
           onDoubleClick={interactive ? ((e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1373,6 +1446,8 @@ export function SpriteShelf() {
           onClick={interactive ? ((e) => {
             if (item.type === 'object' && object) {
               handleObjectRowClick(e, object.id);
+            } else if (item.type === 'folder' && folder) {
+              handleFolderRowClick(e, folder.id);
             }
           }) : undefined}
           onContextMenu={interactive ? ((e) => {
@@ -1388,17 +1463,36 @@ export function SpriteShelf() {
           onDragEnd={interactive ? clearLayerDragState : undefined}
         >
           <div className="relative">
-            {(isSelected || isDropOn) ? (
+            {!isSelected && !isDropOn ? (
               <div
-                className={`pointer-events-none absolute inset-x-0 z-0 ${rowShapeClass} ${rowHighlightBridgeClass} ${rowHighlightClass}`}
+                className={`pointer-events-none absolute inset-0 z-0 rounded-lg opacity-0 transition-opacity group-hover/layer-row:opacity-100 ${rowHoverClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex items-center gap-1 rounded-lg px-2 py-1 transition-colors ${!isSelected && !isDropOn ? 'hover:bg-accent/70' : ''}`}>
+            {(isSelected || isDropOn) ? (
+              <div
+                className={`pointer-events-none absolute inset-0 z-0 ${rowShapeClass} ${rowHighlightClass}`}
+              />
+            ) : null}
+            {isSelected && connectsToNext ? (
+              <div
+                className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
+              />
+            ) : null}
+            <div className={`relative z-10 flex items-stretch rounded-lg ${rowContentPaddingClass} transition-colors`}>
+            {indentDepth > 0 ? (
+              <div aria-hidden="true" className="flex self-center shrink-0">
+                {Array.from({ length: indentDepth }).map((_, index) => (
+                  <span key={`${item.key}-indent-${index}`} className="block w-4 shrink-0" />
+                ))}
+              </div>
+            ) : null}
             <button
               type="button"
               disabled={!hasChildItems}
               aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-              className="shrink-0 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
+              className={`-mx-1 self-stretch shrink-0 rounded px-1 flex items-center justify-center transition-opacity disabled:pointer-events-none ${
+                isShelfHovered ? 'opacity-100' : 'opacity-0'
+              }`}
               onClick={interactive ? ((e) => {
                 e.stopPropagation();
                 if (folder) {
@@ -1414,16 +1508,18 @@ export function SpriteShelf() {
             </button>
 
             {item.type === 'folder' ? (
-              isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />
+              <div className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center rounded-md">
+                {isExpanded ? <FolderOpen className="size-[1.125rem] shrink-0" /> : <Folder className="size-[1.125rem] shrink-0" />}
+              </div>
             ) : (
               <div
-                className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md"
+                className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center overflow-hidden rounded-md"
               >
                 {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
                   const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
                   const bounds = costume?.bounds;
                   if (bounds && bounds.width > 0 && bounds.height > 0) {
-                    const scale = Math.min(1, 32 / Math.max(bounds.width, bounds.height));
+                    const scale = Math.min(1, 24 / Math.max(bounds.width, bounds.height));
                     return (
                       <div
                         className="absolute"
@@ -1457,9 +1553,9 @@ export function SpriteShelf() {
               </div>
             )}
 
-            <div className="flex-1 min-w-0">
+            <div className="ml-1.5 flex flex-1 min-w-0 items-center">
               {isObjectEditing ? (
-                <Input
+                <InlineRenameField
                   key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
                   value={editName}
@@ -1467,13 +1563,14 @@ export function SpriteShelf() {
                   onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
                   onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
                   data-hotkeys="ignore"
-                  className="h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
+                  className="flex-1 min-w-0"
+                  outlineClassName="inset-x-0"
                   autoFocus
                 />
               ) : isFolderEditing ? (
-                <Input
+                <InlineRenameField
                   key={`rename-${inlineRenameSessionId}`}
                   ref={inputRef}
                   value={folderEditName}
@@ -1481,9 +1578,10 @@ export function SpriteShelf() {
                   onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
                   onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
                   data-hotkeys="ignore"
-                  className="h-6 px-1 text-xs"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
+                  className="flex-1 min-w-0"
+                  outlineClassName="inset-x-0"
                   autoFocus
                 />
               ) : (
@@ -1515,7 +1613,11 @@ export function SpriteShelf() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-card border-r">
+    <div
+      className="h-full flex flex-col bg-card"
+      onPointerEnter={() => setIsShelfHovered(true)}
+      onPointerLeave={() => setIsShelfHovered(false)}
+    >
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
           <DropdownMenuTrigger asChild>
@@ -1532,17 +1634,20 @@ export function SpriteShelf() {
               editingSceneId === scene.id ? (
                 <div
                   key={scene.id}
-                  className="flex items-center px-2 py-1.5"
+                  className={`flex items-center gap-2 rounded-sm px-2 py-1.5 ${
+                    scene.id === selectedSceneId ? 'bg-accent' : ''
+                  }`}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
-                  <Input
+                  <GripVertical className="size-3 shrink-0 text-muted-foreground/70" />
+                  <InlineRenameField
                     ref={sceneInputRef}
                     value={editName}
                     onChange={(e) => {
                       setEditName(e.target.value);
                       setSceneEditError(null);
                     }}
-                    onBlur={handleSaveSceneRename}
+                    onBlur={handleSceneRenameBlur}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
@@ -1558,14 +1663,18 @@ export function SpriteShelf() {
                     }}
                     data-hotkeys="ignore"
                     onClick={(e) => e.stopPropagation()}
-                    className={`h-6 text-xs flex-1 ${sceneEditError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                    invalid={!!sceneEditError}
+                    className="flex-1 min-w-0"
+                    inputClassName="text-sm leading-5 text-foreground"
                     autoFocus
                   />
+                  <div className="h-6 w-6 shrink-0 opacity-0" aria-hidden="true" />
                 </div>
               ) : (
                 <DropdownMenuItem
                   key={scene.id}
                   draggable
+                  onPointerMoveCapture={preventSceneMenuHoverFocus}
                   onClick={() => selectScene(scene.id)}
                   onDragStart={(e) => {
                     setDraggedSceneId(scene.id);
@@ -1608,7 +1717,7 @@ export function SpriteShelf() {
                     sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'after'
                       ? 'border-b-2 border-primary'
                       : ''
-                  }`}
+                  } focus:bg-[#E7EAEE] dark:focus:bg-[#434A58]`}
                 >
                   <GripVertical className="size-3 text-muted-foreground/70" />
                   <span className="flex-1">{scene.name}</span>
@@ -1616,7 +1725,7 @@ export function SpriteShelf() {
                     variant="ghost"
                     size="icon-sm"
                     onClick={(e) => handleStartSceneEdit(scene.id, scene.name, e)}
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 hover:opacity-100"
+                    className={`h-6 w-6 transition-opacity ${isShelfHovered ? 'opacity-100' : 'opacity-0'}`}
                   >
                     <Pencil className="size-3" />
                   </Button>
@@ -1624,7 +1733,7 @@ export function SpriteShelf() {
               )
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleAddScene}>
+            <DropdownMenuItem onPointerMoveCapture={preventSceneMenuHoverFocus} onClick={handleAddScene}>
               <Plus className="size-4 mr-2" />
               New Scene
             </DropdownMenuItem>

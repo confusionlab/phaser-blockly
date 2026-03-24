@@ -255,6 +255,8 @@ body {
 
 :root {
   --radius: 0.625rem;
+  --divider-size: 2px;
+  --resize-hit-size: calc(var(--divider-size) * 2.5);
   --background: oklch(1 0 0);
   --foreground: oklch(0.147 0.004 49.25);
   --card: oklch(1 0 0);
@@ -502,10 +504,94 @@ body {
   background-position: 0 0, 0 5px, 5px -5px, -5px 0;
 }
 
+.app-divider-x {
+  width: 0;
+  min-width: var(--divider-size);
+  border-left: var(--divider-size) solid transparent;
+  flex-shrink: 0;
+}
+
+.app-divider-y {
+  height: 0;
+  min-height: var(--divider-size);
+  border-top: var(--divider-size) solid transparent;
+  flex-shrink: 0;
+}
+
+.app-divider-fill {
+  border-color: var(--border);
+  background-color: var(--border);
+}
+
+.app-resize-divider-x {
+  position: relative;
+  width: var(--resize-hit-size);
+  min-width: var(--resize-hit-size);
+  margin-left: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
+  margin-right: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
+  flex-shrink: 0;
+  color: var(--border);
+}
+
+.app-resize-divider-y {
+  position: relative;
+  height: var(--resize-hit-size);
+  min-height: var(--resize-hit-size);
+  margin-top: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
+  margin-bottom: calc((var(--divider-size) - var(--resize-hit-size)) / 2);
+  flex-shrink: 0;
+  color: var(--border);
+}
+
+.app-resize-divider-x::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc((var(--resize-hit-size) - var(--divider-size)) / 2);
+  width: var(--divider-size);
+  background-color: currentColor;
+}
+
+.app-resize-divider-y::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc((var(--resize-hit-size) - var(--divider-size)) / 2);
+  height: var(--divider-size);
+  background-color: currentColor;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
+  .border-t {
+    border-top-width: var(--divider-size);
+  }
+
+  .border-r {
+    border-right-width: var(--divider-size);
+  }
+
+  .border-b {
+    border-bottom-width: var(--divider-size);
+  }
+
+  .border-l {
+    border-left-width: var(--divider-size);
+  }
+
+  .divide-y > :not([hidden]) ~ :not([hidden]) {
+    border-top-width: var(--divider-size);
+  }
+
+  .divide-x > :not([hidden]) ~ :not([hidden]) {
+    border-left-width: var(--divider-size);
+  }
+
   body {
     @apply bg-background text-foreground;
   }

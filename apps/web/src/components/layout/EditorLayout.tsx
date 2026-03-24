@@ -633,7 +633,7 @@ export function EditorLayout() {
           <>
             {/* Object Editor - Left Panel */}
             <div
-              className="h-full border-r"
+              className="h-full"
               data-editor-panel="code"
               style={{ width: `${dividerPosition}%` }}
               onMouseEnter={() => setHoveredPanel('code')}
@@ -645,7 +645,7 @@ export function EditorLayout() {
             {/* Resizable Divider */}
             <div
               data-testid="editor-layout-divider"
-              className="w-1 bg-border hover:bg-primary cursor-col-resize transition-colors"
+              className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
               onMouseDown={handleDividerDrag}
             />
 

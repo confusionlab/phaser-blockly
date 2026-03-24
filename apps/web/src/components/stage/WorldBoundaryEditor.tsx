@@ -6,6 +6,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import type { WorldPoint } from '@/types';
 import {
+  getSceneBackgroundBaseColor,
   getUserSpaceViewportFromCanvasViewBox,
   TiledBackgroundCanvasCompositor,
 } from '@/lib/background/compositor';
@@ -209,6 +210,7 @@ export function WorldBoundaryEditor() {
     if (!project || !sceneId) return null;
     return project.scenes.find((candidate) => candidate.id === sceneId) ?? null;
   }, [project, selectedSceneId, worldBoundaryEditorSceneId]);
+  const editorSurfaceColor = getSceneBackgroundBaseColor(scene?.background);
 
   const canvasWidth = project?.settings.canvasWidth ?? 800;
   const canvasHeight = project?.settings.canvasHeight ?? 600;
@@ -650,7 +652,10 @@ export function WorldBoundaryEditor() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 relative overflow-hidden bg-[#060a14]">
+      <div
+        className="flex-1 min-h-0 relative overflow-hidden"
+        style={{ backgroundColor: editorSurfaceColor }}
+      >
         <canvas
           ref={backgroundCanvasRef}
           className="absolute inset-0 h-full w-full pointer-events-none"

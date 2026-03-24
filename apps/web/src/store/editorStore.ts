@@ -64,6 +64,12 @@ function projectContainsObject(project: Project, sceneId: string | null, objectI
   return !!scene?.objects.some((object) => object.id === objectId);
 }
 
+function projectContainsFolder(project: Project, sceneId: string | null, folderId: string | null): boolean {
+  if (!sceneId || !folderId) return false;
+  const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+  return !!scene?.objectFolders?.some((folder) => folder.id === folderId);
+}
+
 function projectContainsComponent(project: Project, componentId: string | null): boolean {
   if (!componentId) return false;
   return (project.components || []).some((component) => component.id === componentId);
@@ -72,6 +78,7 @@ function projectContainsComponent(project: Project, componentId: string | null):
 interface EditorStore {
   // Selection state
   selectedSceneId: string | null;
+  selectedFolderId: string | null;
   selectedObjectId: string | null;
   selectedObjectIds: string[];
   selectedComponentId: string | null;
@@ -118,6 +125,7 @@ interface EditorStore {
 
   // Actions
   selectScene: (sceneId: string | null, options?: SelectionHistoryOptions) => void;
+  selectFolder: (folderId: string | null, options?: SelectionHistoryOptions) => void;
   selectObject: (objectId: string | null, options?: SelectionHistoryOptions) => void;
   selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
   selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
@@ -186,6 +194,7 @@ function getBeforeSelectionChangeHandler(state: EditorStore): UndoRedoHandler['b
 export const useEditorStore = create<EditorStore>((set, get) => ({
   // Selection state
   selectedSceneId: null,
+  selectedFolderId: null,
   selectedObjectId: null,
   selectedObjectIds: [],
   selectedComponentId: null,
@@ -245,11 +254,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const recordHistory = options?.recordHistory !== false;
     const state = get();
     const nextSelectedSceneId = sceneId;
+    const nextSelectedFolderId = null;
     const nextSelectedObjectId = null;
     const nextSelectedObjectIds: string[] = [];
     const nextSelectedComponentId = null;
     const didChange =
       state.selectedSceneId !== nextSelectedSceneId ||
+      state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
       state.selectedComponentId !== nextSelectedComponentId;
@@ -263,6 +274,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const applySelection = () => {
       set({
         selectedSceneId: nextSelectedSceneId,
+        selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
@@ -284,13 +296,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     });
   },
 
-  selectObject: (objectId, options) => {
+  selectFolder: (folderId, options) => {
     const recordHistory = options?.recordHistory !== false;
     const state = get();
-    const nextSelectedObjectId = objectId;
-    const nextSelectedObjectIds = objectId ? [objectId] : [];
+    const nextSelectedFolderId = folderId;
+    const nextSelectedObjectId = null;
+    const nextSelectedObjectIds: string[] = [];
     const nextSelectedComponentId = null;
     const didChange =
+      state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
       state.selectedComponentId !== nextSelectedComponentId;
@@ -303,6 +317,50 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const applySelection = () => {
       set({
+        selectedFolderId: nextSelectedFolderId,
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:folder', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:folder', () => {
+      beforeSelectionChange?.({ source: 'selection:folder', recordHistory: true });
+      applySelection();
+    });
+  },
+
+  selectObject: (objectId, options) => {
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedFolderId = null;
+    const nextSelectedObjectId = objectId;
+    const nextSelectedObjectIds = objectId ? [objectId] : [];
+    const nextSelectedComponentId = null;
+    const didChange =
+      state.selectedFolderId !== nextSelectedFolderId ||
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId;
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
+    }
+
+    const applySelection = () => {
+      set({
+        selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
@@ -331,10 +389,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       : uniqueIds[0] ?? null;
     const recordHistory = options?.recordHistory !== false;
     const state = get();
+    const nextSelectedFolderId = null;
     const nextSelectedObjectId = primary;
     const nextSelectedObjectIds = uniqueIds;
     const nextSelectedComponentId = null;
     const didChange =
+      state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
       state.selectedComponentId !== nextSelectedComponentId;
@@ -347,6 +407,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const applySelection = () => {
       set({
+        selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
@@ -372,10 +433,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const recordHistory = options?.recordHistory !== false;
     const state = get();
     const nextSelectedComponentId = componentId;
+    const nextSelectedFolderId = null;
     const nextSelectedObjectId = null;
     const nextSelectedObjectIds: string[] = [];
     const didChange =
       state.selectedComponentId !== nextSelectedComponentId ||
+      state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds);
     if (!didChange) {
@@ -388,6 +451,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const applySelection = () => {
       set({
         selectedComponentId: nextSelectedComponentId,
+        selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
       });
@@ -417,6 +481,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedComponentId = project && projectContainsComponent(project, state.selectedComponentId)
       ? state.selectedComponentId
       : null;
+    const nextSelectedFolderId = project && !nextSelectedComponentId && projectContainsFolder(project, nextSelectedSceneId, state.selectedFolderId)
+      ? state.selectedFolderId
+      : null;
     const validPrimaryObjectId = project && !nextSelectedComponentId && projectContainsObject(project, nextSelectedSceneId, state.selectedObjectId)
       ? state.selectedObjectId
       : null;
@@ -432,6 +499,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const recordHistory = options?.recordHistory !== false;
     const didChange =
       state.selectedSceneId !== nextSelectedSceneId ||
+      state.selectedFolderId !== (nextSelectedComponentId ? null : nextSelectedFolderId) ||
       state.selectedObjectId !== (nextSelectedComponentId ? null : nextSelectedObjectId) ||
       !arraysEqual(state.selectedObjectIds, nextSelectedComponentId ? [] : nextSelectedObjectIds) ||
       state.selectedComponentId !== nextSelectedComponentId;
@@ -445,6 +513,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const applySelection = () => {
       set({
         selectedSceneId: nextSelectedSceneId,
+        selectedFolderId: nextSelectedComponentId ? null : nextSelectedFolderId,
         selectedObjectId: nextSelectedComponentId ? null : nextSelectedObjectId,
         selectedObjectIds: nextSelectedComponentId ? [] : nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
@@ -527,6 +596,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       beforeSelectionChange?.({ source: 'selection:validation-focus', recordHistory: true });
       set({
         selectedSceneId: issue.sceneId,
+        selectedFolderId: null,
         selectedObjectId: issue.objectId,
         selectedObjectIds: issue.objectId ? [issue.objectId] : [],
         selectedComponentId: null,
@@ -737,6 +807,7 @@ registerSelectionHistoryBridge(
     const state = useEditorStore.getState();
     return {
       selectedSceneId: state.selectedSceneId,
+      selectedFolderId: state.selectedFolderId,
       selectedObjectId: state.selectedObjectId,
       selectedObjectIds: [...state.selectedObjectIds],
       selectedComponentId: state.selectedComponentId,
@@ -745,6 +816,7 @@ registerSelectionHistoryBridge(
   (selection) => {
     useEditorStore.setState({
       selectedSceneId: selection.selectedSceneId,
+      selectedFolderId: selection.selectedFolderId ?? null,
       selectedObjectId: selection.selectedObjectId,
       selectedObjectIds: [...selection.selectedObjectIds],
       selectedComponentId: selection.selectedComponentId ?? null,

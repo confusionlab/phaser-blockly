@@ -3,7 +3,7 @@ import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import {
   ColorPicker,
   ColorPickerHue,
@@ -18,6 +18,7 @@ export function SceneTabs() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
+  const [editWidth, setEditWidth] = useState<number | null>(null);
   const [showBgColorPicker, setShowBgColorPicker] = useState(false);
   const cancelEditOnBlurRef = useRef(false);
 
@@ -52,10 +53,11 @@ export function SceneTabs() {
     addScene(newName);
   };
 
-  const handleDoubleClick = (scene: typeof project.scenes[0]) => {
+  const handleDoubleClick = (scene: typeof project.scenes[0], event: React.MouseEvent<HTMLDivElement>) => {
     setEditingId(scene.id);
     setEditName(scene.name);
     setEditError(null);
+    setEditWidth(event.currentTarget.getBoundingClientRect().width);
   };
 
   const handleSaveEdit = () => {
@@ -85,6 +87,7 @@ export function SceneTabs() {
     setEditingId(null);
     setEditName('');
     setEditError(null);
+    setEditWidth(null);
   };
 
   const handleDeleteScene = (sceneId: string, e: React.MouseEvent) => {
@@ -107,15 +110,16 @@ export function SceneTabs() {
         <div
           key={scene.id}
           onClick={() => selectScene(scene.id)}
-          onDoubleClick={() => handleDoubleClick(scene)}
+          onDoubleClick={(event) => handleDoubleClick(scene, event)}
           className={`group flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
             selectedSceneId === scene.id
               ? 'bg-primary text-primary-foreground'
               : 'bg-secondary hover:bg-secondary/80 text-secondary-foreground'
           }`}
+          style={editingId === scene.id && editWidth ? { width: `${editWidth}px` } : undefined}
         >
           {editingId === scene.id ? (
-            <Input
+            <InlineRenameField
               value={editName}
               onChange={e => {
                 setEditName(e.target.value);
@@ -131,11 +135,15 @@ export function SceneTabs() {
                   setEditingId(null);
                   setEditName('');
                   setEditError(null);
+                  setEditWidth(null);
                 }
               }}
-              className={`w-24 h-6 px-1 py-0.5 text-sm ${editError ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+              className="flex-1 min-w-0"
+              inputClassName="text-sm font-medium leading-5 text-current"
+              invalid={!!editError}
               autoFocus
               onClick={e => e.stopPropagation()}
+              onPointerDown={e => e.stopPropagation()}
             />
           ) : (
             <>
