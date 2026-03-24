@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as Blockly from 'blockly';
-import { registerContinuousToolbox } from '@blockly/continuous-toolbox';
+import { Pin } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {
@@ -27,17 +27,26 @@ import {
 } from '@/lib/blocklyReferenceMaps';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { normalizeBlocklyXml } from '../../../../../packages/ui-shared/src/blocklyXml';
+import {
+  isPinnableContinuousToolbox,
+  PINNABLE_CONTINUOUS_METRICS,
+  PINNABLE_CONTINUOUS_TOOLBOX,
+  registerPinnableContinuousToolbox,
+  setInitialPinnableToolboxPinnedState,
+} from './pinnableContinuousToolbox';
 import type { UndoRedoHandler } from '@/store/editorStore';
 import type { Variable } from '@/types';
 
-// Register continuous toolbox plugin once at module load
-registerContinuousToolbox();
+// Register Blockly toolbox plugins once at module load.
+registerPinnableContinuousToolbox();
 Blockly.Scrollbar.scrollbarThickness = 6;
 
 // Global clipboard for cross-object block copying
 // Store the copy data from Blockly's ICopyable interface
 let globalBlockClipboard: Blockly.ICopyData | null = null;
 const BLOCK_CLIPBOARD_STORAGE_KEY = 'pochacoding:blocklyClipboard:v1';
+const TOOLBOX_PINNED_STORAGE_KEY = 'pochacoding:blocklyToolboxPinned:v1';
+const TOOLBOX_PIN_BUTTON_SIZE = 28;
 
 type PersistedBlockClipboard = {
   version: 1;
@@ -90,6 +99,57 @@ function getBlockClipboard(): Blockly.ICopyData | null {
   }
 
   return globalBlockClipboard;
+}
+
+function loadToolboxPinnedPreference(): boolean {
+  if (typeof window === 'undefined') return true;
+
+  try {
+    const raw = window.localStorage.getItem(TOOLBOX_PINNED_STORAGE_KEY);
+    if (raw === null) return true;
+    return raw === 'true';
+  } catch (err) {
+    console.warn('[Blockly] Failed to load toolbox pin preference:', err);
+    return true;
+  }
+}
+
+function saveToolboxPinnedPreference(pinned: boolean): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(TOOLBOX_PINNED_STORAGE_KEY, String(pinned));
+  } catch (err) {
+    console.warn('[Blockly] Failed to save toolbox pin preference:', err);
+  }
+}
+
+function isVisibleToolboxSurface(element: Element | null): element is Element {
+  if (!element) return false;
+
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
+
+  const style = window.getComputedStyle(element);
+  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+}
+
+function getPinButtonPosition(container: HTMLDivElement): { top: number; left: number } | null {
+  const flyout = container.querySelector('.blocklyFlyout');
+  const toolbox = container.querySelector('.blocklyToolboxDiv');
+  const anchor = isVisibleToolboxSurface(flyout)
+    ? flyout
+    : (isVisibleToolboxSurface(toolbox) ? toolbox : null);
+
+  if (!anchor) return null;
+
+  const containerRect = container.getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+
+  return {
+    top: Math.max(8, anchorRect.top - containerRect.top + 8),
+    left: Math.max(8, anchorRect.right - containerRect.left - TOOLBOX_PIN_BUTTON_SIZE - 8),
+  };
 }
 
 // Helper to deep clone and copy a block properly
@@ -331,6 +391,7 @@ export function BlocklyEditor() {
   const currentSceneIdRef = useRef<string | null>(null);
   const currentObjectIdRef = useRef<string | null>(null);
   const currentComponentIdRef = useRef<string | null>(null);
+  const toolboxPinnedRef = useRef(loadToolboxPinnedPreference());
   const validationOriginalColoursRef = useRef<Map<string, string>>(new Map());
   const lastLoadedTargetRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
@@ -343,6 +404,8 @@ export function BlocklyEditor() {
     timeoutId: number;
   } | null>(null);
   const pendingMessageFieldApplyRef = useRef<((messageId: string) => void) | null>(null);
+  const [toolboxPinned, setToolboxPinned] = useState(loadToolboxPinnedPreference);
+  const [pinButtonPosition, setPinButtonPosition] = useState<{ top: number; left: number } | null>(null);
   const [showAddVariableDialog, setShowAddVariableDialog] = useState(false);
   const [showVariableManager, setShowVariableManager] = useState(false);
   const [showBlockSearch, setShowBlockSearch] = useState(false);
@@ -378,6 +441,72 @@ export function BlocklyEditor() {
     currentObjectIdRef.current = selectedObjectId;
     currentComponentIdRef.current = selectedComponentId;
   }, [selectedSceneId, selectedObjectId, selectedComponentId]);
+
+  useEffect(() => {
+    toolboxPinnedRef.current = toolboxPinned;
+  }, [toolboxPinned]);
+
+  const updatePinButtonPosition = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) {
+      setPinButtonPosition(null);
+      return;
+    }
+
+    setPinButtonPosition(getPinButtonPosition(container));
+  }, []);
+
+  useEffect(() => {
+    saveToolboxPinnedPreference(toolboxPinned);
+
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+
+    const toolbox = workspace.getToolbox();
+    if (!isPinnableContinuousToolbox(toolbox)) return;
+
+    toolbox.setPinned(toolboxPinned);
+    updatePinButtonPosition();
+  }, [toolboxPinned, updatePinButtonPosition]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let frameId = 0;
+    const schedulePositionUpdate = () => {
+      if (frameId) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = window.requestAnimationFrame(() => {
+        frameId = 0;
+        updatePinButtonPosition();
+      });
+    };
+
+    const resizeObserver = new ResizeObserver(schedulePositionUpdate);
+    resizeObserver.observe(container);
+
+    const mutationObserver = new MutationObserver(schedulePositionUpdate);
+    mutationObserver.observe(container, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+    });
+
+    window.addEventListener('resize', schedulePositionUpdate);
+    schedulePositionUpdate();
+
+    return () => {
+      if (frameId) {
+        cancelAnimationFrame(frameId);
+      }
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener('resize', schedulePositionUpdate);
+    };
+  }, [updatePinButtonPosition]);
 
   const persistWorkspaceToStore = useCallback((
     sceneId: string | null,
@@ -594,6 +723,7 @@ export function BlocklyEditor() {
   // Initialize Blockly workspace
   useEffect(() => {
     if (!containerRef.current) return;
+    setInitialPinnableToolboxPinnedState(toolboxPinnedRef.current);
 
     if (loadingResetTimeoutRef.current !== null) {
       window.clearTimeout(loadingResetTimeoutRef.current);
@@ -609,9 +739,9 @@ export function BlocklyEditor() {
       toolbox: getToolboxConfig(),
       renderer: 'zelos',
       plugins: {
-        toolbox: 'ContinuousToolbox',
+        toolbox: PINNABLE_CONTINUOUS_TOOLBOX,
         flyoutsVerticalToolbox: 'ContinuousFlyout',
-        metricsManager: 'ContinuousMetrics',
+        metricsManager: PINNABLE_CONTINUOUS_METRICS,
       },
       trashcan: false,
       zoom: {
@@ -625,6 +755,12 @@ export function BlocklyEditor() {
         wheel: true,
       },
     });
+
+    const toolbox = workspaceRef.current.getToolbox();
+    if (isPinnableContinuousToolbox(toolbox)) {
+      toolbox.setPinned(toolboxPinnedRef.current);
+    }
+    window.requestAnimationFrame(updatePinButtonPosition);
 
     // Register typed variables category callback
     registerTypedVariablesCategory(workspaceRef.current);
@@ -771,7 +907,7 @@ export function BlocklyEditor() {
       setAddVariableCallback(null);
       setManageVariablesCallback(null);
     };
-  }, [flushPendingWorkspacePersist, scheduleWorkspacePersist]);
+  }, [flushPendingWorkspacePersist, scheduleWorkspacePersist, updatePinButtonPosition]);
 
   // Keep workspace in sync with selected object XML, including undo/redo history replays.
   useEffect(() => {
@@ -997,6 +1133,20 @@ export function BlocklyEditor() {
     <>
       <div className="relative h-full w-full">
         <div ref={containerRef} className="h-full w-full" data-blockly-editor="true" />
+        {pinButtonPosition && (
+          <button
+            type="button"
+            className="absolute z-[90] flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
+            style={pinButtonPosition}
+            title={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
+            aria-label={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
+            aria-pressed={toolboxPinned}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setToolboxPinned((current) => !current)}
+          >
+            <Pin className={`size-4 ${toolboxPinned ? 'fill-current text-foreground' : ''}`} />
+          </button>
+        )}
       </div>
       <AddVariableDialog
         open={showAddVariableDialog}
