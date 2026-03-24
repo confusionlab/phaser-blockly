@@ -3,6 +3,7 @@ import type {
   Project,
   Scene,
   GameObject,
+  Costume,
   Variable,
   ComponentDefinition,
   SceneFolder,
@@ -39,6 +40,18 @@ import {
   resetHistory,
   runInHistoryTransaction,
 } from '@/store/universalHistory';
+import {
+  applyCostumeEditorState,
+  type CostumeEditorObjectTarget,
+  type CostumeEditorOperation,
+  type CostumeEditorPersistedSession,
+  removeCostumeFromList,
+  renameCostumeInList,
+  resolveCostumeEditorObject,
+  resolveCostumeEditorTarget,
+  type CostumeEditorPersistedState,
+  type CostumeEditorTarget,
+} from '@/lib/editor/costumeEditorSession';
 
 interface ProjectStore {
   project: Project | null;
@@ -65,6 +78,22 @@ interface ProjectStore {
   addObject: (sceneId: string, name: string) => GameObject;
   removeObject: (sceneId: string, objectId: string) => void;
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
+  updateCostumeFromEditor: (
+    target: CostumeEditorTarget,
+    state: CostumeEditorPersistedState,
+    options?: { recordHistory?: boolean }
+  ) => boolean;
+  applyCostumeEditorOperation: (
+    target: CostumeEditorObjectTarget,
+    options: {
+      persistedSession?: CostumeEditorPersistedSession;
+      operation: CostumeEditorOperation;
+    }
+  ) => boolean;
+  selectObjectCostume: (sceneId: string, objectId: string, costumeId: string) => boolean;
+  addObjectCostume: (sceneId: string, objectId: string, costume: Costume) => boolean;
+  removeObjectCostume: (target: CostumeEditorTarget) => boolean;
+  renameObjectCostume: (target: CostumeEditorTarget, name: string) => boolean;
   duplicateObject: (sceneId: string, objectId: string) => GameObject | null;
   reorderObject: (sceneId: string, fromIndex: number, toIndex: number) => void;
 
@@ -225,6 +254,235 @@ function getEffectiveComponentLocalVariables(
   }
 
   return [];
+}
+
+function applyObjectUpdatesToProject(
+  project: Project,
+  sceneId: string,
+  objectId: string,
+  updates: Partial<GameObject>,
+): Project | null {
+  const normalizedUpdates: Partial<GameObject> = {
+    ...updates,
+    ...(updates.blocklyXml !== undefined
+      ? { blocklyXml: normalizeBlocklyXml(updates.blocklyXml) }
+      : {}),
+  };
+
+  const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+  const obj = scene?.objects.find((candidate) => candidate.id === objectId);
+  if (!obj) {
+    return null;
+  }
+
+  if (obj.componentId) {
+    const componentId = obj.componentId;
+    const instanceOnlyKeys = new Set<keyof GameObject>([
+      'x',
+      'y',
+      'scaleX',
+      'scaleY',
+      'visible',
+      'rotation',
+      'parentId',
+      'order',
+      'folderId',
+      'layer',
+    ]);
+    const componentSyncKeys = COMPONENT_SYNC_KEYS as (keyof ComponentDefinition & keyof GameObject)[];
+
+    const syncedUpdates: Partial<ComponentDefinition> = {};
+    const instanceUpdates: Partial<GameObject> = {};
+
+    for (const key of Object.keys(normalizedUpdates) as (keyof GameObject)[]) {
+      if (instanceOnlyKeys.has(key)) {
+        (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
+      } else if ((componentSyncKeys as (keyof GameObject)[]).includes(key)) {
+        (syncedUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
+      } else {
+        (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
+      }
+    }
+
+    if (Object.keys(syncedUpdates).length > 0) {
+      return {
+        ...project,
+        components: (project.components || []).map((component) =>
+          component.id === componentId ? { ...component, ...syncedUpdates } : component
+        ),
+        scenes: project.scenes.map((candidateScene) => ({
+          ...normalizeSceneLayering({
+            ...candidateScene,
+            objects: candidateScene.objects.map((candidateObject) => {
+              if (candidateObject.componentId !== componentId) {
+                return candidateObject;
+              }
+
+              const syncedObjectUpdates: Partial<GameObject> = {};
+              for (const syncKey of componentSyncKeys) {
+                const value = syncedUpdates[syncKey];
+                if (value !== undefined) {
+                  (syncedObjectUpdates as Record<string, unknown>)[syncKey] = value;
+                }
+              }
+
+              if (candidateObject.id === objectId) {
+                return { ...candidateObject, ...syncedObjectUpdates, ...instanceUpdates };
+              }
+
+              return { ...candidateObject, ...syncedObjectUpdates };
+            }),
+          }),
+        })),
+        updatedAt: createUpdatedAt(project.updatedAt),
+      };
+    }
+
+    if (Object.keys(instanceUpdates).length > 0) {
+      return {
+        ...project,
+        scenes: project.scenes.map((candidateScene) =>
+          candidateScene.id === sceneId
+            ? normalizeSceneLayering({
+                ...candidateScene,
+                objects: candidateScene.objects.map((candidateObject) =>
+                  candidateObject.id === objectId ? { ...candidateObject, ...instanceUpdates } : candidateObject
+                ),
+              })
+            : candidateScene
+        ),
+        updatedAt: createUpdatedAt(project.updatedAt),
+      };
+    }
+
+    return null;
+  }
+
+  return {
+    ...project,
+    scenes: project.scenes.map((candidateScene) =>
+      candidateScene.id === sceneId
+        ? normalizeSceneLayering({
+            ...candidateScene,
+            objects: candidateScene.objects.map((candidateObject) =>
+              candidateObject.id === objectId ? { ...candidateObject, ...normalizedUpdates } : candidateObject
+            ),
+          })
+        : candidateScene
+    ),
+    updatedAt: createUpdatedAt(project.updatedAt),
+  };
+}
+
+function buildCostumeEditorOperationUpdates(
+  project: Project,
+  target: CostumeEditorObjectTarget,
+  options: {
+    persistedSession?: CostumeEditorPersistedSession;
+    operation: CostumeEditorOperation;
+  },
+): Partial<GameObject> | null {
+  const resolvedObject = resolveCostumeEditorObject(project, target);
+  if (!resolvedObject) {
+    return null;
+  }
+
+  let nextCostumes = resolvedObject.costumes;
+  let costumesChanged = false;
+  let nextCostumeIndex = resolvedObject.currentCostumeIndex;
+  const persistedSession = options.persistedSession;
+  const operation = options.operation;
+
+  if (persistedSession) {
+    if (
+      persistedSession.target.sceneId !== target.sceneId ||
+      persistedSession.target.objectId !== target.objectId
+    ) {
+      return null;
+    }
+
+    const persistedCostumeIndex = nextCostumes.findIndex(
+      (costume) => costume.id === persistedSession.target.costumeId,
+    );
+    if (persistedCostumeIndex < 0) {
+      return null;
+    }
+
+    const persistedCostumes = applyCostumeEditorState(
+      nextCostumes,
+      persistedSession.target.costumeId,
+      persistedSession.state,
+    );
+    if (persistedCostumes) {
+      nextCostumes = persistedCostumes;
+      costumesChanged = true;
+    }
+  }
+
+  switch (operation.type) {
+    case 'rename': {
+      const renamedCostumes = renameCostumeInList(nextCostumes, operation.costumeId, operation.name);
+      if (renamedCostumes) {
+        nextCostumes = renamedCostumes;
+        costumesChanged = true;
+      }
+      break;
+    }
+    case 'select': {
+      const requestedIndex = nextCostumes.findIndex((costume) => costume.id === operation.costumeId);
+      if (requestedIndex < 0) {
+        return null;
+      }
+      nextCostumeIndex = requestedIndex;
+      break;
+    }
+    case 'add': {
+      nextCostumes = cloneCostumes([...nextCostumes, operation.costume]);
+      costumesChanged = true;
+      nextCostumeIndex = nextCostumes.length - 1;
+      break;
+    }
+    case 'remove': {
+      if (nextCostumes.length <= 1) {
+        return null;
+      }
+
+      const removal = removeCostumeFromList(nextCostumes, operation.costumeId);
+      if (!removal || removal.costumes.length === 0) {
+        return null;
+      }
+
+      nextCostumes = removal.costumes;
+      costumesChanged = true;
+      nextCostumeIndex = resolvedObject.currentCostumeIndex > removal.removedIndex
+        ? resolvedObject.currentCostumeIndex - 1
+        : Math.min(resolvedObject.currentCostumeIndex, removal.costumes.length - 1);
+      break;
+    }
+  }
+
+  const updates: Partial<GameObject> = {};
+  if (costumesChanged) {
+    updates.costumes = cloneCostumes(nextCostumes);
+  }
+  if (nextCostumeIndex !== resolvedObject.currentCostumeIndex) {
+    updates.currentCostumeIndex = nextCostumeIndex;
+  }
+
+  return Object.keys(updates).length > 0 ? updates : null;
+}
+
+function getCostumeEditorOperationHistoryOptions(operation: CostumeEditorOperation): { source: string; allowMerge?: boolean } {
+  switch (operation.type) {
+    case 'rename':
+      return { source: 'project:rename-object-costume', allowMerge: true };
+    case 'select':
+      return { source: 'project:select-object-costume' };
+    case 'add':
+      return { source: 'project:add-object-costume' };
+    case 'remove':
+      return { source: 'project:remove-object-costume' };
+  }
 }
 
 function normalizeProject(project: Project): Project {
@@ -524,142 +782,117 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => {
-    set(state => {
+    let didUpdate = false;
+    set((state) => {
       if (!state.project) return state;
 
-      const normalizedUpdates: Partial<GameObject> = {
-        ...updates,
-        ...(updates.blocklyXml !== undefined
-          ? { blocklyXml: normalizeBlocklyXml(updates.blocklyXml) }
-          : {}),
-      };
-
-      // Find the object to check if it's a component instance
-      const scene = state.project.scenes.find(s => s.id === sceneId);
-      const obj = scene?.objects.find(o => o.id === objectId);
-
-      // For component instances, some properties sync to component (shared across instances)
-      // and some are instance-specific (not synced)
-      if (obj?.componentId) {
-        const componentId = obj.componentId;
-
-        // Instance-specific properties (do NOT sync across component instances)
-        const instanceOnlyKeys = new Set<keyof GameObject>([
-          'x',
-          'y',
-          'scaleX',
-          'scaleY',
-          'visible',
-          'rotation',
-          'parentId',
-          'order',
-          'folderId',
-          'layer',
-        ]);
-
-        // Shared component properties (sync across all instances of the same component)
-        const componentSyncKeys = COMPONENT_SYNC_KEYS as (keyof ComponentDefinition & keyof GameObject)[];
-
-        const syncedUpdates: Partial<ComponentDefinition> = {};
-        const instanceUpdates: Partial<GameObject> = {};
-
-        for (const key of Object.keys(normalizedUpdates) as (keyof GameObject)[]) {
-          if (instanceOnlyKeys.has(key)) {
-            // These are always instance-specific
-            (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
-          } else if ((componentSyncKeys as (keyof GameObject)[]).includes(key)) {
-            // These sync to component definition + all instances
-            (syncedUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
-          } else {
-            // Non-component fields remain instance-specific
-            (instanceUpdates as Record<string, unknown>)[key] = normalizedUpdates[key];
-          }
-        }
-
-        // If we have synced updates, update component and all instances
-        if (Object.keys(syncedUpdates).length > 0) {
-          return {
-            project: {
-              ...state.project,
-              // Update component definition
-              components: (state.project.components || []).map(c =>
-                c.id === componentId ? { ...c, ...syncedUpdates } : c
-              ),
-              // Update all instances with synced properties + this instance with instance-specific
-              scenes: state.project.scenes.map(s => ({
-                ...normalizeSceneLayering({
-                  ...s,
-                  objects: s.objects.map(o => {
-                    if (o.componentId === componentId) {
-                      // All instances get synced updates
-                      const syncedObjUpdates: Partial<GameObject> = {};
-                      for (const syncKey of componentSyncKeys) {
-                        const value = syncedUpdates[syncKey];
-                        if (value !== undefined) {
-                          (syncedObjUpdates as Record<string, unknown>)[syncKey] = value;
-                        }
-                      }
-
-                      // This specific instance also gets instance-specific updates
-                      if (o.id === objectId) {
-                        return { ...o, ...syncedObjUpdates, ...instanceUpdates };
-                      }
-                      return { ...o, ...syncedObjUpdates };
-                    }
-                    return o;
-                  }),
-                }),
-              })),
-              updatedAt: createUpdatedAt(),
-            },
-            isDirty: true,
-          };
-        }
-
-        // Only instance-specific updates
-        if (Object.keys(instanceUpdates).length > 0) {
-          return {
-            project: {
-              ...state.project,
-              scenes: state.project.scenes.map(s =>
-                s.id === sceneId
-                  ? normalizeSceneLayering({
-                      ...s,
-                      objects: s.objects.map(o =>
-                        o.id === objectId ? { ...o, ...instanceUpdates } : o
-                      ),
-                    })
-                  : s
-              ),
-              updatedAt: createUpdatedAt(),
-            },
-            isDirty: true,
-          };
-        }
-
+      const nextProject = applyObjectUpdatesToProject(state.project, sceneId, objectId, updates);
+      if (!nextProject) {
         return state;
       }
 
-      // Regular object update (not a component instance)
+      didUpdate = true;
       return {
-        project: {
-          ...state.project,
-          scenes: state.project.scenes.map(s =>
-            s.id === sceneId
-              ? normalizeSceneLayering({
-                  ...s,
-                  objects: s.objects.map(o =>
-                    o.id === objectId ? { ...o, ...normalizedUpdates } : o
-                  ),
-                })
-              : s
-          ),
-          updatedAt: createUpdatedAt(),
-        },
+        project: nextProject,
         isDirty: true,
       };
     });
-    recordHistoryChange({ source: 'project:update-object', allowMerge: true });
+    if (didUpdate) {
+      recordHistoryChange({ source: 'project:update-object', allowMerge: true });
+    }
+  },
+
+  updateCostumeFromEditor: (target, costumeState, options) => {
+    let didUpdate = false;
+    set((state) => {
+      if (!state.project) return state;
+
+      const resolvedTarget = resolveCostumeEditorTarget(state.project, target);
+      if (!resolvedTarget) {
+        return state;
+      }
+
+      const nextCostumes = applyCostumeEditorState(
+        resolvedTarget.costumes,
+        target.costumeId,
+        costumeState,
+      );
+      if (!nextCostumes) {
+        return state;
+      }
+
+      const nextProject = applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, {
+        costumes: nextCostumes,
+      });
+      if (!nextProject) {
+        return state;
+      }
+
+      didUpdate = true;
+      return {
+        project: nextProject,
+        isDirty: true,
+      };
+    });
+    if (didUpdate && options?.recordHistory !== false) {
+      recordHistoryChange({ source: 'project:update-object-costume', allowMerge: true });
+    }
+    return didUpdate;
+  },
+
+  applyCostumeEditorOperation: (target, options) => {
+    let didUpdate = false;
+    set((state) => {
+      if (!state.project) return state;
+
+      const updates = buildCostumeEditorOperationUpdates(state.project, target, options);
+      if (!updates) {
+        return state;
+      }
+
+      const nextProject = applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, updates);
+      if (!nextProject) {
+        return state;
+      }
+
+      didUpdate = true;
+      return {
+        project: nextProject,
+        isDirty: true,
+      };
+    });
+    if (didUpdate) {
+      recordHistoryChange(getCostumeEditorOperationHistoryOptions(options.operation));
+    }
+    return didUpdate;
+  },
+
+  selectObjectCostume: (sceneId, objectId, costumeId) => {
+    return get().applyCostumeEditorOperation(
+      { sceneId, objectId },
+      { operation: { type: 'select', costumeId } },
+    );
+  },
+
+  addObjectCostume: (sceneId, objectId, costume) => {
+    return get().applyCostumeEditorOperation(
+      { sceneId, objectId },
+      { operation: { type: 'add', costume } },
+    );
+  },
+
+  removeObjectCostume: (target) => {
+    return get().applyCostumeEditorOperation(
+      { sceneId: target.sceneId, objectId: target.objectId },
+      { operation: { type: 'remove', costumeId: target.costumeId } },
+    );
+  },
+
+  renameObjectCostume: (target, name) => {
+    return get().applyCostumeEditorOperation(
+      { sceneId: target.sceneId, objectId: target.objectId },
+      { operation: { type: 'rename', costumeId: target.costumeId, name } },
+    );
   },
 
   duplicateObject: (sceneId: string, objectId: string) => {

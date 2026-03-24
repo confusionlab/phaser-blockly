@@ -4,9 +4,9 @@ import type { Project } from '@/types';
 import {
   canRedoHistory,
   canUndoHistory,
-  recordHistoryChange,
   redoHistory,
   registerSelectionHistoryBridge,
+  runInHistoryTransaction,
   syncHistorySnapshot,
   undoHistory,
 } from '@/store/universalHistory';
@@ -29,6 +29,7 @@ export type UndoRedoHandler = {
   canUndo?: () => boolean;
   canRedo?: () => boolean;
   beforeHistoryUndoRedo?: () => void;
+  beforeSelectionChange?: (context: { source: string; recordHistory: boolean }) => void;
   deleteSelection?: () => boolean;
   duplicateSelection?: () => boolean | Promise<boolean>;
   isTextEditing?: () => boolean;
@@ -39,6 +40,18 @@ export type BackgroundEditorShortcutHandler = (event: KeyboardEvent) => boolean;
 type SelectionHistoryOptions = {
   recordHistory?: boolean;
 };
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function projectContainsScene(project: Project, sceneId: string | null): boolean {
   if (!sceneId) return false;
@@ -157,6 +170,19 @@ interface EditorStore {
   redo: () => void;
 }
 
+function getBeforeSelectionChangeHandler(state: EditorStore): UndoRedoHandler['beforeSelectionChange'] | undefined {
+  if (state.backgroundEditorOpen) {
+    return state.backgroundUndoHandler?.beforeSelectionChange;
+  }
+  if (state.activeObjectTab === 'costumes') {
+    return state.costumeUndoHandler?.beforeSelectionChange;
+  }
+  if (state.activeObjectTab === 'code') {
+    return state.codeUndoHandler?.beforeSelectionChange;
+  }
+  return undefined;
+}
+
 export const useEditorStore = create<EditorStore>((set, get) => ({
   // Selection state
   selectedSceneId: null,
@@ -216,30 +242,86 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   // Actions
   selectScene: (sceneId, options) => {
-    set({
-      selectedSceneId: sceneId,
-      selectedObjectId: null,
-      selectedObjectIds: [],
-      selectedComponentId: null,
-    });
-    if (options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'selection:scene' });
-    } else {
-      syncHistorySnapshot();
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedSceneId = sceneId;
+    const nextSelectedObjectId = null;
+    const nextSelectedObjectIds: string[] = [];
+    const nextSelectedComponentId = null;
+    const didChange =
+      state.selectedSceneId !== nextSelectedSceneId ||
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId;
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
     }
+
+    const applySelection = () => {
+      set({
+        selectedSceneId: nextSelectedSceneId,
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:scene', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:scene', () => {
+      beforeSelectionChange?.({ source: 'selection:scene', recordHistory: true });
+      applySelection();
+    });
   },
 
   selectObject: (objectId, options) => {
-    set({
-      selectedObjectId: objectId,
-      selectedObjectIds: objectId ? [objectId] : [],
-      selectedComponentId: null,
-    });
-    if (options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'selection:object' });
-    } else {
-      syncHistorySnapshot();
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedObjectId = objectId;
+    const nextSelectedObjectIds = objectId ? [objectId] : [];
+    const nextSelectedComponentId = null;
+    const didChange =
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId;
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
     }
+
+    const applySelection = () => {
+      set({
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:object', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:object', () => {
+      beforeSelectionChange?.({ source: 'selection:object', recordHistory: true });
+      applySelection();
+    });
   },
 
   selectObjects: (objectIds, primaryObjectId = null, options) => {
@@ -247,29 +329,83 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const primary = primaryObjectId && uniqueIds.includes(primaryObjectId)
       ? primaryObjectId
       : uniqueIds[0] ?? null;
-    set({
-      selectedObjectId: primary,
-      selectedObjectIds: uniqueIds,
-      selectedComponentId: null,
-    });
-    if (options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'selection:objects' });
-    } else {
-      syncHistorySnapshot();
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedObjectId = primary;
+    const nextSelectedObjectIds = uniqueIds;
+    const nextSelectedComponentId = null;
+    const didChange =
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId;
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
     }
+
+    const applySelection = () => {
+      set({
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:objects', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:objects', () => {
+      beforeSelectionChange?.({ source: 'selection:objects', recordHistory: true });
+      applySelection();
+    });
   },
 
   selectComponent: (componentId, options) => {
-    set({
-      selectedComponentId: componentId,
-      selectedObjectId: null,
-      selectedObjectIds: [],
-    });
-    if (options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'selection:component' });
-    } else {
-      syncHistorySnapshot();
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedComponentId = componentId;
+    const nextSelectedObjectId = null;
+    const nextSelectedObjectIds: string[] = [];
+    const didChange =
+      state.selectedComponentId !== nextSelectedComponentId ||
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds);
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
     }
+
+    const applySelection = () => {
+      set({
+        selectedComponentId: nextSelectedComponentId,
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:component', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:component', () => {
+      beforeSelectionChange?.({ source: 'selection:component', recordHistory: true });
+      applySelection();
+    });
   },
 
   reconcileSelectionToProject: (project, options) => {
@@ -293,19 +429,41 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedObjectId = validPrimaryObjectId && nextSelectedObjectIds.includes(validPrimaryObjectId)
       ? validPrimaryObjectId
       : nextSelectedObjectIds[0] ?? null;
-
-    set({
-      selectedSceneId: nextSelectedSceneId,
-      selectedObjectId: nextSelectedComponentId ? null : nextSelectedObjectId,
-      selectedObjectIds: nextSelectedComponentId ? [] : nextSelectedObjectIds,
-      selectedComponentId: nextSelectedComponentId,
-    });
-
-    if (options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'selection:reconcile' });
-    } else {
-      syncHistorySnapshot();
+    const recordHistory = options?.recordHistory !== false;
+    const didChange =
+      state.selectedSceneId !== nextSelectedSceneId ||
+      state.selectedObjectId !== (nextSelectedComponentId ? null : nextSelectedObjectId) ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedComponentId ? [] : nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId;
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
     }
+
+    const applySelection = () => {
+      set({
+        selectedSceneId: nextSelectedSceneId,
+        selectedObjectId: nextSelectedComponentId ? null : nextSelectedObjectId,
+        selectedObjectIds: nextSelectedComponentId ? [] : nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:reconcile', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:reconcile', () => {
+      beforeSelectionChange?.({ source: 'selection:reconcile', recordHistory: true });
+      applySelection();
+    });
   },
 
   startPlaying: () => {
@@ -362,15 +520,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   focusPlayValidationIssue: (issue) => {
-    set({
-      selectedSceneId: issue.sceneId,
-      selectedObjectId: issue.objectId,
-      selectedObjectIds: issue.objectId ? [issue.objectId] : [],
-      selectedComponentId: null,
-      activeObjectTab: 'code',
-      showPlayValidationDialog: false,
+    const state = get();
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    runInHistoryTransaction('selection:validation-focus', () => {
+      beforeSelectionChange?.({ source: 'selection:validation-focus', recordHistory: true });
+      set({
+        selectedSceneId: issue.sceneId,
+        selectedObjectId: issue.objectId,
+        selectedObjectIds: issue.objectId ? [issue.objectId] : [],
+        selectedComponentId: null,
+        activeObjectTab: 'code',
+        showPlayValidationDialog: false,
+      });
     });
-    recordHistoryChange({ source: 'selection:validation-focus' });
   },
 
   toggleFolderCollapsed: (sceneId, folderId) => {

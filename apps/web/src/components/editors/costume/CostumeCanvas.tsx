@@ -98,11 +98,12 @@ export interface CostumeCanvasExportState {
 export interface CostumeCanvasHandle {
   toDataURL: () => string;
   toDataURLWithBounds: () => { dataUrl: string; bounds: CostumeBounds | null };
-  loadFromDataURL: (dataUrl: string) => Promise<void>;
-  loadCostume: (costume: Costume) => Promise<void>;
-  exportCostumeState: () => CostumeCanvasExportState;
+  loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
+  loadCostume: (sessionKey: string, costume: Costume) => Promise<void>;
+  exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   setEditorMode: (mode: CostumeEditorMode) => Promise<void>;
   getEditorMode: () => CostumeEditorMode;
+  getLoadedSessionKey: () => string | null;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => boolean;
@@ -279,6 +280,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const bitmapSelectionDragModeRef = useRef<'none' | 'marquee'>('none');
   const bitmapSelectionBusyRef = useRef(false);
   const loadRequestIdRef = useRef(0);
+  const loadedSessionKeyRef = useRef<string | null>(null);
   const originalControlsRef = useRef<WeakMap<object, Record<string, Control> | undefined>>(new WeakMap());
   const brushCursorEnabledRef = useRef(false);
   const brushCursorPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -718,7 +720,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory();
   }, [loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
 
-  const exportCostumeState = useCallback((): CostumeCanvasExportState => {
+  const exportCostumeState = useCallback((sessionKey?: string | null): CostumeCanvasExportState | null => {
+    if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
+      return null;
+    }
+
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) {
       return {
@@ -951,10 +957,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return !!activeObject && isTextObject(activeObject) && !!(activeObject as any).isEditing;
   }, []);
 
-  const loadCostume = useCallback(async (costume: Costume) => {
+  const loadCostume = useCallback(async (sessionKey: string, costume: Costume) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
     const requestId = ++loadRequestIdRef.current;
+    loadedSessionKeyRef.current = null;
 
     const requestedMode: CostumeEditorMode = costume.editorMode === 'bitmap' ? 'bitmap' : 'vector';
     const hasValidVectorDocument =
@@ -998,6 +1005,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     if (!isLoadRequestActive(requestId)) return;
+    loadedSessionKeyRef.current = sessionKey;
     historyRef.current = [];
     historyIndexRef.current = -1;
     saveHistory();
@@ -2728,9 +2736,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       };
     },
 
-    loadFromDataURL: async (dataUrl: string) => {
+    loadFromDataURL: async (dataUrl: string, sessionKey?: string | null) => {
+      loadedSessionKeyRef.current = null;
       await loadBitmapLayer(dataUrl, false);
       setEditorMode('bitmap');
+      loadedSessionKeyRef.current = sessionKey ?? null;
       historyRef.current = [];
       historyIndexRef.current = -1;
       saveHistory();
@@ -2747,6 +2757,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     getEditorMode: () => editorModeRef.current,
 
+    getLoadedSessionKey: () => loadedSessionKeyRef.current,
+
     deleteSelection,
 
     duplicateSelection,
@@ -2759,6 +2771,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     clear: () => {
       void (async () => {
+        loadedSessionKeyRef.current = null;
         await loadBitmapLayer('', false);
         setEditorMode('bitmap');
         saveHistory();

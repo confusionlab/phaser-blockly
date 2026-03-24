@@ -13,7 +13,16 @@ import {
 } from './costume/CostumeToolbar';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
 import { getEffectiveObjectProps, createDefaultColliderConfig } from '@/types';
-import type { Costume, ColliderConfig, CostumeEditorMode, CostumeBounds, CostumeVectorDocument } from '@/types';
+import type { Costume, ColliderConfig, CostumeEditorMode } from '@/types';
+import {
+  createCostumeEditorSession,
+  type CostumeEditorObjectTarget,
+  type CostumeEditorOperation,
+  type CostumeEditorPersistedSession,
+  type CostumeEditorPersistedState,
+  type CostumeEditorSession,
+  type CostumeEditorTarget,
+} from '@/lib/editor/costumeEditorSession';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'vector', 'rectangle', 'circle', 'line', 'text', 'collider']);
@@ -26,43 +35,49 @@ function ensureToolForMode(mode: CostumeEditorMode, tool: DrawingTool): DrawingT
   return BITMAP_TOOLS.has(tool) ? tool : 'brush';
 }
 
-function areBoundsEqual(a: CostumeBounds | undefined, b: CostumeBounds | undefined): boolean {
-  if (!a && !b) return true;
-  if (!a || !b) return false;
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-}
-
-function areVectorDocumentsEqual(
-  a: CostumeVectorDocument | undefined,
-  b: CostumeVectorDocument | undefined
-): boolean {
-  if (!a && !b) return true;
-  if (!a || !b) return false;
-  return a.version === b.version && a.fabricJson === b.fabricJson;
-}
-
 function getInitialCostumeEditorMode(costume: Costume | undefined): CostumeEditorMode {
   return costume?.editorMode === 'bitmap' ? 'bitmap' : 'vector';
 }
 
+function createCostumeTarget(
+  sceneId: string | null,
+  objectId: string | null,
+  costumeId: string | null,
+): CostumeEditorTarget | null {
+  if (!sceneId || !objectId || !costumeId) {
+    return null;
+  }
+
+  return {
+    sceneId,
+    objectId,
+    costumeId,
+  };
+}
+
+function createCostumeObjectTarget(
+  sceneId: string | null,
+  objectId: string | null,
+): CostumeEditorObjectTarget | null {
+  if (!sceneId || !objectId) {
+    return null;
+  }
+
+  return {
+    sceneId,
+    objectId,
+  };
+}
+
 export function CostumeEditor() {
   const canvasRef = useRef<CostumeCanvasHandle>(null);
-  const { project, updateObject } = useProjectStore();
+  const {
+    project,
+    updateObject,
+    updateCostumeFromEditor,
+    applyCostumeEditorOperation,
+  } = useProjectStore();
   const { selectedSceneId, selectedObjectId, registerCostumeUndo, activeObjectTab } = useEditorStore();
-
-  useEffect(() => {
-    const handler: UndoRedoHandler = {
-      undo: () => canvasRef.current?.undo(),
-      redo: () => canvasRef.current?.redo(),
-      canUndo: () => canvasRef.current?.canUndo() ?? false,
-      canRedo: () => canvasRef.current?.canRedo() ?? false,
-      deleteSelection: () => canvasRef.current?.deleteSelection() ?? false,
-      duplicateSelection: () => canvasRef.current?.duplicateSelection() ?? false,
-      isTextEditing: () => canvasRef.current?.isTextEditing() ?? false,
-    };
-    registerCostumeUndo(handler);
-    return () => registerCostumeUndo(null);
-  }, [registerCostumeUndo]);
 
   const currentCostumeIdRef = useRef<string | null>(null);
   const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null }>({
@@ -71,11 +86,11 @@ export function CostumeEditor() {
   });
   const loadRequestIdRef = useRef(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const justSavedRef = useRef(false);
   const isLoadingRef = useRef(true);
+  const loadedSessionRef = useRef<CostumeEditorSession | null>(null);
 
-  const scene = project?.scenes.find((s) => s.id === selectedSceneId);
-  const object = scene?.objects.find((o) => o.id === selectedObjectId);
+  const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
+  const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
 
   const effectiveProps = useMemo(() => {
     if (!object || !project) return null;
@@ -86,6 +101,14 @@ export function CostumeEditor() {
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
   const currentCostume = costumes[currentCostumeIndex];
+  const currentSession = useMemo(() => {
+    const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
+    return target ? createCostumeEditorSession(target) : null;
+  }, [currentCostume?.id, selectedObjectId, selectedSceneId]);
+  const currentObjectTarget = useMemo(
+    () => createCostumeObjectTarget(selectedSceneId, selectedObjectId),
+    [selectedObjectId, selectedSceneId],
+  );
   const initialEditorMode: CostumeEditorMode = currentCostume
     ? getInitialCostumeEditorMode(currentCostume)
     : 'bitmap';
@@ -108,6 +131,7 @@ export function CostumeEditor() {
   const [canRedo, setCanRedo] = useState(false);
   const [hasCanvasSelection, setHasCanvasSelection] = useState(false);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
 
   useEffect(() => {
     setEditorMode((prev) => {
@@ -120,80 +144,111 @@ export function CostumeEditor() {
     });
   }, [initialEditorMode]);
 
-  const getUpdatedCostumesWithCanvasState = useCallback((sourceCostumes: Costume[], costumeIndex: number): Costume[] | null => {
-    if (!canvasRef.current) return null;
-    if (sourceCostumes.length === 0) return null;
-    const current = sourceCostumes[costumeIndex];
-    if (!current) return null;
-
-    const state = canvasRef.current.exportCostumeState();
-    if (!state.dataUrl) return null;
-
-    const nextBounds = state.bounds || undefined;
-    const nextVectorDocument = state.vectorDocument;
-    const nextEditorMode = state.editorMode;
-
-    const noAssetChange = current.assetId === state.dataUrl;
-    const noBoundsChange = areBoundsEqual(current.bounds, nextBounds);
-    const noModeChange = current.editorMode === nextEditorMode;
-    const noVectorDocChange = areVectorDocumentsEqual(current.vectorDocument, nextVectorDocument);
-    if (noAssetChange && noBoundsChange && noModeChange && noVectorDocChange) {
-      return null;
+  const isCanvasReadyForSession = useCallback((session: CostumeEditorSession | null): boolean => {
+    if (!canvasRef.current || !session) {
+      return false;
     }
-
-    return sourceCostumes.map((costume, index) =>
-      index === costumeIndex
-        ? {
-            ...costume,
-            assetId: state.dataUrl,
-            bounds: nextBounds,
-            editorMode: nextEditorMode,
-            vectorDocument: nextVectorDocument,
-          }
-        : costume
-    );
+    return canvasRef.current.getLoadedSessionKey() === session.key;
   }, []);
 
-  const persistCanvasStateToObject = useCallback((
-    sceneId: string | null,
-    objectId: string | null,
+  const getCanvasPersistedStateForSession = useCallback((
+    session: CostumeEditorSession | null,
     options: { skipLoadingGuard?: boolean } = {}
+  ): CostumeEditorPersistedState | null => {
+    if (!canvasRef.current || !session) return null;
+    if (!options.skipLoadingGuard && isLoadingRef.current) return null;
+
+    const state = canvasRef.current.exportCostumeState(session.key);
+    if (!state?.dataUrl) return null;
+
+    return {
+      assetId: state.dataUrl,
+      bounds: state.bounds ?? undefined,
+      editorMode: state.editorMode,
+      vectorDocument: state.vectorDocument,
+    };
+  }, []);
+
+  const persistCanvasStateToSession = useCallback((
+    session: CostumeEditorSession | null,
+    options: { skipLoadingGuard?: boolean; recordHistory?: boolean } = {}
   ): boolean => {
-    if (!canvasRef.current) return false;
-    if (!options.skipLoadingGuard && isLoadingRef.current) return false;
-    if (!sceneId || !objectId) return false;
+    if (!session) return false;
 
-    const projectState = useProjectStore.getState();
-    if (!projectState.project) return false;
+    const persistedState = getCanvasPersistedStateForSession(session, options);
+    if (!persistedState) {
+      return false;
+    }
 
-    const freshScene = projectState.project.scenes.find((s) => s.id === sceneId);
-    const freshObject = freshScene?.objects.find((o) => o.id === objectId);
-    if (!freshObject) return false;
-
-    const freshEffectiveProps = getEffectiveObjectProps(freshObject, projectState.project.components || []);
-    const freshCostumes = freshEffectiveProps.costumes || [];
-    const freshCostumeIndex = freshEffectiveProps.currentCostumeIndex ?? 0;
-    const updatedCostumes = getUpdatedCostumesWithCanvasState(freshCostumes, freshCostumeIndex);
-    if (!updatedCostumes) return false;
-
-    justSavedRef.current = true;
-    updateObject(sceneId, objectId, { costumes: updatedCostumes });
-    setTimeout(() => {
-      justSavedRef.current = false;
-    }, 100);
+    const didPersist = updateCostumeFromEditor(session, persistedState, {
+      recordHistory: options.recordHistory,
+    });
+    if (!didPersist) {
+      return false;
+    }
     return true;
-  }, [getUpdatedCostumesWithCanvasState, updateObject]);
+  }, [getCanvasPersistedStateForSession, updateCostumeFromEditor]);
 
-  const saveToCostume = useCallback((sceneId: string | null, objectId: string | null) => {
-    persistCanvasStateToObject(sceneId, objectId);
-  }, [persistCanvasStateToObject]);
+  useEffect(() => {
+    const handler: UndoRedoHandler = {
+      undo: () => canvasRef.current?.undo(),
+      redo: () => canvasRef.current?.redo(),
+      canUndo: () => canvasRef.current?.canUndo() ?? false,
+      canRedo: () => canvasRef.current?.canRedo() ?? false,
+      beforeSelectionChange: ({ recordHistory }) => {
+        persistCanvasStateToSession(loadedSessionRef.current, {
+          skipLoadingGuard: true,
+          recordHistory,
+        });
+      },
+      deleteSelection: () => canvasRef.current?.deleteSelection() ?? false,
+      duplicateSelection: () => canvasRef.current?.duplicateSelection() ?? false,
+      isTextEditing: () => canvasRef.current?.isTextEditing() ?? false,
+    };
+    registerCostumeUndo(handler);
+    return () => registerCostumeUndo(null);
+  }, [persistCanvasStateToSession, registerCostumeUndo]);
 
-  const debouncedSave = useCallback((sceneId: string | null, objectId: string | null) => {
+  const applyOperationToCurrentObject = useCallback((operation: CostumeEditorOperation): boolean => {
+    if (isLoadingRef.current || !currentObjectTarget) {
+      return false;
+    }
+
+    const loadedSession = loadedSessionRef.current;
+    if (loadedSession && !isCanvasReadyForSession(loadedSession)) {
+      return false;
+    }
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    const persistedState = getCanvasPersistedStateForSession(loadedSession);
+    const persistedSession: CostumeEditorPersistedSession | undefined =
+      loadedSession && persistedState
+        ? {
+            target: loadedSession,
+            state: persistedState,
+          }
+        : undefined;
+
+    return applyCostumeEditorOperation(currentObjectTarget, {
+      persistedSession,
+      operation,
+    });
+  }, [applyCostumeEditorOperation, currentObjectTarget, getCanvasPersistedStateForSession, isCanvasReadyForSession]);
+
+  const saveToCostume = useCallback((session: CostumeEditorSession | null) => {
+    persistCanvasStateToSession(session);
+  }, [persistCanvasStateToSession]);
+
+  const debouncedSave = useCallback((session: CostumeEditorSession | null) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
     saveTimeoutRef.current = setTimeout(() => {
-      saveToCostume(sceneId, objectId);
+      saveToCostume(session);
     }, 300);
   }, [saveToCostume]);
 
@@ -209,37 +264,35 @@ export function CostumeEditor() {
         saveTimeoutRef.current = null;
       }
 
-      if (previousSelection.sceneId && previousSelection.objectId) {
-        persistCanvasStateToObject(previousSelection.sceneId, previousSelection.objectId, {
-          skipLoadingGuard: true,
-        });
-      }
+      loadRequestIdRef.current += 1;
+      currentCostumeIdRef.current = null;
+      isLoadingRef.current = true;
+      setIsSessionLoading(!!selectedObjectId);
     }
 
-    loadRequestIdRef.current += 1;
-    currentCostumeIdRef.current = null;
-    isLoadingRef.current = true;
     previousSelectionRef.current = {
       sceneId: selectedSceneId,
       objectId: selectedObjectId,
     };
-  }, [persistCanvasStateToObject, selectedSceneId, selectedObjectId]);
+  }, [selectedSceneId, selectedObjectId]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
-    if (justSavedRef.current) return;
 
-    if (!currentCostume) {
+    if (!currentCostume || !currentSession) {
       currentCostumeIdRef.current = null;
       const requestId = ++loadRequestIdRef.current;
       isLoadingRef.current = true;
+      setIsSessionLoading(!!selectedObjectId);
       const fallbackMode: CostumeEditorMode = 'bitmap';
       setEditorMode(fallbackMode);
       setActiveTool((prev) => ensureToolForMode(fallbackMode, prev));
 
-      canvasRef.current.loadFromDataURL('').finally(() => {
+      canvasRef.current.loadFromDataURL('', null).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
+        loadedSessionRef.current = null;
         isLoadingRef.current = false;
+        setIsSessionLoading(false);
         const resolvedMode = canvasRef.current?.getEditorMode() ?? fallbackMode;
         setEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
@@ -247,117 +300,115 @@ export function CostumeEditor() {
       return;
     }
 
-    if (currentCostumeIdRef.current !== currentCostume.id) {
+    const loadedSessionKey = canvasRef.current.getLoadedSessionKey();
+    if (currentCostumeIdRef.current !== currentCostume.id || loadedSessionKey !== currentSession.key) {
       currentCostumeIdRef.current = currentCostume.id;
       isLoadingRef.current = true;
+      setIsSessionLoading(true);
       const requestId = ++loadRequestIdRef.current;
 
-      const initialMode = getInitialCostumeEditorMode(currentCostume);
-      setEditorMode(initialMode);
-      setActiveTool((prev) => ensureToolForMode(initialMode, prev));
+      const nextMode = getInitialCostumeEditorMode(currentCostume);
+      setEditorMode(nextMode);
+      setActiveTool((prev) => ensureToolForMode(nextMode, prev));
 
-      canvasRef.current.loadCostume(currentCostume).finally(() => {
+      canvasRef.current.loadCostume(currentSession.key, currentCostume).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
+        loadedSessionRef.current = currentSession;
         isLoadingRef.current = false;
-        const resolvedMode = canvasRef.current?.getEditorMode() ?? initialMode;
+        setIsSessionLoading(false);
+        const resolvedMode = canvasRef.current?.getEditorMode() ?? nextMode;
         setEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
-  }, [costumes, currentCostume, currentCostumeIndex, selectedSceneId, selectedObjectId]);
+  }, [currentCostume, currentSession, selectedObjectId]);
 
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
-      const editorState = useEditorStore.getState();
-      persistCanvasStateToObject(editorState.selectedSceneId, editorState.selectedObjectId, {
+      persistCanvasStateToSession(loadedSessionRef.current, {
         skipLoadingGuard: true,
       });
     };
-  }, [persistCanvasStateToObject]);
+  }, [persistCanvasStateToSession]);
 
   const handleHistoryChange = useCallback(() => {
     if (isLoadingRef.current) {
       return;
     }
+
     if (canvasRef.current) {
       setCanUndo(canvasRef.current.canUndo());
       setCanRedo(canvasRef.current.canRedo());
     }
-    const editorState = useEditorStore.getState();
-    debouncedSave(editorState.selectedSceneId, editorState.selectedObjectId);
-  }, [debouncedSave]);
 
-  const persistCurrentCostumeInMemory = useCallback(() => {
-    if (isLoadingRef.current) {
-      return costumes;
+    const loadedSession = loadedSessionRef.current;
+    if (!loadedSession || !isCanvasReadyForSession(loadedSession)) {
+      return;
     }
-    if (!canvasRef.current || costumes.length === 0) {
-      return costumes;
-    }
-    return getUpdatedCostumesWithCanvasState(costumes, currentCostumeIndex) ?? costumes;
-  }, [costumes, currentCostumeIndex, getUpdatedCostumesWithCanvasState]);
+
+    debouncedSave(loadedSession);
+  }, [debouncedSave, isCanvasReadyForSession]);
 
   const handleSelectCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
 
-    const updatedCostumes = persistCurrentCostumeInMemory();
-    currentCostumeIdRef.current = null;
-    updateObject(selectedSceneId, selectedObjectId, {
-      costumes: updatedCostumes,
-      currentCostumeIndex: index,
+    const nextCostume = costumes[index];
+    if (!nextCostume) return;
+
+    applyOperationToCurrentObject({
+      type: 'select',
+      costumeId: nextCostume.id,
     });
-  }, [selectedSceneId, selectedObjectId, persistCurrentCostumeInMemory, updateObject]);
+  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
 
   const handleAddCostume = useCallback((costume: Costume) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
 
-    const updatedCostumes = persistCurrentCostumeInMemory();
-    currentCostumeIdRef.current = null;
-    updateObject(selectedSceneId, selectedObjectId, {
-      costumes: [...updatedCostumes, costume],
-      currentCostumeIndex: updatedCostumes.length,
+    applyOperationToCurrentObject({
+      type: 'add',
+      costume,
     });
-  }, [selectedSceneId, selectedObjectId, persistCurrentCostumeInMemory, updateObject]);
+  }, [applyOperationToCurrentObject, selectedObjectId, selectedSceneId]);
 
   const handleDeleteCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
 
-    const syncedCostumes = persistCurrentCostumeInMemory();
-    if (syncedCostumes.length <= 1) return;
-    const updatedCostumes = syncedCostumes.filter((_, i) => i !== index);
-    const newIndex = Math.min(currentCostumeIndex, updatedCostumes.length - 1);
+    const costume = costumes[index];
+    if (!costume) return;
 
-    currentCostumeIdRef.current = null;
-    updateObject(selectedSceneId, selectedObjectId, {
-      costumes: updatedCostumes,
-      currentCostumeIndex: newIndex,
+    applyOperationToCurrentObject({
+      type: 'remove',
+      costumeId: costume.id,
     });
-  }, [selectedSceneId, selectedObjectId, persistCurrentCostumeInMemory, currentCostumeIndex, updateObject]);
+  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
 
   const handleRenameCostume = useCallback((index: number, name: string) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
 
-    justSavedRef.current = true;
-    const syncedCostumes = persistCurrentCostumeInMemory();
-    const updatedCostumes = syncedCostumes.map((c, i) =>
-      i === index ? { ...c, name } : c
-    );
-    updateObject(selectedSceneId, selectedObjectId, { costumes: updatedCostumes });
-    setTimeout(() => {
-      justSavedRef.current = false;
-    }, 100);
-  }, [selectedSceneId, selectedObjectId, persistCurrentCostumeInMemory, updateObject]);
+    const costume = costumes[index];
+    if (!costume) return;
+
+    applyOperationToCurrentObject({
+      type: 'rename',
+      costumeId: costume.id,
+      name,
+    });
+  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
 
   const handleEditorModeChange = useCallback((mode: CostumeEditorMode) => {
+    if (isLoadingRef.current || !isCanvasReadyForSession(loadedSessionRef.current)) {
+      return;
+    }
+
     setEditorMode(mode);
     setActiveTool((prev) => ensureToolForMode(mode, prev));
     if (canvasRef.current) {
       void canvasRef.current.setEditorMode(mode);
     }
-  }, []);
+  }, [isCanvasReadyForSession]);
 
   const handleCanvasModeChange = useCallback((mode: CostumeEditorMode) => {
     setEditorMode(mode);
@@ -368,6 +419,9 @@ export function CostumeEditor() {
   }, []);
 
   const handleToolChange = useCallback((tool: DrawingTool) => {
+    if (isLoadingRef.current) {
+      return;
+    }
     setActiveTool(ensureToolForMode(editorMode, tool));
   }, [editorMode]);
 
@@ -377,6 +431,9 @@ export function CostumeEditor() {
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isLoadingRef.current) {
+        return;
+      }
       if (shouldIgnoreGlobalKeyboardEvent(event)) {
         return;
       }
@@ -404,10 +461,16 @@ export function CostumeEditor() {
   }, [activeObjectTab, editorMode]);
 
   const handleMoveOrder = useCallback((action: MoveOrderAction) => {
+    if (isLoadingRef.current) {
+      return;
+    }
     canvasRef.current?.moveSelectionOrder(action);
   }, []);
 
   const handleAlign = useCallback((action: AlignAction) => {
+    if (isLoadingRef.current) {
+      return;
+    }
     canvasRef.current?.alignSelection(action);
   }, []);
 
@@ -433,39 +496,37 @@ export function CostumeEditor() {
   }, []);
 
   const handleColliderTypeChange = useCallback((type: ColliderConfig['type']) => {
-    if (!selectedSceneId || !selectedObjectId) return;
-
-    justSavedRef.current = true;
+    const loadedSession = loadedSessionRef.current;
+    if (!loadedSession || isLoadingRef.current || !isCanvasReadyForSession(loadedSession)) return;
 
     if (type === 'none') {
-      updateObject(selectedSceneId, selectedObjectId, { collider: null });
+      updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: null });
     } else {
       const newCollider: ColliderConfig = collider
         ? { ...collider, type }
         : createDefaultColliderConfig(type);
-      updateObject(selectedSceneId, selectedObjectId, { collider: newCollider });
+      updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: newCollider });
     }
-
-    setTimeout(() => {
-      justSavedRef.current = false;
-    }, 100);
-  }, [selectedSceneId, selectedObjectId, collider, updateObject]);
+  }, [collider, isCanvasReadyForSession, updateObject]);
 
   const handleColliderChange = useCallback((newCollider: ColliderConfig) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    const loadedSession = loadedSessionRef.current;
+    if (!loadedSession || isLoadingRef.current || !isCanvasReadyForSession(loadedSession)) return;
 
-    justSavedRef.current = true;
-    updateObject(selectedSceneId, selectedObjectId, { collider: newCollider });
-    setTimeout(() => {
-      justSavedRef.current = false;
-    }, 100);
-  }, [selectedSceneId, selectedObjectId, updateObject]);
+    updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: newCollider });
+  }, [isCanvasReadyForSession, updateObject]);
 
   const handleUndo = useCallback(() => {
+    if (isLoadingRef.current) {
+      return;
+    }
     canvasRef.current?.undo();
   }, []);
 
   const handleRedo = useCallback(() => {
+    if (isLoadingRef.current) {
+      return;
+    }
     canvasRef.current?.redo();
   }, []);
 
@@ -478,7 +539,7 @@ export function CostumeEditor() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="relative flex h-full overflow-hidden">
       <CostumeList
         costumes={costumes}
         selectedIndex={currentCostumeIndex}
@@ -532,6 +593,12 @@ export function CostumeEditor() {
           onSelectionStateChange={handleSelectionStateChange}
         />
       </div>
+
+      {isSessionLoading && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 text-sm text-muted-foreground backdrop-blur-[1px]">
+          Switching costume editor to the selected object...
+        </div>
+      )}
     </div>
   );
 }
