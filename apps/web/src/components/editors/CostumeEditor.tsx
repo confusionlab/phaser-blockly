@@ -729,6 +729,7 @@ export function CostumeEditor() {
           onModeChange={handleCanvasModeChange}
           onTextStyleSync={handleTextStyleChange}
           onVectorStyleSync={handleVectorStyleChange}
+          onVectorHandleTypeSync={setVectorHandleType}
           onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
           onVectorPointEditingChange={setIsVectorPointEditing}
           onTextSelectionChange={setHasTextSelection}

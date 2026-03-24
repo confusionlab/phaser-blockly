@@ -112,13 +112,13 @@ export function SegmentedControl<T extends string>({
 
   const isLarge = size === 'large';
   const containerSizeClassName = isLarge
-    ? 'rounded-[12px] p-[2px]'
+    ? 'rounded-[14px] p-[3px]'
     : 'rounded-[10px] p-[2px]';
   const thumbClassName = isLarge
-    ? 'inset-y-[2px] rounded-[10px]'
+    ? 'inset-y-[3px] rounded-[11px]'
     : 'inset-y-[2px] rounded-[8px]';
   const optionSizeClassName = isLarge
-    ? 'min-h-[23px] gap-1 rounded-[10px] px-2 py-0 text-[12px]'
+    ? 'min-h-[34px] gap-1.5 rounded-[11px] px-3 py-0 text-[13px]'
     : 'min-h-[20px] gap-1 rounded-[8px] px-2 py-0 text-[11px]';
 
   const thumbStyle: React.CSSProperties = layout === 'content'

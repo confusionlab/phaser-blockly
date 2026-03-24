@@ -58,6 +58,8 @@ const VECTOR_JSON_EXTRA_PROPS = ['nodeHandleTypes', 'strokeUniform'];
 const CIRCLE_CUBIC_KAPPA = 0.5522847498307936;
 const VECTOR_POINT_EDIT_GUIDE_STROKE = '#cbd5e1';
 const VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH = 6;
+const VECTOR_POINT_INSERTION_HIT_RADIUS_PX = 8;
+const VECTOR_POINT_INSERTION_ENDPOINT_RADIUS_PX = 10;
 
 function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
   fabricCanvas.defaultCursor = cursor;
@@ -166,6 +168,7 @@ interface CostumeCanvasProps {
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
   onVectorStyleSync?: (updates: Partial<VectorToolStyle>) => void;
+  onVectorHandleTypeSync?: (handleType: VectorHandleType) => void;
   onVectorStyleCapabilitiesSync?: (capabilities: VectorStyleCapabilities) => void;
   onVectorPointEditingChange?: (isEditing: boolean) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
@@ -352,6 +355,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onModeChange,
   onTextStyleSync,
   onVectorStyleSync,
+  onVectorHandleTypeSync,
   onVectorStyleCapabilitiesSync,
   onVectorPointEditingChange,
   onTextSelectionChange,
@@ -422,6 +426,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const onVectorStyleSyncRef = useRef(onVectorStyleSync);
   onVectorStyleSyncRef.current = onVectorStyleSync;
+  const onVectorHandleTypeSyncRef = useRef(onVectorHandleTypeSync);
+  onVectorHandleTypeSyncRef.current = onVectorHandleTypeSync;
 
   const onVectorStyleCapabilitiesSyncRef = useRef(onVectorStyleCapabilitiesSync);
   onVectorStyleCapabilitiesSyncRef.current = onVectorStyleCapabilitiesSync;
@@ -1406,6 +1412,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return map[String(normalized)] ?? null;
   }, [getPathNodeHandleTypes, normalizeAnchorIndex]);
 
+  const syncVectorHandleTypeFromSelection = useCallback(() => {
+    const activeAnchor = activePathAnchorRef.current;
+    if (!activeAnchor || getFabricObjectType(activeAnchor.path) !== 'path') return;
+    onVectorHandleTypeSyncRef.current?.(
+      getPathNodeHandleType(activeAnchor.path, activeAnchor.anchorIndex) ?? 'corner',
+    );
+  }, [getPathNodeHandleType]);
+
   const findPreviousDrawableCommandIndex = useCallback((pathObj: any, commandIndex: number): number => {
     const commands = getPathCommands(pathObj);
     for (let i = commandIndex - 1; i >= 0; i -= 1) {
@@ -1512,10 +1526,346 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return new Point(point.x, point.y);
   }, []);
 
+  const lerpPoint = useCallback((a: Point, b: Point, t: number) => (
+    new Point(
+      a.x + (b.x - a.x) * t,
+      a.y + (b.y - a.y) * t,
+    )
+  ), []);
+
+  const distanceSqBetweenPoints = useCallback((a: Point, b: Point) => {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  }, []);
+
+  const getScenePointFromOwnPlanePoint = useCallback((obj: any, point: Point): Point | null => {
+    if (!obj || !point || typeof obj.calcOwnMatrix !== 'function') return null;
+    return point.transform(obj.calcOwnMatrix());
+  }, []);
+
+  const invertOwnPlanePoint = useCallback((obj: any, point: Point): Point | null => {
+    if (!obj || !point || typeof obj.calcOwnMatrix !== 'function') return null;
+    const [a, b, c, d, e, f] = obj.calcOwnMatrix() as [number, number, number, number, number, number];
+    const determinant = a * d - b * c;
+    if (Math.abs(determinant) <= 0.0000001) return null;
+    const nextX = point.x - e;
+    const nextY = point.y - f;
+    return new Point(
+      (d * nextX - c * nextY) / determinant,
+      (-b * nextX + a * nextY) / determinant,
+    );
+  }, []);
+
+  const toPathScenePoint = useCallback((pathObj: any, point: Point): Point | null => {
+    if (!pathObj?.pathOffset) return null;
+    return getScenePointFromOwnPlanePoint(
+      pathObj,
+      new Point(point.x - pathObj.pathOffset.x, point.y - pathObj.pathOffset.y),
+    );
+  }, [getScenePointFromOwnPlanePoint]);
+
+  const toPathCommandPoint = useCallback((pathObj: any, scenePoint: Point): Point | null => {
+    if (!pathObj?.pathOffset) return null;
+    const ownPlanePoint = invertOwnPlanePoint(pathObj, scenePoint);
+    if (!ownPlanePoint) return null;
+    return ownPlanePoint.add(pathObj.pathOffset);
+  }, [invertOwnPlanePoint]);
+
+  const findClosestPointOnLineSegment = useCallback((point: Point, start: Point, end: Point) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSq = dx * dx + dy * dy;
+    if (lengthSq <= 0.0000001) {
+      return { t: 0, point: new Point(start.x, start.y), distanceSq: distanceSqBetweenPoints(point, start) };
+    }
+    const rawT = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq;
+    const t = Math.max(0, Math.min(1, rawT));
+    const nearest = lerpPoint(start, end, t);
+    return { t, point: nearest, distanceSq: distanceSqBetweenPoints(point, nearest) };
+  }, [distanceSqBetweenPoints, lerpPoint]);
+
+  const evaluateQuadraticPoint = useCallback((p0: Point, p1: Point, p2: Point, t: number) => {
+    const a = lerpPoint(p0, p1, t);
+    const b = lerpPoint(p1, p2, t);
+    return lerpPoint(a, b, t);
+  }, [lerpPoint]);
+
+  const evaluateCubicPoint = useCallback((p0: Point, p1: Point, p2: Point, p3: Point, t: number) => {
+    const a = lerpPoint(p0, p1, t);
+    const b = lerpPoint(p1, p2, t);
+    const c = lerpPoint(p2, p3, t);
+    const d = lerpPoint(a, b, t);
+    const e = lerpPoint(b, c, t);
+    return lerpPoint(d, e, t);
+  }, [lerpPoint]);
+
+  const findClosestCurveSample = useCallback((
+    point: Point,
+    evaluate: (t: number) => Point,
+  ) => {
+    const coarseSteps = 24;
+    let bestT = 0;
+    let bestPoint = evaluate(0);
+    let bestDistanceSq = distanceSqBetweenPoints(point, bestPoint);
+
+    for (let index = 1; index <= coarseSteps; index += 1) {
+      const t = index / coarseSteps;
+      const candidate = evaluate(t);
+      const candidateDistanceSq = distanceSqBetweenPoints(point, candidate);
+      if (candidateDistanceSq < bestDistanceSq) {
+        bestT = t;
+        bestPoint = candidate;
+        bestDistanceSq = candidateDistanceSq;
+      }
+    }
+
+    let minT = Math.max(0, bestT - 1 / coarseSteps);
+    let maxT = Math.min(1, bestT + 1 / coarseSteps);
+    for (let refinement = 0; refinement < 5; refinement += 1) {
+      const refineSteps = 12;
+      for (let index = 0; index <= refineSteps; index += 1) {
+        const t = minT + ((maxT - minT) * index) / refineSteps;
+        const candidate = evaluate(t);
+        const candidateDistanceSq = distanceSqBetweenPoints(point, candidate);
+        if (candidateDistanceSq < bestDistanceSq) {
+          bestT = t;
+          bestPoint = candidate;
+          bestDistanceSq = candidateDistanceSq;
+        }
+      }
+      const nextSpan = (maxT - minT) / refineSteps;
+      minT = Math.max(0, bestT - nextSpan);
+      maxT = Math.min(1, bestT + nextSpan);
+    }
+
+    return { t: bestT, point: bestPoint, distanceSq: bestDistanceSq };
+  }, [distanceSqBetweenPoints]);
+
   const toParentPlanePoint = useCallback((pathObj: any, point: Point): Point | null => {
     if (!pathObj || !point || !pathObj.pathOffset || typeof pathObj.calcOwnMatrix !== 'function') return null;
     return new Point(point.x - pathObj.pathOffset.x, point.y - pathObj.pathOffset.y).transform(pathObj.calcOwnMatrix());
   }, []);
+
+  const getPathSegments = useCallback((pathObj: any) => {
+    const commands = getPathCommands(pathObj);
+    const segments: Array<{
+      commandIndex: number;
+      type: 'L' | 'Q' | 'C' | 'Z';
+      start: Point;
+      end: Point;
+      control1?: Point;
+      control2?: Point;
+    }> = [];
+
+    if (commands.length === 0) return segments;
+
+    let subpathStart = getCommandEndpoint(commands[0]);
+    let previousPoint = subpathStart;
+    for (let commandIndex = 1; commandIndex < commands.length; commandIndex += 1) {
+      const command = commands[commandIndex];
+      const type = getCommandType(command);
+      if (type === 'M') {
+        subpathStart = getCommandEndpoint(command);
+        previousPoint = subpathStart;
+        continue;
+      }
+      if (!previousPoint) continue;
+      if (type === 'L') {
+        const end = getCommandEndpoint(command);
+        if (!end) continue;
+        segments.push({ commandIndex, type: 'L', start: previousPoint, end });
+        previousPoint = end;
+        continue;
+      }
+      if (type === 'Q') {
+        const end = getCommandEndpoint(command);
+        if (!end) continue;
+        segments.push({
+          commandIndex,
+          type: 'Q',
+          start: previousPoint,
+          control1: new Point(Number(command[1]), Number(command[2])),
+          end,
+        });
+        previousPoint = end;
+        continue;
+      }
+      if (type === 'C') {
+        const end = getCommandEndpoint(command);
+        if (!end) continue;
+        segments.push({
+          commandIndex,
+          type: 'C',
+          start: previousPoint,
+          control1: new Point(Number(command[1]), Number(command[2])),
+          control2: new Point(Number(command[3]), Number(command[4])),
+          end,
+        });
+        previousPoint = end;
+        continue;
+      }
+      if (type === 'Z' && subpathStart) {
+        segments.push({
+          commandIndex,
+          type: 'Z',
+          start: previousPoint,
+          end: subpathStart,
+        });
+        previousPoint = subpathStart;
+      }
+    }
+
+    return segments;
+  }, [getCommandEndpoint, getCommandType, getPathCommands]);
+
+  const buildShiftedPathNodeHandleTypes = useCallback((
+    pathObj: any,
+    fromIndex: number,
+    delta: number,
+  ) => {
+    const next: Record<string, VectorHandleType> = {};
+    for (const [key, value] of Object.entries(getPathNodeHandleTypes(pathObj))) {
+      const numericKey = Number(key);
+      if (!Number.isFinite(numericKey)) continue;
+      next[String(numericKey >= fromIndex ? numericKey + delta : numericKey)] = value;
+    }
+    return next;
+  }, [getPathNodeHandleTypes]);
+
+  const insertPathPointAtScenePosition = useCallback((pathObj: any, scenePoint: Point): number | null => {
+    const commands = getPathCommands(pathObj);
+    if (commands.length < 2) return null;
+
+    const sceneScale = Math.max(0.0001, BASE_VIEW_SCALE * zoomRef.current);
+    const hitRadius = VECTOR_POINT_INSERTION_HIT_RADIUS_PX / sceneScale;
+    const endpointClearance = VECTOR_POINT_INSERTION_ENDPOINT_RADIUS_PX / sceneScale;
+    const hitRadiusSq = hitRadius * hitRadius;
+    const endpointClearanceSq = endpointClearance * endpointClearance;
+
+    let bestCandidate: {
+      commandIndex: number;
+      type: 'L' | 'Q' | 'C' | 'Z';
+      t: number;
+      scenePoint: Point;
+      distanceSq: number;
+      start: Point;
+      end: Point;
+      control1?: Point;
+      control2?: Point;
+    } | null = null;
+
+    for (const segment of getPathSegments(pathObj)) {
+      const startScene = toPathScenePoint(pathObj, segment.start);
+      const endScene = toPathScenePoint(pathObj, segment.end);
+      if (!startScene || !endScene) continue;
+
+      let candidate: { t: number; point: Point; distanceSq: number } | null = null;
+      if (segment.type === 'L' || segment.type === 'Z') {
+        candidate = findClosestPointOnLineSegment(scenePoint, startScene, endScene);
+      } else if (segment.type === 'Q' && segment.control1) {
+        const controlScene = toPathScenePoint(pathObj, segment.control1);
+        if (!controlScene) continue;
+        candidate = findClosestCurveSample(
+          scenePoint,
+          (t) => evaluateQuadraticPoint(startScene, controlScene, endScene, t),
+        );
+      } else if (segment.type === 'C' && segment.control1 && segment.control2) {
+        const control1Scene = toPathScenePoint(pathObj, segment.control1);
+        const control2Scene = toPathScenePoint(pathObj, segment.control2);
+        if (!control1Scene || !control2Scene) continue;
+        candidate = findClosestCurveSample(
+          scenePoint,
+          (t) => evaluateCubicPoint(startScene, control1Scene, control2Scene, endScene, t),
+        );
+      }
+
+      if (!candidate) continue;
+      if (candidate.distanceSq > hitRadiusSq) continue;
+      if (candidate.t <= 0.001 || candidate.t >= 0.999) continue;
+      if (
+        distanceSqBetweenPoints(candidate.point, startScene) <= endpointClearanceSq ||
+        distanceSqBetweenPoints(candidate.point, endScene) <= endpointClearanceSq
+      ) {
+        continue;
+      }
+      if (!bestCandidate || candidate.distanceSq < bestCandidate.distanceSq) {
+        bestCandidate = {
+          commandIndex: segment.commandIndex,
+          type: segment.type,
+          t: candidate.t,
+          scenePoint: candidate.point,
+          distanceSq: candidate.distanceSq,
+          start: segment.start,
+          end: segment.end,
+          control1: segment.control1,
+          control2: segment.control2,
+        };
+      }
+    }
+
+    if (!bestCandidate) return null;
+
+    const insertedCommandPoint = toPathCommandPoint(pathObj, bestCandidate.scenePoint);
+    if (!insertedCommandPoint) return null;
+
+    const nextCommands = commands.map((command) => (Array.isArray(command) ? [...command] : command));
+    const insertIndex = bestCandidate.commandIndex;
+    if (bestCandidate.type === 'L') {
+      nextCommands[insertIndex] = ['L', insertedCommandPoint.x, insertedCommandPoint.y];
+      nextCommands.splice(insertIndex + 1, 0, ['L', bestCandidate.end.x, bestCandidate.end.y]);
+    } else if (bestCandidate.type === 'Z') {
+      nextCommands.splice(insertIndex, 0, ['L', insertedCommandPoint.x, insertedCommandPoint.y]);
+    } else if (bestCandidate.type === 'Q' && bestCandidate.control1) {
+      const firstControl = lerpPoint(bestCandidate.start, bestCandidate.control1, bestCandidate.t);
+      const secondControl = lerpPoint(bestCandidate.control1, bestCandidate.end, bestCandidate.t);
+      const insertedPoint = lerpPoint(firstControl, secondControl, bestCandidate.t);
+      nextCommands[insertIndex] = ['Q', firstControl.x, firstControl.y, insertedPoint.x, insertedPoint.y];
+      nextCommands.splice(insertIndex + 1, 0, ['Q', secondControl.x, secondControl.y, bestCandidate.end.x, bestCandidate.end.y]);
+    } else if (bestCandidate.type === 'C' && bestCandidate.control1 && bestCandidate.control2) {
+      const p01 = lerpPoint(bestCandidate.start, bestCandidate.control1, bestCandidate.t);
+      const p12 = lerpPoint(bestCandidate.control1, bestCandidate.control2, bestCandidate.t);
+      const p23 = lerpPoint(bestCandidate.control2, bestCandidate.end, bestCandidate.t);
+      const p012 = lerpPoint(p01, p12, bestCandidate.t);
+      const p123 = lerpPoint(p12, p23, bestCandidate.t);
+      const insertedPoint = lerpPoint(p012, p123, bestCandidate.t);
+      nextCommands[insertIndex] = ['C', p01.x, p01.y, p012.x, p012.y, insertedPoint.x, insertedPoint.y];
+      nextCommands.splice(insertIndex + 1, 0, ['C', p123.x, p123.y, p23.x, p23.y, bestCandidate.end.x, bestCandidate.end.y]);
+    } else {
+      return null;
+    }
+
+    const centerPoint = typeof pathObj.getCenterPoint === 'function'
+      ? pathObj.getCenterPoint()
+      : null;
+    const nextHandleTypes = buildShiftedPathNodeHandleTypes(pathObj, insertIndex, 1);
+    nextHandleTypes[String(insertIndex)] = 'smooth';
+
+    pathObj.set?.({
+      path: nextCommands,
+      nodeHandleTypes: nextHandleTypes,
+    });
+    pathObj.setDimensions?.();
+    if (centerPoint && typeof pathObj.setPositionByOrigin === 'function') {
+      pathObj.setPositionByOrigin(centerPoint, 'center', 'center');
+    }
+    pathObj.set('dirty', true);
+    pathObj.setCoords?.();
+    activePathAnchorRef.current = { path: pathObj, anchorIndex: insertIndex };
+    return insertIndex;
+  }, [
+    buildShiftedPathNodeHandleTypes,
+    distanceSqBetweenPoints,
+    evaluateCubicPoint,
+    evaluateQuadraticPoint,
+    findClosestCurveSample,
+    findClosestPointOnLineSegment,
+    getPathCommands,
+    getPathSegments,
+    lerpPoint,
+    toPathCommandPoint,
+    toPathScenePoint,
+  ]);
 
   const stabilizePathAfterAnchorMutation = useCallback((pathObj: any, anchorPoint: Point) => {
     const anchorBefore = toParentPlanePoint(pathObj, anchorPoint);
@@ -1976,6 +2326,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               if (!existingType) {
                 setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
               }
+              syncVectorHandleTypeFromSelection();
             }
           }
           if (typeof originalMouseDownHandler === 'function') {
@@ -2031,6 +2382,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               setPathNodeHandleType(pathObj, resolved.anchorIndex, vectorHandleTypeRef.current);
             }
             activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
+            syncVectorHandleTypeFromSelection();
             enforcePathAnchorHandleType(pathObj, resolved.anchorIndex, resolved.changed, dragState);
           }
           return performed;
@@ -2078,6 +2430,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
     setPathNodeHandleType,
+    syncVectorHandleTypeFromSelection,
   ]);
 
   const activateVectorPointEditing = useCallback((target: any, saveConversionToHistory: boolean): boolean => {
@@ -2394,6 +2747,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         const pointEditingTarget = vectorPointEditingTargetRef.current;
         const clickedTarget = opt.target as any;
         const clickedPointEditingTarget = !!pointEditingTarget && clickedTarget === pointEditingTarget;
+        const clickedActivePathControl = clickedPointEditingTarget && typeof clickedTarget?.__corner === 'string' && clickedTarget.__corner.length > 0;
 
         if (pointEditingTarget && !clickedPointEditingTarget) {
           restoreAllOriginalControls();
@@ -2401,6 +2755,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           queueMicrotask(() => {
             configureCanvasForTool();
           });
+        }
+
+        if (
+          pointEditingTarget &&
+          clickedPointEditingTarget &&
+          !clickedActivePathControl &&
+          opt.e.detail === 1 &&
+          getFabricObjectType(pointEditingTarget) === 'path'
+        ) {
+          const insertedAnchorIndex = insertPathPointAtScenePosition(pointEditingTarget, pointer);
+          if (insertedAnchorIndex !== null) {
+            fabricCanvas.setActiveObject(pointEditingTarget);
+            applyVectorPointControls(pointEditingTarget);
+            applyVectorPointEditingAppearance(pointEditingTarget);
+            syncVectorHandleTypeFromSelection();
+            syncVectorStyleFromSelection();
+            syncSelectionState();
+            fabricCanvas.requestRenderAll();
+            saveHistory();
+            return;
+          }
         }
 
         if (opt.e.detail >= 2 && clickedTarget && isVectorPointSelectableObject(clickedTarget)) {
@@ -2717,7 +3092,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvasRef.current = null;
       vectorGuideCtxRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, loadBitmapLayer, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorStyleFromSelection]);
+  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, insertPathPointAtScenePosition, loadBitmapLayer, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleTypeFromSelection, syncVectorStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
