@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -19,6 +20,13 @@ import {
   endHistoryTransaction,
   runInHistoryTransaction,
 } from '@/store/universalHistory';
+
+type InspectorTab = 'object' | 'scene';
+
+const inspectorTabs: SegmentedControlOption<InspectorTab>[] = [
+  { value: 'object', label: 'Object' },
+  { value: 'scene', label: 'Scene' },
+];
 
 // Color swatch with popup picker
 interface ColorSwatchProps {
@@ -252,7 +260,7 @@ export function ObjectInspector() {
     openWorldBoundaryEditor,
     openCostumeColliderEditor,
   } = useEditorStore();
-  const [activeTab, setActiveTab] = useState<string>('object');
+  const [activeTab, setActiveTab] = useState<InspectorTab>('object');
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const selectedObjects = scene
@@ -270,13 +278,22 @@ export function ObjectInspector() {
     }
   }, [selectedFolderId, selectedObjectId, selectedObjectIds.length]);
 
+  const handleTabChange = useCallback((value: string) => {
+    setActiveTab(value === 'scene' ? 'scene' : 'object');
+  }, []);
+
   return (
     <div className="bg-card">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList variant="line" className="w-full justify-start px-4">
-          <TabsTrigger value="object">Object</TabsTrigger>
-          <TabsTrigger value="scene">Scene</TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <div className="border-b border-zinc-200/80 px-3 py-2 dark:border-white/10">
+          <SegmentedControl
+            ariaLabel="Inspector sections"
+            className="max-w-[220px]"
+            options={inspectorTabs}
+            value={activeTab}
+            onValueChange={setActiveTab}
+          />
+        </div>
 
         <TabsContent value="object" className="px-4 py-3 mt-0">
           {selectedFolderId ? (

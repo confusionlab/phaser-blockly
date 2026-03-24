@@ -107,7 +107,7 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'relative inline-grid w-full items-center rounded-[22px] border border-zinc-200/80 bg-zinc-100/95 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] dark:border-white/10 dark:bg-white/6',
+        'relative inline-grid w-full items-center rounded-[18px] border border-zinc-200/80 bg-zinc-100/95 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] dark:border-white/10 dark:bg-white/6',
         className,
       )}
       style={{
@@ -118,7 +118,7 @@ export function SegmentedControl<T extends string>({
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-1 left-1 rounded-[16px] bg-white shadow-[0_14px_30px_-22px_rgba(15,23,42,0.8),0_2px_8px_rgba(15,23,42,0.14)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-zinc-950 dark:shadow-[0_14px_30px_-22px_rgba(0,0,0,0.9),0_2px_8px_rgba(0,0,0,0.5)]"
+        className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-[13px] bg-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.75),0_2px_6px_rgba(15,23,42,0.12)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-zinc-950 dark:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.95),0_2px_6px_rgba(0,0,0,0.45)]"
         style={thumbStyle}
       />
 
@@ -138,7 +138,7 @@ export function SegmentedControl<T extends string>({
             data-state={isActive ? 'active' : 'inactive'}
             tabIndex={isActive ? 0 : -1}
             className={cn(
-              'relative z-10 flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-[16px] px-4 py-2.5 text-sm font-semibold tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
+              'relative z-10 flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-[13px] px-4 py-1 text-sm font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
               optionClassName,
             )}
             onClick={() => onValueChange(option.value)}

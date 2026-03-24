@@ -6,12 +6,12 @@ import { BlocklyEditor } from '../blockly/BlocklyEditor';
 import { CostumeEditor } from './CostumeEditor';
 import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
-import { Code } from 'lucide-react';
+import { Code, Palette, Volume2 } from 'lucide-react';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
-  { value: 'code', label: 'Code' },
-  { value: 'costumes', label: 'Costume' },
-  { value: 'sounds', label: 'Sound' },
+  { value: 'code', label: 'Code', icon: <Code className="size-3.5" /> },
+  { value: 'costumes', label: 'Costume', icon: <Palette className="size-3.5" /> },
+  { value: 'sounds', label: 'Sound', icon: <Volume2 className="size-3.5" /> },
 ];
 
 export function ObjectEditor() {
@@ -79,10 +79,10 @@ export function ObjectEditor() {
     <div className="flex flex-col h-full bg-card">
       <div className="flex h-full flex-col gap-0">
         {!emptyStateMessage ? (
-          <div className="border-b border-zinc-200/80 px-3 py-3 dark:border-white/10">
+          <div className="border-b border-zinc-200/80 px-3 py-2 dark:border-white/10">
             <SegmentedControl
               ariaLabel="Object editor sections"
-              className="max-w-[340px]"
+              className="max-w-[320px]"
               options={sectionOptions}
               value={activeObjectTab}
               onValueChange={setActiveObjectTab}
