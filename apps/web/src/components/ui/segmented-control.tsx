@@ -107,7 +107,7 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'relative inline-grid w-full items-center rounded-[12px] border border-zinc-200/80 bg-zinc-100/95 p-[2px] shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] dark:border-white/10 dark:bg-white/6',
+        'relative inline-grid w-full items-center rounded-[12px] bg-zinc-100 p-[2px] dark:bg-zinc-900',
         className,
       )}
       style={{
@@ -118,7 +118,7 @@ export function SegmentedControl<T extends string>({
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-[2px] left-[2px] rounded-[7px] bg-white shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-zinc-950 dark:shadow-[0_6px_14px_-14px_rgba(0,0,0,0.95),0_1px_3px_rgba(0,0,0,0.45)]"
+        className="pointer-events-none absolute inset-y-[2px] left-[2px] rounded-[10px] bg-white shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-zinc-950 dark:shadow-[0_6px_14px_-14px_rgba(0,0,0,0.95),0_1px_3px_rgba(0,0,0,0.45)]"
         style={thumbStyle}
       />
 
@@ -138,7 +138,7 @@ export function SegmentedControl<T extends string>({
             data-state={isActive ? 'active' : 'inactive'}
             tabIndex={isActive ? 0 : -1}
             className={cn(
-              'relative z-10 flex min-h-[23px] min-w-0 items-center justify-center gap-1 rounded-[7px] px-2 py-0 text-[12px] font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
+              'relative z-10 flex min-h-[23px] min-w-0 items-center justify-center gap-1 rounded-[10px] px-2 py-0 text-[12px] font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
               optionClassName,
             )}
             onClick={() => onValueChange(option.value)}
