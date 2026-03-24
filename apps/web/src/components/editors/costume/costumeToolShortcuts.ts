@@ -5,10 +5,13 @@ const UNIVERSAL_COSTUME_TOOL_SHORTCUTS: Record<string, DrawingTool> = {
   v: 'select',
   r: 'rectangle',
   c: 'circle',
+  g: 'triangle',
+  s: 'star',
   l: 'line',
 };
 
 const VECTOR_COSTUME_TOOL_SHORTCUTS: Record<string, DrawingTool> = {
+  p: 'pen',
   t: 'text',
 };
 

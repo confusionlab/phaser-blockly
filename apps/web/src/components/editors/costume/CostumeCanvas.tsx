@@ -6,6 +6,7 @@ import {
   Rect,
   Ellipse,
   Line,
+  Polygon,
   IText,
   ActiveSelection,
   FabricImage,
@@ -14,13 +15,14 @@ import {
   controlsUtils,
 } from 'fabric';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
-import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
+import { calculateBoundsFromCanvas, calculateBoundsFromImageData } from '@/utils/imageBounds';
 import {
   pathNodeHandleTypeToVectorHandleMode,
   vectorHandleModeToPathNodeHandleType,
 } from './CostumeToolbar';
 import type {
   AlignAction,
+  BitmapShapeStyle,
   DrawingTool,
   MoveOrderAction,
   TextToolStyle,
@@ -72,11 +74,71 @@ const VECTOR_POINT_SELECTION_HIT_PADDING = 6;
 const VECTOR_POINT_SELECTION_MIN_SIZE = 12;
 const VECTOR_POINT_INSERTION_HIT_RADIUS_PX = 8;
 const VECTOR_POINT_INSERTION_ENDPOINT_RADIUS_PX = 10;
+const VECTOR_POINT_MARQUEE_DRAG_THRESHOLD_PX = 4;
+const PEN_TOOL_CLOSE_HIT_RADIUS_PX = 10;
+const PEN_TOOL_DRAG_THRESHOLD_PX = 4;
 const OBJECT_SELECTION_CORNER_SIZE = 12;
 const OBJECT_SELECTION_PADDING = 2;
 
 function getZoomInvariantCanvasMetric(metric: number, zoom: number) {
   return metric / Math.max(zoom, 0.0001);
+}
+
+function getStrokedShapeBoundsFromPathBounds(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  strokeWidth: number,
+) {
+  const left = Math.min(startX, endX);
+  const top = Math.min(startY, endY);
+  const width = Math.abs(endX - startX);
+  const height = Math.abs(endY - startY);
+  const strokeInset = Math.max(0, strokeWidth) / 2;
+
+  return {
+    left: left - strokeInset,
+    top: top - strokeInset,
+    width,
+    height,
+  };
+}
+
+function buildTrianglePoints(width: number, height: number): Array<{ x: number; y: number }> {
+  return [
+    { x: width / 2, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+  ];
+}
+
+function buildStarPoints(
+  width: number,
+  height: number,
+  pointCount = 5,
+  innerRadiusScale = 0.5,
+): Array<{ x: number; y: number }> {
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const outerRadiusX = width / 2;
+  const outerRadiusY = height / 2;
+  const innerRadiusX = outerRadiusX * innerRadiusScale;
+  const innerRadiusY = outerRadiusY * innerRadiusScale;
+  const points: Array<{ x: number; y: number }> = [];
+
+  for (let index = 0; index < pointCount * 2; index += 1) {
+    const isOuterPoint = index % 2 === 0;
+    const radiusX = isOuterPoint ? outerRadiusX : innerRadiusX;
+    const radiusY = isOuterPoint ? outerRadiusY : innerRadiusY;
+    const angle = -Math.PI / 2 + (index * Math.PI) / pointCount;
+    points.push({
+      x: centerX + Math.cos(angle) * radiusX,
+      y: centerY + Math.sin(angle) * radiusY,
+    });
+  }
+
+  return points;
 }
 
 function getEditableVectorHandleMode(mode: VectorHandleMode): Exclude<VectorHandleMode, 'multiple'> {
@@ -99,9 +161,30 @@ function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
 class CompositePencilBrush extends PencilBrush {
   compositeOperation: GlobalCompositeOperation = 'source-over';
 
+  override needsFullRender() {
+    return this.compositeOperation === 'destination-out' || super.needsFullRender();
+  }
+
   override _setBrushStyles(ctx: CanvasRenderingContext2D) {
     super._setBrushStyles(ctx);
     ctx.globalCompositeOperation = this.compositeOperation;
+  }
+
+  override _render(ctx: CanvasRenderingContext2D = this.canvas.contextTop) {
+    if (this.compositeOperation === 'destination-out' && ctx === this.canvas.contextTop) {
+      const previewCtx = this.canvas.contextTop;
+      const sourceCanvas = (this.canvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl;
+
+      previewCtx.save();
+      previewCtx.setTransform(1, 0, 0, 1, 0, 0);
+      previewCtx.clearRect(0, 0, previewCtx.canvas.width, previewCtx.canvas.height);
+      if (sourceCanvas) {
+        previewCtx.drawImage(sourceCanvas, 0, 0);
+      }
+      previewCtx.restore();
+    }
+
+    super._render(ctx);
   }
 
   override createPath(pathData: any) {
@@ -124,6 +207,10 @@ const COSTUME_WORLD_RECT = {
   width: CANVAS_SIZE,
   height: CANVAS_SIZE,
 } as const;
+
+function cloneScenePoint(point: Point | null): Point | null {
+  return point ? new Point(point.x, point.y) : null;
+}
 
 type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
@@ -187,6 +274,105 @@ interface PointSelectionTransformSession {
   hasChanged: boolean;
 }
 
+interface PointSelectionMarqueeSession {
+  path: any;
+  startPointerScene: Point;
+  currentPointerScene: Point;
+  initialSelectedAnchorIndices: number[];
+  toggleSelection: boolean;
+}
+
+interface PenDraftAnchor {
+  point: Point;
+  incoming: Point | null;
+  outgoing: Point | null;
+  handleType: VectorPathNodeHandleType;
+}
+
+interface PenDraftState {
+  anchors: PenDraftAnchor[];
+  previewPoint: Point | null;
+}
+
+type PenHandleRole = 'incoming' | 'outgoing';
+
+interface PenAnchorPlacementSession {
+  anchorIndex: number;
+  handleRole: PenHandleRole;
+  startPointerScene: Point;
+  currentPointerScene: Point;
+  hasDragged: boolean;
+  moveAnchorMode: boolean;
+  moveAnchorStartPointerScene: Point | null;
+  moveAnchorSnapshot: PenDraftAnchor | null;
+  cuspMode: boolean;
+  cuspFixedOpposite: Point | null;
+}
+
+function clonePenDraftAnchor(anchor: PenDraftAnchor): PenDraftAnchor {
+  return {
+    point: new Point(anchor.point.x, anchor.point.y),
+    incoming: cloneScenePoint(anchor.incoming),
+    outgoing: cloneScenePoint(anchor.outgoing),
+    handleType: anchor.handleType,
+  };
+}
+
+function createPenDraftAnchor(point: Point): PenDraftAnchor {
+  return {
+    point: new Point(point.x, point.y),
+    incoming: null,
+    outgoing: null,
+    handleType: 'linear',
+  };
+}
+
+function buildPenDraftPathData(
+  anchors: PenDraftAnchor[],
+  closed: boolean,
+): string {
+  if (anchors.length === 0) return '';
+
+  const round = (value: number) => Math.round(value * 1000) / 1000;
+  const commands: string[] = [`M ${round(anchors[0].point.x)} ${round(anchors[0].point.y)}`];
+
+  const appendSegment = (fromAnchor: PenDraftAnchor, toAnchor: PenDraftAnchor) => {
+    const control1 = fromAnchor.outgoing;
+    const control2 = toAnchor.incoming;
+    if (!control1 && !control2) {
+      commands.push(`L ${round(toAnchor.point.x)} ${round(toAnchor.point.y)}`);
+      return;
+    }
+
+    const resolvedControl1 = control1 ?? fromAnchor.point;
+    const resolvedControl2 = control2 ?? toAnchor.point;
+    commands.push(
+      `C ${round(resolvedControl1.x)} ${round(resolvedControl1.y)} ${round(resolvedControl2.x)} ${round(resolvedControl2.y)} ${round(toAnchor.point.x)} ${round(toAnchor.point.y)}`,
+    );
+  };
+
+  for (let index = 1; index < anchors.length; index += 1) {
+    appendSegment(anchors[index - 1], anchors[index]);
+  }
+
+  if (closed && anchors.length > 1) {
+    appendSegment(anchors[anchors.length - 1], anchors[0]);
+    commands.push('Z');
+  }
+
+  return commands.join(' ');
+}
+
+function buildPenDraftNodeHandleTypes(
+  anchors: PenDraftAnchor[],
+): Record<string, VectorPathNodeHandleType> {
+  const next: Record<string, VectorPathNodeHandleType> = {};
+  anchors.forEach((anchor, index) => {
+    next[String(index)] = anchor.handleType;
+  });
+  return next;
+}
+
 export interface CostumeCanvasExportState {
   dataUrl: string;
   bounds: CostumeBounds | null;
@@ -222,6 +408,7 @@ interface CostumeCanvasProps {
   activeTool: DrawingTool;
   brushColor: string;
   brushSize: number;
+  bitmapShapeStyle: BitmapShapeStyle;
   vectorHandleMode: VectorHandleMode;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
@@ -271,11 +458,8 @@ function getSelectedObjects(obj: unknown): any[] {
   return [obj];
 }
 
-type PathLikeVectorType = 'path' | 'polyline' | 'polygon';
-
-function isPathLikeVectorObject(obj: unknown): obj is { type: PathLikeVectorType } {
-  const type = getFabricObjectType(obj);
-  return type === 'path' || type === 'polyline' || type === 'polygon';
+function isDirectlyEditablePathObject(obj: unknown): obj is { type: 'path' } {
+  return getFabricObjectType(obj) === 'path';
 }
 
 function getVectorStyleTargets(obj: unknown): any[] {
@@ -410,6 +594,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   activeTool,
   brushColor,
   brushSize,
+  bitmapShapeStyle,
   vectorHandleMode,
   textStyle,
   vectorStyle,
@@ -472,6 +657,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
 
+  const bitmapShapeStyleRef = useRef(bitmapShapeStyle);
+  bitmapShapeStyleRef.current = bitmapShapeStyle;
+
   const vectorHandleModeRef = useRef<VectorHandleMode>(vectorHandleMode);
   vectorHandleModeRef.current = vectorHandleMode;
   const pendingSelectionSyncedVectorHandleModeRef = useRef<VectorHandleMode | null>(null);
@@ -523,7 +711,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const hasUnsavedChangesRef = useRef(false);
 
   const shapeDraftRef = useRef<{
-    type: 'rectangle' | 'circle' | 'line';
+    type: 'rectangle' | 'circle' | 'triangle' | 'star' | 'line';
     startX: number;
     startY: number;
     object: any;
@@ -537,6 +725,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const bitmapMarqueeRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const bitmapSelectionDragModeRef = useRef<'none' | 'marquee'>('none');
   const bitmapSelectionBusyRef = useRef(false);
+  const suppressBitmapSelectionAutoCommitRef = useRef(false);
   const loadRequestIdRef = useRef(0);
   const loadedSessionKeyRef = useRef<string | null>(null);
   const originalControlsRef = useRef<WeakMap<object, Record<string, Control> | undefined>>(new WeakMap());
@@ -551,6 +740,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     dragState: PathAnchorDragState;
   } | null>(null);
   const pointSelectionTransformSessionRef = useRef<PointSelectionTransformSession | null>(null);
+  const pointSelectionMarqueeSessionRef = useRef<PointSelectionMarqueeSession | null>(null);
+  const penDraftRef = useRef<PenDraftState | null>(null);
+  const penAnchorPlacementSessionRef = useRef<PenAnchorPlacementSession | null>(null);
+  const penModifierStateRef = useRef({
+    alt: false,
+    space: false,
+  });
 
   const setVectorPointEditingTarget = useCallback((nextTarget: any | null) => {
     if (vectorPointEditingTargetRef.current === nextTarget) {
@@ -562,6 +758,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     selectedPathAnchorIndicesRef.current = [];
     insertedPathAnchorDragSessionRef.current = null;
     pointSelectionTransformSessionRef.current = null;
+    pointSelectionMarqueeSessionRef.current = null;
     pendingSelectionSyncedVectorHandleModeRef.current = null;
     onVectorPointSelectionChangeRef.current?.(false);
     onVectorPointEditingChangeRef.current?.(!!nextTarget);
@@ -834,6 +1031,412 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     updateDirtyStateFromSnapshot(snapshot);
     onHistoryChangeRef.current?.();
   }, [createSnapshot, updateDirtyStateFromSnapshot]);
+
+  const mirrorPointAcrossAnchor = useCallback((anchor: Point, handlePoint: Point) => (
+    new Point(
+      anchor.x * 2 - handlePoint.x,
+      anchor.y * 2 - handlePoint.y,
+    )
+  ), []);
+
+  const translateScenePoint = useCallback((point: Point | null, deltaX: number, deltaY: number) => {
+    if (!point) return null;
+    return new Point(point.x + deltaX, point.y + deltaY);
+  }, []);
+
+  const resolvePenDraftAnchorHandleType = useCallback((anchor: PenDraftAnchor): VectorPathNodeHandleType => {
+    const hasIncoming = !!anchor.incoming;
+    const hasOutgoing = !!anchor.outgoing;
+    if (!hasIncoming && !hasOutgoing) {
+      return 'linear';
+    }
+    if (!hasIncoming || !hasOutgoing) {
+      return 'corner';
+    }
+
+    const incoming = anchor.incoming!;
+    const outgoing = anchor.outgoing!;
+    const mirrored = (
+      Math.abs(incoming.x + outgoing.x - anchor.point.x * 2) <= 0.0001 &&
+      Math.abs(incoming.y + outgoing.y - anchor.point.y * 2) <= 0.0001
+    );
+    return mirrored ? 'symmetric' : 'corner';
+  }, []);
+
+  const commitCurrentPenPlacement = useCallback(() => {
+    const draft = penDraftRef.current;
+    const session = penAnchorPlacementSessionRef.current;
+    if (!draft || !session) return false;
+    const anchor = draft.anchors[session.anchorIndex];
+    if (!anchor) {
+      penAnchorPlacementSessionRef.current = null;
+      return false;
+    }
+
+    if (!session.hasDragged) {
+      anchor.incoming = null;
+      anchor.outgoing = null;
+      anchor.handleType = 'linear';
+    } else {
+      anchor.handleType = resolvePenDraftAnchorHandleType(anchor);
+    }
+
+    draft.previewPoint = cloneScenePoint(session.currentPointerScene);
+    penAnchorPlacementSessionRef.current = null;
+    return true;
+  }, [resolvePenDraftAnchorHandleType]);
+
+  const updatePenAnchorPlacement = useCallback((pointer: Point) => {
+    const draft = penDraftRef.current;
+    const session = penAnchorPlacementSessionRef.current;
+    if (!draft || !session) return false;
+
+    const anchor = draft.anchors[session.anchorIndex];
+    if (!anchor) return false;
+
+    const nextPointer = new Point(pointer.x, pointer.y);
+    session.currentPointerScene = nextPointer;
+
+    const dragThreshold = getZoomInvariantMetric(PEN_TOOL_DRAG_THRESHOLD_PX);
+    if (
+      Math.hypot(
+        nextPointer.x - session.startPointerScene.x,
+        nextPointer.y - session.startPointerScene.y,
+      ) >= dragThreshold
+    ) {
+      session.hasDragged = true;
+    }
+
+    if (session.moveAnchorMode && session.moveAnchorSnapshot && session.moveAnchorStartPointerScene) {
+      const deltaX = nextPointer.x - session.moveAnchorStartPointerScene.x;
+      const deltaY = nextPointer.y - session.moveAnchorStartPointerScene.y;
+      anchor.point = new Point(
+        session.moveAnchorSnapshot.point.x + deltaX,
+        session.moveAnchorSnapshot.point.y + deltaY,
+      );
+      anchor.incoming = translateScenePoint(session.moveAnchorSnapshot.incoming, deltaX, deltaY);
+      anchor.outgoing = translateScenePoint(session.moveAnchorSnapshot.outgoing, deltaX, deltaY);
+      anchor.handleType = resolvePenDraftAnchorHandleType(anchor);
+      return true;
+    }
+
+    if (session.handleRole === 'incoming') {
+      anchor.incoming = nextPointer;
+      anchor.outgoing = session.cuspMode
+        ? cloneScenePoint(session.cuspFixedOpposite)
+        : mirrorPointAcrossAnchor(anchor.point, nextPointer);
+    } else {
+      anchor.outgoing = nextPointer;
+      anchor.incoming = session.cuspMode
+        ? cloneScenePoint(session.cuspFixedOpposite)
+        : mirrorPointAcrossAnchor(anchor.point, nextPointer);
+    }
+    anchor.handleType = session.cuspMode ? 'corner' : 'symmetric';
+    draft.previewPoint = nextPointer;
+    return true;
+  }, [getZoomInvariantMetric, mirrorPointAcrossAnchor, resolvePenDraftAnchorHandleType, translateScenePoint]);
+
+  const setPenAnchorMoveMode = useCallback((enabled: boolean) => {
+    const draft = penDraftRef.current;
+    const session = penAnchorPlacementSessionRef.current;
+    if (!draft || !session) return false;
+    if (enabled === session.moveAnchorMode) return false;
+
+    if (enabled) {
+      const anchor = draft.anchors[session.anchorIndex];
+      if (!anchor) return false;
+      session.moveAnchorMode = true;
+      session.moveAnchorStartPointerScene = cloneScenePoint(session.currentPointerScene);
+      session.moveAnchorSnapshot = clonePenDraftAnchor(anchor);
+      return true;
+    }
+
+    session.moveAnchorMode = false;
+    session.moveAnchorStartPointerScene = null;
+    session.moveAnchorSnapshot = null;
+    return true;
+  }, []);
+
+  const setPenAnchorCuspMode = useCallback((enabled: boolean) => {
+    const draft = penDraftRef.current;
+    const session = penAnchorPlacementSessionRef.current;
+    if (!draft || !session) return false;
+    if (enabled === session.cuspMode) return false;
+
+    const anchor = draft.anchors[session.anchorIndex];
+    if (!anchor) return false;
+
+    session.cuspMode = enabled;
+    if (enabled) {
+      session.cuspFixedOpposite = cloneScenePoint(
+        session.handleRole === 'incoming' ? anchor.outgoing : anchor.incoming,
+      );
+    } else {
+      session.cuspFixedOpposite = null;
+    }
+
+    if (!session.moveAnchorMode) {
+      updatePenAnchorPlacement(session.currentPointerScene);
+    }
+    return true;
+  }, [updatePenAnchorPlacement]);
+
+  const discardPenDraft = useCallback(() => {
+    penDraftRef.current = null;
+    penAnchorPlacementSessionRef.current = null;
+    penModifierStateRef.current.alt = false;
+    penModifierStateRef.current.space = false;
+    fabricCanvasRef.current?.requestRenderAll();
+    syncSelectionState();
+  }, [syncSelectionState]);
+
+  const finalizePenDraft = useCallback((options: { close?: boolean } = {}): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    const draft = penDraftRef.current;
+    if (!fabricCanvas || !draft) return false;
+
+    commitCurrentPenPlacement();
+
+    if (draft.anchors.length < 2) {
+      discardPenDraft();
+      return false;
+    }
+
+    const shouldClose = options.close === true;
+    const pathData = buildPenDraftPathData(draft.anchors, shouldClose);
+    if (!pathData) {
+      discardPenDraft();
+      return false;
+    }
+
+    const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
+    const path = new Path(pathData, {
+      fill: shouldClose ? vectorStyleRef.current.fillColor : null,
+      stroke: vectorStyleRef.current.strokeColor,
+      strokeWidth,
+      strokeUniform: true,
+      noScaleCache: false,
+      strokeLineCap: 'round',
+      strokeLineJoin: 'round',
+      selectable: true,
+      evented: true,
+      hasControls: true,
+      hasBorders: true,
+      nodeHandleTypes: buildPenDraftNodeHandleTypes(draft.anchors),
+    } as any);
+
+    path.setCoords?.();
+    fabricCanvas.add(path);
+    if (activeToolRef.current === 'pen') {
+      fabricCanvas.discardActiveObject();
+    } else {
+      fabricCanvas.setActiveObject(path);
+    }
+
+    penDraftRef.current = null;
+    penAnchorPlacementSessionRef.current = null;
+    penModifierStateRef.current.alt = false;
+    penModifierStateRef.current.space = false;
+    fabricCanvas.requestRenderAll();
+    syncSelectionState();
+    saveHistory();
+    return true;
+  }, [commitCurrentPenPlacement, discardPenDraft, saveHistory, syncSelectionState]);
+
+  const removeLastPenDraftAnchor = useCallback(() => {
+    const draft = penDraftRef.current;
+    if (!draft) return false;
+
+    penAnchorPlacementSessionRef.current = null;
+    draft.anchors.pop();
+    if (draft.anchors.length === 0) {
+      discardPenDraft();
+      return true;
+    }
+
+    draft.previewPoint = cloneScenePoint(draft.anchors[draft.anchors.length - 1]?.point ?? null);
+    fabricCanvasRef.current?.requestRenderAll();
+    return true;
+  }, [discardPenDraft]);
+
+  const startPenAnchorPlacement = useCallback((pointer: Point, options: { cuspMode?: boolean } = {}) => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
+    let draft = penDraftRef.current;
+    if (!draft) {
+      draft = {
+        anchors: [],
+        previewPoint: null,
+      };
+      penDraftRef.current = draft;
+    }
+
+    if (draft.anchors.length >= 2) {
+      const firstAnchor = draft.anchors[0]?.point ?? null;
+      const closeRadius = getZoomInvariantMetric(PEN_TOOL_CLOSE_HIT_RADIUS_PX);
+      if (
+        firstAnchor &&
+        Math.hypot(pointer.x - firstAnchor.x, pointer.y - firstAnchor.y) <= closeRadius
+      ) {
+        return finalizePenDraft({ close: true });
+      }
+    }
+
+    const anchor = createPenDraftAnchor(pointer);
+    const anchorIndex = draft.anchors.length;
+    draft.anchors.push(anchor);
+    draft.previewPoint = cloneScenePoint(pointer);
+    penAnchorPlacementSessionRef.current = {
+      anchorIndex,
+      handleRole: anchorIndex === 0 ? 'outgoing' : 'incoming',
+      startPointerScene: cloneScenePoint(pointer) ?? new Point(pointer.x, pointer.y),
+      currentPointerScene: cloneScenePoint(pointer) ?? new Point(pointer.x, pointer.y),
+      hasDragged: false,
+      moveAnchorMode: false,
+      moveAnchorStartPointerScene: null,
+      moveAnchorSnapshot: null,
+      cuspMode: options.cuspMode === true,
+      cuspFixedOpposite: null,
+    };
+    fabricCanvas.discardActiveObject();
+    fabricCanvas.requestRenderAll();
+    syncSelectionState();
+    return true;
+  }, [finalizePenDraft, getZoomInvariantMetric, syncSelectionState]);
+
+  const renderPenDraftGuide = useCallback((ctx: CanvasRenderingContext2D) => {
+    const draft = penDraftRef.current;
+    if (!draft || draft.anchors.length === 0) return false;
+
+    const activeAnchorIndex = penAnchorPlacementSessionRef.current?.anchorIndex ?? (draft.anchors.length - 1);
+    const previewPoint = penAnchorPlacementSessionRef.current ? null : draft.previewPoint;
+    const previewStrokeWidth = Math.max(1, vectorStyleRef.current.strokeWidth);
+
+    ctx.save();
+    try {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.moveTo(draft.anchors[0].point.x, draft.anchors[0].point.y);
+      for (let index = 1; index < draft.anchors.length; index += 1) {
+        const previousAnchor = draft.anchors[index - 1];
+        const currentAnchor = draft.anchors[index];
+        if (previousAnchor.outgoing || currentAnchor.incoming) {
+          const control1 = previousAnchor.outgoing ?? previousAnchor.point;
+          const control2 = currentAnchor.incoming ?? currentAnchor.point;
+          ctx.bezierCurveTo(
+            control1.x,
+            control1.y,
+            control2.x,
+            control2.y,
+            currentAnchor.point.x,
+            currentAnchor.point.y,
+          );
+        } else {
+          ctx.lineTo(currentAnchor.point.x, currentAnchor.point.y);
+        }
+      }
+      if (previewPoint && draft.anchors.length > 0) {
+        const lastAnchor = draft.anchors[draft.anchors.length - 1];
+        if (lastAnchor.outgoing) {
+          ctx.bezierCurveTo(
+            lastAnchor.outgoing.x,
+            lastAnchor.outgoing.y,
+            previewPoint.x,
+            previewPoint.y,
+            previewPoint.x,
+            previewPoint.y,
+          );
+        } else {
+          ctx.lineTo(previewPoint.x, previewPoint.y);
+        }
+      }
+      ctx.strokeStyle = vectorStyleRef.current.strokeColor;
+      ctx.lineWidth = previewStrokeWidth;
+      ctx.stroke();
+
+      ctx.strokeStyle = VECTOR_POINT_HANDLE_GUIDE_STROKE;
+      ctx.lineWidth = getZoomInvariantMetric(VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH);
+      draft.anchors.forEach((anchor) => {
+        if (anchor.incoming) {
+          ctx.beginPath();
+          ctx.moveTo(anchor.point.x, anchor.point.y);
+          ctx.lineTo(anchor.incoming.x, anchor.incoming.y);
+          ctx.stroke();
+        }
+        if (anchor.outgoing) {
+          ctx.beginPath();
+          ctx.moveTo(anchor.point.x, anchor.point.y);
+          ctx.lineTo(anchor.outgoing.x, anchor.outgoing.y);
+          ctx.stroke();
+        }
+      });
+
+      const handleRadius = getZoomInvariantMetric(HANDLE_SIZE * 0.42);
+      draft.anchors.forEach((anchor, anchorIndex) => {
+        const isActive = anchorIndex === activeAnchorIndex;
+        const drawHandle = (handlePoint: Point | null) => {
+          if (!handlePoint) return;
+          ctx.beginPath();
+          ctx.arc(handlePoint.x, handlePoint.y, handleRadius, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+          ctx.lineWidth = getZoomInvariantMetric(2);
+          ctx.strokeStyle = '#0ea5e9';
+          ctx.stroke();
+        };
+
+        drawHandle(anchor.incoming);
+        drawHandle(anchor.outgoing);
+
+        ctx.beginPath();
+        ctx.arc(anchor.point.x, anchor.point.y, getZoomInvariantMetric(HANDLE_SIZE / 2), 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? '#0ea5e9' : '#ffffff';
+        ctx.fill();
+        ctx.lineWidth = getZoomInvariantMetric(2);
+        ctx.strokeStyle = isActive ? '#ffffff' : '#0ea5e9';
+        ctx.stroke();
+      });
+    } finally {
+      ctx.restore();
+    }
+
+    return true;
+  }, [getZoomInvariantMetric]);
+
+  const deleteBitmapFloatingSelection = useCallback((): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    const floatingObject = bitmapFloatingObjectRef.current;
+    if (!fabricCanvas || !floatingObject) return false;
+    if (editorModeRef.current !== 'bitmap' || activeToolRef.current !== 'select') return false;
+    if (bitmapSelectionBusyRef.current) return false;
+
+    suppressBitmapSelectionAutoCommitRef.current = true;
+    try {
+      if (fabricCanvas.getActiveObject() === floatingObject) {
+        fabricCanvas.discardActiveObject();
+      }
+
+      fabricCanvas.remove(floatingObject);
+      bitmapFloatingObjectRef.current = null;
+      setHasBitmapFloatingSelection(false);
+      bitmapSelectionStartRef.current = null;
+      bitmapMarqueeRectRef.current = null;
+      bitmapSelectionDragModeRef.current = 'none';
+      drawBitmapSelectionOverlay();
+      fabricCanvas.requestRenderAll();
+      syncSelectionState();
+      saveHistory();
+      return true;
+    } finally {
+      queueMicrotask(() => {
+        suppressBitmapSelectionAutoCommitRef.current = false;
+      });
+    }
+  }, [drawBitmapSelectionOverlay, saveHistory, syncSelectionState]);
 
   const syncTextStyleFromSelection = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1161,12 +1764,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const deleteSelection = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return false;
+    if (editorModeRef.current === 'bitmap') {
+      return deleteBitmapFloatingSelection();
+    }
     if (editorModeRef.current !== 'vector') return false;
     const deleted = deleteActiveCanvasSelection(fabricCanvas);
     if (!deleted) return false;
     saveHistory();
     return true;
-  }, [saveHistory]);
+  }, [deleteBitmapFloatingSelection, saveHistory]);
 
   const cloneFabricObject = useCallback(async (obj: any) => {
     if (!obj || typeof obj.clone !== 'function') {
@@ -1607,6 +2213,47 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     ).sort((a, b) => a - b);
   }, [normalizeAnchorIndex]);
 
+  const getSelectablePathAnchorIndices = useCallback((pathObj: any): number[] => {
+    if (!pathObj || getFabricObjectType(pathObj) !== 'path') return [];
+
+    const commands = getPathCommands(pathObj);
+    const seen = new Set<number>();
+    const anchorIndices: number[] = [];
+    commands.forEach((command, commandIndex) => {
+      if (getCommandType(command) === 'Z') return;
+      if (!getCommandEndpoint(command)) return;
+      const normalizedAnchorIndex = normalizeAnchorIndex(pathObj, commandIndex);
+      if (seen.has(normalizedAnchorIndex)) return;
+      seen.add(normalizedAnchorIndex);
+      anchorIndices.push(normalizedAnchorIndex);
+    });
+
+    return anchorIndices.sort((a, b) => a - b);
+  }, [getCommandEndpoint, getCommandType, getPathCommands, normalizeAnchorIndex]);
+
+  const getSceneRectFromPoints = useCallback((startPoint: Point, endPoint: Point) => {
+    const left = Math.min(startPoint.x, endPoint.x);
+    const top = Math.min(startPoint.y, endPoint.y);
+    const right = Math.max(startPoint.x, endPoint.x);
+    const bottom = Math.max(startPoint.y, endPoint.y);
+    return {
+      left,
+      top,
+      right,
+      bottom,
+      width: right - left,
+      height: bottom - top,
+    };
+  }, []);
+
+  const hasPointSelectionMarqueeExceededThreshold = useCallback((session: PointSelectionMarqueeSession) => {
+    const threshold = getZoomInvariantMetric(VECTOR_POINT_MARQUEE_DRAG_THRESHOLD_PX);
+    return Math.hypot(
+      session.currentPointerScene.x - session.startPointerScene.x,
+      session.currentPointerScene.y - session.startPointerScene.y,
+    ) >= threshold;
+  }, [getZoomInvariantMetric]);
+
   const syncVectorHandleModeFromSelection = useCallback(() => {
     const activeAnchor = activePathAnchorRef.current;
     if (!activeAnchor || getFabricObjectType(activeAnchor.path) !== 'path') return;
@@ -1641,7 +2288,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       let visible = true;
       if (isControlPoint) {
         const handleType = getPathNodeHandleType(pathObj, resolved.anchorIndex) ?? 'linear';
-        const isCurvedHandleType = handleType === 'smooth' || handleType === 'symmetric';
+        const isCurvedHandleType = handleType === 'smooth' || handleType === 'symmetric' || handleType === 'corner';
         const commandIndex = resolved.changed === 'incoming'
           ? findIncomingCubicCommandIndex(pathObj, resolved.anchorIndex)
           : findOutgoingCubicCommandIndex(pathObj, resolved.anchorIndex);
@@ -2681,6 +3328,61 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     transformPointSelectionScenePoint,
   ]);
 
+  const applyPointSelectionMarqueeSession = useCallback((session: PointSelectionMarqueeSession) => {
+    const { path } = session;
+    if (!path || getFabricObjectType(path) !== 'path') return false;
+
+    if (!hasPointSelectionMarqueeExceededThreshold(session)) {
+      if (!session.toggleSelection && session.initialSelectedAnchorIndices.length > 0) {
+        clearSelectedPathAnchors(path);
+        return true;
+      }
+      return false;
+    }
+
+    const marqueeBounds = getSceneRectFromPoints(session.startPointerScene, session.currentPointerScene);
+    const hitAnchorIndices = getSelectablePathAnchorIndices(path).filter((anchorIndex) => {
+      const anchorPoint = getAnchorPointForIndex(path, anchorIndex);
+      const anchorScenePoint = anchorPoint ? toPathScenePoint(path, anchorPoint) : null;
+      if (!anchorScenePoint) return false;
+      return (
+        anchorScenePoint.x >= marqueeBounds.left &&
+        anchorScenePoint.x <= marqueeBounds.right &&
+        anchorScenePoint.y >= marqueeBounds.top &&
+        anchorScenePoint.y <= marqueeBounds.bottom
+      );
+    });
+
+    let nextSelectedAnchorIndices = hitAnchorIndices;
+    if (session.toggleSelection) {
+      const nextSelectedAnchorSet = new Set(session.initialSelectedAnchorIndices);
+      hitAnchorIndices.forEach((anchorIndex) => {
+        if (nextSelectedAnchorSet.has(anchorIndex)) {
+          nextSelectedAnchorSet.delete(anchorIndex);
+        } else {
+          nextSelectedAnchorSet.add(anchorIndex);
+        }
+      });
+      nextSelectedAnchorIndices = Array.from(nextSelectedAnchorSet).sort((a, b) => a - b);
+    }
+
+    const primaryAnchorIndex = nextSelectedAnchorIndices.length > 0
+      ? nextSelectedAnchorIndices[nextSelectedAnchorIndices.length - 1]
+      : null;
+    setSelectedPathAnchors(path, nextSelectedAnchorIndices, {
+      primaryAnchorIndex,
+    });
+    return true;
+  }, [
+    clearSelectedPathAnchors,
+    getAnchorPointForIndex,
+    getSceneRectFromPoints,
+    getSelectablePathAnchorIndices,
+    hasPointSelectionMarqueeExceededThreshold,
+    setSelectedPathAnchors,
+    toPathScenePoint,
+  ]);
+
   const createFourPointEllipsePathData = useCallback((obj: any): string | null => {
     const rx = Math.max(1, typeof obj.rx === 'number' ? obj.rx : ((obj.width || 1) / 2));
     const ry = Math.max(1, typeof obj.ry === 'number' ? obj.ry : ((obj.height || 1) / 2));
@@ -2734,6 +3436,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       };
     }
 
+    if ((type === 'polygon' || type === 'polyline') && Array.isArray(obj.points)) {
+      const pathOffset = obj.pathOffset ?? { x: 0, y: 0 };
+      return {
+        points: obj.points.map((point: { x: number; y: number }) => (
+          toCanvasPoint(obj, point.x - pathOffset.x, point.y - pathOffset.y)
+        )),
+        closed: type === 'polygon',
+      };
+    }
+
     if (typeof obj.getCoords === 'function') {
       const coords = obj.getCoords() as Array<{ x: number; y: number }> | undefined;
       if (Array.isArray(coords) && coords.length >= 2) {
@@ -2749,7 +3461,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const convertObjectToVectorPath = useCallback((obj: any): any | null => {
     if (!obj || !isVectorPointSelectableObject(obj)) return null;
-    if (isPathLikeVectorObject(obj)) return obj;
+    if (isDirectlyEditablePathObject(obj)) return obj;
 
     const type = getFabricObjectType(obj);
     let pathData = '';
@@ -2808,7 +3520,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const ensurePathLikeObjectForVectorTool = useCallback((obj: any): any | null => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || !obj || !isVectorPointSelectableObject(obj)) return null;
-    if (isPathLikeVectorObject(obj)) return obj;
+    if (isDirectlyEditablePathObject(obj)) return obj;
 
     const converted = convertObjectToVectorPath(obj);
     if (!converted) return null;
@@ -2949,7 +3661,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
       for (const anchorIndex of selectedAnchors) {
         const handleType = getPathNodeHandleType(target, anchorIndex) ?? 'linear';
-        const isCurvedHandleType = handleType === 'smooth' || handleType === 'symmetric';
+        const isCurvedHandleType = handleType === 'smooth' || handleType === 'symmetric' || handleType === 'corner';
         if (!isCurvedHandleType) continue;
 
         const anchorPoint = getAnchorPointForIndex(target, anchorIndex);
@@ -2997,6 +3709,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   ]);
 
   const renderPointSelectionTransformGuides = useCallback((ctx: CanvasRenderingContext2D, target: any) => {
+    if (pointSelectionMarqueeSessionRef.current) return;
     const snapshot = getSelectedPathAnchorTransformSnapshot(target);
     if (!snapshot) return;
 
@@ -3053,6 +3766,40 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getZoomInvariantMetric,
   ]);
 
+  const renderPointSelectionMarquee = useCallback((ctx: CanvasRenderingContext2D) => {
+    const session = pointSelectionMarqueeSessionRef.current;
+    if (!session) return;
+    if (!hasPointSelectionMarqueeExceededThreshold(session)) return;
+
+    const marqueeBounds = getSceneRectFromPoints(session.startPointerScene, session.currentPointerScene);
+
+    ctx.save();
+    try {
+      ctx.fillStyle = 'rgba(0, 94, 255, 0.08)';
+      ctx.strokeStyle = VECTOR_SELECTION_COLOR;
+      ctx.lineWidth = getZoomInvariantMetric(2);
+      ctx.setLineDash([
+        getZoomInvariantMetric(6),
+        getZoomInvariantMetric(4),
+      ]);
+      ctx.fillRect(
+        marqueeBounds.left,
+        marqueeBounds.top,
+        marqueeBounds.width,
+        marqueeBounds.height,
+      );
+      ctx.strokeRect(
+        marqueeBounds.left,
+        marqueeBounds.top,
+        marqueeBounds.width,
+        marqueeBounds.height,
+      );
+      ctx.setLineDash([]);
+    } finally {
+      ctx.restore();
+    }
+  }, [getSceneRectFromPoints, getZoomInvariantMetric, hasPointSelectionMarqueeExceededThreshold]);
+
   const renderVectorPointEditingGuide = useCallback(() => {
     const ctx = vectorGuideCtxRef.current;
     const fabricCanvas = fabricCanvasRef.current;
@@ -3060,7 +3807,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!fabricCanvas || !ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'select') return;
+    if (editorModeRef.current !== 'vector') return;
+    if (activeToolRef.current === 'pen') {
+      renderPenDraftGuide(ctx);
+      return;
+    }
+    if (activeToolRef.current !== 'select') return;
     if (!target || !fabricCanvas.getObjects().includes(target)) return;
 
     ctx.save();
@@ -3077,11 +3829,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
       renderVectorPointHandleGuides(ctx, target);
       renderPointSelectionTransformGuides(ctx, target);
+      renderPointSelectionMarquee(ctx);
     } finally {
       ctx.restore();
     }
 
-  }, [getZoomInvariantMetric, renderPointSelectionTransformGuides, renderVectorPointHandleGuides, traceVectorPointEditingGuidePath]);
+  }, [getZoomInvariantMetric, renderPenDraftGuide, renderPointSelectionMarquee, renderPointSelectionTransformGuides, renderVectorPointHandleGuides, traceVectorPointEditingGuidePath]);
 
   const applyVectorPointControls = useCallback((obj: any): boolean => {
     if (!obj || typeof obj !== 'object') return false;
@@ -3302,7 +4055,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       return false;
     }
 
-    if (!isPathLikeVectorObject(activeObject)) {
+    if (!isDirectlyEditablePathObject(activeObject)) {
       const converted = ensurePathLikeObjectForVectorTool(activeObject);
       if (!converted) {
         fabricCanvas.discardActiveObject();
@@ -3460,7 +4213,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     let cursor = 'default';
     if (mode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
       cursor = 'none';
-    } else if (tool === 'fill' || tool === 'line' || tool === 'circle' || tool === 'rectangle') {
+    } else if (tool === 'fill' || tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'triangle' || tool === 'star' || tool === 'pen') {
       cursor = 'crosshair';
     } else if (tool === 'text') {
       cursor = 'text';
@@ -3599,11 +4352,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         return;
       }
 
+      if (mode === 'vector' && tool === 'pen') {
+        startPenAnchorPlacement(pointer, { cuspMode: opt.e.altKey === true });
+        return;
+      }
+
       if (mode === 'vector' && tool === 'select') {
         const pointEditingTarget = vectorPointEditingTargetRef.current;
         const clickedTarget = opt.target as any;
         const clickedPointEditingTarget = !!pointEditingTarget && clickedTarget === pointEditingTarget;
         const clickedActivePathControl = clickedPointEditingTarget && typeof clickedTarget?.__corner === 'string' && clickedTarget.__corner.length > 0;
+        const pointSelectionToggle = isPointSelectionToggleModifierPressed(opt.e);
         const pointSelectionTransformHit = (
           pointEditingTarget &&
           getFabricObjectType(pointEditingTarget) === 'path' &&
@@ -3625,12 +4384,33 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           }
         }
 
-        if (pointEditingTarget && !clickedPointEditingTarget) {
+        if (pointEditingTarget && !clickedPointEditingTarget && opt.e.detail >= 2) {
+          clearSelectedPathAnchors(pointEditingTarget);
           restoreAllOriginalControls();
           setVectorPointEditingTarget(null);
           queueMicrotask(() => {
+            const canvas = fabricCanvasRef.current;
+            if (!canvas) return;
+            if (!canvas.getObjects().includes(pointEditingTarget)) return;
+            canvas.setActiveObject(pointEditingTarget);
             configureCanvasForTool();
           });
+          return;
+        }
+
+        if (pointEditingTarget && !clickedPointEditingTarget) {
+          pointSelectionTransformSessionRef.current = null;
+          insertedPathAnchorDragSessionRef.current = null;
+          pointSelectionMarqueeSessionRef.current = {
+            path: pointEditingTarget,
+            startPointerScene: new Point(pointer.x, pointer.y),
+            currentPointerScene: new Point(pointer.x, pointer.y),
+            initialSelectedAnchorIndices: getSelectedPathAnchorIndices(pointEditingTarget),
+            toggleSelection: pointSelectionToggle,
+          };
+          fabricCanvas.setActiveObject(pointEditingTarget);
+          fabricCanvas.requestRenderAll();
+          return;
         }
 
         if (
@@ -3728,20 +4508,28 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         return;
       }
 
-      if (tool === 'rectangle' || tool === 'circle' || tool === 'line') {
+      if (tool === 'rectangle' || tool === 'circle' || tool === 'triangle' || tool === 'star' || tool === 'line') {
         const isVectorMode = mode === 'vector';
-        const fillColor = isVectorMode ? vectorStyleRef.current.fillColor : brushColorRef.current;
-        const strokeColor = isVectorMode ? vectorStyleRef.current.strokeColor : brushColorRef.current;
-        const strokeWidth = isVectorMode ? Math.max(0, vectorStyleRef.current.strokeWidth) : 1;
+        const activeShapeStyle = isVectorMode ? vectorStyleRef.current : bitmapShapeStyleRef.current;
+        const fillColor = activeShapeStyle.fillColor;
+        const strokeColor = activeShapeStyle.strokeColor;
+        const strokeWidth = Math.max(0, activeShapeStyle.strokeWidth);
         let object: any;
         if (tool === 'rectangle') {
+          const bounds = getStrokedShapeBoundsFromPathBounds(
+            pointer.x,
+            pointer.y,
+            pointer.x,
+            pointer.y,
+            strokeWidth,
+          );
           object = new Rect({
-            left: pointer.x,
-            top: pointer.y,
+            left: bounds.left,
+            top: bounds.top,
             originX: 'left',
             originY: 'top',
-            width: 1,
-            height: 1,
+            width: 0,
+            height: 0,
             fill: fillColor,
             stroke: strokeColor,
             strokeWidth,
@@ -3751,11 +4539,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             evented: false,
           });
         } else if (tool === 'circle') {
+          const bounds = getStrokedShapeBoundsFromPathBounds(
+            pointer.x,
+            pointer.y,
+            pointer.x,
+            pointer.y,
+            strokeWidth,
+          );
           object = new Ellipse({
-            left: pointer.x,
-            top: pointer.y,
-            rx: 1,
-            ry: 1,
+            left: bounds.left,
+            top: bounds.top,
+            rx: 0,
+            ry: 0,
             fill: fillColor,
             stroke: strokeColor,
             strokeWidth,
@@ -3766,10 +4561,35 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             selectable: false,
             evented: false,
           });
+        } else if (tool === 'triangle' || tool === 'star') {
+          const bounds = getStrokedShapeBoundsFromPathBounds(
+            pointer.x,
+            pointer.y,
+            pointer.x,
+            pointer.y,
+            strokeWidth,
+          );
+          const points = tool === 'triangle'
+            ? buildTrianglePoints(bounds.width, bounds.height)
+            : buildStarPoints(bounds.width, bounds.height);
+          object = new Polygon(points, {
+            left: bounds.left,
+            top: bounds.top,
+            originX: 'left',
+            originY: 'top',
+            fill: fillColor,
+            stroke: strokeColor,
+            strokeWidth,
+            strokeUniform: isVectorMode,
+            noScaleCache: !isVectorMode ? undefined : false,
+            selectable: false,
+            evented: false,
+          });
+          object.setBoundingBox?.(true);
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-            stroke: isVectorMode ? strokeColor : brushColorRef.current,
-            strokeWidth: isVectorMode ? Math.max(0, vectorStyleRef.current.strokeWidth) : Math.max(1, brushSizeRef.current),
+            stroke: strokeColor,
+            strokeWidth,
             strokeUniform: isVectorMode,
             noScaleCache: !isVectorMode ? undefined : false,
             selectable: false,
@@ -3787,6 +4607,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
 
     const onMouseMove = (opt: any) => {
+      if (editorModeRef.current === 'vector' && activeToolRef.current === 'pen' && opt.e) {
+        const pointer = fabricCanvas.getScenePoint(opt.e);
+        if (penAnchorPlacementSessionRef.current) {
+          if (updatePenAnchorPlacement(pointer)) {
+            fabricCanvas.requestRenderAll();
+          }
+          return;
+        }
+
+        const draft = penDraftRef.current;
+        if (draft) {
+          draft.previewPoint = new Point(pointer.x, pointer.y);
+          fabricCanvas.requestRenderAll();
+          return;
+        }
+      }
+
       const pointSelectionTransformSession = pointSelectionTransformSessionRef.current;
       if (pointSelectionTransformSession && opt.e) {
         const pointer = fabricCanvas.getScenePoint(opt.e);
@@ -3806,6 +4643,25 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           fabricCanvas.setActiveObject(pointSelectionTransformSession.path);
           fabricCanvas.requestRenderAll();
         }
+        return;
+      }
+
+      const pointSelectionMarqueeSession = pointSelectionMarqueeSessionRef.current;
+      if (pointSelectionMarqueeSession && opt.e) {
+        if (
+          editorModeRef.current !== 'vector' ||
+          activeToolRef.current !== 'select' ||
+          vectorPointEditingTargetRef.current !== pointSelectionMarqueeSession.path ||
+          !fabricCanvas.getObjects().includes(pointSelectionMarqueeSession.path)
+        ) {
+          pointSelectionMarqueeSessionRef.current = null;
+          return;
+        }
+
+        const pointer = fabricCanvas.getScenePoint(opt.e);
+        pointSelectionMarqueeSession.currentPointerScene = new Point(pointer.x, pointer.y);
+        fabricCanvas.setActiveObject(pointSelectionMarqueeSession.path);
+        fabricCanvas.requestRenderAll();
         return;
       }
 
@@ -3845,22 +4701,47 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       const object = draft.object;
 
       if (draft.type === 'rectangle') {
-        const left = Math.min(pointer.x, draft.startX);
-        const top = Math.min(pointer.y, draft.startY);
-        const width = Math.abs(pointer.x - draft.startX);
-        const height = Math.abs(pointer.y - draft.startY);
-        object.set({ left, top, width, height });
+        const bounds = getStrokedShapeBoundsFromPathBounds(
+          draft.startX,
+          draft.startY,
+          pointer.x,
+          pointer.y,
+          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
+        );
+        object.set(bounds);
       } else if (draft.type === 'circle') {
-        const left = Math.min(pointer.x, draft.startX);
-        const top = Math.min(pointer.y, draft.startY);
-        const rx = Math.abs(pointer.x - draft.startX) / 2;
-        const ry = Math.abs(pointer.y - draft.startY) / 2;
+        const bounds = getStrokedShapeBoundsFromPathBounds(
+          draft.startX,
+          draft.startY,
+          pointer.x,
+          pointer.y,
+          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
+        );
+        const rx = bounds.width / 2;
+        const ry = bounds.height / 2;
         object.set({
-          left,
-          top,
+          left: bounds.left,
+          top: bounds.top,
           rx,
           ry,
         });
+      } else if (draft.type === 'triangle' || draft.type === 'star') {
+        const bounds = getStrokedShapeBoundsFromPathBounds(
+          draft.startX,
+          draft.startY,
+          pointer.x,
+          pointer.y,
+          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
+        );
+        const points = draft.type === 'triangle'
+          ? buildTrianglePoints(bounds.width, bounds.height)
+          : buildStarPoints(bounds.width, bounds.height);
+        object.set({
+          left: bounds.left,
+          top: bounds.top,
+          points,
+        });
+        object.setBoundingBox?.(true);
       } else {
         object.set({ x2: pointer.x, y2: pointer.y });
       }
@@ -3870,12 +4751,32 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
 
     const onMouseUp = () => {
+      if (penAnchorPlacementSessionRef.current) {
+        commitCurrentPenPlacement();
+        fabricCanvas.requestRenderAll();
+        return;
+      }
+
       if (pointSelectionTransformSessionRef.current) {
         const shouldSave = pointSelectionTransformSessionRef.current.hasChanged;
         pointSelectionTransformSessionRef.current = null;
         if (shouldSave) {
           saveHistory();
         }
+        return;
+      }
+
+      if (pointSelectionMarqueeSessionRef.current) {
+        const pointSelectionMarqueeSession = pointSelectionMarqueeSessionRef.current;
+        pointSelectionMarqueeSessionRef.current = null;
+        applyPointSelectionMarqueeSession(pointSelectionMarqueeSession);
+        if (
+          vectorPointEditingTargetRef.current === pointSelectionMarqueeSession.path &&
+          fabricCanvas.getObjects().includes(pointSelectionMarqueeSession.path)
+        ) {
+          fabricCanvas.setActiveObject(pointSelectionMarqueeSession.path);
+        }
+        fabricCanvas.requestRenderAll();
         return;
       }
 
@@ -3962,7 +4863,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         editorModeRef.current === 'bitmap' &&
         activeToolRef.current === 'select' &&
         bitmapFloatingObjectRef.current &&
-        !bitmapSelectionBusyRef.current
+        !bitmapSelectionBusyRef.current &&
+        !suppressBitmapSelectionAutoCommitRef.current
       ) {
         void commitBitmapSelection();
         return;
@@ -4048,7 +4950,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvasRef.current = null;
       vectorGuideCtxRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyPointSelectionTransformSession, applyVectorPointControls, beginPointSelectionTransformSession, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, loadBitmapLayer, movePathAnchorByDelta, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint]);
+  }, [activateVectorPointEditing, applyFill, applyPointSelectionMarqueeSession, applyPointSelectionTransformSession, applyVectorPointControls, beginPointSelectionTransformSession, clearSelectedPathAnchors, commitBitmapSelection, commitCurrentPenPlacement, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorIndices, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, isPointSelectionToggleModifierPressed, loadBitmapLayer, movePathAnchorByDelta, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, startPenAnchorPlacement, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint, updatePenAnchorPlacement]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -4525,14 +5427,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         if (!rasterCtx) return;
 
         const selectionImageData = rasterCtx.getImageData(x, y, width, height);
-        let hasVisiblePixel = false;
-        for (let i = 3; i < selectionImageData.data.length; i += 4) {
-          if (selectionImageData.data[i] > 0) {
-            hasVisiblePixel = true;
-            break;
-          }
-        }
-        if (!hasVisiblePixel) {
+        const visibleSelectionBounds = calculateBoundsFromImageData(selectionImageData, 0);
+        if (!visibleSelectionBounds) {
           return;
         }
 
@@ -4541,16 +5437,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         if (!loaded) return;
 
         const selectionCanvas = document.createElement('canvas');
-        selectionCanvas.width = width;
-        selectionCanvas.height = height;
+        selectionCanvas.width = visibleSelectionBounds.width;
+        selectionCanvas.height = visibleSelectionBounds.height;
         const selectionCtx = selectionCanvas.getContext('2d');
         if (!selectionCtx) return;
-        selectionCtx.putImageData(selectionImageData, 0, 0);
+        selectionCtx.putImageData(
+          selectionImageData,
+          -visibleSelectionBounds.x,
+          -visibleSelectionBounds.y,
+        );
 
         const floatingImage = await FabricImage.fromURL(selectionCanvas.toDataURL('image/png'));
         floatingImage.set({
-          left: x + width / 2,
-          top: y + height / 2,
+          left: x + visibleSelectionBounds.x + visibleSelectionBounds.width / 2,
+          top: y + visibleSelectionBounds.y + visibleSelectionBounds.height / 2,
           originX: 'center',
           originY: 'center',
           selectable: true,
@@ -4617,6 +5517,115 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
     drawBitmapSelectionOverlay();
   }, [activeTool, commitBitmapSelection, drawBitmapSelectionOverlay, editorModeState]);
+
+  useEffect(() => {
+    if (editorModeState === 'vector' && activeTool === 'pen') {
+      return;
+    }
+    if (penDraftRef.current) {
+      finalizePenDraft();
+    }
+  }, [activeTool, editorModeState, finalizePenDraft]);
+
+  useEffect(() => {
+    if (editorModeState !== 'vector' || activeTool !== 'pen') {
+      return;
+    }
+    if (!penDraftRef.current) {
+      return;
+    }
+    fabricCanvasRef.current?.requestRenderAll();
+  }, [activeTool, editorModeState, vectorStyle]);
+
+  useEffect(() => {
+    const shouldIgnorePenShortcutTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
+      if (target.isContentEditable) return true;
+      const tagName = target.tagName.toLowerCase();
+      return tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'pen') {
+        return;
+      }
+      if (shouldIgnorePenShortcutTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === ' ' && penAnchorPlacementSessionRef.current) {
+        event.preventDefault();
+        if (!penModifierStateRef.current.space) {
+          penModifierStateRef.current.space = true;
+          if (setPenAnchorMoveMode(true)) {
+            fabricCanvasRef.current?.requestRenderAll();
+          }
+        }
+        return;
+      }
+
+      if (event.key === 'Alt' && penAnchorPlacementSessionRef.current) {
+        event.preventDefault();
+        if (!penModifierStateRef.current.alt) {
+          penModifierStateRef.current.alt = true;
+          if (setPenAnchorCuspMode(true)) {
+            fabricCanvasRef.current?.requestRenderAll();
+          }
+        }
+        return;
+      }
+
+      if (!penDraftRef.current) {
+        return;
+      }
+
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        event.preventDefault();
+        finalizePenDraft();
+        return;
+      }
+
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        event.preventDefault();
+        removeLastPenDraftAnchor();
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'pen') {
+        return;
+      }
+
+      if (event.key === ' ') {
+        if (!penModifierStateRef.current.space) {
+          return;
+        }
+        event.preventDefault();
+        penModifierStateRef.current.space = false;
+        if (setPenAnchorMoveMode(false)) {
+          fabricCanvasRef.current?.requestRenderAll();
+        }
+        return;
+      }
+
+      if (event.key === 'Alt') {
+        if (!penModifierStateRef.current.alt) {
+          return;
+        }
+        penModifierStateRef.current.alt = false;
+        if (setPenAnchorCuspMode(false)) {
+          fabricCanvasRef.current?.requestRenderAll();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [finalizePenDraft, removeLastPenDraftAnchor, setPenAnchorCuspMode, setPenAnchorMoveMode]);
 
   // Expose imperative methods.
   useImperativeHandle(ref, () => ({

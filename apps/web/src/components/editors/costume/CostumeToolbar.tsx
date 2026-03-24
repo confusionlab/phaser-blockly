@@ -14,12 +14,15 @@ import {
 } from '@/components/ui/color-picker';
 import {
   MousePointer2,
+  PenTool,
   Pencil,
   Eraser,
   PaintBucket,
   Circle,
   Square,
   Minus,
+  Triangle,
+  Star,
   ChevronDown,
   Check,
   Type,
@@ -41,7 +44,7 @@ import Color from 'color';
 import type { CostumeEditorMode } from '@/types';
 
 export type EditorMode = CostumeEditorMode;
-export type DrawingTool = 'select' | 'vector' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
+export type DrawingTool = 'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
 export type EditableVectorHandleMode = 'pointed' | 'curved';
 export type VectorHandleMode = EditableVectorHandleMode | 'multiple';
@@ -73,6 +76,12 @@ export interface VectorToolStyle {
   strokeWidth: number;
 }
 
+export interface BitmapShapeStyle {
+  fillColor: string;
+  strokeColor: string;
+  strokeWidth: number;
+}
+
 export interface VectorStyleCapabilities {
   supportsFill: boolean;
 }
@@ -82,7 +91,7 @@ export function vectorHandleModeToPathNodeHandleType(mode: EditableVectorHandleM
 }
 
 export function pathNodeHandleTypeToVectorHandleMode(type: VectorPathNodeHandleType | null | undefined): EditableVectorHandleMode {
-  return type === 'smooth' || type === 'symmetric' ? 'curved' : 'pointed';
+  return type === 'linear' ? 'pointed' : 'curved';
 }
 
 interface ToolDefinition {
@@ -225,6 +234,145 @@ const ToolbarColorControl = memo(({
 
 ToolbarColorControl.displayName = 'ToolbarColorControl';
 
+const toolbarSliderThumbClassName =
+  'block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
+const toolbarSliderTrackClassName = 'relative h-1.5 w-full grow rounded-full bg-secondary';
+const toolbarSliderRangeClassName = 'absolute h-full rounded-full bg-primary';
+const toolbarSliderPreviewSurfaceClassName =
+  'pointer-events-none absolute bottom-full left-1/2 z-20 mb-2.5 -translate-x-1/2 rounded-[18px] border border-border/70 bg-background/95 px-3 py-3 shadow-[0_18px_40px_-22px_rgba(15,23,42,0.38)] backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-150';
+
+interface ToolbarPreviewSliderProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onValueChange: (value: number) => void;
+  preview: React.ReactNode;
+  className?: string;
+  sliderClassName?: string;
+  valueClassName?: string;
+  thumbClassName?: string;
+}
+
+const ToolbarPreviewSlider = memo(({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  onValueChange,
+  preview,
+  className,
+  sliderClassName,
+  valueClassName,
+  thumbClassName,
+}: ToolbarPreviewSliderProps) => {
+  const [isPreviewVisible, setIsPreviewVisible] = useState(false);
+
+  useEffect(() => {
+    if (!isPreviewVisible) {
+      return;
+    }
+
+    const handlePointerEnd = () => {
+      setIsPreviewVisible(false);
+    };
+
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
+    };
+  }, [isPreviewVisible]);
+
+  return (
+    <div className={cn('flex min-w-[136px] items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0', className)}>
+      <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
+      <div className="relative flex min-w-0 grow items-center">
+        {isPreviewVisible && (
+          <div className={toolbarSliderPreviewSurfaceClassName} aria-hidden="true">
+            {preview}
+          </div>
+        )}
+        <Slider.Root
+          className={cn('relative flex h-4 w-full touch-none items-center', sliderClassName)}
+          value={[value]}
+          onValueChange={([nextValue]) => onValueChange(nextValue)}
+          onValueCommit={() => setIsPreviewVisible(false)}
+          onPointerDownCapture={() => setIsPreviewVisible(true)}
+          onFocusCapture={() => setIsPreviewVisible(true)}
+          onBlurCapture={() => setIsPreviewVisible(false)}
+          min={min}
+          max={max}
+          step={step}
+        >
+          <Slider.Track className={toolbarSliderTrackClassName}>
+            <Slider.Range className={toolbarSliderRangeClassName} />
+          </Slider.Track>
+          <Slider.Thumb className={cn(toolbarSliderThumbClassName, thumbClassName)} />
+        </Slider.Root>
+      </div>
+      <span className={cn('w-8 text-right text-xs text-muted-foreground', valueClassName)}>{value}</span>
+    </div>
+  );
+});
+
+ToolbarPreviewSlider.displayName = 'ToolbarPreviewSlider';
+
+interface StrokeWidthPreviewProps {
+  thickness: number;
+  color: string;
+}
+
+const StrokeWidthPreview = memo(({
+  thickness,
+  color,
+}: StrokeWidthPreviewProps) => (
+  <div className="flex h-14 w-[124px] items-center justify-center overflow-hidden rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))]">
+    {thickness > 0 && (
+      <div
+        className="w-20 rounded-full"
+        style={{
+          height: `${thickness}px`,
+          backgroundColor: color,
+        }}
+      />
+    )}
+  </div>
+));
+
+StrokeWidthPreview.displayName = 'StrokeWidthPreview';
+
+interface TextSizePreviewProps {
+  textStyle: TextToolStyle;
+  color: string;
+}
+
+const TextSizePreview = memo(({
+  textStyle,
+  color,
+}: TextSizePreviewProps) => (
+  <div className="flex h-[78px] w-[164px] items-center justify-center overflow-hidden rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))] px-4">
+    <span
+      className="max-w-full whitespace-nowrap text-center leading-none"
+      style={{
+        color,
+        fontFamily: textStyle.fontFamily,
+        fontSize: `${textStyle.fontSize}px`,
+        fontWeight: textStyle.fontWeight,
+        fontStyle: textStyle.fontStyle,
+        textDecoration: textStyle.underline ? 'underline' : 'none',
+      }}
+    >
+      Text
+    </span>
+  </div>
+));
+
+TextSizePreview.displayName = 'TextSizePreview';
+
 interface CostumeToolbarProps {
   editorMode: EditorMode;
   activeTool: DrawingTool;
@@ -234,6 +382,7 @@ interface CostumeToolbarProps {
   hasSelectedVectorPoints: boolean;
   brushColor: string;
   brushSize: number;
+  bitmapShapeStyle: BitmapShapeStyle;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
   vectorStyleCapabilities: VectorStyleCapabilities;
@@ -246,6 +395,7 @@ interface CostumeToolbarProps {
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
   onBrushSizeChange: (size: number) => void;
+  onBitmapShapeStyleChange: (updates: Partial<BitmapShapeStyle>) => void;
   onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
   onVectorStyleChange: (updates: Partial<VectorToolStyle>) => void;
 }
@@ -259,6 +409,7 @@ const bitmapPrimaryTools: ToolDefinition[] = [
 
 const vectorPrimaryTools: ToolDefinition[] = [
   { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
+  { tool: 'pen', icon: <PenTool className="size-[18px]" />, label: 'Pen' },
 ];
 
 const vectorTrailingTools: ToolDefinition[] = [
@@ -268,6 +419,8 @@ const vectorTrailingTools: ToolDefinition[] = [
 const shapeTools: ToolDefinition[] = [
   { tool: 'rectangle', icon: <Square className="size-[18px]" />, label: 'Rectangle' },
   { tool: 'circle', icon: <Circle className="size-[18px]" />, label: 'Circle' },
+  { tool: 'triangle', icon: <Triangle className="size-[18px]" />, label: 'Triangle' },
+  { tool: 'star', icon: <Star className="size-[18px]" />, label: 'Star' },
   { tool: 'line', icon: <Minus className="size-[18px]" />, label: 'Line' },
 ];
 
@@ -329,6 +482,7 @@ export const CostumeToolbar = memo(({
   hasSelectedVectorPoints,
   brushColor,
   brushSize,
+  bitmapShapeStyle,
   textStyle,
   vectorStyle,
   vectorStyleCapabilities,
@@ -341,6 +495,7 @@ export const CostumeToolbar = memo(({
   alignDisabled,
   onColorChange,
   onBrushSizeChange,
+  onBitmapShapeStyleChange,
   onTextStyleChange,
   onVectorStyleChange,
 }: CostumeToolbarProps) => {
@@ -361,16 +516,23 @@ export const CostumeToolbar = memo(({
   const shapeToolIsActive = isShapeTool(activeTool);
   const showSelectionActions = activeTool === 'select' && !isVectorPointEditing;
   const showContextualPropertyBar = isVectorPointEditing || !(showSelectionActions && !hasActiveSelection);
-  const showPrimaryColorControl = editorMode === 'bitmap' || showTextControls;
+  const showBitmapShapeStyleControls = editorMode === 'bitmap' && shapeToolIsActive;
+  const showBitmapShapeFillControl = showBitmapShapeStyleControls && activeTool !== 'line';
+  const showBitmapBrushSizeControl =
+    editorMode === 'bitmap' &&
+    !shapeToolIsActive &&
+    (activeTool === 'brush' || activeTool === 'eraser');
+  const showPrimaryColorControl = (editorMode === 'bitmap' && !showBitmapShapeStyleControls) || showTextControls;
   const showVectorStyleControls =
     editorMode === 'vector' &&
     !showTextControls &&
-    (showSelectionActions || isVectorPointEditing || shapeToolIsActive);
+    (showSelectionActions || isVectorPointEditing || shapeToolIsActive || activeTool === 'pen');
   const showVectorFillControl =
     showVectorStyleControls &&
     (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line');
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
+  const activeBrushPreviewColor = activeTool === 'eraser' ? '#94a3b8' : brushColor;
 
   useEffect(() => {
     if (!showContextualPropertyBar) {
@@ -504,6 +666,44 @@ export const CostumeToolbar = memo(({
                     />
                   )}
 
+                  {showBitmapShapeStyleControls && (
+                    <>
+                      {showBitmapShapeFillControl && (
+                        <ToolbarColorControl
+                          label="Fill"
+                          value={bitmapShapeStyle.fillColor}
+                          menuId="fill-color"
+                          openMenu={openMenu}
+                          onMenuOpenChange={handleMenuOpenChange}
+                          onColorChange={(fillColor) => onBitmapShapeStyleChange({ fillColor })}
+                        />
+                      )}
+
+                      <ToolbarColorControl
+                        label="Stroke"
+                        value={bitmapShapeStyle.strokeColor}
+                        menuId="stroke-color"
+                        openMenu={openMenu}
+                        onMenuOpenChange={handleMenuOpenChange}
+                        onColorChange={(strokeColor) => onBitmapShapeStyleChange({ strokeColor })}
+                      />
+
+                      <ToolbarPreviewSlider
+                        label="Stroke"
+                        value={bitmapShapeStyle.strokeWidth}
+                        onValueChange={(strokeWidth) => onBitmapShapeStyleChange({ strokeWidth })}
+                        min={0}
+                        max={50}
+                        preview={(
+                          <StrokeWidthPreview
+                            thickness={bitmapShapeStyle.strokeWidth}
+                            color={bitmapShapeStyle.strokeColor}
+                          />
+                        )}
+                      />
+                    </>
+                  )}
+
                   {showVectorStyleControls && (
                     <>
                       {showVectorFillControl && (
@@ -526,44 +726,36 @@ export const CostumeToolbar = memo(({
                         onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
                       />
 
-                      <div className="flex min-w-[132px] items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                        <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
-                        <Slider.Root
-                          className="relative flex h-4 w-full touch-none items-center"
-                          value={[vectorStyle.strokeWidth]}
-                          onValueChange={([strokeWidth]) => onVectorStyleChange({ strokeWidth })}
-                          min={0}
-                          max={50}
-                          step={1}
-                        >
-                          <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
-                            <Slider.Range className="absolute h-full rounded-full bg-primary" />
-                          </Slider.Track>
-                          <Slider.Thumb className="block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-                        </Slider.Root>
-                        <span className="w-6 text-right text-xs text-muted-foreground">{vectorStyle.strokeWidth}</span>
-                      </div>
+                      <ToolbarPreviewSlider
+                        label="Stroke"
+                        value={vectorStyle.strokeWidth}
+                        onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
+                        min={0}
+                        max={50}
+                        preview={(
+                          <StrokeWidthPreview
+                            thickness={vectorStyle.strokeWidth}
+                            color={vectorStyle.strokeColor}
+                          />
+                        )}
+                      />
                     </>
                   )}
 
-                  {editorMode === 'bitmap' && (
-                    <div className="flex min-w-[120px] items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                      <span className="whitespace-nowrap text-xs text-muted-foreground">Size:</span>
-                      <Slider.Root
-                        className="relative flex h-4 w-full touch-none items-center"
-                        value={[brushSize]}
-                        onValueChange={([value]) => onBrushSizeChange(value)}
-                        min={1}
-                        max={50}
-                        step={1}
-                      >
-                        <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
-                          <Slider.Range className="absolute h-full rounded-full bg-primary" />
-                        </Slider.Track>
-                        <Slider.Thumb className="block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-                      </Slider.Root>
-                      <span className="w-6 text-right text-xs text-muted-foreground">{brushSize}</span>
-                    </div>
+                  {showBitmapBrushSizeControl && (
+                    <ToolbarPreviewSlider
+                      label="Size"
+                      value={brushSize}
+                      onValueChange={onBrushSizeChange}
+                      min={1}
+                      max={50}
+                      preview={(
+                        <StrokeWidthPreview
+                          thickness={brushSize}
+                          color={activeBrushPreviewColor}
+                        />
+                      )}
+                    />
                   )}
 
                   {editorMode === 'vector' && showTextControls && (
@@ -596,23 +788,21 @@ export const CostumeToolbar = memo(({
                         </DropdownMenuContent>
                       </DropdownMenu>
 
-                      <div className="flex min-w-[90px] items-center gap-1">
-                        <span className="text-xs text-muted-foreground">Sz</span>
-                        <Slider.Root
-                          className="relative flex h-4 w-16 touch-none items-center"
-                          value={[textStyle.fontSize]}
-                          onValueChange={([value]) => onTextStyleChange({ fontSize: value })}
-                          min={8}
-                          max={120}
-                          step={1}
-                        >
-                          <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
-                            <Slider.Range className="absolute h-full rounded-full bg-primary" />
-                          </Slider.Track>
-                          <Slider.Thumb className="block size-3 rounded-full border border-primary/50 bg-background shadow" />
-                        </Slider.Root>
-                        <span className="w-6 text-right text-xs text-muted-foreground">{textStyle.fontSize}</span>
-                      </div>
+                      <ToolbarPreviewSlider
+                        label="Size"
+                        value={textStyle.fontSize}
+                        onValueChange={(fontSize) => onTextStyleChange({ fontSize })}
+                        min={8}
+                        max={120}
+                        sliderClassName="w-16"
+                        thumbClassName="size-3"
+                        preview={(
+                          <TextSizePreview
+                            textStyle={textStyle}
+                            color={brushColor}
+                          />
+                        )}
+                      />
 
                       <DropdownMenu
                         open={openMenu === 'text-format'}

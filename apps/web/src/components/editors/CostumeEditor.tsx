@@ -4,6 +4,7 @@ import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import { CostumeList } from './costume/CostumeList';
 import { CostumeCanvas, type CostumeCanvasHandle } from './costume/CostumeCanvas';
 import {
+  type BitmapShapeStyle,
   CostumeToolbar,
   type AlignAction,
   type DrawingTool,
@@ -37,8 +38,8 @@ import {
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 
-const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'rectangle', 'circle', 'line', 'text', 'collider']);
-const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'line', 'collider']);
+const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
+const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
 
 function ensureToolForMode(mode: CostumeEditorMode, tool: DrawingTool): DrawingTool {
   if (mode === 'vector') {
@@ -138,6 +139,11 @@ export function CostumeEditor() {
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [brushColor, setBrushColor] = useState('#000000');
   const [brushSize, setBrushSize] = useState(5);
+  const [bitmapShapeStyle, setBitmapShapeStyle] = useState<BitmapShapeStyle>({
+    fillColor: '#000000',
+    strokeColor: '#000000',
+    strokeWidth: 5,
+  });
   const [vectorHandleMode, setVectorHandleMode] = useState<VectorHandleMode>('pointed');
   const [textStyle, setTextStyle] = useState<TextToolStyle>({
     fontFamily: 'Arial',
@@ -646,6 +652,20 @@ export function CostumeEditor() {
     });
   }, []);
 
+  const handleBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>) => {
+    setBitmapShapeStyle((prev) => {
+      const next = { ...prev, ...updates };
+      if (
+        next.fillColor === prev.fillColor &&
+        next.strokeColor === prev.strokeColor &&
+        next.strokeWidth === prev.strokeWidth
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
   const handleColliderChange = useCallback((newCollider: ColliderConfig) => {
     const loadedSession = loadedSessionRef.current;
     if (!loadedSession || isLoadingRef.current || !isCanvasReadyForSession(loadedSession)) return;
@@ -696,6 +716,7 @@ export function CostumeEditor() {
           hasSelectedVectorPoints={hasSelectedVectorPoints}
           brushColor={brushColor}
           brushSize={brushSize}
+          bitmapShapeStyle={bitmapShapeStyle}
           textStyle={textStyle}
           vectorStyle={vectorStyle}
           vectorStyleCapabilities={vectorStyleCapabilities}
@@ -708,6 +729,7 @@ export function CostumeEditor() {
           alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
           onColorChange={setBrushColor}
           onBrushSizeChange={setBrushSize}
+          onBitmapShapeStyleChange={handleBitmapShapeStyleChange}
           onTextStyleChange={handleTextStyleChange}
           onVectorStyleChange={handleVectorStyleChange}
         />
@@ -718,6 +740,7 @@ export function CostumeEditor() {
           activeTool={activeTool}
           brushColor={brushColor}
           brushSize={brushSize}
+          bitmapShapeStyle={bitmapShapeStyle}
           vectorHandleMode={vectorHandleMode}
           textStyle={textStyle}
           vectorStyle={vectorStyle}
