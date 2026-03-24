@@ -873,14 +873,19 @@ function PhysicsToggle({
   const togglePhysics = (checked: boolean) => {
     freezeEditorResizeForLayoutTransition();
     if (!checked) {
-      updateObject(sceneId, object.id, { physics: null, collider: null });
+      updateObject(sceneId, object.id, {
+        physics: {
+          ...(physics ?? createDefaultPhysicsConfig()),
+          enabled: false,
+        },
+      });
     } else {
-      // Enable physics with default settings
       const updates: Partial<GameObject> = {
-        physics: createDefaultPhysicsConfig(),
+        physics: physics
+          ? { ...physics, enabled: true }
+          : createDefaultPhysicsConfig(),
       };
 
-      // If no collider exists, create a default circle collider
       if (!collider || collider.type === 'none') {
         updates.collider = createDefaultColliderConfig('circle');
       }

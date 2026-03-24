@@ -23,16 +23,19 @@ export function normalizePhysicsColliderState<
   entity: Entity,
   createDefaultCollider: () => Collider,
 ): Entity {
-  if (!isPhysicsEnabled(entity.physics)) {
-    if (entity.physics === null && entity.collider === null) {
+  if (entity.physics === null) {
+    if (entity.collider === null) {
       return entity;
     }
 
     return {
       ...entity,
-      physics: null,
       collider: null,
     } as Entity;
+  }
+
+  if (!isPhysicsEnabled(entity.physics)) {
+    return entity;
   }
 
   if (!entity.collider || entity.collider.type === 'none') {

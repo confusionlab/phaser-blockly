@@ -79,6 +79,10 @@ function getZoomInvariantCanvasMetric(metric: number, zoom: number) {
   return metric / Math.max(zoom, 0.0001);
 }
 
+function getEditableVectorHandleMode(mode: VectorHandleMode): Exclude<VectorHandleMode, 'multiple'> {
+  return mode === 'multiple' ? 'pointed' : mode;
+}
+
 function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
   fabricCanvas.defaultCursor = cursor;
   fabricCanvas.hoverCursor = cursor;
@@ -1494,16 +1498,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return map[String(normalized)] ?? null;
   }, [getPathNodeHandleTypes, normalizeAnchorIndex]);
 
-  const syncVectorHandleModeFromSelection = useCallback(() => {
-    const activeAnchor = activePathAnchorRef.current;
-    if (!activeAnchor || getFabricObjectType(activeAnchor.path) !== 'path') return;
-    const syncedMode = pathNodeHandleTypeToVectorHandleMode(
-      getPathNodeHandleType(activeAnchor.path, activeAnchor.anchorIndex) ?? 'linear',
-    );
-    pendingSelectionSyncedVectorHandleModeRef.current = syncedMode;
-    onVectorHandleModeSyncRef.current?.(syncedMode);
-  }, [getPathNodeHandleType]);
-
   const findPreviousDrawableCommandIndex = useCallback((pathObj: any, commandIndex: number): number => {
     const commands = getPathCommands(pathObj);
     for (let i = commandIndex - 1; i >= 0; i -= 1) {
@@ -1612,6 +1606,28 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       ),
     ).sort((a, b) => a - b);
   }, [normalizeAnchorIndex]);
+
+  const syncVectorHandleModeFromSelection = useCallback(() => {
+    const activeAnchor = activePathAnchorRef.current;
+    if (!activeAnchor || getFabricObjectType(activeAnchor.path) !== 'path') return;
+    const selectedAnchorIndices = getSelectedPathAnchorIndices(activeAnchor.path);
+    const targetAnchorIndices = selectedAnchorIndices.length > 0
+      ? selectedAnchorIndices
+      : [activeAnchor.anchorIndex];
+
+    const handleModes = new Set<VectorHandleMode>();
+    for (const anchorIndex of targetAnchorIndices) {
+      handleModes.add(pathNodeHandleTypeToVectorHandleMode(
+        getPathNodeHandleType(activeAnchor.path, anchorIndex) ?? 'linear',
+      ));
+    }
+
+    const syncedMode = handleModes.size > 1
+      ? 'multiple'
+      : Array.from(handleModes)[0] ?? 'pointed';
+    pendingSelectionSyncedVectorHandleModeRef.current = syncedMode;
+    onVectorHandleModeSyncRef.current?.(syncedMode);
+  }, [getPathNodeHandleType, getSelectedPathAnchorIndices]);
 
   const syncPathControlPointVisibility = useCallback((pathObj: any) => {
     if (!pathObj || getFabricObjectType(pathObj) !== 'path' || !pathObj.controls) return;
@@ -3125,7 +3141,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
                 setPathNodeHandleType(
                   pathObj,
                   resolved.anchorIndex,
-                  vectorHandleModeToPathNodeHandleType(vectorHandleModeRef.current),
+                  vectorHandleModeToPathNodeHandleType(getEditableVectorHandleMode(vectorHandleModeRef.current)),
                 );
               }
               syncVectorHandleModeFromSelection();
@@ -3185,7 +3201,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               setPathNodeHandleType(
                 pathObj,
                 resolved.anchorIndex,
-                vectorHandleModeToPathNodeHandleType(vectorHandleModeRef.current),
+                vectorHandleModeToPathNodeHandleType(getEditableVectorHandleMode(vectorHandleModeRef.current)),
               );
             }
             activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
@@ -4054,6 +4070,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
     }
 
+    if (vectorHandleMode === 'multiple') {
+      return;
+    }
+
     const activeObject = fabricCanvas.getActiveObject() as any;
     if (!activeObject || activeObject !== activeAnchor.path) return;
     if (getFabricObjectType(activeObject) !== 'path') return;
@@ -4072,7 +4092,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       setPathNodeHandleType(
         activeObject,
         anchorIndex,
-        vectorHandleModeToPathNodeHandleType(vectorHandleMode),
+        vectorHandleModeToPathNodeHandleType(getEditableVectorHandleMode(vectorHandleMode)),
       );
       enforcePathAnchorHandleType(activeObject, anchorIndex, null);
       changed = true;

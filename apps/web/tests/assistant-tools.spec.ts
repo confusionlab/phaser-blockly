@@ -343,9 +343,14 @@ test.describe('Assistant tool curation primitives', () => {
     });
   });
 
-  test('assistant object property updates normalize physics and collider together', () => {
+  test('assistant object property updates can preserve remembered physics settings while disabled', () => {
     const fixture = buildProjectFixture();
     const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const rememberedPhysics = {
+      ...createDefaultPhysicsConfig(),
+      bounce: 0.55,
+    };
+    const rememberedCollider = createDefaultColliderConfig('box');
 
     const withPhysics = applyAssistantProjectOperations(snapshot.state, [
       {
@@ -353,36 +358,48 @@ test.describe('Assistant tool curation primitives', () => {
         sceneId: fixture.sceneId,
         objectId: fixture.heroId,
         properties: {
-          physics: createDefaultPhysicsConfig(),
+          physics: rememberedPhysics,
+          collider: rememberedCollider,
         },
       },
     ]);
 
     const nextScene = withPhysics.state.scenes.find((scene) => scene.id === fixture.sceneId);
     const heroWithPhysics = nextScene?.objects.find((object) => object.id === fixture.heroId);
-    expect(heroWithPhysics?.physics).toEqual(createDefaultPhysicsConfig());
-    expect(heroWithPhysics?.collider).toEqual(createDefaultColliderConfig('circle'));
+    expect(heroWithPhysics?.physics).toEqual(rememberedPhysics);
+    expect(heroWithPhysics?.collider).toEqual(rememberedCollider);
 
-    const withoutPhysics = applyAssistantProjectOperations(withPhysics.state, [
+    const disabledPhysics = applyAssistantProjectOperations(withPhysics.state, [
       {
         kind: 'update_object_properties',
         sceneId: fixture.sceneId,
         objectId: fixture.heroId,
         properties: {
-          physics: null,
+          physics: {
+            ...rememberedPhysics,
+            enabled: false,
+          },
         },
       },
     ]);
 
-    const finalScene = withoutPhysics.state.scenes.find((scene) => scene.id === fixture.sceneId);
-    const heroWithoutPhysics = finalScene?.objects.find((object) => object.id === fixture.heroId);
-    expect(heroWithoutPhysics?.physics).toBeNull();
-    expect(heroWithoutPhysics?.collider).toBeNull();
+    const disabledScene = disabledPhysics.state.scenes.find((scene) => scene.id === fixture.sceneId);
+    const heroWithRememberedPhysics = disabledScene?.objects.find((object) => object.id === fixture.heroId);
+    expect(heroWithRememberedPhysics?.physics).toEqual({
+      ...rememberedPhysics,
+      enabled: false,
+    });
+    expect(heroWithRememberedPhysics?.collider).toEqual(rememberedCollider);
   });
 
-  test('applyAssistantChangeSetToProject normalizes component physics and collider together', () => {
+  test('applyAssistantChangeSetToProject can preserve remembered component physics settings while disabled', () => {
     const fixture = buildProjectFixture();
     const snapshot = createAssistantProjectSnapshot(fixture.project);
+    const rememberedPhysics = {
+      ...fixture.project.components[0]!.physics!,
+      enabled: false,
+    };
+    const rememberedCollider = createDefaultColliderConfig('capsule');
 
     const changeSet: AssistantChangeSet = {
       baseProjectId: fixture.project.id,
@@ -392,11 +409,12 @@ test.describe('Assistant tool curation primitives', () => {
           kind: 'update_component_properties',
           componentId: fixture.componentId,
           properties: {
-            physics: null,
+            physics: rememberedPhysics,
+            collider: rememberedCollider,
           },
         },
       ],
-      summary: 'Disable enemy component physics',
+      summary: 'Disable enemy component physics but keep settings',
       affectedEntityIds: [fixture.componentId],
     };
 
@@ -405,10 +423,10 @@ test.describe('Assistant tool curation primitives', () => {
     const nextScene = nextProject.scenes.find((scene) => scene.id === fixture.sceneId);
     const enemy = nextScene?.objects.find((object) => object.id === fixture.enemyId);
 
-    expect(enemyComponent?.physics).toBeNull();
-    expect(enemyComponent?.collider).toBeNull();
-    expect(enemy?.physics).toBeNull();
-    expect(enemy?.collider).toBeNull();
+    expect(enemyComponent?.physics).toEqual(rememberedPhysics);
+    expect(enemyComponent?.collider).toEqual(rememberedCollider);
+    expect(enemy?.physics).toEqual(rememberedPhysics);
+    expect(enemy?.collider).toEqual(rememberedCollider);
   });
 
   test('assistant blockly writes normalize common alias block types', () => {

@@ -703,7 +703,7 @@ export function CostumeEditor() {
           onToolChange={handleToolChange}
           onMoveOrder={handleMoveOrder}
           vectorHandleMode={vectorHandleMode}
-          onVectorHandleModeChange={setVectorHandleMode}
+          onVectorHandleModeChange={(mode) => setVectorHandleMode(mode)}
           onAlign={handleAlign}
           alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
           onColorChange={setBrushColor}

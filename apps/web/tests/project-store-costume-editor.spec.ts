@@ -232,21 +232,49 @@ test.describe('project store costume editor boundary', () => {
     expect(nextProject?.scenes[0]?.objects[0]?.componentId).toBe(sharedComponent.id);
   });
 
-  test('keeps object physics and collider in sync at the store boundary', async () => {
+  test('remembers object physics settings when physics is toggled off', async () => {
     const project = createDefaultProject('Physics collider sync');
     const scene = project.scenes[0];
     const object = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
     scene.objects = [object];
+    const rememberedPhysics = {
+      ...createDefaultPhysicsConfig(),
+      bounce: 0.65,
+    };
+    const rememberedCollider = createDefaultColliderConfig('box');
 
     const useProjectStore = await openProject(project);
 
     useProjectStore.getState().updateObject(scene.id, object.id, {
-      physics: createDefaultPhysicsConfig(),
+      physics: rememberedPhysics,
+      collider: rememberedCollider,
     });
 
     let nextProject = useProjectStore.getState().project;
-    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(createDefaultPhysicsConfig());
-    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(createDefaultColliderConfig('circle'));
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(rememberedPhysics);
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(rememberedCollider);
+
+    useProjectStore.getState().updateObject(scene.id, object.id, {
+      physics: {
+        ...rememberedPhysics,
+        enabled: false,
+      },
+    });
+
+    nextProject = useProjectStore.getState().project;
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual({
+      ...rememberedPhysics,
+      enabled: false,
+    });
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(rememberedCollider);
+
+    useProjectStore.getState().updateObject(scene.id, object.id, {
+      physics: rememberedPhysics,
+    });
+
+    nextProject = useProjectStore.getState().project;
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(rememberedPhysics);
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(rememberedCollider);
 
     useProjectStore.getState().updateObject(scene.id, object.id, {
       physics: null,
@@ -255,17 +283,9 @@ test.describe('project store costume editor boundary', () => {
     nextProject = useProjectStore.getState().project;
     expect(nextProject?.scenes[0]?.objects[0]?.physics).toBeNull();
     expect(nextProject?.scenes[0]?.objects[0]?.collider).toBeNull();
-
-    useProjectStore.getState().updateObject(scene.id, object.id, {
-      collider: createDefaultColliderConfig('box'),
-    });
-
-    nextProject = useProjectStore.getState().project;
-    expect(nextProject?.scenes[0]?.objects[0]?.physics).toBeNull();
-    expect(nextProject?.scenes[0]?.objects[0]?.collider).toBeNull();
   });
 
-  test('keeps component physics and collider in sync across instances', async () => {
+  test('remembers component physics settings when physics is toggled off', async () => {
     const project = createDefaultProject('Component physics collider sync');
     const scene = project.scenes[0];
     const sharedComponent: ComponentDefinition = {
@@ -284,28 +304,53 @@ test.describe('project store costume editor boundary', () => {
     instance.costumes = [];
     scene.objects = [instance];
     project.components = [sharedComponent];
+    const rememberedPhysics = {
+      ...createDefaultPhysicsConfig(),
+      friction: 0.45,
+    };
+    const rememberedCollider = createDefaultColliderConfig('capsule');
 
     const useProjectStore = await openProject(project);
 
     useProjectStore.getState().updateComponent(sharedComponent.id, {
-      physics: createDefaultPhysicsConfig(),
+      physics: rememberedPhysics,
+      collider: rememberedCollider,
     });
 
     let nextProject = useProjectStore.getState().project;
-    expect(nextProject?.components[0]?.physics).toEqual(createDefaultPhysicsConfig());
-    expect(nextProject?.components[0]?.collider).toEqual(createDefaultColliderConfig('circle'));
-    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(createDefaultPhysicsConfig());
-    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(createDefaultColliderConfig('circle'));
+    expect(nextProject?.components[0]?.physics).toEqual(rememberedPhysics);
+    expect(nextProject?.components[0]?.collider).toEqual(rememberedCollider);
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(rememberedPhysics);
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(rememberedCollider);
 
     useProjectStore.getState().updateComponent(sharedComponent.id, {
-      physics: null,
+      physics: {
+        ...rememberedPhysics,
+        enabled: false,
+      },
     });
 
     nextProject = useProjectStore.getState().project;
-    expect(nextProject?.components[0]?.physics).toBeNull();
-    expect(nextProject?.components[0]?.collider).toBeNull();
-    expect(nextProject?.scenes[0]?.objects[0]?.physics).toBeNull();
-    expect(nextProject?.scenes[0]?.objects[0]?.collider).toBeNull();
+    expect(nextProject?.components[0]?.physics).toEqual({
+      ...rememberedPhysics,
+      enabled: false,
+    });
+    expect(nextProject?.components[0]?.collider).toEqual(rememberedCollider);
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual({
+      ...rememberedPhysics,
+      enabled: false,
+    });
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(rememberedCollider);
+
+    useProjectStore.getState().updateComponent(sharedComponent.id, {
+      physics: rememberedPhysics,
+    });
+
+    nextProject = useProjectStore.getState().project;
+    expect(nextProject?.components[0]?.physics).toEqual(rememberedPhysics);
+    expect(nextProject?.components[0]?.collider).toEqual(rememberedCollider);
+    expect(nextProject?.scenes[0]?.objects[0]?.physics).toEqual(rememberedPhysics);
+    expect(nextProject?.scenes[0]?.objects[0]?.collider).toEqual(rememberedCollider);
   });
 
   test('opens the costume editor with a scoped collider edit request', async () => {

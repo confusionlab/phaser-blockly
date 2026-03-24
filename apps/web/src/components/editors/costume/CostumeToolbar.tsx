@@ -43,7 +43,8 @@ import type { CostumeEditorMode } from '@/types';
 export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'vector' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
-export type VectorHandleMode = 'pointed' | 'curved';
+export type EditableVectorHandleMode = 'pointed' | 'curved';
+export type VectorHandleMode = EditableVectorHandleMode | 'multiple';
 export type VectorPathNodeHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';
 export type AlignAction =
   | 'top-left'
@@ -76,11 +77,11 @@ export interface VectorStyleCapabilities {
   supportsFill: boolean;
 }
 
-export function vectorHandleModeToPathNodeHandleType(mode: VectorHandleMode): VectorPathNodeHandleType {
+export function vectorHandleModeToPathNodeHandleType(mode: EditableVectorHandleMode): VectorPathNodeHandleType {
   return mode === 'curved' ? 'smooth' : 'linear';
 }
 
-export function pathNodeHandleTypeToVectorHandleMode(type: VectorPathNodeHandleType | null | undefined): VectorHandleMode {
+export function pathNodeHandleTypeToVectorHandleMode(type: VectorPathNodeHandleType | null | undefined): EditableVectorHandleMode {
   return type === 'smooth' || type === 'symmetric' ? 'curved' : 'pointed';
 }
 
@@ -240,7 +241,7 @@ interface CostumeToolbarProps {
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
   vectorHandleMode: VectorHandleMode;
-  onVectorHandleModeChange: (mode: VectorHandleMode) => void;
+  onVectorHandleModeChange: (mode: EditableVectorHandleMode) => void;
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
@@ -305,10 +306,15 @@ const alignGrid: Array<{ action: AlignAction; label: string; title: string }> = 
   { action: 'bottom-right', label: '↘', title: 'Bottom Right' },
 ];
 
-const vectorHandleModeOptions: Array<{ value: VectorHandleMode; label: string }> = [
+const vectorHandleModeOptions: Array<{ value: EditableVectorHandleMode; label: string }> = [
   { value: 'pointed', label: 'Pointed' },
   { value: 'curved', label: 'Curved' },
 ];
+
+function getVectorHandleModeLabel(mode: VectorHandleMode) {
+  if (mode === 'multiple') return 'Multiple';
+  return mode === 'curved' ? 'Curved' : 'Pointed';
+}
 
 function isShapeTool(tool: DrawingTool) {
   return shapeTools.some((shapeTool) => shapeTool.tool === tool);
@@ -427,21 +433,31 @@ export const CostumeToolbar = memo(({
                             size="sm"
                             className="h-8 min-w-[120px] justify-between gap-2 px-2 text-xs"
                           >
-                            <span>{vectorHandleMode === 'curved' ? 'Curved' : 'Pointed'}</span>
+                            <span>{getVectorHandleModeLabel(vectorHandleMode)}</span>
                             <ChevronDown className="size-3 shrink-0" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[140px]">
-                          <DropdownMenuRadioGroup
-                            value={vectorHandleMode}
-                            onValueChange={(value) => onVectorHandleModeChange(value as VectorHandleMode)}
-                          >
-                            {vectorHandleModeOptions.map((option) => (
-                              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                          {vectorHandleModeOptions.map((option) => {
+                            const showIndicator = vectorHandleMode === 'multiple' || vectorHandleMode === option.value;
+                            return (
+                              <DropdownMenuItem
+                                key={option.value}
+                                onSelect={() => onVectorHandleModeChange(option.value)}
+                                className="relative pl-8"
+                              >
+                                <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
+                                  <span
+                                    className={cn(
+                                      'size-2 rounded-full bg-current transition-opacity',
+                                      showIndicator ? 'opacity-100' : 'opacity-0',
+                                    )}
+                                  />
+                                </span>
                                 {option.label}
-                              </DropdownMenuRadioItem>
-                            ))}
-                          </DropdownMenuRadioGroup>
+                              </DropdownMenuItem>
+                            );
+                          })}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
