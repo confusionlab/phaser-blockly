@@ -309,7 +309,7 @@ export function ObjectInspector() {
           aria-hidden={activeTab !== 'object'}
           className={cn(
             'absolute inset-0 h-full min-h-0 min-w-0',
-            activeTab !== 'object' && 'pointer-events-none invisible',
+            activeTab === 'object' ? 'z-10' : 'hidden',
           )}
         >
           <div className="min-h-full min-w-0 px-4 py-3">
@@ -330,7 +330,7 @@ export function ObjectInspector() {
           aria-hidden={activeTab !== 'scene'}
           className={cn(
             'absolute inset-0 h-full min-h-0 min-w-0',
-            activeTab !== 'scene' && 'pointer-events-none invisible',
+            activeTab === 'scene' ? 'z-10' : 'hidden',
           )}
         >
           <div className="min-h-full min-w-0 px-4 py-3">
