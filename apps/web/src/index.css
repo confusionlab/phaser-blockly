@@ -48,6 +48,14 @@ body {
 /* Blockly workspace styling */
 .blocklySvg {
   background-color: var(--blockly-workspace-bg) !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.injectionDiv {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .blocklyToolboxDiv {
@@ -145,17 +153,18 @@ body {
 
 /* Make main workspace scrollbars smaller and closer to edge */
 .blocklyMainWorkspaceScrollbar {
-  transform: scale(0.5) !important;
+  transform: none !important;
 }
 
 .blocklyScrollbarHorizontal {
   height: 6px !important;
-  bottom: 2px !important;
+  bottom: 0 !important;
 }
 
 .blocklyScrollbarVertical {
   width: 6px !important;
-  right: 2px !important;
+  right: 0 !important;
+  bottom: 0 !important;
 }
 
 .blocklyScrollbarHandle {
