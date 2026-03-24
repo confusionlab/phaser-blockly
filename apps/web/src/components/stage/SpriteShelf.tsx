@@ -1372,9 +1372,9 @@ export function SpriteShelf() {
       && nextVisibleItem?.type === 'object'
       && selectedIdsInScene.includes(nextVisibleItem.id);
     const rowHighlightClass = isSelected
-      ? 'bg-sky-600/16 dark:bg-sky-300/22'
+      ? 'bg-[#C6E2FF] dark:bg-[#4A5879]'
       : isDropOn
-        ? 'bg-sky-500/10 dark:bg-sky-400/12'
+        ? 'bg-[#EEF7FF] dark:bg-[#183955]'
         : '';
     const rowShapeClass = isSelected || isDropOn
       ? connectsToPrevious
