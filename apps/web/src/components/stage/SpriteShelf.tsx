@@ -758,8 +758,13 @@ export function SpriteShelf() {
     clearLayerDragState();
   };
 
-  const handleEmptyShelfClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || draggedLayerKeys.length > 0) {
+  const handleEmptyShelfClick = (event: React.MouseEvent<HTMLElement>) => {
+    if (draggedLayerKeys.length > 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-sprite-shelf-row="true"]')) {
       return;
     }
 
@@ -1445,6 +1450,7 @@ export function SpriteShelf() {
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
+          data-sprite-shelf-row="true"
           className={`group/layer-row ${rowPaddingClass} select-none ${
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}

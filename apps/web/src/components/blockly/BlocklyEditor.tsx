@@ -67,6 +67,10 @@ let globalBlockClipboard: Blockly.ICopyData | null = null;
 const BLOCK_CLIPBOARD_STORAGE_KEY = 'pochacoding:blocklyClipboard:v1';
 const TOOLBOX_PINNED_STORAGE_KEY = 'pochacoding:blocklyToolboxPinned:v1';
 const TOOLBOX_PIN_BUTTON_SIZE = 28;
+const EMPTY_TOOLBOX_CONFIG = {
+  kind: 'categoryToolbox',
+  contents: [],
+} as const;
 
 type PersistedBlockClipboard = {
   version: 1;
@@ -446,6 +450,7 @@ export function BlocklyEditor() {
     .join('|') ?? '';
   const selectedScene = selectedSceneId ? project?.scenes.find((scene) => scene.id === selectedSceneId) : undefined;
   const selectedObject = selectedObjectId ? selectedScene?.objects.find((object) => object.id === selectedObjectId) : undefined;
+  const hasCodeTarget = !!selectedObjectId || !!selectedComponentId;
   const explicitlySelectedComponent = selectedComponentId
     ? (project?.components || []).find((component) => component.id === selectedComponentId)
     : undefined;
@@ -785,7 +790,7 @@ export function BlocklyEditor() {
 
     // Blockly config with Zelos renderer and continuous toolbox
     workspaceRef.current = Blockly.inject(containerRef.current, {
-      toolbox: getToolboxConfig(),
+      toolbox: hasCodeTarget ? getToolboxConfig() : EMPTY_TOOLBOX_CONFIG,
       renderer: 'zelos',
       plugins: {
         toolbox: PINNABLE_CONTINUOUS_TOOLBOX,
@@ -961,7 +966,15 @@ export function BlocklyEditor() {
       setAddVariableCallback(null);
       setManageVariablesCallback(null);
     };
-  }, [collapseUnpinnedFlyout, flushPendingWorkspacePersist, scheduleWorkspacePersist, updatePinButtonPosition]);
+  }, [collapseUnpinnedFlyout, flushPendingWorkspacePersist, hasCodeTarget, scheduleWorkspacePersist, updatePinButtonPosition]);
+
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+
+    workspace.updateToolbox(hasCodeTarget ? getToolboxConfig() : EMPTY_TOOLBOX_CONFIG);
+    updatePinButtonPosition();
+  }, [hasCodeTarget, updatePinButtonPosition]);
 
   // Keep workspace in sync with selected object XML, including undo/redo history replays.
   useEffect(() => {
@@ -1198,9 +1211,10 @@ export function BlocklyEditor() {
           ref={containerRef}
           className="h-full w-full"
           data-blockly-editor="true"
+          data-has-code-target={hasCodeTarget ? 'true' : 'false'}
           style={blocklyContainerStyle}
         />
-        {pinButtonPosition && (
+        {hasCodeTarget && pinButtonPosition && (
           <button
             type="button"
             className="absolute z-[90] flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"

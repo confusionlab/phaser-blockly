@@ -166,6 +166,13 @@ body {
   ry: calc(var(--scrollbar-size) / 2) !important;
 }
 
+[data-blockly-editor="true"][data-has-code-target="false"] .blocklyScrollbarHorizontal,
+[data-blockly-editor="true"][data-has-code-target="false"] .blocklyScrollbarVertical {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+
 .blocklyWidgetDiv,
 .blocklyDropDownDiv {
   color: var(--popover-foreground);
