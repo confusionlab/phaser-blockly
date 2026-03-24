@@ -12,8 +12,72 @@ export interface ViewportCamera {
   y: number;
 }
 
+export interface WorldRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export function clampViewportZoom(value: number, minZoom: number, maxZoom: number): number {
   return Math.max(minZoom, Math.min(maxZoom, value));
+}
+
+function clampCameraAxisToWorldRect(
+  center: number,
+  viewportPixels: number,
+  pixelsPerWorldUnit: number,
+  rectStart: number,
+  rectSize: number,
+  maxOverscrollPixels: number,
+): number {
+  if (viewportPixels <= 0 || pixelsPerWorldUnit <= 0 || rectSize <= 0) {
+    return center;
+  }
+
+  const halfViewportWorld = viewportPixels / (2 * pixelsPerWorldUnit);
+  const overscrollWorld = Math.max(0, maxOverscrollPixels) / pixelsPerWorldUnit;
+  const rectEnd = rectStart + rectSize;
+
+  if (rectSize <= halfViewportWorld * 2) {
+    const rectCenter = rectStart + rectSize / 2;
+    return Math.max(rectCenter - overscrollWorld, Math.min(rectCenter + overscrollWorld, center));
+  }
+
+  const minCenter = rectStart + halfViewportWorld - overscrollWorld;
+  const maxCenter = rectEnd - halfViewportWorld + overscrollWorld;
+  return Math.max(minCenter, Math.min(maxCenter, center));
+}
+
+export function clampCameraToWorldRect(
+  camera: ViewportCamera,
+  viewport: Pick<ViewportRect, 'width' | 'height'>,
+  pixelsPerWorldUnit: number,
+  worldRect: WorldRect,
+  maxOverscrollPixels = 0,
+): ViewportCamera {
+  const nextX = clampCameraAxisToWorldRect(
+    camera.x,
+    viewport.width,
+    pixelsPerWorldUnit,
+    worldRect.left,
+    worldRect.width,
+    maxOverscrollPixels,
+  );
+  const nextY = clampCameraAxisToWorldRect(
+    camera.y,
+    viewport.height,
+    pixelsPerWorldUnit,
+    worldRect.top,
+    worldRect.height,
+    maxOverscrollPixels,
+  );
+
+  if (nextX === camera.x && nextY === camera.y) {
+    return camera;
+  }
+
+  return { x: nextX, y: nextY };
 }
 
 export function screenToWorldPoint(

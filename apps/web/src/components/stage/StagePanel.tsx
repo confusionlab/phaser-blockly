@@ -20,7 +20,7 @@ function dispatchEditorResizeFreeze(active: boolean): void {
 }
 
 const stageOverlayButtonClass =
-  'inline-flex h-9 w-9 items-center justify-center rounded-full text-white/78 transition-[background-color,color,transform] duration-150 hover:bg-white/14 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55';
+  'inline-flex h-7 w-7 items-center justify-center rounded-full text-white/78 transition-[background-color,color,transform] duration-150 hover:bg-white/14 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55';
 
 const stageOverlayButtonActiveClass =
   'bg-white/16 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]';
@@ -117,8 +117,8 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-[100001] overflow-hidden bg-black">
-        <div className="absolute top-4 right-4 z-10">
-          <OverlayPill tone="dark">
+        <div className="absolute right-2 top-2 z-10">
+          <OverlayPill tone="dark" size="compact">
             <button
               type="button"
               onClick={handleRestartPlaying}
@@ -126,16 +126,16 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
               aria-label="Restart"
               className={cn(stageOverlayButtonClass, stageOverlayButtonActiveClass)}
             >
-              <RotateCcw className="size-4" />
+              <RotateCcw className="size-3.5" />
             </button>
             <button
               type="button"
               onClick={stopPlaying}
               title="Stop"
               aria-label="Stop"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-red-500 text-white transition-colors duration-150 hover:bg-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white transition-colors duration-150 hover:bg-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55"
             >
-              <Square className="size-4 fill-current" />
+              <Square className="size-3.5 fill-current" />
             </button>
           </OverlayPill>
         </div>
@@ -149,7 +149,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
   const isCameraView = viewMode !== 'editor';
 
   const stageOverlayControls = (
-    <OverlayPill tone="dark">
+    <OverlayPill tone="dark" size="compact">
       <button
         type="button"
         className={cn(
@@ -174,7 +174,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         aria-label={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
         aria-pressed={isCanvasFullscreen}
       >
-        {isCanvasFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+        {isCanvasFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
       </button>
       <button
         type="button"
@@ -183,13 +183,13 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
         title="Play"
         aria-label="Play"
       >
-        <Play className="size-5 fill-current" />
+        <Play className="size-4 fill-current" />
       </button>
     </OverlayPill>
   );
 
   const fullscreenCanvasControls = (
-    <div className="absolute top-4 right-4 z-10">
+    <div className="absolute right-2 top-2 z-10">
       {stageOverlayControls}
     </div>
   );
@@ -216,7 +216,7 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
           className="relative h-full w-full overflow-hidden"
           style={stageShellStyle}
         >
-          <div className="absolute right-3 top-3 z-20">
+          <div className="absolute right-2 top-2 z-20">
             {stageOverlayControls}
           </div>
           <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />

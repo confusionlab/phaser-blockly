@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import * as Select from '@radix-ui/react-select';
 import { Button } from '@/components/ui/button';
+import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import {
   ColorPicker,
   ColorPickerSelection,
@@ -30,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { EditorToolbar } from '@/components/editors/shared/EditorToolbar';
+import { cn } from '@/lib/utils';
 import Color from 'color';
 import type { CostumeEditorMode } from '@/types';
 
@@ -56,7 +58,13 @@ export interface TextToolStyle {
   opacity: number;
 }
 
-interface ToolButtonProps {
+interface ToolDefinition {
+  tool: DrawingTool;
+  icon: React.ReactNode;
+  label: string;
+}
+
+interface FloatingToolButtonProps {
   tool: DrawingTool;
   icon: React.ReactNode;
   label: string;
@@ -64,20 +72,40 @@ interface ToolButtonProps {
   onClick: (tool: DrawingTool) => void;
 }
 
-const ToolButton = memo(({ tool, icon, label, activeTool, onClick }: ToolButtonProps) => (
-  <Button
-    variant={activeTool === tool ? 'default' : 'ghost'}
-    size="icon"
-    className="size-8"
-    onClick={() => onClick(tool)}
-    title={label}
-    data-tool={tool}
-  >
-    {icon}
-  </Button>
-));
+const floatingToolButtonBaseClass =
+  'h-11 rounded-[18px] border border-transparent bg-transparent text-muted-foreground shadow-none transition-[transform,background-color,color,box-shadow,border-color] duration-200 hover:-translate-y-px hover:bg-background/85 hover:text-foreground';
+const floatingToolButtonActiveClass =
+  'border-border/70 bg-background text-foreground shadow-[0_16px_32px_-24px_rgba(15,23,42,0.6),0_2px_6px_rgba(15,23,42,0.08)]';
 
-ToolButton.displayName = 'ToolButton';
+const FloatingToolButton = memo(({
+  tool,
+  icon,
+  label,
+  activeTool,
+  onClick,
+}: FloatingToolButtonProps) => {
+  const isActive = activeTool === tool;
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon-lg"
+      className={cn(
+        floatingToolButtonBaseClass,
+        'w-11',
+        isActive && floatingToolButtonActiveClass,
+      )}
+      onClick={() => onClick(tool)}
+      title={label}
+      aria-pressed={isActive}
+      data-tool={tool}
+    >
+      {icon}
+    </Button>
+  );
+});
+
+FloatingToolButton.displayName = 'FloatingToolButton';
 
 interface CostumeToolbarProps {
   editorMode: EditorMode;
@@ -98,23 +126,31 @@ interface CostumeToolbarProps {
   onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
 }
 
-const bitmapTools: { tool: DrawingTool; icon: React.ReactNode; label: string }[] = [
-  { tool: 'select', icon: <MousePointer2 className="size-4" />, label: 'Select' },
-  { tool: 'brush', icon: <Pencil className="size-4" />, label: 'Brush' },
-  { tool: 'eraser', icon: <Eraser className="size-4" />, label: 'Eraser' },
-  { tool: 'fill', icon: <PaintBucket className="size-4" />, label: 'Fill' },
-  { tool: 'circle', icon: <Circle className="size-4" />, label: 'Circle' },
-  { tool: 'rectangle', icon: <Square className="size-4" />, label: 'Rectangle' },
-  { tool: 'line', icon: <Minus className="size-4" />, label: 'Line' },
+const bitmapPrimaryTools: ToolDefinition[] = [
+  { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
+  { tool: 'brush', icon: <Pencil className="size-[18px]" />, label: 'Brush' },
+  { tool: 'eraser', icon: <Eraser className="size-[18px]" />, label: 'Eraser' },
+  { tool: 'fill', icon: <PaintBucket className="size-[18px]" />, label: 'Fill' },
 ];
 
-const vectorTools: { tool: DrawingTool; icon: React.ReactNode; label: string }[] = [
-  { tool: 'select', icon: <MousePointer2 className="size-4" />, label: 'Select' },
-  { tool: 'vector', icon: <PenTool className="size-4" />, label: 'Vector Point' },
-  { tool: 'rectangle', icon: <Square className="size-4" />, label: 'Rectangle' },
-  { tool: 'circle', icon: <Circle className="size-4" />, label: 'Circle' },
-  { tool: 'line', icon: <Minus className="size-4" />, label: 'Line' },
-  { tool: 'text', icon: <Type className="size-4" />, label: 'Text' },
+const vectorPrimaryTools: ToolDefinition[] = [
+  { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
+  { tool: 'vector', icon: <PenTool className="size-[18px]" />, label: 'Vector Point' },
+];
+
+const vectorTrailingTools: ToolDefinition[] = [
+  { tool: 'text', icon: <Type className="size-[18px]" />, label: 'Text' },
+];
+
+const shapeTools: ToolDefinition[] = [
+  { tool: 'rectangle', icon: <Square className="size-[18px]" />, label: 'Rectangle' },
+  { tool: 'circle', icon: <Circle className="size-[18px]" />, label: 'Circle' },
+  { tool: 'line', icon: <Minus className="size-[18px]" />, label: 'Line' },
+];
+
+const modeOptions: SegmentedControlOption<EditorMode>[] = [
+  { value: 'bitmap', label: 'Bitmap' },
+  { value: 'vector', label: 'Vector' },
 ];
 
 const fontFamilyOptions = [
@@ -143,6 +179,10 @@ const vectorHandleTypeOptions: Array<{ value: VectorHandleType; label: string }>
   { value: 'smooth', label: 'Smooth' },
   { value: 'symmetric', label: 'Symmetric' },
 ];
+
+function isShapeTool(tool: DrawingTool) {
+  return shapeTools.some((shapeTool) => shapeTool.tool === tool);
+}
 
 export const CostumeToolbar = memo(({
   editorMode,
@@ -175,17 +215,15 @@ export const CostumeToolbar = memo(({
     }
   }, [onColorChange]);
 
-  const tools = editorMode === 'vector' ? vectorTools : bitmapTools;
-
   const updateColorPickerPosition = useCallback(() => {
     const button = colorButtonRef.current;
     if (!button) return;
     const rect = button.getBoundingClientRect();
-    const pickerWidth = 212; // 192px content + padding/border
+    const pickerWidth = 212;
     const viewportPadding = 8;
     const left = Math.max(
       viewportPadding,
-      Math.min(rect.left, window.innerWidth - pickerWidth - viewportPadding)
+      Math.min(rect.left, window.innerWidth - pickerWidth - viewportPadding),
     );
     setColorPickerPosition({
       left,
@@ -205,270 +243,331 @@ export const CostumeToolbar = memo(({
     };
   }, [showColorPicker, updateColorPickerPosition]);
 
+  const leadingTools = editorMode === 'vector' ? vectorPrimaryTools : bitmapPrimaryTools;
+  const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
+  const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
+  const shapeToolIsActive = isShapeTool(activeTool);
+
   return (
-    <EditorToolbar>
-      <div className="flex items-center gap-1 border-r pr-2">
-        <Button
-          variant={editorMode === 'bitmap' ? 'default' : 'outline'}
-          size="sm"
-          className="h-8 text-xs"
-          onClick={() => onEditorModeChange('bitmap')}
-        >
-          Bitmap
-        </Button>
-        <Button
-          variant={editorMode === 'vector' ? 'default' : 'outline'}
-          size="sm"
-          className="h-8 text-xs"
-          onClick={() => onEditorModeChange('vector')}
-        >
-          Vector
-        </Button>
-      </div>
+    <>
+      <EditorToolbar className="border-b bg-background/72 backdrop-blur-md supports-[backdrop-filter]:bg-background/62">
+        {editorMode === 'vector' && (
+          <div className="flex items-center border-r pr-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
+                  Move Order
+                  <ChevronDown className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="bottom" className="min-w-[160px]">
+                <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
+                  Move Forward
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onMoveOrder('backward')}>
+                  Move Backward
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onMoveOrder('front')}>
+                  Move To Front
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onMoveOrder('back')}>
+                  Move To Back
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
 
-      <div className="flex items-center gap-0.5 border-r pr-2">
-        {tools.map(({ tool, icon, label }) => (
-          <ToolButton
-            key={tool}
-            tool={tool}
-            icon={icon}
-            label={label}
-            activeTool={activeTool}
-            onClick={onToolChange}
-          />
-        ))}
-      </div>
+        {editorMode === 'vector' && activeTool === 'vector' && (
+          <div className="flex items-center gap-2 border-r pr-2">
+            <span className="whitespace-nowrap text-xs text-muted-foreground">Handles</span>
+            <Select.Root value={vectorHandleType} onValueChange={(value) => onVectorHandleTypeChange(value as VectorHandleType)}>
+              <Select.Trigger className="flex h-8 min-w-[120px] items-center justify-between gap-2 rounded-md border bg-background px-2 text-xs">
+                <Select.Value />
+              </Select.Trigger>
+              <Select.Portal>
+                <Select.Content className="z-[70] rounded-md border bg-popover shadow-md">
+                  <Select.Viewport className="p-1">
+                    {vectorHandleTypeOptions.map((option) => (
+                      <Select.Item
+                        key={option.value}
+                        value={option.value}
+                        className="flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted"
+                      >
+                        <Select.ItemText>{option.label}</Select.ItemText>
+                        <Select.ItemIndicator>
+                          <Check className="size-3" />
+                        </Select.ItemIndicator>
+                      </Select.Item>
+                    ))}
+                  </Select.Viewport>
+                </Select.Content>
+              </Select.Portal>
+            </Select.Root>
+          </div>
+        )}
 
-      {editorMode === 'vector' && (
         <div className="flex items-center border-r pr-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
-                Move Order
+              <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" disabled={alignDisabled}>
+                Align
                 <ChevronDown className="size-3" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-[160px]">
-              <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
-                Move Forward
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onMoveOrder('backward')}>
-                Move Backward
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onMoveOrder('front')}>
-                Move To Front
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onMoveOrder('back')}>
-                Move To Back
-              </DropdownMenuItem>
+            <DropdownMenuContent align="start" side="bottom" className="w-[140px] p-2">
+              <div className="grid grid-cols-3 gap-1">
+                {alignGrid.map((item) => (
+                  <DropdownMenuItem
+                    key={item.action}
+                    className="h-8 w-8 justify-center rounded border p-0 text-sm"
+                    title={item.title}
+                    onClick={() => onAlign(item.action)}
+                  >
+                    {item.label}
+                  </DropdownMenuItem>
+                ))}
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      )}
 
-      {editorMode === 'vector' && activeTool === 'vector' && (
-        <div className="flex items-center gap-2 border-r pr-2">
-          <span className="text-xs text-muted-foreground whitespace-nowrap">Handles</span>
-          <Select.Root value={vectorHandleType} onValueChange={(value) => onVectorHandleTypeChange(value as VectorHandleType)}>
-            <Select.Trigger className="h-8 min-w-[120px] rounded-md border bg-background px-2 text-xs flex items-center justify-between gap-2">
-              <Select.Value />
-            </Select.Trigger>
-            <Select.Portal>
-              <Select.Content className="z-[70] bg-popover border rounded-md shadow-md">
-                <Select.Viewport className="p-1">
-                  {vectorHandleTypeOptions.map((option) => (
-                    <Select.Item
-                      key={option.value}
-                      value={option.value}
-                      className="text-xs px-2 py-1.5 rounded hover:bg-muted cursor-pointer flex items-center justify-between gap-2"
-                    >
-                      <Select.ItemText>{option.label}</Select.ItemText>
-                      <Select.ItemIndicator>
-                        <Check className="size-3" />
-                      </Select.ItemIndicator>
-                    </Select.Item>
-                  ))}
-                </Select.Viewport>
-              </Select.Content>
-            </Select.Portal>
-          </Select.Root>
+        <div className="relative flex items-center gap-2 border-r pr-2">
+          <button
+            ref={colorButtonRef}
+            type="button"
+            className="size-7 cursor-pointer rounded border"
+            style={{ backgroundColor: brushColor }}
+            onClick={() => {
+              if (!showColorPicker) {
+                updateColorPickerPosition();
+              }
+              setShowColorPicker(!showColorPicker);
+            }}
+            title="Color"
+          />
+          {showColorPicker && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowColorPicker(false)} />
+              <div
+                className="fixed z-50 rounded-lg border bg-popover p-3 shadow-lg"
+                style={{
+                  left: colorPickerPosition.left,
+                  top: colorPickerPosition.top,
+                }}
+              >
+                <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
+                  <ColorPickerSelection className="mb-2 h-32 rounded" />
+                  <ColorPickerHue />
+                </ColorPicker>
+              </div>
+            </>
+          )}
         </div>
-      )}
 
-      <div className="flex items-center border-r pr-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1" disabled={alignDisabled}>
-              Align
-              <ChevronDown className="size-3" />
+        {editorMode === 'bitmap' && (
+          <div className="flex min-w-[120px] items-center gap-2 border-r pr-2">
+            <span className="whitespace-nowrap text-xs text-muted-foreground">Size:</span>
+            <Slider.Root
+              className="relative flex h-4 w-full touch-none items-center"
+              value={[brushSize]}
+              onValueChange={([value]) => onBrushSizeChange(value)}
+              min={1}
+              max={50}
+              step={1}
+            >
+              <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
+                <Slider.Range className="absolute h-full rounded-full bg-primary" />
+              </Slider.Track>
+              <Slider.Thumb className="block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+            </Slider.Root>
+            <span className="w-6 text-right text-xs text-muted-foreground">{brushSize}</span>
+          </div>
+        )}
+
+        {editorMode === 'vector' && showTextControls && (
+          <div className="flex items-center gap-2 border-r pr-2">
+            <Select.Root
+              value={textStyle.fontFamily}
+              onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
+            >
+              <Select.Trigger className="inline-flex h-8 min-w-[120px] items-center justify-between gap-1 rounded border bg-background px-2 text-xs hover:bg-accent">
+                <Select.Value />
+                <Select.Icon>
+                  <ChevronDown className="size-3" />
+                </Select.Icon>
+              </Select.Trigger>
+              <Select.Portal>
+                <Select.Content className="z-50 rounded-md border bg-popover shadow-md">
+                  <Select.Viewport className="p-1">
+                    {fontFamilyOptions.map((family) => (
+                      <Select.Item
+                        key={family}
+                        value={family}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs outline-none hover:bg-accent data-[highlighted]:bg-accent"
+                      >
+                        <Select.ItemIndicator>
+                          <Check className="size-3" />
+                        </Select.ItemIndicator>
+                        <Select.ItemText>{family}</Select.ItemText>
+                      </Select.Item>
+                    ))}
+                  </Select.Viewport>
+                </Select.Content>
+              </Select.Portal>
+            </Select.Root>
+
+            <div className="flex min-w-[90px] items-center gap-1">
+              <span className="text-xs text-muted-foreground">Sz</span>
+              <Slider.Root
+                className="relative flex h-4 w-16 touch-none items-center"
+                value={[textStyle.fontSize]}
+                onValueChange={([value]) => onTextStyleChange({ fontSize: value })}
+                min={8}
+                max={120}
+                step={1}
+              >
+                <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
+                  <Slider.Range className="absolute h-full rounded-full bg-primary" />
+                </Slider.Track>
+                <Slider.Thumb className="block size-3 rounded-full border border-primary/50 bg-background shadow" />
+              </Slider.Root>
+              <span className="w-6 text-right text-xs text-muted-foreground">{textStyle.fontSize}</span>
+            </div>
+
+            <Button
+              size="sm"
+              variant={textStyle.fontWeight === 'bold' ? 'default' : 'outline'}
+              className="h-8 px-2 text-xs font-bold"
+              onClick={() => onTextStyleChange({ fontWeight: textStyle.fontWeight === 'bold' ? 'normal' : 'bold' })}
+            >
+              B
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-[140px] p-2">
-            <div className="grid grid-cols-3 gap-1">
-              {alignGrid.map((item) => (
-                <DropdownMenuItem
-                  key={item.action}
-                  className="h-8 w-8 justify-center rounded border p-0 text-sm"
-                  title={item.title}
-                  onClick={() => onAlign(item.action)}
+
+            <div className="flex items-center gap-0.5">
+              {(['left', 'center', 'right'] as const).map((align) => (
+                <Button
+                  key={align}
+                  size="icon"
+                  variant={textStyle.textAlign === align ? 'default' : 'outline'}
+                  className="size-8"
+                  onClick={() => onTextStyleChange({ textAlign: align })}
+                  title={`Align ${align}`}
                 >
-                  {item.label}
-                </DropdownMenuItem>
+                  {align === 'left' && <AlignLeft className="size-3.5" />}
+                  {align === 'center' && <AlignCenter className="size-3.5" />}
+                  {align === 'right' && <AlignRight className="size-3.5" />}
+                </Button>
               ))}
             </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
 
-      <div className="relative flex items-center gap-2 border-r pr-2">
-        <button
-          ref={colorButtonRef}
-          type="button"
-          className="size-7 rounded border cursor-pointer"
-          style={{ backgroundColor: brushColor }}
-          onClick={() => {
-            if (!showColorPicker) {
-              updateColorPickerPosition();
-            }
-            setShowColorPicker(!showColorPicker);
-          }}
-          title="Color"
-        />
-        {showColorPicker && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowColorPicker(false)} />
-            <div
-              className="fixed z-50 bg-popover border rounded-lg p-3 shadow-lg"
-              style={{
-                left: colorPickerPosition.left,
-                top: colorPickerPosition.top,
-              }}
-            >
-              <ColorPicker value={brushColor} onChange={handleColorChange} className="w-48">
-                <ColorPickerSelection className="h-32 rounded mb-2" />
-                <ColorPickerHue />
-              </ColorPicker>
-            </div>
-          </>
-        )}
-      </div>
-
-      {editorMode === 'bitmap' && (
-        <div className="flex items-center gap-2 border-r pr-2 min-w-[120px]">
-          <span className="text-xs text-muted-foreground whitespace-nowrap">Size:</span>
-          <Slider.Root
-            className="relative flex h-4 w-full touch-none items-center"
-            value={[brushSize]}
-            onValueChange={([value]) => onBrushSizeChange(value)}
-            min={1}
-            max={50}
-            step={1}
-          >
-            <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
-              <Slider.Range className="absolute h-full rounded-full bg-primary" />
-            </Slider.Track>
-            <Slider.Thumb className="block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-          </Slider.Root>
-          <span className="text-xs text-muted-foreground w-6 text-right">{brushSize}</span>
-        </div>
-      )}
-
-      {editorMode === 'vector' && showTextControls && (
-        <div className="flex items-center gap-2 border-r pr-2">
-          <Select.Root
-            value={textStyle.fontFamily}
-            onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
-          >
-            <Select.Trigger className="inline-flex items-center justify-between gap-1 h-8 px-2 text-xs bg-background border rounded hover:bg-accent min-w-[120px]">
-              <Select.Value />
-              <Select.Icon>
-                <ChevronDown className="size-3" />
-              </Select.Icon>
-            </Select.Trigger>
-            <Select.Portal>
-              <Select.Content className="bg-popover border rounded-md shadow-md z-50">
-                <Select.Viewport className="p-1">
-                  {fontFamilyOptions.map((family) => (
-                    <Select.Item
-                      key={family}
-                      value={family}
-                      className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-accent data-[highlighted]:bg-accent"
-                    >
-                      <Select.ItemIndicator>
-                        <Check className="size-3" />
-                      </Select.ItemIndicator>
-                      <Select.ItemText>{family}</Select.ItemText>
-                    </Select.Item>
-                  ))}
-                </Select.Viewport>
-              </Select.Content>
-            </Select.Portal>
-          </Select.Root>
-
-          <div className="flex items-center gap-1 min-w-[90px]">
-            <span className="text-xs text-muted-foreground">Sz</span>
-            <Slider.Root
-              className="relative flex h-4 w-16 touch-none items-center"
-              value={[textStyle.fontSize]}
-              onValueChange={([value]) => onTextStyleChange({ fontSize: value })}
-              min={8}
-              max={120}
-              step={1}
-            >
-              <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
-                <Slider.Range className="absolute h-full rounded-full bg-primary" />
-              </Slider.Track>
-              <Slider.Thumb className="block size-3 rounded-full border border-primary/50 bg-background shadow" />
-            </Slider.Root>
-            <span className="text-xs text-muted-foreground w-6 text-right">{textStyle.fontSize}</span>
-          </div>
-
-          <Button
-            size="sm"
-            variant={textStyle.fontWeight === 'bold' ? 'default' : 'outline'}
-            className="h-8 px-2 text-xs font-bold"
-            onClick={() => onTextStyleChange({ fontWeight: textStyle.fontWeight === 'bold' ? 'normal' : 'bold' })}
-          >
-            B
-          </Button>
-
-          <div className="flex items-center gap-0.5">
-            {(['left', 'center', 'right'] as const).map((align) => (
-              <Button
-                key={align}
-                size="icon"
-                variant={textStyle.textAlign === align ? 'default' : 'outline'}
-                className="size-8"
-                onClick={() => onTextStyleChange({ textAlign: align })}
-                title={`Align ${align}`}
+            <div className="flex min-w-[110px] items-center gap-1">
+              <span className="text-xs text-muted-foreground">Op</span>
+              <Slider.Root
+                className="relative flex h-4 w-16 touch-none items-center"
+                value={[Math.round(textStyle.opacity * 100)]}
+                onValueChange={([value]) => onTextStyleChange({ opacity: value / 100 })}
+                min={10}
+                max={100}
+                step={1}
               >
-                {align === 'left' && <AlignLeft className="size-3.5" />}
-                {align === 'center' && <AlignCenter className="size-3.5" />}
-                {align === 'right' && <AlignRight className="size-3.5" />}
-              </Button>
-            ))}
+                <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
+                  <Slider.Range className="absolute h-full rounded-full bg-primary" />
+                </Slider.Track>
+                <Slider.Thumb className="block size-3 rounded-full border border-primary/50 bg-background shadow" />
+              </Slider.Root>
+              <span className="w-8 text-right text-xs text-muted-foreground">{Math.round(textStyle.opacity * 100)}%</span>
+            </div>
           </div>
+        )}
+      </EditorToolbar>
 
-          <div className="flex items-center gap-1 min-w-[110px]">
-            <span className="text-xs text-muted-foreground">Op</span>
-            <Slider.Root
-              className="relative flex h-4 w-16 touch-none items-center"
-              value={[Math.round(textStyle.opacity * 100)]}
-              onValueChange={([value]) => onTextStyleChange({ opacity: value / 100 })}
-              min={10}
-              max={100}
-              step={1}
-            >
-              <Slider.Track className="relative h-1.5 w-full grow rounded-full bg-secondary">
-                <Slider.Range className="absolute h-full rounded-full bg-primary" />
-              </Slider.Track>
-              <Slider.Thumb className="block size-3 rounded-full border border-primary/50 bg-background shadow" />
-            </Slider.Root>
-            <span className="text-xs text-muted-foreground w-8 text-right">{Math.round(textStyle.opacity * 100)}%</span>
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
+        <div className="pointer-events-auto hide-scrollbar max-w-full overflow-x-auto rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(252,252,251,0.97),rgba(241,244,242,0.96))] p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl dark:bg-[linear-gradient(180deg,rgba(42,42,46,0.96),rgba(24,24,27,0.94))] dark:shadow-[0_28px_72px_-38px_rgba(0,0,0,0.8),0_8px_24px_-18px_rgba(0,0,0,0.6)]">
+          <div className="flex min-w-max items-center gap-2">
+            <div className="flex items-center gap-1 rounded-[22px] bg-black/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:bg-white/[0.05] dark:shadow-none">
+              {leadingTools.map(({ tool, icon, label }) => (
+                <FloatingToolButton
+                  key={tool}
+                  tool={tool}
+                  icon={icon}
+                  label={label}
+                  activeTool={activeTool}
+                  onClick={onToolChange}
+                />
+              ))}
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      floatingToolButtonBaseClass,
+                      'h-11 gap-2 px-3 text-sm',
+                      shapeToolIsActive && floatingToolButtonActiveClass,
+                    )}
+                    title="Shapes"
+                    aria-pressed={shapeToolIsActive}
+                  >
+                    {currentShapeTool.icon}
+                    <ChevronDown className="size-3.5 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="top"
+                  align="center"
+                  sideOffset={12}
+                  className="min-w-[180px] rounded-2xl border p-2"
+                >
+                  {shapeTools.map((shapeTool) => {
+                    const isActive = activeTool === shapeTool.tool;
+
+                    return (
+                      <DropdownMenuItem
+                        key={shapeTool.tool}
+                        className="flex items-center justify-between rounded-xl px-3 py-2 text-sm"
+                        onClick={() => onToolChange(shapeTool.tool)}
+                      >
+                        <span className="flex items-center gap-3">
+                          {shapeTool.icon}
+                          <span>{shapeTool.label}</span>
+                        </span>
+                        <Check className={cn('size-3.5 text-foreground/70', !isActive && 'opacity-0')} />
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {trailingTools.map(({ tool, icon, label }) => (
+                <FloatingToolButton
+                  key={tool}
+                  tool={tool}
+                  icon={icon}
+                  label={label}
+                  activeTool={activeTool}
+                  onClick={onToolChange}
+                />
+              ))}
+            </div>
+
+            <div className="h-10 w-px bg-border/65" />
+
+            <div className="w-[164px] rounded-[20px] bg-black/[0.045] p-1 dark:bg-white/[0.05]">
+              <SegmentedControl
+                ariaLabel="Costume editor mode"
+                options={modeOptions}
+                value={editorMode}
+                onValueChange={onEditorModeChange}
+                className="w-full rounded-[16px] bg-background/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] dark:bg-black/30"
+                optionClassName="min-h-[40px] rounded-[14px] px-3 text-[13px] font-medium"
+              />
+            </div>
           </div>
         </div>
-      )}
-    </EditorToolbar>
+      </div>
+    </>
   );
 });
 

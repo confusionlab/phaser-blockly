@@ -622,7 +622,7 @@ export function CostumeEditor() {
         onRenameCostume={handleRenameCostume}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <CostumeToolbar
           editorMode={editorMode}
           activeTool={activeTool}

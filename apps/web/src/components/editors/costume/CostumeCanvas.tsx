@@ -26,6 +26,7 @@ import {
   getCompositeOperation,
 } from '@/lib/background/brushCore';
 import {
+  clampCameraToWorldRect,
   clampViewportZoom,
   panCameraFromDrag,
   panCameraFromWheel,
@@ -38,6 +39,7 @@ const BASE_VIEW_SCALE = BASE_DISPLAY_SIZE / CANVAS_SIZE;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
 const ZOOM_STEP = 0.1;
+const MAX_PAN_OVERSCROLL_PX = 160;
 const HANDLE_SIZE = 16;
 const VECTOR_SELECTION_COLOR = '#005eff';
 const VECTOR_SELECTION_CORNER_COLOR = '#ffffff';
@@ -81,6 +83,13 @@ const VECTOR_POINT_CONTROL_STYLE = {
   cornerSize: 14,
   transparentCorners: false,
 };
+
+const COSTUME_WORLD_RECT = {
+  left: 0,
+  top: 0,
+  width: CANVAS_SIZE,
+  height: CANVAS_SIZE,
+} as const;
 
 type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
@@ -371,6 +380,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return clampViewportZoom(value, MIN_ZOOM, MAX_ZOOM);
   }, []);
 
+  const clampCameraCenter = useCallback((
+    nextCamera: { x: number; y: number },
+    zoomValue = zoomRef.current,
+    view = viewportSizeRef.current,
+  ) => {
+    return clampCameraToWorldRect(
+      nextCamera,
+      view,
+      BASE_VIEW_SCALE * zoomValue,
+      COSTUME_WORLD_RECT,
+      MAX_PAN_OVERSCROLL_PX,
+    );
+  }, []);
+
   const zoomAtScreenPoint = useCallback((screenX: number, screenY: number, nextZoom: number) => {
     const clampedZoom = clampZoom(nextZoom);
     const currentZoom = zoomRef.current;
@@ -395,12 +418,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       y: (screenY - view.height / 2) / afterScale + currentCamera.y,
     };
 
-    setCameraCenter({
+    setCameraCenter(clampCameraCenter({
       x: currentCamera.x + (worldBefore.x - worldAfter.x),
       y: currentCamera.y + (worldBefore.y - worldAfter.y),
-    });
+    }, clampedZoom, view));
     setZoom(clampedZoom);
-  }, [clampZoom]);
+  }, [clampCameraCenter, clampZoom]);
 
   const zoomAroundViewportCenter = useCallback((nextZoom: number) => {
     const view = viewportSizeRef.current;
@@ -2535,6 +2558,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    setCameraCenter((prev) => clampCameraCenter(prev));
+  }, [clampCameraCenter, viewportSize.height, viewportSize.width]);
+
   // Stage-like pan behavior: middle/right mouse drag.
   useEffect(() => {
     const container = containerRef.current;
@@ -2561,12 +2588,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       event.preventDefault();
       const currentScale = BASE_VIEW_SCALE * zoomRef.current;
       setCameraCenter(
-        panCameraFromDrag(
-          { x: pan.cameraStartX, y: pan.cameraStartY },
-          event.clientX - pan.startX,
-          event.clientY - pan.startY,
-          currentScale,
-          'down',
+        clampCameraCenter(
+          panCameraFromDrag(
+            { x: pan.cameraStartX, y: pan.cameraStartY },
+            event.clientX - pan.startX,
+            event.clientY - pan.startY,
+            currentScale,
+            'down',
+          ),
+          zoomRef.current,
         ),
       );
     };
@@ -2878,14 +2908,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       const zoomFactor = Math.max(0.01, 1 + zoomDelta);
       const nextZoom = clampZoom(zoomRef.current * zoomFactor);
       setCameraCenter(
-        zoomCameraAtClientPoint(
-          e.clientX,
-          e.clientY,
-          rect,
-          cameraCenterRef.current,
-          BASE_VIEW_SCALE * zoomRef.current,
-          BASE_VIEW_SCALE * nextZoom,
-          'down',
+        clampCameraCenter(
+          zoomCameraAtClientPoint(
+            e.clientX,
+            e.clientY,
+            rect,
+            cameraCenterRef.current,
+            BASE_VIEW_SCALE * zoomRef.current,
+            BASE_VIEW_SCALE * nextZoom,
+            'down',
+          ),
+          nextZoom,
         ),
       );
       setZoom(nextZoom);
@@ -2893,8 +2926,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const currentScale = BASE_VIEW_SCALE * zoomRef.current;
-    setCameraCenter((prev) => panCameraFromWheel(prev, e.deltaX, e.deltaY, currentScale, 'down'));
-  }, [clampZoom]);
+    setCameraCenter((prev) => clampCameraCenter(
+      panCameraFromWheel(prev, e.deltaX, e.deltaY, currentScale, 'down'),
+    ));
+  }, [clampCameraCenter, clampZoom]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -2948,8 +2983,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const handleZoomReset = useCallback(() => {
     setZoom(1);
-    setCameraCenter({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
-  }, []);
+    setCameraCenter(clampCameraCenter({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 }, 1));
+  }, [clampCameraCenter]);
 
   const currentViewScale = BASE_VIEW_SCALE * zoom;
   const canvasLeft = viewportSize.width / 2 - cameraCenter.x * currentViewScale;
