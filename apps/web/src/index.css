@@ -65,6 +65,7 @@ body {
 
 .blocklyMainBackground {
   fill: var(--blockly-workspace-bg) !important;
+  stroke: none !important;
 }
 
 /* Make Blockly toolbox category buttons smaller */
