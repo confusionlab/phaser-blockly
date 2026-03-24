@@ -32,7 +32,7 @@ const stageOverlayToneClasses = {
   },
   light: {
     button:
-      'inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-slate-950/8 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18',
+      'inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-white/22 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18',
     active:
       'bg-white/42 text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_8px_18px_-14px_rgba(15,23,42,0.22)]',
     play:

@@ -1528,6 +1528,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isNearlyEqual,
   ]);
 
+  const removePathControlPointHandles = useCallback((controls: Record<string, Control>) => {
+    for (const key of Object.keys(controls)) {
+      if (/_CP_/i.test(key)) {
+        delete controls[key];
+      }
+    }
+  }, []);
+
   const clonePoint = useCallback((point: Point | null): Point | null => {
     if (!point) return null;
     return new Point(point.x, point.y);
@@ -2295,7 +2303,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       ctx.restore();
     }
 
-    target.drawControls?.(ctx);
   }, [isClosedPath, traceVectorPointEditingGuidePath]);
 
   const applyVectorPointControls = useCallback((obj: any): boolean => {
@@ -2320,6 +2327,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           controlStroke: '#ffffff',
         },
       });
+      removePathControlPointHandles(controls);
       removeDuplicateClosedPathAnchorControl(obj, controls);
       for (const [key, control] of Object.entries(controls)) {
         const originalMouseDownHandler = control.mouseDownHandler;
@@ -2406,7 +2414,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       obj.controls = controls;
       if (typeof obj.setControlVisible === 'function') {
         for (const key of Object.keys(obj.controls || {})) {
-          obj.setControlVisible(key, !/_CP_/i.test(key));
+          obj.setControlVisible(key, true);
         }
       }
       if (typeof obj.setCoords === 'function') {
@@ -2441,6 +2449,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getAnchorPointForIndex,
     getCommandType,
     getPathNodeHandleType,
+    removePathControlPointHandles,
     removeDuplicateClosedPathAnchorControl,
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
