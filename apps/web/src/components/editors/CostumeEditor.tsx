@@ -12,7 +12,7 @@ import {
   type VectorHandleType,
 } from './costume/CostumeToolbar';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
-import { getEffectiveObjectProps, createDefaultColliderConfig } from '@/types';
+import { getEffectiveObjectProps } from '@/types';
 import type { Costume, ColliderConfig, CostumeEditorMode } from '@/types';
 import {
   createCostumeEditorSession,
@@ -77,7 +77,14 @@ export function CostumeEditor() {
     updateCostumeFromEditor,
     applyCostumeEditorOperation,
   } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, registerCostumeUndo, activeObjectTab } = useEditorStore();
+  const {
+    selectedSceneId,
+    selectedObjectId,
+    registerCostumeUndo,
+    activeObjectTab,
+    costumeColliderEditorRequest,
+    consumeCostumeColliderEditorRequest,
+  } = useEditorStore();
 
   const currentCostumeIdRef = useRef<string | null>(null);
   const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null }>({
@@ -470,6 +477,41 @@ export function CostumeEditor() {
   }, [editorMode]);
 
   useEffect(() => {
+    if (
+      activeObjectTab !== 'costumes' ||
+      !selectedSceneId ||
+      !selectedObjectId ||
+      !costumeColliderEditorRequest ||
+      costumeColliderEditorRequest.sceneId !== selectedSceneId ||
+      costumeColliderEditorRequest.objectId !== selectedObjectId ||
+      !collider?.type ||
+      collider.type === 'none'
+    ) {
+      return;
+    }
+
+    consumeCostumeColliderEditorRequest(selectedSceneId, selectedObjectId);
+    setActiveTool('collider');
+  }, [
+    activeObjectTab,
+    collider,
+    consumeCostumeColliderEditorRequest,
+    costumeColliderEditorRequest,
+    selectedObjectId,
+    selectedSceneId,
+  ]);
+
+  useEffect(() => {
+    if (activeTool !== 'collider') {
+      return;
+    }
+    if (collider?.type && collider.type !== 'none') {
+      return;
+    }
+    setActiveTool(ensureToolForMode(editorMode, 'select'));
+  }, [activeTool, collider, editorMode]);
+
+  useEffect(() => {
     if (activeObjectTab !== 'costumes') {
       return;
     }
@@ -538,20 +580,6 @@ export function CostumeEditor() {
       return next;
     });
   }, []);
-
-  const handleColliderTypeChange = useCallback((type: ColliderConfig['type']) => {
-    const loadedSession = loadedSessionRef.current;
-    if (!loadedSession || isLoadingRef.current || !isCanvasReadyForSession(loadedSession)) return;
-
-    if (type === 'none') {
-      updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: null });
-    } else {
-      const newCollider: ColliderConfig = collider
-        ? { ...collider, type }
-        : createDefaultColliderConfig(type);
-      updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: newCollider });
-    }
-  }, [collider, isCanvasReadyForSession, updateObject]);
 
   const handleColliderChange = useCallback((newCollider: ColliderConfig) => {
     const loadedSession = loadedSessionRef.current;
@@ -625,9 +653,6 @@ export function CostumeEditor() {
           canRedo={canRedo}
           onUndo={handleUndo}
           onRedo={handleRedo}
-          onToolChange={handleToolChange}
-          colliderType={collider?.type ?? 'none'}
-          onColliderTypeChange={handleColliderTypeChange}
           collider={collider}
           onHistoryChange={handleHistoryChange}
           onColliderChange={handleColliderChange}

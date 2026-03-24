@@ -129,9 +129,6 @@ interface CostumeCanvasProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
-  onToolChange: (tool: DrawingTool) => void;
-  colliderType: ColliderConfig['type'];
-  onColliderTypeChange: (type: ColliderConfig['type']) => void;
   collider: ColliderConfig | null;
   onHistoryChange?: () => void;
   onColliderChange?: (collider: ColliderConfig) => void;
@@ -206,9 +203,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   canRedo,
   onUndo,
   onRedo,
-  onToolChange,
-  colliderType,
-  onColliderTypeChange,
   collider,
   onHistoryChange,
   onColliderChange,
@@ -2974,10 +2968,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
         onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
         onZoomReset={handleZoomReset}
-        colliderType={colliderType}
-        onColliderTypeChange={onColliderTypeChange}
-        activeTool={activeTool}
-        onToolChange={onToolChange}
       />
 
       <div

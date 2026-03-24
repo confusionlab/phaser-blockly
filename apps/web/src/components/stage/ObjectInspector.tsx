@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/color-picker';
 import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink, Component, Paintbrush } from 'lucide-react';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
-import { createDefaultColliderConfig, getEffectiveObjectProps } from '@/types';
+import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
 import {
   beginHistoryTransaction,
   endHistoryTransaction,
@@ -250,6 +250,7 @@ export function ObjectInspector() {
     selectedObjectIds,
     openBackgroundEditor,
     openWorldBoundaryEditor,
+    openCostumeColliderEditor,
   } = useEditorStore();
   const [activeTab, setActiveTab] = useState<string>('object');
 
@@ -285,6 +286,7 @@ export function ObjectInspector() {
               objects={selectedObjects}
               sceneId={selectedSceneId}
               updateObject={updateObject}
+              openCostumeColliderEditor={openCostumeColliderEditor}
             />
           )}
         </TabsContent>
@@ -305,9 +307,10 @@ interface ObjectPropertiesProps {
   objects: GameObject[];
   sceneId: string | null;
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
+  openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
 }
 
-function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesProps) {
+function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderEditor }: ObjectPropertiesProps) {
   const [linkScale, setLinkScale] = useState(true);
   const dragStartValuesRef = useRef<Partial<Record<'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation', Map<string, number>>>>({});
   const activeDragTransactionsRef = useRef(0);
@@ -638,6 +641,8 @@ function ObjectProperties({ objects, sceneId, updateObject }: ObjectPropertiesPr
               sceneId={sceneId}
               updateObject={updateObject}
               physics={effectivePhysics}
+              collider={effectiveCollider}
+              onEditCollider={() => openCostumeColliderEditor(sceneId, object.id)}
             />
           )}
         </>
@@ -797,16 +802,7 @@ function PhysicsToggle({
     } else {
       // Enable physics with default settings
       const updates: Partial<GameObject> = {
-        physics: {
-          enabled: true,
-          bodyType: 'dynamic',
-          gravityY: 1, // Matter.js gravity scale: 1 = normal gravity
-          velocityX: 0,
-          velocityY: 0,
-          bounce: 0.2,
-          friction: 0.1,
-          allowRotation: false,
-        },
+        physics: createDefaultPhysicsConfig(),
       };
 
       // If no collider exists, create a default circle collider
@@ -835,17 +831,42 @@ function PhysicsToggle({
   );
 }
 
+const colliderTypeOptions: Array<{ value: 'none' | 'box' | 'circle' | 'capsule'; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'box', label: 'Box' },
+  { value: 'circle', label: 'Circle' },
+  { value: 'capsule', label: 'Capsule' },
+];
+
 function PhysicsProperties({
   object,
   sceneId,
   updateObject,
   physics,
-}: FieldProps & { physics: PhysicsConfig }) {
+  collider,
+  onEditCollider,
+}: FieldProps & {
+  physics: PhysicsConfig;
+  collider: GameObject['collider'];
+  onEditCollider: () => void;
+}) {
   const syncedLabelClass = object.componentId ? 'text-purple-600' : 'text-muted-foreground';
+  const colliderType = collider?.type ?? 'none';
 
   const updatePhysics = (updates: Partial<PhysicsConfig>) => {
     updateObject(sceneId, object.id, {
       physics: { ...physics, ...updates }
+    });
+  };
+
+  const updateColliderType = (type: 'none' | 'box' | 'circle' | 'capsule') => {
+    if (type === 'none') {
+      updateObject(sceneId, object.id, { collider: null });
+      return;
+    }
+
+    updateObject(sceneId, object.id, {
+      collider: collider ? { ...collider, type } : createDefaultColliderConfig(type),
     });
   };
 
@@ -923,6 +944,34 @@ function PhysicsProperties({
         <Label htmlFor="allow-rotation" className={`text-xs cursor-pointer ${syncedLabelClass}`}>
           Rotate with Physics
         </Label>
+      </div>
+
+      <div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Collider</div>
+        <div className="flex gap-2 items-center">
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg flex-1">
+            <select
+              value={colliderType}
+              onChange={(e) => updateColliderType(e.target.value as 'none' | 'box' | 'circle' | 'capsule')}
+              className="flex-1 bg-transparent text-sm outline-none text-foreground cursor-pointer"
+            >
+              {colliderTypeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-10 px-3 text-xs"
+            onClick={onEditCollider}
+            disabled={colliderType === 'none'}
+          >
+            Edit
+          </Button>
+        </div>
       </div>
     </div>
   );

@@ -12,6 +12,10 @@ import {
 } from '@/store/universalHistory';
 
 export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
+export interface CostumeColliderEditorRequest {
+  sceneId: string;
+  objectId: string;
+}
 
 // View mode for the stage canvas
 // 'camera-masked': Shows game area with black bars outside camera bounds
@@ -104,6 +108,7 @@ interface EditorStore {
   showPlayValidationDialog: boolean;
   playValidationIssues: PlayValidationIssue[];
   activeObjectTab: ObjectEditorTab;
+  costumeColliderEditorRequest: CostumeColliderEditorRequest | null;
   collapsedFolderIdsByScene: Record<string, string[]>;
   backgroundEditorOpen: boolean;
   backgroundEditorSceneId: string | null;
@@ -131,6 +136,8 @@ interface EditorStore {
   selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
   reconcileSelectionToProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
+  openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
+  consumeCostumeColliderEditorRequest: (sceneId: string, objectId: string) => boolean;
 
   startPlaying: () => void;
   stopPlaying: () => void;
@@ -230,6 +237,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   showPlayValidationDialog: false,
   playValidationIssues: [],
   activeObjectTab: 'code' as ObjectEditorTab,
+  costumeColliderEditorRequest: null,
   collapsedFolderIdsByScene: {},
   backgroundEditorOpen: false,
   backgroundEditorSceneId: null,
@@ -278,6 +286,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        costumeColliderEditorRequest: null,
       });
     };
 
@@ -321,6 +330,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        costumeColliderEditorRequest: null,
       });
     };
 
@@ -364,6 +374,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        costumeColliderEditorRequest: null,
       });
     };
 
@@ -411,6 +422,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        costumeColliderEditorRequest: null,
       });
     };
 
@@ -454,6 +466,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
+        costumeColliderEditorRequest: null,
       });
     };
 
@@ -517,6 +530,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedComponentId ? null : nextSelectedObjectId,
         selectedObjectIds: nextSelectedComponentId ? [] : nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        costumeColliderEditorRequest: null,
       });
     };
 
@@ -601,6 +615,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectIds: issue.objectId ? [issue.objectId] : [],
         selectedComponentId: null,
         activeObjectTab: 'code',
+        costumeColliderEditorRequest: null,
         showPlayValidationDialog: false,
       });
     });
@@ -689,7 +704,29 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   setActiveObjectTab: (tab) => {
-    set({ activeObjectTab: tab });
+    set((state) => ({
+      activeObjectTab: tab,
+      costumeColliderEditorRequest: tab === 'costumes' ? state.costumeColliderEditorRequest : null,
+    }));
+  },
+
+  openCostumeColliderEditor: (sceneId, objectId) => {
+    set({
+      activeObjectTab: 'costumes',
+      costumeColliderEditorRequest: {
+        sceneId,
+        objectId,
+      },
+    });
+  },
+
+  consumeCostumeColliderEditorRequest: (sceneId, objectId) => {
+    const request = get().costumeColliderEditorRequest;
+    if (!request || request.sceneId !== sceneId || request.objectId !== objectId) {
+      return false;
+    }
+    set({ costumeColliderEditorRequest: null });
+    return true;
   },
 
   openObjectPicker: (callback, excludeId = null) => {

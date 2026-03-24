@@ -116,6 +116,7 @@ test.describe('project store costume editor boundary', () => {
       selectedObjectIds: [],
       selectedComponentId: null,
       activeObjectTab: 'code',
+      costumeColliderEditorRequest: null,
       costumeUndoHandler: null,
     });
   });
@@ -222,6 +223,27 @@ test.describe('project store costume editor boundary', () => {
     const nextProject = useProjectStore.getState().project;
     expect(nextProject?.components[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,UPDATED_COMPONENT');
     expect(nextProject?.scenes[0]?.objects[0]?.componentId).toBe(sharedComponent.id);
+  });
+
+  test('opens the costume editor with a scoped collider edit request', async () => {
+    const { useEditorStore } = await loadStores();
+
+    useEditorStore.getState().openCostumeColliderEditor('scene-a', 'object-a');
+
+    expect(useEditorStore.getState().activeObjectTab).toBe('costumes');
+    expect(useEditorStore.getState().costumeColliderEditorRequest).toEqual({
+      sceneId: 'scene-a',
+      objectId: 'object-a',
+    });
+
+    expect(useEditorStore.getState().consumeCostumeColliderEditorRequest('scene-b', 'object-a')).toBe(false);
+    expect(useEditorStore.getState().costumeColliderEditorRequest).toEqual({
+      sceneId: 'scene-a',
+      objectId: 'object-a',
+    });
+
+    expect(useEditorStore.getState().consumeCostumeColliderEditorRequest('scene-a', 'object-a')).toBe(true);
+    expect(useEditorStore.getState().costumeColliderEditorRequest).toBeNull();
   });
 
   test('persists the active session and renames another costume in one undo step', async () => {

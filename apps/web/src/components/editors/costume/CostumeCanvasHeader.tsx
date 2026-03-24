@@ -1,8 +1,5 @@
-import * as Select from '@radix-ui/react-select';
-import { Undo2, Redo2, Move, ChevronDown, Check } from 'lucide-react';
+import { Undo2, Redo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { ColliderConfig } from '@/types';
-import type { DrawingTool } from './CostumeToolbar';
 
 interface CostumeCanvasHeaderProps {
   canUndo: boolean;
@@ -15,18 +12,7 @@ interface CostumeCanvasHeaderProps {
   onZoomOut: () => void;
   onZoomIn: () => void;
   onZoomReset: () => void;
-  colliderType: ColliderConfig['type'];
-  onColliderTypeChange: (type: ColliderConfig['type']) => void;
-  activeTool: DrawingTool;
-  onToolChange: (tool: DrawingTool) => void;
 }
-
-const colliderTypes: { value: ColliderConfig['type']; label: string }[] = [
-  { value: 'none', label: 'None' },
-  { value: 'box', label: 'Box' },
-  { value: 'circle', label: 'Circle' },
-  { value: 'capsule', label: 'Capsule' },
-];
 
 export function CostumeCanvasHeader({
   canUndo,
@@ -39,10 +25,6 @@ export function CostumeCanvasHeader({
   onZoomOut,
   onZoomIn,
   onZoomReset,
-  colliderType,
-  onColliderTypeChange,
-  activeTool,
-  onToolChange,
 }: CostumeCanvasHeaderProps) {
   return (
     <div className="flex items-center py-2 px-3 border-b bg-background/50">
@@ -81,49 +63,7 @@ export function CostumeCanvasHeader({
         </button>
       </div>
 
-      <div className="flex-1 flex items-center justify-end gap-2">
-        <span className="text-xs text-muted-foreground">Collider:</span>
-        <Select.Root value={colliderType} onValueChange={(value) => onColliderTypeChange(value as ColliderConfig['type'])}>
-          <Select.Trigger className="inline-flex items-center justify-between gap-1 h-8 px-2 text-xs bg-background border rounded hover:bg-accent min-w-[90px]">
-            <Select.Value />
-            <Select.Icon>
-              <ChevronDown className="size-3" />
-            </Select.Icon>
-          </Select.Trigger>
-          <Select.Portal>
-            <Select.Content className="bg-popover border rounded-md shadow-md z-50">
-              <Select.Viewport className="p-1">
-                {colliderTypes.map(({ value, label }) => (
-                  <Select.Item
-                    key={value}
-                    value={value}
-                    className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-accent data-[highlighted]:bg-accent"
-                  >
-                    <Select.ItemIndicator>
-                      <Check className="size-3" />
-                    </Select.ItemIndicator>
-                    <Select.ItemText>{label}</Select.ItemText>
-                  </Select.Item>
-                ))}
-              </Select.Viewport>
-            </Select.Content>
-          </Select.Portal>
-        </Select.Root>
-
-        {colliderType !== 'none' && (
-          <Button
-            variant={activeTool === 'collider' ? 'default' : 'outline'}
-            size="sm"
-            className="h-8 px-2 gap-1"
-            onClick={() => onToolChange('collider')}
-            title="Edit Collider"
-            style={activeTool === 'collider' ? { backgroundColor: '#22c55e', borderColor: '#22c55e' } : { borderColor: '#22c55e', color: '#22c55e' }}
-          >
-            <Move className="size-3" />
-            <span className="text-xs">Edit</span>
-          </Button>
-        )}
-      </div>
+      <div className="flex-1" />
     </div>
   );
 }
