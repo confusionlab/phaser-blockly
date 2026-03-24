@@ -65,7 +65,7 @@ export function ObjectEditor() {
       <Tabs
         value={activeObjectTab}
         onValueChange={(value) => setActiveObjectTab(value as ObjectEditorTab)}
-        className="flex flex-col h-full"
+        className="flex h-full flex-col gap-0"
       >
         {/* Tab Header */}
         <div className="flex items-center border-b px-2">
