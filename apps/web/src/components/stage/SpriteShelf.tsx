@@ -1423,7 +1423,6 @@ export function SpriteShelf() {
     const rowContentPaddingClass = 'py-1';
     const indentDepth = Math.max(0, level - 1);
     const rowHoverClass = 'bg-[#E7EAEE] dark:bg-[#434A58]';
-    const controlHoverClass = 'hover:bg-[#DDE1E7] dark:hover:bg-[#4B5363]';
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1479,9 +1478,9 @@ export function SpriteShelf() {
                 className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex items-center rounded-lg ${rowContentPaddingClass} transition-colors`}>
+            <div className={`relative z-10 flex items-stretch rounded-lg ${rowContentPaddingClass} transition-colors`}>
             {indentDepth > 0 ? (
-              <div aria-hidden="true" className="flex shrink-0">
+              <div aria-hidden="true" className="flex self-center shrink-0">
                 {Array.from({ length: indentDepth }).map((_, index) => (
                   <span key={`${item.key}-indent-${index}`} className="block w-4 shrink-0" />
                 ))}
@@ -1491,9 +1490,9 @@ export function SpriteShelf() {
               type="button"
               disabled={!hasChildItems}
               aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-              className={`-m-1 shrink-0 rounded p-1 flex items-center justify-center transition-opacity disabled:pointer-events-none ${
+              className={`-mx-1 self-stretch shrink-0 rounded px-1 flex items-center justify-center transition-opacity disabled:pointer-events-none ${
                 isShelfHovered ? 'opacity-100' : 'opacity-0'
-              } ${controlHoverClass}`}
+              }`}
               onClick={interactive ? ((e) => {
                 e.stopPropagation();
                 if (folder) {
@@ -1509,12 +1508,12 @@ export function SpriteShelf() {
             </button>
 
             {item.type === 'folder' ? (
-              <div className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
-                {isExpanded ? <FolderOpen className="size-3.5 shrink-0" /> : <Folder className="size-3.5 shrink-0" />}
+              <div className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center rounded-md">
+                {isExpanded ? <FolderOpen className="size-6 shrink-0" /> : <Folder className="size-6 shrink-0" />}
               </div>
             ) : (
               <div
-                className="relative flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md"
+                className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center overflow-hidden rounded-md"
               >
                 {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
                   const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
@@ -1554,7 +1553,7 @@ export function SpriteShelf() {
               </div>
             )}
 
-            <div className="ml-1.5 flex-1 min-w-0">
+            <div className="ml-1.5 flex flex-1 min-w-0 items-center">
               {isObjectEditing ? (
                 <InlineRenameField
                   key={`rename-${inlineRenameSessionId}`}
