@@ -149,7 +149,7 @@ const shapeTools: ToolDefinition[] = [
 ];
 
 const modeOptions: SegmentedControlOption<EditorMode>[] = [
-  { value: 'bitmap', label: 'Bitmap' },
+  { value: 'bitmap', label: 'Pixel' },
   { value: 'vector', label: 'Vector' },
 ];
 
@@ -501,7 +501,7 @@ export const CostumeToolbar = memo(({
               <DropdownMenu open={shapeMenuOpen} onOpenChange={setShapeMenuOpen}>
                 <div
                   className={cn(
-                    'flex items-center overflow-hidden rounded-[18px] bg-transparent',
+                    'flex items-center gap-1 rounded-[18px] bg-transparent',
                     shapeToolIsActive && floatingToolButtonActiveClass,
                   )}
                   onContextMenu={(event) => {
@@ -514,7 +514,7 @@ export const CostumeToolbar = memo(({
                     size="sm"
                     className={cn(
                       floatingToolButtonBaseClass,
-                      'h-11 rounded-r-none px-2.5 text-sm',
+                      'h-11 rounded-[18px] !pl-3 !pr-0 text-sm',
                       shapeToolIsActive && 'bg-transparent shadow-none',
                     )}
                     onClick={() => onToolChange(currentShapeTool.tool)}
@@ -530,7 +530,7 @@ export const CostumeToolbar = memo(({
                       size="sm"
                       className={cn(
                         floatingToolButtonBaseClass,
-                        'h-11 rounded-l-none px-1.5 text-sm',
+                        'h-11 rounded-[18px] !pl-0 !pr-3 text-sm',
                         shapeToolIsActive && 'bg-transparent shadow-none',
                       )}
                       title="Open shape tools"
