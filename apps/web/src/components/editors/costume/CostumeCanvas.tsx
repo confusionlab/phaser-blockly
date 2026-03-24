@@ -97,6 +97,17 @@ type CanvasHistorySnapshot = {
   vectorJson: string | null;
 };
 
+interface CanvasSelectionBoundsSnapshot {
+  selectionObject: any;
+  selectedObjects: any[];
+  bounds: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+}
+
 export interface CostumeCanvasExportState {
   dataUrl: string;
   bounds: CostumeBounds | null;
@@ -236,6 +247,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [isViewportPanning, setIsViewportPanning] = useState(false);
   const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
+  const [canZoomToSelection, setCanZoomToSelection] = useState(false);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   const cameraCenterRef = useRef(cameraCenter);
@@ -314,16 +326,60 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const brushCursorPosRef = useRef<{ x: number; y: number } | null>(null);
   const activePathAnchorRef = useRef<{ path: any; anchorIndex: number } | null>(null);
 
+  const getSelectionBoundsSnapshot = useCallback((): CanvasSelectionBoundsSnapshot | null => {
+    const fabricCanvas = fabricCanvasRef.current;
+    const mode = editorModeRef.current;
+    const activeObject = fabricCanvas?.getActiveObject() as any;
+    const selectionObject = mode === 'bitmap'
+      ? bitmapFloatingObjectRef.current
+      : activeObject;
+    if (!selectionObject) return null;
+    if (isTextObject(selectionObject) && (selectionObject as any).isEditing) return null;
+
+    const selectedObjects = isActiveSelectionObject(selectionObject) && typeof selectionObject.getObjects === 'function'
+      ? (selectionObject.getObjects() as any[]).filter(Boolean)
+      : [selectionObject];
+    if (selectedObjects.length === 0) return null;
+
+    const boundsList = selectedObjects
+      .map((obj) => ({ obj, rect: obj.getBoundingRect() as { left: number; top: number; width: number; height: number } }))
+      .filter((entry) => Number.isFinite(entry.rect.left) && Number.isFinite(entry.rect.top));
+    if (boundsList.length === 0) return null;
+
+    let minLeft = Number.POSITIVE_INFINITY;
+    let minTop = Number.POSITIVE_INFINITY;
+    let maxRight = Number.NEGATIVE_INFINITY;
+    let maxBottom = Number.NEGATIVE_INFINITY;
+    for (const { rect } of boundsList) {
+      minLeft = Math.min(minLeft, rect.left);
+      minTop = Math.min(minTop, rect.top);
+      maxRight = Math.max(maxRight, rect.left + rect.width);
+      maxBottom = Math.max(maxBottom, rect.top + rect.height);
+    }
+
+    return {
+      selectionObject,
+      selectedObjects: boundsList.map((entry) => entry.obj),
+      bounds: {
+        left: minLeft,
+        top: minTop,
+        width: Math.max(1, maxRight - minLeft),
+        height: Math.max(1, maxBottom - minTop),
+      },
+    };
+  }, []);
+
   const syncSelectionState = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
     const hasBitmap = !!bitmapFloatingObjectRef.current;
     const hasActive = !!fabricCanvas?.getActiveObject();
     const hasSelection = hasBitmap || (editorModeRef.current === 'vector' && hasActive);
+    setCanZoomToSelection(!!getSelectionBoundsSnapshot());
     onSelectionStateChangeRef.current?.({
       hasSelection,
       hasBitmapFloatingSelection: hasBitmap,
     });
-  }, []);
+  }, [getSelectionBoundsSnapshot]);
 
   const syncBrushCursorOverlay = useCallback(() => {
     const overlay = brushCursorOverlayRef.current;
@@ -939,36 +995,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return false;
 
-    const mode = editorModeRef.current;
-    const activeObject = fabricCanvas.getActiveObject() as any;
-    const selectionObject = mode === 'bitmap'
-      ? bitmapFloatingObjectRef.current
-      : activeObject;
-    if (!selectionObject) return false;
-    if (isTextObject(selectionObject) && (selectionObject as any).isEditing) return false;
+    const selectionSnapshot = getSelectionBoundsSnapshot();
+    if (!selectionSnapshot) return false;
 
-    const selectedObjects = isActiveSelectionObject(selectionObject) && typeof selectionObject.getObjects === 'function'
-      ? (selectionObject.getObjects() as any[]).filter(Boolean)
-      : [selectionObject];
-    if (selectedObjects.length === 0) return false;
-
-    const boundsList = selectedObjects
-      .map((obj) => ({ obj, rect: obj.getBoundingRect() as { left: number; top: number; width: number; height: number } }))
-      .filter((entry) => Number.isFinite(entry.rect.left) && Number.isFinite(entry.rect.top));
-    if (boundsList.length === 0) return false;
-
-    let minLeft = Number.POSITIVE_INFINITY;
-    let minTop = Number.POSITIVE_INFINITY;
-    let maxRight = Number.NEGATIVE_INFINITY;
-    let maxBottom = Number.NEGATIVE_INFINITY;
-    for (const { rect } of boundsList) {
-      minLeft = Math.min(minLeft, rect.left);
-      minTop = Math.min(minTop, rect.top);
-      maxRight = Math.max(maxRight, rect.left + rect.width);
-      maxBottom = Math.max(maxBottom, rect.top + rect.height);
-    }
-    const groupWidth = Math.max(1, maxRight - minLeft);
-    const groupHeight = Math.max(1, maxBottom - minTop);
+    const { selectionObject, selectedObjects, bounds } = selectionSnapshot;
+    const minLeft = bounds.left;
+    const minTop = bounds.top;
+    const groupWidth = bounds.width;
+    const groupHeight = bounds.height;
 
     let targetLeft = minLeft;
     let targetTop = minTop;
@@ -994,7 +1028,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       return false;
     }
 
-    for (const { obj } of boundsList) {
+    for (const obj of selectedObjects) {
       obj.set({
         left: (typeof obj.left === 'number' ? obj.left : 0) + dx,
         top: (typeof obj.top === 'number' ? obj.top : 0) + dy,
@@ -1009,7 +1043,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory();
     syncSelectionState();
     return true;
-  }, [saveHistory, syncSelectionState]);
+  }, [getSelectionBoundsSnapshot, saveHistory, syncSelectionState]);
 
   const isTextEditing = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -2981,17 +3015,60 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncBrushCursorOverlay();
   }, [activeTool, brushColor, brushSize, editorModeState, zoom, syncBrushCursorOverlay]);
 
-  const handleZoomReset = useCallback(() => {
-    setZoom(1);
-    setCameraCenter(clampCameraCenter({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 }, 1));
-  }, [clampCameraCenter]);
+  const setZoomLevel = useCallback((nextZoom: number) => {
+    const clampedZoom = clampZoom(nextZoom);
+    setZoom(clampedZoom);
+    setCameraCenter((prev) => clampCameraCenter(prev, clampedZoom));
+  }, [clampCameraCenter, clampZoom]);
+
+  const zoomToBounds = useCallback((
+    bounds: { left: number; top: number; width: number; height: number },
+    paddingPx = 56,
+  ): boolean => {
+    const view = viewportSizeRef.current;
+    if (view.width <= 0 || view.height <= 0) return false;
+
+    const availableWidth = Math.max(1, view.width - paddingPx * 2);
+    const availableHeight = Math.max(1, view.height - paddingPx * 2);
+    const targetScale = Math.min(
+      availableWidth / Math.max(1, bounds.width),
+      availableHeight / Math.max(1, bounds.height),
+    );
+    const targetZoom = clampZoom(targetScale / BASE_VIEW_SCALE);
+    const targetCenter = clampCameraCenter({
+      x: bounds.left + bounds.width / 2,
+      y: bounds.top + bounds.height / 2,
+    }, targetZoom, view);
+
+    setZoom(targetZoom);
+    setCameraCenter(targetCenter);
+    return true;
+  }, [clampCameraCenter, clampZoom]);
+
+  const handleZoomToActualSize = useCallback(() => {
+    setZoomLevel(1);
+  }, [setZoomLevel]);
+
+  const handleZoomToFit = useCallback(() => {
+    zoomToBounds(COSTUME_WORLD_RECT, 48);
+  }, [zoomToBounds]);
+
+  const handleZoomToSelection = useCallback(() => {
+    const selectionSnapshot = getSelectionBoundsSnapshot();
+    if (!selectionSnapshot) return;
+    zoomToBounds(selectionSnapshot.bounds, 72);
+  }, [getSelectionBoundsSnapshot, zoomToBounds]);
+
+  const handleZoomFocus = useCallback(() => {
+    containerRef.current?.focus();
+  }, []);
 
   const currentViewScale = BASE_VIEW_SCALE * zoom;
   const canvasLeft = viewportSize.width / 2 - cameraCenter.x * currentViewScale;
   const canvasTop = viewportSize.height / 2 - cameraCenter.y * currentViewScale;
 
   return (
-    <div className="flex-1 overflow-hidden bg-muted/50 flex flex-col">
+    <div className="relative flex-1 overflow-hidden bg-muted/50">
       <CostumeCanvasHeader
         canUndo={canUndo}
         canRedo={canRedo}
@@ -3002,12 +3079,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         maxZoom={MAX_ZOOM}
         onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
         onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
-        onZoomReset={handleZoomReset}
+        onZoomToActualSize={handleZoomToActualSize}
+        onZoomToFit={handleZoomToFit}
+        onZoomToSelection={handleZoomToSelection}
+        onZoomFocus={handleZoomFocus}
+        canZoomToSelection={canZoomToSelection}
       />
 
       <div
         ref={containerRef}
-        className="flex-1 overflow-hidden relative"
+        tabIndex={-1}
+        className="size-full overflow-hidden relative outline-none"
         style={{
           cursor: isViewportPanning ? 'grabbing' : undefined,
           overscrollBehavior: 'contain',

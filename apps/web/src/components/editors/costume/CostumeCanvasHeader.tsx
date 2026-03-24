@@ -1,5 +1,14 @@
-import { Undo2, Redo2 } from 'lucide-react';
+import { ChevronDown, Redo2, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
 
 interface CostumeCanvasHeaderProps {
   canUndo: boolean;
@@ -11,7 +20,11 @@ interface CostumeCanvasHeaderProps {
   maxZoom: number;
   onZoomOut: () => void;
   onZoomIn: () => void;
-  onZoomReset: () => void;
+  onZoomToActualSize: () => void;
+  onZoomToFit: () => void;
+  onZoomToSelection: () => void;
+  onZoomFocus: () => void;
+  canZoomToSelection: boolean;
 }
 
 export function CostumeCanvasHeader({
@@ -24,46 +37,81 @@ export function CostumeCanvasHeader({
   maxZoom,
   onZoomOut,
   onZoomIn,
-  onZoomReset,
+  onZoomToActualSize,
+  onZoomToFit,
+  onZoomToSelection,
+  onZoomFocus,
+  canZoomToSelection,
 }: CostumeCanvasHeaderProps) {
+  const overlayButtonClassName = 'text-foreground/78 hover:!bg-transparent hover:text-foreground';
+
   return (
-    <div className="flex items-center py-2 px-3 border-b bg-background/50">
-      <div className="flex-1 flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="size-8" onClick={onUndo} disabled={!canUndo} title="Undo">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-4 py-3">
+      <div className="pointer-events-auto flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={overlayButtonClassName}
+          onClick={onUndo}
+          disabled={!canUndo}
+          title="Undo"
+        >
           <Undo2 className="size-4" />
         </Button>
-        <Button variant="ghost" size="icon" className="size-8" onClick={onRedo} disabled={!canRedo} title="Redo">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={overlayButtonClassName}
+          onClick={onRedo}
+          disabled={!canRedo}
+          title="Redo"
+        >
           <Redo2 className="size-4" />
         </Button>
       </div>
 
-      <div className="flex items-center justify-center gap-2">
-        <button
-          onClick={onZoomOut}
-          className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
-          disabled={zoom <= minZoom}
-        >
-          -
-        </button>
-        <span className="text-xs text-muted-foreground w-16 text-center">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button
-          onClick={onZoomIn}
-          className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
-          disabled={zoom >= maxZoom}
-        >
-          +
-        </button>
-        <button
-          onClick={onZoomReset}
-          className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded ml-2"
-        >
-          Reset
-        </button>
+      <div className="pointer-events-auto ml-auto flex items-center justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(overlayButtonClassName, 'gap-1 px-2 text-xs font-medium')}
+              title="Zoom options"
+            >
+              {Math.round(zoom * 100)}%
+              <ChevronDown className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="min-w-[220px]">
+            <DropdownMenuItem onClick={onZoomFocus} className="justify-between">
+              <span>Zoom</span>
+              <DropdownMenuShortcut>Z</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onZoomIn} disabled={zoom >= maxZoom} className="justify-between">
+              <span>Zoom In</span>
+              <DropdownMenuShortcut>⌘+</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onZoomOut} disabled={zoom <= minZoom} className="justify-between">
+              <span>Zoom Out</span>
+              <DropdownMenuShortcut>⌘-</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onZoomToActualSize} className="justify-between">
+              <span>Zoom to 100%</span>
+              <DropdownMenuShortcut>⌘0</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onZoomToFit} className="justify-between">
+              <span>Zoom to Fit</span>
+              <DropdownMenuShortcut>⌘1</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onZoomToSelection} disabled={!canZoomToSelection} className="justify-between">
+              <span>Zoom to Selection</span>
+              <DropdownMenuShortcut>⌘2</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-
-      <div className="flex-1" />
     </div>
   );
 }
