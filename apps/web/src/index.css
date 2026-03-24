@@ -255,7 +255,7 @@ body {
 
 :root {
   --radius: 0.625rem;
-  --divider-size: 1.5px;
+  --divider-size: 2px;
   --background: oklch(1 0 0);
   --foreground: oklch(0.147 0.004 49.25);
   --card: oklch(1 0 0);
@@ -520,6 +520,28 @@ body {
 .app-divider-fill {
   border-color: var(--border);
   background-color: var(--border);
+}
+
+.app-resize-divider-x {
+  width: calc(var(--divider-size) * 2.5);
+  min-width: calc(var(--divider-size) * 2.5);
+  flex-shrink: 0;
+  color: var(--border);
+  background-image: linear-gradient(currentColor, currentColor);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: var(--divider-size) 100%;
+}
+
+.app-resize-divider-y {
+  height: calc(var(--divider-size) * 2.5);
+  min-height: calc(var(--divider-size) * 2.5);
+  flex-shrink: 0;
+  color: var(--border);
+  background-image: linear-gradient(currentColor, currentColor);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% var(--divider-size);
 }
 
 @layer base {

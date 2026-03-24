@@ -645,7 +645,7 @@ export function EditorLayout() {
             {/* Resizable Divider */}
             <div
               data-testid="editor-layout-divider"
-              className="app-divider-x app-divider-fill hover:border-primary cursor-col-resize transition-colors"
+              className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
               onMouseDown={handleDividerDrag}
             />
 
