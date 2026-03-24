@@ -285,7 +285,7 @@ export function ObjectInspector() {
   return (
     <div className="bg-card">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <div className="border-b border-zinc-200/80 px-3 py-2 dark:border-white/10">
+        <div className="border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
           <SegmentedControl
             ariaLabel="Inspector sections"
             className="w-full"

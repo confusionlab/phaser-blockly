@@ -50,7 +50,7 @@ export function SegmentedControl<T extends string>({
     : (enabledIndices[0] ?? 0);
 
   const thumbStyle: React.CSSProperties = {
-    width: `calc((100% - 0.5rem) / ${options.length})`,
+    width: `calc((100% - 0.25rem) / ${options.length})`,
     transform: `translateX(calc(${activeIndex} * 100%))`,
   };
 
@@ -107,7 +107,7 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'relative inline-grid w-full items-center rounded-[18px] border border-zinc-200/80 bg-zinc-100/95 p-[3px] shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] dark:border-white/10 dark:bg-white/6',
+        'relative inline-grid w-full items-center rounded-[14px] border border-zinc-200/80 bg-zinc-100/95 p-[2px] shadow-[inset_0_1px_0_rgba(255,255,255,0.78)] dark:border-white/10 dark:bg-white/6',
         className,
       )}
       style={{
@@ -118,7 +118,7 @@ export function SegmentedControl<T extends string>({
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-[3px] left-[3px] rounded-[13px] bg-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.75),0_2px_6px_rgba(15,23,42,0.12)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-zinc-950 dark:shadow-[0_10px_24px_-20px_rgba(0,0,0,0.95),0_2px_6px_rgba(0,0,0,0.45)]"
+        className="pointer-events-none absolute inset-y-[2px] left-[2px] rounded-[10px] bg-white shadow-[0_8px_18px_-16px_rgba(15,23,42,0.7),0_1px_4px_rgba(15,23,42,0.12)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:bg-zinc-950 dark:shadow-[0_8px_18px_-16px_rgba(0,0,0,0.95),0_1px_4px_rgba(0,0,0,0.45)]"
         style={thumbStyle}
       />
 
@@ -138,7 +138,7 @@ export function SegmentedControl<T extends string>({
             data-state={isActive ? 'active' : 'inactive'}
             tabIndex={isActive ? 0 : -1}
             className={cn(
-              'relative z-10 flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-[13px] px-4 py-1 text-sm font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
+              'relative z-10 flex min-h-8 min-w-0 items-center justify-center gap-1.5 rounded-[10px] px-3 py-0.5 text-[13px] font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
               optionClassName,
             )}
             onClick={() => onValueChange(option.value)}
