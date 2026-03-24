@@ -15,7 +15,7 @@ import {
 } from 'fabric';
 import { floodFill, hexToRgb } from '@/utils/floodFill';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
-import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle, VectorHandleType } from './CostumeToolbar';
+import type { AlignAction, DrawingTool, MoveOrderAction, TextToolStyle, VectorHandleType, VectorToolStyle } from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CostumeCanvasHeader } from './CostumeCanvasHeader';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
@@ -46,7 +46,7 @@ const VECTOR_SELECTION_CORNER_COLOR = '#ffffff';
 const VECTOR_SELECTION_CORNER_STROKE = '#005eff';
 const VECTOR_SELECTION_BORDER_OPACITY = 1;
 const VECTOR_SELECTION_BORDER_SCALE = 2;
-const VECTOR_JSON_EXTRA_PROPS = ['nodeHandleTypes'];
+const VECTOR_JSON_EXTRA_PROPS = ['nodeHandleTypes', 'strokeUniform'];
 const CIRCLE_CUBIC_KAPPA = 0.5522847498307936;
 
 function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
@@ -145,6 +145,7 @@ interface CostumeCanvasProps {
   brushSize: number;
   vectorHandleType: VectorHandleType;
   textStyle: TextToolStyle;
+  vectorStyle: VectorToolStyle;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -154,6 +155,7 @@ interface CostumeCanvasProps {
   onColliderChange?: (collider: ColliderConfig) => void;
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
+  onVectorStyleSync?: (updates: Partial<VectorToolStyle>) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
 }
@@ -178,11 +180,42 @@ function isImageObject(obj: unknown): obj is { type: string } {
   return getFabricObjectType(obj) === 'image';
 }
 
+function getSelectedObjects(obj: unknown): any[] {
+  if (!obj) return [];
+  if (isActiveSelectionObject(obj) && typeof obj.getObjects === 'function') {
+    return (obj.getObjects() as any[]).filter(Boolean);
+  }
+  return [obj];
+}
+
 type PathLikeVectorType = 'path' | 'polyline' | 'polygon';
 
 function isPathLikeVectorObject(obj: unknown): obj is { type: PathLikeVectorType } {
   const type = getFabricObjectType(obj);
   return type === 'path' || type === 'polyline' || type === 'polygon';
+}
+
+function getVectorStyleTargets(obj: unknown): any[] {
+  return getSelectedObjects(obj).filter((candidate) => (
+    !!candidate &&
+    !isImageObject(candidate) &&
+    !isTextObject(candidate) &&
+    !isActiveSelectionObject(candidate)
+  ));
+}
+
+function normalizeVectorObjectStrokeUniform(obj: unknown): boolean {
+  if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
+    return false;
+  }
+
+  const candidate = obj as { strokeUniform?: boolean; set?: (props: Record<string, unknown>) => void };
+  if (candidate.strokeUniform === true || typeof candidate.set !== 'function') {
+    return false;
+  }
+
+  candidate.set({ strokeUniform: true });
+  return true;
 }
 
 function isVectorPointSelectableObject(obj: unknown): obj is Record<string, any> {
@@ -219,6 +252,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   brushSize,
   vectorHandleType,
   textStyle,
+  vectorStyle,
   canUndo,
   canRedo,
   onUndo,
@@ -228,6 +262,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onColliderChange,
   onModeChange,
   onTextStyleSync,
+  onVectorStyleSync,
   onTextSelectionChange,
   onSelectionStateChange,
 }, ref) => {
@@ -277,6 +312,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const textStyleRef = useRef(textStyle);
   textStyleRef.current = textStyle;
 
+  const vectorStyleRef = useRef(vectorStyle);
+  vectorStyleRef.current = vectorStyle;
+
   const onHistoryChangeRef = useRef(onHistoryChange);
   onHistoryChangeRef.current = onHistoryChange;
 
@@ -288,6 +326,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const onTextStyleSyncRef = useRef(onTextStyleSync);
   onTextStyleSyncRef.current = onTextStyleSync;
+
+  const onVectorStyleSyncRef = useRef(onVectorStyleSync);
+  onVectorStyleSyncRef.current = onVectorStyleSync;
 
   const onTextSelectionChangeRef = useRef(onTextSelectionChange);
   onTextSelectionChangeRef.current = onTextSelectionChange;
@@ -607,6 +648,20 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
   }, []);
 
+  const syncVectorStyleFromSelection = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return;
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    const [vectorObject] = getVectorStyleTargets(activeObject);
+    if (!vectorObject) return;
+
+    onVectorStyleSyncRef.current?.({
+      fillColor: typeof vectorObject.fill === 'string' ? vectorObject.fill : undefined,
+      strokeColor: typeof vectorObject.stroke === 'string' ? vectorObject.stroke : undefined,
+      strokeWidth: typeof vectorObject.strokeWidth === 'number' ? vectorObject.strokeWidth : undefined,
+    });
+  }, []);
+
   const syncTextSelectionState = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
@@ -772,6 +827,25 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
   }, [isLoadRequestActive]);
 
+  const normalizeCanvasVectorStrokeUniform = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
+    let changed = false;
+    fabricCanvas.forEachObject((obj: any) => {
+      if (normalizeVectorObjectStrokeUniform(obj)) {
+        obj.setCoords?.();
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      fabricCanvas.requestRenderAll();
+    }
+
+    return changed;
+  }, []);
+
   const applySnapshot = useCallback(async (snapshot: CanvasHistorySnapshot) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
@@ -783,6 +857,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           const parsed = JSON.parse(snapshot.vectorJson);
           fabricCanvas.clear();
           await fabricCanvas.loadFromJSON(parsed);
+          normalizeCanvasVectorStrokeUniform();
           fabricCanvas.requestRenderAll();
           setEditorMode('vector');
         } catch (error) {
@@ -799,7 +874,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       updateDirtyStateFromSnapshot(snapshot);
       onHistoryChangeRef.current?.();
     }
-  }, [loadBitmapLayer, setEditorMode, updateDirtyStateFromSnapshot]);
+  }, [loadBitmapLayer, normalizeCanvasVectorStrokeUniform, setEditorMode, updateDirtyStateFromSnapshot]);
 
   const applyFill = useCallback(async (x: number, y: number) => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1073,6 +1148,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         suppressHistoryRef.current = true;
         fabricCanvas.clear();
         await fabricCanvas.loadFromJSON(parsed);
+        normalizeCanvasVectorStrokeUniform();
         if (!isLoadRequestActive(requestId)) return;
         fabricCanvas.requestRenderAll();
         setEditorMode('vector');
@@ -1107,7 +1183,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     historyIndexRef.current = -1;
     saveHistory();
     markCurrentSnapshotPersisted(sessionKey);
-  }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, markCurrentSnapshotPersisted, saveHistory, setEditorMode]);
+  }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, markCurrentSnapshotPersisted, normalizeCanvasVectorStrokeUniform, saveHistory, setEditorMode]);
 
   const restoreOriginalControls = useCallback((obj: any) => {
     if (!obj || typeof obj !== 'object') return;
@@ -1576,6 +1652,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fill: shouldFill ? (obj.fill ?? null) : null,
       stroke: strokeValue,
       strokeWidth: typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
+      strokeUniform: true,
       strokeLineCap: obj.strokeLineCap,
       strokeLineJoin: obj.strokeLineJoin,
       strokeMiterLimit: obj.strokeMiterLimit,
@@ -1807,6 +1884,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const mode = editorModeRef.current;
     const tool = activeToolRef.current;
 
+    if (mode === 'vector') {
+      normalizeCanvasVectorStrokeUniform();
+    }
+
     const isBitmapBrush = mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
     if (isBitmapBrush) {
       const brush = new CompositePencilBrush(fabricCanvas as any);
@@ -1942,7 +2023,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyCanvasCursor(fabricCanvas, cursor);
     fabricCanvas.requestRenderAll();
     syncSelectionState();
-  }, [activateVectorPointEditing, applyVectorPointControls, ensurePathLikeObjectForVectorTool, restoreAllOriginalControls, restoreOriginalControls, saveHistory, syncBrushCursorOverlay, syncSelectionState]);
+  }, [activateVectorPointEditing, applyVectorPointControls, ensurePathLikeObjectForVectorTool, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, saveHistory, syncBrushCursorOverlay, syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -2142,7 +2223,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
 
       if (tool === 'rectangle' || tool === 'circle' || tool === 'line') {
-        const color = brushColorRef.current;
+        const isVectorMode = mode === 'vector';
+        const fillColor = isVectorMode ? vectorStyleRef.current.fillColor : brushColorRef.current;
+        const strokeColor = isVectorMode ? vectorStyleRef.current.strokeColor : brushColorRef.current;
+        const strokeWidth = isVectorMode ? Math.max(0, vectorStyleRef.current.strokeWidth) : 1;
         let object: any;
         if (tool === 'rectangle') {
           object = new Rect({
@@ -2152,9 +2236,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             originY: 'top',
             width: 1,
             height: 1,
-            fill: color,
-            stroke: color,
-            strokeWidth: 1,
+            fill: fillColor,
+            stroke: strokeColor,
+            strokeWidth,
+            strokeUniform: isVectorMode,
             selectable: false,
             evented: false,
           });
@@ -2164,9 +2249,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             top: pointer.y,
             rx: 1,
             ry: 1,
-            fill: color,
-            stroke: color,
-            strokeWidth: 1,
+            fill: fillColor,
+            stroke: strokeColor,
+            strokeWidth,
+            strokeUniform: isVectorMode,
             originX: 'left',
             originY: 'top',
             selectable: false,
@@ -2174,8 +2260,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           });
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-            stroke: color,
-            strokeWidth: Math.max(1, brushSizeRef.current),
+            stroke: isVectorMode ? strokeColor : brushColorRef.current,
+            strokeWidth: isVectorMode ? Math.max(0, vectorStyleRef.current.strokeWidth) : Math.max(1, brushSizeRef.current),
+            strokeUniform: isVectorMode,
             selectable: false,
             evented: false,
           });
@@ -2256,6 +2343,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const onSelectionChange = () => {
       syncTextStyleFromSelection();
+      syncVectorStyleFromSelection();
       syncTextSelectionState();
       syncSelectionState();
       if (editorModeRef.current === 'vector' && activeToolRef.current === 'vector') {
@@ -2331,7 +2419,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.dispose();
       fabricCanvasRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, loadBitmapLayer, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection]);
+  }, [activateVectorPointEditing, applyFill, applyVectorPointControls, commitBitmapSelection, configureCanvasForTool, drawBitmapSelectionOverlay, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, loadBitmapLayer, restoreAllOriginalControls, saveHistory, setEditorMode, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorStyleFromSelection]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -2382,11 +2470,32 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         opacity: textStyle.opacity,
       });
     } else {
-      if (activeObject.fill !== brushColor) changed = true;
-      if (activeObject.stroke !== brushColor) changed = true;
-      activeObject.set({
-        fill: brushColor,
-        stroke: brushColor,
+      const strokeWidth = Math.max(0, vectorStyle.strokeWidth);
+      const vectorTargets = getVectorStyleTargets(activeObject);
+      if (!vectorTargets.length) return;
+
+      vectorTargets.forEach((target) => {
+        const updates: Record<string, unknown> = {};
+        if (target.strokeUniform !== true) {
+          changed = true;
+          updates.strokeUniform = true;
+        }
+        if (target.fill !== vectorStyle.fillColor) {
+          changed = true;
+          updates.fill = vectorStyle.fillColor;
+        }
+        if (target.stroke !== vectorStyle.strokeColor) {
+          changed = true;
+          updates.stroke = vectorStyle.strokeColor;
+        }
+        if (target.strokeWidth !== strokeWidth) {
+          changed = true;
+          updates.strokeWidth = strokeWidth;
+        }
+        if (Object.keys(updates).length > 0) {
+          target.set(updates);
+        }
+        target.setCoords?.();
       });
     }
 
@@ -2395,7 +2504,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     activeObject.setCoords?.();
     fabricCanvas.requestRenderAll();
     saveHistory();
-  }, [brushColor, textStyle, saveHistory]);
+  }, [brushColor, textStyle, vectorStyle, saveHistory]);
 
   // Draw collider when collider/tool changes.
   useEffect(() => {

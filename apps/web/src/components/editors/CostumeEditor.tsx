@@ -9,6 +9,7 @@ import {
   type DrawingTool,
   type MoveOrderAction,
   type TextToolStyle,
+  type VectorToolStyle,
   type VectorHandleType,
 } from './costume/CostumeToolbar';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
@@ -145,6 +146,11 @@ export function CostumeEditor() {
     underline: false,
     textAlign: 'left',
     opacity: 1,
+  });
+  const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>({
+    fillColor: '#000000',
+    strokeColor: '#000000',
+    strokeWidth: 1,
   });
   const [hasTextSelection, setHasTextSelection] = useState(false);
 
@@ -619,6 +625,20 @@ export function CostumeEditor() {
     });
   }, []);
 
+  const handleVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+    setVectorStyle((prev) => {
+      const next = { ...prev, ...updates };
+      if (
+        next.fillColor === prev.fillColor &&
+        next.strokeColor === prev.strokeColor &&
+        next.strokeWidth === prev.strokeWidth
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
   const handleColliderChange = useCallback((newCollider: ColliderConfig) => {
     const loadedSession = loadedSessionRef.current;
     if (!loadedSession || isLoadingRef.current || !isCanvasReadyForSession(loadedSession)) return;
@@ -668,6 +688,7 @@ export function CostumeEditor() {
           brushColor={brushColor}
           brushSize={brushSize}
           textStyle={textStyle}
+          vectorStyle={vectorStyle}
           onEditorModeChange={handleEditorModeChange}
           onToolChange={handleToolChange}
           onMoveOrder={handleMoveOrder}
@@ -678,6 +699,7 @@ export function CostumeEditor() {
           onColorChange={setBrushColor}
           onBrushSizeChange={setBrushSize}
           onTextStyleChange={handleTextStyleChange}
+          onVectorStyleChange={handleVectorStyleChange}
         />
 
         <CostumeCanvas
@@ -688,6 +710,7 @@ export function CostumeEditor() {
           brushSize={brushSize}
           vectorHandleType={vectorHandleType}
           textStyle={textStyle}
+          vectorStyle={vectorStyle}
           canUndo={canUndo}
           canRedo={canRedo}
           onUndo={handleUndo}
@@ -697,6 +720,7 @@ export function CostumeEditor() {
           onColliderChange={handleColliderChange}
           onModeChange={handleCanvasModeChange}
           onTextStyleSync={handleTextStyleChange}
+          onVectorStyleSync={handleVectorStyleChange}
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
         />
