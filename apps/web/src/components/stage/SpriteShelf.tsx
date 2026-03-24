@@ -1388,6 +1388,8 @@ export function SpriteShelf() {
     const rowPaddingClass = 'px-1 py-1';
     const rowContentPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
     const indentDepth = Math.max(0, level - 1);
+    const rowHoverClass = 'hover:bg-[#E7EAEE] dark:hover:bg-[#434A58]';
+    const controlHoverClass = 'hover:bg-[#DDE1E7] dark:hover:bg-[#4B5363]';
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1436,7 +1438,7 @@ export function SpriteShelf() {
                 className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors ${!isSelected && !isDropOn ? 'hover:bg-accent/70' : ''}`}>
+            <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors ${!isSelected && !isDropOn ? rowHoverClass : ''}`}>
             {indentDepth > 0 ? (
               <div aria-hidden="true" className="flex shrink-0">
                 {Array.from({ length: indentDepth }).map((_, index) => (
@@ -1448,7 +1450,7 @@ export function SpriteShelf() {
               type="button"
               disabled={!hasChildItems}
               aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-              className="shrink-0 rounded p-0 hover:bg-accent flex items-center justify-center disabled:pointer-events-none"
+              className={`shrink-0 rounded p-0 flex items-center justify-center disabled:pointer-events-none ${controlHoverClass}`}
               onClick={interactive ? ((e) => {
                 e.stopPropagation();
                 if (folder) {
@@ -1663,7 +1665,7 @@ export function SpriteShelf() {
                     sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'after'
                       ? 'border-b-2 border-primary'
                       : ''
-                  }`}
+                  } focus:bg-[#E7EAEE] dark:focus:bg-[#434A58]`}
                 >
                   <GripVertical className="size-3 text-muted-foreground/70" />
                   <span className="flex-1">{scene.name}</span>
