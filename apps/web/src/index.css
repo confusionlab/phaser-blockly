@@ -152,19 +152,12 @@ body {
 }
 
 /* Make main workspace scrollbars smaller and closer to edge */
-.blocklyMainWorkspaceScrollbar {
-  transform: none !important;
-}
-
 .blocklyScrollbarHorizontal {
   height: 6px !important;
-  bottom: 0 !important;
 }
 
 .blocklyScrollbarVertical {
   width: 6px !important;
-  right: 0 !important;
-  bottom: 0 !important;
 }
 
 .blocklyScrollbarHandle {

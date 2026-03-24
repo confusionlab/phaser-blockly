@@ -32,6 +32,7 @@ import type { Variable } from '@/types';
 
 // Register continuous toolbox plugin once at module load
 registerContinuousToolbox();
+Blockly.Scrollbar.scrollbarThickness = 6;
 
 // Global clipboard for cross-object block copying
 // Store the copy data from Blockly's ICopyable interface
