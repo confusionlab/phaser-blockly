@@ -911,7 +911,7 @@ export function BackgroundCanvasEditor() {
           <X className="size-4" />
           Cancel
         </Button>
-        <div className="w-px h-6 bg-border mx-1" />
+        <div className="app-divider-x app-divider-fill h-6 mx-1" />
         <Button
           variant={tool === 'brush' ? 'default' : 'outline'}
           size="sm"

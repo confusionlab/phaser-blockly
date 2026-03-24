@@ -1614,7 +1614,7 @@ export function SpriteShelf() {
 
   return (
     <div
-      className="h-full flex flex-col bg-card border-r"
+      className="h-full flex flex-col bg-card"
       onPointerEnter={() => setIsShelfHovered(true)}
       onPointerLeave={() => setIsShelfHovered(false)}
     >

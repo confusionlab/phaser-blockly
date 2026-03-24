@@ -270,7 +270,7 @@ export function ObjectInspector() {
   }, [selectedFolderId, selectedObjectId, selectedObjectIds.length]);
 
   return (
-    <div className="bg-card border-t">
+    <div className="bg-card">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList variant="line" className="w-full justify-start px-4">
           <TabsTrigger value="object">Object</TabsTrigger>
