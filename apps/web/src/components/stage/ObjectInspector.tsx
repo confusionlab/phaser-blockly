@@ -3,6 +3,7 @@ import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -302,25 +303,33 @@ export function ObjectInspector() {
           />
         </div>
 
-        <TabsContent forceMount value="object" className="mt-0 min-h-0 overflow-y-scroll px-4 py-3 scrollbar-gutter-stable data-[state=inactive]:hidden">
-          {selectedFolderId ? (
-            <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
-          ) : (
-            <ObjectProperties
-              objects={selectedObjects}
-              sceneId={selectedSceneId}
-              updateObject={updateObject}
-              openCostumeColliderEditor={openCostumeColliderEditor}
-            />
-          )}
+        <TabsContent forceMount value="object" className="mt-0 min-h-0 data-[state=inactive]:hidden">
+          <ScrollArea className="h-full">
+            <div className="px-4 py-3">
+              {selectedFolderId ? (
+                <div className="py-8 text-sm text-muted-foreground">Folder selected</div>
+              ) : (
+                <ObjectProperties
+                  objects={selectedObjects}
+                  sceneId={selectedSceneId}
+                  updateObject={updateObject}
+                  openCostumeColliderEditor={openCostumeColliderEditor}
+                />
+              )}
+            </div>
+          </ScrollArea>
         </TabsContent>
-        <TabsContent forceMount value="scene" className="mt-0 min-h-0 overflow-y-scroll px-4 py-3 scrollbar-gutter-stable data-[state=inactive]:hidden">
-          <SceneProperties
-            scene={scene}
-            updateScene={updateScene}
-            onOpenBackgroundEditor={openBackgroundEditor}
-            onOpenWorldBoundaryEditor={openWorldBoundaryEditor}
-          />
+        <TabsContent forceMount value="scene" className="mt-0 min-h-0 data-[state=inactive]:hidden">
+          <ScrollArea className="h-full">
+            <div className="px-4 py-3">
+              <SceneProperties
+                scene={scene}
+                updateScene={updateScene}
+                onOpenBackgroundEditor={openBackgroundEditor}
+                onOpenWorldBoundaryEditor={openWorldBoundaryEditor}
+              />
+            </div>
+          </ScrollArea>
         </TabsContent>
       </Tabs>
     </div>

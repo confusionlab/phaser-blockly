@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
 import { Button } from '@/components/ui/button';
@@ -1770,41 +1771,43 @@ export function SpriteShelf() {
         </div>
       </div>
 
-      <div
-        className="flex-1 overflow-y-scroll scrollbar-gutter-stable"
+      <ScrollArea
+        className="flex-1"
         onDragOver={handleRootDragOver}
         onDrop={handleRootDrop}
         onClick={handleEmptyShelfClick}
         data-testid="sprite-shelf-scroll-area"
       >
-        {selectedScene.objects.length === 0 && folders.length === 0 ? (
-          <div
-            className="flex flex-col items-center justify-center h-full text-muted-foreground p-4"
-            onClick={handleEmptyShelfClick}
-          >
-            <span className="text-2xl mb-2">📦</span>
-            <span className="text-xs text-center">No objects yet</span>
-          </div>
-        ) : (
-          <div
-            role="tree"
-            aria-label="Scene hierarchy"
-            className="relative outline-none"
-            onClick={handleEmptyShelfClick}
-          >
-            {treeItems.map((item) => renderTreeItem(item))}
+        <div className="min-h-full">
+          {selectedScene.objects.length === 0 && folders.length === 0 ? (
             <div
-              className="absolute inset-x-2 -bottom-2 z-10 h-4 rounded"
-              onDragOver={handleRootDropZoneDragOver}
-              onDrop={handleRootDropZoneDrop}
+              className="flex h-full flex-col items-center justify-center p-4 text-muted-foreground"
+              onClick={handleEmptyShelfClick}
             >
-              {layerDropTarget?.key === null ? (
-                <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 border-t-2 rounded border-primary/80" />
-              ) : null}
+              <span className="mb-2 text-2xl">📦</span>
+              <span className="text-center text-xs">No objects yet</span>
             </div>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div
+              role="tree"
+              aria-label="Scene hierarchy"
+              className="relative min-h-full outline-none"
+              onClick={handleEmptyShelfClick}
+            >
+              {treeItems.map((item) => renderTreeItem(item))}
+              <div
+                className="absolute inset-x-2 -bottom-2 z-10 h-4 rounded"
+                onDragOver={handleRootDropZoneDragOver}
+                onDrop={handleRootDropZoneDrop}
+              >
+                {layerDropTarget?.key === null ? (
+                  <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 border-t-2 rounded border-primary/80" />
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+      </ScrollArea>
 
       {contextMenu && (
         <>

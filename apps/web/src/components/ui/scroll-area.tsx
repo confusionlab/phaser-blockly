@@ -31,29 +31,23 @@ function ScrollBar({
   orientation = "vertical",
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>) {
-  const thicknessStyle =
-    orientation === "vertical"
-      ? { width: "var(--scrollbar-size)" }
-      : { height: "var(--scrollbar-size)" }
-
   return (
     <ScrollAreaPrimitive.ScrollAreaScrollbar
       data-slot="scroll-area-scrollbar"
       orientation={orientation}
       className={cn(
-        "flex touch-none p-px transition-colors select-none",
+        "absolute z-20 flex touch-none select-none rounded-full bg-transparent p-0.5 transition-opacity duration-150",
         orientation === "vertical" &&
-          "h-full border-l border-l-transparent",
+          "right-1 top-1 bottom-1 w-2",
         orientation === "horizontal" &&
-          "flex-col border-t border-t-transparent",
+          "right-1 bottom-1 left-1 h-2 flex-col",
         className
       )}
-      style={thicknessStyle}
       {...props}
     >
       <ScrollAreaPrimitive.ScrollAreaThumb
         data-slot="scroll-area-thumb"
-        className="bg-border relative flex-1 rounded-full"
+        className="relative flex-1 rounded-full bg-foreground/18 hover:bg-foreground/28"
       />
     </ScrollAreaPrimitive.ScrollAreaScrollbar>
   )

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface AssetSidebarProps {
   title: string;
@@ -23,9 +24,11 @@ export function AssetSidebar({
         {actions ? <div className="flex gap-1">{actions}</div> : null}
       </div>
 
-      <div className={cn('scrollbar-gutter-stable flex-1 overflow-y-scroll p-2', contentClassName)}>
-        {children}
-      </div>
+      <ScrollArea className="flex-1">
+        <div className={cn('p-2', contentClassName)}>
+          {children}
+        </div>
+      </ScrollArea>
     </aside>
   );
 }
