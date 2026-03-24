@@ -1388,7 +1388,7 @@ export function SpriteShelf() {
     const rowPaddingClass = 'px-1 py-1';
     const rowContentPaddingClass = item.type === 'object' ? 'py-1' : 'px-2 py-1';
     const indentDepth = Math.max(0, level - 1);
-    const rowHoverClass = 'hover:bg-[#E7EAEE] dark:hover:bg-[#434A58]';
+    const rowHoverClass = 'bg-[#E7EAEE] dark:bg-[#434A58]';
     const controlHoverClass = 'hover:bg-[#DDE1E7] dark:hover:bg-[#4B5363]';
 
     return (
@@ -1397,7 +1397,7 @@ export function SpriteShelf() {
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
-          className={`${rowPaddingClass} select-none ${
+          className={`group/layer-row ${rowPaddingClass} select-none ${
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
@@ -1428,6 +1428,11 @@ export function SpriteShelf() {
           onDragEnd={interactive ? clearLayerDragState : undefined}
         >
           <div className="relative">
+            {!isSelected && !isDropOn ? (
+              <div
+                className={`pointer-events-none absolute inset-0 z-0 rounded-lg opacity-0 transition-opacity group-hover/layer-row:opacity-100 ${rowHoverClass}`}
+              />
+            ) : null}
             {(isSelected || isDropOn) ? (
               <div
                 className={`pointer-events-none absolute inset-0 z-0 ${rowShapeClass} ${rowHighlightClass}`}
@@ -1438,7 +1443,7 @@ export function SpriteShelf() {
                 className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors ${!isSelected && !isDropOn ? rowHoverClass : ''}`}>
+            <div className={`relative z-10 flex items-center gap-1 rounded-lg ${rowContentPaddingClass} transition-colors`}>
             {indentDepth > 0 ? (
               <div aria-hidden="true" className="flex shrink-0">
                 {Array.from({ length: indentDepth }).map((_, index) => (
