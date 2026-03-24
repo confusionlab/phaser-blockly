@@ -12,11 +12,6 @@ const PINNABLE_TOOLBOX_REGISTRATION = 'PochaContinuousToolbox';
 let registered = false;
 let initialPinnedState = true;
 
-function isFlyoutVisible(workspace: Blockly.WorkspaceSvg): boolean {
-  const flyout = workspace.getFlyout();
-  return Boolean(flyout?.isVisible());
-}
-
 export class PinnableContinuousMetrics extends ContinuousMetrics {
   override getViewMetrics(
     getWorkspaceCoordinates = false,
@@ -24,9 +19,6 @@ export class PinnableContinuousMetrics extends ContinuousMetrics {
     const scale = getWorkspaceCoordinates ? this.workspace_.scale : 1;
     const svgMetrics = this.getSvgMetrics();
     const toolboxMetrics = this.getToolboxMetrics();
-    const flyoutMetrics = isFlyoutVisible(this.workspace_)
-      ? this.getFlyoutMetrics(false)
-      : { width: 0, height: 0 };
     const toolboxPosition = toolboxMetrics.position;
 
     if (this.workspace_.getToolbox()) {
@@ -34,12 +26,12 @@ export class PinnableContinuousMetrics extends ContinuousMetrics {
         toolboxPosition == Blockly.TOOLBOX_AT_TOP ||
         toolboxPosition == Blockly.TOOLBOX_AT_BOTTOM
       ) {
-        svgMetrics.height -= toolboxMetrics.height + flyoutMetrics.height;
+        svgMetrics.height -= toolboxMetrics.height;
       } else if (
         toolboxPosition == Blockly.TOOLBOX_AT_LEFT ||
         toolboxPosition == Blockly.TOOLBOX_AT_RIGHT
       ) {
-        svgMetrics.width -= toolboxMetrics.width + flyoutMetrics.width;
+        svgMetrics.width -= toolboxMetrics.width;
       }
     }
 
@@ -53,9 +45,6 @@ export class PinnableContinuousMetrics extends ContinuousMetrics {
 
   override getAbsoluteMetrics(): Blockly.MetricsManager.AbsoluteMetrics {
     const toolboxMetrics = this.getToolboxMetrics();
-    const flyoutMetrics = isFlyoutVisible(this.workspace_)
-      ? this.getFlyoutMetrics(false)
-      : { width: 0, height: 0 };
     const toolboxPosition = toolboxMetrics.position;
 
     let absoluteLeft = 0;
@@ -63,7 +52,7 @@ export class PinnableContinuousMetrics extends ContinuousMetrics {
       this.workspace_.getToolbox() &&
       toolboxPosition == Blockly.TOOLBOX_AT_LEFT
     ) {
-      absoluteLeft = toolboxMetrics.width + flyoutMetrics.width;
+      absoluteLeft = toolboxMetrics.width;
     }
 
     let absoluteTop = 0;
@@ -71,7 +60,7 @@ export class PinnableContinuousMetrics extends ContinuousMetrics {
       this.workspace_.getToolbox() &&
       toolboxPosition == Blockly.TOOLBOX_AT_TOP
     ) {
-      absoluteTop = toolboxMetrics.height + flyoutMetrics.height;
+      absoluteTop = toolboxMetrics.height;
     }
 
     return {
@@ -83,6 +72,7 @@ export class PinnableContinuousMetrics extends ContinuousMetrics {
 
 export class PinnableContinuousToolbox extends ContinuousToolbox {
   private pinned = initialPinnedState;
+  private pinnableRefreshDebouncer?: ReturnType<typeof setTimeout>;
 
   override init() {
     super.init();
@@ -112,6 +102,26 @@ export class PinnableContinuousToolbox extends ContinuousToolbox {
     }
   }
 
+  override refreshSelection() {
+    if (this.pinnableRefreshDebouncer) {
+      clearTimeout(this.pinnableRefreshDebouncer);
+      this.pinnableRefreshDebouncer = undefined;
+    }
+
+    if (!this.getFlyout().isVisible()) {
+      return;
+    }
+
+    this.pinnableRefreshDebouncer = setTimeout(() => {
+      if (!this.getFlyout().isVisible()) {
+        return;
+      }
+
+      this.getFlyout().show(this.getInitialFlyoutContents_());
+      this.pinnableRefreshDebouncer = undefined;
+    }, 100);
+  }
+
   isPinned(): boolean {
     return this.pinned;
   }
@@ -122,15 +132,28 @@ export class PinnableContinuousToolbox extends ContinuousToolbox {
     this.applyPinnedState(pinned, false);
   }
 
+  collapseFlyout(): void {
+    if (this.pinned) return;
+
+    if (this.pinnableRefreshDebouncer) {
+      clearTimeout(this.pinnableRefreshDebouncer);
+      this.pinnableRefreshDebouncer = undefined;
+    }
+
+    this.getFlyout().hide();
+    this.clearSelection();
+    this.getWorkspace().resizeContents();
+    Blockly.svgResize(this.getWorkspace());
+  }
+
   private applyPinnedState(pinned: boolean, initializing: boolean): void {
     const flyout = this.getFlyout();
-    flyout.setAutoClose(!pinned);
+    flyout.setAutoClose(false);
 
     if (pinned) {
       flyout.show(this.getInitialFlyoutContents_());
     } else {
-      flyout.hide();
-      this.clearSelection();
+      this.collapseFlyout();
     }
 
     if (!initializing) {

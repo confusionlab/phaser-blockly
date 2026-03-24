@@ -456,6 +456,17 @@ export function BlocklyEditor() {
     setPinButtonPosition(getPinButtonPosition(container));
   }, []);
 
+  const collapseUnpinnedFlyout = useCallback(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+
+    const toolbox = workspace.getToolbox();
+    if (!isPinnableContinuousToolbox(toolbox) || toolbox.isPinned()) return;
+
+    toolbox.collapseFlyout();
+    updatePinButtonPosition();
+  }, [updatePinButtonPosition]);
+
   useEffect(() => {
     saveToolboxPinnedPreference(toolboxPinned);
 
@@ -773,6 +784,10 @@ export function BlocklyEditor() {
     workspaceRef.current.addChangeListener((event) => {
       if (event.type === Blockly.Events.BLOCK_DRAG) {
         const dragEvent = event as Blockly.Events.BlockDrag;
+        if (dragEvent.isStart) {
+          collapseUnpinnedFlyout();
+          return;
+        }
         if (!dragEvent.isStart) {
           const sceneId = currentSceneIdRef.current;
           const objectId = currentObjectIdRef.current;
@@ -881,6 +896,7 @@ export function BlocklyEditor() {
             validationOriginalColoursRef.current,
           );
         }
+
       }
     });
 
@@ -907,7 +923,7 @@ export function BlocklyEditor() {
       setAddVariableCallback(null);
       setManageVariablesCallback(null);
     };
-  }, [flushPendingWorkspacePersist, scheduleWorkspacePersist, updatePinButtonPosition]);
+  }, [collapseUnpinnedFlyout, flushPendingWorkspacePersist, scheduleWorkspacePersist, updatePinButtonPosition]);
 
   // Keep workspace in sync with selected object XML, including undo/redo history replays.
   useEffect(() => {
