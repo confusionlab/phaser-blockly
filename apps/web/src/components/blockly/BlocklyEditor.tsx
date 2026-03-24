@@ -1217,7 +1217,7 @@ export function BlocklyEditor() {
         {hasCodeTarget && pinButtonPosition && (
           <button
             type="button"
-            className="absolute z-[90] flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
+            className="absolute z-40 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
             style={pinButtonPosition}
             title={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
             aria-label={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}

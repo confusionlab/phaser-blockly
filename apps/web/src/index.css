@@ -146,6 +146,17 @@ body {
   fill: var(--blockly-flyout-fg) !important;
 }
 
+/* Keep Blockly chrome below the shared modal/dialog layer. */
+.blocklyToolbox,
+.blocklyToolboxDiv {
+  z-index: 20 !important;
+}
+
+.blocklyBlockDragSurface,
+.blocklyAnimationLayer {
+  z-index: 30 !important;
+}
+
 /* Hide flyout scrollbar */
 .blocklyFlyoutScrollbar {
   visibility: hidden !important;
@@ -176,6 +187,11 @@ body {
 .blocklyWidgetDiv,
 .blocklyDropDownDiv {
   color: var(--popover-foreground);
+  z-index: 40 !important;
+}
+
+.blocklyTooltipDiv {
+  z-index: 40 !important;
 }
 
 .blocklyDropDownDiv .goog-menu {
