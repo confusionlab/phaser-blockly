@@ -204,17 +204,32 @@ function getVectorStyleTargets(obj: unknown): any[] {
   ));
 }
 
-function normalizeVectorObjectStrokeUniform(obj: unknown): boolean {
+function normalizeVectorObjectRendering(obj: unknown): boolean {
   if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
     return false;
   }
 
-  const candidate = obj as { strokeUniform?: boolean; set?: (props: Record<string, unknown>) => void };
-  if (candidate.strokeUniform === true || typeof candidate.set !== 'function') {
+  const candidate = obj as {
+    strokeUniform?: boolean;
+    noScaleCache?: boolean;
+    set?: (props: Record<string, unknown>) => void;
+  };
+  if (typeof candidate.set !== 'function') {
     return false;
   }
 
-  candidate.set({ strokeUniform: true });
+  const updates: Record<string, unknown> = {};
+  if (candidate.strokeUniform !== true) {
+    updates.strokeUniform = true;
+  }
+  if (candidate.noScaleCache !== false) {
+    updates.noScaleCache = false;
+  }
+  if (Object.keys(updates).length === 0) {
+    return false;
+  }
+
+  candidate.set(updates);
   return true;
 }
 
@@ -833,7 +848,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     let changed = false;
     fabricCanvas.forEachObject((obj: any) => {
-      if (normalizeVectorObjectStrokeUniform(obj)) {
+      if (normalizeVectorObjectRendering(obj)) {
         obj.setCoords?.();
         changed = true;
       }
@@ -1653,6 +1668,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       stroke: strokeValue,
       strokeWidth: typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
       strokeUniform: true,
+      noScaleCache: false,
       strokeLineCap: obj.strokeLineCap,
       strokeLineJoin: obj.strokeLineJoin,
       strokeMiterLimit: obj.strokeMiterLimit,
@@ -2240,6 +2256,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             stroke: strokeColor,
             strokeWidth,
             strokeUniform: isVectorMode,
+            noScaleCache: !isVectorMode ? undefined : false,
             selectable: false,
             evented: false,
           });
@@ -2253,6 +2270,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             stroke: strokeColor,
             strokeWidth,
             strokeUniform: isVectorMode,
+            noScaleCache: !isVectorMode ? undefined : false,
             originX: 'left',
             originY: 'top',
             selectable: false,
@@ -2263,6 +2281,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             stroke: isVectorMode ? strokeColor : brushColorRef.current,
             strokeWidth: isVectorMode ? Math.max(0, vectorStyleRef.current.strokeWidth) : Math.max(1, brushSizeRef.current),
             strokeUniform: isVectorMode,
+            noScaleCache: !isVectorMode ? undefined : false,
             selectable: false,
             evented: false,
           });
@@ -2485,6 +2504,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         if (target.strokeUniform !== true) {
           changed = true;
           updates.strokeUniform = true;
+        }
+        if (target.noScaleCache !== false) {
+          changed = true;
+          updates.noScaleCache = false;
         }
         if (target.fill !== vectorStyle.fillColor) {
           changed = true;
