@@ -295,7 +295,7 @@ const toolbarSliderThumbClassName =
 const toolbarSliderTrackClassName = 'relative h-1.5 w-full grow rounded-full bg-secondary';
 const toolbarSliderRangeClassName = 'absolute h-full rounded-full bg-primary';
 const toolbarSliderPreviewSurfaceClassName =
-  'pointer-events-none overflow-visible rounded-md bg-background px-4 py-3';
+  'pointer-events-none overflow-visible border-0 bg-transparent p-0 shadow-none';
 
 interface ToolbarPreviewSliderProps {
   label: string;
@@ -385,6 +385,39 @@ const ToolbarPreviewSlider = memo(({
 });
 
 ToolbarPreviewSlider.displayName = 'ToolbarPreviewSlider';
+
+interface BrushSizePreviewProps {
+  size: number;
+  previewScale: number;
+}
+
+const BrushSizePreview = memo(({
+  size,
+  previewScale,
+}: BrushSizePreviewProps) => {
+  const displayDiameter = Math.max(6, size * previewScale);
+  const previewExtent = Math.max(72, displayDiameter + 24);
+
+  return (
+    <div
+      className="flex items-center justify-center"
+      style={{
+        minWidth: `${previewExtent}px`,
+        minHeight: `${previewExtent}px`,
+      }}
+    >
+      <div
+        className="rounded-full border-2 border-black bg-transparent"
+        style={{
+          width: `${displayDiameter}px`,
+          height: `${displayDiameter}px`,
+        }}
+      />
+    </div>
+  );
+});
+
+BrushSizePreview.displayName = 'BrushSizePreview';
 
 interface StrokeWidthPreviewProps {
   thickness: number;
@@ -681,8 +714,6 @@ export const CostumeToolbar = memo(({
     showTextToolbarControls;
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
-  const activeBrushPreviewColor = activeTool === 'eraser' ? '#94a3b8' : brushColor;
-
   useEffect(() => {
     if (!showContextualPropertyBar) {
       setOpenMenu(null);
@@ -1066,9 +1097,8 @@ export const CostumeToolbar = memo(({
                       min={1}
                       max={50}
                         preview={(
-                          <StrokeWidthPreview
-                            thickness={brushSize}
-                            color={activeBrushPreviewColor}
+                          <BrushSizePreview
+                            size={brushSize}
                             previewScale={previewScale}
                           />
                         )}
