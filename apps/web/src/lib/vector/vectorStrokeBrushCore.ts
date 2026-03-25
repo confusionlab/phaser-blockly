@@ -114,10 +114,6 @@ function hash2d(x: number, y: number) {
   return value - Math.floor(value);
 }
 
-function colorWithAlpha(color: string, alpha: number) {
-  return Color(color).alpha(clampUnit(alpha)).rgb().string();
-}
-
 function clampByte(value: number) {
   return Math.max(0, Math.min(255, Math.round(value)));
 }

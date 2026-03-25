@@ -52,9 +52,10 @@ import {
   type BitmapFillTextureId,
 } from '@/lib/background/bitmapFillCore';
 import {
-  createVectorStrokeBrushStamp,
+  createVectorStrokeBrushRenderStyle,
   getVectorStrokeBrushPreset,
   DEFAULT_VECTOR_STROKE_BRUSH_ID,
+  type VectorStrokeBrushRenderStyle,
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import {
@@ -205,6 +206,10 @@ function getDistanceBetweenPoints(a: Point, b: Point) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function clampUnit(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
 function hashNumberTriplet(a: number, b: number, c: number) {
   const value = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453123;
   return value - Math.floor(value);
@@ -230,6 +235,114 @@ function getCubicBezierPoint(start: Point, control1: Point, control2: Point, end
       3 * inverse * t * t * control2.y +
       t * t * t * end.y,
   );
+}
+
+function getVectorStrokeSampleSpacing(strokeWidth: number) {
+  return Math.max(0.75, Math.min(3, Math.max(1, strokeWidth * 0.12)));
+}
+
+function buildClosedPolylinePoints(points: Point[], closed: boolean) {
+  if (!closed || points.length < 2) {
+    return points;
+  }
+  const firstPoint = points[0];
+  const lastPoint = points[points.length - 1];
+  return getDistanceBetweenPoints(firstPoint, lastPoint) <= 0.5
+    ? points
+    : [...points, firstPoint];
+}
+
+function buildPolylineArcTable(points: Point[]) {
+  const cumulativeLengths = [0];
+  let totalLength = 0;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    totalLength += getDistanceBetweenPoints(points[index], points[index + 1]);
+    cumulativeLengths.push(totalLength);
+  }
+  return { cumulativeLengths, totalLength };
+}
+
+function resolveDistanceAlongPolyline(distance: number, totalLength: number, closed: boolean) {
+  if (totalLength <= 0) {
+    return 0;
+  }
+  if (!closed) {
+    return Math.max(0, Math.min(totalLength, distance));
+  }
+  const wrappedDistance = distance % totalLength;
+  return wrappedDistance < 0 ? wrappedDistance + totalLength : wrappedDistance;
+}
+
+function findPolylineSegmentIndex(cumulativeLengths: number[], distance: number) {
+  let low = 0;
+  let high = cumulativeLengths.length - 1;
+
+  while (low < high - 1) {
+    const mid = Math.floor((low + high) / 2);
+    if (cumulativeLengths[mid] <= distance) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+
+  return Math.max(0, Math.min(cumulativeLengths.length - 2, low));
+}
+
+function samplePointAlongPolyline(
+  points: Point[],
+  cumulativeLengths: number[],
+  totalLength: number,
+  distance: number,
+  closed: boolean,
+) {
+  if (points.length === 0) {
+    return new Point(0, 0);
+  }
+  if (points.length === 1 || totalLength <= 0) {
+    return points[0];
+  }
+
+  const resolvedDistance = resolveDistanceAlongPolyline(distance, totalLength, closed);
+  const segmentIndex = findPolylineSegmentIndex(cumulativeLengths, resolvedDistance);
+  const segmentStart = cumulativeLengths[segmentIndex];
+  const segmentEnd = cumulativeLengths[segmentIndex + 1];
+  const segmentLength = Math.max(0.0001, segmentEnd - segmentStart);
+  const progress = clampUnit((resolvedDistance - segmentStart) / segmentLength);
+  const start = points[segmentIndex];
+  const end = points[segmentIndex + 1];
+  return new Point(
+    lerpNumber(start.x, end.x, progress),
+    lerpNumber(start.y, end.y, progress),
+  );
+}
+
+function sampleAngleAlongPolyline(
+  points: Point[],
+  cumulativeLengths: number[],
+  totalLength: number,
+  distance: number,
+  closed: boolean,
+  window: number,
+) {
+  const sampleWindow = closed
+    ? Math.max(0.5, Math.min(window, totalLength * 0.49))
+    : Math.max(0.5, Math.min(window, totalLength));
+  const previousPoint = samplePointAlongPolyline(
+    points,
+    cumulativeLengths,
+    totalLength,
+    distance - sampleWindow,
+    closed,
+  );
+  const nextPoint = samplePointAlongPolyline(
+    points,
+    cumulativeLengths,
+    totalLength,
+    distance + sampleWindow,
+    closed,
+  );
+  return Math.atan2(nextPoint.y - previousPoint.y, nextPoint.x - previousPoint.x);
 }
 
 function buildTrianglePoints(width: number, height: number): Array<{ x: number; y: number }> {
@@ -1312,6 +1425,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const suppressHistoryRef = useRef(false);
   const bitmapRasterCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const vectorStrokeBrushRenderCacheRef = useRef<Map<string, VectorStrokeBrushRenderStyle>>(new Map());
   const vectorStrokeTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const vectorStrokeTexturePendingRef = useRef<Set<string>>(new Set());
 
@@ -1620,6 +1734,46 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return resolveVectorTextureSource(texturePath);
   }, [resolveVectorTextureSource]);
 
+  const resolveVectorStrokeBrushRenderStyle = useCallback((
+    brushId: VectorStrokeBrushId,
+    strokeColor: string,
+    strokeWidth: number,
+  ) => {
+    const preset = getVectorStrokeBrushPreset(brushId);
+    const texturePath = preset.texturePath?.trim();
+    const textureSource = texturePath
+      ? resolveVectorStrokeTextureSource(brushId)
+      : null;
+
+    if (texturePath && !textureSource && !vectorStrokeTextureCacheRef.current.has(texturePath)) {
+      return null;
+    }
+
+    const cacheKey = [
+      brushId,
+      strokeColor,
+      strokeWidth.toFixed(3),
+      texturePath ?? 'builtin',
+      textureSource ? 'ready' : 'fallback',
+    ].join('|');
+    const cached = vectorStrokeBrushRenderCacheRef.current.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const renderStyle = createVectorStrokeBrushRenderStyle(
+      brushId,
+      strokeColor,
+      strokeWidth,
+      textureSource,
+    );
+    if (vectorStrokeBrushRenderCacheRef.current.size >= 256) {
+      vectorStrokeBrushRenderCacheRef.current.clear();
+    }
+    vectorStrokeBrushRenderCacheRef.current.set(cacheKey, renderStyle);
+    return renderStyle;
+  }, [resolveVectorStrokeTextureSource]);
+
   const resolveVectorFillTextureSource = useCallback((textureId: VectorFillTextureId) => {
     const preset = getVectorFillTexturePreset(textureId);
     const texturePath = preset.texturePath?.trim();
@@ -1650,6 +1804,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const objectType = getFabricObjectType(obj);
+    const strokeSampleSpacing = getVectorStrokeSampleSpacing(
+      typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
+    );
     const transformPoint = (x: number, y: number, pathOffset?: Point | null) => (
       transformVectorLocalPointToScene(obj, x, y, pathOffset)
     );
@@ -1682,7 +1839,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (objectType === 'ellipse' || objectType === 'circle') {
       const radiusX = typeof obj.rx === 'number' ? obj.rx : ((typeof obj.width === 'number' ? obj.width : 0) / 2);
       const radiusY = typeof obj.ry === 'number' ? obj.ry : ((typeof obj.height === 'number' ? obj.height : 0) / 2);
-      const segments = Math.max(24, Math.ceil((Math.max(radiusX, radiusY) * Math.PI * 2) / 10));
+      const ellipseCircumference = Math.PI * (3 * (radiusX + radiusY) - Math.sqrt((3 * radiusX + radiusY) * (radiusX + 3 * radiusY)));
+      const segments = Math.max(24, Math.ceil(ellipseCircumference / strokeSampleSpacing));
       const points: Point[] = [];
       for (let index = 0; index < segments; index += 1) {
         const angle = (index / segments) * Math.PI * 2;
@@ -1704,7 +1862,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       const sampledPoints: Point[] = [];
       let currentPoint: Point | null = null;
       let subpathStart: Point | null = null;
-      const targetSpacing = Math.max(4, (typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1) * 0.6);
+      const targetSpacing = strokeSampleSpacing;
 
       const appendPoint = (point: Point) => {
         const lastPoint = sampledPoints[sampledPoints.length - 1];
@@ -1776,77 +1934,80 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     ctx: CanvasRenderingContext2D,
     points: Point[],
     closed: boolean,
-    stampConfig: NonNullable<ReturnType<typeof createVectorStrokeBrushStamp>>,
+    renderStyle: VectorStrokeBrushRenderStyle,
   ) => {
-    if (points.length < 2) {
+    if (renderStyle.kind !== 'bitmap-dab' || renderStyle.dabs.length === 0 || points.length < 2) {
       return;
     }
 
-    const pathPoints = closed ? [...points, points[0]] : points;
+    const pathPoints = buildClosedPolylinePoints(points, closed);
+    if (pathPoints.length < 2) {
+      return;
+    }
+    const { cumulativeLengths, totalLength } = buildPolylineArcTable(pathPoints);
+    if (totalLength <= 0) {
+      return;
+    }
 
-    const renderStampAt = (point: Point, angle: number, stampIndex: number) => {
-      const scaleRandom = hashNumberTriplet(point.x, point.y, stampIndex * 0.17);
-      const rotationRandom = hashNumberTriplet(point.y, point.x, stampIndex * 0.41);
-      const scatterAngleRandom = hashNumberTriplet(point.x, angle, stampIndex * 0.83);
-      const scatterRadiusRandom = hashNumberTriplet(point.y, angle, stampIndex * 1.29);
-      const jitterScale = 1 + (((scaleRandom * 2) - 1) * stampConfig.scaleJitter);
-      const jitterRotation = ((rotationRandom * 2) - 1) * stampConfig.rotationJitter;
+    const tangentWindow = Math.max(1, renderStyle.spacing * 0.85);
+
+    const renderDabAt = (distanceAlongPath: number, dabIndex: number) => {
+      const point = samplePointAlongPolyline(
+        pathPoints,
+        cumulativeLengths,
+        totalLength,
+        distanceAlongPath,
+        closed,
+      );
+      const angle = sampleAngleAlongPolyline(
+        pathPoints,
+        cumulativeLengths,
+        totalLength,
+        distanceAlongPath,
+        closed,
+        tangentWindow,
+      );
+      const dab = renderStyle.dabs[dabIndex % renderStyle.dabs.length];
+      const scaleRandom = hashNumberTriplet(point.x, point.y, dabIndex * 0.17);
+      const opacityRandom = hashNumberTriplet(point.y, point.x, dabIndex * 0.23);
+      const rotationRandom = hashNumberTriplet(point.y, point.x, dabIndex * 0.41);
+      const scatterAngleRandom = hashNumberTriplet(point.x, angle, dabIndex * 0.83);
+      const scatterRadiusRandom = hashNumberTriplet(point.y, angle, dabIndex * 1.29);
+      const jitterScale = 1 + (((scaleRandom * 2) - 1) * renderStyle.scaleJitter);
+      const jitterRotation = ((rotationRandom * 2) - 1) * renderStyle.rotationJitter;
+      const jitterOpacity = clampUnit(1 + (((opacityRandom * 2) - 1) * renderStyle.opacityJitter));
       const scatterAngle = scatterAngleRandom * Math.PI * 2;
-      const scatterRadius = stampConfig.scatter > 0 ? scatterRadiusRandom * stampConfig.scatter : 0;
+      const scatterRadius = renderStyle.scatter > 0 ? scatterRadiusRandom * renderStyle.scatter : 0;
       const renderX = point.x + Math.cos(scatterAngle) * scatterRadius;
       const renderY = point.y + Math.sin(scatterAngle) * scatterRadius;
+      const drawWidth = Math.max(1, dab.width * jitterScale);
+      const drawHeight = Math.max(1, dab.height * jitterScale);
 
       ctx.save();
-      ctx.globalAlpha = stampConfig.opacity;
+      ctx.globalAlpha = dab.opacity * jitterOpacity;
       ctx.translate(renderX, renderY);
       ctx.rotate(angle + jitterRotation);
-      if (jitterScale !== 1) {
-        ctx.scale(jitterScale, jitterScale);
-      }
       ctx.drawImage(
-        stampConfig.image,
-        -stampConfig.image.width / 2,
-        -stampConfig.image.height / 2,
+        dab.image,
+        -drawWidth / 2,
+        -drawHeight / 2,
+        drawWidth,
+        drawHeight,
       );
       ctx.restore();
     };
 
-    let carry = 0;
-    let stampIndex = 0;
-    for (let index = 0; index < pathPoints.length - 1; index += 1) {
-      const start = pathPoints[index];
-      const end = pathPoints[index + 1];
-      const segmentLength = getDistanceBetweenPoints(start, end);
-      if (segmentLength === 0) {
-        continue;
-      }
-
-      const angle = Math.atan2(end.y - start.y, end.x - start.x);
-      let distanceAlong = index === 0 ? 0 : Math.max(0, stampConfig.advance - carry);
-      if (index === 0) {
-        renderStampAt(start, angle, stampIndex);
-        stampIndex += 1;
-        distanceAlong = stampConfig.advance;
-      }
-
-      while (distanceAlong <= segmentLength) {
-        const progress = distanceAlong / segmentLength;
-        renderStampAt(new Point(
-          lerpNumber(start.x, end.x, progress),
-          lerpNumber(start.y, end.y, progress),
-        ), angle, stampIndex);
-        stampIndex += 1;
-        distanceAlong += stampConfig.advance;
-      }
-
-      carry = segmentLength - (distanceAlong - stampConfig.advance);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    let dabIndex = 0;
+    for (let distanceAlongPath = 0; distanceAlongPath < totalLength; distanceAlongPath += renderStyle.spacing) {
+      renderDabAt(distanceAlongPath, dabIndex);
+      dabIndex += 1;
     }
-
     if (!closed) {
-      const lastPoint = pathPoints[pathPoints.length - 1];
-      const previousPoint = pathPoints[pathPoints.length - 2];
-      renderStampAt(lastPoint, Math.atan2(lastPoint.y - previousPoint.y, lastPoint.x - previousPoint.x), stampIndex);
+      renderDabAt(totalLength, dabIndex);
     }
+    ctx.restore();
   }, []);
 
   const traceVectorObjectLocalPath = useCallback((ctx: CanvasRenderingContext2D, obj: any): boolean => {
@@ -1980,21 +2141,23 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         continue;
       }
 
-      const stampConfig = createVectorStrokeBrushStamp(
+      const renderStyle = resolveVectorStrokeBrushRenderStyle(
         brushId,
         strokeColor,
         strokeWidth,
-        resolveVectorStrokeTextureSource(brushId),
       );
-      if (!stampConfig) {
+      if (!renderStyle || renderStyle.kind !== 'bitmap-dab') {
         continue;
       }
       const objectOpacity = typeof obj.opacity === 'number' ? obj.opacity : 1;
-      const resolvedStampConfig = objectOpacity === 1
-        ? stampConfig
+      const resolvedRenderStyle = objectOpacity === 1
+        ? renderStyle
         : {
-            ...stampConfig,
-            opacity: stampConfig.opacity * objectOpacity,
+            ...renderStyle,
+            dabs: renderStyle.dabs.map((dab) => ({
+              ...dab,
+              opacity: dab.opacity * objectOpacity,
+            })),
           };
 
       const contourPaths = getVectorObjectContourPaths(obj);
@@ -2003,12 +2166,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
 
       for (const contour of contourPaths) {
-        drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedStampConfig);
+        drawVectorStrokeBrushPath(ctx, contour.points, contour.closed, resolvedRenderStyle);
       }
     }
 
     ctx.restore();
-  }, [drawVectorStrokeBrushPath, getVectorObjectContourPaths, resolveVectorFillTextureSource, resolveVectorStrokeTextureSource, traceVectorObjectLocalPath]);
+  }, [drawVectorStrokeBrushPath, getVectorObjectContourPaths, resolveVectorFillTextureSource, resolveVectorStrokeBrushRenderStyle, traceVectorObjectLocalPath]);
 
   const getCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
