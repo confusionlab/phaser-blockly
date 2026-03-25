@@ -1631,6 +1631,28 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
   }, []);
 
+  const syncActiveLayerCanvasVisibility = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
+      wrapperEl?: HTMLDivElement;
+      lowerCanvasEl?: HTMLCanvasElement;
+      upperCanvasEl?: HTMLCanvasElement;
+    }) | null;
+    if (!fabricCanvas) {
+      return;
+    }
+
+    const nextOpacity = activeLayerVisible ? String(activeLayerOpacity) : '0';
+    if (fabricCanvas.wrapperEl) {
+      fabricCanvas.wrapperEl.style.opacity = nextOpacity;
+    }
+    if (fabricCanvas.lowerCanvasEl) {
+      fabricCanvas.lowerCanvasEl.style.opacity = nextOpacity;
+    }
+    if (fabricCanvas.upperCanvasEl) {
+      fabricCanvas.upperCanvasEl.style.opacity = nextOpacity;
+    }
+  }, [activeLayerOpacity, activeLayerVisible]);
+
   const setEditorMode = useCallback((mode: CostumeEditorMode) => {
     editorModeRef.current = mode;
     setEditorModeState(mode);
@@ -6626,6 +6648,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     historyRef.current = [];
     historyIndexRef.current = -1;
     saveHistory();
+    syncActiveLayerCanvasVisibility();
     configureCanvasForTool();
 
     return () => {
@@ -6646,12 +6669,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       vectorStrokeCtxRef.current = null;
       vectorGuideCtxRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyPointSelectionMarqueeSession, applyPointSelectionTransformSession, applyVectorPointControls, applyVectorPointEditingAppearance, beginPointSelectionTransformSession, clearSelectedPathAnchors, commitBitmapSelection, commitCurrentPenPlacement, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorIndices, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, isPointSelectionToggleModifierPressed, loadBitmapLayer, movePathAnchorByDelta, renderVectorBrushStrokeOverlay, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, setSelectedPathAnchors, setVectorPointEditingTarget, startPenAnchorPlacement, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint, updatePenAnchorPlacement]);
+	  }, [activateVectorPointEditing, applyFill, applyPointSelectionMarqueeSession, applyPointSelectionTransformSession, applyVectorPointControls, applyVectorPointEditingAppearance, beginPointSelectionTransformSession, clearSelectedPathAnchors, commitBitmapSelection, commitCurrentPenPlacement, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorIndices, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, isPointSelectionToggleModifierPressed, loadBitmapLayer, movePathAnchorByDelta, renderVectorBrushStrokeOverlay, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, setSelectedPathAnchors, setVectorPointEditingTarget, startPenAnchorPlacement, syncActiveLayerCanvasVisibility, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint, updatePenAnchorPlacement]);
 
   // Sync tool behavior.
   useEffect(() => {
     configureCanvasForTool();
   }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, vectorStyle, configureCanvasForTool]);
+
+  useEffect(() => {
+    syncActiveLayerCanvasVisibility();
+  }, [syncActiveLayerCanvasVisibility]);
 
   useEffect(() => {
     const activeAnchor = activePathAnchorRef.current;
