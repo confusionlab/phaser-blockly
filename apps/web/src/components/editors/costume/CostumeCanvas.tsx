@@ -3026,19 +3026,19 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     let targetLeft = minLeft;
     let targetTop = minTop;
-    if (action.endsWith('left')) {
+    if (action === 'left') {
       targetLeft = 0;
-    } else if (action.endsWith('center')) {
+    } else if (action === 'center-x') {
       targetLeft = (CANVAS_SIZE - groupWidth) / 2;
-    } else if (action.endsWith('right')) {
+    } else if (action === 'right') {
       targetLeft = CANVAS_SIZE - groupWidth;
     }
 
-    if (action.startsWith('top')) {
+    if (action === 'top') {
       targetTop = 0;
-    } else if (action.startsWith('middle')) {
+    } else if (action === 'center-y') {
       targetTop = (CANVAS_SIZE - groupHeight) / 2;
-    } else if (action.startsWith('bottom')) {
+    } else if (action === 'bottom') {
       targetTop = CANVAS_SIZE - groupHeight;
     }
 

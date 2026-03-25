@@ -70,15 +70,12 @@ export type VectorPathNodeHandleType = 'linear' | 'corner' | 'smooth' | 'symmetr
 export type EditableVectorHandleMode = VectorPathNodeHandleType;
 export type VectorHandleMode = EditableVectorHandleMode | 'multiple';
 export type AlignAction =
-  | 'top-left'
-  | 'top-center'
-  | 'top-right'
-  | 'middle-left'
-  | 'middle-center'
-  | 'middle-right'
-  | 'bottom-left'
-  | 'bottom-center'
-  | 'bottom-right';
+  | 'left'
+  | 'center-x'
+  | 'right'
+  | 'top'
+  | 'center-y'
+  | 'bottom';
 
 export interface TextToolStyle {
   fontFamily: string;
@@ -124,6 +121,30 @@ interface ToolDefinition {
   tool: DrawingTool;
   icon: React.ReactNode;
   label: string;
+}
+
+function AlignCanvasActionIcon({ action }: { action: AlignAction }) {
+  const isVertical = action === 'left' || action === 'center-x' || action === 'right';
+  const guideX = action === 'left' ? 4 : action === 'center-x' ? 12 : 20;
+  const guideY = action === 'top' ? 4 : action === 'center-y' ? 12 : 20;
+  const rectX = action === 'left' ? 11 : action === 'center-x' ? 8 : 5;
+  const rectY = action === 'top' ? 11 : action === 'center-y' ? 8 : 5;
+
+  return (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
+      {isVertical ? (
+        <>
+          <line x1={guideX} y1="2" x2={guideX} y2="22" stroke="currentColor" strokeWidth="1.6" opacity="0.45" />
+          <rect x={rectX} y="8" width="8" height="8" rx="2" fill="currentColor" />
+        </>
+      ) : (
+        <>
+          <line x1="2" y1={guideY} x2="22" y2={guideY} stroke="currentColor" strokeWidth="1.6" opacity="0.45" />
+          <rect x="8" y={rectY} width="8" height="8" rx="2" fill="currentColor" />
+        </>
+      )}
+    </svg>
+  );
 }
 
 interface FloatingToolButtonProps {
@@ -518,16 +539,13 @@ const textAlignOptions: Array<{
   { value: 'right', label: 'Right', Icon: AlignRight },
 ];
 
-const alignGrid: Array<{ action: AlignAction; label: string; title: string }> = [
-  { action: 'top-left', label: '↖', title: 'Top Left' },
-  { action: 'top-center', label: '↑', title: 'Top Center' },
-  { action: 'top-right', label: '↗', title: 'Top Right' },
-  { action: 'middle-left', label: '←', title: 'Middle Left' },
-  { action: 'middle-center', label: '•', title: 'Center' },
-  { action: 'middle-right', label: '→', title: 'Middle Right' },
-  { action: 'bottom-left', label: '↙', title: 'Bottom Left' },
-  { action: 'bottom-center', label: '↓', title: 'Bottom Center' },
-  { action: 'bottom-right', label: '↘', title: 'Bottom Right' },
+const alignOptions: Array<{ action: AlignAction; title: string }> = [
+  { action: 'left', title: 'Align Left' },
+  { action: 'center-x', title: 'Center Horizontally' },
+  { action: 'right', title: 'Align Right' },
+  { action: 'top', title: 'Align Top' },
+  { action: 'center-y', title: 'Center Vertically' },
+  { action: 'bottom', title: 'Align Bottom' },
 ];
 
 const vectorHandleModeOptions: Array<{ value: EditableVectorHandleMode; label: string }> = [
@@ -760,16 +778,16 @@ export const CostumeToolbar = memo(({
                             <ChevronDown className="size-3" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="w-[140px] p-2">
-                          <div className="grid grid-cols-3 gap-1">
-                            {alignGrid.map((item) => (
+                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="w-auto p-2">
+                          <div className="flex items-center gap-1">
+                            {alignOptions.map((item) => (
                               <DropdownMenuItem
                                 key={item.action}
-                                className="h-8 w-8 justify-center rounded border p-0 text-sm"
+                                className="h-8 w-8 justify-center rounded border p-0 text-muted-foreground"
                                 title={item.title}
                                 onClick={() => onAlign(item.action)}
                               >
-                                {item.label}
+                                <AlignCanvasActionIcon action={item.action} />
                               </DropdownMenuItem>
                             ))}
                           </div>
