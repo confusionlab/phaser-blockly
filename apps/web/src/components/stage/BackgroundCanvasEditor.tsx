@@ -2420,10 +2420,6 @@ export function BackgroundCanvasEditor() {
     setCamera((current) => panCameraFromWheel(current, event.deltaX, event.deltaY, zoom, 'up'));
   }, [camera, zoom]);
 
-  const handleToolbarModeChange = useCallback(() => {
-    // Background drawing is bitmap-only, so the shared toolbar mode switcher is hidden.
-  }, []);
-
   const handleToolbarToolChange = useCallback((nextTool: CostumeDrawingTool) => {
     if (busy || !isBackgroundToolbarTool(nextTool)) {
       return;
@@ -2559,7 +2555,6 @@ export function BackgroundCanvasEditor() {
           vectorStyle={BACKGROUND_TOOLBAR_VECTOR_STYLE}
           vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
           previewScale={zoom}
-          onEditorModeChange={handleToolbarModeChange}
           onToolChange={handleToolbarToolChange}
           onMoveOrder={handleToolbarMoveOrder}
           onFlipSelection={handleToolbarFlipSelection}

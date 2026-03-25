@@ -123,20 +123,62 @@ export interface CostumeBounds {
   height: number; // Height of visible content
 }
 
-export type CostumeEditorMode = 'bitmap' | 'vector';
+export type CostumeLayerKind = 'bitmap' | 'vector';
+export type CostumeLayerBlendMode = 'normal';
+export type CostumeLayerEffect = never;
+
+export interface CostumeBitmapContentRef {
+  assetId: string | null;
+}
 
 export interface CostumeVectorDocument {
+  engine: 'fabric';
   version: 1;
   fabricJson: string;
 }
+
+export interface CostumeLayerBase {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  opacity: number;
+  blendMode: CostumeLayerBlendMode;
+  mask: null;
+  effects: CostumeLayerEffect[];
+}
+
+export interface CostumeBitmapLayer extends CostumeLayerBase {
+  kind: 'bitmap';
+  width: number;
+  height: number;
+  bitmap: CostumeBitmapContentRef;
+}
+
+export interface CostumeVectorLayer extends CostumeLayerBase {
+  kind: 'vector';
+  vector: CostumeVectorDocument;
+}
+
+export type CostumeLayer = CostumeBitmapLayer | CostumeVectorLayer;
+
+export interface CostumeDocument {
+  version: 1;
+  activeLayerId: string;
+  layers: CostumeLayer[];
+}
+
+/**
+ * @deprecated Use CostumeLayerKind for active layer kind instead.
+ */
+export type CostumeEditorMode = CostumeLayerKind;
 
 export interface Costume {
   id: string;
   name: string;
   assetId: string; // Reference to Asset
   bounds?: CostumeBounds; // Bounding box of visible (non-transparent) pixels
-  editorMode?: CostumeEditorMode;
-  vectorDocument?: CostumeVectorDocument;
+  document: CostumeDocument;
 }
 
 export interface Sound {
@@ -236,7 +278,7 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 8,
+    schemaVersion: 9,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     messages: [],
     globalVariables: [],
@@ -292,11 +334,33 @@ function randomPastelColor(): string {
 
 export function createDefaultGameObject(name: string): GameObject {
   const color = randomPastelColor();
+  const initialLayerId = crypto.randomUUID();
   const defaultCostume: Costume = {
     id: crypto.randomUUID(),
     name: 'costume1',
     assetId: generateCircleCostume(color),
-    editorMode: 'vector',
+    document: {
+      version: 1,
+      activeLayerId: initialLayerId,
+      layers: [
+        {
+          id: initialLayerId,
+          name: 'Layer 1',
+          kind: 'bitmap',
+          visible: true,
+          locked: false,
+          opacity: 1,
+          blendMode: 'normal',
+          mask: null,
+          effects: [],
+          width: 1024,
+          height: 1024,
+          bitmap: {
+            assetId: generateCircleCostume(color),
+          },
+        },
+      ],
+    },
   };
 
   return {

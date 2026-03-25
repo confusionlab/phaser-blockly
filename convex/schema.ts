@@ -1,23 +1,9 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
 
 // Project data schema version. Keep aligned with src/db/database.ts.
-export const SCHEMA_VERSION = 8;
-
-// Shared bounds validator
-const boundsValidator = v.object({
-  x: v.number(),
-  y: v.number(),
-  width: v.number(),
-  height: v.number(),
-});
-
-const editorModeValidator = v.union(v.literal("bitmap"), v.literal("vector"));
-
-const vectorDocumentValidator = v.object({
-  version: v.literal(1),
-  fabricJson: v.string(),
-});
+export const SCHEMA_VERSION = 9;
 
 // Physics config validator
 const physicsValidator = v.object({
@@ -81,8 +67,7 @@ export default defineSchema({
     storageId: v.id("_storage"),
     thumbnail: v.string(), // Base64 small preview
     bounds: v.optional(boundsValidator),
-    editorMode: v.optional(editorModeValidator),
-    vectorDocument: v.optional(vectorDocumentValidator),
+    document: costumeDocumentValidator,
     mimeType: v.string(),
     size: v.number(),
     createdAt: v.number(),
@@ -110,8 +95,7 @@ export default defineSchema({
         name: v.string(),
         storageId: v.id("_storage"),
         bounds: v.optional(boundsValidator),
-        editorMode: v.optional(editorModeValidator),
-        vectorDocument: v.optional(vectorDocumentValidator),
+        document: costumeDocumentValidator,
       }),
     ),
     sounds: v.array(

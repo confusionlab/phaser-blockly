@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import { Button } from '@/components/ui/button';
-import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
   FloatingBottomToolbar,
@@ -64,7 +63,7 @@ import {
 } from '@/lib/vector/vectorFillTextureCore';
 
 export type EditorMode = CostumeEditorMode;
-export type DrawingTool = 'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
+export type DrawingTool = 'select' | 'box-select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
 export type SelectionFlipAxis = 'horizontal' | 'vertical';
 export type VectorPathNodeHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';
@@ -122,6 +121,15 @@ interface ToolDefinition {
   tool: DrawingTool;
   icon: React.ReactNode;
   label: string;
+}
+
+function BoxSelectIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden="true">
+      <rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" strokeDasharray="2.5 2.5" strokeWidth="1.8" />
+      <path d="M9 12h6M12 9v6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
+    </svg>
+  );
 }
 
 function AlignCanvasActionIcon({ action }: { action: AlignAction }) {
@@ -547,7 +555,6 @@ interface CostumeToolbarProps {
   vectorStyle: VectorToolStyle;
   vectorStyleCapabilities: VectorStyleCapabilities;
   previewScale?: number;
-  onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
   onFlipSelection: (axis: SelectionFlipAxis) => void;
@@ -567,6 +574,7 @@ interface CostumeToolbarProps {
 
 const bitmapPrimaryTools: ToolDefinition[] = [
   { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
+  { tool: 'box-select', icon: <BoxSelectIcon />, label: 'Box Select' },
   { tool: 'brush', icon: <Paintbrush className="size-[18px]" />, label: 'Brush' },
   { tool: 'eraser', icon: <Eraser className="size-[18px]" />, label: 'Eraser' },
   { tool: 'fill', icon: <PaintBucket className="size-[18px]" />, label: 'Fill' },
@@ -588,11 +596,6 @@ const shapeTools: ToolDefinition[] = [
   { tool: 'triangle', icon: <Triangle className="size-[18px]" />, label: 'Triangle' },
   { tool: 'star', icon: <Star className="size-[18px]" />, label: 'Star' },
   { tool: 'line', icon: <Minus className="size-[18px]" />, label: 'Line' },
-];
-
-const modeOptions: SegmentedControlOption<EditorMode>[] = [
-  { value: 'bitmap', label: 'Pixel' },
-  { value: 'vector', label: 'Vector' },
 ];
 
 const fontFamilyOptions = [
@@ -665,7 +668,7 @@ export const CostumeToolbar = memo(({
   activeTool,
   hasActiveSelection,
   toolVisibility,
-  showModeSwitcher = true,
+  showModeSwitcher = false,
   selectionActionsEnabled = true,
   showTextControls,
   isVectorPointEditing,
@@ -679,7 +682,6 @@ export const CostumeToolbar = memo(({
   vectorStyle,
   vectorStyleCapabilities,
   previewScale = 1,
-  onEditorModeChange,
   onToolChange,
   onMoveOrder,
   onFlipSelection,
@@ -714,7 +716,8 @@ export const CostumeToolbar = memo(({
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = showShapeTools && isShapeTool(activeTool);
-  const showSelectionActions = selectionActionsEnabled && activeTool === 'select' && !isVectorPointEditing && hasActiveSelection;
+  const selectionTool = editorMode === 'bitmap' ? 'box-select' : 'select';
+  const showSelectionActions = selectionActionsEnabled && activeTool === selectionTool && !isVectorPointEditing && hasActiveSelection;
   const showVectorHandleControl = editorMode === 'vector' && isVectorPointEditing && hasSelectedVectorPoints;
   const showBitmapShapeStyleControls = editorMode === 'bitmap' && shapeToolIsActive;
   const showBitmapShapeFillControl = showBitmapShapeStyleControls && activeTool !== 'line';
@@ -1489,24 +1492,7 @@ export const CostumeToolbar = memo(({
                     />
                   ))}
                 </div>
-
-                {showModeSwitcher && (
-                  <>
-                    <div className="h-10 w-px bg-border/65" />
-
-                    <div className="w-[164px]">
-                      <SegmentedControl
-                        ariaLabel="Costume editor mode"
-                        options={modeOptions}
-                        size="large"
-                        value={editorMode}
-                        onValueChange={onEditorModeChange}
-                        className="w-full"
-                        optionClassName="min-h-[40px] px-3 text-[13px]"
-                      />
-                    </div>
-                  </>
-                )}
+                {showModeSwitcher ? <div className="hidden" /> : null}
               </div>
           </FloatingBottomToolbar>
       </FloatingBottomToolbarDock>

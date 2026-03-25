@@ -10,6 +10,7 @@
 
 import type * as assistant from "../assistant.js";
 import type * as costumeLibrary from "../costumeLibrary.js";
+import type * as costumeValidators from "../costumeValidators.js";
 import type * as http from "../http.js";
 import type * as objectLibrary from "../objectLibrary.js";
 import type * as projectAssets from "../projectAssets.js";
@@ -27,6 +28,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   assistant: typeof assistant;
   costumeLibrary: typeof costumeLibrary;
+  costumeValidators: typeof costumeValidators;
   http: typeof http;
   objectLibrary: typeof objectLibrary;
   projectAssets: typeof projectAssets;

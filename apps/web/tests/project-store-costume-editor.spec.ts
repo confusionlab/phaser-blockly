@@ -7,6 +7,7 @@ import {
   type ComponentDefinition,
   type Project,
 } from '../src/types';
+import { createBitmapCostumeDocument } from '../src/lib/costume/costumeDocument';
 
 type StoreModules = {
   useProjectStore: typeof import('../src/store/projectStore').useProjectStore;
@@ -82,7 +83,7 @@ function createObject(id: string, costumeId: string, assetId: string) {
       id: costumeId,
       name: `${id}-costume`,
       assetId,
-      editorMode: 'vector',
+      document: createBitmapCostumeDocument(assetId, `${id}-costume`),
     },
   ];
   object.currentCostumeIndex = 0;
@@ -101,10 +102,17 @@ function createObjectWithCostumes(
     id: costume.id,
     name: costume.name,
     assetId: costume.assetId,
-    editorMode: 'vector',
+    document: createBitmapCostumeDocument(costume.assetId, costume.name),
   }));
   object.currentCostumeIndex = 0;
   return object;
+}
+
+function createPersistedCostumeState(assetId: string) {
+  return {
+    assetId,
+    document: createBitmapCostumeDocument(assetId, 'Layer 1'),
+  };
 }
 
 async function openProject(project: Project) {
@@ -144,8 +152,7 @@ test.describe('project store costume editor boundary', () => {
         costumeId: 'costume-a',
       },
       {
-        assetId: 'data:image/png;base64,EDITED_A',
-        editorMode: 'vector',
+        ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
       },
     );
 
@@ -172,8 +179,7 @@ test.describe('project store costume editor boundary', () => {
         costumeId: 'costume-a',
       },
       {
-        assetId: 'data:image/png;base64,SHOULD_NOT_APPLY',
-        editorMode: 'vector',
+        ...createPersistedCostumeState('data:image/png;base64,SHOULD_NOT_APPLY'),
       },
     );
 
@@ -196,7 +202,7 @@ test.describe('project store costume editor boundary', () => {
           id: 'shared-costume',
           name: 'hero',
           assetId: 'data:image/png;base64,COMPONENT',
-          editorMode: 'vector',
+          document: createBitmapCostumeDocument('data:image/png;base64,COMPONENT', 'hero'),
         },
       ],
       currentCostumeIndex: 0,
@@ -220,8 +226,7 @@ test.describe('project store costume editor boundary', () => {
         costumeId: 'shared-costume',
       },
       {
-        assetId: 'data:image/png;base64,UPDATED_COMPONENT',
-        editorMode: 'vector',
+        ...createPersistedCostumeState('data:image/png;base64,UPDATED_COMPONENT'),
       },
     );
 
@@ -398,8 +403,7 @@ test.describe('project store costume editor boundary', () => {
             costumeId: 'costume-a',
           },
           state: {
-            assetId: 'data:image/png;base64,EDITED_A',
-            editorMode: 'vector',
+            ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
           },
         },
         operation: {
@@ -448,8 +452,7 @@ test.describe('project store costume editor boundary', () => {
             costumeId: 'costume-a',
           },
           state: {
-            assetId: 'data:image/png;base64,EDITED_A',
-            editorMode: 'vector',
+            ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
           },
         },
         operation: {
@@ -499,8 +502,7 @@ test.describe('project store costume editor boundary', () => {
             costumeId: 'costume-a',
           },
           state: {
-            assetId: 'data:image/png;base64,EDITED_A',
-            editorMode: 'vector',
+            ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
           },
         },
         operation: {
@@ -546,7 +548,7 @@ test.describe('project store costume editor boundary', () => {
             id: 'costume-a',
             name: 'idle',
             assetId: 'data:image/png;base64,AAA',
-            editorMode: 'vector',
+            document: createBitmapCostumeDocument('data:image/png;base64,AAA', 'idle'),
           },
         },
       },
@@ -584,8 +586,7 @@ test.describe('project store costume editor boundary', () => {
             costumeId: 'costume-a',
           },
           {
-            assetId: 'data:image/png;base64,EDITED_A',
-            editorMode: 'vector',
+            ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
           },
           { recordHistory },
         );
@@ -629,8 +630,7 @@ test.describe('project store costume editor boundary', () => {
             costumeId: 'costume-a',
           },
           {
-            assetId: 'data:image/png;base64,EDITED_A',
-            editorMode: 'vector',
+            ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
           },
           { recordHistory },
         );
@@ -668,8 +668,7 @@ test.describe('project store costume editor boundary', () => {
             costumeId: 'costume-a',
           },
           {
-            assetId: 'data:image/png;base64,EDITED_A',
-            editorMode: 'vector',
+            ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
           },
           { recordHistory },
         );

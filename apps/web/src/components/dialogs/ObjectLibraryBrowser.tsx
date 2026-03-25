@@ -19,10 +19,15 @@ import type {
   ColliderConfig,
   Variable,
   CostumeBounds,
-  CostumeEditorMode,
-  CostumeVectorDocument,
+  CostumeDocument,
 } from "@/types";
 import { urlToDataUrl } from "@/utils/convexHelpers";
+import {
+  cloneCostumeDocument,
+  ensureCostumeDocument,
+  getActiveCostumeLayer,
+  isBitmapCostumeLayer,
+} from "@/lib/costume/costumeDocument";
 
 interface ObjectLibraryItem {
   _id: Id<"objectLibrary">;
@@ -34,8 +39,7 @@ interface ObjectLibraryItem {
     storageId: Id<"_storage">;
     url: string | null;
     bounds?: CostumeBounds;
-    editorMode?: CostumeEditorMode;
-    vectorDocument?: CostumeVectorDocument;
+    document: CostumeDocument;
   }>;
   sounds: Array<{
     id: string;
@@ -107,13 +111,17 @@ export function ObjectLibraryBrowser({
             throw new Error(`Costume ${costume.name} has no URL`);
           }
           const dataUrl = await urlToDataUrl(costume.url);
+          const document = cloneCostumeDocument(ensureCostumeDocument(costume as { document?: unknown }));
+          const activeLayer = getActiveCostumeLayer(document);
+          if (isBitmapCostumeLayer(activeLayer) && !activeLayer.bitmap.assetId) {
+            activeLayer.bitmap.assetId = dataUrl;
+          }
           return {
             id: crypto.randomUUID(), // Generate new IDs for the imported object
             name: costume.name,
             assetId: dataUrl,
             bounds: costume.bounds,
-            editorMode: costume.editorMode ?? 'vector',
-            vectorDocument: costume.vectorDocument,
+            document,
           };
         })
       );

@@ -54,6 +54,10 @@ import {
   type CostumeEditorPersistedState,
   type CostumeEditorTarget,
 } from '@/lib/editor/costumeEditorSession';
+import {
+  cloneCostume,
+  ensureCostumeDocument,
+} from '@/lib/costume/costumeDocument';
 
 interface ProjectStore {
   project: Project | null;
@@ -158,11 +162,12 @@ function createUpdatedAt(previous: Date | null = null): Date {
 }
 
 function cloneCostumes(costumes: GameObject['costumes']): GameObject['costumes'] {
-  return (costumes || []).map((costume) => ({
-    ...costume,
-    bounds: costume.bounds ? { ...costume.bounds } : undefined,
-    vectorDocument: costume.vectorDocument ? { ...costume.vectorDocument } : undefined,
-  }));
+  return (costumes || []).map((costume) =>
+    cloneCostume({
+      ...costume,
+      document: ensureCostumeDocument(costume),
+    })
+  );
 }
 
 function cloneSounds(sounds: GameObject['sounds']): GameObject['sounds'] {
@@ -536,6 +541,7 @@ function normalizeProject(project: Project): Project {
     normalizePhysicsCollider({
       ...component,
       blocklyXml: normalizeBlocklyXml(component.blocklyXml || ''),
+      costumes: cloneCostumes(component.costumes || []),
       localVariables: normalizeVariableDefinitions(component.localVariables || [], { scope: 'local' }),
     })
   );
@@ -557,6 +563,7 @@ function normalizeProject(project: Project): Project {
         normalizePhysicsCollider({
           ...obj,
           blocklyXml: normalizeBlocklyXml(obj.blocklyXml || ''),
+          costumes: cloneCostumes(obj.costumes || []),
           localVariables: normalizeVariableDefinitions(obj.localVariables || [], {
             scope: 'local',
             objectId: obj.componentId ? null : obj.id,

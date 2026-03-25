@@ -2,11 +2,14 @@ import { getEffectiveObjectProps } from '@/types';
 import type {
   Costume,
   CostumeBounds,
-  CostumeEditorMode,
-  CostumeVectorDocument,
+  CostumeDocument,
   GameObject,
   Project,
 } from '@/types';
+import {
+  cloneCostumeDocument,
+  ensureCostumeDocument,
+} from '@/lib/costume/costumeDocument';
 
 export interface CostumeEditorTarget {
   sceneId: string;
@@ -26,8 +29,7 @@ export interface CostumeEditorSession extends CostumeEditorTarget {
 export interface CostumeEditorPersistedState {
   assetId: string;
   bounds?: CostumeBounds;
-  editorMode: CostumeEditorMode;
-  vectorDocument?: CostumeVectorDocument;
+  document: CostumeDocument;
 }
 
 export interface CostumeEditorPersistedSession {
@@ -68,13 +70,13 @@ export function areCostumeBoundsEqual(a: CostumeBounds | undefined, b: CostumeBo
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
 
-export function areCostumeVectorDocumentsEqual(
-  a: CostumeVectorDocument | undefined,
-  b: CostumeVectorDocument | undefined
+export function areCostumeDocumentsEqual(
+  a: CostumeDocument | undefined,
+  b: CostumeDocument | undefined
 ): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return a.version === b.version && a.fabricJson === b.fabricJson;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export function applyCostumeEditorState(
@@ -89,14 +91,14 @@ export function applyCostumeEditorState(
 
   const costume = costumes[costumeIndex];
   const nextBounds = state.bounds ?? undefined;
-  const nextVectorDocument = state.vectorDocument;
-  const nextEditorMode = state.editorMode;
+  const nextDocument = state.document
+    ? cloneCostumeDocument(state.document)
+    : cloneCostumeDocument(ensureCostumeDocument(costume));
 
   const noAssetChange = costume.assetId === state.assetId;
   const noBoundsChange = areCostumeBoundsEqual(costume.bounds, nextBounds);
-  const noModeChange = costume.editorMode === nextEditorMode;
-  const noVectorDocChange = areCostumeVectorDocumentsEqual(costume.vectorDocument, nextVectorDocument);
-  if (noAssetChange && noBoundsChange && noModeChange && noVectorDocChange) {
+  const noDocumentChange = areCostumeDocumentsEqual(costume.document, nextDocument);
+  if (noAssetChange && noBoundsChange && noDocumentChange) {
     return null;
   }
 
@@ -106,8 +108,7 @@ export function applyCostumeEditorState(
           ...entry,
           assetId: state.assetId,
           bounds: nextBounds,
-          editorMode: nextEditorMode,
-          vectorDocument: nextVectorDocument,
+          document: nextDocument,
         }
       : entry
   );
@@ -157,7 +158,10 @@ export function resolveCostumeEditorObject(
   }
 
   const effectiveProps = getEffectiveObjectProps(object, project.components || []);
-  const costumes = effectiveProps.costumes || [];
+  const costumes = (effectiveProps.costumes || []).map((costume) => ({
+    ...costume,
+    document: ensureCostumeDocument(costume),
+  }));
 
   return {
     ...target,

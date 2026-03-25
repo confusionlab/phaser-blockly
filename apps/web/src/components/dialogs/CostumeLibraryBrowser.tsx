@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Trash2, Upload, Loader2 } from "lucide-react";
-import type { CostumeBounds, CostumeEditorMode, CostumeVectorDocument } from "@/types";
+import type { CostumeBounds, CostumeDocument } from "@/types";
 import {
   uploadDataUrlToStorage,
   generateThumbnail,
@@ -20,6 +20,13 @@ import {
 } from "@/utils/convexHelpers";
 import { calculateVisibleBounds } from "@/utils/imageBounds";
 import { processImage } from "@/utils/imageProcessor";
+import {
+  cloneCostumeDocument,
+  createBitmapCostumeDocument,
+  ensureCostumeDocument,
+  getActiveCostumeLayer,
+  isBitmapCostumeLayer,
+} from "@/lib/costume/costumeDocument";
 
 interface CostumeLibraryBrowserProps {
   open: boolean;
@@ -28,8 +35,7 @@ interface CostumeLibraryBrowserProps {
     name: string;
     dataUrl: string;
     bounds?: CostumeBounds;
-    editorMode?: CostumeEditorMode;
-    vectorDocument?: CostumeVectorDocument;
+    document: CostumeDocument;
   }) => void;
 }
 
@@ -80,7 +86,10 @@ export function CostumeLibraryBrowser({
           storageId: storageId as Id<"_storage">,
           thumbnail,
           bounds: bounds || undefined,
-          editorMode: 'vector',
+          document: createBitmapCostumeDocument(
+            processedDataUrl,
+            file.name.replace(/\.[^/.]+$/, "") || "Layer 1",
+          ),
           mimeType,
           size,
         });
@@ -116,12 +125,17 @@ export function CostumeLibraryBrowser({
       // Download the image and convert to data URL
       const dataUrl = await urlToDataUrl(item.url);
 
+      const document = cloneCostumeDocument(ensureCostumeDocument(item as { document?: unknown }));
+      const activeLayer = getActiveCostumeLayer(document);
+      if (isBitmapCostumeLayer(activeLayer) && !activeLayer.bitmap.assetId) {
+        activeLayer.bitmap.assetId = dataUrl;
+      }
+
       onSelect?.({
         name: item.name,
         dataUrl,
         bounds: item.bounds ?? undefined,
-        editorMode: item.editorMode ?? 'vector',
-        vectorDocument: item.vectorDocument ?? undefined,
+        document,
       });
       onOpenChange(false);
     } catch (error) {

@@ -2,8 +2,6 @@ import Dexie, { type EntityTable } from 'dexie';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type {
   BackgroundConfig,
-  CostumeEditorMode,
-  CostumeVectorDocument,
   MessageDefinition,
   Project,
   ReusableObject,
@@ -21,9 +19,14 @@ import {
 } from '@/lib/blocklyReferenceMaps';
 import { normalizeVariableDefinition } from '@/lib/variableUtils';
 import { normalizeProjectLayering } from '@/utils/layerTree';
+import {
+  cloneCostumeDocument,
+  ensureCostumeDocument,
+  isBitmapCostumeLayer,
+} from '@/lib/costume/costumeDocument';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 8;
+export const CURRENT_SCHEMA_VERSION = 9;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -131,45 +134,24 @@ function normalizeSchemaVersion(version: unknown): number {
   return 1;
 }
 
-function normalizeCostumeEditorMode(mode: unknown): CostumeEditorMode {
-  return mode === 'bitmap' ? 'bitmap' : 'vector';
-}
+function normalizeCostumeDocumentsInProject(project: Project): Project {
+  const normalizeCostume = (costume: any) => ({
+    ...costume,
+    document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+  });
 
-function sanitizeVectorDocument(value: unknown): CostumeVectorDocument | undefined {
-  if (!value || typeof value !== 'object') {
-    return undefined;
-  }
-  const maybe = value as { version?: unknown; fabricJson?: unknown };
-  if (maybe.version !== 1 || typeof maybe.fabricJson !== 'string') {
-    return undefined;
-  }
-  return {
-    version: 1,
-    fabricJson: maybe.fabricJson,
-  };
-}
-
-function normalizeCostumeMetadataInProject(project: Project): Project {
   return {
     ...project,
     scenes: (project.scenes || []).map((scene) => ({
       ...scene,
       objects: (scene.objects || []).map((obj) => ({
         ...obj,
-        costumes: (obj.costumes || []).map((costume) => ({
-          ...costume,
-          editorMode: normalizeCostumeEditorMode(costume.editorMode),
-          vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
-        })),
+        costumes: (obj.costumes || []).map(normalizeCostume),
       })),
     })),
     components: (project.components || []).map((component) => ({
       ...component,
-      costumes: (component.costumes || []).map((costume) => ({
-        ...costume,
-        editorMode: normalizeCostumeEditorMode(costume.editorMode),
-        vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
-      })),
+      costumes: (component.costumes || []).map(normalizeCostume),
     })),
   };
 }
@@ -546,6 +528,65 @@ function addPersistedAssetRef(
   refsById.set(assetId, { assetId, kind });
 }
 
+async function normalizeCostumeAssetsForStorage(
+  costume: { assetId: string; document?: unknown },
+  refsById: Map<string, PersistedProjectAssetRef>,
+): Promise<void> {
+  if (isLikelyAssetSource(costume.assetId)) {
+    const record = await ensureAssetRecordFromSource(costume.assetId, 'image');
+    addPersistedAssetRef(refsById, record.id, 'image');
+    costume.assetId = record.id;
+  }
+
+  const document = ensureCostumeDocument(costume);
+  for (const layer of document.layers) {
+    if (!isBitmapCostumeLayer(layer) || !isLikelyAssetSource(layer.bitmap.assetId)) {
+      continue;
+    }
+    const record = await ensureAssetRecordFromSource(layer.bitmap.assetId, 'image');
+    addPersistedAssetRef(refsById, record.id, 'image');
+    layer.bitmap.assetId = record.id;
+  }
+  (costume as { document: unknown }).document = cloneCostumeDocument(document);
+}
+
+async function hydrateCostumeAssetsFromStorage(costume: { assetId: string; document?: unknown }): Promise<void> {
+  if (isManagedAssetId(costume.assetId)) {
+    const objectUrl = await resolveManagedAssetUrl(costume.assetId);
+    if (objectUrl) {
+      rememberResolvedManagedAsset(costume.assetId, objectUrl);
+      costume.assetId = objectUrl;
+    }
+  }
+
+  const document = ensureCostumeDocument(costume);
+  for (const layer of document.layers) {
+    if (!isBitmapCostumeLayer(layer) || !isManagedAssetId(layer.bitmap.assetId)) {
+      continue;
+    }
+    const objectUrl = await resolveManagedAssetUrl(layer.bitmap.assetId);
+    if (!objectUrl) {
+      continue;
+    }
+    rememberResolvedManagedAsset(layer.bitmap.assetId, objectUrl);
+    layer.bitmap.assetId = objectUrl;
+  }
+  (costume as { document: unknown }).document = cloneCostumeDocument(document);
+}
+
+function collectCostumePersistedAssetRefs(
+  costume: { assetId: string; document?: unknown },
+  refsById: Map<string, PersistedProjectAssetRef>,
+): void {
+  addPersistedAssetRef(refsById, costume.assetId, 'image');
+  const document = ensureCostumeDocument(costume);
+  for (const layer of document.layers) {
+    if (isBitmapCostumeLayer(layer) && layer.bitmap.assetId) {
+      addPersistedAssetRef(refsById, layer.bitmap.assetId, 'image');
+    }
+  }
+}
+
 async function normalizeProjectAssetsForStorage(
   projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
 ): Promise<{
@@ -554,13 +595,6 @@ async function normalizeProjectAssetsForStorage(
 }> {
   const nextProject = cloneValue(projectData);
   const refsById = new Map<string, PersistedProjectAssetRef>();
-
-  const normalizeCostumeAsset = async (costume: { assetId: string }) => {
-    if (!isLikelyAssetSource(costume.assetId)) return;
-    const record = await ensureAssetRecordFromSource(costume.assetId, 'image');
-    addPersistedAssetRef(refsById, record.id, 'image');
-    costume.assetId = record.id;
-  };
 
   const normalizeSoundAsset = async (sound: { assetId: string }) => {
     if (!isLikelyAssetSource(sound.assetId)) return;
@@ -596,7 +630,7 @@ async function normalizeProjectAssetsForStorage(
     await normalizeBackground(scene.background);
     for (const object of scene.objects || []) {
       for (const costume of object.costumes || []) {
-        await normalizeCostumeAsset(costume);
+        await normalizeCostumeAssetsForStorage(costume, refsById);
       }
       for (const sound of object.sounds || []) {
         await normalizeSoundAsset(sound);
@@ -606,7 +640,7 @@ async function normalizeProjectAssetsForStorage(
 
   for (const component of nextProject.components || []) {
     for (const costume of component.costumes || []) {
-      await normalizeCostumeAsset(costume);
+      await normalizeCostumeAssetsForStorage(costume, refsById);
     }
     for (const sound of component.sounds || []) {
       await normalizeSoundAsset(sound);
@@ -623,17 +657,6 @@ async function hydrateProjectAssetsFromStorage(
   projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
 ): Promise<Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>> {
   const nextProject = cloneValue(projectData);
-
-  const hydrateCostumeAsset = async (costume: { assetId: string }) => {
-    if (!isManagedAssetId(costume.assetId)) {
-      return;
-    }
-    const objectUrl = await resolveManagedAssetUrl(costume.assetId);
-    if (objectUrl) {
-      rememberResolvedManagedAsset(costume.assetId, objectUrl);
-      costume.assetId = objectUrl;
-    }
-  };
 
   const hydrateSoundAsset = async (sound: { assetId: string }) => {
     if (!isManagedAssetId(sound.assetId)) {
@@ -680,7 +703,7 @@ async function hydrateProjectAssetsFromStorage(
     await hydrateBackground(scene.background);
     for (const object of scene.objects || []) {
       for (const costume of object.costumes || []) {
-        await hydrateCostumeAsset(costume);
+        await hydrateCostumeAssetsFromStorage(costume);
       }
       for (const sound of object.sounds || []) {
         await hydrateSoundAsset(sound);
@@ -690,7 +713,7 @@ async function hydrateProjectAssetsFromStorage(
 
   for (const component of nextProject.components || []) {
     for (const costume of component.costumes || []) {
-      await hydrateCostumeAsset(costume);
+      await hydrateCostumeAssetsFromStorage(costume);
     }
     for (const sound of component.sounds || []) {
       await hydrateSoundAsset(sound);
@@ -719,7 +742,7 @@ function collectPersistedAssetRefsFromProjectData(
     collectBackground(scene.background);
     for (const object of scene.objects || []) {
       for (const costume of object.costumes || []) {
-        addPersistedAssetRef(refsById, costume.assetId, 'image');
+        collectCostumePersistedAssetRefs(costume, refsById);
       }
       for (const sound of object.sounds || []) {
         addPersistedAssetRef(refsById, sound.assetId, 'audio');
@@ -729,7 +752,7 @@ function collectPersistedAssetRefsFromProjectData(
 
   for (const component of projectData.components || []) {
     for (const costume of component.costumes || []) {
-      addPersistedAssetRef(refsById, costume.assetId, 'image');
+      collectCostumePersistedAssetRefs(costume, refsById);
     }
     for (const sound of component.sounds || []) {
       addPersistedAssetRef(refsById, sound.assetId, 'audio');
@@ -780,7 +803,7 @@ async function deserializeProjectFromRecord(record: ProjectRecord): Promise<{
   }
 
   project = normalizeMessagesInProject(project);
-  project = normalizeCostumeMetadataInProject(project);
+  project = normalizeCostumeDocumentsInProject(project);
   project = normalizeProjectLayering(project);
 
   return {
@@ -1020,6 +1043,47 @@ async function buildRevisionData(project: Project): Promise<{ serializedData: st
 
 function parseRevisionProjectData(serializedData: string): Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'> {
   return JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+}
+
+function migrateSerializedProjectDataToCurrentSchema(
+  serializedData: string,
+  sourceSchemaVersion: number,
+  meta: {
+    id: string;
+    name: string;
+    createdAt: Date;
+    updatedAt: Date;
+  },
+): {
+  serializedData: string;
+  schemaVersion: number;
+  migrated: boolean;
+} {
+  const parsedData = JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  let project: Project = {
+    id: meta.id,
+    name: meta.name,
+    createdAt: meta.createdAt,
+    updatedAt: meta.updatedAt,
+    ...parsedData,
+  };
+
+  let migrated = false;
+  if (sourceSchemaVersion < CURRENT_SCHEMA_VERSION) {
+    project = migrateProject(project, sourceSchemaVersion);
+    migrated = true;
+  }
+
+  project = normalizeMessagesInProject(project);
+  project = normalizeCostumeDocumentsInProject(project);
+  project = normalizeProjectLayering(project);
+
+  const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...projectData } = project;
+  return {
+    serializedData: JSON.stringify(projectData),
+    schemaVersion: migrated ? CURRENT_SCHEMA_VERSION : sourceSchemaVersion,
+    migrated,
+  };
 }
 
 function formatRestoreTimestamp(date: Date): string {
@@ -1510,6 +1574,7 @@ export async function syncProjectFromCloud(cloudProject: {
   }
 
   incomingProject = normalizeMessagesInProject(incomingProject);
+  incomingProject = normalizeCostumeDocumentsInProject(incomingProject);
 
   const {
     id: _incomingId,
@@ -1604,20 +1669,36 @@ export async function syncProjectFromCloud(cloudProject: {
 export async function syncProjectRevisionsFromCloud(
   projectId: string,
   cloudRevisions: ProjectRevisionSyncPayload[],
-): Promise<{ created: number; updated: number; skipped: number }> {
+): Promise<{ created: number; updated: number; skipped: number; migrated: number }> {
   const projectExists = await db.projects.get(projectId);
   if (!projectExists) {
-    return { created: 0, updated: 0, skipped: cloudRevisions.length };
+    return { created: 0, updated: 0, skipped: cloudRevisions.length, migrated: 0 };
   }
 
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  let migrated = 0;
 
   for (const payload of cloudRevisions) {
     if (payload.localProjectId !== projectId) {
       skipped += 1;
       continue;
+    }
+
+    const incomingSchemaVersion = normalizeSchemaVersion(payload.schemaVersion);
+    const migratedRevision = migrateSerializedProjectDataToCurrentSchema(
+      payload.data,
+      incomingSchemaVersion,
+      {
+        id: payload.localProjectId,
+        name: projectExists.name,
+        createdAt: new Date(payload.createdAt),
+        updatedAt: new Date(payload.createdAt),
+      },
+    );
+    if (migratedRevision.migrated) {
+      migrated += 1;
     }
 
     const incomingKind: ProjectRevisionKind = payload.kind === 'delta' ? 'delta' : 'snapshot';
@@ -1633,11 +1714,11 @@ export async function syncProjectRevisionsFromCloud(
       parentRevisionId: payload.parentRevisionId,
       kind: incomingKind,
       baseRevisionId: payload.baseRevisionId,
-      snapshotData: incomingKind === 'snapshot' ? payload.data : undefined,
-      patch: incomingKind === 'delta' ? payload.data : undefined,
-      contentHash: normalizeContentHash(payload.contentHash) ?? computeContentHash(payload.data),
+      snapshotData: incomingKind === 'snapshot' ? migratedRevision.serializedData : undefined,
+      patch: incomingKind === 'delta' ? migratedRevision.serializedData : undefined,
+      contentHash: normalizeContentHash(payload.contentHash) ?? computeContentHash(migratedRevision.serializedData),
       createdAt: new Date(payload.createdAt),
-      schemaVersion: normalizeSchemaVersion(payload.schemaVersion),
+      schemaVersion: migratedRevision.schemaVersion,
       appVersion: payload.appVersion,
       reason: incomingReason,
       checkpointName: payload.checkpointName ? normalizeCheckpointName(payload.checkpointName) : undefined,
@@ -1645,7 +1726,7 @@ export async function syncProjectRevisionsFromCloud(
       restoredFromRevisionId: payload.restoredFromRevisionId,
       assetIds: Array.from(
         new Set(
-          (payload.assetIds ?? collectPersistedAssetRefsFromSerializedProjectData(payload.data)
+          (payload.assetIds ?? collectPersistedAssetRefsFromSerializedProjectData(migratedRevision.serializedData)
             .map((assetRef) => assetRef.assetId))
             .filter((assetId): assetId is string => isManagedAssetId(assetId)),
         ),
@@ -1686,7 +1767,7 @@ export async function syncProjectRevisionsFromCloud(
     updated += 1;
   }
 
-  return { created, updated, skipped };
+  return { created, updated, skipped, migrated };
 }
 
 // Get single project record for sync
@@ -1913,25 +1994,6 @@ const migrations: Record<number, MigrationFn> = {
   // v4: Add costume editor metadata defaults.
   4: (project) => ({
     ...project,
-    scenes: (project.scenes || []).map((scene) => ({
-      ...scene,
-      objects: (scene.objects || []).map((obj) => ({
-        ...obj,
-        costumes: (obj.costumes || []).map((costume) => ({
-          ...costume,
-          editorMode: normalizeCostumeEditorMode(costume.editorMode),
-          vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
-        })),
-      })),
-    })),
-    components: (project.components || []).map((component) => ({
-      ...component,
-      costumes: (component.costumes || []).map((costume) => ({
-        ...costume,
-        editorMode: normalizeCostumeEditorMode(costume.editorMode),
-        vectorDocument: sanitizeVectorDocument(costume.vectorDocument),
-      })),
-    })),
     schemaVersion: 4,
   }),
   // v5: Migrate legacy scene-name references in Blockly "switch scene" blocks to scene IDs.
@@ -2074,6 +2136,11 @@ const migrations: Record<number, MigrationFn> = {
           },
     })),
     schemaVersion: 8,
+  }),
+  // v9: Migrate legacy costume artwork to layered costume documents.
+  9: (project) => ({
+    ...normalizeCostumeDocumentsInProject(project),
+    schemaVersion: 9,
   }),
 };
 
@@ -2379,6 +2446,11 @@ export async function importProject(jsonString: string): Promise<Project> {
 
   // Handle schema version (default to 1 for old files without schemaVersion)
   const schemaVersion = normalizeSchemaVersion(data.schemaVersion ?? data.version ?? 1);
+  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `This project file uses deprecated schema v${schemaVersion}. Only schema v${CURRENT_SCHEMA_VERSION} imports are supported.`,
+    );
+  }
 
   if (schemaVersion > CURRENT_SCHEMA_VERSION) {
     throw new Error(
@@ -2387,18 +2459,14 @@ export async function importProject(jsonString: string): Promise<Project> {
     );
   }
 
-  // Migrate project if needed
   let project = cloneProjectForImport(data.project as Project);
-  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
-    project = migrateProject(project, schemaVersion);
-  }
 
   // Ensure missing arrays do not break import of older files.
   project.scenes = Array.isArray(project.scenes) ? project.scenes : [];
   project.globalVariables = Array.isArray(project.globalVariables) ? project.globalVariables : [];
   project.components = Array.isArray(project.components) ? project.components : [];
   project.messages = Array.isArray(project.messages) ? project.messages : [];
-  project = normalizeCostumeMetadataInProject(project);
+  project = normalizeCostumeDocumentsInProject(project);
 
   // Generate new IDs to avoid collisions and keep imported data isolated.
   const objectIdMap = new Map<string, string>();
@@ -2428,8 +2496,7 @@ export async function importProject(jsonString: string): Promise<Project> {
 
     for (const costume of component.costumes) {
       costume.id = crypto.randomUUID();
-      costume.editorMode = normalizeCostumeEditorMode(costume.editorMode);
-      costume.vectorDocument = sanitizeVectorDocument(costume.vectorDocument);
+      costume.document = cloneCostumeDocument(ensureCostumeDocument(costume));
     }
 
     for (const sound of component.sounds) {
@@ -2500,8 +2567,7 @@ export async function importProject(jsonString: string): Promise<Project> {
 
       for (const costume of obj.costumes) {
         costume.id = crypto.randomUUID();
-        costume.editorMode = normalizeCostumeEditorMode(costume.editorMode);
-        costume.vectorDocument = sanitizeVectorDocument(costume.vectorDocument);
+        costume.document = cloneCostumeDocument(ensureCostumeDocument(costume));
       }
 
       for (const sound of obj.sounds) {

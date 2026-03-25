@@ -11,8 +11,14 @@ import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
-import type { Costume, CostumeBounds, CostumeEditorMode, CostumeVectorDocument } from '@/types';
+import type { Costume, CostumeBounds, CostumeDocument } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
+import {
+  cloneCostume,
+  cloneCostumeDocument,
+  createBlankCostumeDocument,
+  createBitmapCostumeDocument,
+} from '@/lib/costume/costumeDocument';
 
 interface CostumeListProps {
   costumes: Costume[];
@@ -67,7 +73,7 @@ export const CostumeList = memo(({
       id: crypto.randomUUID(),
       name: `costume${costumes.length + 1}`,
       assetId: canvas.toDataURL('image/png'),
-      editorMode: 'vector',
+      document: createBlankCostumeDocument(),
     };
     onAddCostume(newCostume);
   };
@@ -95,7 +101,10 @@ export const CostumeList = memo(({
             name: file.name.replace(/\.[^/.]+$/, ''),
             assetId: processedDataUrl,
             bounds: bounds || undefined,
-            editorMode: 'vector',
+            document: createBitmapCostumeDocument(
+              processedDataUrl,
+              file.name.replace(/\.[^/.]+$/, '') || 'Layer 1',
+            ),
           };
           onAddCostume(newCostume);
         } catch (error) {
@@ -112,8 +121,7 @@ export const CostumeList = memo(({
     name: string;
     dataUrl: string;
     bounds?: CostumeBounds;
-    editorMode?: CostumeEditorMode;
-    vectorDocument?: CostumeVectorDocument;
+    document: CostumeDocument;
   }) => {
     try {
       const newCostume: Costume = {
@@ -121,8 +129,7 @@ export const CostumeList = memo(({
         name: data.name,
         assetId: data.dataUrl,
         bounds: data.bounds,
-        editorMode: data.editorMode ?? 'vector',
-        vectorDocument: data.vectorDocument,
+        document: cloneCostumeDocument(data.document),
       };
       onAddCostume(newCostume);
     } catch (error) {
@@ -152,8 +159,7 @@ export const CostumeList = memo(({
         storageId: storageId as Id<"_storage">,
         thumbnail,
         bounds: costume.bounds,
-        editorMode: costume.editorMode,
-        vectorDocument: costume.vectorDocument,
+        document: cloneCostumeDocument(costume.document),
         mimeType,
         size,
       });
@@ -169,12 +175,11 @@ export const CostumeList = memo(({
     const costume = costumes[index];
     if (!costume) return;
 
-    onAddCostume({
+    onAddCostume(cloneCostume({
       ...costume,
       id: crypto.randomUUID(),
       name: `${costume.name} copy`,
-      bounds: costume.bounds ? { ...costume.bounds } : undefined,
-    });
+    }));
   };
 
   return (

@@ -63,6 +63,7 @@ export function EditorLayout() {
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isMigratingProjects, setIsMigratingProjects] = useState(true);
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
   const hoveredPanelRef = useRef<HoveredPanel>(null);
   const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -82,6 +83,7 @@ export function EditorLayout() {
   // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
   const { syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
     enabled: isCloudWriteEnabled,
+    syncOnMount: true,
     currentProjectId: project?.id ?? null,
     currentProject: project,
     isDirty,
@@ -166,12 +168,17 @@ export function EditorLayout() {
   // Run local project migrations proactively so every project stays schema-compatible.
   useEffect(() => {
     void (async () => {
-      const result = await migrateAllLocalProjects();
-      if (result.migrated > 0) {
-        console.log(`[Migration] Migrated ${result.migrated} local projects to schema v${CURRENT_SCHEMA_VERSION}`);
-      }
-      if (result.failed > 0) {
-        console.error(`[Migration] Failed to migrate ${result.failed} local projects`);
+      setIsMigratingProjects(true);
+      try {
+        const result = await migrateAllLocalProjects();
+        if (result.migrated > 0) {
+          console.log(`[Migration] Migrated ${result.migrated} local projects to schema v${CURRENT_SCHEMA_VERSION}`);
+        }
+        if (result.failed > 0) {
+          console.error(`[Migration] Failed to migrate ${result.failed} local projects`);
+        }
+      } finally {
+        setIsMigratingProjects(false);
       }
     })();
   }, []);
@@ -179,6 +186,9 @@ export function EditorLayout() {
   // Load project from URL
   useEffect(() => {
     const loadFromUrl = async () => {
+      if (isMigratingProjects) {
+        return;
+      }
       if (projectId && (!project || project.id !== projectId)) {
         setIsLoading(true);
         try {
@@ -206,7 +216,7 @@ export function EditorLayout() {
 
     loadFromUrl();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [isMigratingProjects, projectId]);
 
   // Select first scene when project changes
   useEffect(() => {
@@ -565,12 +575,12 @@ export function EditorLayout() {
     </>
   );
 
-  if (isLoading) {
+  if (isLoading || isMigratingProjects) {
     return withProjectLeaseOverlay(
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading project...</p>
+          <p className="text-muted-foreground">{isMigratingProjects ? 'Migrating projects...' : 'Loading project...'}</p>
         </div>
       </div>,
     );

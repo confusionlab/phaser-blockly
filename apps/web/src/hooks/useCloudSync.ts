@@ -202,6 +202,8 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const upsertProjectAssetMutation = useMutation(api.projectAssets.upsert);
   const listRevisionsMutation = useMutation(api.projects.listRevisionsForSync);
   const removeProjectMutation = useMutation(api.projects.remove);
+  const migrateCostumeLibraryMutation = useMutation(api.costumeLibrary.migrateLegacyDocuments);
+  const migrateObjectLibraryMutation = useMutation(api.objectLibrary.migrateLegacyDocuments);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const cloudProjects = useQuery(
     api.projects.listFull,
@@ -211,6 +213,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const isSyncingRef = useRef(false);
   const currentProjectIdRef = useRef(currentProjectId);
   const currentProjectRef = useRef<Project | null>(currentProject);
+  const hasRunLibraryMigrationRef = useRef(false);
 
   currentProjectIdRef.current = currentProjectId;
   currentProjectRef.current = currentProject;
@@ -681,7 +684,10 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
                 ...cloudProject,
                 data,
               });
-              await syncProjectRevisionsFromCloud(cloudProject.localId, hydratedRevisions);
+              const revisionSyncResult = await syncProjectRevisionsFromCloud(cloudProject.localId, hydratedRevisions);
+              if (result.migrated || revisionSyncResult.migrated > 0) {
+                await syncProjectToCloud(cloudProject.localId);
+              }
               return { localId: cloudProject.localId, ...result };
             } catch (revisionError) {
               console.error(`[CloudSync] Failed to sync revisions for "${cloudProject.localId}":`, revisionError);
@@ -690,6 +696,9 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
                 ...cloudProject,
                 data,
               });
+              if (result.migrated) {
+                await syncProjectToCloud(cloudProject.localId);
+              }
               return { localId: cloudProject.localId, ...result };
             }
           } catch (error) {
@@ -717,7 +726,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [cloudProjects, ensureCloudProjectAssetsLocally, listRevisionsMutation]);
+  }, [cloudProjects, ensureCloudProjectAssetsLocally, listRevisionsMutation, syncProjectToCloud]);
 
   // Run a full two-way reconciliation:
   // 1) push all local projects up, then 2) pull cloud projects down.
@@ -809,6 +818,26 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       void syncAllFromCloud();
     }
   }, [enabled, syncOnMount, cloudProjects, syncAllFromCloud]);
+
+  useEffect(() => {
+    if (!enabled || !isConvexAuthenticated || hasRunLibraryMigrationRef.current) {
+      return;
+    }
+
+    hasRunLibraryMigrationRef.current = true;
+    void Promise.all([
+      migrateCostumeLibraryMutation({}),
+      migrateObjectLibraryMutation({}),
+    ]).catch((error) => {
+      hasRunLibraryMigrationRef.current = false;
+      console.error('[CloudSync] Failed to migrate legacy library costume documents:', error);
+    });
+  }, [
+    enabled,
+    isConvexAuthenticated,
+    migrateCostumeLibraryMutation,
+    migrateObjectLibraryMutation,
+  ]);
 
   // Debounced background sync from the latest in-memory edit timestamp.
   useEffect(() => {

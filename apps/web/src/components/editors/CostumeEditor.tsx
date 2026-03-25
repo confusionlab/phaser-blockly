@@ -2,6 +2,7 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import { CostumeList } from './costume/CostumeList';
+import { CostumeLayerPanel } from './costume/CostumeLayerPanel';
 import {
   CostumeCanvas,
   DEFAULT_COSTUME_PREVIEW_SCALE,
@@ -21,18 +22,11 @@ import {
   type VectorToolStyle,
 } from './costume/CostumeToolbar';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
-import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { getEffectiveObjectProps } from '@/types';
 import type { Costume, ColliderConfig, CostumeEditorMode } from '@/types';
 import {
+  areCostumeBoundsEqual,
+  areCostumeDocumentsEqual,
   createCostumeEditorSession,
   type CostumeEditorObjectTarget,
   type CostumeEditorOperation,
@@ -47,19 +41,56 @@ import type { BitmapBrushKind } from '@/lib/background/brushCore';
 import { DEFAULT_BITMAP_FILL_TEXTURE_ID } from '@/lib/background/bitmapFillCore';
 import { DEFAULT_VECTOR_STROKE_BRUSH_ID } from '@/lib/vector/vectorStrokeBrushCore';
 import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
+import {
+  applyCanvasStateToCostumeDocument,
+  cloneCostumeDocument,
+  createBitmapLayer,
+  createVectorLayer,
+  duplicateCostumeLayer,
+  getActiveCostumeLayer,
+  getActiveCostumeLayerKind,
+  getCostumeLayerById,
+  getCostumeLayerIndex,
+  insertCostumeLayerAfterActive,
+  isVectorCostumeLayer,
+  moveCostumeLayer,
+  removeCostumeLayer,
+  setActiveCostumeLayer,
+  updateCostumeLayer,
+} from '@/lib/costume/costumeDocument';
+import {
+  renderCostumeDocument,
+  renderCostumeDocumentSlice,
+  renderCostumeLayerStackToCanvas,
+  renderCostumeLayerStackToDataUrl,
+} from '@/lib/costume/costumeDocumentRender';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
-const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
+const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'box-select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
+
+function clonePersistedState(
+  state: CostumeEditorPersistedState | null | undefined,
+): CostumeEditorPersistedState | null {
+  if (!state) {
+    return null;
+  }
+
+  return {
+    assetId: state.assetId,
+    bounds: state.bounds ? { ...state.bounds } : undefined,
+    document: cloneCostumeDocument(state.document),
+  };
+}
 
 function ensureToolForMode(mode: CostumeEditorMode, tool: DrawingTool): DrawingTool {
   if (mode === 'vector') {
     return VECTOR_TOOLS.has(tool) ? tool : 'select';
   }
-  return BITMAP_TOOLS.has(tool) ? tool : 'brush';
+  return BITMAP_TOOLS.has(tool) ? tool : 'select';
 }
 
 function getInitialCostumeEditorMode(costume: Costume | undefined): CostumeEditorMode {
-  return costume?.editorMode === 'bitmap' ? 'bitmap' : 'vector';
+  return costume ? getActiveCostumeLayerKind(costume.document) : 'vector';
 }
 
 function createCostumeTarget(
@@ -119,6 +150,11 @@ export function CostumeEditor() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoadingRef = useRef(true);
   const loadedSessionRef = useRef<CostumeEditorSession | null>(null);
+  const currentSessionRef = useRef<CostumeEditorSession | null>(null);
+  const documentHistoryRef = useRef<CostumeEditorPersistedState[]>([]);
+  const documentHistoryIndexRef = useRef(-1);
+  const workingPersistedStateRef = useRef<CostumeEditorPersistedState | null>(null);
+  const documentMutationChainRef = useRef<Promise<void>>(Promise.resolve());
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
@@ -132,6 +168,10 @@ export function CostumeEditor() {
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
   const currentCostume = costumes[currentCostumeIndex];
+  const activeLayer = currentCostume ? getActiveCostumeLayer(currentCostume.document) : null;
+  const currentCostumeLoadKey = currentCostume
+    ? `${currentCostume.id}:${currentCostume.document.activeLayerId}`
+    : null;
   const currentSession = useMemo(() => {
     const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
     return target ? createCostumeEditorSession(target) : null;
@@ -140,12 +180,12 @@ export function CostumeEditor() {
     () => createCostumeObjectTarget(selectedSceneId, selectedObjectId),
     [selectedObjectId, selectedSceneId],
   );
+  currentSessionRef.current = currentSession;
   const initialEditorMode: CostumeEditorMode = currentCostume
     ? getInitialCostumeEditorMode(currentCostume)
     : 'bitmap';
 
   const [editorMode, setEditorMode] = useState<CostumeEditorMode>(initialEditorMode);
-  const [pendingEditorMode, setPendingEditorMode] = useState<CostumeEditorMode | null>(null);
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
   const [brushColor, setBrushColor] = useState('#000000');
@@ -189,6 +229,8 @@ export function CostumeEditor() {
   const [canvasPreviewScale, setCanvasPreviewScale] = useState(DEFAULT_COSTUME_PREVIEW_SCALE);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
+  const [underlaySrc, setUnderlaySrc] = useState<string | null>(null);
+  const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
 
   useEffect(() => {
     setEditorMode((prev) => {
@@ -200,6 +242,42 @@ export function CostumeEditor() {
       return ensureToolForMode(initialEditorMode, prev);
     });
   }, [initialEditorMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderLayerSlices = async () => {
+      if (!currentCostume) {
+        setUnderlaySrc(null);
+        setOverlaySrc(null);
+        return;
+      }
+
+      const [nextUnderlay, nextOverlay] = await Promise.all([
+        renderCostumeDocumentSlice(currentCostume.document, {
+          activeLayerId: currentCostume.document.activeLayerId,
+          placement: 'below',
+        }),
+        renderCostumeDocumentSlice(currentCostume.document, {
+          activeLayerId: currentCostume.document.activeLayerId,
+          placement: 'above',
+        }),
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      setUnderlaySrc(nextUnderlay);
+      setOverlaySrc(nextOverlay);
+    };
+
+    void renderLayerSlices();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentCostume, currentCostumeLoadKey]);
 
   const isCanvasReadyForSession = useCallback((session: CostumeEditorSession | null): boolean => {
     if (!canvasRef.current || !session) {
@@ -218,13 +296,38 @@ export function CostumeEditor() {
     const state = canvasRef.current.exportCostumeState(session.key);
     if (!state?.dataUrl) return null;
 
+    if (!currentCostume) {
+      return null;
+    }
+
     return {
       assetId: state.dataUrl,
       bounds: state.bounds ?? undefined,
-      editorMode: state.editorMode,
-      vectorDocument: state.vectorDocument,
+      document: applyCanvasStateToCostumeDocument(currentCostume.document, {
+        ...state,
+        dataUrl: state.activeLayerDataUrl,
+      }),
     };
-  }, []);
+  }, [currentCostume]);
+
+  const getWorkingPersistedState = useCallback((): CostumeEditorPersistedState | null => {
+    const workingPersistedState = clonePersistedState(workingPersistedStateRef.current);
+    if (workingPersistedState) {
+      return workingPersistedState;
+    }
+
+    if (currentSession && isCanvasReadyForSession(currentSession)) {
+      return getCanvasPersistedStateForSession(currentSession, { skipLoadingGuard: true });
+    }
+    if (!currentCostume) {
+      return null;
+    }
+    return {
+      assetId: currentCostume.assetId,
+      bounds: currentCostume.bounds,
+      document: currentCostume.document,
+    };
+  }, [currentCostume, currentSession, getCanvasPersistedStateForSession, isCanvasReadyForSession]);
 
   const clearLoadingOverlayDelay = useCallback(() => {
     if (loadingOverlayTimeoutRef.current) {
@@ -259,6 +362,60 @@ export function CostumeEditor() {
     setShowSessionLoadingOverlay(false);
   }, [clearLoadingOverlayDelay]);
 
+  const syncDocumentHistoryFlags = useCallback(() => {
+    setCanUndo(documentHistoryIndexRef.current > 0);
+    setCanRedo(documentHistoryIndexRef.current >= 0 && documentHistoryIndexRef.current < documentHistoryRef.current.length - 1);
+  }, []);
+
+  const resetDocumentHistory = useCallback((state: CostumeEditorPersistedState | null) => {
+    workingPersistedStateRef.current = clonePersistedState(state);
+    documentHistoryRef.current = state ? [state] : [];
+    documentHistoryIndexRef.current = state ? 0 : -1;
+    syncDocumentHistoryFlags();
+  }, [syncDocumentHistoryFlags]);
+
+  const replaceDocumentHistoryHead = useCallback((state: CostumeEditorPersistedState) => {
+    if (documentHistoryIndexRef.current < 0) {
+      documentHistoryRef.current = [state];
+      documentHistoryIndexRef.current = 0;
+      syncDocumentHistoryFlags();
+      return;
+    }
+
+    const nextHistory = [...documentHistoryRef.current];
+    nextHistory[documentHistoryIndexRef.current] = state;
+    documentHistoryRef.current = nextHistory;
+    syncDocumentHistoryFlags();
+  }, [syncDocumentHistoryFlags]);
+
+  const arePersistedStatesEqual = useCallback((
+    a: CostumeEditorPersistedState | null | undefined,
+    b: CostumeEditorPersistedState | null | undefined,
+  ) => {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return (
+      a.assetId === b.assetId &&
+      areCostumeBoundsEqual(a.bounds, b.bounds) &&
+      areCostumeDocumentsEqual(a.document, b.document)
+    );
+  }, []);
+
+  const pushDocumentHistory = useCallback((state: CostumeEditorPersistedState) => {
+    const current = documentHistoryRef.current[documentHistoryIndexRef.current] ?? null;
+    if (arePersistedStatesEqual(current, state)) {
+      syncDocumentHistoryFlags();
+      return;
+    }
+
+    const nextHistory = documentHistoryRef.current
+      .slice(0, documentHistoryIndexRef.current + 1)
+      .concat([state]);
+    documentHistoryRef.current = nextHistory;
+    documentHistoryIndexRef.current = nextHistory.length - 1;
+    syncDocumentHistoryFlags();
+  }, [arePersistedStatesEqual, syncDocumentHistoryFlags]);
+
   const persistCanvasStateToSession = useCallback((
     session: CostumeEditorSession | null,
     options: { skipLoadingGuard?: boolean; recordHistory?: boolean } = {}
@@ -279,16 +436,135 @@ export function CostumeEditor() {
     if (!didPersist) {
       return false;
     }
+    workingPersistedStateRef.current = clonePersistedState(persistedState);
     canvasRef.current.markPersisted(session.key);
     return true;
   }, [getCanvasPersistedStateForSession, updateCostumeFromEditor]);
 
+  const applyDocumentHistoryState = useCallback((
+    session: CostumeEditorSession | null,
+    state: CostumeEditorPersistedState | null | undefined,
+    options: { recordHistory?: boolean; forceReload?: boolean } = {},
+  ) => {
+    if (!session || !state) {
+      return false;
+    }
+
+    if (options.forceReload) {
+      currentCostumeIdRef.current = null;
+    }
+
+    const didUpdate = updateCostumeFromEditor(session, state, {
+      recordHistory: options.recordHistory,
+    });
+    if (didUpdate) {
+      workingPersistedStateRef.current = clonePersistedState(state);
+    }
+    return didUpdate;
+  }, [updateCostumeFromEditor]);
+
+  const commitDocumentMutation = useCallback((
+    mutate: (
+      state: CostumeEditorPersistedState,
+    ) => Promise<CostumeEditorPersistedState['document'] | null> | CostumeEditorPersistedState['document'] | null,
+    options: {
+      forceReload?: boolean;
+      recordHistory?: boolean;
+      renderDocument?: boolean;
+      replaceCurrentHistoryState?: boolean;
+    } = {},
+  ) => {
+    const queuedSessionKey = currentSessionRef.current?.key ?? null;
+    if (!queuedSessionKey) {
+      return Promise.resolve(false);
+    }
+
+    const runCommit = async () => {
+      const session = currentSessionRef.current;
+      if (!session || session.key !== queuedSessionKey) {
+        return false;
+      }
+
+      const baseState = getWorkingPersistedState();
+      if (!baseState) {
+        return false;
+      }
+
+      const nextDocument = await mutate(baseState);
+      if (!nextDocument) {
+        return false;
+      }
+
+      let resolvedNextState: CostumeEditorPersistedState;
+      if (options.renderDocument === false) {
+        resolvedNextState = {
+          assetId: baseState.assetId,
+          bounds: baseState.bounds ? { ...baseState.bounds } : undefined,
+          document: nextDocument,
+        };
+      } else {
+        const rendered = await renderCostumeDocument(nextDocument);
+        resolvedNextState = {
+          assetId: rendered.dataUrl,
+          bounds: rendered.bounds ?? undefined,
+          document: nextDocument,
+        };
+      }
+
+      const latestSession = currentSessionRef.current;
+      if (!latestSession || latestSession.key !== queuedSessionKey) {
+        return false;
+      }
+
+      if (options.recordHistory === false) {
+        if (options.replaceCurrentHistoryState) {
+          replaceDocumentHistoryHead(resolvedNextState);
+        }
+      } else {
+        pushDocumentHistory(resolvedNextState);
+      }
+
+      return applyDocumentHistoryState(latestSession, resolvedNextState, {
+        recordHistory: options.recordHistory,
+        forceReload: options.forceReload,
+      });
+    };
+
+    const queuedCommit = documentMutationChainRef.current.then(runCommit, runCommit);
+    documentMutationChainRef.current = queuedCommit.then(() => undefined, () => undefined);
+    return queuedCommit;
+  }, [applyDocumentHistoryState, getWorkingPersistedState, pushDocumentHistory, replaceDocumentHistoryHead]);
+
   useEffect(() => {
     const handler: UndoRedoHandler = {
-      undo: () => canvasRef.current?.undo(),
-      redo: () => canvasRef.current?.redo(),
-      canUndo: () => canvasRef.current?.canUndo() ?? false,
-      canRedo: () => canvasRef.current?.canRedo() ?? false,
+      undo: () => {
+        const session = loadedSessionRef.current;
+        if (!session || documentHistoryIndexRef.current <= 0) {
+          return;
+        }
+        documentHistoryIndexRef.current -= 1;
+        const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
+        syncDocumentHistoryFlags();
+        applyDocumentHistoryState(session, snapshot, {
+          recordHistory: false,
+          forceReload: true,
+        });
+      },
+      redo: () => {
+        const session = loadedSessionRef.current;
+        if (!session || documentHistoryIndexRef.current >= documentHistoryRef.current.length - 1) {
+          return;
+        }
+        documentHistoryIndexRef.current += 1;
+        const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
+        syncDocumentHistoryFlags();
+        applyDocumentHistoryState(session, snapshot, {
+          recordHistory: false,
+          forceReload: true,
+        });
+      },
+      canUndo: () => documentHistoryIndexRef.current > 0,
+      canRedo: () => documentHistoryIndexRef.current >= 0 && documentHistoryIndexRef.current < documentHistoryRef.current.length - 1,
       beforeSelectionChange: ({ recordHistory }) => {
         persistCanvasStateToSession(loadedSessionRef.current, {
           skipLoadingGuard: true,
@@ -301,7 +577,7 @@ export function CostumeEditor() {
     };
     registerCostumeUndo(handler);
     return () => registerCostumeUndo(null);
-  }, [persistCanvasStateToSession, registerCostumeUndo]);
+  }, [applyDocumentHistoryState, persistCanvasStateToSession, registerCostumeUndo, syncDocumentHistoryFlags]);
 
   const applyOperationToCurrentObject = useCallback((operation: CostumeEditorOperation): boolean => {
     if (isLoadingRef.current || !currentObjectTarget) {
@@ -342,19 +618,6 @@ export function CostumeEditor() {
     return didApply;
   }, [applyCostumeEditorOperation, currentObjectTarget, getCanvasPersistedStateForSession, isCanvasReadyForSession]);
 
-  const saveToCostume = useCallback((session: CostumeEditorSession | null) => {
-    persistCanvasStateToSession(session);
-  }, [persistCanvasStateToSession]);
-
-  const debouncedSave = useCallback((session: CostumeEditorSession | null) => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    saveTimeoutRef.current = setTimeout(() => {
-      saveToCostume(session);
-    }, 300);
-  }, [saveToCostume]);
-
   useEffect(() => {
     const previousSelection = previousSelectionRef.current;
     const selectionChanged =
@@ -392,6 +655,7 @@ export function CostumeEditor() {
       canvasRef.current.loadFromDataURL('', null).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
         loadedSessionRef.current = null;
+        resetDocumentHistory(null);
         finishSessionLoad();
         const resolvedMode = canvasRef.current?.getEditorMode() ?? fallbackMode;
         setEditorMode(resolvedMode);
@@ -401,8 +665,8 @@ export function CostumeEditor() {
     }
 
     const loadedSessionKey = canvasRef.current.getLoadedSessionKey();
-    if (currentCostumeIdRef.current !== currentCostume.id || loadedSessionKey !== currentSession.key) {
-      currentCostumeIdRef.current = currentCostume.id;
+    if (currentCostumeIdRef.current !== currentCostumeLoadKey || loadedSessionKey !== currentSession.key) {
+      currentCostumeIdRef.current = currentCostumeLoadKey;
       const requestId = ++loadRequestIdRef.current;
       beginSessionLoad(true);
 
@@ -413,13 +677,18 @@ export function CostumeEditor() {
       canvasRef.current.loadCostume(currentSession.key, currentCostume).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
         loadedSessionRef.current = currentSession;
+        resetDocumentHistory({
+          assetId: currentCostume.assetId,
+          bounds: currentCostume.bounds,
+          document: currentCostume.document,
+        });
         finishSessionLoad();
         const resolvedMode = canvasRef.current?.getEditorMode() ?? nextMode;
         setEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
-  }, [beginSessionLoad, currentCostume, currentSession, finishSessionLoad, selectedObjectId]);
+  }, [beginSessionLoad, currentCostume, currentCostumeLoadKey, currentSession, finishSessionLoad, resetDocumentHistory, selectedObjectId]);
 
   useEffect(() => {
     return () => {
@@ -438,18 +707,24 @@ export function CostumeEditor() {
       return;
     }
 
-    if (canvasRef.current) {
-      setCanUndo(canvasRef.current.canUndo());
-      setCanRedo(canvasRef.current.canRedo());
-    }
-
     const loadedSession = loadedSessionRef.current;
     if (!loadedSession || !isCanvasReadyForSession(loadedSession)) {
       return;
     }
 
-    debouncedSave(loadedSession);
-  }, [debouncedSave, isCanvasReadyForSession]);
+    const persistedState = getCanvasPersistedStateForSession(loadedSession);
+    if (!persistedState) {
+      return;
+    }
+
+    pushDocumentHistory(persistedState);
+    const didPersist = applyDocumentHistoryState(loadedSession, persistedState, {
+      recordHistory: true,
+    });
+    if (didPersist) {
+      canvasRef.current?.markPersisted(loadedSession.key);
+    }
+  }, [applyDocumentHistoryState, getCanvasPersistedStateForSession, isCanvasReadyForSession, pushDocumentHistory]);
 
   const handleSelectCostume = useCallback((index: number) => {
     if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
@@ -497,40 +772,232 @@ export function CostumeEditor() {
     });
   }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
 
-  const applyEditorModeChange = useCallback((mode: CostumeEditorMode) => {
-    if (isLoadingRef.current || !isCanvasReadyForSession(loadedSessionRef.current)) {
+  const handleSelectLayer = useCallback((layerId: string) => {
+    if (isLoadingRef.current) {
       return;
     }
 
-    setEditorMode(mode);
-    setActiveTool((prev) => ensureToolForMode(mode, prev));
-    if (canvasRef.current) {
-      void canvasRef.current.setEditorMode(mode);
-    }
-  }, [isCanvasReadyForSession]);
+    void commitDocumentMutation((working) => {
+      if (working.document.activeLayerId === layerId) {
+        return null;
+      }
+      return setActiveCostumeLayer(working.document, layerId);
+    }, {
+      forceReload: true,
+      recordHistory: false,
+      renderDocument: false,
+      replaceCurrentHistoryState: true,
+    });
+  }, [commitDocumentMutation]);
 
-  const handleEditorModeChange = useCallback((mode: CostumeEditorMode) => {
-    if (isLoadingRef.current || !isCanvasReadyForSession(loadedSessionRef.current)) {
+  const handleBitmapLayerPick = useCallback((point: { x: number; y: number }) => {
+    if (editorMode !== 'bitmap' || activeTool !== 'select' || !currentCostume) {
       return;
     }
 
-    if (editorMode === 'vector' && mode === 'bitmap') {
-      setPendingEditorMode(mode);
+    void (async () => {
+      const x = Math.max(0, Math.min(1023, Math.floor(point.x)));
+      const y = Math.max(0, Math.min(1023, Math.floor(point.y)));
+
+      for (let index = currentCostume.document.layers.length - 1; index >= 0; index -= 1) {
+        const layer = currentCostume.document.layers[index];
+        if (!layer.visible) {
+          continue;
+        }
+
+        const canvas = await renderCostumeLayerStackToCanvas([layer]);
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          continue;
+        }
+        const alpha = ctx.getImageData(x, y, 1, 1).data[3] ?? 0;
+        if (alpha > 0) {
+          handleSelectLayer(layer.id);
+          return;
+        }
+      }
+    })();
+  }, [activeTool, currentCostume, editorMode, handleSelectLayer]);
+
+  const handleAddVectorLayer = useCallback(() => {
+    if (isLoadingRef.current) {
       return;
     }
 
-    applyEditorModeChange(mode);
-  }, [applyEditorModeChange, editorMode, isCanvasReadyForSession]);
+    void commitDocumentMutation((working) => insertCostumeLayerAfterActive(
+      working.document,
+      createVectorLayer({ name: `Layer ${working.document.layers.length + 1}` }),
+    ), { forceReload: true });
+  }, [commitDocumentMutation]);
 
-  const handleConfirmPendingEditorMode = useCallback(() => {
-    if (!pendingEditorMode) return;
-    applyEditorModeChange(pendingEditorMode);
-    setPendingEditorMode(null);
-  }, [applyEditorModeChange, pendingEditorMode]);
+  const handleAddBitmapLayer = useCallback(() => {
+    if (isLoadingRef.current) {
+      return;
+    }
 
-  useEffect(() => {
-    setPendingEditorMode(null);
-  }, [currentCostume?.id, selectedObjectId, selectedSceneId]);
+    void commitDocumentMutation((working) => insertCostumeLayerAfterActive(
+      working.document,
+      createBitmapLayer({ name: `Layer ${working.document.layers.length + 1}` }),
+    ), { forceReload: true });
+  }, [commitDocumentMutation]);
+
+  const handleDuplicateLayer = useCallback((layerId: string) => {
+    void commitDocumentMutation((working) => duplicateCostumeLayer(working.document, layerId), {
+      forceReload: true,
+    });
+  }, [commitDocumentMutation]);
+
+  const handleDeleteLayer = useCallback((layerId: string) => {
+    void commitDocumentMutation((working) => removeCostumeLayer(working.document, layerId), {
+      forceReload: true,
+    });
+  }, [commitDocumentMutation]);
+
+  const handleMoveLayer = useCallback((layerId: string, direction: 'up' | 'down') => {
+    void commitDocumentMutation((working) => moveCostumeLayer(working.document, layerId, direction), {
+      forceReload: false,
+    });
+  }, [commitDocumentMutation]);
+
+  const handleToggleLayerVisibility = useCallback((layerId: string) => {
+    void commitDocumentMutation((working) => {
+      const layer = getCostumeLayerById(working.document, layerId);
+      if (!layer) {
+        return null;
+      }
+      return updateCostumeLayer(working.document, layerId, {
+        visible: !layer.visible,
+      });
+    }, {
+      forceReload: true,
+    });
+  }, [commitDocumentMutation]);
+
+  const handleToggleLayerLocked = useCallback((layerId: string) => {
+    void commitDocumentMutation((working) => {
+      const layer = getCostumeLayerById(working.document, layerId);
+      if (!layer) {
+        return null;
+      }
+      return updateCostumeLayer(working.document, layerId, {
+        locked: !layer.locked,
+      });
+    }, {
+      forceReload: true,
+      renderDocument: false,
+    });
+  }, [commitDocumentMutation]);
+
+  const handleRenameLayer = useCallback((layerId: string, name: string) => {
+    void commitDocumentMutation((working) => updateCostumeLayer(working.document, layerId, { name }), {
+      forceReload: false,
+      renderDocument: false,
+    });
+  }, [commitDocumentMutation]);
+
+  const handleLayerOpacityChange = useCallback((layerId: string, opacity: number) => {
+    void commitDocumentMutation((working) => updateCostumeLayer(working.document, layerId, { opacity }), {
+      forceReload: true,
+    });
+  }, [commitDocumentMutation]);
+
+  const handleRasterizeLayer = useCallback((layerId: string) => {
+    void commitDocumentMutation(async (working) => {
+      const layer = getCostumeLayerById(working.document, layerId);
+      if (!isVectorCostumeLayer(layer)) {
+        return null;
+      }
+
+      const rasterizedDataUrl = await renderCostumeLayerStackToDataUrl([layer]);
+      const nextDocument = updateCostumeLayer(working.document, layerId, {});
+      if (!nextDocument) {
+        return null;
+      }
+      const layerIndex = getCostumeLayerIndex(nextDocument, layerId);
+      if (layerIndex < 0) {
+        return null;
+      }
+      nextDocument.layers[layerIndex] = {
+        id: layer.id,
+        name: layer.name,
+        visible: layer.visible,
+        locked: layer.locked,
+        opacity: layer.opacity,
+        blendMode: layer.blendMode,
+        mask: null,
+        effects: [...layer.effects],
+        kind: 'bitmap',
+        width: 1024,
+        height: 1024,
+        bitmap: {
+          assetId: rasterizedDataUrl,
+        },
+      };
+      return nextDocument;
+    }, { forceReload: true });
+  }, [commitDocumentMutation]);
+
+  const handleMergeLayerDown = useCallback((layerId: string) => {
+    void commitDocumentMutation(async (working) => {
+      const upperIndex = getCostumeLayerIndex(working.document, layerId);
+      if (upperIndex <= 0) {
+        return null;
+      }
+
+      const lowerLayer = working.document.layers[upperIndex - 1];
+      const upperLayer = working.document.layers[upperIndex];
+      if (!lowerLayer || !upperLayer) {
+        return null;
+      }
+
+      let mergedLayer: typeof lowerLayer;
+      if (isVectorCostumeLayer(lowerLayer) && isVectorCostumeLayer(upperLayer)) {
+        const lowerJson = JSON.parse(lowerLayer.vector.fabricJson) as { objects?: unknown[]; [key: string]: unknown };
+        const upperJson = JSON.parse(upperLayer.vector.fabricJson) as { objects?: unknown[]; [key: string]: unknown };
+        mergedLayer = {
+          ...lowerLayer,
+          vector: {
+            engine: 'fabric',
+            version: 1,
+            fabricJson: JSON.stringify({
+              ...lowerJson,
+              objects: [...(Array.isArray(lowerJson.objects) ? lowerJson.objects : []), ...(Array.isArray(upperJson.objects) ? upperJson.objects : [])],
+            }),
+          },
+        };
+      } else {
+        const mergedDataUrl = await renderCostumeLayerStackToDataUrl([lowerLayer, upperLayer]);
+        mergedLayer = {
+          id: lowerLayer.id,
+          name: lowerLayer.name,
+          visible: lowerLayer.visible,
+          locked: lowerLayer.locked,
+          opacity: lowerLayer.opacity,
+          blendMode: lowerLayer.blendMode,
+          mask: null,
+          effects: [...lowerLayer.effects],
+          kind: 'bitmap',
+          width: 1024,
+          height: 1024,
+          bitmap: {
+            assetId: mergedDataUrl,
+          },
+        };
+      }
+
+      const nextDocument = {
+        ...working.document,
+        activeLayerId: lowerLayer.id,
+        layers: working.document.layers.filter((layer) => layer.id !== upperLayer.id),
+      };
+      const lowerIndex = getCostumeLayerIndex(nextDocument, lowerLayer.id);
+      if (lowerIndex < 0) {
+        return null;
+      }
+      nextDocument.layers = nextDocument.layers.map((layer, index) => index === lowerIndex ? mergedLayer : layer);
+      return nextDocument;
+    }, { forceReload: true });
+  }, [commitDocumentMutation]);
 
   const handleCanvasModeChange = useCallback((mode: CostumeEditorMode) => {
     setEditorMode(mode);
@@ -582,6 +1049,16 @@ export function CostumeEditor() {
     }
     setActiveTool(ensureToolForMode(editorMode, 'select'));
   }, [activeTool, collider, editorMode]);
+
+  useEffect(() => {
+    if (!activeLayer?.locked) {
+      return;
+    }
+    if (activeTool === 'select') {
+      return;
+    }
+    setActiveTool('select');
+  }, [activeLayer?.locked, activeTool]);
 
   useEffect(() => {
     if (activeObjectTab !== 'costumes') {
@@ -717,18 +1194,37 @@ export function CostumeEditor() {
   }, [isCanvasReadyForSession, updateObject]);
 
   const handleUndo = useCallback(() => {
-    if (isLoadingRef.current) {
+    const session = loadedSessionRef.current;
+    if (isLoadingRef.current || !session || documentHistoryIndexRef.current <= 0) {
       return;
     }
-    canvasRef.current?.undo();
-  }, []);
+    documentHistoryIndexRef.current -= 1;
+    const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
+    syncDocumentHistoryFlags();
+    applyDocumentHistoryState(session, snapshot, {
+      recordHistory: false,
+      forceReload: true,
+    });
+  }, [applyDocumentHistoryState, syncDocumentHistoryFlags]);
 
   const handleRedo = useCallback(() => {
-    if (isLoadingRef.current) {
+    const session = loadedSessionRef.current;
+    if (
+      isLoadingRef.current ||
+      !session ||
+      documentHistoryIndexRef.current < 0 ||
+      documentHistoryIndexRef.current >= documentHistoryRef.current.length - 1
+    ) {
       return;
     }
-    canvasRef.current?.redo();
-  }, []);
+    documentHistoryIndexRef.current += 1;
+    const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
+    syncDocumentHistoryFlags();
+    applyDocumentHistoryState(session, snapshot, {
+      recordHistory: false,
+      forceReload: true,
+    });
+  }, [applyDocumentHistoryState, syncDocumentHistoryFlags]);
 
   if (!object) {
     return (
@@ -766,7 +1262,6 @@ export function CostumeEditor() {
           vectorStyle={vectorStyle}
           vectorStyleCapabilities={vectorStyleCapabilities}
           previewScale={canvasPreviewScale}
-          onEditorModeChange={handleEditorModeChange}
           onToolChange={handleToolChange}
           onMoveOrder={handleMoveOrder}
           onFlipSelection={handleFlipSelection}
@@ -813,34 +1308,39 @@ export function CostumeEditor() {
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
           onViewScaleChange={setCanvasPreviewScale}
+          underlaySrc={underlaySrc}
+          overlaySrc={overlaySrc}
+          activeLayerOpacity={activeLayer?.opacity ?? 1}
+          activeLayerVisible={activeLayer?.visible ?? true}
+          activeLayerLocked={activeLayer?.locked ?? false}
+          onBitmapLayerPick={handleBitmapLayerPick}
         />
       </div>
+
+      {currentCostume && activeLayer ? (
+        <CostumeLayerPanel
+          document={currentCostume.document}
+          activeLayer={activeLayer}
+          onSelectLayer={handleSelectLayer}
+          onAddBitmapLayer={handleAddBitmapLayer}
+          onAddVectorLayer={handleAddVectorLayer}
+          onDuplicateLayer={handleDuplicateLayer}
+          onDeleteLayer={handleDeleteLayer}
+          onMoveLayer={handleMoveLayer}
+          onToggleVisibility={handleToggleLayerVisibility}
+          onToggleLocked={handleToggleLayerLocked}
+          onRenameLayer={handleRenameLayer}
+          onOpacityChange={handleLayerOpacityChange}
+          onMergeDown={handleMergeLayerDown}
+          onRasterizeLayer={handleRasterizeLayer}
+        />
+      ) : null}
 
       {isSessionLoading && (
         <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-background/70 text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>
           {showSessionLoadingOverlay ? 'Switching costume editor to the selected object...' : null}
         </div>
       )}
-
-      <Dialog open={pendingEditorMode === 'bitmap'} onOpenChange={(open) => !open && setPendingEditorMode(null)}>
-        <DialogContent className="sm:max-w-[440px]">
-          <DialogHeader>
-            <DialogTitle>Switch To Pixel?</DialogTitle>
-            <DialogDescription>
-              Switching from Vector to Pixel will flatten the full vector artwork into a single image.
-            </DialogDescription>
-          </DialogHeader>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingEditorMode(null)}>
-              Cancel
-            </Button>
-            <Button onClick={handleConfirmPendingEditorMode}>
-              Flatten To Pixel
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
