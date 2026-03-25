@@ -201,7 +201,7 @@ export function getActiveCostumeLayer(document: CostumeDocument | null | undefin
   if (!document) {
     return null;
   }
-  return getCostumeLayerById(document, document.activeLayerId) ?? document.layers[0] ?? null;
+  return getCostumeLayerById(document, document.activeLayerId);
 }
 
 export function getActiveCostumeLayerKind(document: CostumeDocument | null | undefined): CostumeLayerKind {
@@ -218,7 +218,14 @@ export function getCostumeLayerIndex(
   return document.layers.findIndex((layer) => layer.id === layerId);
 }
 
-export function setActiveCostumeLayer(document: CostumeDocument, layerId: string): CostumeDocument {
+export function setActiveCostumeLayer(document: CostumeDocument, layerId: string | null): CostumeDocument {
+  if (layerId === null) {
+    return {
+      ...cloneCostumeDocument(document),
+      activeLayerId: null,
+    };
+  }
+
   if (!document.layers.some((layer) => layer.id === layerId)) {
     return cloneCostumeDocument(document);
   }
@@ -326,7 +333,16 @@ export function setCostumeLayerVisibility(
   layerId: string,
   visible: boolean,
 ): CostumeDocument | null {
-  return updateCostumeLayer(document, layerId, { visible });
+  const nextDocument = updateCostumeLayer(document, layerId, { visible });
+  if (!nextDocument) {
+    return null;
+  }
+
+  if (!visible && nextDocument.activeLayerId === layerId) {
+    nextDocument.activeLayerId = null;
+  }
+
+  return nextDocument;
 }
 
 export interface ActiveLayerCanvasState {
@@ -444,12 +460,16 @@ export function sanitizeCostumeDocument(value: unknown): CostumeDocument | null 
   const requestedActiveLayerId =
     typeof maybe.activeLayerId === 'string' && maybe.activeLayerId.trim().length > 0
       ? maybe.activeLayerId
-      : null;
-  const activeLayer = layers.find((layer) => layer.id === requestedActiveLayerId) ?? layers[0];
+      : maybe.activeLayerId === null
+        ? null
+        : layers[0]?.id ?? null;
+  const activeLayer = requestedActiveLayerId === null
+    ? null
+    : layers.find((layer) => layer.id === requestedActiveLayerId) ?? layers[0] ?? null;
 
   return {
     version: 1,
-    activeLayerId: activeLayer.id,
+    activeLayerId: activeLayer?.id ?? null,
     layers,
   };
 }

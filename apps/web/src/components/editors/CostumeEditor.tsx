@@ -188,7 +188,7 @@ export function CostumeEditor() {
   currentCostumeRef.current = currentCostume;
   const activeLayer = currentCostume ? getActiveCostumeLayer(currentCostume.document) : null;
   const currentCostumeLoadKey = currentCostume
-    ? `${currentCostume.id}:${currentCostume.document.activeLayerId}`
+    ? `${currentCostume.id}:${currentCostume.document.activeLayerId ?? 'none'}`
     : null;
   const currentSession = useMemo(() => {
     const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
@@ -588,7 +588,7 @@ export function CostumeEditor() {
           bounds: resolvedNextState.bounds,
           document: cloneCostumeDocument(nextDocument),
         };
-        currentCostumeIdRef.current = `${nextCostumeForCanvas.id}:${nextDocument.activeLayerId}`;
+        currentCostumeIdRef.current = `${nextCostumeForCanvas.id}:${nextDocument.activeLayerId ?? 'none'}`;
         await canvasRef.current.loadCostume(latestSession.key, nextCostumeForCanvas);
         loadedSessionRef.current = latestSession;
         const resolvedMode = canvasRef.current.getEditorMode();
@@ -1062,11 +1062,11 @@ export function CostumeEditor() {
   }, []);
 
   const handleToolChange = useCallback((tool: DrawingTool) => {
-    if (isLoadingRef.current) {
+    if (isLoadingRef.current || !activeLayer) {
       return;
     }
     setActiveTool(ensureToolForMode(editorMode, tool));
-  }, [editorMode]);
+  }, [activeLayer, editorMode]);
 
   useEffect(() => {
     if (
@@ -1114,11 +1114,26 @@ export function CostumeEditor() {
   }, [activeLayer?.locked, activeTool]);
 
   useEffect(() => {
+    if (activeLayer) {
+      return;
+    }
+    setHasCanvasSelection(false);
+    setHasBitmapFloatingSelection(false);
+    setIsVectorPointEditing(false);
+    setHasSelectedVectorPoints(false);
+    setHasTextSelection(false);
+    setActiveTool('select');
+  }, [activeLayer]);
+
+  useEffect(() => {
     if (activeObjectTab !== 'costumes') {
       return;
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (!activeLayer) {
+        return;
+      }
       if (isLoadingRef.current) {
         return;
       }
@@ -1146,7 +1161,7 @@ export function CostumeEditor() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeObjectTab, editorMode]);
+  }, [activeLayer, activeObjectTab, editorMode]);
 
   const handleMoveOrder = useCallback((action: MoveOrderAction) => {
     if (isLoadingRef.current) {
@@ -1303,38 +1318,40 @@ export function CostumeEditor() {
       />
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <CostumeToolbar
-          editorMode={editorMode}
-          activeTool={activeTool}
-          hasActiveSelection={editorMode === 'bitmap' ? hasBitmapFloatingSelection : hasCanvasSelection}
-          showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
-          isVectorPointEditing={isVectorPointEditing}
-          hasSelectedVectorPoints={hasSelectedVectorPoints}
-          bitmapBrushKind={bitmapBrushKind}
-          brushColor={brushColor}
-          brushSize={brushSize}
-          bitmapFillStyle={bitmapFillStyle}
-          bitmapShapeStyle={bitmapShapeStyle}
-          textStyle={textStyle}
-          vectorStyle={vectorStyle}
-          vectorStyleCapabilities={vectorStyleCapabilities}
-          previewScale={canvasPreviewScale}
-          onToolChange={handleToolChange}
-          onMoveOrder={handleMoveOrder}
-          onFlipSelection={handleFlipSelection}
-          onRotateSelection={handleRotateSelection}
-          vectorHandleMode={vectorHandleMode}
-          onVectorHandleModeChange={(mode) => setVectorHandleMode(mode)}
-          onAlign={handleAlign}
-          alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
-          onColorChange={setBrushColor}
-          onBitmapBrushKindChange={setBitmapBrushKind}
-          onBrushSizeChange={setBrushSize}
-          onBitmapFillStyleChange={handleBitmapFillStyleChange}
-          onBitmapShapeStyleChange={handleBitmapShapeStyleChange}
-          onTextStyleChange={handleTextStyleChange}
-          onVectorStyleChange={handleVectorStyleChange}
-        />
+        {activeLayer ? (
+          <CostumeToolbar
+            editorMode={editorMode}
+            activeTool={activeTool}
+            hasActiveSelection={editorMode === 'bitmap' ? hasBitmapFloatingSelection : hasCanvasSelection}
+            showTextControls={editorMode === 'vector' && (activeTool === 'text' || hasTextSelection)}
+            isVectorPointEditing={isVectorPointEditing}
+            hasSelectedVectorPoints={hasSelectedVectorPoints}
+            bitmapBrushKind={bitmapBrushKind}
+            brushColor={brushColor}
+            brushSize={brushSize}
+            bitmapFillStyle={bitmapFillStyle}
+            bitmapShapeStyle={bitmapShapeStyle}
+            textStyle={textStyle}
+            vectorStyle={vectorStyle}
+            vectorStyleCapabilities={vectorStyleCapabilities}
+            previewScale={canvasPreviewScale}
+            onToolChange={handleToolChange}
+            onMoveOrder={handleMoveOrder}
+            onFlipSelection={handleFlipSelection}
+            onRotateSelection={handleRotateSelection}
+            vectorHandleMode={vectorHandleMode}
+            onVectorHandleModeChange={(mode) => setVectorHandleMode(mode)}
+            onAlign={handleAlign}
+            alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
+            onColorChange={setBrushColor}
+            onBitmapBrushKindChange={setBitmapBrushKind}
+            onBrushSizeChange={setBrushSize}
+            onBitmapFillStyleChange={handleBitmapFillStyleChange}
+            onBitmapShapeStyleChange={handleBitmapShapeStyleChange}
+            onTextStyleChange={handleTextStyleChange}
+            onVectorStyleChange={handleVectorStyleChange}
+          />
+        ) : null}
 
         <CostumeCanvas
           ref={canvasRef}
@@ -1370,7 +1387,7 @@ export function CostumeEditor() {
         />
       </div>
 
-      {currentCostume && activeLayer ? (
+      {currentCostume ? (
         <CostumeLayerPanel
           document={currentCostume.document}
           activeLayer={activeLayer}
