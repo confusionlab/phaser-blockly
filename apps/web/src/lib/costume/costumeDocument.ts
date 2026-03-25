@@ -16,6 +16,16 @@ import {
   cloneCostumeAssetFrame,
   sanitizeCostumeAssetFrame,
 } from './costumeAssetFrame';
+import {
+  duplicateDocumentLayer,
+  getActiveDocumentLayer,
+  getDocumentLayerById,
+  getDocumentLayerIndex,
+  insertDocumentLayerAfterActive,
+  moveDocumentLayer,
+  removeDocumentLayer,
+  setActiveDocumentLayer,
+} from '@/lib/layers/layerDocument';
 
 export const COSTUME_CANVAS_SIZE = 1024;
 export const MAX_COSTUME_LAYERS = 8;
@@ -211,17 +221,11 @@ export function getCostumeLayerById(
   document: CostumeDocument | null | undefined,
   layerId: string | null | undefined,
 ): CostumeLayer | null {
-  if (!document || !layerId) {
-    return null;
-  }
-  return document.layers.find((layer) => layer.id === layerId) ?? null;
+  return getDocumentLayerById(document, layerId);
 }
 
 export function getActiveCostumeLayer(document: CostumeDocument | null | undefined): CostumeLayer | null {
-  if (!document) {
-    return null;
-  }
-  return getCostumeLayerById(document, document.activeLayerId) ?? document.layers[0] ?? null;
+  return getActiveDocumentLayer(document);
 }
 
 export function getActiveCostumeLayerKind(document: CostumeDocument | null | undefined): CostumeLayerKind {
@@ -273,91 +277,36 @@ export function getCostumeLayerIndex(
   document: CostumeDocument | null | undefined,
   layerId: string | null | undefined,
 ): number {
-  if (!document || !layerId) {
-    return -1;
-  }
-  return document.layers.findIndex((layer) => layer.id === layerId);
+  return getDocumentLayerIndex(document, layerId);
 }
 
 export function setActiveCostumeLayer(document: CostumeDocument, layerId: string): CostumeDocument {
-  if (!document.layers.some((layer) => layer.id === layerId)) {
-    return cloneCostumeDocument(document);
-  }
-  return {
-    ...cloneCostumeDocument(document),
-    activeLayerId: layerId,
-  };
+  return setActiveDocumentLayer(document, layerId, cloneCostumeDocument);
 }
 
 export function insertCostumeLayerAfterActive(document: CostumeDocument, layer: CostumeLayer): CostumeDocument {
-  const nextDocument = cloneCostumeDocument(document);
-  const activeLayerIndex = getCostumeLayerIndex(nextDocument, nextDocument.activeLayerId);
-  const insertionIndex = activeLayerIndex >= 0 ? activeLayerIndex + 1 : nextDocument.layers.length;
-  const nextLayers = [...nextDocument.layers];
-  nextLayers.splice(Math.min(insertionIndex, nextLayers.length), 0, cloneCostumeLayer(layer));
-  nextDocument.layers = nextLayers.slice(0, MAX_COSTUME_LAYERS);
-  nextDocument.activeLayerId = layer.id;
-  return nextDocument;
+  return insertDocumentLayerAfterActive(document, layer, {
+    cloneDocument: cloneCostumeDocument,
+    cloneLayer: cloneCostumeLayer,
+    maxLayers: MAX_COSTUME_LAYERS,
+  });
 }
 
 export function duplicateCostumeLayer(document: CostumeDocument, layerId: string): CostumeDocument | null {
-  if (document.layers.length >= MAX_COSTUME_LAYERS) {
-    return null;
-  }
-
-  const layer = getCostumeLayerById(document, layerId);
-  if (!layer) {
-    return null;
-  }
-
-  const duplicate = cloneCostumeLayer(layer);
-  duplicate.id = crypto.randomUUID();
-  duplicate.name = `${layer.name} copy`;
-
-  const nextDocument = cloneCostumeDocument(document);
-  const layerIndex = getCostumeLayerIndex(nextDocument, layerId);
-  const nextLayers = [...nextDocument.layers];
-  nextLayers.splice(layerIndex + 1, 0, duplicate);
-  nextDocument.layers = nextLayers;
-  nextDocument.activeLayerId = duplicate.id;
-  return nextDocument;
+  return duplicateDocumentLayer(document, layerId, {
+    cloneDocument: cloneCostumeDocument,
+    cloneLayer: cloneCostumeLayer,
+    createLayerId: () => crypto.randomUUID(),
+    maxLayers: MAX_COSTUME_LAYERS,
+  });
 }
 
 export function removeCostumeLayer(document: CostumeDocument, layerId: string): CostumeDocument | null {
-  if (document.layers.length <= 1) {
-    return null;
-  }
-
-  const layerIndex = getCostumeLayerIndex(document, layerId);
-  if (layerIndex < 0) {
-    return null;
-  }
-
-  const nextDocument = cloneCostumeDocument(document);
-  nextDocument.layers = nextDocument.layers.filter((layer) => layer.id !== layerId);
-  if (nextDocument.activeLayerId === layerId) {
-    nextDocument.activeLayerId = nextDocument.layers[Math.max(0, layerIndex - 1)]?.id ?? nextDocument.layers[0].id;
-  }
-  return nextDocument;
+  return removeDocumentLayer(document, layerId, cloneCostumeDocument);
 }
 
 export function moveCostumeLayer(document: CostumeDocument, layerId: string, direction: 'up' | 'down'): CostumeDocument | null {
-  const layerIndex = getCostumeLayerIndex(document, layerId);
-  if (layerIndex < 0) {
-    return null;
-  }
-
-  const targetIndex = direction === 'up' ? layerIndex + 1 : layerIndex - 1;
-  if (targetIndex < 0 || targetIndex >= document.layers.length) {
-    return null;
-  }
-
-  const nextDocument = cloneCostumeDocument(document);
-  const nextLayers = [...nextDocument.layers];
-  const [layer] = nextLayers.splice(layerIndex, 1);
-  nextLayers.splice(targetIndex, 0, layer);
-  nextDocument.layers = nextLayers;
-  return nextDocument;
+  return moveDocumentLayer(document, layerId, direction, cloneCostumeDocument);
 }
 
 export function updateCostumeLayer(

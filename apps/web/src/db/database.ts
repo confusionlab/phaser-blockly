@@ -24,12 +24,17 @@ import {
   ensureCostumeDocument,
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
+import {
+  cloneBackgroundDocument,
+  ensureBackgroundDocument,
+  isBitmapBackgroundLayer,
+} from '@/lib/background/backgroundDocument';
 import { cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
 import { optimizeCostumeBitmapAssetSource } from '@/lib/costume/costumeAssetOptimization';
 import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 9;
+export const CURRENT_SCHEMA_VERSION = 10;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -155,6 +160,21 @@ function normalizeCostumeDocumentsInProject(project: Project): Project {
     components: (project.components || []).map((component) => ({
       ...component,
       costumes: (component.costumes || []).map(normalizeCostume),
+    })),
+  };
+}
+
+function normalizeBackgroundDocumentsInProject(project: Project): Project {
+  return {
+    ...project,
+    scenes: (project.scenes || []).map((scene) => ({
+      ...scene,
+      background: scene.background
+        ? {
+            ...scene.background,
+            document: cloneBackgroundDocument(ensureBackgroundDocument(scene.background)),
+          }
+        : null,
     })),
   };
 }
@@ -620,21 +640,39 @@ async function normalizeProjectAssetsForStorage(
       const record = await ensureAssetRecordFromSource(background.value, 'background');
       addPersistedAssetRef(refsById, record.id, 'background');
       background.value = record.id;
+    }
+
+    if (background.type === 'tiled' && background.chunks) {
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, source] of Object.entries(background.chunks)) {
+        if (!isLikelyAssetSource(source)) continue;
+        const record = await ensureAssetRecordFromSource(source, 'background');
+        addPersistedAssetRef(refsById, record.id, 'background');
+        nextChunks[chunkKey] = record.id;
+      }
+      background.chunks = nextChunks;
+    }
+
+    const document = background.document ? cloneBackgroundDocument(ensureBackgroundDocument(background)) : null;
+    if (!document) {
       return;
     }
 
-    if (background.type !== 'tiled' || !background.chunks) {
-      return;
+    for (const layer of document.layers) {
+      if (!isBitmapBackgroundLayer(layer)) {
+        continue;
+      }
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, source] of Object.entries(layer.bitmap.chunks)) {
+        if (!isLikelyAssetSource(source)) continue;
+        const record = await ensureAssetRecordFromSource(source, 'background');
+        addPersistedAssetRef(refsById, record.id, 'background');
+        nextChunks[chunkKey] = record.id;
+      }
+      layer.bitmap.chunks = nextChunks;
     }
 
-    const nextChunks: Record<string, string> = {};
-    for (const [chunkKey, source] of Object.entries(background.chunks)) {
-      if (!isLikelyAssetSource(source)) continue;
-      const record = await ensureAssetRecordFromSource(source, 'background');
-      addPersistedAssetRef(refsById, record.id, 'background');
-      nextChunks[chunkKey] = record.id;
-    }
-    background.chunks = nextChunks;
+    background.document = document;
   };
 
   for (const scene of nextProject.scenes || []) {
@@ -688,26 +726,49 @@ async function hydrateProjectAssetsFromStorage(
         rememberResolvedManagedAsset(background.value, objectUrl);
         background.value = objectUrl;
       }
+    }
+
+    if (background.type === 'tiled' && background.chunks) {
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, value] of Object.entries(background.chunks)) {
+        if (!isManagedAssetId(value)) {
+          nextChunks[chunkKey] = value;
+          continue;
+        }
+        const objectUrl = await resolveManagedAssetUrl(value);
+        if (objectUrl) {
+          rememberResolvedManagedAsset(value, objectUrl);
+          nextChunks[chunkKey] = objectUrl;
+        }
+      }
+      background.chunks = nextChunks;
+    }
+
+    const document = background.document ? cloneBackgroundDocument(ensureBackgroundDocument(background)) : null;
+    if (!document) {
       return;
     }
 
-    if (background.type !== 'tiled' || !background.chunks) {
-      return;
-    }
-
-    const nextChunks: Record<string, string> = {};
-    for (const [chunkKey, value] of Object.entries(background.chunks)) {
-      if (!isManagedAssetId(value)) {
-        nextChunks[chunkKey] = value;
+    for (const layer of document.layers) {
+      if (!isBitmapBackgroundLayer(layer)) {
         continue;
       }
-      const objectUrl = await resolveManagedAssetUrl(value);
-      if (objectUrl) {
-        rememberResolvedManagedAsset(value, objectUrl);
-        nextChunks[chunkKey] = objectUrl;
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, value] of Object.entries(layer.bitmap.chunks)) {
+        if (!isManagedAssetId(value)) {
+          nextChunks[chunkKey] = value;
+          continue;
+        }
+        const objectUrl = await resolveManagedAssetUrl(value);
+        if (objectUrl) {
+          rememberResolvedManagedAsset(value, objectUrl);
+          nextChunks[chunkKey] = objectUrl;
+        }
       }
+      layer.bitmap.chunks = nextChunks;
     }
-    background.chunks = nextChunks;
+
+    background.document = document;
   };
 
   for (const scene of nextProject.scenes || []) {
@@ -743,10 +804,16 @@ function collectPersistedAssetRefsFromProjectData(
     if (!background) return;
     if (background.type === 'image') {
       addPersistedAssetRef(refsById, background.value, 'background');
-      return;
     }
-    if (background.type !== 'tiled' || !background.chunks) return;
-    Object.values(background.chunks).forEach((assetId) => addPersistedAssetRef(refsById, assetId, 'background'));
+    if (background.type === 'tiled' && background.chunks) {
+      Object.values(background.chunks).forEach((assetId) => addPersistedAssetRef(refsById, assetId, 'background'));
+    }
+    if (!background.document) return;
+    const document = ensureBackgroundDocument(background);
+    for (const layer of document.layers) {
+      if (!isBitmapBackgroundLayer(layer)) continue;
+      Object.values(layer.bitmap.chunks).forEach((assetId) => addPersistedAssetRef(refsById, assetId, 'background'));
+    }
   };
 
   for (const scene of projectData.scenes || []) {
@@ -815,6 +882,7 @@ async function deserializeProjectFromRecord(record: ProjectRecord): Promise<{
 
   project = normalizeMessagesInProject(project);
   project = normalizeCostumeDocumentsInProject(project);
+  project = normalizeBackgroundDocumentsInProject(project);
   project = normalizeProjectLayering(project);
 
   return {
@@ -1087,6 +1155,7 @@ function migrateSerializedProjectDataToCurrentSchema(
 
   project = normalizeMessagesInProject(project);
   project = normalizeCostumeDocumentsInProject(project);
+  project = normalizeBackgroundDocumentsInProject(project);
   project = normalizeProjectLayering(project);
 
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...projectData } = project;
@@ -1586,6 +1655,7 @@ export async function syncProjectFromCloud(cloudProject: {
 
   incomingProject = normalizeMessagesInProject(incomingProject);
   incomingProject = normalizeCostumeDocumentsInProject(incomingProject);
+  incomingProject = normalizeBackgroundDocumentsInProject(incomingProject);
 
   const {
     id: _incomingId,
@@ -2153,6 +2223,11 @@ const migrations: Record<number, MigrationFn> = {
     ...normalizeCostumeDocumentsInProject(project),
     schemaVersion: 9,
   }),
+  // v10: Add layered background editor documents alongside flattened runtime chunks.
+  10: (project) => ({
+    ...normalizeBackgroundDocumentsInProject(project),
+    schemaVersion: 10,
+  }),
 };
 
 function migrateProject(project: Project, fromVersion: number): Project {
@@ -2478,6 +2553,7 @@ export async function importProject(jsonString: string): Promise<Project> {
   project.components = Array.isArray(project.components) ? project.components : [];
   project.messages = Array.isArray(project.messages) ? project.messages : [];
   project = normalizeCostumeDocumentsInProject(project);
+  project = normalizeBackgroundDocumentsInProject(project);
 
   // Generate new IDs to avoid collisions and keep imported data isolated.
   const objectIdMap = new Map<string, string>();

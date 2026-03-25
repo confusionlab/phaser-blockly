@@ -61,6 +61,29 @@ async function readPersistedDarkPixelCount(page: Page): Promise<number> {
   });
 }
 
+async function readBackgroundDocumentSummary(page: Page): Promise<{
+  activeLayerId: string | null;
+  chunkCount: number;
+  layerKinds: string[];
+  layerNames: string[];
+}> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const background = project?.scenes[0]?.background;
+    return {
+      activeLayerId: background?.document?.activeLayerId ?? null,
+      chunkCount: Object.keys(background?.chunks ?? {}).length,
+      layerKinds: (background?.document?.layers ?? []).map((layer: { kind: string }) => layer.kind),
+      layerNames: (background?.document?.layers ?? []).map((layer: { name: string }) => layer.name),
+    };
+  });
+}
+
+function backgroundLayerRow(page: Page, index: number) {
+  return page.locator('[data-testid="layer-row"]').nth(index);
+}
+
 async function openEditorFromProjectList(page: Page): Promise<void> {
   const projectsHeading = page.getByRole('heading', { name: /projects/i });
   const hasProjectList = await projectsHeading.isVisible().catch(() => false);
@@ -178,6 +201,54 @@ test.describe('Background editor', () => {
 
     page.once('dialog', (dialog) => dialog.accept());
     await page.getByRole('button', { name: /cancel/i }).first().click();
+  });
+
+  test('keeps explicit bitmap and vector layers in the saved background document', async ({ page }) => {
+    await page.goto(BACKGROUND_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openEditorFromProjectList(page);
+    const { canvas, box } = await openBackgroundEditor(page);
+
+    const startX = box.x + box.width * 0.28;
+    const startY = box.y + box.height * 0.42;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 90, startY + 35);
+    await page.mouse.up();
+    await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: /^vector$/i }).click();
+    const vectorLayerButton = backgroundLayerRow(page, 0);
+    await expect(vectorLayerButton).toHaveAttribute('data-layer-kind', 'vector');
+    await expect(vectorLayerButton).toHaveAttribute('aria-pressed', 'true');
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(box.x + box.width * 0.56, box.y + box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.73, box.y + box.height * 0.5);
+    await page.mouse.up();
+
+    await canvas.click({ position: { x: Math.round(box.width * 0.62), y: Math.round(box.height * 0.41) } });
+    await expect(vectorLayerButton).toHaveAttribute('aria-pressed', 'true');
+    const bitmapLayerButton = backgroundLayerRow(page, 1);
+    await expect(bitmapLayerButton).toHaveAttribute('data-layer-kind', 'bitmap');
+    await bitmapLayerButton.click();
+    await expect(bitmapLayerButton).toHaveAttribute('aria-pressed', 'true');
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(page.getByTestId('background-editor-root')).toBeHidden();
+
+    const summary = await readBackgroundDocumentSummary(page);
+    expect(summary.layerKinds).toEqual(['bitmap', 'vector']);
+    expect(summary.layerNames).toEqual(['Layer 1', 'Layer 2']);
+    expect(summary.activeLayerId).not.toBeNull();
+    expect(summary.chunkCount).toBeGreaterThan(0);
+
+    const reopened = await openBackgroundEditor(page);
+    await expect(page.locator('[data-testid="layer-row"][data-layer-kind="bitmap"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="layer-row"][data-layer-kind="vector"]')).toHaveCount(1);
+    await page.getByRole('button', { name: /cancel/i }).first().click();
+    await expect(reopened.root).toBeHidden();
   });
 });
 

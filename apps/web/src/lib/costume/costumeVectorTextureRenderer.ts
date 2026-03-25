@@ -265,7 +265,7 @@ function getFabricFillValueForVectorTexture(textureId: VectorFillTextureId, fill
     : Color(fillColor).alpha(0).rgb().string();
 }
 
-function normalizeVectorObjectRendering(obj: unknown): boolean {
+export function normalizeVectorObjectRendering(obj: unknown): boolean {
   if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
     return false;
   }
@@ -764,13 +764,16 @@ export function renderVectorTextureOverlayForObjects(
   objects: readonly any[],
   options: {
     canvasSize?: number;
+    canvasWidth?: number;
+    canvasHeight?: number;
     clear?: boolean;
     onTextureSourceReady?: (() => void) | null;
   } = {},
 ) {
-  const canvasSize = options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  const canvasWidth = options.canvasWidth ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
+  const canvasHeight = options.canvasHeight ?? options.canvasSize ?? COSTUME_CANVAS_SIZE;
   if (options.clear !== false) {
-    ctx.clearRect(0, 0, canvasSize, canvasSize);
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   }
 
   ctx.save();
@@ -801,7 +804,7 @@ export function renderVectorTextureOverlayForObjects(
             ctx.fillStyle = pattern;
             ctx.globalAlpha = typeof obj.opacity === 'number' ? obj.opacity : 1;
             ctx.clip();
-            ctx.fillRect(-canvasSize, -canvasSize, canvasSize * 2, canvasSize * 2);
+            ctx.fillRect(-canvasWidth, -canvasHeight, canvasWidth * 3, canvasHeight * 3);
           }
         }
         ctx.restore();
@@ -856,6 +859,8 @@ export function renderVectorTextureOverlayForFabricCanvas(
   fabricCanvas: { getObjects: () => any[] },
   options: {
     canvasSize?: number;
+    canvasWidth?: number;
+    canvasHeight?: number;
     clear?: boolean;
     onTextureSourceReady?: (() => void) | null;
   } = {},

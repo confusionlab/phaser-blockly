@@ -1,4 +1,4 @@
-import type { BackgroundConfig } from '@/types';
+import type { BackgroundConfig, BackgroundDocument } from '@/types';
 import { DEFAULT_BACKGROUND_CHUNK_SIZE } from './chunkMath';
 
 export const DEFAULT_BACKGROUND_SOFT_CHUNK_LIMIT = 400;
@@ -89,6 +89,7 @@ export function buildTiledBackgroundConfig(
     softChunkLimit?: number;
     hardChunkLimit?: number;
     baseColor?: string;
+    document?: BackgroundDocument;
   },
 ): BackgroundConfig {
   const chunkSize = Number.isFinite(options?.chunkSize) && (options?.chunkSize ?? 0) > 0
@@ -109,5 +110,6 @@ export function buildTiledBackgroundConfig(
     chunks: { ...chunks },
     softChunkLimit,
     hardChunkLimit,
+    document: options?.document,
   };
 }

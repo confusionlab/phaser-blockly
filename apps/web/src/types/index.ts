@@ -84,6 +84,53 @@ export interface BackgroundConfig {
   chunks?: Record<string, string>;
   softChunkLimit?: number;
   hardChunkLimit?: number;
+  document?: BackgroundDocument;
+}
+
+export type BackgroundLayerKind = 'bitmap' | 'vector';
+export type BackgroundLayerBlendMode = 'normal';
+export type BackgroundLayerEffect = never;
+
+export interface BackgroundBitmapContentRef {
+  chunks: Record<string, string>;
+}
+
+export interface BackgroundVectorDocument {
+  engine: 'fabric';
+  version: 1;
+  fabricJson: string;
+}
+
+export interface BackgroundLayerBase {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  opacity: number;
+  blendMode: BackgroundLayerBlendMode;
+  mask: null;
+  effects: BackgroundLayerEffect[];
+}
+
+export interface BackgroundBitmapLayer extends BackgroundLayerBase {
+  kind: 'bitmap';
+  bitmap: BackgroundBitmapContentRef;
+}
+
+export interface BackgroundVectorLayer extends BackgroundLayerBase {
+  kind: 'vector';
+  vector: BackgroundVectorDocument;
+}
+
+export type BackgroundLayer = BackgroundBitmapLayer | BackgroundVectorLayer;
+
+export interface BackgroundDocument {
+  version: 1;
+  activeLayerId: string;
+  chunkSize: number;
+  softChunkLimit: number;
+  hardChunkLimit: number;
+  layers: BackgroundLayer[];
 }
 
 // GameObject Types

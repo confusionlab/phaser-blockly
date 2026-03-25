@@ -539,7 +539,10 @@ interface CostumeToolbarProps {
   hasActiveSelection: boolean;
   toolVisibility?: {
     showSelectTool?: boolean;
+    showPenTool?: boolean;
+    showBrushTool?: boolean;
     showShapeTools?: boolean;
+    showTextTool?: boolean;
   };
   showModeSwitcher?: boolean;
   selectionActionsEnabled?: boolean;
@@ -699,7 +702,10 @@ export const CostumeToolbar = memo(({
 }: CostumeToolbarProps) => {
   const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
   const showSelectTool = toolVisibility?.showSelectTool ?? true;
+  const showPenTool = toolVisibility?.showPenTool ?? true;
+  const showBrushTool = toolVisibility?.showBrushTool ?? true;
   const showShapeTools = toolVisibility?.showShapeTools ?? true;
+  const showTextTool = toolVisibility?.showTextTool ?? true;
 
   const handleMenuOpenChange = useCallback((menu: ToolbarMenuId, open: boolean) => {
     setOpenMenu((current) => {
@@ -711,8 +717,15 @@ export const CostumeToolbar = memo(({
   const isShapeMenuOpen = openMenu === 'shape-tools';
 
   const leadingTools = (editorMode === 'vector' ? vectorPrimaryTools : bitmapPrimaryTools)
-    .filter((tool) => showSelectTool || tool.tool !== 'select');
-  const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
+    .filter((tool) => {
+      if (tool.tool === 'select') return showSelectTool;
+      if (tool.tool === 'pen') return showPenTool;
+      if (tool.tool === 'brush') return showBrushTool;
+      return true;
+    });
+  const trailingTools = editorMode === 'vector'
+    ? vectorTrailingTools.filter((tool) => showTextTool || tool.tool !== 'text')
+    : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = showShapeTools && isShapeTool(activeTool);
   const selectionTool: DrawingTool = 'select';

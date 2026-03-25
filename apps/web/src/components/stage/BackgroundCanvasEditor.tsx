@@ -4,12 +4,18 @@ import { Button } from '@/components/ui/button';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
-import type { BackgroundConfig } from '@/types';
+import type {
+  BackgroundConfig,
+  BackgroundDocument,
+  BackgroundLayer,
+  BackgroundVectorLayer,
+} from '@/types';
 import {
   CostumeToolbar,
   type BitmapFillStyle,
   type BitmapShapeStyle,
   type DrawingTool as CostumeDrawingTool,
+  type MoveOrderAction,
   type SelectionFlipAxis,
   type TextToolStyle,
   type VectorHandleMode,
@@ -29,7 +35,6 @@ import {
 import {
   DEFAULT_BACKGROUND_HARD_CHUNK_LIMIT,
   DEFAULT_BACKGROUND_SOFT_CHUNK_LIMIT,
-  buildTiledBackgroundConfig,
   canCreateChunk,
   createEmptyChunkCanvas,
   estimateSerializedChunkBytes,
@@ -53,6 +58,30 @@ import {
   getBitmapFillTexturePreset,
   type BitmapFillTextureId,
 } from '@/lib/background/bitmapFillCore';
+import {
+  buildBackgroundConfigFromDocument,
+  renderBackgroundLayerToChunkData,
+} from '@/lib/background/backgroundDocumentRender';
+import {
+  cloneBackgroundDocument,
+  createBitmapBackgroundLayer,
+  createVectorBackgroundLayer,
+  duplicateBackgroundLayer,
+  ensureBackgroundDocument,
+  getActiveBackgroundLayer,
+  getActiveBackgroundLayerKind,
+  getBackgroundLayerById,
+  insertBackgroundLayerAfterActive,
+  isBitmapBackgroundLayer,
+  isVectorBackgroundLayer,
+  moveBackgroundLayer,
+  removeBackgroundLayer,
+  setActiveBackgroundLayer,
+  setBackgroundLayerVisibility,
+  updateBackgroundBitmapLayerChunks,
+  updateBackgroundLayer,
+  updateBackgroundVectorLayerDocument,
+} from '@/lib/background/backgroundDocument';
 import { DEFAULT_VECTOR_STROKE_BRUSH_ID } from '@/lib/vector/vectorStrokeBrushCore';
 import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
 import {
@@ -65,6 +94,11 @@ import {
 } from '@/lib/viewportNavigation';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
+import { BackgroundLayerPanel } from './BackgroundLayerPanel';
+import {
+  BackgroundVectorCanvas,
+  type BackgroundVectorCanvasHandle,
+} from './BackgroundVectorCanvas';
 
 const MIN_ZOOM = 0.02;
 const MAX_ZOOM = 10;
@@ -206,7 +240,7 @@ const BACKGROUND_TOOLBAR_VECTOR_STYLE: VectorToolStyle = {
 };
 
 const BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE: VectorHandleMode = 'linear';
-const BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES: VectorStyleCapabilities = { supportsFill: false };
+const BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES: VectorStyleCapabilities = { supportsFill: true };
 
 function isShapeTool(tool: BackgroundDrawingTool): tool is BackgroundShapeTool {
   return tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'triangle' || tool === 'star';
@@ -224,6 +258,17 @@ function isBackgroundToolbarTool(tool: CostumeDrawingTool): tool is BackgroundDr
     tool === 'star' ||
     tool === 'line'
   );
+}
+
+function ensureToolForBackgroundMode(mode: 'bitmap' | 'vector', tool: BackgroundDrawingTool): BackgroundDrawingTool {
+  if (mode === 'vector') {
+    return tool === 'select' || tool === 'brush' || isShapeTool(tool) ? tool : 'select';
+  }
+  return tool;
+}
+
+function toSupportedVectorTool(tool: BackgroundDrawingTool): Extract<BackgroundDrawingTool, 'select' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line'> {
+  return ensureToolForBackgroundMode('vector', tool) as Extract<BackgroundDrawingTool, 'select' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line'>;
 }
 
 function getWorldRectFromPoints(start: WorldPoint, end: WorldPoint): WorldRect {
@@ -451,6 +496,7 @@ export function BackgroundCanvasEditor() {
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const vectorCanvasRef = useRef<BackgroundVectorCanvasHandle | null>(null);
   const pointerWorldRef = useRef<{ x: number; y: number } | null>(null);
   const drawingStrokeRef = useRef<StrokeSession | null>(null);
   const shapeDraftRef = useRef<ShapeDraftSession | null>(null);
@@ -465,6 +511,7 @@ export function BackgroundCanvasEditor() {
   const chunkCanvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const chunkDataRef = useRef<ChunkDataMap>({});
   const chunkKeySetRef = useRef<Set<string>>(new Set());
+  const layerChunkCanvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const fillTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const fillTexturePromiseRef = useRef<Map<string, Promise<HTMLImageElement | null>>>(new Map());
   const undoStackRef = useRef<ChunkDelta[]>([]);
@@ -472,6 +519,8 @@ export function BackgroundCanvasEditor() {
   const didMountRef = useRef(false);
   const initialBackgroundColorRef = useRef('#87CEEB');
   const backgroundColorRef = useRef('#87CEEB');
+  const backgroundDocumentRef = useRef<BackgroundDocument | null>(null);
+  const activeLayerDirtyRef = useRef(false);
 
   const [tool, setTool] = useState<BackgroundDrawingTool>('brush');
   const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
@@ -486,17 +535,22 @@ export function BackgroundCanvasEditor() {
     strokeColor: INITIAL_BRUSH_COLOR,
     strokeWidth: INITIAL_SHAPE_STROKE_WIDTH,
   });
+  const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>(BACKGROUND_TOOLBAR_VECTOR_STYLE);
   const [zoom, setZoom] = useState(0.5);
   const [camera, setCamera] = useState({ x: 0, y: 0 });
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+  const [activeChunkCount, setActiveChunkCount] = useState(0);
   const [chunkLimitWarning, setChunkLimitWarning] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [isRasterOperationBusy, setIsRasterOperationBusy] = useState(false);
   const [hasFloatingSelection, setHasFloatingSelection] = useState(false);
+  const [backgroundDocument, setBackgroundDocumentState] = useState<BackgroundDocument | null>(null);
+  const [renderedLayerChunks, setRenderedLayerChunks] = useState<Record<string, ChunkDataMap>>({});
+  const [hasVectorSelection, setHasVectorSelection] = useState(false);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
 
@@ -522,22 +576,26 @@ export function BackgroundCanvasEditor() {
   }, [backgroundEditorSceneId, project, selectedSceneId]);
 
   const chunkSize = useMemo(() => {
-    const value = scene?.background?.type === 'tiled' ? scene.background.chunkSize : undefined;
+    const value = backgroundDocument?.chunkSize ?? (scene?.background?.type === 'tiled' ? scene.background.chunkSize : undefined);
     if (!Number.isFinite(value) || (value ?? 0) <= 0) return DEFAULT_BACKGROUND_CHUNK_SIZE;
     return Math.max(32, Math.floor(value as number));
-  }, [scene?.background]);
+  }, [backgroundDocument?.chunkSize, scene?.background]);
 
   const softChunkLimit = useMemo(() => {
-    const value = scene?.background?.type === 'tiled' ? scene.background.softChunkLimit : undefined;
+    const value = backgroundDocument?.softChunkLimit ?? (scene?.background?.type === 'tiled' ? scene.background.softChunkLimit : undefined);
     if (!Number.isFinite(value) || (value ?? 0) <= 0) return DEFAULT_BACKGROUND_SOFT_CHUNK_LIMIT;
     return Math.floor(value as number);
-  }, [scene?.background]);
+  }, [backgroundDocument?.softChunkLimit, scene?.background]);
 
   const hardChunkLimit = useMemo(() => {
-    const value = scene?.background?.type === 'tiled' ? scene.background.hardChunkLimit : undefined;
+    const value = backgroundDocument?.hardChunkLimit ?? (scene?.background?.type === 'tiled' ? scene.background.hardChunkLimit : undefined);
     if (!Number.isFinite(value) || (value ?? 0) <= 0) return DEFAULT_BACKGROUND_HARD_CHUNK_LIMIT;
     return Math.max(softChunkLimit, Math.floor(value as number));
-  }, [scene?.background, softChunkLimit]);
+  }, [backgroundDocument?.hardChunkLimit, scene?.background, softChunkLimit]);
+
+  backgroundDocumentRef.current = backgroundDocument;
+  const activeLayer = useMemo(() => getActiveBackgroundLayer(backgroundDocument), [backgroundDocument]);
+  const editorMode = useMemo(() => getActiveBackgroundLayerKind(backgroundDocument), [backgroundDocument]);
 
   backgroundColorRef.current = backgroundColor;
   const cameraBounds = useMemo(() => ({
@@ -599,14 +657,29 @@ export function BackgroundCanvasEditor() {
     setCanRedo(redoStackRef.current.length > 0);
   }, []);
 
+  const syncActiveChunkCount = useCallback(() => {
+    setActiveChunkCount(chunkKeySetRef.current.size);
+  }, []);
+
   const fitToContent = useCallback(() => {
-    const contentBounds = getChunkBoundsFromKeys(chunkKeySetRef.current, chunkSize);
+    const chunkKeys = new Set<string>();
+    if (backgroundDocument) {
+      for (const layer of backgroundDocument.layers) {
+        const layerChunks = layer.id === backgroundDocument.activeLayerId && isBitmapBackgroundLayer(layer)
+          ? chunkDataRef.current
+          : (renderedLayerChunks[layer.id] ?? {});
+        Object.keys(layerChunks).forEach((key) => chunkKeys.add(key));
+      }
+    } else {
+      chunkKeySetRef.current.forEach((key) => chunkKeys.add(key));
+    }
+    const contentBounds = getChunkBoundsFromKeys(chunkKeys, chunkSize);
     if (contentBounds) {
       fitToBounds(contentBounds);
       return;
     }
     fitToBounds(cameraBounds);
-  }, [cameraBounds, chunkSize, fitToBounds]);
+  }, [backgroundDocument, cameraBounds, chunkSize, fitToBounds, renderedLayerChunks]);
 
   const zoomAtClientPoint = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     const clampedZoom = clampViewportZoom(nextZoom, MIN_ZOOM, MAX_ZOOM);
@@ -707,9 +780,90 @@ export function BackgroundCanvasEditor() {
     resolveBitmapFillTextureSource(bitmapFillStyle.textureId);
   }, [bitmapFillStyle.textureId, resolveBitmapFillTextureSource]);
 
+  const replaceBackgroundDocument = useCallback((nextDocument: BackgroundDocument | null) => {
+    backgroundDocumentRef.current = nextDocument;
+    setBackgroundDocumentState(nextDocument ? cloneBackgroundDocument(nextDocument) : null);
+  }, []);
+
+  const markActiveLayerDirty = useCallback(() => {
+    activeLayerDirtyRef.current = true;
+    setIsDirty(true);
+    setRevision((value) => value + 1);
+  }, []);
+
+  const loadActiveBitmapLayerState = useCallback(async (layer: BackgroundLayer | null) => {
+    chunkCanvasesRef.current.clear();
+    loadingChunkKeysRef.current.clear();
+    layerChunkCanvasCacheRef.current.clear();
+    selectionMarqueeRef.current = null;
+    floatingSelectionRef.current = null;
+    floatingSelectionTransformRef.current = null;
+    floatingSelectionBusyRef.current = false;
+    setHasFloatingSelection(false);
+
+    const initialChunks = isBitmapBackgroundLayer(layer) ? normalizeChunkDataMap(layer.bitmap.chunks) : {};
+    chunkDataRef.current = { ...initialChunks };
+    chunkKeySetRef.current = new Set(Object.keys(initialChunks));
+    syncActiveChunkCount();
+
+    for (const [key, dataUrl] of Object.entries(initialChunks)) {
+      const decoded = await dataUrlToCanvas(dataUrl, chunkSize);
+      if (decoded) {
+        chunkCanvasesRef.current.set(key, decoded);
+      }
+    }
+
+    setRevision((value) => value + 1);
+  }, [chunkSize, syncActiveChunkCount]);
+
+  const persistActiveLayerIntoDocument = useCallback((document: BackgroundDocument | null): BackgroundDocument | null => {
+    if (!document) {
+      return null;
+    }
+
+    const activeDocumentLayer = getActiveBackgroundLayer(document);
+    if (!activeDocumentLayer) {
+      return document;
+    }
+
+    if (isBitmapBackgroundLayer(activeDocumentLayer)) {
+      return updateBackgroundBitmapLayerChunks(document, activeDocumentLayer.id, chunkDataRef.current) ?? document;
+    }
+
+    if (isVectorBackgroundLayer(activeDocumentLayer)) {
+      const serialized = vectorCanvasRef.current?.serialize();
+      if (!serialized) {
+        return document;
+      }
+      return updateBackgroundVectorLayerDocument(document, activeDocumentLayer.id, serialized) ?? document;
+    }
+
+    return document;
+  }, []);
+
+  const applyNextDocumentState = useCallback(async (
+    nextDocument: BackgroundDocument,
+    options?: { preserveTool?: boolean },
+  ) => {
+    replaceBackgroundDocument(nextDocument);
+    activeLayerDirtyRef.current = false;
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    syncUndoRedoAvailability();
+    const nextLayer = getActiveBackgroundLayer(nextDocument);
+    await loadActiveBitmapLayerState(nextLayer);
+    if (!options?.preserveTool) {
+      setTool((currentTool) => ensureToolForBackgroundMode(getActiveBackgroundLayerKind(nextDocument), currentTool));
+    }
+    setHasVectorSelection(false);
+    setIsDirty(true);
+    setRevision((value) => value + 1);
+  }, [loadActiveBitmapLayerState, replaceBackgroundDocument, syncUndoRedoAvailability]);
+
   const hasUnsavedBackgroundChanges = useCallback(() => {
     return (
       isDirty ||
+      activeLayerDirtyRef.current ||
       hasFloatingSelection ||
       isDrawing ||
       isRasterOperationBusy ||
@@ -761,6 +915,23 @@ export function BackgroundCanvasEditor() {
     return decoded;
   }, [chunkSize]);
 
+  const ensureLayerChunkCanvasLoaded = useCallback(async (
+    cacheKey: string,
+    dataUrl: string,
+  ): Promise<HTMLCanvasElement | null> => {
+    const existing = layerChunkCanvasCacheRef.current.get(cacheKey);
+    if (existing) {
+      return existing;
+    }
+    const decoded = await dataUrlToCanvas(dataUrl, chunkSize);
+    if (!decoded) {
+      return null;
+    }
+    layerChunkCanvasCacheRef.current.set(cacheKey, decoded);
+    setRevision((value) => value + 1);
+    return decoded;
+  }, [chunkSize]);
+
   const loadFromBackgroundConfig = useCallback(async () => {
     if (!scene) return;
     setBusy(true);
@@ -772,29 +943,25 @@ export function BackgroundCanvasEditor() {
     syncUndoRedoAvailability();
     chunkCanvasesRef.current.clear();
     loadingChunkKeysRef.current.clear();
+    layerChunkCanvasCacheRef.current.clear();
     selectionMarqueeRef.current = null;
     floatingSelectionRef.current = null;
     floatingSelectionTransformRef.current = null;
     floatingSelectionBusyRef.current = false;
+    activeLayerDirtyRef.current = false;
 
-    const initialChunks = normalizeChunkDataMap(scene.background?.type === 'tiled' ? scene.background.chunks : {});
-    chunkDataRef.current = { ...initialChunks };
-    chunkKeySetRef.current = new Set(Object.keys(initialChunks));
+    const initialDocument = ensureBackgroundDocument(scene.background);
+    replaceBackgroundDocument(initialDocument);
     const initialBackgroundColor = getFallbackColor(scene.background);
     initialBackgroundColorRef.current = initialBackgroundColor;
     setBackgroundColor(initialBackgroundColor);
-
-    const entries = Object.entries(initialChunks);
-    for (const [key, dataUrl] of entries) {
-      const decoded = await dataUrlToCanvas(dataUrl, chunkSize);
-      if (decoded) {
-        chunkCanvasesRef.current.set(key, decoded);
-      }
-    }
+    const initialLayer = getActiveBackgroundLayer(initialDocument);
+    await loadActiveBitmapLayerState(initialLayer);
+    setTool(getActiveBackgroundLayerKind(initialDocument) === 'vector' ? 'select' : 'brush');
 
     setBusy(false);
     setRevision((value) => value + 1);
-  }, [chunkSize, scene, syncUndoRedoAvailability]);
+  }, [loadActiveBitmapLayerState, replaceBackgroundDocument, scene, syncUndoRedoAvailability]);
 
   useEffect(() => {
     if (!scene) return;
@@ -802,9 +969,39 @@ export function BackgroundCanvasEditor() {
   }, [loadFromBackgroundConfig, scene]);
 
   useEffect(() => {
+    if (!backgroundDocument) {
+      setRenderedLayerChunks({});
+      return;
+    }
+
+    let cancelled = false;
+    void Promise.all(backgroundDocument.layers.map(async (layer) => {
+      if (isBitmapBackgroundLayer(layer)) {
+        return [layer.id, normalizeChunkDataMap(layer.bitmap.chunks)] as const;
+      }
+      try {
+        return [layer.id, await renderBackgroundLayerToChunkData(layer, backgroundDocument.chunkSize)] as const;
+      } catch (error) {
+        console.warn('Failed to render background layer chunk surface.', error);
+        return [layer.id, {} as ChunkDataMap] as const;
+      }
+    })).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+      setRenderedLayerChunks(Object.fromEntries(entries));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [backgroundDocument]);
+
+  useEffect(() => {
     setIsDirty(
       undoStackRef.current.length > 0 ||
-      backgroundColor !== initialBackgroundColorRef.current,
+      backgroundColor !== initialBackgroundColorRef.current ||
+      activeLayerDirtyRef.current,
     );
   }, [backgroundColor]);
 
@@ -862,6 +1059,15 @@ export function BackgroundCanvasEditor() {
     updateWarnings();
   }, [revision, updateWarnings]);
 
+  useEffect(() => {
+    if (editorMode === 'vector') {
+      setCanUndo(false);
+      setCanRedo(false);
+      return;
+    }
+    syncUndoRedoAvailability();
+  }, [editorMode, revision, syncUndoRedoAvailability]);
+
   const render = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -883,28 +1089,76 @@ export function BackgroundCanvasEditor() {
     ctx.fillRect(0, 0, viewport.width, viewport.height);
 
     const chunkPixelSize = chunkSize * zoom;
-    const keys = Array.from(chunkKeySetRef.current);
-    for (const key of keys) {
-      const parsed = parseChunkKey(key);
-      if (!parsed) continue;
-      const bounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
-      const topLeft = worldToScreen(bounds.left, bounds.top);
+    const drawLayerChunks = (
+      layer: BackgroundLayer,
+      chunks: ChunkDataMap,
+      options?: { useActiveBitmapCache?: boolean },
+    ) => {
       const width = chunkSize * zoom;
       const height = chunkSize * zoom;
+      if (width < 0.35 || height < 0.35) {
+        return;
+      }
 
-      if (width < 0.35 || height < 0.35) continue;
-      if (topLeft.x + width < 0 || topLeft.y + height < 0 || topLeft.x > viewport.width || topLeft.y > viewport.height) {
+      ctx.save();
+      ctx.globalAlpha = layer.opacity;
+
+      for (const [key, dataUrl] of Object.entries(chunks)) {
+        const parsed = parseChunkKey(key);
+        if (!parsed) continue;
+        const bounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
+        const topLeft = worldToScreen(bounds.left, bounds.top);
+        if (topLeft.x + width < 0 || topLeft.y + height < 0 || topLeft.x > viewport.width || topLeft.y > viewport.height) {
+          continue;
+        }
+
+        if (options?.useActiveBitmapCache) {
+          const chunkCanvas = chunkCanvasesRef.current.get(key);
+          if (chunkCanvas) {
+            ctx.drawImage(chunkCanvas, topLeft.x, topLeft.y, width, height);
+            continue;
+          }
+          if (dataUrl) {
+            void ensureChunkCanvasLoaded(key);
+            ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+            ctx.strokeRect(topLeft.x, topLeft.y, width, height);
+          }
+          continue;
+        }
+
+        const cacheKey = `${layer.id}:${key}:${dataUrl}`;
+        const chunkCanvas = layerChunkCanvasCacheRef.current.get(cacheKey);
+        if (chunkCanvas) {
+          ctx.drawImage(chunkCanvas, topLeft.x, topLeft.y, width, height);
+          continue;
+        }
+
+        if (dataUrl) {
+          void ensureLayerChunkCanvasLoaded(cacheKey, dataUrl);
+          ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+          ctx.strokeRect(topLeft.x, topLeft.y, width, height);
+        }
+      }
+
+      ctx.restore();
+    };
+
+    for (const layer of backgroundDocument?.layers ?? []) {
+      if (!layer.visible || layer.opacity <= 0) {
+        continue;
+      }
+      const isActiveBitmapLayer = layer.id === backgroundDocument?.activeLayerId && isBitmapBackgroundLayer(layer);
+      const isActiveVectorLayer = layer.id === backgroundDocument?.activeLayerId && isVectorBackgroundLayer(layer);
+      if (isActiveVectorLayer) {
         continue;
       }
 
-      const chunkCanvas = chunkCanvasesRef.current.get(key);
-      if (chunkCanvas) {
-        ctx.drawImage(chunkCanvas, topLeft.x, topLeft.y, width, height);
-      } else if (chunkDataRef.current[key]) {
-        void ensureChunkCanvasLoaded(key);
-        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-        ctx.strokeRect(topLeft.x, topLeft.y, width, height);
-      }
+      const chunks = isActiveBitmapLayer
+        ? chunkDataRef.current
+        : (renderedLayerChunks[layer.id] ?? {});
+      drawLayerChunks(layer, chunks, {
+        useActiveBitmapCache: isActiveBitmapLayer,
+      });
     }
 
     const worldBoundaryPoints = scene?.worldBoundary?.enabled ? (scene.worldBoundary.points || []) : [];
@@ -961,7 +1215,7 @@ export function BackgroundCanvasEditor() {
     }
 
     const marqueeSelection = selectionMarqueeRef.current;
-    if (tool === 'select' && marqueeSelection && !floatingSelectionRef.current) {
+    if (editorMode === 'bitmap' && tool === 'select' && marqueeSelection && !floatingSelectionRef.current) {
       const marqueeBounds = getWorldRectFromPoints(marqueeSelection.startWorld, marqueeSelection.currentWorld);
       const topLeft = worldToScreen(marqueeBounds.left, marqueeBounds.top);
       ctx.save();
@@ -975,7 +1229,7 @@ export function BackgroundCanvasEditor() {
     }
 
     const floatingSelection = floatingSelectionRef.current;
-    if (tool === 'select' && floatingSelection) {
+    if (editorMode === 'bitmap' && tool === 'select' && floatingSelection) {
       const geometry = getFloatingSelectionScreenGeometry(floatingSelection, worldToScreen, zoom);
       ctx.save();
       ctx.translate(geometry.centerScreen.x, geometry.centerScreen.y);
@@ -1029,7 +1283,7 @@ export function BackgroundCanvasEditor() {
     if (pointerWorldRef.current && !isPanning) {
       const pointerScreen = worldToScreen(pointerWorldRef.current.x, pointerWorldRef.current.y);
 
-      if (tool === 'brush' || tool === 'eraser') {
+      if (editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
         const cursor = getBitmapBrushCursorStyle(tool, bitmapBrushKind, brushColor, brushSize, zoom);
         ctx.beginPath();
         ctx.arc(pointerScreen.x, pointerScreen.y, cursor.diameter * 0.5, 0, Math.PI * 2);
@@ -1038,7 +1292,7 @@ export function BackgroundCanvasEditor() {
         ctx.lineWidth = cursor.borderWidth;
         ctx.fill();
         ctx.stroke();
-      } else if (tool !== 'select') {
+      } else if (tool !== 'select' && !(editorMode === 'vector' && (tool === 'brush'))) {
         ctx.strokeStyle = 'rgba(255,255,255,0.9)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -1057,6 +1311,7 @@ export function BackgroundCanvasEditor() {
     }
   }, [
     backgroundColor,
+    backgroundDocument,
     bitmapBrushKind,
     bitmapShapeStyle.fillColor,
     bitmapShapeStyle.strokeColor,
@@ -1069,7 +1324,10 @@ export function BackgroundCanvasEditor() {
     cameraBounds.top,
     chunkSize,
     ensureChunkCanvasLoaded,
+    ensureLayerChunkCanvasLoaded,
+    editorMode,
     isPanning,
+    renderedLayerChunks,
     tool,
     viewport.height,
     viewport.width,
@@ -1119,9 +1377,10 @@ export function BackgroundCanvasEditor() {
     const created = createEmptyChunkCanvas(chunkSize);
     chunkCanvasesRef.current.set(key, created);
     chunkKeySetRef.current.add(key);
+    syncActiveChunkCount();
     updateWarnings();
     return created;
-  }, [chunkSize, hardChunkLimit, softChunkLimit, updateWarnings]);
+  }, [chunkSize, hardChunkLimit, softChunkLimit, syncActiveChunkCount, updateWarnings]);
 
   const paintHardRoundPoint = useCallback((
     worldX: number,
@@ -1358,9 +1617,10 @@ export function BackgroundCanvasEditor() {
       );
     }
 
+    syncActiveChunkCount();
     updateWarnings();
     setRevision((value) => value + 1);
-  }, [syncUndoRedoAvailability, updateWarnings]);
+  }, [syncActiveChunkCount, syncUndoRedoAvailability, updateWarnings]);
 
   const finalizeStroke = useCallback(() => {
     const stroke = drawingStrokeRef.current;
@@ -1387,9 +1647,10 @@ export function BackgroundCanvasEditor() {
       }
     }
 
+    syncActiveChunkCount();
     updateWarnings();
     setRevision((value) => value + 1);
-  }, [chunkSize, updateWarnings]);
+  }, [chunkSize, syncActiveChunkCount, updateWarnings]);
 
   const commitShapeDraft = useCallback((draft: ShapeDraftSession) => {
     const shapeStyle = bitmapShapeStyle;
@@ -1592,8 +1853,9 @@ export function BackgroundCanvasEditor() {
       chunkKeySetRef.current.add(key);
     }
 
+    syncActiveChunkCount();
     return true;
-  }, [chunkSize, hardChunkLimit, rememberChunkBeforeMutation]);
+  }, [chunkSize, hardChunkLimit, rememberChunkBeforeMutation, syncActiveChunkCount]);
 
   const commitRasterCanvasToChunks = useCallback((
     rasterCanvas: HTMLCanvasElement,
@@ -1879,6 +2141,11 @@ export function BackgroundCanvasEditor() {
   }, [applyDeltaRecord, commitFloatingSelection, syncUndoRedoAvailability]);
 
   const flushActiveInteraction = useCallback(async () => {
+    if (editorMode === 'vector' && isShapeTool(tool) && isDrawing) {
+      vectorCanvasRef.current?.commitShape();
+      setIsDrawing(false);
+    }
+
     if (drawingStrokeRef.current) {
       finalizeStroke();
       setIsDrawing(false);
@@ -1912,7 +2179,157 @@ export function BackgroundCanvasEditor() {
     }
 
     return true;
-  }, [awaitRasterOperations, commitFloatingSelection, commitShapeDraft, finalizeStroke]);
+  }, [awaitRasterOperations, commitFloatingSelection, commitShapeDraft, editorMode, finalizeStroke, isDrawing, tool]);
+
+  const handleSelectLayer = useCallback(async (layerId: string) => {
+    if (busy || !backgroundDocumentRef.current || backgroundDocumentRef.current.activeLayerId === layerId) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = setActiveBackgroundLayer(persistedDocument, layerId);
+    await applyNextDocumentState(nextDocument);
+  }, [applyNextDocumentState, busy, flushActiveInteraction, persistActiveLayerIntoDocument]);
+
+  const handleAddBitmapLayer = useCallback(async () => {
+    if (busy || !backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = insertBackgroundLayerAfterActive(
+      persistedDocument,
+      createBitmapBackgroundLayer({ name: `Layer ${persistedDocument.layers.length + 1}` }),
+    );
+    await applyNextDocumentState(nextDocument, { preserveTool: false });
+  }, [applyNextDocumentState, busy, flushActiveInteraction, persistActiveLayerIntoDocument]);
+
+  const handleAddVectorLayer = useCallback(async () => {
+    if (busy || !backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = insertBackgroundLayerAfterActive(
+      persistedDocument,
+      createVectorBackgroundLayer({ name: `Layer ${persistedDocument.layers.length + 1}` }),
+    );
+    await applyNextDocumentState(nextDocument);
+    setTool('select');
+  }, [applyNextDocumentState, busy, flushActiveInteraction, persistActiveLayerIntoDocument]);
+
+  const handleDuplicateLayer = useCallback(async (layerId: string) => {
+    if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = duplicateBackgroundLayer(persistedDocument, layerId);
+    if (!nextDocument) {
+      return;
+    }
+    await applyNextDocumentState(nextDocument);
+  }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
+
+  const handleDeleteLayer = useCallback(async (layerId: string) => {
+    if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = removeBackgroundLayer(persistedDocument, layerId);
+    if (!nextDocument) {
+      return;
+    }
+    await applyNextDocumentState(nextDocument);
+  }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
+
+  const handleMoveLayer = useCallback(async (layerId: string, direction: 'up' | 'down') => {
+    if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = moveBackgroundLayer(persistedDocument, layerId, direction);
+    if (!nextDocument) {
+      return;
+    }
+    await applyNextDocumentState(nextDocument, { preserveTool: true });
+  }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
+
+  const handleToggleLayerVisibility = useCallback(async (layerId: string) => {
+    if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const currentLayer = getBackgroundLayerById(persistedDocument, layerId);
+    if (!currentLayer) {
+      return;
+    }
+    const nextDocument = setBackgroundLayerVisibility(persistedDocument, layerId, !currentLayer.visible);
+    if (!nextDocument) {
+      return;
+    }
+    await applyNextDocumentState(nextDocument, { preserveTool: true });
+  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
+
+  const handleToggleLayerLocked = useCallback(async (layerId: string) => {
+    if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const currentLayer = getBackgroundLayerById(persistedDocument, layerId);
+    if (!currentLayer) {
+      return;
+    }
+    const nextDocument = updateBackgroundLayer(persistedDocument, layerId, { locked: !currentLayer.locked });
+    if (!nextDocument) {
+      return;
+    }
+    await applyNextDocumentState(nextDocument, { preserveTool: true });
+  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
+
+  const handleRenameLayer = useCallback(async (layerId: string, name: string) => {
+    if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = updateBackgroundLayer(persistedDocument, layerId, { name });
+    if (!nextDocument) {
+      return;
+    }
+    await applyNextDocumentState(nextDocument, { preserveTool: true });
+  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
+
+  const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
+    if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
+    const nextDocument = updateBackgroundLayer(persistedDocument, layerId, { opacity });
+    if (!nextDocument) {
+      return;
+    }
+    await applyNextDocumentState(nextDocument, { preserveTool: true });
+  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
 
   const handleDone = useCallback(async () => {
     if (!scene) {
@@ -1925,8 +2342,17 @@ export function BackgroundCanvasEditor() {
       return;
     }
 
-    const chunks = { ...chunkDataRef.current };
-    const payloadSize = estimateSerializedChunkBytes(chunks);
+    const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current);
+    if (!persistedDocument) {
+      closeBackgroundEditor();
+      return;
+    }
+
+    const nextBackground = await buildBackgroundConfigFromDocument(persistedDocument, {
+      baseColor: backgroundColor,
+      scrollFactor: scene.background?.scrollFactor,
+    });
+    const payloadSize = estimateSerializedChunkBytes(nextBackground.chunks ?? {});
     if (payloadSize > LARGE_PAYLOAD_WARNING_BYTES) {
       const proceed = window.confirm('Background payload is large and may affect project size. Save anyway?');
       if (!proceed) {
@@ -1935,28 +2361,13 @@ export function BackgroundCanvasEditor() {
     }
 
     runInHistoryTransaction('scene:background-paint', () => {
-      if (Object.keys(chunks).length === 0) {
-        updateScene(scene.id, {
-          background: {
-            type: 'color',
-            value: backgroundColor,
-          },
-        });
-        return;
-      }
-
       updateScene(scene.id, {
-        background: buildTiledBackgroundConfig(chunks, {
-          chunkSize,
-          softChunkLimit,
-          hardChunkLimit,
-          baseColor: backgroundColor,
-        }),
+        background: nextBackground,
       });
     });
 
     closeBackgroundEditor();
-  }, [backgroundColor, chunkSize, closeBackgroundEditor, flushActiveInteraction, hardChunkLimit, scene, softChunkLimit, updateScene]);
+  }, [backgroundColor, closeBackgroundEditor, flushActiveInteraction, persistActiveLayerIntoDocument, scene, updateScene]);
 
   const handleCancel = useCallback(() => {
     if (rasterOperationBusyRef.current) {
@@ -2004,11 +2415,17 @@ export function BackgroundCanvasEditor() {
         return true;
       }
       if (event.key.toLowerCase() === 'e' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (editorMode !== 'bitmap') {
+          return false;
+        }
         event.preventDefault();
         setTool('eraser');
         return true;
       }
       if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (editorMode !== 'bitmap') {
+          return false;
+        }
         event.preventDefault();
         setTool('fill');
         return true;
@@ -2040,15 +2457,28 @@ export function BackgroundCanvasEditor() {
       }
       if (event.key === '[' && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
-        setBrushSize((value) => Math.max(1, value - 2));
+        if (editorMode === 'bitmap') {
+          setBrushSize((value) => Math.max(1, value - 2));
+        } else {
+          setVectorStyle((value) => ({ ...value, strokeWidth: Math.max(1, value.strokeWidth - 1) }));
+        }
         return true;
       }
       if (event.key === ']' && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
-        setBrushSize((value) => Math.min(256, value + 2));
+        if (editorMode === 'bitmap') {
+          setBrushSize((value) => Math.min(256, value + 2));
+        } else {
+          setVectorStyle((value) => ({ ...value, strokeWidth: Math.min(256, value.strokeWidth + 1) }));
+        }
         return true;
       }
       if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (editorMode === 'vector' && vectorCanvasRef.current?.deleteSelection()) {
+          event.preventDefault();
+          markActiveLayerDirty();
+          return true;
+        }
         if (deleteFloatingSelection()) {
           event.preventDefault();
           return true;
@@ -2056,6 +2486,11 @@ export function BackgroundCanvasEditor() {
       }
       if (event.key === 'Escape') {
         event.preventDefault();
+        if (editorMode === 'vector' && isDrawing && isShapeTool(tool)) {
+          vectorCanvasRef.current?.cancelShape();
+          setIsDrawing(false);
+          return true;
+        }
         if (selectionMarqueeRef.current) {
           selectionMarqueeRef.current = null;
           setIsDrawing(false);
@@ -2085,7 +2520,7 @@ export function BackgroundCanvasEditor() {
 
     registerBackgroundShortcutHandler(shortcutHandler);
     return () => registerBackgroundShortcutHandler(null);
-  }, [commitFloatingSelection, deleteFloatingSelection, handleCancel, handleDone, redo, registerBackgroundShortcutHandler, undo]);
+  }, [commitFloatingSelection, deleteFloatingSelection, editorMode, handleCancel, handleDone, isDrawing, markActiveLayerDirty, redo, registerBackgroundShortcutHandler, tool, undo]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -2098,6 +2533,9 @@ export function BackgroundCanvasEditor() {
   }, [hasUnsavedBackgroundChanges]);
 
   useEffect(() => {
+    if (editorMode === 'vector') {
+      return;
+    }
     if (tool === 'select') {
       return;
     }
@@ -2112,7 +2550,7 @@ export function BackgroundCanvasEditor() {
       selectionMarqueeRef.current = null;
       setRevision((value) => value + 1);
     }
-  }, [commitFloatingSelection, tool]);
+  }, [commitFloatingSelection, editorMode, tool]);
 
   useEffect(() => {
     if (!backgroundEditorOpen) return;
@@ -2133,9 +2571,24 @@ export function BackgroundCanvasEditor() {
     }
 
     if (event.button === 0) {
+      if (activeLayer?.locked) {
+        event.preventDefault();
+        return;
+      }
       const world = screenToWorld(event.clientX, event.clientY);
       const screen = getScreenPoint(event.clientX, event.clientY);
       pointerWorldRef.current = world;
+      if (editorMode === 'vector') {
+        if (isShapeTool(tool)) {
+          const didStart = vectorCanvasRef.current?.beginShape(tool, world) ?? false;
+          if (didStart) {
+            setIsDrawing(true);
+            (event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId);
+            event.preventDefault();
+          }
+        }
+        return;
+      }
       if (tool === 'select') {
         const floatingSelection = floatingSelectionRef.current;
         if (floatingSelection) {
@@ -2250,11 +2703,13 @@ export function BackgroundCanvasEditor() {
       event.preventDefault();
     }
   }, [
+    activeLayer?.locked,
     applyFill,
     beginMutationSession,
     camera.x,
     camera.y,
     commitFloatingSelection,
+    editorMode,
     enqueueRasterOperation,
     getScreenPoint,
     hitTestFloatingSelection,
@@ -2281,6 +2736,11 @@ export function BackgroundCanvasEditor() {
         zoom,
         'up',
       ));
+      return;
+    }
+
+    if (editorMode === 'vector' && isDrawing && isShapeTool(tool)) {
+      vectorCanvasRef.current?.updateShape(world);
       return;
     }
 
@@ -2354,11 +2814,22 @@ export function BackgroundCanvasEditor() {
     if (!stroke || !stroke.lastWorld) return;
     paintSegment(stroke.lastWorld, world, stroke);
     stroke.lastWorld = world;
-  }, [getScreenPoint, paintSegment, screenToWorld, screenToWorldFromCanvasPoint, zoom]);
+  }, [editorMode, getScreenPoint, isDrawing, paintSegment, screenToWorld, screenToWorldFromCanvasPoint, tool, zoom]);
 
   const onPointerUp = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
     panSessionRef.current = null;
     setIsPanning(false);
+    if (editorMode === 'vector' && isShapeTool(tool) && isDrawing) {
+      vectorCanvasRef.current?.commitShape();
+      setIsDrawing(false);
+      markActiveLayerDirty();
+      try {
+        (event.currentTarget as HTMLCanvasElement).releasePointerCapture(event.pointerId);
+      } catch {
+        // Ignore if pointer capture already released.
+      }
+      return;
+    }
     if (floatingSelectionTransformRef.current) {
       floatingSelectionTransformRef.current = null;
       setIsDrawing(false);
@@ -2392,14 +2863,14 @@ export function BackgroundCanvasEditor() {
     } catch {
       // Ignore if pointer capture already released.
     }
-  }, [commitShapeDraft, enqueueRasterOperation, extractFloatingSelection, finalizeStroke]);
+  }, [commitShapeDraft, editorMode, enqueueRasterOperation, extractFloatingSelection, finalizeStroke, isDrawing, markActiveLayerDirty, tool]);
 
   const onPointerLeave = useCallback(() => {
     pointerWorldRef.current = null;
     setRevision((value) => value + 1);
   }, []);
 
-  const onWheel = useCallback((event: ReactWheelEvent<HTMLCanvasElement>) => {
+  const onWheel = useCallback((event: ReactWheelEvent<HTMLElement>) => {
     event.preventDefault();
     const host = hostRef.current;
     if (!host) return;
@@ -2428,16 +2899,36 @@ export function BackgroundCanvasEditor() {
     if (busy || !isBackgroundToolbarTool(nextTool)) {
       return;
     }
-    setTool(nextTool);
-  }, [busy]);
+    setTool(ensureToolForBackgroundMode(editorMode, nextTool));
+  }, [busy, editorMode]);
 
-  const handleToolbarMoveOrder = useCallback(() => {}, []);
-  const handleToolbarFlipSelection = useCallback((_axis: SelectionFlipAxis) => {}, []);
-  const handleToolbarRotateSelection = useCallback(() => {}, []);
+  const handleToolbarMoveOrder = useCallback((action: MoveOrderAction) => {
+    if (editorMode !== 'vector') {
+      return;
+    }
+    vectorCanvasRef.current?.moveSelectionOrder(action);
+    markActiveLayerDirty();
+  }, [editorMode, markActiveLayerDirty]);
+  const handleToolbarFlipSelection = useCallback((axis: SelectionFlipAxis) => {
+    if (editorMode !== 'vector') {
+      return;
+    }
+    vectorCanvasRef.current?.flipSelection(axis);
+    markActiveLayerDirty();
+  }, [editorMode, markActiveLayerDirty]);
+  const handleToolbarRotateSelection = useCallback(() => {
+    if (editorMode !== 'vector') {
+      return;
+    }
+    vectorCanvasRef.current?.rotateSelection();
+    markActiveLayerDirty();
+  }, [editorMode, markActiveLayerDirty]);
   const handleToolbarVectorHandleModeChange = useCallback(() => {}, []);
   const handleToolbarAlign = useCallback(() => {}, []);
   const handleToolbarTextStyleChange = useCallback(() => {}, []);
-  const handleToolbarVectorStyleChange = useCallback(() => {}, []);
+  const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+    setVectorStyle((prev) => ({ ...prev, ...updates }));
+  }, []);
 
   const handleToolbarColorChange = useCallback((color: string) => {
     if (busy) {
@@ -2483,7 +2974,7 @@ export function BackgroundCanvasEditor() {
       ref={rootRef}
       className="fixed inset-0 z-[100050] bg-background flex flex-col overscroll-none"
       data-testid="background-editor-root"
-      data-chunk-count={chunkKeySetRef.current.size}
+      data-chunk-count={activeChunkCount}
     >
       <div className="h-12 border-b bg-card px-3 flex items-center gap-2">
         <Button variant="default" size="sm" onClick={handleDone} disabled={busy}>
@@ -2510,7 +3001,7 @@ export function BackgroundCanvasEditor() {
         </Button>
         <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
           {isRasterOperationBusy && <span>Processing</span>}
-          {hasFloatingSelection && <span>Selection</span>}
+          {(hasFloatingSelection || hasVectorSelection) && <span>Selection</span>}
           {isPanning && <span>Panning</span>}
         </div>
       </div>
@@ -2521,72 +3012,109 @@ export function BackgroundCanvasEditor() {
         </div>
       )}
 
-      <div ref={hostRef} className="flex-1 min-h-0 relative overflow-hidden bg-[#060a14]">
-        <CanvasViewportOverlay
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onUndo={undo}
-          onRedo={redo}
-          zoom={zoom}
-          minZoom={MIN_ZOOM}
-          maxZoom={MAX_ZOOM}
-          onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
-          onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
-          onZoomToActualSize={handleZoomToActualSize}
-          onZoomToFit={fitToContent}
-          onZoomToSelection={handleZoomToSelection}
-          canZoomToSelection={hasFloatingSelection}
-        />
-        <CostumeToolbar
-          editorMode="bitmap"
-          activeTool={tool}
-          hasActiveSelection={hasFloatingSelection}
-          toolVisibility={{
-            showSelectTool: false,
-            showShapeTools: false,
-          }}
-          showModeSwitcher={false}
-          selectionActionsEnabled={false}
-          showTextControls={false}
-          isVectorPointEditing={false}
-          hasSelectedVectorPoints={false}
-          bitmapBrushKind={bitmapBrushKind}
-          brushColor={brushColor}
-          brushSize={brushSize}
-          bitmapFillStyle={bitmapFillStyle}
-          bitmapShapeStyle={bitmapShapeStyle}
-          textStyle={BACKGROUND_TOOLBAR_TEXT_STYLE}
-          vectorStyle={BACKGROUND_TOOLBAR_VECTOR_STYLE}
-          vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
-          previewScale={zoom}
-          onToolChange={handleToolbarToolChange}
-          onMoveOrder={handleToolbarMoveOrder}
-          onFlipSelection={handleToolbarFlipSelection}
-          onRotateSelection={handleToolbarRotateSelection}
-          vectorHandleMode={BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE}
-          onVectorHandleModeChange={handleToolbarVectorHandleModeChange}
-          onAlign={handleToolbarAlign}
-          alignDisabled
-          onColorChange={handleToolbarColorChange}
-          onBitmapBrushKindChange={handleToolbarBitmapBrushKindChange}
-          onBrushSizeChange={handleToolbarBrushSizeChange}
-          onBitmapFillStyleChange={handleToolbarBitmapFillStyleChange}
-          onBitmapShapeStyleChange={handleToolbarBitmapShapeStyleChange}
-          onTextStyleChange={handleToolbarTextStyleChange}
-          onVectorStyleChange={handleToolbarVectorStyleChange}
-        />
-        <canvas
-          ref={canvasRef}
-          data-testid="background-editor-canvas"
-          className="w-full h-full touch-none"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onPointerLeave={onPointerLeave}
+      <div className="flex flex-1 min-h-0">
+        <div
+          ref={hostRef}
+          className="relative flex-1 min-h-0 overflow-hidden bg-[#060a14]"
           onWheel={onWheel}
           onContextMenu={(event) => event.preventDefault()}
-        />
+        >
+          <CanvasViewportOverlay
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={undo}
+            onRedo={redo}
+            zoom={zoom}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+            onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
+            onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
+            onZoomToActualSize={handleZoomToActualSize}
+            onZoomToFit={fitToContent}
+            onZoomToSelection={handleZoomToSelection}
+            canZoomToSelection={editorMode === 'bitmap' && hasFloatingSelection}
+          />
+          <CostumeToolbar
+            editorMode={editorMode}
+            activeTool={tool}
+            hasActiveSelection={editorMode === 'bitmap' ? hasFloatingSelection : hasVectorSelection}
+            toolVisibility={{
+              showSelectTool: true,
+              showPenTool: false,
+              showTextTool: false,
+              showShapeTools: true,
+            }}
+            showModeSwitcher={false}
+            selectionActionsEnabled={editorMode === 'vector'}
+            showTextControls={false}
+            isVectorPointEditing={false}
+            hasSelectedVectorPoints={false}
+            bitmapBrushKind={bitmapBrushKind}
+            brushColor={brushColor}
+            brushSize={brushSize}
+            bitmapFillStyle={bitmapFillStyle}
+            bitmapShapeStyle={bitmapShapeStyle}
+            textStyle={BACKGROUND_TOOLBAR_TEXT_STYLE}
+            vectorStyle={vectorStyle}
+            vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
+            previewScale={zoom}
+            onToolChange={handleToolbarToolChange}
+            onMoveOrder={handleToolbarMoveOrder}
+            onFlipSelection={handleToolbarFlipSelection}
+            onRotateSelection={handleToolbarRotateSelection}
+            vectorHandleMode={BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE}
+            onVectorHandleModeChange={handleToolbarVectorHandleModeChange}
+            onAlign={handleToolbarAlign}
+            alignDisabled
+            onColorChange={handleToolbarColorChange}
+            onBitmapBrushKindChange={handleToolbarBitmapBrushKindChange}
+            onBrushSizeChange={handleToolbarBrushSizeChange}
+            onBitmapFillStyleChange={handleToolbarBitmapFillStyleChange}
+            onBitmapShapeStyleChange={handleToolbarBitmapShapeStyleChange}
+            onTextStyleChange={handleToolbarTextStyleChange}
+            onVectorStyleChange={handleToolbarVectorStyleChange}
+          />
+          <canvas
+            ref={canvasRef}
+            data-testid="background-editor-canvas"
+            className="absolute inset-0 size-full touch-none"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+            onPointerLeave={onPointerLeave}
+          />
+          {isVectorBackgroundLayer(activeLayer) ? (
+            <BackgroundVectorCanvas
+              ref={vectorCanvasRef}
+              layer={activeLayer as BackgroundVectorLayer}
+              viewport={viewport}
+              camera={camera}
+              zoom={zoom}
+              activeTool={toSupportedVectorTool(tool)}
+              vectorStyle={vectorStyle}
+              interactive={editorMode === 'vector'}
+              onDirty={markActiveLayerDirty}
+              onSelectionChange={setHasVectorSelection}
+            />
+          ) : null}
+        </div>
+        {backgroundDocument ? (
+          <BackgroundLayerPanel
+            document={backgroundDocument}
+            activeLayer={activeLayer}
+            onSelectLayer={(layerId) => { void handleSelectLayer(layerId); }}
+            onAddBitmapLayer={() => { void handleAddBitmapLayer(); }}
+            onAddVectorLayer={() => { void handleAddVectorLayer(); }}
+            onDuplicateLayer={(layerId) => { void handleDuplicateLayer(layerId); }}
+            onDeleteLayer={(layerId) => { void handleDeleteLayer(layerId); }}
+            onMoveLayer={(layerId, direction) => { void handleMoveLayer(layerId, direction); }}
+            onToggleVisibility={(layerId) => { void handleToggleLayerVisibility(layerId); }}
+            onToggleLocked={(layerId) => { void handleToggleLayerLocked(layerId); }}
+            onRenameLayer={(layerId, name) => { void handleRenameLayer(layerId, name); }}
+            onOpacityChange={(layerId, opacity) => { void handleLayerOpacityChange(layerId, opacity); }}
+          />
+        ) : null}
       </div>
     </div>
   );

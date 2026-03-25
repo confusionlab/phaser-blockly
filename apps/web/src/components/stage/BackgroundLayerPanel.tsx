@@ -1,14 +1,14 @@
-import type { CostumeDocument, CostumeLayer } from '@/types';
-import { MAX_COSTUME_LAYERS, getCostumeLayerIndex } from '@/lib/costume/costumeDocument';
-import {
-  getCostumeLayerThumbnailSignature,
-  renderCostumeLayerThumbnailToDataUrl,
-} from '@/lib/costume/costumeDocumentRender';
+import type { BackgroundDocument, BackgroundLayer } from '@/types';
 import { LayerPanel } from '@/components/editors/shared/LayerPanel';
+import { MAX_BACKGROUND_LAYERS, getBackgroundLayerIndex } from '@/lib/background/backgroundDocument';
+import {
+  getBackgroundLayerThumbnailSignature,
+  renderBackgroundLayerThumbnailToDataUrl,
+} from '@/lib/background/backgroundDocumentRender';
 
-interface CostumeLayerPanelProps {
-  document: CostumeDocument;
-  activeLayer: CostumeLayer | null;
+interface BackgroundLayerPanelProps {
+  document: BackgroundDocument;
+  activeLayer: BackgroundLayer | null;
   onSelectLayer: (layerId: string) => void;
   onAddBitmapLayer: () => void;
   onAddVectorLayer: () => void;
@@ -19,19 +19,21 @@ interface CostumeLayerPanelProps {
   onToggleLocked: (layerId: string) => void;
   onRenameLayer: (layerId: string, name: string) => void;
   onOpacityChange: (layerId: string, opacity: number) => void;
-  onMergeDown: (layerId: string) => void;
-  onRasterizeLayer: (layerId: string) => void;
 }
 
-export function CostumeLayerPanel(props: CostumeLayerPanelProps) {
+export function BackgroundLayerPanel(props: BackgroundLayerPanelProps) {
   return (
     <LayerPanel
       document={props.document}
       activeLayer={props.activeLayer}
-      maxLayers={MAX_COSTUME_LAYERS}
-      getLayerIndex={(layerId) => getCostumeLayerIndex(props.document, layerId)}
-      getLayerThumbnailSignature={(layer, size) => getCostumeLayerThumbnailSignature(layer as CostumeLayer, size)}
-      renderLayerThumbnailToDataUrl={(layer, size) => renderCostumeLayerThumbnailToDataUrl(layer as CostumeLayer, size)}
+      maxLayers={MAX_BACKGROUND_LAYERS}
+      getLayerIndex={(layerId) => getBackgroundLayerIndex(props.document, layerId)}
+      getLayerThumbnailSignature={(layer, size) => (
+        getBackgroundLayerThumbnailSignature(layer as BackgroundLayer, props.document.chunkSize, size)
+      )}
+      renderLayerThumbnailToDataUrl={(layer, size) => (
+        renderBackgroundLayerThumbnailToDataUrl(layer as BackgroundLayer, props.document.chunkSize, size)
+      )}
       onSelectLayer={props.onSelectLayer}
       onAddBitmapLayer={props.onAddBitmapLayer}
       onAddVectorLayer={props.onAddVectorLayer}
@@ -42,11 +44,6 @@ export function CostumeLayerPanel(props: CostumeLayerPanelProps) {
       onToggleLocked={props.onToggleLocked}
       onRenameLayer={props.onRenameLayer}
       onOpacityChange={props.onOpacityChange}
-      onMergeDown={props.onMergeDown}
-      onRasterizeLayer={props.onRasterizeLayer}
-      showMergeAction
-      showRasterizeAction
-      thumbnailTestId="costume-layer-thumbnail"
     />
   );
 }
