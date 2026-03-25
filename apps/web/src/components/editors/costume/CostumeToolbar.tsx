@@ -248,7 +248,7 @@ const ToolbarColorControl = memo(({
 
   return (
     <>
-      <div className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+      <div className="relative flex items-center gap-2">
         {labelDisplay === 'left' && (
           <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
         )}
