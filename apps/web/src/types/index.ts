@@ -164,7 +164,7 @@ export type CostumeLayer = CostumeBitmapLayer | CostumeVectorLayer;
 
 export interface CostumeDocument {
   version: 1;
-  activeLayerId: string | null;
+  activeLayerId: string;
   layers: CostumeLayer[];
 }
 

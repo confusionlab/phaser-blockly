@@ -188,7 +188,7 @@ export function CostumeEditor() {
   currentCostumeRef.current = currentCostume;
   const activeLayer = currentCostume ? getActiveCostumeLayer(currentCostume.document) : null;
   const currentCostumeLoadKey = currentCostume
-    ? `${currentCostume.id}:${currentCostume.document.activeLayerId ?? 'none'}`
+    ? `${currentCostume.id}:${currentCostume.document.activeLayerId}`
     : null;
   const currentSession = useMemo(() => {
     const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
@@ -588,7 +588,7 @@ export function CostumeEditor() {
           bounds: resolvedNextState.bounds,
           document: cloneCostumeDocument(nextDocument),
         };
-        currentCostumeIdRef.current = `${nextCostumeForCanvas.id}:${nextDocument.activeLayerId ?? 'none'}`;
+        currentCostumeIdRef.current = `${nextCostumeForCanvas.id}:${nextDocument.activeLayerId}`;
         await canvasRef.current.loadCostume(latestSession.key, nextCostumeForCanvas);
         loadedSessionRef.current = latestSession;
         const resolvedMode = canvasRef.current.getEditorMode();
@@ -1062,7 +1062,7 @@ export function CostumeEditor() {
   }, []);
 
   const handleToolChange = useCallback((tool: DrawingTool) => {
-    if (isLoadingRef.current || !activeLayer) {
+    if (isLoadingRef.current || !activeLayer || activeLayer.visible === false) {
       return;
     }
     setActiveTool(ensureToolForMode(editorMode, tool));
@@ -1114,7 +1114,7 @@ export function CostumeEditor() {
   }, [activeLayer?.locked, activeTool]);
 
   useEffect(() => {
-    if (activeLayer) {
+    if (activeLayer?.visible !== false) {
       return;
     }
     setHasCanvasSelection(false);
@@ -1131,7 +1131,7 @@ export function CostumeEditor() {
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!activeLayer) {
+      if (!activeLayer || activeLayer.visible === false) {
         return;
       }
       if (isLoadingRef.current) {
@@ -1318,7 +1318,7 @@ export function CostumeEditor() {
       />
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {activeLayer ? (
+        {activeLayer && activeLayer.visible ? (
           <CostumeToolbar
             editorMode={editorMode}
             activeTool={activeTool}

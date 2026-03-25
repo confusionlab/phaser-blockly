@@ -47,6 +47,6 @@ export const costumeLayerValidator = v.union(
 
 export const costumeDocumentValidator = v.object({
   version: v.literal(1),
-  activeLayerId: v.union(v.string(), v.null()),
+  activeLayerId: v.string(),
   layers: v.array(costumeLayerValidator),
 });

@@ -1356,9 +1356,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [isViewportPanning, setIsViewportPanning] = useState(false);
   const documentLayers = costumeDocument?.layers ?? [];
   const activeDocumentLayer = useMemo(() => getActiveCostumeLayer(costumeDocument), [costumeDocument]);
-  const activeLayerOpacity = activeDocumentLayer?.opacity ?? 0;
-  const activeLayerVisible = activeDocumentLayer?.visible ?? false;
-  const activeLayerLocked = activeDocumentLayer?.locked ?? true;
+  const activeLayerOpacity = activeDocumentLayer?.opacity ?? 1;
+  const activeLayerVisible = activeDocumentLayer?.visible ?? true;
+  const activeLayerLocked = activeDocumentLayer?.locked ?? false;
   const activeLayerIndex = useMemo(
     () => documentLayers.findIndex((layer) => layer.id === activeDocumentLayer?.id),
     [activeDocumentLayer?.id, documentLayers],
@@ -3144,9 +3144,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
       return null;
     }
-    if (!activeDocumentLayer) {
-      return null;
-    }
 
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) {
@@ -3175,7 +3172,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       activeLayerDataUrl,
       editorMode: mode,
     };
-  }, [activeDocumentLayer]);
+  }, []);
 
   const deleteSelection = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -3438,17 +3435,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     loadedSessionKeyRef.current = null;
 
     const activeLayer = getActiveCostumeLayer(costume.document);
-    if (!activeLayer) {
-      const loaded = await loadBitmapLayer('', false, requestId);
-      if (!loaded || !isLoadRequestActive(requestId)) return;
-      setEditorMode('bitmap');
-      loadedSessionKeyRef.current = sessionKey;
-      lastCommittedSnapshotRef.current = null;
-      saveHistory();
-      markCurrentSnapshotPersisted(sessionKey);
-      return;
-    }
-
     const requestedMode: CostumeEditorMode = activeLayer?.kind === 'bitmap' ? 'bitmap' : 'vector';
     const requestedBitmapSource = isBitmapCostumeLayer(activeLayer)
       ? activeLayer.bitmap.assetId ?? costume.assetId
