@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react';
 import {
   Canvas as FabricCanvas,
   BaseBrush,
@@ -1368,6 +1368,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [cameraCenter, setCameraCenter] = useState({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [isViewportPanning, setIsViewportPanning] = useState(false);
+  const activeLayerIndex = useMemo(
+    () => layerVisuals.findIndex((layerVisual) => layerVisual.isActive),
+    [layerVisuals],
+  );
+  const inactiveLayersBelowActive = useMemo(
+    () => layerVisuals.filter((layerVisual, index) => !layerVisual.isActive && (activeLayerIndex < 0 || index < activeLayerIndex)),
+    [activeLayerIndex, layerVisuals],
+  );
+  const inactiveLayersAboveActive = useMemo(
+    () => layerVisuals.filter((layerVisual, index) => !layerVisual.isActive && activeLayerIndex >= 0 && index > activeLayerIndex),
+    [activeLayerIndex, layerVisuals],
+  );
   const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const [canZoomToSelection, setCanZoomToSelection] = useState(false);
@@ -7695,39 +7707,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             transformOrigin: 'top left',
           }}
         >
-          {layerVisuals.map((layerVisual) => (
-            layerVisual.isActive ? (
-              <Fragment key={layerVisual.layerId}>
-                <canvas
-                  ref={fabricCanvasElementRef}
-                  width={CANVAS_SIZE}
-                  height={CANVAS_SIZE}
-                  style={{
-                    width: CANVAS_SIZE,
-                    height: CANVAS_SIZE,
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    opacity: activeLayerVisible ? activeLayerOpacity : 0,
-                  }}
-                />
-
-                <canvas
-                  ref={vectorStrokeCanvasRef}
-                  width={CANVAS_SIZE}
-                  height={CANVAS_SIZE}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: CANVAS_SIZE,
-                    height: CANVAS_SIZE,
-                    pointerEvents: 'none',
-                    opacity: activeLayerVisible ? activeLayerOpacity : 0,
-                  }}
-                />
-              </Fragment>
-            ) : (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+            }}
+          >
+            {inactiveLayersBelowActive.map((layerVisual) => (
               <img
                 key={layerVisual.layerId}
                 ref={(node) => {
@@ -7751,8 +7739,79 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
                   opacity: layerVisual.visible ? layerVisual.opacity : 0,
                 }}
               />
-            )
-          ))}
+            ))}
+          </div>
+
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+            }}
+          >
+            <canvas
+              ref={fabricCanvasElementRef}
+              width={CANVAS_SIZE}
+              height={CANVAS_SIZE}
+              style={{
+                width: CANVAS_SIZE,
+                height: CANVAS_SIZE,
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                opacity: activeLayerVisible ? activeLayerOpacity : 0,
+              }}
+            />
+
+            <canvas
+              ref={vectorStrokeCanvasRef}
+              width={CANVAS_SIZE}
+              height={CANVAS_SIZE}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: CANVAS_SIZE,
+                height: CANVAS_SIZE,
+                pointerEvents: 'none',
+                opacity: activeLayerVisible ? activeLayerOpacity : 0,
+              }}
+            />
+          </div>
+
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+            }}
+          >
+            {inactiveLayersAboveActive.map((layerVisual) => (
+              <img
+                key={layerVisual.layerId}
+                ref={(node) => {
+                  if (node) {
+                    inactiveLayerImageRefs.current.set(layerVisual.layerId, node);
+                  } else {
+                    inactiveLayerImageRefs.current.delete(layerVisual.layerId);
+                  }
+                }}
+                src={layerVisual.src ?? undefined}
+                alt=""
+                aria-hidden="true"
+                style={{
+                  width: CANVAS_SIZE,
+                  height: CANVAS_SIZE,
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  opacity: layerVisual.visible ? layerVisual.opacity : 0,
+                }}
+              />
+            ))}
+          </div>
 
           <canvas
             ref={vectorGuideCanvasRef}
