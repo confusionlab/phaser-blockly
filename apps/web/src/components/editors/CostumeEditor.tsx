@@ -523,17 +523,24 @@ export function CostumeEditor() {
       currentCostumeIdRef.current = null;
     }
 
+    const previousState = getWorkingPersistedState();
+    // Drive the editor UI from the next working state before the store round-trip
+    // so layer selection and mode switches do not briefly render the old layer.
+    setWorkingPersistedState(session, state);
+
     const didUpdate = updateCostumeFromEditor(session, state, {
       recordHistory: options.recordHistory,
     });
-    if (didUpdate) {
-      setWorkingPersistedState(session, state);
-      if (options.refreshRuntimePreview === true) {
-        scheduleFlattenedPreviewRefreshRef.current(session, state.document);
-      }
+    if (!didUpdate) {
+      setWorkingPersistedState(session, previousState);
+      return false;
     }
-    return didUpdate;
-  }, [setWorkingPersistedState, updateCostumeFromEditor]);
+
+    if (options.refreshRuntimePreview === true) {
+      scheduleFlattenedPreviewRefreshRef.current(session, state.document);
+    }
+    return true;
+  }, [getWorkingPersistedState, setWorkingPersistedState, updateCostumeFromEditor]);
 
   const scheduleFlattenedPreviewRefresh = useCallback((
     session: CostumeEditorSession,

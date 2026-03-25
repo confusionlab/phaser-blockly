@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const COSTUME_EDITOR_TEST_URL = process.env.POCHA_E2E_BASE_URL ?? '/';
 
@@ -61,6 +61,63 @@ async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) 
   await page.mouse.move(targetX, targetY);
   await page.mouse.down();
   await page.mouse.up();
+}
+
+async function expectLayerThumbnail(button: Locator): Promise<void> {
+  const thumbnailImage = button.getByTestId('costume-layer-thumbnail').locator('img');
+  await expect.poll(async () => {
+    if (await thumbnailImage.count() === 0) {
+      return '';
+    }
+    return await thumbnailImage.first().getAttribute('src');
+  }, { timeout: 10000 }).toMatch(/^data:image\/png;base64,/);
+}
+
+async function startLayerSelectionObserver(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const readButtons = () => Array.from(
+      document.querySelectorAll('button[aria-pressed]'),
+    ).map((button) => ({
+      label: button.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      pressed: button.getAttribute('aria-pressed') === 'true',
+    }));
+
+    const previousObserver = (window as typeof window & {
+      __costumeLayerSelectionObserver?: MutationObserver;
+    }).__costumeLayerSelectionObserver;
+    previousObserver?.disconnect();
+
+    (window as typeof window & {
+      __costumeLayerSelectionTimeline?: Array<Array<{ label: string; pressed: boolean }>>;
+    }).__costumeLayerSelectionTimeline = [readButtons()];
+
+    const observer = new MutationObserver(() => {
+      (window as typeof window & {
+        __costumeLayerSelectionTimeline?: Array<Array<{ label: string; pressed: boolean }>>;
+      }).__costumeLayerSelectionTimeline?.push(readButtons());
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['aria-pressed'],
+    });
+    (window as typeof window & {
+      __costumeLayerSelectionObserver?: MutationObserver;
+    }).__costumeLayerSelectionObserver = observer;
+  });
+}
+
+async function stopLayerSelectionObserver(page: Page) {
+  return await page.evaluate(() => {
+    const runtimeWindow = window as typeof window & {
+      __costumeLayerSelectionObserver?: MutationObserver;
+      __costumeLayerSelectionTimeline?: Array<Array<{ label: string; pressed: boolean }>>;
+    };
+    runtimeWindow.__costumeLayerSelectionObserver?.disconnect();
+    delete runtimeWindow.__costumeLayerSelectionObserver;
+    return runtimeWindow.__costumeLayerSelectionTimeline ?? [];
+  });
 }
 
 async function waitForCostumeCanvasReady(page: Page): Promise<void> {
@@ -177,5 +234,47 @@ test.describe('Costume editor tools', () => {
 
     await expect(layer1Button).toHaveAttribute('aria-pressed', 'true');
     await expect(layer2Button).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('layer panel renders thumbnails for bitmap and vector layers', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const bitmapLayerButton = page.getByRole('button', { name: /^layer 1 bitmap$/i });
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.36, 0.34);
+    await expectLayerThumbnail(bitmapLayerButton);
+
+    await page.getByRole('button', { name: /^vector$/i }).click();
+    const vectorLayerButton = page.getByRole('button', { name: /^layer 2 vector$/i });
+    await expect(vectorLayerButton).toBeVisible({ timeout: 10000 });
+    await waitForCostumeCanvasReady(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.54, 0.28, 0.80, 0.54);
+    await expectLayerThumbnail(vectorLayerButton);
+  });
+
+  test('newly created layer becomes active without an intermediate old-selection frame', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await startLayerSelectionObserver(page);
+    await page.getByRole('button', { name: /^vector$/i }).click();
+
+    const layer2Button = page.getByRole('button', { name: /^layer 2 vector$/i });
+    const layer1Button = page.getByRole('button', { name: /^layer 1 bitmap$/i });
+    await expect(layer2Button).toHaveAttribute('aria-pressed', 'true');
+    await expect(layer1Button).toHaveAttribute('aria-pressed', 'false');
+
+    const timeline = await stopLayerSelectionObserver(page);
+    const invalidSnapshot = timeline.find((snapshot) => {
+      const layer1 = snapshot.find((entry) => /^layer 1 bitmap$/i.test(entry.label));
+      const layer2 = snapshot.find((entry) => /^layer 2 vector$/i.test(entry.label));
+      return !!layer2 && (layer2.pressed !== true || layer1?.pressed === true);
+    });
+
+    expect(invalidSnapshot).toBeUndefined();
   });
 });

@@ -11,9 +11,11 @@ import type { RenderableCostumePreviewLayer } from './costumeDocumentPreviewProt
 
 const MAX_CACHED_COSTUME_LAYER_CANVASES = 128;
 const MAX_CACHED_COSTUME_LAYER_PREVIEW_SOURCES = 128;
+const MAX_CACHED_COSTUME_LAYER_THUMBNAILS = 256;
 const MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS = 128;
 const layerCanvasCache = new Map<string, Promise<HTMLCanvasElement>>();
 const layerPreviewSourceCache = new Map<string, Promise<string | null>>();
+const layerThumbnailCache = new Map<string, Promise<string | null>>();
 const documentPreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
 const documentPreviewValueCache = new Map<string, CostumeDocumentPreview>();
 
@@ -100,6 +102,14 @@ export function getCostumeLayerPreviewSignature(layer: CostumeLayer): string {
   ].join('|');
 }
 
+export function getCostumeLayerThumbnailSignature(
+  layer: CostumeLayer,
+  size: number,
+): string {
+  const normalizedSize = Math.max(1, Math.round(size));
+  return `thumb:${normalizedSize}:${getCostumeLayerRenderSignature(layer) ?? `${layer.kind}:empty`}`;
+}
+
 export function getCostumeDocumentPreviewSignature(document: CostumeDocument): string {
   return document.layers
     .map((layer) => getCostumeLayerPreviewSignature(layer))
@@ -154,6 +164,84 @@ export async function renderCostumeLayerToDataUrl(layer: CostumeLayer): Promise<
     return null;
   }
   return layerCanvas.toDataURL('image/png');
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function drawLayerThumbnail(
+  layerCanvas: HTMLCanvasElement,
+  size: number,
+): string | null {
+  const bounds = calculateBoundsFromCanvas(layerCanvas, 0);
+  if (!bounds) {
+    return null;
+  }
+
+  const normalizedSize = Math.max(1, Math.round(size));
+  const thumbnailCanvas = document.createElement('canvas');
+  thumbnailCanvas.width = normalizedSize;
+  thumbnailCanvas.height = normalizedSize;
+  const thumbnailCtx = thumbnailCanvas.getContext('2d');
+  if (!thumbnailCtx) {
+    return null;
+  }
+
+  const maxBoundSize = Math.max(bounds.width, bounds.height);
+  const padding = Math.max(12, Math.round(maxBoundSize * 0.18));
+  const sourceSize = Math.min(
+    COSTUME_CANVAS_SIZE,
+    Math.max(bounds.width, bounds.height) + (padding * 2),
+  );
+  const centerX = bounds.x + (bounds.width / 2);
+  const centerY = bounds.y + (bounds.height / 2);
+  const maxSourceX = Math.max(0, layerCanvas.width - sourceSize);
+  const maxSourceY = Math.max(0, layerCanvas.height - sourceSize);
+  const sourceX = clampNumber(centerX - (sourceSize / 2), 0, maxSourceX);
+  const sourceY = clampNumber(centerY - (sourceSize / 2), 0, maxSourceY);
+
+  thumbnailCtx.clearRect(0, 0, normalizedSize, normalizedSize);
+  thumbnailCtx.imageSmoothingEnabled = true;
+  thumbnailCtx.drawImage(
+    layerCanvas,
+    sourceX,
+    sourceY,
+    sourceSize,
+    sourceSize,
+    0,
+    0,
+    normalizedSize,
+    normalizedSize,
+  );
+  return thumbnailCanvas.toDataURL('image/png');
+}
+
+export async function renderCostumeLayerThumbnailToDataUrl(
+  layer: CostumeLayer,
+  size = 48,
+): Promise<string | null> {
+  const cacheKey = getCostumeLayerThumbnailSignature(layer, size);
+  const cached = layerThumbnailCache.get(cacheKey);
+  if (cached) {
+    return await cached;
+  }
+
+  const pending = (async (): Promise<string | null> => {
+    const layerCanvas = await renderCostumeLayerToCanvas(layer);
+    if (!layerCanvas) {
+      return null;
+    }
+
+    return drawLayerThumbnail(layerCanvas, size);
+  })();
+
+  return await rememberCachedValue(
+    layerThumbnailCache,
+    cacheKey,
+    pending,
+    MAX_CACHED_COSTUME_LAYER_THUMBNAILS,
+  );
 }
 
 async function renderCostumeLayerToPreviewSource(layer: CostumeLayer): Promise<string | null> {
