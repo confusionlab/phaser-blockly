@@ -321,61 +321,12 @@ export function updateCostumeLayer(
   return nextDocument;
 }
 
-function getNearestVisibleLayerId(
-  document: CostumeDocument,
-  anchorIndex: number,
-): string | null {
-  if (document.layers.length === 0) {
-    return null;
-  }
-
-  const clampedAnchorIndex = Math.max(0, Math.min(document.layers.length - 1, anchorIndex));
-  const anchoredLayer = document.layers[clampedAnchorIndex];
-  if (anchoredLayer?.visible) {
-    return anchoredLayer.id;
-  }
-
-  for (let offset = 1; offset < document.layers.length; offset += 1) {
-    const belowLayer = document.layers[clampedAnchorIndex - offset];
-    if (belowLayer?.visible) {
-      return belowLayer.id;
-    }
-
-    const aboveLayer = document.layers[clampedAnchorIndex + offset];
-    if (aboveLayer?.visible) {
-      return aboveLayer.id;
-    }
-  }
-
-  return null;
-}
-
 export function setCostumeLayerVisibility(
   document: CostumeDocument,
   layerId: string,
   visible: boolean,
 ): CostumeDocument | null {
-  const layerIndex = getCostumeLayerIndex(document, layerId);
-  if (layerIndex < 0) {
-    return null;
-  }
-
-  const nextDocument = updateCostumeLayer(document, layerId, { visible });
-  if (!nextDocument) {
-    return null;
-  }
-
-  const activeLayer = getCostumeLayerById(nextDocument, nextDocument.activeLayerId);
-  if (activeLayer?.visible) {
-    return nextDocument;
-  }
-
-  const nextActiveLayerId = getNearestVisibleLayerId(nextDocument, layerIndex);
-  if (nextActiveLayerId) {
-    nextDocument.activeLayerId = nextActiveLayerId;
-  }
-
-  return nextDocument;
+  return updateCostumeLayer(document, layerId, { visible });
 }
 
 export interface ActiveLayerCanvasState {

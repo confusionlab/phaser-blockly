@@ -142,6 +142,7 @@ export function CostumeEditor() {
   } = useEditorStore();
 
   const currentCostumeIdRef = useRef<string | null>(null);
+  const currentCostumeRef = useRef<Costume | undefined>(undefined);
   const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null }>({
     sceneId: null,
     objectId: null,
@@ -169,6 +170,7 @@ export function CostumeEditor() {
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
   const currentCostume = costumes[currentCostumeIndex];
+  currentCostumeRef.current = currentCostume;
   const activeLayer = currentCostume ? getActiveCostumeLayer(currentCostume.document) : null;
   const currentCostumeLoadKey = currentCostume
     ? `${currentCostume.id}:${currentCostume.document.activeLayerId}`
@@ -470,6 +472,7 @@ export function CostumeEditor() {
     ) => Promise<CostumeEditorPersistedState['document'] | null> | CostumeEditorPersistedState['document'] | null,
     options: {
       forceReload?: boolean;
+      forceReloadOnActiveLayerChange?: boolean;
       recordHistory?: boolean;
       renderDocument?: boolean;
       replaceCurrentHistoryState?: boolean;
@@ -517,6 +520,13 @@ export function CostumeEditor() {
         return false;
       }
 
+      const shouldReloadCanvas =
+        options.forceReload === true ||
+        (
+          options.forceReloadOnActiveLayerChange === true &&
+          baseState.document.activeLayerId !== nextDocument.activeLayerId
+        );
+
       if (options.recordHistory === false) {
         if (options.replaceCurrentHistoryState) {
           replaceDocumentHistoryHead(resolvedNextState);
@@ -525,10 +535,30 @@ export function CostumeEditor() {
         pushDocumentHistory(resolvedNextState);
       }
 
-      return applyDocumentHistoryState(latestSession, resolvedNextState, {
+      const didApply = applyDocumentHistoryState(latestSession, resolvedNextState, {
         recordHistory: options.recordHistory,
-        forceReload: options.forceReload,
+        forceReload: false,
       });
+      if (!didApply) {
+        return false;
+      }
+
+      if (shouldReloadCanvas && canvasRef.current && currentCostumeRef.current) {
+        const nextCostumeForCanvas: Costume = {
+          ...currentCostumeRef.current,
+          assetId: resolvedNextState.assetId,
+          bounds: resolvedNextState.bounds,
+          document: cloneCostumeDocument(nextDocument),
+        };
+        currentCostumeIdRef.current = `${nextCostumeForCanvas.id}:${nextDocument.activeLayerId}`;
+        await canvasRef.current.loadCostume(latestSession.key, nextCostumeForCanvas);
+        loadedSessionRef.current = latestSession;
+        const resolvedMode = canvasRef.current.getEditorMode();
+        setEditorMode(resolvedMode);
+        setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
+      }
+
+      return true;
     };
 
     const queuedCommit = documentMutationChainRef.current.then(runCommit, runCommit);
@@ -867,8 +897,6 @@ export function CostumeEditor() {
         return null;
       }
       return setCostumeLayerVisibility(working.document, layerId, !layer.visible);
-    }, {
-      forceReload: true,
     });
   }, [commitDocumentMutation]);
 

@@ -9,9 +9,8 @@ import {
 } from '../src/lib/costume/costumeDocument';
 
 test.describe('costume document visibility', () => {
-  test('moves the active layer to a visible neighbor when hiding the active layer', () => {
+  test('keeps the active layer selected when hiding the active layer', () => {
     let document = createBlankCostumeDocument();
-    const bottomLayer = document.layers[0];
     const middleLayer = createBitmapLayer({ name: 'Layer 2' });
     const topLayer = createVectorLayer({ name: 'Layer 3' });
 
@@ -22,7 +21,7 @@ test.describe('costume document visibility', () => {
     const nextDocument = setCostumeLayerVisibility(document, middleLayer.id, false);
     expect(nextDocument).not.toBeNull();
     expect(nextDocument?.layers.find((layer) => layer.id === middleLayer.id)?.visible).toBe(false);
-    expect(nextDocument?.activeLayerId).toBe(bottomLayer.id);
+    expect(nextDocument?.activeLayerId).toBe(middleLayer.id);
   });
 
   test('keeps the active layer when toggling another layer visibility', () => {
@@ -37,7 +36,7 @@ test.describe('costume document visibility', () => {
     expect(nextDocument?.activeLayerId).toBe(activeLayer.id);
   });
 
-  test('promotes a newly visible layer when the current active layer is hidden', () => {
+  test('keeps the current active layer when revealing another layer while active is hidden', () => {
     let document = createBlankCostumeDocument();
     const firstLayer = document.layers[0];
     const secondLayer = createBitmapLayer({ name: 'Layer 2', visible: false });
@@ -50,7 +49,7 @@ test.describe('costume document visibility', () => {
 
     const nextDocument = setCostumeLayerVisibility(document, secondLayer.id, true);
     expect(nextDocument).not.toBeNull();
-    expect(nextDocument?.activeLayerId).toBe(secondLayer.id);
+    expect(nextDocument?.activeLayerId).toBe(firstLayer.id);
     expect(nextDocument?.layers.find((layer) => layer.id === secondLayer.id)?.visible).toBe(true);
   });
 
