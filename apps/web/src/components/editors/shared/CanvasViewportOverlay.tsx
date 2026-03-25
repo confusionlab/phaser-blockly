@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
-interface CostumeCanvasHeaderProps {
+interface CanvasViewportOverlayProps {
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -22,11 +22,12 @@ interface CostumeCanvasHeaderProps {
   onZoomIn: () => void;
   onZoomToActualSize: () => void;
   onZoomToFit: () => void;
-  onZoomToSelection: () => void;
-  canZoomToSelection: boolean;
+  onZoomToSelection?: () => void;
+  canZoomToSelection?: boolean;
+  className?: string;
 }
 
-export function CostumeCanvasHeader({
+export function CanvasViewportOverlay({
   canUndo,
   canRedo,
   onUndo,
@@ -39,12 +40,14 @@ export function CostumeCanvasHeader({
   onZoomToActualSize,
   onZoomToFit,
   onZoomToSelection,
-  canZoomToSelection,
-}: CostumeCanvasHeaderProps) {
+  canZoomToSelection = false,
+  className,
+}: CanvasViewportOverlayProps) {
   const overlayButtonClassName = 'text-foreground/78 hover:!bg-transparent hover:text-foreground';
+  const showSelectionZoomAction = typeof onZoomToSelection === 'function';
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-4 py-3">
+    <div className={cn('pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-4 py-3', className)}>
       <div className="pointer-events-auto flex items-center gap-1">
         <Button
           variant="ghost"
@@ -53,6 +56,7 @@ export function CostumeCanvasHeader({
           onClick={onUndo}
           disabled={!canUndo}
           title="Undo"
+          aria-label="Undo"
         >
           <Undo2 className="size-4" />
         </Button>
@@ -63,6 +67,7 @@ export function CostumeCanvasHeader({
           onClick={onRedo}
           disabled={!canRedo}
           title="Redo"
+          aria-label="Redo"
         >
           <Redo2 className="size-4" />
         </Button>
@@ -76,6 +81,7 @@ export function CostumeCanvasHeader({
               size="sm"
               className={cn(overlayButtonClassName, 'gap-1 px-2 text-xs font-medium')}
               title="Zoom options"
+              aria-label="Zoom options"
             >
               {Math.round(zoom * 100)}%
               <ChevronDown className="size-3.5" />
@@ -99,10 +105,12 @@ export function CostumeCanvasHeader({
               <span>Zoom to Fit</span>
               <DropdownMenuShortcut>⌘1</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={onZoomToSelection} disabled={!canZoomToSelection} className="justify-between">
-              <span>Zoom to Selection</span>
-              <DropdownMenuShortcut>⌘2</DropdownMenuShortcut>
-            </DropdownMenuItem>
+            {showSelectionZoomAction ? (
+              <DropdownMenuItem onClick={onZoomToSelection} disabled={!canZoomToSelection} className="justify-between">
+                <span>Zoom to Selection</span>
+                <DropdownMenuShortcut>⌘2</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

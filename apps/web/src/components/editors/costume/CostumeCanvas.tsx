@@ -35,7 +35,7 @@ import type {
   VectorToolStyle,
 } from './CostumeToolbar';
 import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
-import { CostumeCanvasHeader } from './CostumeCanvasHeader';
+import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
 import Color from 'color';
@@ -7367,7 +7367,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   return (
     <div className="relative flex-1 overflow-hidden bg-muted/50">
-      <CostumeCanvasHeader
+      <CanvasViewportOverlay
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={onUndo}

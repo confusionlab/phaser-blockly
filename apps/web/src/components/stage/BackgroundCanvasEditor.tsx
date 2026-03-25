@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, LocateFixed, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import type { BackgroundConfig } from '@/types';
@@ -74,6 +75,7 @@ const LARGE_PAYLOAD_WARNING_BYTES = 15 * 1024 * 1024;
 const INITIAL_SHAPE_STROKE_WIDTH = 6;
 const MAX_RASTER_OPERATION_DIMENSION = 8192;
 const MAX_RASTER_OPERATION_PIXELS = 36 * 1024 * 1024;
+const ZOOM_STEP = 0.1;
 
 type ChunkDelta = {
   before: Record<string, string | null>;
@@ -487,9 +489,9 @@ export function BackgroundCanvasEditor() {
   const [zoom, setZoom] = useState(0.5);
   const [camera, setCamera] = useState({ x: 0, y: 0 });
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
-  const [softLimitWarning, setSoftLimitWarning] = useState<string | null>(null);
-  const [hardLimitWarning, setHardLimitWarning] = useState<string | null>(null);
-  const [payloadWarning, setPayloadWarning] = useState<string | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [chunkLimitWarning, setChunkLimitWarning] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -592,6 +594,11 @@ export function BackgroundCanvasEditor() {
     });
   }, []);
 
+  const syncUndoRedoAvailability = useCallback(() => {
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(redoStackRef.current.length > 0);
+  }, []);
+
   const fitToContent = useCallback(() => {
     const contentBounds = getChunkBoundsFromKeys(chunkKeySetRef.current, chunkSize);
     if (contentBounds) {
@@ -600,6 +607,48 @@ export function BackgroundCanvasEditor() {
     }
     fitToBounds(cameraBounds);
   }, [cameraBounds, chunkSize, fitToBounds]);
+
+  const zoomAtClientPoint = useCallback((clientX: number, clientY: number, nextZoom: number) => {
+    const clampedZoom = clampViewportZoom(nextZoom, MIN_ZOOM, MAX_ZOOM);
+    const host = hostRef.current;
+    if (!host) {
+      setZoom(clampedZoom);
+      return;
+    }
+
+    const rect = host.getBoundingClientRect();
+    setCamera((current) => zoomCameraAtClientPoint(
+      clientX,
+      clientY,
+      rect,
+      current,
+      zoom,
+      clampedZoom,
+      'up',
+    ));
+    setZoom(clampedZoom);
+  }, [zoom]);
+
+  const zoomAroundViewportCenter = useCallback((nextZoom: number) => {
+    const host = hostRef.current;
+    if (!host) {
+      setZoom(clampViewportZoom(nextZoom, MIN_ZOOM, MAX_ZOOM));
+      return;
+    }
+
+    const rect = host.getBoundingClientRect();
+    zoomAtClientPoint(rect.left + rect.width * 0.5, rect.top + rect.height * 0.5, nextZoom);
+  }, [zoomAtClientPoint]);
+
+  const handleZoomToActualSize = useCallback(() => {
+    zoomAroundViewportCenter(1);
+  }, [zoomAroundViewportCenter]);
+
+  const handleZoomToSelection = useCallback(() => {
+    const selection = floatingSelectionRef.current;
+    if (!selection) return;
+    fitToBounds(getFloatingSelectionWorldBounds(selection));
+  }, [fitToBounds]);
 
   const resolveBitmapFillTextureSource = useCallback((textureId: BitmapFillTextureId) => {
     const preset = getBitmapFillTexturePreset(textureId);
@@ -715,13 +764,12 @@ export function BackgroundCanvasEditor() {
   const loadFromBackgroundConfig = useCallback(async () => {
     if (!scene) return;
     setBusy(true);
-    setSoftLimitWarning(null);
-    setHardLimitWarning(null);
-    setPayloadWarning(null);
+    setChunkLimitWarning(null);
     setIsDirty(false);
     setHasFloatingSelection(false);
     undoStackRef.current = [];
     redoStackRef.current = [];
+    syncUndoRedoAvailability();
     chunkCanvasesRef.current.clear();
     loadingChunkKeysRef.current.clear();
     selectionMarqueeRef.current = null;
@@ -746,7 +794,7 @@ export function BackgroundCanvasEditor() {
 
     setBusy(false);
     setRevision((value) => value + 1);
-  }, [chunkSize, scene]);
+  }, [chunkSize, scene, syncUndoRedoAvailability]);
 
   useEffect(() => {
     if (!scene) return;
@@ -807,16 +855,7 @@ export function BackgroundCanvasEditor() {
 
   const updateWarnings = useCallback(() => {
     const limits = evaluateChunkLimits(chunkKeySetRef.current.size, softChunkLimit, hardChunkLimit);
-    setSoftLimitWarning(
-      limits.softExceeded && !limits.hardExceeded
-        ? `Soft chunk limit reached (${limits.count}/${limits.softLimit}).`
-        : null,
-    );
-    setHardLimitWarning(
-      limits.hardExceeded
-        ? `Hard chunk limit reached (${limits.count}/${limits.hardLimit}). Erase some areas before adding more chunks.`
-        : null,
-    );
+    setChunkLimitWarning(limits.hardExceeded ? 'Chunk limit exceeded.' : null);
   }, [hardChunkLimit, softChunkLimit]);
 
   useEffect(() => {
@@ -1130,7 +1169,7 @@ export function BackgroundCanvasEditor() {
         chunkCanvas = getOrCreateChunkCanvas(key);
       }
       if (!chunkCanvas) {
-        setHardLimitWarning(`Hard chunk limit reached (${chunkKeySetRef.current.size}/${hardChunkLimit}).`);
+        setChunkLimitWarning('Chunk limit exceeded.');
         continue;
       }
 
@@ -1204,7 +1243,7 @@ export function BackgroundCanvasEditor() {
         chunkCanvas = getOrCreateChunkCanvas(key);
       }
       if (!chunkCanvas) {
-        setHardLimitWarning(`Hard chunk limit reached (${chunkKeySetRef.current.size}/${hardChunkLimit}).`);
+        setChunkLimitWarning('Chunk limit exceeded.');
         continue;
       }
 
@@ -1310,6 +1349,7 @@ export function BackgroundCanvasEditor() {
         undoStackRef.current.shift();
       }
       redoStackRef.current = [];
+      syncUndoRedoAvailability();
       setIsDirty(
         undoStackRef.current.length > 0 ||
         backgroundColorRef.current !== initialBackgroundColorRef.current,
@@ -1318,7 +1358,7 @@ export function BackgroundCanvasEditor() {
 
     updateWarnings();
     setRevision((value) => value + 1);
-  }, [updateWarnings]);
+  }, [syncUndoRedoAvailability, updateWarnings]);
 
   const finalizeStroke = useCallback(() => {
     const stroke = drawingStrokeRef.current;
@@ -1384,7 +1424,7 @@ export function BackgroundCanvasEditor() {
         chunkCanvas = getOrCreateChunkCanvas(key);
       }
       if (!chunkCanvas) {
-        setHardLimitWarning(`Hard chunk limit reached (${chunkKeySetRef.current.size}/${hardChunkLimit}).`);
+        setChunkLimitWarning('Chunk limit exceeded.');
         continue;
       }
 
@@ -1444,7 +1484,7 @@ export function BackgroundCanvasEditor() {
       bounds.height > MAX_RASTER_OPERATION_DIMENSION ||
       bounds.width * bounds.height > MAX_RASTER_OPERATION_PIXELS
     ) {
-      setPayloadWarning('This fill region is too large to rasterize safely in one pass. Zoom in or reduce the edited area.');
+      window.alert('This fill region is too large to rasterize safely in one pass. Zoom in or reduce the edited area.');
       return null;
     }
 
@@ -1534,11 +1574,9 @@ export function BackgroundCanvasEditor() {
     }
 
     if (projectedChunkCount > hardChunkLimit) {
-      setHardLimitWarning(`Hard chunk limit reached (${projectedChunkCount}/${hardChunkLimit}).`);
+      setChunkLimitWarning('Chunk limit exceeded.');
       return false;
     }
-
-    setPayloadWarning(null);
     for (const [key, nextCanvas] of nextChunkCanvases) {
       if (!nextCanvas) {
         delete chunkDataRef.current[key];
@@ -1664,7 +1702,7 @@ export function BackgroundCanvasEditor() {
       bounds.height > MAX_RASTER_OPERATION_DIMENSION ||
       bounds.width * bounds.height > MAX_RASTER_OPERATION_PIXELS
     ) {
-      setPayloadWarning('This selection is too large to rasterize safely in one pass.');
+      window.alert('This selection is too large to rasterize safely in one pass.');
       return false;
     }
 
@@ -1810,12 +1848,13 @@ export function BackgroundCanvasEditor() {
     const delta = undoStackRef.current.pop();
     if (!delta) return;
     redoStackRef.current.push(delta);
+    syncUndoRedoAvailability();
     void applyDeltaRecord(delta.before);
     setIsDirty(
       undoStackRef.current.length > 0 ||
       backgroundColorRef.current !== initialBackgroundColorRef.current,
     );
-  }, [applyDeltaRecord, commitFloatingSelection]);
+  }, [applyDeltaRecord, commitFloatingSelection, syncUndoRedoAvailability]);
 
   const redo = useCallback(() => {
     if (floatingSelectionRef.current) {
@@ -1827,12 +1866,13 @@ export function BackgroundCanvasEditor() {
     const delta = redoStackRef.current.pop();
     if (!delta) return;
     undoStackRef.current.push(delta);
+    syncUndoRedoAvailability();
     void applyDeltaRecord(delta.after);
     setIsDirty(
       undoStackRef.current.length > 0 ||
       backgroundColorRef.current !== initialBackgroundColorRef.current,
     );
-  }, [applyDeltaRecord, commitFloatingSelection]);
+  }, [applyDeltaRecord, commitFloatingSelection, syncUndoRedoAvailability]);
 
   const flushActiveInteraction = useCallback(async () => {
     if (drawingStrokeRef.current) {
@@ -1884,13 +1924,10 @@ export function BackgroundCanvasEditor() {
     const chunks = { ...chunkDataRef.current };
     const payloadSize = estimateSerializedChunkBytes(chunks);
     if (payloadSize > LARGE_PAYLOAD_WARNING_BYTES) {
-      setPayloadWarning(`Background data is large (${(payloadSize / (1024 * 1024)).toFixed(1)} MB).`);
       const proceed = window.confirm('Background payload is large and may affect project size. Save anyway?');
       if (!proceed) {
         return;
       }
-    } else {
-      setPayloadWarning(null);
     }
 
     runInHistoryTransaction('scene:background-paint', () => {
@@ -1919,7 +1956,7 @@ export function BackgroundCanvasEditor() {
 
   const handleCancel = useCallback(() => {
     if (rasterOperationBusyRef.current) {
-      setPayloadWarning('Please wait for the current bitmap operation to finish.');
+      window.alert('Please wait for the current bitmap operation to finish.');
       return;
     }
     if (hasUnsavedBackgroundChanges()) {
@@ -2441,14 +2478,12 @@ export function BackgroundCanvasEditor() {
     return null;
   }
 
-  const chunkCount = chunkKeySetRef.current.size;
-  const limits = evaluateChunkLimits(chunkCount, softChunkLimit, hardChunkLimit);
-
   return (
     <div
       ref={rootRef}
       className="fixed inset-0 z-[100050] bg-background flex flex-col overscroll-none"
       data-testid="background-editor-root"
+      data-chunk-count={chunkKeySetRef.current.size}
     >
       <div className="h-12 border-b bg-card px-3 flex items-center gap-2">
         <Button variant="default" size="sm" onClick={handleDone} disabled={busy}>
@@ -2474,22 +2509,34 @@ export function BackgroundCanvasEditor() {
           Fit
         </Button>
         <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-          <span>Zoom: {(zoom * 100).toFixed(0)}%</span>
-          <span data-testid="background-editor-chunk-count">Chunks: {limits.count}/{limits.hardLimit}</span>
           {isRasterOperationBusy && <span>Processing</span>}
           {hasFloatingSelection && <span>Selection</span>}
-          {isDrawing && <span>Drawing</span>}
           {isPanning && <span>Panning</span>}
         </div>
       </div>
 
-      {(softLimitWarning || hardLimitWarning || payloadWarning) && (
+      {chunkLimitWarning && (
         <div className="px-3 py-2 text-xs bg-amber-50 text-amber-900 border-b border-amber-200">
-          {hardLimitWarning || softLimitWarning || payloadWarning}
+          {chunkLimitWarning}
         </div>
       )}
 
       <div ref={hostRef} className="flex-1 min-h-0 relative overflow-hidden bg-[#060a14]">
+        <CanvasViewportOverlay
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={undo}
+          onRedo={redo}
+          zoom={zoom}
+          minZoom={MIN_ZOOM}
+          maxZoom={MAX_ZOOM}
+          onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
+          onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
+          onZoomToActualSize={handleZoomToActualSize}
+          onZoomToFit={fitToContent}
+          onZoomToSelection={handleZoomToSelection}
+          canZoomToSelection={hasFloatingSelection}
+        />
         <CostumeToolbar
           editorMode="bitmap"
           activeTool={tool}
