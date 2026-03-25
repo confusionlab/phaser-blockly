@@ -922,45 +922,84 @@ const HAT_BLOCKS = [
   'event_when_touching_direction_value',
 ];
 
+interface GenerateCodeForObjectOptions {
+  logErrors?: boolean;
+}
+
+function withBlocklyEventsDisabled<T>(callback: () => T): T {
+  Blockly.Events.disable();
+  try {
+    return callback();
+  } finally {
+    Blockly.Events.enable();
+  }
+}
+
+function disposeBlocklyWorkspaceSilently(workspace: Blockly.Workspace | null | undefined): void {
+  if (!workspace) {
+    return;
+  }
+
+  try {
+    withBlocklyEventsDisabled(() => {
+      workspace.dispose();
+    });
+  } catch {
+    // Ignore disposal errors from best-effort headless workspaces.
+  }
+}
+
 /**
  * Generate executable code for a single game object.
  * Only generates code for hat blocks (event blocks) and their children.
  * Orphan blocks without an event are ignored.
  */
-export function generateCodeForObject(blocklyXml: string, objectId: string): string {
+export function generateCodeForObject(
+  blocklyXml: string,
+  objectId: string,
+  options: GenerateCodeForObjectOptions = {},
+): string {
   if (!blocklyXml) return '';
   registerCodeGenerators();
   const normalizedBlocklyXml = normalizeBlocklyXml(blocklyXml);
+  const logErrors = options.logErrors === true;
 
   let workspace: Blockly.Workspace | null = null;
   try {
     // Create a hidden workspace to load the XML
     workspace = new Blockly.Workspace();
+    const activeWorkspace = workspace;
 
     // Parse XML
     let xmlDom;
     try {
       xmlDom = Blockly.utils.xml.textToDom(normalizedBlocklyXml);
     } catch (parseError) {
-      console.error('XML parsing error for object', objectId, parseError);
+      if (logErrors) {
+        console.error('XML parsing error for object', objectId, parseError);
+      }
       return '';
     }
 
     // Load into workspace
     try {
-      Blockly.Xml.domToWorkspace(xmlDom, workspace);
+      withBlocklyEventsDisabled(() => {
+        Blockly.Xml.domToWorkspace(xmlDom, activeWorkspace);
+      });
     } catch (loadError) {
-      console.error('Workspace load error for object', objectId, loadError);
-      workspace.dispose();
+      if (logErrors) {
+        console.error('Workspace load error for object', objectId, loadError);
+      }
+      disposeBlocklyWorkspaceSilently(activeWorkspace);
       return '';
     }
 
     // IMPORTANT: Initialize the generator with the workspace before generating code
     // This is required for blocks that use provideFunction_ (like math_random_int)
-    javascriptGenerator.init(workspace);
+    javascriptGenerator.init(activeWorkspace);
 
     // Get only top-level hat blocks (event blocks)
-    const topBlocks = workspace.getTopBlocks(false);
+    const topBlocks = activeWorkspace.getTopBlocks(false);
     const hatBlocks = topBlocks.filter(block => HAT_BLOCKS.includes(block.type));
 
     // Generate code only for hat blocks
@@ -973,7 +1012,9 @@ export function generateCodeForObject(blocklyXml: string, objectId: string): str
           code += typeof blockCode === 'string' ? blockCode : blockCode[0];
         }
       } catch (genError) {
-        console.error('Block code generation error for block', block.type, 'in object', objectId, genError);
+        if (logErrors) {
+          console.error('Block code generation error for block', block.type, 'in object', objectId, genError);
+        }
       }
     }
 
@@ -982,7 +1023,7 @@ export function generateCodeForObject(blocklyXml: string, objectId: string): str
     code = javascriptGenerator.finish(code);
 
     // Clean up
-    workspace.dispose();
+    disposeBlocklyWorkspaceSilently(activeWorkspace);
 
     // If no hat blocks, return empty
     if (!code.trim()) {
@@ -995,10 +1036,10 @@ export function generateCodeForObject(blocklyXml: string, objectId: string): str
 ${code}
 })`;
   } catch (e) {
-    console.error('Code generation error for object', objectId, e);
-    if (workspace) {
-      try { workspace.dispose(); } catch { /* ignore */ }
+    if (logErrors) {
+      console.error('Code generation error for object', objectId, e);
     }
+    disposeBlocklyWorkspaceSilently(workspace);
     return '';
   }
 }

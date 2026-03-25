@@ -143,4 +143,25 @@ test.describe('assistant model snapshot', () => {
     expect(prompt).toContain('runtime.forever');
   });
 
+  test('createAssistantProjectSnapshot tolerates malformed Blockly XML without console noise', () => {
+    const project = createDefaultProject('Malformed Blockly Fixture');
+    const hero = createDefaultGameObject('Hero');
+    hero.blocklyXml = '<xml><block type="typed_variable_set"><field name="VAR"></field></block></xml>';
+    project.scenes[0]!.objects = [hero];
+
+    const originalConsoleError = console.error;
+    const consoleErrorCalls: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      consoleErrorCalls.push(args);
+    };
+
+    try {
+      const snapshot = createAssistantProjectSnapshot(project);
+      expect(snapshot.state.scenes[0]!.objects[0]!.generatedJs).toBeUndefined();
+      expect(consoleErrorCalls).toEqual([]);
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
+
 });
