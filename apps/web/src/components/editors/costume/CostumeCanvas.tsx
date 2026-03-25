@@ -527,7 +527,9 @@ class BitmapStampBrush extends BaseBrush {
     const scale = 1 + (scaleJitter > 0 ? (Math.random() * 2 - 1) * scaleJitter : 0);
 
     ctx.save();
-    ctx.globalCompositeOperation = this.compositeOperation;
+    // Build the stroke into an isolated mask first; the actual paint/erase composite
+    // is applied later when previewing and committing onto the bitmap layer.
+    ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = opacity;
     ctx.translate(centerX, centerY);
     if (rotation !== 0) {
@@ -560,6 +562,7 @@ class BitmapStampBrush extends BaseBrush {
     }
 
     this._saveAndTransform(ctx);
+    ctx.globalCompositeOperation = this.compositeOperation;
     ctx.drawImage(this.strokeCanvas, 0, 0);
     ctx.restore();
   }
