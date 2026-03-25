@@ -15,6 +15,7 @@ import type {
   VectorToolStyle,
 } from './CostumeToolbar';
 import type {
+  CostumeAssetFrame,
   CostumeDocument,
   CostumeEditorMode,
   CostumeVectorDocument,
@@ -61,7 +62,12 @@ interface UseCostumeCanvasCommandControllerOptions {
   lastCommittedSnapshotRef: MutableRefObject<any>;
   layerSurfaceRefs: MutableRefObject<Map<string, HTMLCanvasElement>>;
   loadBitmapAsSingleVectorImage: (bitmapCanvas: HTMLCanvasElement, requestId?: number) => Promise<boolean>;
-  loadBitmapLayer: (dataUrl: string, selectable: boolean, requestId?: number) => Promise<boolean>;
+  loadBitmapLayer: (
+    dataUrl: string,
+    selectable: boolean,
+    requestId?: number,
+    options?: { assetFrame?: CostumeAssetFrame | null },
+  ) => Promise<boolean>;
   loadRequestIdRef: MutableRefObject<number>;
   loadedSessionKeyRef: MutableRefObject<string | null>;
   markCurrentSnapshotPersisted: (sessionKey?: string | null) => void;
@@ -716,7 +722,9 @@ export function useCostumeCanvasCommandController({
         suppressHistoryRef.current = false;
       }
     } else {
-      const loaded = await loadBitmapLayer(requestedState.bitmapAssetId ?? '', false, requestId);
+      const loaded = await loadBitmapLayer(requestedState.bitmapAssetId ?? '', false, requestId, {
+        assetFrame: requestedState.bitmapAssetFrame,
+      });
       if (!loaded || !isLoadRequestActive(requestId)) {
         const resetToBlank = await loadBitmapLayer('', false, requestId);
         if (!resetToBlank || !isLoadRequestActive(requestId)) return;

@@ -62,7 +62,11 @@ import {
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 import {
-  renderCostumeDocumentPreview,
+  areCostumeAssetFramesEqual,
+  cloneCostumeAssetFrame,
+} from '@/lib/costume/costumeAssetFrame';
+import {
+  renderCostumeDocument,
   renderCostumeLayerStackToDataUrl,
 } from '@/lib/costume/costumeDocumentRender';
 
@@ -80,6 +84,7 @@ function clonePersistedState(
   return {
     assetId: state.assetId,
     bounds: state.bounds ? { ...state.bounds } : undefined,
+    assetFrame: cloneCostumeAssetFrame(state.assetFrame),
     document: cloneCostumeDocument(state.document),
   };
 }
@@ -98,6 +103,7 @@ function arePersistedStatesEqual(
   return (
     a.assetId === b.assetId &&
     areCostumeBoundsEqual(a.bounds, b.bounds) &&
+    areCostumeAssetFramesEqual(a.assetFrame, b.assetFrame) &&
     areCostumeDocumentsEqual(a.document, b.document)
   );
 }
@@ -225,6 +231,7 @@ export function CostumeEditor() {
       ...currentCostume,
       assetId: currentWorkingPersistedState.assetId,
       bounds: currentWorkingPersistedState.bounds,
+      assetFrame: cloneCostumeAssetFrame(currentWorkingPersistedState.assetFrame),
       document: currentWorkingPersistedState.document,
     };
   }, [currentCostume, currentWorkingPersistedState]);
@@ -335,6 +342,7 @@ export function CostumeEditor() {
     return {
       assetId: costume.assetId,
       bounds: costume.bounds ? { ...costume.bounds } : undefined,
+      assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
       document: cloneCostumeDocument(costume.document),
     };
   }, []);
@@ -403,6 +411,7 @@ export function CostumeEditor() {
         : fallbackCostume?.bounds
           ? { ...fallbackCostume.bounds }
           : undefined,
+      assetFrame: cloneCostumeAssetFrame(workingState?.assetFrame ?? fallbackCostume?.assetFrame),
       document: cloneCostumeDocument(document),
     };
   }, [getWorkingPersistedState]);
@@ -556,7 +565,7 @@ export function CostumeEditor() {
     flattenedPreviewRefreshTimeoutRef.current = setTimeout(() => {
       flattenedPreviewRefreshTimeoutRef.current = null;
 
-      void renderCostumeDocumentPreview(nextDocument).then((rendered) => {
+      void renderCostumeDocument(nextDocument).then((rendered) => {
         if (flattenedPreviewRefreshIdRef.current !== requestId) {
           return;
         }
@@ -574,6 +583,7 @@ export function CostumeEditor() {
         const refreshedState: CostumeEditorPersistedState = {
           assetId: rendered.dataUrl,
           bounds: rendered.bounds ?? undefined,
+          assetFrame: cloneCostumeAssetFrame(rendered.assetFrame),
           document: nextDocument,
         };
 
@@ -634,6 +644,7 @@ export function CostumeEditor() {
       const resolvedNextState: CostumeEditorPersistedState = {
         assetId: baseState.assetId,
         bounds: baseState.bounds ? { ...baseState.bounds } : undefined,
+        assetFrame: cloneCostumeAssetFrame(baseState.assetFrame),
         document: nextDocument,
       };
 
@@ -862,6 +873,7 @@ export function CostumeEditor() {
         resetDocumentHistory({
           assetId: editorCostume.assetId,
           bounds: editorCostume.bounds,
+          assetFrame: cloneCostumeAssetFrame(editorCostume.assetFrame),
           document: editorCostume.document,
         });
         finishSessionLoad();

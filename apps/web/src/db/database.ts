@@ -24,6 +24,8 @@ import {
   ensureCostumeDocument,
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
+import { cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
+import { optimizeCostumeBitmapAssetSource } from '@/lib/costume/costumeAssetOptimization';
 import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
@@ -530,7 +532,7 @@ function addPersistedAssetRef(
 }
 
 async function normalizeCostumeAssetsForStorage(
-  costume: { assetId: string; document?: unknown },
+  costume: { assetId: string; assetFrame?: unknown; document?: unknown },
   refsById: Map<string, PersistedProjectAssetRef>,
 ): Promise<void> {
   const document = ensureCostumeDocument(costume);
@@ -538,14 +540,23 @@ async function normalizeCostumeAssetsForStorage(
   const runtimeAssetRecord = await ensureAssetRecordFromSource(renderedCostume.dataUrl, 'image');
   addPersistedAssetRef(refsById, runtimeAssetRecord.id, 'image');
   costume.assetId = runtimeAssetRecord.id;
+  (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(renderedCostume.assetFrame);
 
   for (const layer of document.layers) {
     if (!isBitmapCostumeLayer(layer) || !isLikelyAssetSource(layer.bitmap.assetId)) {
       continue;
     }
-    const record = await ensureAssetRecordFromSource(layer.bitmap.assetId, 'image');
+    const optimizedLayerAsset = await optimizeCostumeBitmapAssetSource(
+      layer.bitmap.assetId,
+      layer.bitmap.assetFrame,
+    );
+    if (!optimizedLayerAsset) {
+      continue;
+    }
+    const record = await ensureAssetRecordFromSource(optimizedLayerAsset.dataUrl, 'image');
     addPersistedAssetRef(refsById, record.id, 'image');
     layer.bitmap.assetId = record.id;
+    layer.bitmap.assetFrame = cloneCostumeAssetFrame(optimizedLayerAsset.assetFrame);
   }
   (costume as { document: unknown }).document = cloneCostumeDocument(document);
 }

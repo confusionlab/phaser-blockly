@@ -23,7 +23,7 @@ import {
   normalizeVectorObjectRendering,
 } from './costumeCanvasVectorRuntime';
 import type { DrawingTool } from './CostumeToolbar';
-import type { CostumeEditorMode } from '@/types';
+import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 
 type FabricCanvasHostRuntime = FabricCanvas & {
   lowerCanvasEl?: HTMLCanvasElement;
@@ -108,7 +108,12 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   hitPointSelectionTransform: (snapshot: any, pointer: Point) => any;
   insertPathPointAtScenePosition: (path: any, point: Point) => number | null;
   isPointSelectionToggleModifierPressed: (eventData: any) => boolean;
-  loadBitmapLayer: (dataUrl: string, selectable: boolean, requestId?: number) => Promise<boolean>;
+  loadBitmapLayer: (
+    dataUrl: string,
+    selectable: boolean,
+    requestId?: number,
+    options?: { assetFrame?: CostumeAssetFrame | null },
+  ) => Promise<boolean>;
   movePathAnchorByDelta: (path: any, anchorIndex: number, deltaX: number, deltaY: number, dragState?: any) => boolean;
   renderVectorBrushStrokeOverlay: (ctx: CanvasRenderingContext2D, options?: { clear?: boolean }) => void;
   renderVectorPointEditingGuide: () => void;

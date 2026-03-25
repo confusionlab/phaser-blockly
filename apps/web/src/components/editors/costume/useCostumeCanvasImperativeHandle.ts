@@ -1,6 +1,6 @@
 import { useImperativeHandle, type ForwardedRef, type MutableRefObject } from 'react';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
-import type { CostumeEditorMode } from '@/types';
+import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { areHistorySnapshotsEqual } from './costumeCanvasShared';
 import type { CostumeCanvasExportState, CostumeCanvasHandle } from './CostumeCanvas';
 
@@ -15,7 +15,12 @@ interface UseCostumeCanvasImperativeHandleOptions {
   getComposedCanvasElement: () => HTMLCanvasElement;
   isTextEditing: () => boolean;
   lastCommittedSnapshotRef: MutableRefObject<any>;
-  loadBitmapLayer: (dataUrl: string, selectable: boolean, requestId?: number) => Promise<boolean>;
+  loadBitmapLayer: (
+    dataUrl: string,
+    selectable: boolean,
+    requestId?: number,
+    options?: { assetFrame?: CostumeAssetFrame | null },
+  ) => Promise<boolean>;
   loadDocument: (sessionKey: string, document: any) => Promise<void>;
   loadedSessionKeyRef: MutableRefObject<string | null>;
   markCurrentSnapshotPersisted: (sessionKey?: string | null) => void;

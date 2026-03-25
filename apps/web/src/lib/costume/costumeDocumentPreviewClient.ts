@@ -1,4 +1,4 @@
-import type { CostumeBounds } from '@/types';
+import type { CostumeAssetFrame, CostumeBounds } from '@/types';
 import type {
   CostumeDocumentPreviewWorkerRequest,
   CostumeDocumentPreviewWorkerResponse,
@@ -7,7 +7,7 @@ import type {
 
 type PendingPreviewRequest = {
   reject: (reason?: unknown) => void;
-  resolve: (result: { bounds: CostumeBounds | null; dataUrl: string }) => void;
+  resolve: (result: { assetFrame?: CostumeAssetFrame | null; bounds: CostumeBounds | null; dataUrl: string }) => void;
 };
 
 let previewWorker: Worker | null = null;
@@ -44,6 +44,7 @@ function handleWorkerMessage(event: MessageEvent<CostumeDocumentPreviewWorkerRes
 
   void blobToDataUrl(response.blob).then((dataUrl) => {
     pending.resolve({
+      assetFrame: response.assetFrame,
       dataUrl,
       bounds: response.bounds,
     });
@@ -73,13 +74,15 @@ export function canUseCostumeDocumentPreviewWorker(): boolean {
 export function renderCostumePreviewLayersInWorker(
   canvasSize: number,
   layers: RenderableCostumePreviewLayer[],
-): Promise<{ bounds: CostumeBounds | null; dataUrl: string }> {
+  options: { trimTransparentFrame?: boolean } = {},
+): Promise<{ assetFrame?: CostumeAssetFrame | null; bounds: CostumeBounds | null; dataUrl: string }> {
   const worker = ensurePreviewWorker();
   const requestId = nextRequestId++;
   const request: CostumeDocumentPreviewWorkerRequest = {
     requestId,
     canvasSize,
     layers,
+    trimTransparentFrame: options.trimTransparentFrame === true,
   };
 
   return new Promise((resolve, reject) => {

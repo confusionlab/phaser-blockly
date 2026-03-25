@@ -1,4 +1,8 @@
 import Phaser from 'phaser';
+import {
+  getCostumeAssetCenterOffset,
+  getCostumeVisibleCenterOffset,
+} from '@/lib/costume/costumeAssetFrame';
 import { appendRuntimeLog } from './RuntimeEngine';
 import { setBodyGravityY } from './gravity';
 import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
@@ -541,15 +545,13 @@ export class RuntimeSprite {
 
     this._costumeImage = this.scene.add.image(0, 0, textureKey);
     this._costumeImage.setOrigin(0.5, 0.5);
-
-    // Keep sprite at (0, 0) - centered on the 1024x1024 canvas
-    // This ensures the collider aligns with the visual regardless of costume bounds
-    // The bounds are only used for editor selection/hit area, not positioning
+    const costume = this._costumes[this._currentCostumeIndex];
+    const assetOffset = getCostumeAssetCenterOffset(costume?.assetFrame);
+    this._costumeImage.setPosition(assetOffset.x, assetOffset.y);
 
     this.container.addAt(this._costumeImage, 0);
 
     // Update container size to match costume (used for fallback collision detection)
-    const costume = this._costumes[this._currentCostumeIndex];
     if (costume?.bounds && costume.bounds.width > 0 && costume.bounds.height > 0) {
       this.container.setSize(costume.bounds.width, costume.bounds.height);
     } else {
@@ -1349,10 +1351,13 @@ export class RuntimeSprite {
       };
     }
 
-    const imgWidth = this._costumeImage.width;
-    const imgHeight = this._costumeImage.height;
-    const left = bounds.x - imgWidth / 2;
-    const top = bounds.y - imgHeight / 2;
+    const visibleCenterOffset = getCostumeVisibleCenterOffset(bounds, {
+      assetFrame: costume?.assetFrame,
+      assetWidth: this._costumeImage.width,
+      assetHeight: this._costumeImage.height,
+    });
+    const left = visibleCenterOffset.x - (bounds.width / 2);
+    const top = visibleCenterOffset.y - (bounds.height / 2);
     const right = left + bounds.width;
     const bottom = top + bounds.height;
 

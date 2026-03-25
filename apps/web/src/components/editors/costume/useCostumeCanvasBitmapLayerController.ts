@@ -5,7 +5,7 @@ import { renderBitmapAssetToSurfaceCanvas } from '@/lib/costume/costumeBitmapSur
 import { extractVisibleCanvasRegion } from './costumeCanvasShared';
 import { normalizeVectorObjectRendering } from './costumeCanvasVectorRuntime';
 import type { BitmapStampBrushCommitPayload } from './costumeCanvasBitmapRuntime';
-import type { CostumeEditorMode } from '@/types';
+import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 
 interface UseCostumeCanvasBitmapLayerControllerOptions {
   bitmapFloatingObjectRef: MutableRefObject<any | null>;
@@ -101,7 +101,12 @@ export function useCostumeCanvasBitmapLayerController({
     syncSelectionState,
   ]);
 
-  const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean, requestId?: number): Promise<boolean> => {
+  const loadBitmapLayer = useCallback(async (
+    dataUrl: string,
+    selectable: boolean,
+    requestId?: number,
+    options?: { assetFrame?: CostumeAssetFrame | null },
+  ): Promise<boolean> => {
     const fabricCanvas = await waitForFabricCanvas(requestId);
     if (!fabricCanvas) return false;
     if (!isLoadRequestActive(requestId)) return false;
@@ -109,7 +114,7 @@ export function useCostumeCanvasBitmapLayerController({
     let surfaceCanvas: HTMLCanvasElement | null = null;
     if (dataUrl) {
       try {
-        surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(dataUrl);
+        surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(dataUrl, options?.assetFrame);
       } catch (error) {
         console.error('Failed to load bitmap layer:', error);
         return false;

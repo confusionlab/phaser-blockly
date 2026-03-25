@@ -1,5 +1,6 @@
 import type {
   Costume,
+  CostumeAssetFrame,
   CostumeBitmapContentRef,
   CostumeBitmapLayer,
   CostumeDocument,
@@ -11,6 +12,10 @@ import type {
   CostumeVectorDocument,
   CostumeVectorLayer,
 } from '@/types';
+import {
+  cloneCostumeAssetFrame,
+  sanitizeCostumeAssetFrame,
+} from './costumeAssetFrame';
 
 export const COSTUME_CANVAS_SIZE = 1024;
 export const MAX_COSTUME_LAYERS = 8;
@@ -43,11 +48,12 @@ function sanitizeBitmapContentRef(value: unknown): CostumeBitmapContentRef {
   if (!value || typeof value !== 'object') {
     return { assetId: null };
   }
-  const maybe = value as { assetId?: unknown };
+  const maybe = value as { assetId?: unknown; assetFrame?: unknown };
   return {
     assetId: typeof maybe.assetId === 'string' && maybe.assetId.trim().length > 0
       ? maybe.assetId
       : null,
+    assetFrame: sanitizeCostumeAssetFrame(maybe.assetFrame),
   };
 }
 
@@ -98,7 +104,10 @@ export function cloneCostumeLayer(layer: CostumeLayer): CostumeLayer {
   if (layer.kind === 'bitmap') {
     return {
       ...layer,
-      bitmap: { ...layer.bitmap },
+      bitmap: {
+        ...layer.bitmap,
+        assetFrame: cloneCostumeAssetFrame(layer.bitmap.assetFrame),
+      },
       effects: [...layer.effects],
     };
   }
@@ -122,6 +131,7 @@ export function createBitmapLayer(options: {
   id?: string;
   name?: string;
   assetId?: string | null;
+  assetFrame?: CostumeAssetFrame | null;
   visible?: boolean;
   locked?: boolean;
   opacity?: number;
@@ -140,6 +150,7 @@ export function createBitmapLayer(options: {
     height: COSTUME_CANVAS_SIZE,
     bitmap: {
       assetId: typeof options.assetId === 'string' && options.assetId.trim().length > 0 ? options.assetId : null,
+      assetFrame: cloneCostumeAssetFrame(options.assetFrame),
     },
   };
 }
@@ -221,6 +232,7 @@ export interface ActiveCostumeLayerEditorLoadState {
   activeLayerId: string | null;
   editorMode: CostumeLayerKind;
   bitmapAssetId: string | null;
+  bitmapAssetFrame: CostumeAssetFrame | null;
   vectorDocument: CostumeVectorDocument | null;
 }
 
@@ -233,6 +245,7 @@ export function resolveActiveCostumeLayerEditorLoadState(
       activeLayerId: null,
       editorMode: 'vector',
       bitmapAssetId: null,
+      bitmapAssetFrame: null,
       vectorDocument: createEmptyCostumeVectorDocument(),
     };
   }
@@ -242,6 +255,7 @@ export function resolveActiveCostumeLayerEditorLoadState(
       activeLayerId: activeLayer.id,
       editorMode: 'bitmap',
       bitmapAssetId: activeLayer.bitmap.assetId ?? null,
+      bitmapAssetFrame: cloneCostumeAssetFrame(activeLayer.bitmap.assetFrame) ?? null,
       vectorDocument: null,
     };
   }
@@ -250,6 +264,7 @@ export function resolveActiveCostumeLayerEditorLoadState(
     activeLayerId: activeLayer.id,
     editorMode: 'vector',
     bitmapAssetId: null,
+    bitmapAssetFrame: null,
     vectorDocument: activeLayer.vector,
   };
 }
@@ -426,6 +441,7 @@ export function applyCanvasStateToCostumeDocument(
     height: COSTUME_CANVAS_SIZE,
     bitmap: {
       assetId: state.dataUrl || null,
+      assetFrame: undefined,
     },
   };
   return nextDocument;
@@ -531,6 +547,7 @@ export function cloneCostume(costume: Costume): Costume {
   return {
     ...costume,
     bounds: costume.bounds ? { ...costume.bounds } : undefined,
+    assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(costume.document),
   };
 }

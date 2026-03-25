@@ -1,3 +1,5 @@
+import type { CostumeAssetFrame } from '@/types';
+import { getCostumeAssetFrameSignature } from './costumeAssetFrame';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 
 const MAX_CACHED_BITMAP_IMAGES = 128;
@@ -60,7 +62,30 @@ function getBitmapSourceDimensions(source: HTMLImageElement | HTMLCanvasElement)
 
 export function createBitmapSurfaceCanvas(
   source: HTMLImageElement | HTMLCanvasElement,
+  assetFrame?: CostumeAssetFrame | null,
 ): HTMLCanvasElement {
+  if (assetFrame) {
+    const canvas = document.createElement('canvas');
+    canvas.width = assetFrame.sourceWidth;
+    canvas.height = assetFrame.sourceHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return canvas;
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(
+      source,
+      assetFrame.x,
+      assetFrame.y,
+      assetFrame.width,
+      assetFrame.height,
+    );
+    return canvas;
+  }
+
   const canvas = document.createElement('canvas');
   canvas.width = COSTUME_CANVAS_SIZE;
   canvas.height = COSTUME_CANVAS_SIZE;
@@ -93,32 +118,35 @@ export function createBitmapSurfaceCanvas(
 
 export async function renderBitmapAssetToSurfaceCanvas(
   source: string | null | undefined,
+  assetFrame?: CostumeAssetFrame | null,
 ): Promise<HTMLCanvasElement | null> {
   if (!source) {
     return null;
   }
 
-  const cached = bitmapSurfaceCache.get(source);
+  const cacheKey = `${source}#${getCostumeAssetFrameSignature(assetFrame)}`;
+  const cached = bitmapSurfaceCache.get(cacheKey);
   if (cached) {
     return await cached;
   }
 
   const pending = loadBitmapImage(source)
-    .then((image) => createBitmapSurfaceCanvas(image))
+    .then((image) => createBitmapSurfaceCanvas(image, assetFrame))
     .catch((error) => {
-      bitmapSurfaceCache.delete(source);
+      bitmapSurfaceCache.delete(cacheKey);
       throw error;
     });
 
-  return await rememberCachedValue(bitmapSurfaceCache, source, pending, MAX_CACHED_BITMAP_SURFACES);
+  return await rememberCachedValue(bitmapSurfaceCache, cacheKey, pending, MAX_CACHED_BITMAP_SURFACES);
 }
 
 export async function renderBitmapAssetToSurfaceDataUrl(
   source: string | null | undefined,
   type: 'image/png' | 'image/webp' = 'image/png',
   quality?: number,
+  assetFrame?: CostumeAssetFrame | null,
 ): Promise<string | null> {
-  const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(source);
+  const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(source, assetFrame);
   if (!surfaceCanvas) {
     return null;
   }

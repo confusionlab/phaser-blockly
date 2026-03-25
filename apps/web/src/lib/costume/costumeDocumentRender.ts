@@ -1,7 +1,12 @@
-import type { CostumeBounds, CostumeDocument, CostumeLayer } from '@/types';
+import type { CostumeAssetFrame, CostumeBounds, CostumeDocument, CostumeLayer } from '@/types';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { COSTUME_CANVAS_SIZE, isBitmapCostumeLayer, isVectorCostumeLayer } from './costumeDocument';
 import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
+import {
+  cloneCostumeAssetFrame,
+  getCostumeAssetFrameSignature,
+} from './costumeAssetFrame';
+import { optimizeCostumeRasterCanvas } from './costumeAssetOptimization';
 import { renderVectorLayerDocumentToCanvas } from './costumeVectorTextureRenderer';
 import {
   canUseCostumeDocumentPreviewWorker,
@@ -20,6 +25,7 @@ const documentPreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
 const documentPreviewValueCache = new Map<string, CostumeDocumentPreview>();
 
 interface CostumeDocumentPreview {
+  assetFrame?: CostumeAssetFrame | null;
   dataUrl: string;
   bounds: CostumeBounds | null;
 }
@@ -63,6 +69,7 @@ function rememberResolvedPreview(
     documentPreviewValueCache.delete(signature);
   }
   documentPreviewValueCache.set(signature, {
+    assetFrame: cloneCostumeAssetFrame(preview.assetFrame),
     dataUrl: preview.dataUrl,
     bounds: preview.bounds ? { ...preview.bounds } : null,
   });
@@ -80,7 +87,9 @@ function rememberResolvedPreview(
 
 export function getCostumeLayerRenderSignature(layer: CostumeLayer): string | null {
   if (isBitmapCostumeLayer(layer)) {
-    return layer.bitmap.assetId ? `bitmap:${layer.bitmap.assetId}` : null;
+    return layer.bitmap.assetId
+      ? `bitmap:${layer.bitmap.assetId}:${getCostumeAssetFrameSignature(layer.bitmap.assetFrame)}`
+      : null;
   }
 
   if (!isVectorCostumeLayer(layer)) {
@@ -125,6 +134,7 @@ export function getCachedCostumeDocumentPreview(
   }
 
   return {
+    assetFrame: cloneCostumeAssetFrame(cached.assetFrame),
     dataUrl: cached.dataUrl,
     bounds: cached.bounds ? { ...cached.bounds } : null,
   };
@@ -141,7 +151,7 @@ export async function renderCostumeLayerToCanvas(layer: CostumeLayer): Promise<H
 
   const pending = (async (): Promise<HTMLCanvasElement | null> => {
     if (isBitmapCostumeLayer(layer)) {
-      return await renderBitmapAssetToSurfaceCanvas(layer.bitmap.assetId);
+      return await renderBitmapAssetToSurfaceCanvas(layer.bitmap.assetId, layer.bitmap.assetFrame);
     }
 
     if (!isVectorCostumeLayer(layer)) {
@@ -347,15 +357,39 @@ export async function renderCostumeDocumentSlice(
 
 export async function renderCostumeDocument(document: CostumeDocument): Promise<{
   canvas: HTMLCanvasElement;
+  assetFrame?: CostumeAssetFrame;
   dataUrl: string;
   bounds: CostumeBounds | null;
 }> {
-  const canvas = await renderCostumeLayerStackToCanvas(document.layers);
-  return {
-    canvas,
-    dataUrl: canvas.toDataURL('image/webp', 0.85),
-    bounds: calculateBoundsFromCanvas(canvas),
-  };
+  if (canUseCostumeDocumentPreviewWorker()) {
+    try {
+      const renderableLayers = await createRenderableCostumePreviewLayers(document);
+      const rendered = await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers, {
+        trimTransparentFrame: true,
+      });
+      const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(
+        rendered.dataUrl,
+        rendered.assetFrame,
+      );
+      const fallbackCanvas = globalThis.document?.createElement('canvas') ?? null;
+      if (fallbackCanvas) {
+        fallbackCanvas.width = COSTUME_CANVAS_SIZE;
+        fallbackCanvas.height = COSTUME_CANVAS_SIZE;
+      }
+
+      return {
+        canvas: surfaceCanvas ?? fallbackCanvas ?? await renderCostumeLayerStackToCanvas(document.layers),
+        assetFrame: cloneCostumeAssetFrame(rendered.assetFrame),
+        dataUrl: rendered.dataUrl,
+        bounds: rendered.bounds,
+      };
+    } catch (error) {
+      console.warn('Failed to render optimized costume asset in the background worker. Falling back to the main thread renderer.', error);
+    }
+  }
+
+  const composedCanvas = await renderCostumeLayerStackToCanvas(document.layers);
+  return optimizeCostumeRasterCanvas(composedCanvas);
 }
 
 async function createRenderableCostumePreviewLayers(
@@ -375,6 +409,7 @@ async function createRenderableCostumePreviewLayers(
 
     previewLayers.push({
       source,
+      assetFrame: isBitmapCostumeLayer(layer) ? cloneCostumeAssetFrame(layer.bitmap.assetFrame) ?? null : null,
       opacity: layer.opacity,
     });
   }
@@ -383,6 +418,7 @@ async function createRenderableCostumePreviewLayers(
 }
 
 export async function renderCostumeDocumentPreview(document: CostumeDocument): Promise<{
+  assetFrame?: CostumeAssetFrame | null;
   dataUrl: string;
   bounds: CostumeBounds | null;
 }> {
@@ -405,10 +441,11 @@ export async function renderCostumeDocumentPreview(document: CostumeDocument): P
       }
     }
 
-    const rendered = await renderCostumeDocument(document);
+    const canvas = await renderCostumeLayerStackToCanvas(document.layers);
     return rememberResolvedPreview(signature, {
-      dataUrl: rendered.dataUrl,
-      bounds: rendered.bounds,
+      assetFrame: undefined,
+      dataUrl: canvas.toDataURL('image/webp', 0.85),
+      bounds: calculateBoundsFromCanvas(canvas),
     });
   })().catch((error) => {
     documentPreviewCache.delete(signature);

@@ -123,12 +123,22 @@ export interface CostumeBounds {
   height: number; // Height of visible content
 }
 
+export interface CostumeAssetFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  sourceWidth: number;
+  sourceHeight: number;
+}
+
 export type CostumeLayerKind = 'bitmap' | 'vector';
 export type CostumeLayerBlendMode = 'normal';
 export type CostumeLayerEffect = never;
 
 export interface CostumeBitmapContentRef {
   assetId: string | null;
+  assetFrame?: CostumeAssetFrame;
 }
 
 export interface CostumeVectorDocument {
@@ -178,6 +188,7 @@ export interface Costume {
   name: string;
   assetId: string; // Reference to Asset
   bounds?: CostumeBounds; // Bounding box of visible (non-transparent) pixels
+  assetFrame?: CostumeAssetFrame; // Placement metadata for cropped runtime assets
   document: CostumeDocument;
 }
 

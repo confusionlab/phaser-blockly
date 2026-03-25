@@ -1,6 +1,7 @@
 import { getEffectiveObjectProps } from '@/types';
 import type {
   Costume,
+  CostumeAssetFrame,
   CostumeBounds,
   CostumeDocument,
   CostumeLayer,
@@ -13,6 +14,10 @@ import {
   ensureCostumeDocument,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
+import {
+  areCostumeAssetFramesEqual,
+  cloneCostumeAssetFrame,
+} from '@/lib/costume/costumeAssetFrame';
 
 export interface CostumeEditorTarget {
   sceneId: string;
@@ -32,6 +37,7 @@ export interface CostumeEditorSession extends CostumeEditorTarget {
 export interface CostumeEditorPersistedState {
   assetId: string;
   bounds?: CostumeBounds;
+  assetFrame?: CostumeAssetFrame;
   document: CostumeDocument;
 }
 
@@ -119,7 +125,8 @@ function areCostumeLayersEqual(a: CostumeLayer | undefined, b: CostumeLayer | un
     return (
       a.width === b.width &&
       a.height === b.height &&
-      a.bitmap.assetId === b.bitmap.assetId
+      a.bitmap.assetId === b.bitmap.assetId &&
+      areCostumeAssetFramesEqual(a.bitmap.assetFrame, b.bitmap.assetFrame)
     );
   }
 
@@ -144,6 +151,7 @@ function clonePersistedState(
   return {
     assetId: state.assetId,
     bounds: state.bounds ? { ...state.bounds } : undefined,
+    assetFrame: cloneCostumeAssetFrame(state.assetFrame),
     document: cloneCostumeDocument(state.document),
   };
 }
@@ -156,6 +164,7 @@ function createPersistedStateFromCostume(costume: Costume | null | undefined): C
   return {
     assetId: costume.assetId,
     bounds: costume.bounds ? { ...costume.bounds } : undefined,
+    assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(ensureCostumeDocument(costume)),
   };
 }
@@ -197,8 +206,9 @@ export function applyCostumeEditorState(
 
   const noAssetChange = costume.assetId === state.assetId;
   const noBoundsChange = areCostumeBoundsEqual(costume.bounds, nextBounds);
+  const noAssetFrameChange = areCostumeAssetFramesEqual(costume.assetFrame, state.assetFrame);
   const noDocumentChange = areCostumeDocumentsEqual(costume.document, nextDocument);
-  if (noAssetChange && noBoundsChange && noDocumentChange) {
+  if (noAssetChange && noBoundsChange && noAssetFrameChange && noDocumentChange) {
     return null;
   }
 
@@ -208,6 +218,7 @@ export function applyCostumeEditorState(
           ...entry,
           assetId: state.assetId,
           bounds: nextBounds,
+          assetFrame: cloneCostumeAssetFrame(state.assetFrame),
           document: nextDocument,
         }
       : entry

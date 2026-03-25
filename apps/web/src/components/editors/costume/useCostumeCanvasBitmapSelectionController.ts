@@ -1,7 +1,7 @@
 import { useEffect, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
-import type { CostumeEditorMode } from '@/types';
+import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import {
   VECTOR_SELECTION_BORDER_OPACITY,
   VECTOR_SELECTION_BORDER_SCALE,
@@ -26,7 +26,12 @@ interface UseCostumeCanvasBitmapSelectionControllerOptions {
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   getSelectionMousePos: (event: MouseEvent) => { x: number; y: number };
   hasBitmapFloatingSelection: boolean;
-  loadBitmapLayer: (dataUrl: string, selectable: boolean, requestId?: number) => Promise<boolean>;
+  loadBitmapLayer: (
+    dataUrl: string,
+    selectable: boolean,
+    requestId?: number,
+    options?: { assetFrame?: CostumeAssetFrame | null },
+  ) => Promise<boolean>;
   setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
   syncSelectionState: () => void;
 }

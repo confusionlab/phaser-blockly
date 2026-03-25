@@ -1,6 +1,7 @@
-import type { CostumeBounds } from '@/types';
+import type { CostumeAssetFrame, CostumeBounds } from '@/types';
 
 export interface RenderableCostumePreviewLayer {
+  assetFrame?: CostumeAssetFrame | null;
   opacity: number;
   source: string;
 }
@@ -8,10 +9,12 @@ export interface RenderableCostumePreviewLayer {
 export interface CostumeDocumentPreviewWorkerRequest {
   canvasSize: number;
   layers: RenderableCostumePreviewLayer[];
+  trimTransparentFrame?: boolean;
   requestId: number;
 }
 
 export interface CostumeDocumentPreviewWorkerSuccessResponse {
+  assetFrame?: CostumeAssetFrame | null;
   blob: Blob;
   bounds: CostumeBounds | null;
   requestId: number;

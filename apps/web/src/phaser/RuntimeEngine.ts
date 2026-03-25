@@ -3,7 +3,7 @@ import { RuntimeSprite } from './RuntimeSprite';
 import { applyCustomGravityForce } from './gravity';
 import { normalizeConfiguredKey, normalizeKeyboardCode } from '@/utils/keyboard';
 import { clampPointToPolygon, getPolygonSegments, hasUsableWorldBoundary } from '@/lib/worldBoundary';
-import type { CostumeBounds, WorldPoint } from '@/types';
+import type { CostumeAssetFrame, CostumeBounds, WorldPoint } from '@/types';
 
 // Handlers receive sprite as parameter so they work correctly for clones
 type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
@@ -167,6 +167,7 @@ export interface InventoryItemEntry {
   sourceComponentId: string | null;
   label: string;
   costumeAssetId: string | null;
+  costumeAssetFrame?: CostumeAssetFrame | null;
   costumeName: string | null;
   costumeBounds: CostumeBounds | null;
   isPendingUse: boolean;
@@ -596,6 +597,7 @@ export class RuntimeEngine {
       sourceComponentId: sprite.componentId,
       label: sprite.name,
       costumeAssetId: currentCostume?.assetId ?? null,
+      costumeAssetFrame: currentCostume?.assetFrame ? { ...currentCostume.assetFrame } : null,
       costumeName: currentCostume?.name ?? null,
       costumeBounds: currentCostume?.bounds ? { ...currentCostume.bounds } : null,
       isPendingUse: false,

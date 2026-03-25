@@ -11,8 +11,9 @@ import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
-import type { Costume, CostumeBounds, CostumeDocument } from '@/types';
+import type { Costume, CostumeAssetFrame, CostumeBounds, CostumeDocument } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
+import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
 import {
   cloneCostume,
   cloneCostumeDocument,
@@ -39,16 +40,18 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
     () => getCostumeDocumentPreviewSignature(costume.document),
     [costume.document],
   );
-  const [preview, setPreview] = useState<{ assetId: string; bounds?: CostumeBounds }>(() => {
+  const [preview, setPreview] = useState<{ assetFrame?: CostumeAssetFrame | null; assetId: string; bounds?: CostumeBounds }>(() => {
     const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
     if (cachedPreview) {
       return {
+        assetFrame: cachedPreview.assetFrame,
         assetId: cachedPreview.dataUrl,
         bounds: cachedPreview.bounds ?? undefined,
       };
     }
 
     return {
+      assetFrame: costume.assetFrame,
       assetId: costume.assetId,
       bounds: costume.bounds,
     };
@@ -59,6 +62,7 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
     const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
     if (cachedPreview) {
       setPreview({
+        assetFrame: cachedPreview.assetFrame,
         assetId: cachedPreview.dataUrl,
         bounds: cachedPreview.bounds ?? undefined,
       });
@@ -73,6 +77,7 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
       }
 
       setPreview({
+        assetFrame: rendered.assetFrame,
         assetId: rendered.dataUrl,
         bounds: rendered.bounds ?? undefined,
       });
@@ -89,13 +94,16 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
 
   if (preview.bounds && preview.bounds.width > 0 && preview.bounds.height > 0) {
     const scale = Math.min(1, 140 / Math.max(preview.bounds.width, preview.bounds.height));
+    const localBounds = getCostumeBoundsInAssetSpace(preview.bounds, preview.assetFrame);
     return (
       <div
         className="absolute inset-0"
         style={{
           backgroundImage: `url(${preview.assetId})`,
-          backgroundPosition: `${-preview.bounds.x}px ${-preview.bounds.y}px`,
-          backgroundSize: '1024px 1024px',
+          backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
+          backgroundSize: preview.assetFrame
+            ? `${preview.assetFrame.width}px ${preview.assetFrame.height}px`
+            : '1024px 1024px',
           backgroundRepeat: 'no-repeat',
           transform: `scale(${scale})`,
           transformOrigin: 'top left',

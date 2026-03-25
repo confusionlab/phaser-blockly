@@ -6,7 +6,16 @@ import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
-import type { Scene as SceneData, GameObject, ComponentDefinition, Variable, BackgroundConfig, Costume, CostumeBounds } from '@/types';
+import type {
+  Scene as SceneData,
+  GameObject,
+  ComponentDefinition,
+  Variable,
+  BackgroundConfig,
+  Costume,
+  CostumeAssetFrame,
+  CostumeBounds,
+} from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
@@ -20,6 +29,12 @@ import {
   TiledBackgroundCanvasCompositor,
   type UserSpaceViewport,
 } from '@/lib/background/compositor';
+import {
+  areCostumeAssetFramesEqual,
+  getCostumeAssetCenterOffset,
+  getCostumeBoundsInAssetSpace,
+  getCostumeVisibleCenterOffset,
+} from '@/lib/costume/costumeAssetFrame';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -55,8 +70,18 @@ type FrozenStageFrame = {
 type PendingCostumeVisualTarget = {
   costumeId: string | null;
   assetId: string | null;
+  assetFrame?: CostumeAssetFrame | null;
   textureKey: string | null;
 };
+
+function areCostumeBoundsEqual(
+  a: CostumeBounds | null | undefined,
+  b: CostumeBounds | null | undefined,
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
 
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
@@ -384,17 +409,20 @@ function resolveSceneByReference(scenes: SceneData[], sceneRef: string): SceneDa
 
 function InventoryCostumePreview({
   assetId,
+  assetFrame,
   bounds,
   label,
   size = INVENTORY_PREVIEW_SIZE,
 }: {
   assetId: string;
+  assetFrame?: CostumeAssetFrame | null;
   bounds: CostumeBounds | null;
   label: string;
   size?: number;
 }) {
   if (bounds && bounds.width > 0 && bounds.height > 0) {
     const scale = Math.min(1, size / Math.max(bounds.width, bounds.height));
+    const localBounds = getCostumeBoundsInAssetSpace(bounds, assetFrame);
     return (
       <div
         role="img"
@@ -406,8 +434,10 @@ function InventoryCostumePreview({
           className="absolute"
           style={{
             backgroundImage: `url(${assetId})`,
-            backgroundPosition: `${-bounds.x}px ${-bounds.y}px`,
-            backgroundSize: `${COSTUME_CANVAS_SIZE}px ${COSTUME_CANVAS_SIZE}px`,
+            backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
+            backgroundSize: assetFrame
+              ? `${assetFrame.width}px ${assetFrame.height}px`
+              : `${COSTUME_CANVAS_SIZE}px ${COSTUME_CANVAS_SIZE}px`,
             backgroundRepeat: 'no-repeat',
             imageRendering: 'pixelated',
             width: bounds.width,
@@ -1313,12 +1343,17 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         const currentCostume = costumes[currentCostumeIndex];
         const storedCostumeId = targetContainer.getData('costumeId');
         const storedAssetId = targetContainer.getData('assetId');
+        const storedAssetFrame = targetContainer.getData('assetFrame') as CostumeAssetFrame | null | undefined;
+        const storedBounds = targetContainer.getData('bounds') as CostumeBounds | null | undefined;
         const pendingVisualTarget = getPendingCostumeVisualTarget(targetContainer);
         const resolvedCostumeId = pendingVisualTarget?.costumeId ?? storedCostumeId;
         const resolvedAssetId = pendingVisualTarget?.assetId ?? storedAssetId;
+        const resolvedAssetFrame = pendingVisualTarget?.assetFrame ?? storedAssetFrame;
 
         const hasCurrentCostumeAsset = !!currentCostume?.assetId;
         const hadResolvedCostumeAsset = !!resolvedAssetId;
+        const currentBounds = currentCostume?.bounds ?? null;
+        const currentAssetFrame = currentCostume?.assetFrame ?? null;
 
         // Update when costume content changes or when switching between placeholder <-> costume
         const costumeChanged = hasCurrentCostumeAsset !== hadResolvedCostumeAsset || (
@@ -1327,8 +1362,12 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             currentCostume.assetId !== resolvedAssetId
           )
         );
+        const costumeLayoutChanged = hasCurrentCostumeAsset && (
+          !areCostumeBoundsEqual(currentBounds, storedBounds) ||
+          !areCostumeAssetFramesEqual(currentAssetFrame, resolvedAssetFrame)
+        );
 
-        if (costumeChanged) {
+        if (costumeChanged || costumeLayoutChanged) {
           const nextVisualVersion = ((targetContainer.getData('costumeVisualVersion') as number | undefined) ?? 0) + 1;
           targetContainer.setData('costumeVisualVersion', nextVisualVersion);
 
@@ -1336,66 +1375,60 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           const updateWithSprite = (
             sprite: Phaser.GameObjects.Image,
             cont: Phaser.GameObjects.Container,
-            bounds: { x: number; y: number; width: number; height: number } | null | undefined
+            bounds: { x: number; y: number; width: number; height: number } | null | undefined,
+            assetFrame?: CostumeAssetFrame | null,
           ) => {
             sprite.setName('sprite');
             cont.add(sprite);
-
+            const hitRect = cont.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
+            const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
+            const assetOffset = getCostumeAssetCenterOffset(assetFrame);
             const imgWidth = sprite.width;
             const imgHeight = sprite.height;
 
-            // Keep sprite at (0, 0) - aligned to 1024x1024 canvas center
-            // This ensures collider alignment regardless of costume bounds
-            sprite.setPosition(0, 0);
+            sprite.setPosition(assetOffset.x, assetOffset.y);
 
-            // If we have bounds, offset the hit area and selection to cover visible content
             if (bounds && bounds.width > 0 && bounds.height > 0) {
-              const w = Math.max(bounds.width, 32);
-              const h = Math.max(bounds.height, 32);
-
-              // Calculate offset from canvas center (512, 512) to bounds center
-              const visibleCenterX = bounds.x + bounds.width / 2;
-              const visibleCenterY = bounds.y + bounds.height / 2;
-              const offsetX = visibleCenterX - imgWidth / 2;
-              const offsetY = visibleCenterY - imgHeight / 2;
-
-              cont.setSize(w, h);
-
-              const hitRect = cont.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
-              if (hitRect) {
-                hitRect.setSize(w, h);
-                hitRect.setPosition(offsetX, offsetY);
-                hitRect.removeInteractive();
-                hitRect.setInteractive({ useHandCursor: true });
-              }
-
-              const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
-              if (selRect) {
-                selRect.setSize(w + 8, h + 8);
-                selRect.setPosition(offsetX, offsetY);
-                cont.sendToBack(selRect);
-              }
-            } else {
-              // No bounds - use full image size (fallback)
-              const width = Math.max(imgWidth, 32);
-              const height = Math.max(imgHeight, 32);
+              const width = Math.max(bounds.width, 32);
+              const height = Math.max(bounds.height, 32);
+              const visibleCenterOffset = getCostumeVisibleCenterOffset(bounds, {
+                assetFrame,
+                assetWidth: imgWidth,
+                assetHeight: imgHeight,
+              });
 
               cont.setSize(width, height);
 
-              const hitRect = cont.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
               if (hitRect) {
                 hitRect.setSize(width, height);
-                hitRect.setPosition(0, 0);
+                hitRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
                 hitRect.removeInteractive();
                 hitRect.setInteractive({ useHandCursor: true });
               }
 
-              const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
               if (selRect) {
                 selRect.setSize(width + 8, height + 8);
-                selRect.setPosition(0, 0);
+                selRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
                 cont.sendToBack(selRect);
               }
+              return;
+            }
+
+            const width = Math.max(imgWidth, 32);
+            const height = Math.max(imgHeight, 32);
+            cont.setSize(width, height);
+
+            if (hitRect) {
+              hitRect.setSize(width, height);
+              hitRect.setPosition(assetOffset.x, assetOffset.y);
+              hitRect.removeInteractive();
+              hitRect.setInteractive({ useHandCursor: true });
+            }
+
+            if (selRect) {
+              selRect.setSize(width + 8, height + 8);
+              selRect.setPosition(assetOffset.x, assetOffset.y);
+              cont.sendToBack(selRect);
             }
           };
 
@@ -1470,9 +1503,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             replaceCurrentVisual(() => {
               targetContainer.setData('costumeId', costume.id);
               targetContainer.setData('assetId', costume.assetId);
+              targetContainer.setData('assetFrame', costume.assetFrame ?? null);
               targetContainer.setData('textureKey', textureKey);
               targetContainer.setData('bounds', costume.bounds);
-              updateWithSprite(sprite, targetContainer, costume.bounds);
+              updateWithSprite(sprite, targetContainer, costume.bounds, costume.assetFrame);
             }, textureKey);
           };
 
@@ -1480,6 +1514,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             replaceCurrentVisual(() => {
               targetContainer.setData('costumeId', null);
               targetContainer.setData('assetId', null);
+              targetContainer.setData('assetFrame', null);
               targetContainer.setData('textureKey', null);
               targetContainer.setData('bounds', null);
               applyPlaceholderVisual();
@@ -1489,6 +1524,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             targetContainer.setData('pendingVisualTarget', {
               costumeId: currentCostume.id,
               assetId: currentCostume.assetId,
+              assetFrame: currentCostume.assetFrame ?? null,
               textureKey,
             } satisfies PendingCostumeVisualTarget);
             if (phaserScene.textures.exists(textureKey)) {
@@ -1504,6 +1540,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                 if (
                   currentPendingTarget?.costumeId !== currentCostume.id ||
                   currentPendingTarget?.assetId !== currentCostume.assetId ||
+                  !areCostumeAssetFramesEqual(currentPendingTarget?.assetFrame, currentCostume.assetFrame ?? null) ||
                   currentPendingTarget?.textureKey !== textureKey
                 ) {
                   return;
@@ -1705,6 +1742,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                       {item.costumeAssetId ? (
                         <InventoryCostumePreview
                           assetId={item.costumeAssetId}
+                          assetFrame={item.costumeAssetFrame}
                           bounds={item.costumeBounds}
                           label={item.label}
                         />
@@ -1746,6 +1784,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                 {draggedInventoryItem.entry.costumeAssetId ? (
                   <InventoryCostumePreview
                     assetId={draggedInventoryItem.entry.costumeAssetId}
+                    assetFrame={draggedInventoryItem.entry.costumeAssetFrame}
                     bounds={draggedInventoryItem.entry.costumeBounds}
                     label={draggedInventoryItem.entry.label}
                   />
@@ -3385,32 +3424,30 @@ function createObjectVisual(
   // Helper to update container size, hit area, and selection rect based on bounds
   const updateContainerWithBounds = (
     sprite: Phaser.GameObjects.Image,
-    bounds: { x: number; y: number; width: number; height: number } | null | undefined
+    bounds: { x: number; y: number; width: number; height: number } | null | undefined,
+    assetFrame?: CostumeAssetFrame | null,
   ) => {
     const imgWidth = sprite.width;
     const imgHeight = sprite.height;
-
-    // Keep sprite at (0, 0) - aligned to 1024x1024 canvas center
-    // This ensures collider alignment regardless of costume bounds
-    sprite.setPosition(0, 0);
+    const assetOffset = getCostumeAssetCenterOffset(assetFrame);
+    sprite.setPosition(assetOffset.x, assetOffset.y);
 
     // If we have bounds, offset the hit area and selection to cover visible content
     if (bounds && bounds.width > 0 && bounds.height > 0) {
       const w = Math.max(bounds.width, 32);
       const h = Math.max(bounds.height, 32);
-
-      // Calculate offset from canvas center (512, 512) to bounds center
-      const visibleCenterX = bounds.x + bounds.width / 2;
-      const visibleCenterY = bounds.y + bounds.height / 2;
-      const offsetX = visibleCenterX - imgWidth / 2;
-      const offsetY = visibleCenterY - imgHeight / 2;
+      const visibleCenterOffset = getCostumeVisibleCenterOffset(bounds, {
+        assetFrame,
+        assetWidth: imgWidth,
+        assetHeight: imgHeight,
+      });
 
       container.setSize(w, h);
 
       // Update hit area rectangle - position it over the visible bounds
       if (hitRect) {
         hitRect.setSize(w, h);
-        hitRect.setPosition(offsetX, offsetY);
+        hitRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
         hitRect.removeInteractive();
         hitRect.setInteractive({ useHandCursor: true });
       }
@@ -3418,7 +3455,7 @@ function createObjectVisual(
       // Update selection rectangle
       if (selectionRect) {
         selectionRect.setSize(w + 8, h + 8);
-        selectionRect.setPosition(offsetX, offsetY);
+        selectionRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
       }
 
       // Update gizmo handle positions
@@ -3461,6 +3498,7 @@ function createObjectVisual(
     // Store costume ID, assetId, textureKey, and bounds for change detection
     container.setData('costumeId', currentCostume.id);
     container.setData('assetId', currentCostume.assetId);
+    container.setData('assetFrame', currentCostume.assetFrame ?? null);
     container.setData('textureKey', textureKey);
     container.setData('bounds', currentCostume.bounds);
 
@@ -3478,7 +3516,7 @@ function createObjectVisual(
       // Send selection to back, bring hit area to front for input
       if (selectionRect) container.sendToBack(selectionRect);
       if (hitRect) container.bringToTop(hitRect);
-      updateContainerWithBounds(sprite, currentCostume.bounds);
+      updateContainerWithBounds(sprite, currentCostume.bounds, currentCostume.assetFrame);
     };
     img.src = currentCostume.assetId;
   } else {

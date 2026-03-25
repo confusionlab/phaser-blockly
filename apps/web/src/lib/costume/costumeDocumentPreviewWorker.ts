@@ -7,6 +7,7 @@ import type {
 } from './costumeDocumentPreviewProtocol';
 
 async function renderPreview(request: CostumeDocumentPreviewWorkerRequest): Promise<{
+  assetFrame?: import('@/types').CostumeAssetFrame | null;
   blob: Blob;
   bounds: ReturnType<typeof calculateBoundsFromImageData>;
 }> {
@@ -31,7 +32,17 @@ async function renderPreview(request: CostumeDocumentPreviewWorkerRequest): Prom
     try {
       ctx.save();
       ctx.globalAlpha = layer.opacity;
-      ctx.drawImage(bitmap, 0, 0, request.canvasSize, request.canvasSize);
+      if (layer.assetFrame) {
+        ctx.drawImage(
+          bitmap,
+          layer.assetFrame.x,
+          layer.assetFrame.y,
+          layer.assetFrame.width,
+          layer.assetFrame.height,
+        );
+      } else {
+        ctx.drawImage(bitmap, 0, 0, request.canvasSize, request.canvasSize);
+      }
       ctx.restore();
     } finally {
       bitmap.close();
@@ -39,14 +50,56 @@ async function renderPreview(request: CostumeDocumentPreviewWorkerRequest): Prom
   }
 
   const imageData = ctx.getImageData(0, 0, request.canvasSize, request.canvasSize);
-  const previewBlob = await canvas.convertToBlob({
+  const bounds = calculateBoundsFromImageData(imageData);
+  const cropBounds = calculateBoundsFromImageData(imageData, 0);
+  let targetCanvas: OffscreenCanvas = canvas;
+  let assetFrame: import('@/types').CostumeAssetFrame | null | undefined;
+
+  if (
+    request.trimTransparentFrame === true &&
+    cropBounds &&
+    (
+      cropBounds.x !== 0 ||
+      cropBounds.y !== 0 ||
+      cropBounds.width !== request.canvasSize ||
+      cropBounds.height !== request.canvasSize
+    )
+  ) {
+    targetCanvas = new OffscreenCanvas(cropBounds.width, cropBounds.height);
+    const targetCtx = targetCanvas.getContext('2d');
+    if (!targetCtx) {
+      throw new Error('Preview worker failed to create a cropped rendering surface.');
+    }
+    targetCtx.drawImage(
+      canvas,
+      cropBounds.x,
+      cropBounds.y,
+      cropBounds.width,
+      cropBounds.height,
+      0,
+      0,
+      cropBounds.width,
+      cropBounds.height,
+    );
+    assetFrame = {
+      x: cropBounds.x,
+      y: cropBounds.y,
+      width: cropBounds.width,
+      height: cropBounds.height,
+      sourceWidth: request.canvasSize,
+      sourceHeight: request.canvasSize,
+    };
+  }
+
+  const previewBlob = await targetCanvas.convertToBlob({
     type: 'image/webp',
     quality: 0.85,
   });
 
   return {
+    assetFrame,
     blob: previewBlob,
-    bounds: calculateBoundsFromImageData(imageData),
+    bounds,
   };
 }
 
@@ -60,6 +113,7 @@ workerScope.onmessage = (event: MessageEvent<CostumeDocumentPreviewWorkerRequest
       const response: CostumeDocumentPreviewWorkerResponse = {
         type: 'success',
         requestId: request.requestId,
+        assetFrame: rendered.assetFrame,
         blob: rendered.blob,
         bounds: rendered.bounds,
       };

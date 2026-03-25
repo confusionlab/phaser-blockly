@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
 import { Button } from '@/components/ui/button';
+import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
 import {
@@ -1541,13 +1542,16 @@ export function SpriteShelf() {
                   const bounds = costume?.bounds;
                   if (bounds && bounds.width > 0 && bounds.height > 0) {
                     const scale = Math.min(1, 24 / Math.max(bounds.width, bounds.height));
+                    const localBounds = getCostumeBoundsInAssetSpace(bounds, costume?.assetFrame);
                     return (
                       <div
                         className="absolute"
                         style={{
                           backgroundImage: `url(${costume.assetId})`,
-                          backgroundPosition: `${-bounds.x}px ${-bounds.y}px`,
-                          backgroundSize: '1024px 1024px',
+                          backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
+                          backgroundSize: costume?.assetFrame
+                            ? `${costume.assetFrame.width}px ${costume.assetFrame.height}px`
+                            : '1024px 1024px',
                           backgroundRepeat: 'no-repeat',
                           transform: `scale(${scale})`,
                           transformOrigin: 'top left',
