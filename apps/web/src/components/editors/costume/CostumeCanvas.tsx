@@ -109,6 +109,7 @@ const PEN_TOOL_CLOSE_HIT_RADIUS_PX = 10;
 const PEN_TOOL_DRAG_THRESHOLD_PX = 4;
 const OBJECT_SELECTION_CORNER_SIZE = 12;
 const OBJECT_SELECTION_PADDING = 2;
+export const DEFAULT_COSTUME_PREVIEW_SCALE = BASE_VIEW_SCALE;
 
 function getZoomInvariantCanvasMetric(metric: number, zoom: number) {
   return metric / Math.max(zoom, 0.0001);
@@ -808,6 +809,7 @@ interface CostumeCanvasProps {
   onVectorPointSelectionChange?: (hasSelectedPoints: boolean) => void;
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
+  onViewScaleChange?: (scale: number) => void;
 }
 
 function getFabricObjectType(obj: unknown): string {
@@ -1135,6 +1137,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onVectorPointSelectionChange,
   onTextSelectionChange,
   onSelectionStateChange,
+  onViewScaleChange,
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textEditingHostRef = useRef<HTMLDivElement>(null);
@@ -1228,6 +1231,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onTextSelectionChangeRef.current = onTextSelectionChange;
   const onSelectionStateChangeRef = useRef(onSelectionStateChange);
   onSelectionStateChangeRef.current = onSelectionStateChange;
+  const onViewScaleChangeRef = useRef(onViewScaleChange);
+  onViewScaleChangeRef.current = onViewScaleChange;
 
   const colliderRef = useRef(collider);
   colliderRef.current = collider;
@@ -6989,6 +6994,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   useEffect(() => {
     syncBrushCursorOverlay();
   }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, zoom, syncBrushCursorOverlay]);
+
+  useEffect(() => {
+    onViewScaleChangeRef.current?.(BASE_VIEW_SCALE * zoom);
+  }, [zoom]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;

@@ -389,24 +389,27 @@ ToolbarPreviewSlider.displayName = 'ToolbarPreviewSlider';
 interface StrokeWidthPreviewProps {
   thickness: number;
   color: string;
+  previewScale: number;
 }
 
 const StrokeWidthPreview = memo(({
   thickness,
   color,
+  previewScale,
 }: StrokeWidthPreviewProps) => {
-  const previewHeight = Math.max(72, thickness + 28);
+  const displayThickness = Math.max(0, thickness * previewScale);
+  const previewHeight = Math.max(72, displayThickness + 28);
 
   return (
     <div
       className="flex w-[136px] items-center justify-center"
       style={{ minHeight: `${previewHeight}px` }}
     >
-      {thickness > 0 && (
+      {displayThickness > 0 && (
         <div
           className="w-full rounded-full"
           style={{
-            height: `${thickness}px`,
+            height: `${displayThickness}px`,
             backgroundColor: color,
           }}
         />
@@ -420,14 +423,17 @@ StrokeWidthPreview.displayName = 'StrokeWidthPreview';
 interface TextSizePreviewProps {
   textStyle: TextToolStyle;
   color: string;
+  previewScale: number;
 }
 
 const TextSizePreview = memo(({
   textStyle,
   color,
+  previewScale,
 }: TextSizePreviewProps) => {
-  const previewHeight = Math.max(96, Math.min(220, textStyle.fontSize + 44));
-  const previewWidth = Math.max(176, Math.min(320, textStyle.fontSize * 2.8));
+  const displayFontSize = Math.max(1, textStyle.fontSize * previewScale);
+  const previewHeight = Math.max(96, Math.min(220, displayFontSize + 44));
+  const previewWidth = Math.max(176, Math.min(320, displayFontSize * 2.8));
 
   return (
     <div
@@ -442,7 +448,7 @@ const TextSizePreview = memo(({
         style={{
           color,
           fontFamily: textStyle.fontFamily,
-          fontSize: `${textStyle.fontSize}px`,
+          fontSize: `${displayFontSize}px`,
           fontWeight: textStyle.fontWeight,
           fontStyle: textStyle.fontStyle,
           textDecoration: textStyle.underline ? 'underline' : 'none',
@@ -474,6 +480,7 @@ interface CostumeToolbarProps {
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
   vectorStyleCapabilities: VectorStyleCapabilities;
+  previewScale?: number;
   onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
@@ -603,6 +610,7 @@ export const CostumeToolbar = memo(({
   textStyle,
   vectorStyle,
   vectorStyleCapabilities,
+  previewScale = 1,
   onEditorModeChange,
   onToolChange,
   onMoveOrder,
@@ -938,6 +946,7 @@ export const CostumeToolbar = memo(({
                           <StrokeWidthPreview
                             thickness={bitmapShapeStyle.strokeWidth}
                             color={bitmapShapeStyle.strokeColor}
+                            previewScale={previewScale}
                           />
                         )}
                       />
@@ -1042,6 +1051,7 @@ export const CostumeToolbar = memo(({
                           <StrokeWidthPreview
                             thickness={vectorStyle.strokeWidth}
                             color={vectorStyle.strokeColor}
+                            previewScale={previewScale}
                           />
                         )}
                       />
@@ -1055,13 +1065,14 @@ export const CostumeToolbar = memo(({
                       onValueChange={onBrushSizeChange}
                       min={1}
                       max={50}
-                      preview={(
-                        <StrokeWidthPreview
-                          thickness={brushSize}
-                          color={activeBrushPreviewColor}
-                        />
-                      )}
-                    />
+                        preview={(
+                          <StrokeWidthPreview
+                            thickness={brushSize}
+                            color={activeBrushPreviewColor}
+                            previewScale={previewScale}
+                          />
+                        )}
+                      />
                   )}
 
                   {showTextToolbarControls && (
@@ -1106,6 +1117,7 @@ export const CostumeToolbar = memo(({
                           <TextSizePreview
                             textStyle={textStyle}
                             color={brushColor}
+                            previewScale={previewScale}
                           />
                         )}
                       />

@@ -2507,6 +2507,7 @@ export function BackgroundCanvasEditor() {
           textStyle={BACKGROUND_TOOLBAR_TEXT_STYLE}
           vectorStyle={BACKGROUND_TOOLBAR_VECTOR_STYLE}
           vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
+          previewScale={zoom}
           onEditorModeChange={handleToolbarModeChange}
           onToolChange={handleToolbarToolChange}
           onMoveOrder={handleToolbarMoveOrder}

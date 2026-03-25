@@ -2,7 +2,11 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import { CostumeList } from './costume/CostumeList';
-import { CostumeCanvas, type CostumeCanvasHandle } from './costume/CostumeCanvas';
+import {
+  CostumeCanvas,
+  DEFAULT_COSTUME_PREVIEW_SCALE,
+  type CostumeCanvasHandle,
+} from './costume/CostumeCanvas';
 import {
   type BitmapFillStyle,
   type BitmapShapeStyle,
@@ -182,6 +186,7 @@ export function CostumeEditor() {
   const [canRedo, setCanRedo] = useState(false);
   const [hasCanvasSelection, setHasCanvasSelection] = useState(false);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
+  const [canvasPreviewScale, setCanvasPreviewScale] = useState(DEFAULT_COSTUME_PREVIEW_SCALE);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
 
@@ -760,6 +765,7 @@ export function CostumeEditor() {
           textStyle={textStyle}
           vectorStyle={vectorStyle}
           vectorStyleCapabilities={vectorStyleCapabilities}
+          previewScale={canvasPreviewScale}
           onEditorModeChange={handleEditorModeChange}
           onToolChange={handleToolChange}
           onMoveOrder={handleMoveOrder}
@@ -806,6 +812,7 @@ export function CostumeEditor() {
           onVectorPointSelectionChange={setHasSelectedVectorPoints}
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
+          onViewScaleChange={setCanvasPreviewScale}
         />
       </div>
 
