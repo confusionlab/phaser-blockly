@@ -107,66 +107,9 @@ const PEN_TOOL_CLOSE_HIT_RADIUS_PX = 10;
 const PEN_TOOL_DRAG_THRESHOLD_PX = 4;
 const OBJECT_SELECTION_CORNER_SIZE = 12;
 const OBJECT_SELECTION_PADDING = 2;
-const ERASER_PREVIEW_CHECKER_SIZE = 16;
-
-let eraserPreviewCheckerTileCache: HTMLCanvasElement | null = null;
-let eraserPreviewCheckerTileKey = '';
 
 function getZoomInvariantCanvasMetric(metric: number, zoom: number) {
   return metric / Math.max(zoom, 0.0001);
-}
-
-function getEraserPreviewCheckerTile() {
-  if (typeof document === 'undefined') {
-    return null;
-  }
-
-  const computedStyle = window.getComputedStyle(document.documentElement);
-  const backgroundColor = computedStyle.getPropertyValue('--checkerboard-bg').trim() || '#f2f2f2';
-  const tileColor = computedStyle.getPropertyValue('--checkerboard-tile').trim() || '#e2e2e2';
-  const key = `${backgroundColor}|${tileColor}`;
-
-  if (eraserPreviewCheckerTileCache && eraserPreviewCheckerTileKey === key) {
-    return eraserPreviewCheckerTileCache;
-  }
-
-  const tile = document.createElement('canvas');
-  tile.width = ERASER_PREVIEW_CHECKER_SIZE;
-  tile.height = ERASER_PREVIEW_CHECKER_SIZE;
-  const tileCtx = tile.getContext('2d');
-  if (!tileCtx) {
-    return null;
-  }
-
-  tileCtx.fillStyle = backgroundColor;
-  tileCtx.fillRect(0, 0, tile.width, tile.height);
-  tileCtx.fillStyle = tileColor;
-  const halfSize = ERASER_PREVIEW_CHECKER_SIZE / 2;
-  tileCtx.fillRect(0, 0, halfSize, halfSize);
-  tileCtx.fillRect(halfSize, halfSize, halfSize, halfSize);
-
-  eraserPreviewCheckerTileCache = tile;
-  eraserPreviewCheckerTileKey = key;
-  return tile;
-}
-
-function fillEraserPreviewBackdrop(ctx: CanvasRenderingContext2D) {
-  const tile = getEraserPreviewCheckerTile();
-  if (!tile) {
-    return;
-  }
-
-  const pattern = ctx.createPattern(tile, 'repeat');
-  if (!pattern) {
-    return;
-  }
-
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = 'destination-over';
-  ctx.fillStyle = pattern;
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  ctx.restore();
 }
 
 function getStrokedShapeBoundsFromPathBounds(
@@ -329,6 +272,8 @@ function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
 
 class CompositePencilBrush extends PencilBrush {
   compositeOperation: GlobalCompositeOperation = 'source-over';
+  private previewSourceWasHidden = false;
+  private previousLowerCanvasOpacity = '';
 
   override needsFullRender() {
     return this.compositeOperation === 'destination-out' || super.needsFullRender();
@@ -339,8 +284,33 @@ class CompositePencilBrush extends PencilBrush {
     ctx.globalCompositeOperation = this.compositeOperation;
   }
 
+  private setPreviewSourceHidden(hidden: boolean) {
+    const lowerCanvas = (this.canvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl;
+    if (!lowerCanvas) {
+      return;
+    }
+
+    if (hidden) {
+      if (this.previewSourceWasHidden) {
+        return;
+      }
+      this.previousLowerCanvasOpacity = lowerCanvas.style.opacity;
+      lowerCanvas.style.opacity = '0';
+      this.previewSourceWasHidden = true;
+      return;
+    }
+
+    if (!this.previewSourceWasHidden) {
+      return;
+    }
+    lowerCanvas.style.opacity = this.previousLowerCanvasOpacity;
+    this.previousLowerCanvasOpacity = '';
+    this.previewSourceWasHidden = false;
+  }
+
   override _render(ctx: CanvasRenderingContext2D = this.canvas.contextTop) {
     if (this.compositeOperation === 'destination-out' && ctx === this.canvas.contextTop) {
+      this.setPreviewSourceHidden(true);
       const previewCtx = this.canvas.contextTop;
       const sourceCanvas = getEraserPreviewSourceCanvas(this.canvas);
 
@@ -356,9 +326,13 @@ class CompositePencilBrush extends PencilBrush {
     }
 
     super._render(ctx);
+  }
 
-    if (this.compositeOperation === 'destination-out' && ctx === this.canvas.contextTop) {
-      fillEraserPreviewBackdrop(this.canvas.contextTop);
+  override onMouseUp(eventData: any) {
+    try {
+      return super.onMouseUp(eventData);
+    } finally {
+      this.setPreviewSourceHidden(false);
     }
   }
 
@@ -391,6 +365,8 @@ class BitmapStampBrush extends BaseBrush {
   private readonly stampDefinition: ReturnType<typeof getBitmapBrushStampDefinition>;
   private strokeCanvas: HTMLCanvasElement | null = null;
   private strokeCtx: CanvasRenderingContext2D | null = null;
+  private previewSourceWasHidden = false;
+  private previousLowerCanvasOpacity = '';
 
   constructor(canvas: FabricCanvas, options: BitmapStampBrushOptions) {
     super(canvas as any);
@@ -409,9 +385,36 @@ class BitmapStampBrush extends BaseBrush {
     return true;
   }
 
+  private setPreviewSourceHidden(hidden: boolean) {
+    const lowerCanvas = (this.canvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl;
+    if (!lowerCanvas) {
+      return;
+    }
+
+    if (hidden) {
+      if (this.previewSourceWasHidden) {
+        return;
+      }
+      this.previousLowerCanvasOpacity = lowerCanvas.style.opacity;
+      lowerCanvas.style.opacity = '0';
+      this.previewSourceWasHidden = true;
+      return;
+    }
+
+    if (!this.previewSourceWasHidden) {
+      return;
+    }
+    lowerCanvas.style.opacity = this.previousLowerCanvasOpacity;
+    this.previousLowerCanvasOpacity = '';
+    this.previewSourceWasHidden = false;
+  }
+
   override onMouseDown(pointer: Point, { e }: any) {
     if (!this.canvas._isMainEvent(e)) {
       return;
+    }
+    if (this.compositeOperation === 'destination-out') {
+      this.setPreviewSourceHidden(true);
     }
     this.prepareStroke();
     this.lastPoint = new Point(pointer.x, pointer.y);
@@ -445,6 +448,7 @@ class BitmapStampBrush extends BaseBrush {
     const alphaThreshold = this.stampDefinition.alphaThreshold;
     this.resetStrokeState();
     this.canvas.clearContext(this.canvas.contextTop);
+    this.setPreviewSourceHidden(false);
 
     if (strokeCanvas) {
       this.onCommit({
@@ -558,10 +562,6 @@ class BitmapStampBrush extends BaseBrush {
     this._saveAndTransform(ctx);
     ctx.drawImage(this.strokeCanvas, 0, 0);
     ctx.restore();
-
-    if (this.compositeOperation === 'destination-out') {
-      fillEraserPreviewBackdrop(this.canvas.contextTop);
-    }
   }
 }
 
@@ -5156,6 +5156,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.isDrawingMode = true;
     } else {
       fabricCanvas.isDrawingMode = false;
+      if (fabricCanvas.lowerCanvasEl) {
+        fabricCanvas.lowerCanvasEl.style.opacity = '';
+      }
       if (fabricCanvas.contextTop) {
         fabricCanvas.contextTop.globalCompositeOperation = 'source-over';
       }
