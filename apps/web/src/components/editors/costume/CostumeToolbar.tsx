@@ -431,6 +431,8 @@ interface CostumeToolbarProps {
   editorMode: EditorMode;
   activeTool: DrawingTool;
   hasActiveSelection: boolean;
+  showModeSwitcher?: boolean;
+  selectionActionsEnabled?: boolean;
   showTextControls: boolean;
   isVectorPointEditing: boolean;
   hasSelectedVectorPoints: boolean;
@@ -559,6 +561,8 @@ export const CostumeToolbar = memo(({
   editorMode,
   activeTool,
   hasActiveSelection,
+  showModeSwitcher = true,
+  selectionActionsEnabled = true,
   showTextControls,
   isVectorPointEditing,
   hasSelectedVectorPoints,
@@ -600,8 +604,8 @@ export const CostumeToolbar = memo(({
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = isShapeTool(activeTool);
-  const showSelectionActions = activeTool === 'select' && !isVectorPointEditing;
-  const showContextualPropertyBar = isVectorPointEditing || !(showSelectionActions && !hasActiveSelection);
+  const showSelectionActions = selectionActionsEnabled && activeTool === 'select' && !isVectorPointEditing && hasActiveSelection;
+  const showVectorHandleControl = editorMode === 'vector' && isVectorPointEditing && hasSelectedVectorPoints;
   const showBitmapShapeStyleControls = editorMode === 'bitmap' && shapeToolIsActive;
   const showBitmapShapeFillControl = showBitmapShapeStyleControls && activeTool !== 'line';
   const showBitmapFillTextureControl = editorMode === 'bitmap' && activeTool === 'fill';
@@ -618,6 +622,17 @@ export const CostumeToolbar = memo(({
   const showVectorFillControl =
     showVectorStyleControls &&
     (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line');
+  const showTextToolbarControls = editorMode === 'vector' && showTextControls;
+  const showContextualPropertyBar =
+    showSelectionActions ||
+    showVectorHandleControl ||
+    showPrimaryColorControl ||
+    showBitmapBrushTypeControl ||
+    showBitmapFillTextureControl ||
+    showBitmapShapeStyleControls ||
+    showVectorStyleControls ||
+    showBitmapBrushSizeControl ||
+    showTextToolbarControls;
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
   const activeBrushPreviewColor = activeTool === 'eraser' ? '#94a3b8' : brushColor;
@@ -670,7 +685,7 @@ export const CostumeToolbar = memo(({
                     </div>
                   )}
 
-                  {editorMode === 'vector' && isVectorPointEditing && hasSelectedVectorPoints && (
+                  {showVectorHandleControl && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                       <span className="whitespace-nowrap text-xs text-muted-foreground">Handles</span>
                       <DropdownMenu
@@ -976,7 +991,7 @@ export const CostumeToolbar = memo(({
                     />
                   )}
 
-                  {editorMode === 'vector' && showTextControls && (
+                  {showTextToolbarControls && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                       <DropdownMenu
                         open={openMenu === 'font-family'}
@@ -1208,19 +1223,23 @@ export const CostumeToolbar = memo(({
                   ))}
                 </div>
 
-                <div className="h-10 w-px bg-border/65" />
+                {showModeSwitcher && (
+                  <>
+                    <div className="h-10 w-px bg-border/65" />
 
-                <div className="w-[164px]">
-                  <SegmentedControl
-                    ariaLabel="Costume editor mode"
-                    options={modeOptions}
-                    size="large"
-                    value={editorMode}
-                    onValueChange={onEditorModeChange}
-                    className="w-full"
-                    optionClassName="min-h-[40px] px-3 text-[13px]"
-                  />
-                </div>
+                    <div className="w-[164px]">
+                      <SegmentedControl
+                        ariaLabel="Costume editor mode"
+                        options={modeOptions}
+                        size="large"
+                        value={editorMode}
+                        onValueChange={onEditorModeChange}
+                        className="w-full"
+                        optionClassName="min-h-[40px] px-3 text-[13px]"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
           </FloatingBottomToolbar>
       </FloatingBottomToolbarDock>

@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { Check, Circle, Eraser, LocateFixed, Minus, MousePointer2, PaintBucket, Pencil, Square, Star, Triangle, X } from 'lucide-react';
+import { Check, LocateFixed, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import type { BackgroundConfig } from '@/types';
-import type { BitmapFillStyle, BitmapShapeStyle } from '@/components/editors/costume/CostumeToolbar';
+import {
+  CostumeToolbar,
+  type BitmapFillStyle,
+  type BitmapShapeStyle,
+  type DrawingTool as CostumeDrawingTool,
+  type TextToolStyle,
+  type VectorHandleMode,
+  type VectorStyleCapabilities,
+  type VectorToolStyle,
+} from '@/components/editors/costume/CostumeToolbar';
 import {
   DEFAULT_BACKGROUND_CHUNK_SIZE,
   getChunkBoundsFromKeys,
@@ -28,7 +37,6 @@ import {
   type ChunkDataMap,
 } from '@/lib/background/chunkStore';
 import {
-  BITMAP_BRUSH_OPTIONS,
   getBitmapBrushCursorStyle,
   getBitmapBrushStampDefinition,
   getBrushPaintColor,
@@ -39,11 +47,12 @@ import {
 } from '@/lib/background/brushCore';
 import {
   applyBitmapBucketFill,
-  BITMAP_FILL_TEXTURE_OPTIONS,
   DEFAULT_BITMAP_FILL_TEXTURE_ID,
   getBitmapFillTexturePreset,
   type BitmapFillTextureId,
 } from '@/lib/background/bitmapFillCore';
+import { DEFAULT_VECTOR_STROKE_BRUSH_ID } from '@/lib/vector/vectorStrokeBrushCore';
+import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
 import {
   clampViewportZoom,
   panCameraFromDrag,
@@ -70,8 +79,8 @@ type ChunkDelta = {
   after: Record<string, string | null>;
 };
 
-type BackgroundShapeTool = 'line' | 'circle' | 'rectangle' | 'triangle' | 'star';
-type BackgroundDrawingTool = 'select' | BitmapBrushTool | 'fill' | BackgroundShapeTool;
+type BackgroundShapeTool = Extract<CostumeDrawingTool, 'line' | 'circle' | 'rectangle' | 'triangle' | 'star'>;
+type BackgroundDrawingTool = Extract<CostumeDrawingTool, 'select' | 'brush' | 'eraser' | 'fill' | 'line' | 'circle' | 'rectangle' | 'triangle' | 'star'>;
 
 type MutationSession = {
   touched: Set<string>;
@@ -175,8 +184,43 @@ const FLOATING_SELECTION_MIN_SCREEN_SIZE = 8;
 const FLOATING_SELECTION_BORDER_COLOR = '#0ea5e9';
 const FLOATING_SELECTION_BORDER_FILL = 'rgba(14, 165, 233, 0.08)';
 
+const BACKGROUND_TOOLBAR_TEXT_STYLE: TextToolStyle = {
+  fontFamily: 'Arial',
+  fontSize: 32,
+  fontWeight: 'normal',
+  fontStyle: 'normal',
+  underline: false,
+  textAlign: 'left',
+  opacity: 1,
+};
+
+const BACKGROUND_TOOLBAR_VECTOR_STYLE: VectorToolStyle = {
+  fillColor: '#000000',
+  fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
+  strokeColor: '#000000',
+  strokeWidth: 1,
+  strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
+};
+
+const BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE: VectorHandleMode = 'linear';
+const BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES: VectorStyleCapabilities = { supportsFill: false };
+
 function isShapeTool(tool: BackgroundDrawingTool): tool is BackgroundShapeTool {
   return tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'triangle' || tool === 'star';
+}
+
+function isBackgroundToolbarTool(tool: CostumeDrawingTool): tool is BackgroundDrawingTool {
+  return (
+    tool === 'select' ||
+    tool === 'brush' ||
+    tool === 'eraser' ||
+    tool === 'fill' ||
+    tool === 'rectangle' ||
+    tool === 'circle' ||
+    tool === 'triangle' ||
+    tool === 'star' ||
+    tool === 'line'
+  );
 }
 
 function getWorldRectFromPoints(start: WorldPoint, end: WorldPoint): WorldRect {
@@ -2338,6 +2382,58 @@ export function BackgroundCanvasEditor() {
     setCamera((current) => panCameraFromWheel(current, event.deltaX, event.deltaY, zoom, 'up'));
   }, [camera, zoom]);
 
+  const handleToolbarModeChange = useCallback(() => {
+    // Background drawing is bitmap-only, so the shared toolbar mode switcher is hidden.
+  }, []);
+
+  const handleToolbarToolChange = useCallback((nextTool: CostumeDrawingTool) => {
+    if (busy || !isBackgroundToolbarTool(nextTool)) {
+      return;
+    }
+    setTool(nextTool);
+  }, [busy]);
+
+  const handleToolbarMoveOrder = useCallback(() => {}, []);
+  const handleToolbarVectorHandleModeChange = useCallback(() => {}, []);
+  const handleToolbarAlign = useCallback(() => {}, []);
+  const handleToolbarTextStyleChange = useCallback(() => {}, []);
+  const handleToolbarVectorStyleChange = useCallback(() => {}, []);
+
+  const handleToolbarColorChange = useCallback((color: string) => {
+    if (busy) {
+      return;
+    }
+    setBrushColor(color);
+  }, [busy]);
+
+  const handleToolbarBitmapBrushKindChange = useCallback((kind: BitmapBrushKind) => {
+    if (busy) {
+      return;
+    }
+    setBitmapBrushKind(kind);
+  }, [busy]);
+
+  const handleToolbarBrushSizeChange = useCallback((size: number) => {
+    if (busy) {
+      return;
+    }
+    setBrushSize(size);
+  }, [busy]);
+
+  const handleToolbarBitmapFillStyleChange = useCallback((updates: Partial<BitmapFillStyle>) => {
+    if (busy) {
+      return;
+    }
+    setBitmapFillStyle((prev) => ({ ...prev, ...updates }));
+  }, [busy]);
+
+  const handleToolbarBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>) => {
+    if (busy) {
+      return;
+    }
+    setBitmapShapeStyle((prev) => ({ ...prev, ...updates }));
+  }, [busy]);
+
   if (!scene) {
     return null;
   }
@@ -2361,199 +2457,6 @@ export function BackgroundCanvasEditor() {
           Cancel
         </Button>
         <div className="app-divider-x app-divider-fill h-6 mx-1" />
-        <Button
-          variant={tool === 'select' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('select')}
-          disabled={busy}
-          title="Select (V)"
-        >
-          <MousePointer2 className="size-4" />
-          Select
-        </Button>
-        <Button
-          variant={tool === 'brush' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('brush')}
-          disabled={busy}
-          title="Brush (B)"
-        >
-          <Pencil className="size-4" />
-          Brush
-        </Button>
-        <Button
-          variant={tool === 'eraser' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('eraser')}
-          disabled={busy}
-          title="Eraser (E)"
-        >
-          <Eraser className="size-4" />
-          Eraser
-        </Button>
-        <Button
-          variant={tool === 'fill' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('fill')}
-          disabled={busy}
-          title="Fill (F)"
-        >
-          <PaintBucket className="size-4" />
-          Fill
-        </Button>
-        <Button
-          variant={tool === 'rectangle' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('rectangle')}
-          disabled={busy}
-          title="Rectangle (R)"
-        >
-          <Square className="size-4" />
-          Rect
-        </Button>
-        <Button
-          variant={tool === 'circle' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('circle')}
-          disabled={busy}
-          title="Circle (C)"
-        >
-          <Circle className="size-4" />
-          Circle
-        </Button>
-        <Button
-          variant={tool === 'triangle' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('triangle')}
-          disabled={busy}
-          title="Triangle (G)"
-        >
-          <Triangle className="size-4" />
-          Triangle
-        </Button>
-        <Button
-          variant={tool === 'star' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('star')}
-          disabled={busy}
-          title="Star (S)"
-        >
-          <Star className="size-4" />
-          Star
-        </Button>
-        <Button
-          variant={tool === 'line' ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setTool('line')}
-          disabled={busy}
-          title="Line (L)"
-        >
-          <Minus className="size-4" />
-          Line
-        </Button>
-        {(tool === 'brush' || tool === 'eraser' || tool === 'fill') && (
-          <>
-            <label className="text-xs text-muted-foreground">{tool === 'fill' ? 'Color' : 'Brush'}</label>
-            <input
-              type="color"
-              value={brushColor}
-              onChange={(event) => setBrushColor(event.target.value)}
-              className="h-8 w-10 rounded border bg-background"
-              title="Brush color"
-              disabled={busy || tool === 'eraser'}
-            />
-          </>
-        )}
-        {tool === 'brush' && (
-          <>
-            <label className="text-xs text-muted-foreground">Type</label>
-            <select
-              value={bitmapBrushKind}
-              onChange={(event) => setBitmapBrushKind(event.target.value as BitmapBrushKind)}
-              className="h-8 rounded border bg-background px-2 text-xs"
-              disabled={busy}
-              title="Brush type"
-            >
-              {BITMAP_BRUSH_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        {tool === 'fill' && (
-          <>
-            <label className="text-xs text-muted-foreground">Texture</label>
-            <select
-              value={bitmapFillStyle.textureId}
-              onChange={(event) => setBitmapFillStyle({ textureId: event.target.value as BitmapFillTextureId })}
-              className="h-8 rounded border bg-background px-2 text-xs"
-              disabled={busy}
-              title="Fill texture"
-            >
-              {BITMAP_FILL_TEXTURE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        {(tool === 'brush' || tool === 'eraser') && (
-          <>
-            <label className="text-xs text-muted-foreground">Size</label>
-            <input
-              type="range"
-              min={1}
-              max={256}
-              step={1}
-              value={brushSize}
-              onChange={(event) => setBrushSize(Number(event.target.value))}
-              className="w-36"
-              disabled={busy}
-            />
-            <span className="text-xs w-10 text-right tabular-nums">{brushSize}</span>
-          </>
-        )}
-        {isShapeTool(tool) && (
-          <>
-            {tool !== 'line' && (
-              <>
-                <label className="text-xs text-muted-foreground">Fill</label>
-                <input
-                  type="color"
-                  value={bitmapShapeStyle.fillColor}
-                  onChange={(event) => setBitmapShapeStyle((prev) => ({ ...prev, fillColor: event.target.value }))}
-                  className="h-8 w-10 rounded border bg-background"
-                  title="Shape fill color"
-                  disabled={busy}
-                />
-              </>
-            )}
-            <label className="text-xs text-muted-foreground">Stroke</label>
-            <input
-              type="color"
-              value={bitmapShapeStyle.strokeColor}
-              onChange={(event) => setBitmapShapeStyle((prev) => ({ ...prev, strokeColor: event.target.value }))}
-              className="h-8 w-10 rounded border bg-background"
-              title="Shape stroke color"
-              disabled={busy}
-            />
-            <label className="text-xs text-muted-foreground">Width</label>
-            <input
-              type="range"
-              min={0}
-              max={50}
-              step={1}
-              value={bitmapShapeStyle.strokeWidth}
-              onChange={(event) => setBitmapShapeStyle((prev) => ({ ...prev, strokeWidth: Number(event.target.value) }))}
-              className="w-32"
-              disabled={busy}
-            />
-            <span className="text-xs w-10 text-right tabular-nums">{bitmapShapeStyle.strokeWidth}</span>
-          </>
-        )}
         <label className="text-xs text-muted-foreground">BG</label>
         <input
           type="color"
@@ -2584,6 +2487,38 @@ export function BackgroundCanvasEditor() {
       )}
 
       <div ref={hostRef} className="flex-1 min-h-0 relative overflow-hidden bg-[#060a14]">
+        <CostumeToolbar
+          editorMode="bitmap"
+          activeTool={tool}
+          hasActiveSelection={hasFloatingSelection}
+          showModeSwitcher={false}
+          selectionActionsEnabled={false}
+          showTextControls={false}
+          isVectorPointEditing={false}
+          hasSelectedVectorPoints={false}
+          bitmapBrushKind={bitmapBrushKind}
+          brushColor={brushColor}
+          brushSize={brushSize}
+          bitmapFillStyle={bitmapFillStyle}
+          bitmapShapeStyle={bitmapShapeStyle}
+          textStyle={BACKGROUND_TOOLBAR_TEXT_STYLE}
+          vectorStyle={BACKGROUND_TOOLBAR_VECTOR_STYLE}
+          vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
+          onEditorModeChange={handleToolbarModeChange}
+          onToolChange={handleToolbarToolChange}
+          onMoveOrder={handleToolbarMoveOrder}
+          vectorHandleMode={BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE}
+          onVectorHandleModeChange={handleToolbarVectorHandleModeChange}
+          onAlign={handleToolbarAlign}
+          alignDisabled
+          onColorChange={handleToolbarColorChange}
+          onBitmapBrushKindChange={handleToolbarBitmapBrushKindChange}
+          onBrushSizeChange={handleToolbarBrushSizeChange}
+          onBitmapFillStyleChange={handleToolbarBitmapFillStyleChange}
+          onBitmapShapeStyleChange={handleToolbarBitmapShapeStyleChange}
+          onTextStyleChange={handleToolbarTextStyleChange}
+          onVectorStyleChange={handleToolbarVectorStyleChange}
+        />
         <canvas
           ref={canvasRef}
           data-testid="background-editor-canvas"
