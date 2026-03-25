@@ -300,6 +300,7 @@ export function SpriteShelf() {
   const [showComponentLibrary, setShowComponentLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const cancelInlineRenameOnBlurRef = useRef(false);
   const cancelSceneRenameOnBlurRef = useRef(false);
   const sceneRenamePointerDownTargetRef = useRef<EventTarget | null>(null);
 
@@ -503,6 +504,14 @@ export function SpriteShelf() {
     }
   };
 
+  const cancelActiveInlineRename = () => {
+    cancelInlineRenameOnBlurRef.current = true;
+    setEditingObjectId(null);
+    setEditingFolderId(null);
+    setEditName('');
+    setFolderEditName('');
+  };
+
   const beginInlineRenameSession = () => {
     const nextSessionId = inlineRenameSessionRef.current + 1;
     inlineRenameSessionRef.current = nextSessionId;
@@ -512,6 +521,11 @@ export function SpriteShelf() {
 
   const handleInlineRenameBlur = (sessionId: number) => {
     if (sessionId !== inlineRenameSessionRef.current) {
+      return;
+    }
+
+    if (cancelInlineRenameOnBlurRef.current) {
+      cancelInlineRenameOnBlurRef.current = false;
       return;
     }
 
@@ -561,6 +575,7 @@ export function SpriteShelf() {
   const handleInlineRenameKeyDown = (
     event: React.KeyboardEvent<HTMLInputElement>,
     commitRename: () => void,
+    cancelRename: () => void,
   ) => {
     if (event.key === 'ArrowUp') {
       event.preventDefault();
@@ -583,9 +598,15 @@ export function SpriteShelf() {
       return;
     }
 
-    if (event.key === 'Enter' || event.key === 'Escape') {
+    if (event.key === 'Enter') {
       event.preventDefault();
       commitRename();
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelRename();
     }
   };
 
@@ -1586,7 +1607,7 @@ export function SpriteShelf() {
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
-                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
+                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename, cancelActiveInlineRename)}
                   data-hotkeys="ignore"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -1601,7 +1622,7 @@ export function SpriteShelf() {
                   value={folderEditName}
                   onChange={(e) => setFolderEditName(e.target.value)}
                   onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
-                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename)}
+                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename, cancelActiveInlineRename)}
                   data-hotkeys="ignore"
                   onClick={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
