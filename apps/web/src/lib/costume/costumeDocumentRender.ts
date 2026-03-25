@@ -2,6 +2,11 @@ import { StaticCanvas } from 'fabric';
 import type { CostumeBounds, CostumeDocument, CostumeLayer } from '@/types';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { COSTUME_CANVAS_SIZE, isBitmapCostumeLayer, isVectorCostumeLayer } from './costumeDocument';
+import {
+  canUseCostumeDocumentPreviewWorker,
+  renderCostumePreviewLayersInWorker,
+} from './costumeDocumentPreviewClient';
+import type { RenderableCostumePreviewLayer } from './costumeDocumentPreviewProtocol';
 
 const MAX_CACHED_COSTUME_IMAGES = 128;
 const MAX_CACHED_COSTUME_LAYER_CANVASES = 128;
@@ -229,5 +234,51 @@ export async function renderCostumeDocument(document: CostumeDocument): Promise<
     canvas,
     dataUrl: canvas.toDataURL('image/webp', 0.85),
     bounds: calculateBoundsFromCanvas(canvas),
+  };
+}
+
+async function createRenderableCostumePreviewLayers(
+  document: CostumeDocument,
+): Promise<RenderableCostumePreviewLayer[]> {
+  const previewLayers: RenderableCostumePreviewLayer[] = [];
+
+  for (const layer of document.layers) {
+    if (!layer.visible || layer.opacity <= 0) {
+      continue;
+    }
+
+    const source = isBitmapCostumeLayer(layer)
+      ? layer.bitmap.assetId
+      : await renderCostumeLayerToDataUrl(layer);
+    if (!source) {
+      continue;
+    }
+
+    previewLayers.push({
+      source,
+      opacity: layer.opacity,
+    });
+  }
+
+  return previewLayers;
+}
+
+export async function renderCostumeDocumentPreview(document: CostumeDocument): Promise<{
+  dataUrl: string;
+  bounds: CostumeBounds | null;
+}> {
+  if (canUseCostumeDocumentPreviewWorker()) {
+    try {
+      const renderableLayers = await createRenderableCostumePreviewLayers(document);
+      return await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers);
+    } catch (error) {
+      console.warn('Failed to render costume preview in the background worker. Falling back to the main thread renderer.', error);
+    }
+  }
+
+  const rendered = await renderCostumeDocument(document);
+  return {
+    dataUrl: rendered.dataUrl,
+    bounds: rendered.bounds,
   };
 }

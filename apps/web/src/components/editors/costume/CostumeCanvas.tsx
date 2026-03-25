@@ -35,10 +35,9 @@ import type {
   VectorToolStyle,
 } from './CostumeToolbar';
 import type { CostumeBounds, ColliderConfig, CostumeDocument, CostumeEditorMode, CostumeVectorDocument } from '@/types';
-import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
-import { CostumeLayerSurface } from './CostumeLayerSurface';
+import { CostumeCanvasStage } from './CostumeCanvasStage';
 import Color from 'color';
 import {
   getBitmapBrushCursorStyle,
@@ -7650,199 +7649,42 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     zoomToBounds(selectionSnapshot.bounds, 72);
   }, [getSelectionBoundsSnapshot, zoomToBounds]);
 
-  const currentViewScale = BASE_VIEW_SCALE * zoom;
-  const canvasLeft = viewportSize.width / 2 - cameraCenter.x * currentViewScale;
-  const canvasTop = viewportSize.height / 2 - cameraCenter.y * currentViewScale;
-
   return (
-    <div className="relative flex-1 overflow-hidden bg-muted/50">
-      <CanvasViewportOverlay
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUndo={onUndo}
-        onRedo={onRedo}
-        zoom={zoom}
-        minZoom={MIN_ZOOM}
-        maxZoom={MAX_ZOOM}
-        onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
-        onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
-        onZoomToActualSize={handleZoomToActualSize}
-        onZoomToFit={handleZoomToFit}
-        onZoomToSelection={handleZoomToSelection}
-        canZoomToSelection={canZoomToSelection}
-      />
-
-      <div
-        ref={containerRef}
-        tabIndex={-1}
-        className="size-full overflow-hidden relative outline-none"
-        style={{
-          cursor: isViewportPanning ? 'grabbing' : undefined,
-          overscrollBehavior: 'contain',
-        }}
-      >
-        <div
-          ref={textEditingHostRef}
-          aria-hidden="true"
-          className="fixed inset-0 overflow-hidden pointer-events-none"
-        />
-
-        <div
-          className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg"
-          style={{
-            width: CANVAS_SIZE,
-            height: CANVAS_SIZE,
-            transform: `translate(${canvasLeft}px, ${canvasTop}px) scale(${currentViewScale})`,
-            transformOrigin: 'top left',
-          }}
-        >
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-            }}
-          >
-            {inactiveLayersBelowActive.map((layer) => (
-              <CostumeLayerSurface
-                key={layer.id}
-                ref={(node) => {
-                  if (node) {
-                    inactiveLayerSurfaceRefs.current.set(layer.id, node);
-                  } else {
-                    inactiveLayerSurfaceRefs.current.delete(layer.id);
-                  }
-                }}
-                layer={layer}
-                opacity={layer.visible ? layer.opacity : 0}
-              />
-            ))}
-          </div>
-
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-            }}
-          >
-            <div
-              ref={fabricCanvasHostRef}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: CANVAS_SIZE,
-                height: CANVAS_SIZE,
-              }}
-            />
-
-            <canvas
-              ref={vectorStrokeCanvasRef}
-              width={CANVAS_SIZE}
-              height={CANVAS_SIZE}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: CANVAS_SIZE,
-                height: CANVAS_SIZE,
-                pointerEvents: 'none',
-                opacity: activeLayerVisible ? activeLayerOpacity : 0,
-              }}
-            />
-          </div>
-
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-            }}
-          >
-            {inactiveLayersAboveActive.map((layer) => (
-              <CostumeLayerSurface
-                key={layer.id}
-                ref={(node) => {
-                  if (node) {
-                    inactiveLayerSurfaceRefs.current.set(layer.id, node);
-                  } else {
-                    inactiveLayerSurfaceRefs.current.delete(layer.id);
-                  }
-                }}
-                layer={layer}
-                opacity={layer.visible ? layer.opacity : 0}
-              />
-            ))}
-          </div>
-
-          <canvas
-            ref={vectorGuideCanvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              pointerEvents: 'none',
-            }}
-          />
-
-          <canvas
-            ref={bitmapSelectionCanvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              pointerEvents: editorModeState === 'bitmap' && (
-                activeTool === 'select' ||
-                (activeTool === 'box-select' && activeLayerVisible && !hasBitmapFloatingSelection && !activeLayerLocked)
-              ) ? 'auto' : 'none',
-              opacity: activeLayerVisible ? activeLayerOpacity : 0,
-            }}
-          />
-
-          <canvas
-            ref={colliderCanvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              pointerEvents: activeTool === 'collider' ? 'auto' : 'none',
-            }}
-          />
-        </div>
-        <div
-          ref={brushCursorOverlayRef}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: 12,
-            height: 12,
-            borderRadius: '9999px',
-            border: '1.5px solid #111111',
-            background: 'rgba(255,255,255,0.1)',
-            boxShadow: 'none',
-            transform: 'translate(-9999px, -9999px)',
-            opacity: 0,
-            pointerEvents: 'none',
-            zIndex: 40,
-          }}
-        />
-      </div>
-    </div>
+    <CostumeCanvasStage
+      activeLayerLocked={activeLayerLocked}
+      activeLayerOpacity={activeLayerOpacity}
+      activeLayerVisible={activeLayerVisible}
+      activeTool={activeTool}
+      bitmapSelectionCanvasRef={bitmapSelectionCanvasRef}
+      brushCursorOverlayRef={brushCursorOverlayRef}
+      cameraCenter={cameraCenter}
+      canRedo={canRedo}
+      canUndo={canUndo}
+      canZoomToSelection={canZoomToSelection}
+      colliderCanvasRef={colliderCanvasRef}
+      containerRef={containerRef}
+      editorModeState={editorModeState}
+      fabricCanvasHostRef={fabricCanvasHostRef}
+      hasBitmapFloatingSelection={hasBitmapFloatingSelection}
+      inactiveLayerSurfaceRefs={inactiveLayerSurfaceRefs}
+      inactiveLayersAboveActive={inactiveLayersAboveActive}
+      inactiveLayersBelowActive={inactiveLayersBelowActive}
+      isViewportPanning={isViewportPanning}
+      maxZoom={MAX_ZOOM}
+      minZoom={MIN_ZOOM}
+      onRedo={onRedo}
+      onUndo={onUndo}
+      onZoomIn={() => zoomAroundViewportCenter(zoom + ZOOM_STEP)}
+      onZoomOut={() => zoomAroundViewportCenter(zoom - ZOOM_STEP)}
+      onZoomToActualSize={handleZoomToActualSize}
+      onZoomToFit={handleZoomToFit}
+      onZoomToSelection={handleZoomToSelection}
+      textEditingHostRef={textEditingHostRef}
+      vectorGuideCanvasRef={vectorGuideCanvasRef}
+      vectorStrokeCanvasRef={vectorStrokeCanvasRef}
+      viewportSize={viewportSize}
+      zoom={zoom}
+    />
   );
 });
 

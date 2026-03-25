@@ -61,7 +61,7 @@ import {
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 import {
-  renderCostumeDocument,
+  renderCostumeDocumentPreview,
   renderCostumeLayerStackToDataUrl,
 } from '@/lib/costume/costumeDocumentRender';
 
@@ -520,7 +520,7 @@ export function CostumeEditor() {
     flattenedPreviewRefreshTimeoutRef.current = setTimeout(() => {
       flattenedPreviewRefreshTimeoutRef.current = null;
 
-      void renderCostumeDocument(nextDocument).then((rendered) => {
+      void renderCostumeDocumentPreview(nextDocument).then((rendered) => {
         if (flattenedPreviewRefreshIdRef.current !== requestId) {
           return;
         }

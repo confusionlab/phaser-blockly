@@ -19,7 +19,7 @@ import {
   createBlankCostumeDocument,
   createBitmapCostumeDocument,
 } from '@/lib/costume/costumeDocument';
-import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
+import { renderCostumeDocumentPreview } from '@/lib/costume/costumeDocumentRender';
 
 interface CostumeListProps {
   costumes: Costume[];
@@ -61,7 +61,7 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
           }
     ));
 
-    void renderCostumeDocument(costume.document).then((rendered) => {
+    void renderCostumeDocumentPreview(costume.document).then((rendered) => {
       if (cancelled) {
         return;
       }
@@ -230,7 +230,7 @@ export const CostumeList = memo(({
 
     setSavingToLibrary(index);
     try {
-      const renderedCostume = await renderCostumeDocument(costume.document);
+      const renderedCostume = await renderCostumeDocumentPreview(costume.document);
       const resolvedAssetId = renderedCostume.dataUrl;
       const resolvedBounds = renderedCostume.bounds ?? costume.bounds;
 
