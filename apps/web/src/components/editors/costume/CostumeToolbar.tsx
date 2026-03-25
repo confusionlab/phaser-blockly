@@ -295,7 +295,7 @@ const toolbarSliderThumbClassName =
 const toolbarSliderTrackClassName = 'relative h-1.5 w-full grow rounded-full bg-secondary';
 const toolbarSliderRangeClassName = 'absolute h-full rounded-full bg-primary';
 const toolbarSliderPreviewSurfaceClassName =
-  'pointer-events-none overflow-visible rounded-[18px] border border-border/70 bg-background/95 px-3 py-3 shadow-[0_18px_40px_-22px_rgba(15,23,42,0.38)] backdrop-blur-xl';
+  'pointer-events-none overflow-visible rounded-md bg-background px-4 py-3';
 
 interface ToolbarPreviewSliderProps {
   label: string;
@@ -399,7 +399,7 @@ const StrokeWidthPreview = memo(({
 
   return (
     <div
-      className="flex w-[136px] items-center justify-center rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))] px-5 py-4"
+      className="flex w-[136px] items-center justify-center"
       style={{ minHeight: `${previewHeight}px` }}
     >
       {thickness > 0 && (
@@ -431,7 +431,7 @@ const TextSizePreview = memo(({
 
   return (
     <div
-      className="flex items-center justify-center rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))] px-5 py-4"
+      className="flex items-center justify-center"
       style={{
         minHeight: `${previewHeight}px`,
         minWidth: `${previewWidth}px`,
