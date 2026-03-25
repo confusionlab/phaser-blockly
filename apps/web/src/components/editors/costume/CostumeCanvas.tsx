@@ -5150,7 +5150,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const isBitmapBrush = mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
     if (isBitmapBrush) {
       const compositeOperation = getCompositeOperation(tool);
-      const brush = tool === 'brush' && bitmapBrushKindRef.current !== 'hard-round'
+      const brush = bitmapBrushKindRef.current !== 'hard-round'
         ? new BitmapStampBrush(fabricCanvas, {
             brushKind: bitmapBrushKindRef.current,
             brushColor: brushColorRef.current,

@@ -613,8 +613,15 @@ export const CostumeToolbar = memo(({
     editorMode === 'bitmap' &&
     !shapeToolIsActive &&
     (activeTool === 'brush' || activeTool === 'eraser');
-  const showBitmapBrushTypeControl = editorMode === 'bitmap' && activeTool === 'brush' && !shapeToolIsActive;
-  const showPrimaryColorControl = (editorMode === 'bitmap' && !showBitmapShapeStyleControls) || showTextControls;
+  const showBitmapBrushTypeControl =
+    editorMode === 'bitmap' &&
+    !shapeToolIsActive &&
+    (activeTool === 'brush' || activeTool === 'eraser');
+  const showBitmapPrimaryColorControl =
+    editorMode === 'bitmap' &&
+    !shapeToolIsActive &&
+    (activeTool === 'brush' || activeTool === 'fill');
+  const showPrimaryColorControl = showBitmapPrimaryColorControl || showTextControls;
   const showVectorStyleControls =
     editorMode === 'vector' &&
     !showTextControls &&

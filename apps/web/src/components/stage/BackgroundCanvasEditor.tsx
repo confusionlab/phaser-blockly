@@ -1235,7 +1235,7 @@ export function BackgroundCanvasEditor() {
     const dy = to.y - from.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
-    if (brushTool === 'brush' && bitmapBrushKind !== 'hard-round') {
+    if (bitmapBrushKind !== 'hard-round') {
       const stampDefinition = getBitmapBrushStampDefinition(bitmapBrushKind, brushColor, brushSize);
       const steps = Math.max(1, Math.ceil(distance / Math.max(1, stampDefinition.spacing)));
       for (let index = 0; index <= steps; index += 1) {
