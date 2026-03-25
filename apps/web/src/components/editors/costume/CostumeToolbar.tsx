@@ -63,7 +63,7 @@ import {
 } from '@/lib/vector/vectorFillTextureCore';
 
 export type EditorMode = CostumeEditorMode;
-export type DrawingTool = 'select' | 'box-select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
+export type DrawingTool = 'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
 export type SelectionFlipAxis = 'horizontal' | 'vertical';
 export type VectorPathNodeHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';

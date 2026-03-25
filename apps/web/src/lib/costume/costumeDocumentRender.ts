@@ -1,8 +1,8 @@
-import { StaticCanvas } from 'fabric';
 import type { CostumeBounds, CostumeDocument, CostumeLayer } from '@/types';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { COSTUME_CANVAS_SIZE, isBitmapCostumeLayer, isVectorCostumeLayer } from './costumeDocument';
 import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
+import { renderVectorLayerDocumentToCanvas } from './costumeVectorTextureRenderer';
 import {
   canUseCostumeDocumentPreviewWorker,
   renderCostumePreviewLayersInWorker,
@@ -138,32 +138,7 @@ export async function renderCostumeLayerToCanvas(layer: CostumeLayer): Promise<H
       return null;
     }
 
-    const vectorCanvasElement = document.createElement('canvas');
-    vectorCanvasElement.width = COSTUME_CANVAS_SIZE;
-    vectorCanvasElement.height = COSTUME_CANVAS_SIZE;
-    const vectorCanvas = new StaticCanvas(vectorCanvasElement, {
-      width: COSTUME_CANVAS_SIZE,
-      height: COSTUME_CANVAS_SIZE,
-      renderOnAddRemove: false,
-      enableRetinaScaling: false,
-    });
-
-    try {
-      const parsed = JSON.parse(layer.vector.fabricJson);
-      await vectorCanvas.loadFromJSON(parsed);
-      vectorCanvas.renderAll();
-      const snapshotCanvas = document.createElement('canvas');
-      snapshotCanvas.width = COSTUME_CANVAS_SIZE;
-      snapshotCanvas.height = COSTUME_CANVAS_SIZE;
-      const snapshotCtx = snapshotCanvas.getContext('2d');
-      if (!snapshotCtx) {
-        return null;
-      }
-      snapshotCtx.drawImage(vectorCanvasElement, 0, 0, COSTUME_CANVAS_SIZE, COSTUME_CANVAS_SIZE);
-      return snapshotCanvas;
-    } finally {
-      vectorCanvas.dispose();
-    }
+    return await renderVectorLayerDocumentToCanvas(layer.vector.fabricJson, COSTUME_CANVAS_SIZE);
   })();
 
   if (!cacheKey) {

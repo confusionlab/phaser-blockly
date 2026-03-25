@@ -18,11 +18,11 @@ import type {
 import type { CostumeBounds, ColliderConfig, CostumeDocument, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import { type BitmapBrushKind } from '@/lib/background/brushCore';
-import type { VectorStrokeBrushRenderStyle } from '@/lib/vector/vectorStrokeBrushCore';
 import {
   getActiveCostumeLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
+import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import {
   CANVAS_SIZE,
   MIN_ZOOM,
@@ -266,9 +266,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const suppressHistoryRef = useRef(false);
   const bitmapRasterCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const vectorStrokeBrushRenderCacheRef = useRef<Map<string, VectorStrokeBrushRenderStyle>>(new Map());
-  const vectorStrokeTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
-  const vectorStrokeTexturePendingRef = useRef<Set<string>>(new Set());
 
   const shapeDraftRef = useRef<{
     type: 'rectangle' | 'circle' | 'triangle' | 'star' | 'line';
@@ -500,9 +497,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   } = useCostumeCanvasVectorBrushRenderer({
     editorModeRef,
     fabricCanvasRef,
-    vectorStrokeBrushRenderCacheRef,
-    vectorStrokeTextureCacheRef,
-    vectorStrokeTexturePendingRef,
   });
 
   const getActiveLayerCanvasElement = useCallback((): HTMLCanvasElement => {
@@ -535,6 +529,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     ctx.clearRect(0, 0, surface.width, surface.height);
     ctx.drawImage(fabricCanvas.toCanvasElement(1), 0, 0, surface.width, surface.height);
+    if (editorModeRef.current === 'vector') {
+      renderVectorTextureOverlayForFabricCanvas(ctx, fabricCanvas, {
+        canvasSize: surface.width,
+        clear: false,
+      });
+    }
   }, []);
 
   const {

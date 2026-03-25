@@ -113,10 +113,11 @@ export function AnchoredPopupSurface({
       ref={surfaceRef}
       data-state="open"
       data-side={position.side}
-      className={cn(dropdownMenuContentClassName, 'fixed z-[100060]', className)}
+      className={cn(dropdownMenuContentClassName, 'fixed', className)}
       style={{
         left: position.left,
         top: position.top,
+        zIndex: 'var(--z-editor-popup)',
       }}
     >
       {children}

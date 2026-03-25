@@ -187,11 +187,11 @@ body {
 .blocklyWidgetDiv,
 .blocklyDropDownDiv {
   color: var(--popover-foreground);
-  z-index: 40 !important;
+  z-index: var(--z-editor-popup) !important;
 }
 
 .blocklyTooltipDiv {
-  z-index: 40 !important;
+  z-index: var(--z-editor-popup) !important;
 }
 
 .blocklyDropDownDiv .goog-menu {
@@ -387,6 +387,7 @@ body {
 }
 
 :root {
+  --z-editor-popup: 100120;
   --radius: 0.625rem;
   --divider-size: 2px;
   --resize-hit-size: calc(var(--divider-size) * 2.5);
