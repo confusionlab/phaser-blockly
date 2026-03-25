@@ -891,12 +891,20 @@ export function CostumeEditor() {
   }, [commitDocumentMutation]);
 
   const handleToggleLayerVisibility = useCallback((layerId: string) => {
+    const currentDocument = currentCostumeRef.current?.document;
+    const currentLayer = currentDocument ? getCostumeLayerById(currentDocument, layerId) : null;
+    const nextVisible = currentLayer ? !currentLayer.visible : null;
+    const shouldReloadActiveLayer = currentDocument?.activeLayerId === layerId;
+
     void commitDocumentMutation((working) => {
       const layer = getCostumeLayerById(working.document, layerId);
-      if (!layer) {
+      const resolvedVisible = nextVisible ?? (layer ? !layer.visible : null);
+      if (!layer || resolvedVisible === null) {
         return null;
       }
-      return setCostumeLayerVisibility(working.document, layerId, !layer.visible);
+      return setCostumeLayerVisibility(working.document, layerId, resolvedVisible);
+    }, {
+      forceReload: shouldReloadActiveLayer,
     });
   }, [commitDocumentMutation]);
 
