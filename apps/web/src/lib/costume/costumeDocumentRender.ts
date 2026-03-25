@@ -10,8 +10,10 @@ import type { RenderableCostumePreviewLayer } from './costumeDocumentPreviewProt
 
 const MAX_CACHED_COSTUME_IMAGES = 128;
 const MAX_CACHED_COSTUME_LAYER_CANVASES = 128;
+const MAX_CACHED_COSTUME_LAYER_PREVIEW_SOURCES = 128;
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 const layerCanvasCache = new Map<string, Promise<HTMLCanvasElement>>();
+const layerPreviewSourceCache = new Map<string, Promise<string | null>>();
 
 function hashString(value: string): string {
   let hash = 2166136261;
@@ -147,6 +149,30 @@ export async function renderCostumeLayerToDataUrl(layer: CostumeLayer): Promise<
   return layerCanvas.toDataURL('image/png');
 }
 
+async function renderCostumeLayerToPreviewSource(layer: CostumeLayer): Promise<string | null> {
+  if (isBitmapCostumeLayer(layer)) {
+    return layer.bitmap.assetId || null;
+  }
+
+  const cacheKey = getCostumeLayerRenderSignature(layer);
+  if (!cacheKey) {
+    return await renderCostumeLayerToDataUrl(layer);
+  }
+
+  const cached = layerPreviewSourceCache.get(cacheKey);
+  if (cached) {
+    return await cached;
+  }
+
+  const pending = renderCostumeLayerToDataUrl(layer);
+  return await rememberCachedValue(
+    layerPreviewSourceCache,
+    cacheKey,
+    pending,
+    MAX_CACHED_COSTUME_LAYER_PREVIEW_SOURCES,
+  );
+}
+
 export async function renderCostumeLayerIntoCanvas(
   targetCanvas: HTMLCanvasElement,
   layer: CostumeLayer,
@@ -247,9 +273,7 @@ async function createRenderableCostumePreviewLayers(
       continue;
     }
 
-    const source = isBitmapCostumeLayer(layer)
-      ? layer.bitmap.assetId
-      : await renderCostumeLayerToDataUrl(layer);
+    const source = await renderCostumeLayerToPreviewSource(layer);
     if (!source) {
       continue;
     }

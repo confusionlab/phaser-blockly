@@ -2,9 +2,9 @@ import type { MutableRefObject, RefObject } from 'react';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import type { CostumeEditorMode, CostumeLayer } from '@/types';
 import type { DrawingTool } from './CostumeToolbar';
+import { CostumeActiveLayerHost } from './CostumeActiveLayerHost';
 import { CostumeLayerSurface } from './CostumeLayerSurface';
-
-const CANVAS_SIZE = 1024;
+import { CANVAS_SIZE, DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
 
 interface CostumeCanvasStageProps {
   activeLayerLocked: boolean;
@@ -77,7 +77,7 @@ export function CostumeCanvasStage({
   viewportSize,
   zoom,
 }: CostumeCanvasStageProps) {
-  const canvasPreviewScale = zoom * (480 / CANVAS_SIZE);
+  const canvasPreviewScale = zoom * DEFAULT_COSTUME_PREVIEW_SCALE;
   const canvasLeft = viewportSize.width / 2 - cameraCenter.x * canvasPreviewScale;
   const canvasTop = viewportSize.height / 2 - cameraCenter.y * canvasPreviewScale;
 
@@ -149,38 +149,19 @@ export function CostumeCanvasStage({
             ))}
           </div>
 
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-            }}
-          >
-            <div
-              ref={fabricCanvasHostRef}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: CANVAS_SIZE,
-                height: CANVAS_SIZE,
-              }}
-            />
-
-            <canvas
-              ref={vectorStrokeCanvasRef}
-              width={CANVAS_SIZE}
-              height={CANVAS_SIZE}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: CANVAS_SIZE,
-                height: CANVAS_SIZE,
-                pointerEvents: 'none',
-                opacity: activeLayerVisible ? activeLayerOpacity : 0,
-              }}
-            />
-          </div>
+          <CostumeActiveLayerHost
+            activeLayerLocked={activeLayerLocked}
+            activeLayerOpacity={activeLayerOpacity}
+            activeLayerVisible={activeLayerVisible}
+            activeTool={activeTool}
+            bitmapSelectionCanvasRef={bitmapSelectionCanvasRef}
+            colliderCanvasRef={colliderCanvasRef}
+            editorModeState={editorModeState}
+            fabricCanvasHostRef={fabricCanvasHostRef}
+            hasBitmapFloatingSelection={hasBitmapFloatingSelection}
+            vectorGuideCanvasRef={vectorGuideCanvasRef}
+            vectorStrokeCanvasRef={vectorStrokeCanvasRef}
+          />
 
           <div
             aria-hidden="true"
@@ -200,51 +181,6 @@ export function CostumeCanvasStage({
             ))}
           </div>
 
-          <canvas
-            ref={vectorGuideCanvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              pointerEvents: 'none',
-            }}
-          />
-
-          <canvas
-            ref={bitmapSelectionCanvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              pointerEvents: editorModeState === 'bitmap' && (
-                activeTool === 'select' ||
-                (activeTool === 'box-select' && activeLayerVisible && !hasBitmapFloatingSelection && !activeLayerLocked)
-              ) ? 'auto' : 'none',
-              opacity: activeLayerVisible ? activeLayerOpacity : 0,
-            }}
-          />
-
-          <canvas
-            ref={colliderCanvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              pointerEvents: activeTool === 'collider' ? 'auto' : 'none',
-            }}
-          />
         </div>
 
         <div
