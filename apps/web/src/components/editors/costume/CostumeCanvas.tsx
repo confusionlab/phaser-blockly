@@ -34,7 +34,7 @@ import type {
   VectorStyleCapabilities,
   VectorToolStyle,
 } from './CostumeToolbar';
-import type { Costume, CostumeBounds, ColliderConfig, CostumeDocument, CostumeEditorMode, CostumeVectorDocument } from '@/types';
+import type { CostumeBounds, ColliderConfig, CostumeDocument, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
@@ -73,9 +73,9 @@ import {
   zoomCameraAtClientPoint,
 } from '@/lib/viewportNavigation';
 import {
+  createEmptyCostumeVectorDocument,
   getActiveCostumeLayer,
-  isBitmapCostumeLayer,
-  isVectorCostumeLayer,
+  resolveActiveCostumeLayerEditorLoadState,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 
@@ -953,7 +953,7 @@ export interface CostumeCanvasHandle {
   toDataURL: () => string;
   toDataURLWithBounds: () => { dataUrl: string; bounds: CostumeBounds | null };
   loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
-  loadCostume: (sessionKey: string, costume: Costume) => Promise<void>;
+  loadDocument: (sessionKey: string, document: CostumeDocument) => Promise<void>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   hasUnsavedChanges: (sessionKey?: string | null) => boolean;
   markPersisted: (sessionKey?: string | null) => void;
@@ -2245,10 +2245,22 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     ctx.restore();
   }, [drawVectorStrokeBrushPath, getVectorObjectContourPaths, resolveVectorFillTextureSource, resolveVectorStrokeBrushRenderStyle, traceVectorObjectLocalPath]);
 
-  const getCanvasElement = useCallback((): HTMLCanvasElement => {
+  const getActiveLayerCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     if (fabricCanvas) {
-      const baseCanvas = fabricCanvas.toCanvasElement(1);
+      return fabricCanvas.toCanvasElement(1);
+    }
+
+    const fallback = document.createElement('canvas');
+    fallback.width = CANVAS_SIZE;
+    fallback.height = CANVAS_SIZE;
+    return fallback;
+  }, []);
+
+  const getComposedCanvasElement = useCallback((): HTMLCanvasElement => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (fabricCanvas) {
+      const baseCanvas = getActiveLayerCanvasElement();
       const composed = document.createElement('canvas');
       composed.width = CANVAS_SIZE;
       composed.height = CANVAS_SIZE;
@@ -2287,7 +2299,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fallback.width = CANVAS_SIZE;
     fallback.height = CANVAS_SIZE;
     return fallback;
-  }, [activeDocumentLayer?.id, activeLayerOpacity, activeLayerVisible, documentLayers, renderVectorBrushStrokeOverlay]);
+  }, [activeDocumentLayer?.id, activeLayerOpacity, activeLayerVisible, documentLayers, getActiveLayerCanvasElement, renderVectorBrushStrokeOverlay]);
 
   const getSelectionMousePos = useCallback((event: MouseEvent) => {
     const canvas = bitmapSelectionCanvasRef.current;
@@ -3139,7 +3151,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!fabricCanvas) return;
     if (editorModeRef.current === nextMode) return;
 
-    const rasterizedCanvas = getCanvasElement();
+    const rasterizedCanvas = getActiveLayerCanvasElement();
     const rasterized = rasterizedCanvas.toDataURL('image/png');
 
     if (nextMode === 'bitmap') {
@@ -3153,7 +3165,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     saveHistory();
-  }, [getCanvasElement, loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
+  }, [getActiveLayerCanvasElement, loadBitmapAsSingleVectorImage, loadBitmapLayer, saveHistory, setEditorMode]);
 
   const exportCostumeState = useCallback((sessionKey?: string | null): CostumeCanvasExportState | null => {
     if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
@@ -3443,27 +3455,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return !!activeObject && isTextObject(activeObject) && !!(activeObject as any).isEditing;
   }, []);
 
-  const loadCostume = useCallback(async (sessionKey: string, costume: Costume) => {
+  const loadDocument = useCallback(async (sessionKey: string, costumeDocument: CostumeDocument) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
     const requestId = ++loadRequestIdRef.current;
     loadedSessionKeyRef.current = null;
 
-    const activeLayer = getActiveCostumeLayer(costume.document);
-    const requestedMode: CostumeEditorMode = activeLayer?.kind === 'bitmap' ? 'bitmap' : 'vector';
-    const requestedBitmapSource = isBitmapCostumeLayer(activeLayer)
-      ? activeLayer.bitmap.assetId ?? costume.assetId
-      : costume.assetId;
-    const requestedVectorDocument = isVectorCostumeLayer(activeLayer) ? activeLayer.vector : null;
-    const hasValidVectorDocument =
-      requestedMode === 'vector' &&
-      requestedVectorDocument?.version === 1 &&
-      typeof requestedVectorDocument.fabricJson === 'string';
-
-    if (hasValidVectorDocument) {
-      let loadedVector = false;
+    const requestedState = resolveActiveCostumeLayerEditorLoadState(costumeDocument);
+    if (requestedState.editorMode === 'vector') {
+      const requestedVectorDocument = requestedState.vectorDocument ?? createEmptyCostumeVectorDocument();
       try {
-        const parsed = JSON.parse(requestedVectorDocument!.fabricJson);
+        const parsed = JSON.parse(requestedVectorDocument.fabricJson);
         suppressHistoryRef.current = true;
         fabricCanvas.clear();
         await fabricCanvas.loadFromJSON(parsed);
@@ -3471,28 +3473,26 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         if (!isLoadRequestActive(requestId)) return;
         fabricCanvas.requestRenderAll();
         setEditorMode('vector');
-        loadedVector = true;
       } catch (error) {
-        console.warn('Invalid vector document. Falling back to bitmap mode.', error);
+        console.warn('Invalid vector document. Loading an empty active vector layer instead.', error);
+        suppressHistoryRef.current = true;
+        try {
+          fabricCanvas.clear();
+          if (!isLoadRequestActive(requestId)) return;
+          fabricCanvas.requestRenderAll();
+          setEditorMode('vector');
+        } finally {
+          suppressHistoryRef.current = false;
+        }
       } finally {
         suppressHistoryRef.current = false;
       }
-
-      if (!loadedVector) {
-        const loaded = await loadBitmapLayer(requestedBitmapSource ?? '', false, requestId);
-        if (!loaded || !isLoadRequestActive(requestId)) return;
-        setEditorMode('bitmap');
-      }
-    } else if (requestedMode === 'vector') {
-      const loadedBitmap = await loadBitmapLayer(requestedBitmapSource ?? '', false, requestId);
-      if (!loadedBitmap || !isLoadRequestActive(requestId)) return;
-      const rasterizedCanvas = fabricCanvas.toCanvasElement(1);
-      const loadedVector = await loadBitmapAsSingleVectorImage(rasterizedCanvas, requestId);
-      if (!loadedVector || !isLoadRequestActive(requestId)) return;
-      setEditorMode('vector');
     } else {
-      const loaded = await loadBitmapLayer(requestedBitmapSource ?? '', false, requestId);
-      if (!loaded || !isLoadRequestActive(requestId)) return;
+      const loaded = await loadBitmapLayer(requestedState.bitmapAssetId ?? '', false, requestId);
+      if (!loaded || !isLoadRequestActive(requestId)) {
+        const resetToBlank = await loadBitmapLayer('', false, requestId);
+        if (!resetToBlank || !isLoadRequestActive(requestId)) return;
+      }
       setEditorMode('bitmap');
     }
 
@@ -3501,7 +3501,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     lastCommittedSnapshotRef.current = null;
     saveHistory();
     markCurrentSnapshotPersisted(sessionKey);
-  }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, markCurrentSnapshotPersisted, normalizeCanvasVectorStrokeUniform, saveHistory, setEditorMode]);
+  }, [isLoadRequestActive, loadBitmapLayer, markCurrentSnapshotPersisted, normalizeCanvasVectorStrokeUniform, saveHistory, setEditorMode]);
 
   const restoreOriginalControls = useCallback((obj: any) => {
     if (!obj || typeof obj !== 'object') return;
@@ -7383,12 +7383,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   // Expose imperative methods.
   useImperativeHandle(ref, () => ({
     toDataURL: () => {
-      const composed = getCanvasElement();
+      const composed = getComposedCanvasElement();
       return composed.toDataURL('image/webp', 0.85);
     },
 
     toDataURLWithBounds: () => {
-      const composed = getCanvasElement();
+      const composed = getComposedCanvasElement();
       return {
         dataUrl: composed.toDataURL('image/webp', 0.85),
         bounds: calculateBoundsFromCanvas(composed),
@@ -7405,7 +7405,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       markCurrentSnapshotPersisted(sessionKey ?? null);
     },
 
-    loadCostume,
+    loadDocument,
 
     exportCostumeState,
 
@@ -7466,10 +7466,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     configureCanvasForTool,
     createSnapshot,
     exportCostumeState,
-    getCanvasElement,
+    getComposedCanvasElement,
     markCurrentSnapshotPersisted,
     loadBitmapLayer,
-    loadCostume,
+    loadDocument,
     saveHistory,
     setEditorMode,
     switchEditorMode,

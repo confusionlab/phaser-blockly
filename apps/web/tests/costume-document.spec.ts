@@ -2,8 +2,10 @@ import { expect, test } from '@playwright/test';
 import {
   createBlankCostumeDocument,
   createBitmapLayer,
+  createEmptyCostumeVectorDocument,
   createVectorLayer,
   insertCostumeLayerAfterActive,
+  resolveActiveCostumeLayerEditorLoadState,
   setActiveCostumeLayer,
   setCostumeLayerVisibility,
 } from '../src/lib/costume/costumeDocument';
@@ -61,5 +63,31 @@ test.describe('costume document visibility', () => {
     expect(nextDocument).not.toBeNull();
     expect(nextDocument?.activeLayerId).toBe(activeLayer.id);
     expect(nextDocument?.layers[0]?.visible).toBe(false);
+  });
+
+  test('resolves active bitmap editor load state from the document only', () => {
+    const document = createBlankCostumeDocument();
+    const bitmapLayer = createBitmapLayer({
+      name: 'Bitmap Layer',
+      assetId: 'data:image/png;base64,ACTIVE_BITMAP',
+    });
+    const withBitmap = setActiveCostumeLayer(
+      insertCostumeLayerAfterActive(document, bitmapLayer),
+      bitmapLayer.id,
+    );
+
+    const loadState = resolveActiveCostumeLayerEditorLoadState(withBitmap);
+    expect(loadState.activeLayerId).toBe(bitmapLayer.id);
+    expect(loadState.editorMode).toBe('bitmap');
+    expect(loadState.bitmapAssetId).toBe('data:image/png;base64,ACTIVE_BITMAP');
+    expect(loadState.vectorDocument).toBeNull();
+  });
+
+  test('resolves missing documents to an empty vector editor state', () => {
+    const loadState = resolveActiveCostumeLayerEditorLoadState(null);
+    expect(loadState.activeLayerId).toBeNull();
+    expect(loadState.editorMode).toBe('vector');
+    expect(loadState.bitmapAssetId).toBeNull();
+    expect(loadState.vectorDocument).toEqual(createEmptyCostumeVectorDocument());
   });
 });

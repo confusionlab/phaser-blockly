@@ -630,14 +630,8 @@ export function CostumeEditor() {
       }
 
       if (shouldReloadCanvas && canvasRef.current && currentCostumeRef.current) {
-        const nextCostumeForCanvas: Costume = {
-          ...currentCostumeRef.current,
-          assetId: resolvedNextState.assetId,
-          bounds: resolvedNextState.bounds,
-          document: cloneCostumeDocument(nextDocument),
-        };
-        currentCostumeIdRef.current = `${nextCostumeForCanvas.id}:${nextDocument.activeLayerId}`;
-        await canvasRef.current.loadCostume(latestSession.key, nextCostumeForCanvas);
+        currentCostumeIdRef.current = `${currentCostumeRef.current.id}:${nextDocument.activeLayerId}`;
+        await canvasRef.current.loadDocument(latestSession.key, cloneCostumeDocument(nextDocument));
         loadedSessionRef.current = latestSession;
         const resolvedMode = canvasRef.current.getEditorMode();
         setEditorMode(resolvedMode);
@@ -799,7 +793,7 @@ export function CostumeEditor() {
       setEditorMode(nextMode);
       setActiveTool((prev) => ensureToolForMode(nextMode, prev));
 
-      canvasRef.current.loadCostume(currentSession.key, editorCostume).finally(() => {
+      canvasRef.current.loadDocument(currentSession.key, cloneCostumeDocument(editorCostume.document)).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
         loadedSessionRef.current = currentSession;
         resetDocumentHistory({

@@ -15,6 +15,7 @@ import type {
 export const COSTUME_CANVAS_SIZE = 1024;
 export const MAX_COSTUME_LAYERS = 8;
 const DEFAULT_BLEND_MODE: CostumeLayerBlendMode = 'normal';
+export const EMPTY_COSTUME_VECTOR_FABRIC_JSON = '{"version":"7.0.0","objects":[]}';
 
 type LegacyCostumeShape = {
   assetId?: unknown;
@@ -164,8 +165,16 @@ export function createVectorLayer(options: {
     vector: {
       engine: 'fabric',
       version: 1,
-      fabricJson: typeof options.fabricJson === 'string' ? options.fabricJson : '{"version":"6.0.0","objects":[]}',
+      fabricJson: typeof options.fabricJson === 'string' ? options.fabricJson : EMPTY_COSTUME_VECTOR_FABRIC_JSON,
     },
+  };
+}
+
+export function createEmptyCostumeVectorDocument(): CostumeVectorDocument {
+  return {
+    engine: 'fabric',
+    version: 1,
+    fabricJson: EMPTY_COSTUME_VECTOR_FABRIC_JSON,
   };
 }
 
@@ -206,6 +215,43 @@ export function getActiveCostumeLayer(document: CostumeDocument | null | undefin
 
 export function getActiveCostumeLayerKind(document: CostumeDocument | null | undefined): CostumeLayerKind {
   return getActiveCostumeLayer(document)?.kind ?? 'vector';
+}
+
+export interface ActiveCostumeLayerEditorLoadState {
+  activeLayerId: string | null;
+  editorMode: CostumeLayerKind;
+  bitmapAssetId: string | null;
+  vectorDocument: CostumeVectorDocument | null;
+}
+
+export function resolveActiveCostumeLayerEditorLoadState(
+  document: CostumeDocument | null | undefined,
+): ActiveCostumeLayerEditorLoadState {
+  const activeLayer = getActiveCostumeLayer(document);
+  if (!activeLayer) {
+    return {
+      activeLayerId: null,
+      editorMode: 'vector',
+      bitmapAssetId: null,
+      vectorDocument: createEmptyCostumeVectorDocument(),
+    };
+  }
+
+  if (isBitmapCostumeLayer(activeLayer)) {
+    return {
+      activeLayerId: activeLayer.id,
+      editorMode: 'bitmap',
+      bitmapAssetId: activeLayer.bitmap.assetId ?? null,
+      vectorDocument: null,
+    };
+  }
+
+  return {
+    activeLayerId: activeLayer.id,
+    editorMode: 'vector',
+    bitmapAssetId: null,
+    vectorDocument: activeLayer.vector,
+  };
 }
 
 export function getCostumeLayerIndex(
