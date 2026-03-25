@@ -6,6 +6,7 @@ import { CostumeLayerPanel } from './costume/CostumeLayerPanel';
 import {
   CostumeCanvas,
   DEFAULT_COSTUME_PREVIEW_SCALE,
+  type CostumeCanvasLayerVisual,
   type CostumeCanvasHandle,
 } from './costume/CostumeCanvas';
 import {
@@ -34,6 +35,7 @@ import {
   type CostumeEditorPersistedState,
   type CostumeEditorSession,
   type CostumeEditorTarget,
+  resolveCostumeEditorTarget,
 } from '@/lib/editor/costumeEditorSession';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
@@ -62,7 +64,7 @@ import {
 } from '@/lib/costume/costumeDocument';
 import {
   renderCostumeDocument,
-  renderCostumeDocumentSlice,
+  renderCostumeLayerToDataUrl,
   renderCostumeLayerStackToCanvas,
   renderCostumeLayerStackToDataUrl,
 } from '@/lib/costume/costumeDocumentRender';
@@ -158,6 +160,7 @@ export function CostumeEditor() {
   const documentHistoryIndexRef = useRef(-1);
   const workingPersistedStateRef = useRef<CostumeEditorPersistedState | null>(null);
   const documentMutationChainRef = useRef<Promise<void>>(Promise.resolve());
+  const flattenedPreviewRefreshIdRef = useRef(0);
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
@@ -176,22 +179,33 @@ export function CostumeEditor() {
   const currentCostumeLoadKey = currentCostume
     ? `${currentCostume.id}:${currentCostume.document.activeLayerId}`
     : null;
-  const layerSliceRenderKey = useMemo(() => {
+  const [layerVisualSourceMap, setLayerVisualSourceMap] = useState<Record<string, string | null>>({});
+  const layerVisualSourceKey = useMemo(() => {
     if (!currentCostume) {
       return null;
     }
 
-    const activeLayerId = currentCostume.document.activeLayerId;
     return currentCostume.document.layers.map((layer, index) => {
-      if (layer.id === activeLayerId) {
-        return `active:${index}:${layer.id}`;
-      }
       if (isBitmapCostumeLayer(layer)) {
-        return `bitmap:${index}:${layer.id}:${layer.visible ? 1 : 0}:${layer.opacity}:${layer.bitmap.assetId ?? ''}`;
+        return `bitmap:${index}:${layer.id}:${layer.bitmap.assetId ?? ''}`;
       }
-      return `vector:${index}:${layer.id}:${layer.visible ? 1 : 0}:${layer.opacity}:${layer.vector.fabricJson}`;
+      return `vector:${index}:${layer.id}:${layer.vector.fabricJson}`;
     }).join('|');
   }, [currentCostume]);
+  const canvasLayerVisuals = useMemo<CostumeCanvasLayerVisual[]>(() => {
+    if (!currentCostume) {
+      return [];
+    }
+
+    const activeLayerId = currentCostume.document.activeLayerId;
+    return currentCostume.document.layers.map((layer) => ({
+      layerId: layer.id,
+      isActive: layer.id === activeLayerId,
+      opacity: layer.opacity,
+      src: layerVisualSourceMap[layer.id] ?? null,
+      visible: layer.visible,
+    }));
+  }, [currentCostume, layerVisualSourceMap]);
   const currentSession = useMemo(() => {
     const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
     return target ? createCostumeEditorSession(target) : null;
@@ -249,8 +263,6 @@ export function CostumeEditor() {
   const [canvasPreviewScale, setCanvasPreviewScale] = useState(DEFAULT_COSTUME_PREVIEW_SCALE);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
-  const [underlaySrc, setUnderlaySrc] = useState<string | null>(null);
-  const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
 
   useEffect(() => {
     setEditorMode((prev) => {
@@ -266,39 +278,31 @@ export function CostumeEditor() {
   useEffect(() => {
     let cancelled = false;
 
-    const renderLayerSlices = async () => {
-      const sliceDocument = currentCostumeRef.current?.document ?? null;
-      if (!sliceDocument) {
-        setUnderlaySrc(null);
-        setOverlaySrc(null);
+    const renderLayerVisualSources = async () => {
+      const costume = currentCostumeRef.current;
+      if (!costume) {
+        setLayerVisualSourceMap({});
         return;
       }
 
-      const [nextUnderlay, nextOverlay] = await Promise.all([
-        renderCostumeDocumentSlice(sliceDocument, {
-          activeLayerId: sliceDocument.activeLayerId,
-          placement: 'below',
-        }),
-        renderCostumeDocumentSlice(sliceDocument, {
-          activeLayerId: sliceDocument.activeLayerId,
-          placement: 'above',
-        }),
-      ]);
+      const nextEntries = await Promise.all(costume.document.layers.map(async (layer) => ([
+        layer.id,
+        await renderCostumeLayerToDataUrl(layer),
+      ] as const)));
 
       if (cancelled) {
         return;
       }
 
-      setUnderlaySrc(nextUnderlay);
-      setOverlaySrc(nextOverlay);
+      setLayerVisualSourceMap(Object.fromEntries(nextEntries));
     };
 
-    void renderLayerSlices();
+    void renderLayerVisualSources();
 
     return () => {
       cancelled = true;
     };
-  }, [currentCostume?.id, layerSliceRenderKey]);
+  }, [currentCostume?.id, layerVisualSourceKey]);
 
   const isCanvasReadyForSession = useCallback((session: CostumeEditorSession | null): boolean => {
     if (!canvasRef.current || !session) {
@@ -484,11 +488,61 @@ export function CostumeEditor() {
     return didUpdate;
   }, [updateCostumeFromEditor]);
 
+  const scheduleFlattenedPreviewRefresh = useCallback((
+    session: CostumeEditorSession,
+    document: CostumeEditorPersistedState['document'],
+  ) => {
+    const requestId = ++flattenedPreviewRefreshIdRef.current;
+    const nextDocument = cloneCostumeDocument(document);
+
+    void renderCostumeDocument(nextDocument).then((rendered) => {
+      if (flattenedPreviewRefreshIdRef.current !== requestId) {
+        return;
+      }
+
+      const project = useProjectStore.getState().project;
+      if (!project) {
+        return;
+      }
+
+      const resolvedTarget = resolveCostumeEditorTarget(project, session);
+      if (!resolvedTarget || !areCostumeDocumentsEqual(resolvedTarget.costume.document, nextDocument)) {
+        return;
+      }
+
+      const refreshedState: CostumeEditorPersistedState = {
+        assetId: rendered.dataUrl,
+        bounds: rendered.bounds ?? undefined,
+        document: nextDocument,
+      };
+
+      const didApply = updateCostumeFromEditor(session, refreshedState, {
+        recordHistory: false,
+      });
+      if (!didApply) {
+        return;
+      }
+
+      const currentHistoryState = documentHistoryRef.current[documentHistoryIndexRef.current] ?? null;
+      if (
+        currentSessionRef.current?.key === session.key &&
+        currentHistoryState &&
+        areCostumeDocumentsEqual(currentHistoryState.document, nextDocument)
+      ) {
+        replaceDocumentHistoryHead(refreshedState);
+        workingPersistedStateRef.current = clonePersistedState(refreshedState);
+      }
+    }).catch((error) => {
+      console.warn('Failed to refresh flattened costume preview after document update.', error);
+    });
+  }, [replaceDocumentHistoryHead, updateCostumeFromEditor]);
+
   const commitDocumentMutation = useCallback((
     mutate: (
       state: CostumeEditorPersistedState,
     ) => Promise<CostumeEditorPersistedState['document'] | null> | CostumeEditorPersistedState['document'] | null,
     options: {
+      deferFlattenedRender?: boolean;
       forceReload?: boolean;
       forceReloadOnActiveLayerChange?: boolean;
       recordHistory?: boolean;
@@ -518,7 +572,7 @@ export function CostumeEditor() {
       }
 
       let resolvedNextState: CostumeEditorPersistedState;
-      if (options.renderDocument === false) {
+      if (options.deferFlattenedRender === true || options.renderDocument === false) {
         resolvedNextState = {
           assetId: baseState.assetId,
           bounds: baseState.bounds ? { ...baseState.bounds } : undefined,
@@ -576,13 +630,17 @@ export function CostumeEditor() {
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       }
 
+      if (options.deferFlattenedRender === true) {
+        scheduleFlattenedPreviewRefresh(latestSession, nextDocument);
+      }
+
       return true;
     };
 
     const queuedCommit = documentMutationChainRef.current.then(runCommit, runCommit);
     documentMutationChainRef.current = queuedCommit.then(() => undefined, () => undefined);
     return queuedCommit;
-  }, [applyDocumentHistoryState, getWorkingPersistedState, pushDocumentHistory, replaceDocumentHistoryHead]);
+  }, [applyDocumentHistoryState, getWorkingPersistedState, pushDocumentHistory, replaceDocumentHistoryHead, scheduleFlattenedPreviewRefresh]);
 
   useEffect(() => {
     const handler: UndoRedoHandler = {
@@ -920,6 +978,8 @@ export function CostumeEditor() {
         return null;
       }
       return setCostumeLayerVisibility(working.document, layerId, resolvedVisible);
+    }, {
+      deferFlattenedRender: true,
     });
   }, [commitDocumentMutation]);
 
@@ -1358,8 +1418,7 @@ export function CostumeEditor() {
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
           onViewScaleChange={setCanvasPreviewScale}
-          underlaySrc={underlaySrc}
-          overlaySrc={overlaySrc}
+          layerVisuals={canvasLayerVisuals}
           activeLayerOpacity={activeLayer?.opacity ?? 1}
           activeLayerVisible={activeLayer?.visible ?? true}
           activeLayerLocked={activeLayer?.locked ?? false}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
+import { Fragment, useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
 import {
   Canvas as FabricCanvas,
   BaseBrush,
@@ -974,6 +974,14 @@ export interface CostumeCanvasHandle {
   canRedo: () => boolean;
 }
 
+export interface CostumeCanvasLayerVisual {
+  layerId: string;
+  isActive: boolean;
+  opacity: number;
+  src: string | null;
+  visible: boolean;
+}
+
 interface CostumeCanvasProps {
   initialEditorMode: CostumeEditorMode;
   activeTool: DrawingTool;
@@ -1002,8 +1010,7 @@ interface CostumeCanvasProps {
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
   onViewScaleChange?: (scale: number) => void;
-  underlaySrc?: string | null;
-  overlaySrc?: string | null;
+  layerVisuals?: CostumeCanvasLayerVisual[];
   activeLayerOpacity?: number;
   activeLayerVisible?: boolean;
   activeLayerLocked?: boolean;
@@ -1336,8 +1343,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onTextSelectionChange,
   onSelectionStateChange,
   onViewScaleChange,
-  underlaySrc = null,
-  overlaySrc = null,
+  layerVisuals = [],
   activeLayerOpacity = 1,
   activeLayerVisible = true,
   activeLayerLocked = false,
@@ -1347,8 +1353,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const textEditingHostRef = useRef<HTMLDivElement>(null);
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
-  const underlayImageRef = useRef<HTMLImageElement>(null);
-  const overlayImageRef = useRef<HTMLImageElement>(null);
+  const inactiveLayerImageRefs = useRef(new Map<string, HTMLImageElement>());
   const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -2234,18 +2239,30 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (!composedCtx) {
         return baseCanvas;
       }
-      const underlayImage = underlayImageRef.current;
-      if (underlayImage && underlayImage.complete && underlayImage.naturalWidth > 0) {
-        composedCtx.drawImage(underlayImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-      }
-      composedCtx.save();
-      composedCtx.globalAlpha = activeLayerVisible ? activeLayerOpacity : 0;
-      composedCtx.drawImage(baseCanvas, 0, 0);
-      renderVectorBrushStrokeOverlay(composedCtx, { clear: false });
-      composedCtx.restore();
-      const overlayImage = overlayImageRef.current;
-      if (overlayImage && overlayImage.complete && overlayImage.naturalWidth > 0) {
-        composedCtx.drawImage(overlayImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+      for (const layerVisual of layerVisuals) {
+        if (layerVisual.isActive) {
+          composedCtx.save();
+          composedCtx.globalAlpha = activeLayerVisible ? activeLayerOpacity : 0;
+          composedCtx.drawImage(baseCanvas, 0, 0);
+          renderVectorBrushStrokeOverlay(composedCtx, { clear: false });
+          composedCtx.restore();
+          continue;
+        }
+
+        if (!layerVisual.visible || layerVisual.opacity <= 0) {
+          continue;
+        }
+
+        const layerImage = inactiveLayerImageRefs.current.get(layerVisual.layerId);
+        if (!layerImage || !layerImage.complete || layerImage.naturalWidth <= 0) {
+          continue;
+        }
+
+        composedCtx.save();
+        composedCtx.globalAlpha = layerVisual.opacity;
+        composedCtx.drawImage(layerImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        composedCtx.restore();
       }
       return composed;
     }
@@ -2253,7 +2270,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fallback.width = CANVAS_SIZE;
     fallback.height = CANVAS_SIZE;
     return fallback;
-  }, [activeLayerOpacity, activeLayerVisible, renderVectorBrushStrokeOverlay]);
+  }, [activeLayerOpacity, activeLayerVisible, layerVisuals, renderVectorBrushStrokeOverlay]);
 
   const getSelectionMousePos = useCallback((event: MouseEvent) => {
     const canvas = bitmapSelectionCanvasRef.current;
@@ -7678,50 +7695,64 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
             transformOrigin: 'top left',
           }}
         >
-          <img
-            ref={underlayImageRef}
-            src={underlaySrc ?? undefined}
-            alt=""
-            aria-hidden="true"
-            style={{
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              pointerEvents: 'none',
-              userSelect: 'none',
-            }}
-          />
+          {layerVisuals.map((layerVisual) => (
+            layerVisual.isActive ? (
+              <Fragment key={layerVisual.layerId}>
+                <canvas
+                  ref={fabricCanvasElementRef}
+                  width={CANVAS_SIZE}
+                  height={CANVAS_SIZE}
+                  style={{
+                    width: CANVAS_SIZE,
+                    height: CANVAS_SIZE,
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    opacity: activeLayerVisible ? activeLayerOpacity : 0,
+                  }}
+                />
 
-          <canvas
-            ref={fabricCanvasElementRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              opacity: activeLayerVisible ? activeLayerOpacity : 0,
-            }}
-          />
-
-          <canvas
-            ref={vectorStrokeCanvasRef}
-            width={CANVAS_SIZE}
-            height={CANVAS_SIZE}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              pointerEvents: 'none',
-              opacity: activeLayerVisible ? activeLayerOpacity : 0,
-            }}
-          />
+                <canvas
+                  ref={vectorStrokeCanvasRef}
+                  width={CANVAS_SIZE}
+                  height={CANVAS_SIZE}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: CANVAS_SIZE,
+                    height: CANVAS_SIZE,
+                    pointerEvents: 'none',
+                    opacity: activeLayerVisible ? activeLayerOpacity : 0,
+                  }}
+                />
+              </Fragment>
+            ) : (
+              <img
+                key={layerVisual.layerId}
+                ref={(node) => {
+                  if (node) {
+                    inactiveLayerImageRefs.current.set(layerVisual.layerId, node);
+                  } else {
+                    inactiveLayerImageRefs.current.delete(layerVisual.layerId);
+                  }
+                }}
+                src={layerVisual.src ?? undefined}
+                alt=""
+                aria-hidden="true"
+                style={{
+                  width: CANVAS_SIZE,
+                  height: CANVAS_SIZE,
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  opacity: layerVisual.visible ? layerVisual.opacity : 0,
+                }}
+              />
+            )
+          ))}
 
           <canvas
             ref={vectorGuideCanvasRef}
@@ -7752,22 +7783,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
                 (activeTool === 'box-select' && activeLayerVisible && !hasBitmapFloatingSelection && !activeLayerLocked)
               ) ? 'auto' : 'none',
               opacity: activeLayerVisible ? activeLayerOpacity : 0,
-            }}
-          />
-
-          <img
-            ref={overlayImageRef}
-            src={overlaySrc ?? undefined}
-            alt=""
-            aria-hidden="true"
-            style={{
-              width: CANVAS_SIZE,
-              height: CANVAS_SIZE,
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              pointerEvents: 'none',
-              userSelect: 'none',
             }}
           />
 

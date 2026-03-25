@@ -5,8 +5,10 @@ import { COSTUME_CANVAS_SIZE, isBitmapCostumeLayer, isVectorCostumeLayer } from 
 
 const MAX_CACHED_COSTUME_IMAGES = 128;
 const MAX_CACHED_COSTUME_LAYER_CANVASES = 128;
+const MAX_CACHED_COSTUME_LAYER_DATA_URLS = 128;
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 const layerCanvasCache = new Map<string, Promise<HTMLCanvasElement>>();
+const layerDataUrlCache = new Map<string, Promise<string | null>>();
 
 function rememberCachedValue<T>(
   cache: Map<string, Promise<T>>,
@@ -123,6 +125,30 @@ async function renderLayerToCanvas(layer: CostumeLayer): Promise<HTMLCanvasEleme
   }
 
   return await rememberCachedValue(layerCanvasCache, cacheKey, pending, MAX_CACHED_COSTUME_LAYER_CANVASES);
+}
+
+export async function renderCostumeLayerToDataUrl(layer: CostumeLayer): Promise<string | null> {
+  const cacheKey = getCostumeLayerCacheKey(layer);
+  if (cacheKey) {
+    const cached = layerDataUrlCache.get(cacheKey);
+    if (cached) {
+      return await cached;
+    }
+  }
+
+  const pending = (async (): Promise<string | null> => {
+    const layerCanvas = await renderLayerToCanvas(layer);
+    if (!layerCanvas) {
+      return null;
+    }
+    return layerCanvas.toDataURL('image/png');
+  })();
+
+  if (!cacheKey) {
+    return await pending;
+  }
+
+  return await rememberCachedValue(layerDataUrlCache, cacheKey, pending, MAX_CACHED_COSTUME_LAYER_DATA_URLS);
 }
 
 async function renderLayerOntoContext(
