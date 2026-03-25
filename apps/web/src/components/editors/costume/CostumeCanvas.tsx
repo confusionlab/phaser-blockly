@@ -76,6 +76,7 @@ import {
   getActiveCostumeLayer,
   isBitmapCostumeLayer,
   isVectorCostumeLayer,
+  type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 
 const CANVAS_SIZE = 1024;
@@ -990,7 +991,7 @@ interface CostumeCanvasProps {
   onUndo: () => void;
   onRedo: () => void;
   collider: ColliderConfig | null;
-  onHistoryChange?: () => void;
+  onHistoryChange?: (state: ActiveLayerCanvasState) => void;
   onColliderChange?: (collider: ColliderConfig) => void;
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
@@ -1300,6 +1301,20 @@ function cloneHistorySnapshot(snapshot: CanvasHistorySnapshot): CanvasHistorySna
     mode: snapshot.mode,
     bitmapDataUrl: snapshot.bitmapDataUrl,
     vectorJson: snapshot.vectorJson,
+  };
+}
+
+function createActiveLayerCanvasStateFromSnapshot(snapshot: CanvasHistorySnapshot): ActiveLayerCanvasState {
+  return {
+    editorMode: snapshot.mode,
+    dataUrl: snapshot.bitmapDataUrl,
+    vectorDocument: snapshot.mode === 'vector' && snapshot.vectorJson
+      ? {
+          engine: 'fabric',
+          version: 1,
+          fabricJson: snapshot.vectorJson,
+        }
+      : undefined,
   };
 }
 
@@ -2362,7 +2377,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
     updateDirtyStateFromSnapshot(snapshot);
-    onHistoryChangeRef.current?.();
+    onHistoryChangeRef.current?.(createActiveLayerCanvasStateFromSnapshot(snapshot));
   }, [createSnapshot, updateDirtyStateFromSnapshot]);
 
   const applySelectionTransform = useCallback((transform: Parameters<typeof util.applyTransformToObject>[1]): boolean => {
