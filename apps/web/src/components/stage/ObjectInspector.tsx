@@ -19,7 +19,7 @@ import {
   ColorPickerSelection,
   ColorPickerHue,
 } from '@/components/ui/color-picker';
-import { RotateCw, FlipHorizontal, FlipVertical, Link, Unlink, Component, Paintbrush } from 'lucide-react';
+import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Component, Paintbrush } from 'lucide-react';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
 import {
@@ -683,7 +683,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
               allFlippedH && 'text-primary',
             )}
           >
-            <FlipHorizontal className="size-4" />
+            <FlipHorizontal2 className="size-4" />
           </Button>
           <Button
             variant="ghost"
@@ -695,7 +695,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
               allFlippedV && 'text-primary',
             )}
           >
-            <FlipVertical className="size-4" />
+            <FlipVertical2 className="size-4" />
           </Button>
         </div>
       </div>
