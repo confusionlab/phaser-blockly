@@ -44,13 +44,14 @@ async function renderLayerOntoContext(
       width: COSTUME_CANVAS_SIZE,
       height: COSTUME_CANVAS_SIZE,
       renderOnAddRemove: false,
+      enableRetinaScaling: false,
     });
 
     try {
       const parsed = JSON.parse(layer.vector.fabricJson);
       await vectorCanvas.loadFromJSON(parsed);
       vectorCanvas.renderAll();
-      ctx.drawImage(vectorCanvasElement, 0, 0);
+      ctx.drawImage(vectorCanvasElement, 0, 0, COSTUME_CANVAS_SIZE, COSTUME_CANVAS_SIZE);
     } finally {
       vectorCanvas.dispose();
     }
