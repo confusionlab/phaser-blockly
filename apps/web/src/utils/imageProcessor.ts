@@ -1,9 +1,12 @@
 /**
  * Image processing utility for costumes
  * - Resizes images to fit within 950x950 (maintaining aspect ratio)
+ * - Centers the result into a canonical 1024x1024 costume layer surface
  * - Converts to WebP format with good compression
  * Note: Canvas is 1024x1024, but we limit imports to 950px to leave room for editing
  */
+
+import { createBitmapSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
 
 const MAX_SIZE = 950;
 const WEBP_QUALITY = 0.85; // 85% quality - good balance of size and quality
@@ -47,8 +50,8 @@ export async function processImage(file: File): Promise<string> {
         // Draw the image
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Convert to WebP
-        const webpDataUrl = canvas.toDataURL('image/webp', WEBP_QUALITY);
+        const surfaceCanvas = createBitmapSurfaceCanvas(canvas);
+        const webpDataUrl = surfaceCanvas.toDataURL('image/webp', WEBP_QUALITY);
 
         // Check if browser actually supports WebP encoding
         // Some older browsers might fall back to PNG
@@ -57,7 +60,7 @@ export async function processImage(file: File): Promise<string> {
         } else {
           // Fallback: browser doesn't support WebP encoding, use PNG
           console.warn('Browser does not support WebP encoding, using PNG');
-          resolve(canvas.toDataURL('image/png'));
+          resolve(surfaceCanvas.toDataURL('image/png'));
         }
       } catch (error) {
         reject(error);
@@ -95,15 +98,7 @@ export async function processImageFromDataUrl(dataUrl: string): Promise<string> 
         let width = img.width;
         let height = img.height;
 
-        // If already within size limits, check if we need to re-encode
         const needsResize = width > MAX_SIZE || height > MAX_SIZE;
-        const isAlreadyWebP = dataUrl.startsWith('data:image/webp');
-
-        // If no resize needed and already WebP, return as-is
-        if (!needsResize && isAlreadyWebP) {
-          resolve(dataUrl);
-          return;
-        }
 
         if (needsResize) {
           const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height);
@@ -126,14 +121,14 @@ export async function processImageFromDataUrl(dataUrl: string): Promise<string> 
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Convert to WebP
-        const webpDataUrl = canvas.toDataURL('image/webp', WEBP_QUALITY);
+        const surfaceCanvas = createBitmapSurfaceCanvas(canvas);
+        const webpDataUrl = surfaceCanvas.toDataURL('image/webp', WEBP_QUALITY);
 
         if (webpDataUrl.startsWith('data:image/webp')) {
           resolve(webpDataUrl);
         } else {
           console.warn('Browser does not support WebP encoding, using PNG');
-          resolve(canvas.toDataURL('image/png'));
+          resolve(surfaceCanvas.toDataURL('image/png'));
         }
       } catch (error) {
         reject(error);

@@ -1,7 +1,8 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
-import { extractVisibleCanvasRegion, CANVAS_SIZE } from './costumeCanvasShared';
+import { renderBitmapAssetToSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
+import { extractVisibleCanvasRegion } from './costumeCanvasShared';
 import { normalizeVectorObjectRendering } from './costumeCanvasVectorRuntime';
 import type { BitmapStampBrushCommitPayload } from './costumeCanvasBitmapRuntime';
 import type { CostumeEditorMode } from '@/types';
@@ -40,14 +41,14 @@ export function useCostumeCanvasBitmapLayerController({
   syncSelectionState,
 }: UseCostumeCanvasBitmapLayerControllerOptions) {
   const applyBitmapLayerSource = useCallback((
-    source: FabricImage | HTMLImageElement | HTMLCanvasElement | null,
+    source: HTMLImageElement | HTMLCanvasElement | null,
     selectable: boolean,
   ): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return false;
 
     const image = source
-      ? (source instanceof FabricImage ? source : new FabricImage(source as any))
+      ? new FabricImage(source as any)
       : null;
 
     suppressHistoryRef.current = true;
@@ -62,15 +63,11 @@ export function useCostumeCanvasBitmapLayerController({
       fabricCanvas.clear();
 
       if (image) {
-        const width = image.width || 1;
-        const height = image.height || 1;
-        const scale = Math.min(CANVAS_SIZE / width, CANVAS_SIZE / height, 1);
-
         image.set({
-          left: CANVAS_SIZE / 2,
-          top: CANVAS_SIZE / 2,
-          originX: 'center',
-          originY: 'center',
+          left: 0,
+          top: 0,
+          originX: 'left',
+          originY: 'top',
           selectable,
           evented: selectable,
           hasControls: selectable,
@@ -81,7 +78,6 @@ export function useCostumeCanvasBitmapLayerController({
           lockScalingX: !selectable,
           lockScalingY: !selectable,
         } as any);
-        image.scale(scale);
         fabricCanvas.add(image);
       }
 
@@ -106,10 +102,10 @@ export function useCostumeCanvasBitmapLayerController({
   const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean, requestId?: number): Promise<boolean> => {
     if (!isLoadRequestActive(requestId)) return false;
 
-    let image: FabricImage | null = null;
+    let surfaceCanvas: HTMLCanvasElement | null = null;
     if (dataUrl) {
       try {
-        image = await FabricImage.fromURL(dataUrl);
+        surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(dataUrl);
       } catch (error) {
         console.error('Failed to load bitmap layer:', error);
         return false;
@@ -117,7 +113,7 @@ export function useCostumeCanvasBitmapLayerController({
       if (!isLoadRequestActive(requestId)) return false;
     }
 
-    return applyBitmapLayerSource(image, selectable);
+    return applyBitmapLayerSource(surfaceCanvas, selectable);
   }, [applyBitmapLayerSource, isLoadRequestActive]);
 
   const commitBitmapSelection = useCallback(async () => {

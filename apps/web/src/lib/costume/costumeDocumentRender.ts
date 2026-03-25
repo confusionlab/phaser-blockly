@@ -2,17 +2,16 @@ import { StaticCanvas } from 'fabric';
 import type { CostumeBounds, CostumeDocument, CostumeLayer } from '@/types';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { COSTUME_CANVAS_SIZE, isBitmapCostumeLayer, isVectorCostumeLayer } from './costumeDocument';
+import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
 import {
   canUseCostumeDocumentPreviewWorker,
   renderCostumePreviewLayersInWorker,
 } from './costumeDocumentPreviewClient';
 import type { RenderableCostumePreviewLayer } from './costumeDocumentPreviewProtocol';
 
-const MAX_CACHED_COSTUME_IMAGES = 128;
 const MAX_CACHED_COSTUME_LAYER_CANVASES = 128;
 const MAX_CACHED_COSTUME_LAYER_PREVIEW_SOURCES = 128;
 const MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS = 128;
-const imageCache = new Map<string, Promise<HTMLImageElement>>();
 const layerCanvasCache = new Map<string, Promise<HTMLCanvasElement>>();
 const layerPreviewSourceCache = new Map<string, Promise<string | null>>();
 const documentPreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
@@ -121,22 +120,6 @@ export function getCachedCostumeDocumentPreview(
   };
 }
 
-async function loadImage(source: string): Promise<HTMLImageElement> {
-  const cached = imageCache.get(source);
-  if (cached) {
-    return await cached;
-  }
-
-  const pending = new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Failed to load costume layer image: ${source.slice(0, 64)}`));
-    image.src = source;
-  });
-
-  return await rememberCachedValue(imageCache, source, pending, MAX_CACHED_COSTUME_IMAGES);
-}
-
 export async function renderCostumeLayerToCanvas(layer: CostumeLayer): Promise<HTMLCanvasElement | null> {
   const cacheKey = getCostumeLayerRenderSignature(layer);
   if (cacheKey) {
@@ -148,21 +131,7 @@ export async function renderCostumeLayerToCanvas(layer: CostumeLayer): Promise<H
 
   const pending = (async (): Promise<HTMLCanvasElement | null> => {
     if (isBitmapCostumeLayer(layer)) {
-      if (!layer.bitmap.assetId) {
-        return null;
-      }
-
-      const image = await loadImage(layer.bitmap.assetId);
-      const canvas = document.createElement('canvas');
-      canvas.width = COSTUME_CANVAS_SIZE;
-      canvas.height = COSTUME_CANVAS_SIZE;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        return null;
-      }
-
-      ctx.drawImage(image, 0, 0, COSTUME_CANVAS_SIZE, COSTUME_CANVAS_SIZE);
-      return canvas;
+      return await renderBitmapAssetToSurfaceCanvas(layer.bitmap.assetId);
     }
 
     if (!isVectorCostumeLayer(layer)) {
