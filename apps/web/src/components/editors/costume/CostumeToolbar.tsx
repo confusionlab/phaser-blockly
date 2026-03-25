@@ -15,7 +15,7 @@ import {
 import {
   MousePointer2,
   PenTool,
-  Pencil,
+  Paintbrush,
   Eraser,
   PaintBucket,
   Circle,
@@ -494,7 +494,7 @@ interface CostumeToolbarProps {
 
 const bitmapPrimaryTools: ToolDefinition[] = [
   { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
-  { tool: 'brush', icon: <Pencil className="size-[18px]" />, label: 'Brush' },
+  { tool: 'brush', icon: <Paintbrush className="size-[18px]" />, label: 'Brush' },
   { tool: 'eraser', icon: <Eraser className="size-[18px]" />, label: 'Eraser' },
   { tool: 'fill', icon: <PaintBucket className="size-[18px]" />, label: 'Fill' },
 ];
@@ -785,6 +785,7 @@ export const CostumeToolbar = memo(({
                                 key={item.action}
                                 className="h-8 w-8 justify-center rounded border p-0 text-muted-foreground"
                                 title={item.title}
+                                onSelect={(event) => event.preventDefault()}
                                 onClick={() => onAlign(item.action)}
                               >
                                 <AlignCanvasActionIcon action={item.action} />
@@ -839,8 +840,7 @@ export const CostumeToolbar = memo(({
                   )}
 
                   {showBitmapBrushTypeControl && (
-                    <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                      <span className="whitespace-nowrap text-xs text-muted-foreground">Brush</span>
+                    <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
                       <DropdownMenu
                         open={openMenu === 'brush-kind'}
                         onOpenChange={(open) => handleMenuOpenChange('brush-kind', open)}
