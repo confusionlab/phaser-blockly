@@ -11,9 +11,17 @@ import type { RenderableCostumePreviewLayer } from './costumeDocumentPreviewProt
 const MAX_CACHED_COSTUME_IMAGES = 128;
 const MAX_CACHED_COSTUME_LAYER_CANVASES = 128;
 const MAX_CACHED_COSTUME_LAYER_PREVIEW_SOURCES = 128;
+const MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS = 128;
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
 const layerCanvasCache = new Map<string, Promise<HTMLCanvasElement>>();
 const layerPreviewSourceCache = new Map<string, Promise<string | null>>();
+const documentPreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
+const documentPreviewValueCache = new Map<string, CostumeDocumentPreview>();
+
+interface CostumeDocumentPreview {
+  dataUrl: string;
+  bounds: CostumeBounds | null;
+}
 
 function hashString(value: string): string {
   let hash = 2166136261;
@@ -46,6 +54,29 @@ function rememberCachedValue<T>(
   return value;
 }
 
+function rememberResolvedPreview(
+  signature: string,
+  preview: CostumeDocumentPreview,
+): CostumeDocumentPreview {
+  if (documentPreviewValueCache.has(signature)) {
+    documentPreviewValueCache.delete(signature);
+  }
+  documentPreviewValueCache.set(signature, {
+    dataUrl: preview.dataUrl,
+    bounds: preview.bounds ? { ...preview.bounds } : null,
+  });
+
+  while (documentPreviewValueCache.size > MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS) {
+    const oldestKey = documentPreviewValueCache.keys().next().value;
+    if (typeof oldestKey !== 'string') {
+      break;
+    }
+    documentPreviewValueCache.delete(oldestKey);
+  }
+
+  return preview;
+}
+
 export function getCostumeLayerRenderSignature(layer: CostumeLayer): string | null {
   if (isBitmapCostumeLayer(layer)) {
     return layer.bitmap.assetId ? `bitmap:${layer.bitmap.assetId}` : null;
@@ -56,6 +87,38 @@ export function getCostumeLayerRenderSignature(layer: CostumeLayer): string | nu
   }
 
   return `vector:${layer.vector.engine}:${layer.vector.version}:${hashString(layer.vector.fabricJson)}`;
+}
+
+export function getCostumeLayerPreviewSignature(layer: CostumeLayer): string {
+  return [
+    layer.kind,
+    getCostumeLayerRenderSignature(layer) ?? `${layer.kind}:empty`,
+    layer.visible ? 'visible' : 'hidden',
+    `opacity:${layer.opacity}`,
+    `blend:${layer.blendMode}`,
+    `mask:${layer.mask ? 'present' : 'none'}`,
+    `effects:${layer.effects.length}`,
+  ].join('|');
+}
+
+export function getCostumeDocumentPreviewSignature(document: CostumeDocument): string {
+  return document.layers
+    .map((layer) => getCostumeLayerPreviewSignature(layer))
+    .join('||');
+}
+
+export function getCachedCostumeDocumentPreview(
+  document: CostumeDocument,
+): CostumeDocumentPreview | null {
+  const cached = documentPreviewValueCache.get(getCostumeDocumentPreviewSignature(document));
+  if (!cached) {
+    return null;
+  }
+
+  return {
+    dataUrl: cached.dataUrl,
+    bounds: cached.bounds ? { ...cached.bounds } : null,
+  };
 }
 
 async function loadImage(source: string): Promise<HTMLImageElement> {
@@ -291,18 +354,40 @@ export async function renderCostumeDocumentPreview(document: CostumeDocument): P
   dataUrl: string;
   bounds: CostumeBounds | null;
 }> {
-  if (canUseCostumeDocumentPreviewWorker()) {
-    try {
-      const renderableLayers = await createRenderableCostumePreviewLayers(document);
-      return await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers);
-    } catch (error) {
-      console.warn('Failed to render costume preview in the background worker. Falling back to the main thread renderer.', error);
-    }
+  const signature = getCostumeDocumentPreviewSignature(document);
+  const cached = documentPreviewCache.get(signature);
+  if (cached) {
+    return await cached;
   }
 
-  const rendered = await renderCostumeDocument(document);
-  return {
-    dataUrl: rendered.dataUrl,
-    bounds: rendered.bounds,
-  };
+  const pending = (async (): Promise<CostumeDocumentPreview> => {
+    if (canUseCostumeDocumentPreviewWorker()) {
+      try {
+        const renderableLayers = await createRenderableCostumePreviewLayers(document);
+        return rememberResolvedPreview(
+          signature,
+          await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers),
+        );
+      } catch (error) {
+        console.warn('Failed to render costume preview in the background worker. Falling back to the main thread renderer.', error);
+      }
+    }
+
+    const rendered = await renderCostumeDocument(document);
+    return rememberResolvedPreview(signature, {
+      dataUrl: rendered.dataUrl,
+      bounds: rendered.bounds,
+    });
+  })().catch((error) => {
+    documentPreviewCache.delete(signature);
+    documentPreviewValueCache.delete(signature);
+    throw error;
+  });
+
+  return await rememberCachedValue(
+    documentPreviewCache,
+    signature,
+    pending,
+    MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS,
+  );
 }

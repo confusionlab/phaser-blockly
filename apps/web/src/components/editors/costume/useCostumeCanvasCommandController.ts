@@ -48,15 +48,18 @@ interface UseCostumeCanvasCommandControllerOptions {
   bitmapSelectionDragModeRef: MutableRefObject<'none' | 'marquee'>;
   bitmapSelectionStartRef: MutableRefObject<{ x: number; y: number } | null>;
   brushColorRef: MutableRefObject<string>;
+  commitHostedLayerSurfaceSnapshot: (layerId: string | null) => void;
   documentLayers: CostumeDocument['layers'];
   drawBitmapSelectionOverlay: () => void;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   getActiveLayerCanvasElement: () => HTMLCanvasElement;
   getSelectionBoundsSnapshot: () => CanvasSelectionBoundsSnapshot | null;
-  inactiveLayerSurfaceRefs: MutableRefObject<Map<string, HTMLCanvasElement>>;
+  hostedLayerIdRef: MutableRefObject<string | null>;
   isLoadRequestActive: (requestId?: number) => boolean;
+  isHostedLayerReadyRef: MutableRefObject<boolean>;
   lastCommittedSnapshotRef: MutableRefObject<any>;
+  layerSurfaceRefs: MutableRefObject<Map<string, HTMLCanvasElement>>;
   loadBitmapAsSingleVectorImage: (bitmapCanvas: HTMLCanvasElement, requestId?: number) => Promise<boolean>;
   loadBitmapLayer: (dataUrl: string, selectable: boolean, requestId?: number) => Promise<boolean>;
   loadRequestIdRef: MutableRefObject<number>;
@@ -73,6 +76,8 @@ interface UseCostumeCanvasCommandControllerOptions {
   saveHistory: () => void;
   setEditorMode: (mode: CostumeEditorMode) => void;
   setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
+  setHostedLayerId: (layerId: string | null) => void;
+  setHostedLayerReady: (ready: boolean) => void;
   suppressBitmapSelectionAutoCommitRef: MutableRefObject<boolean>;
   suppressHistoryRef: MutableRefObject<boolean>;
   syncSelectionState: () => void;
@@ -92,15 +97,18 @@ export function useCostumeCanvasCommandController({
   bitmapSelectionDragModeRef,
   bitmapSelectionStartRef,
   brushColorRef,
+  commitHostedLayerSurfaceSnapshot,
   documentLayers,
   drawBitmapSelectionOverlay,
   editorModeRef,
   fabricCanvasRef,
   getActiveLayerCanvasElement,
   getSelectionBoundsSnapshot,
-  inactiveLayerSurfaceRefs,
+  hostedLayerIdRef,
   isLoadRequestActive,
+  isHostedLayerReadyRef,
   lastCommittedSnapshotRef,
+  layerSurfaceRefs,
   loadBitmapAsSingleVectorImage,
   loadBitmapLayer,
   loadRequestIdRef,
@@ -117,6 +125,8 @@ export function useCostumeCanvasCommandController({
   saveHistory,
   setEditorMode,
   setHasBitmapFloatingSelection,
+  setHostedLayerId,
+  setHostedLayerReady,
   suppressBitmapSelectionAutoCommitRef,
   suppressHistoryRef,
   syncSelectionState,
@@ -125,47 +135,43 @@ export function useCostumeCanvasCommandController({
 }: UseCostumeCanvasCommandControllerOptions) {
   const getComposedCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
-    if (fabricCanvas) {
-      const baseCanvas = getActiveLayerCanvasElement();
-      const composed = document.createElement('canvas');
-      composed.width = CANVAS_SIZE;
-      composed.height = CANVAS_SIZE;
-      const composedCtx = composed.getContext('2d');
-      if (!composedCtx) {
-        return baseCanvas;
-      }
+    const hostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId;
+    const canRenderHostedLayer = !!fabricCanvas && isHostedLayerReadyRef.current;
+    const baseCanvas = canRenderHostedLayer ? getActiveLayerCanvasElement() : null;
+    const composed = document.createElement('canvas');
+    composed.width = CANVAS_SIZE;
+    composed.height = CANVAS_SIZE;
+    const composedCtx = composed.getContext('2d');
+    if (!composedCtx) {
+      return baseCanvas ?? composed;
+    }
 
-      for (const layer of documentLayers) {
-        if (layer.id === activeDocumentLayerId) {
+    for (const layer of documentLayers) {
+      if (canRenderHostedLayer && layer.id === hostedLayerId && baseCanvas) {
           composedCtx.save();
           composedCtx.globalAlpha = activeLayerVisible ? activeLayerOpacity : 0;
           composedCtx.drawImage(baseCanvas, 0, 0);
           renderVectorBrushStrokeOverlay(composedCtx, { clear: false });
           composedCtx.restore();
-          continue;
-        }
-
-        if (!layer.visible || layer.opacity <= 0) {
-          continue;
-        }
-
-        const layerSurface = inactiveLayerSurfaceRefs.current.get(layer.id);
-        if (!layerSurface) {
-          continue;
-        }
-
-        composedCtx.save();
-        composedCtx.globalAlpha = layer.opacity;
-        composedCtx.drawImage(layerSurface, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
-        composedCtx.restore();
+        continue;
       }
-      return composed;
+
+      if (!layer.visible || layer.opacity <= 0) {
+        continue;
+      }
+
+      const layerSurface = layerSurfaceRefs.current.get(layer.id);
+      if (!layerSurface) {
+        continue;
+      }
+
+      composedCtx.save();
+      composedCtx.globalAlpha = layer.opacity;
+      composedCtx.drawImage(layerSurface, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      composedCtx.restore();
     }
 
-    const fallback = document.createElement('canvas');
-    fallback.width = CANVAS_SIZE;
-    fallback.height = CANVAS_SIZE;
-    return fallback;
+    return composed;
   }, [
     activeDocumentLayerId,
     activeLayerOpacity,
@@ -173,7 +179,9 @@ export function useCostumeCanvasCommandController({
     documentLayers,
     fabricCanvasRef,
     getActiveLayerCanvasElement,
-    inactiveLayerSurfaceRefs,
+    hostedLayerIdRef,
+    isHostedLayerReadyRef,
+    layerSurfaceRefs,
     renderVectorBrushStrokeOverlay,
   ]);
 
@@ -194,6 +202,8 @@ export function useCostumeCanvasCommandController({
   const pickBitmapLayerAtPoint = useCallback((point: { x: number; y: number }): string | null => {
     const x = Math.max(0, Math.min(CANVAS_SIZE - 1, Math.floor(point.x)));
     const y = Math.max(0, Math.min(CANVAS_SIZE - 1, Math.floor(point.y)));
+    const hostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId;
+    const canUseHostedLayer = isHostedLayerReadyRef.current;
 
     for (let index = documentLayers.length - 1; index >= 0; index -= 1) {
       const layer = documentLayers[index];
@@ -201,9 +211,9 @@ export function useCostumeCanvasCommandController({
         continue;
       }
 
-      const sourceCanvas = layer.id === activeDocumentLayerId
+      const sourceCanvas = canUseHostedLayer && layer.id === hostedLayerId
         ? fabricCanvasRef.current?.toCanvasElement(1) ?? null
-        : inactiveLayerSurfaceRefs.current.get(layer.id) ?? null;
+        : layerSurfaceRefs.current.get(layer.id) ?? null;
       if (!sourceCanvas) {
         continue;
       }
@@ -220,7 +230,7 @@ export function useCostumeCanvasCommandController({
     }
 
     return null;
-  }, [activeDocumentLayerId, documentLayers, fabricCanvasRef, inactiveLayerSurfaceRefs]);
+  }, [activeDocumentLayerId, documentLayers, fabricCanvasRef, hostedLayerIdRef, isHostedLayerReadyRef, layerSurfaceRefs]);
 
   const applySelectionTransform = useCallback((transform: Parameters<typeof util.applyTransformToObject>[1]): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -704,9 +714,13 @@ export function useCostumeCanvasCommandController({
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
     const requestId = ++loadRequestIdRef.current;
+    const previousHostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId ?? null;
+    commitHostedLayerSurfaceSnapshot(previousHostedLayerId);
+    setHostedLayerReady(false);
     loadedSessionKeyRef.current = null;
 
     const requestedState = resolveActiveCostumeLayerEditorLoadState(costumeDocument);
+    const nextHostedLayerId = requestedState.activeLayerId;
     if (requestedState.editorMode === 'vector') {
       const requestedVectorDocument = requestedState.vectorDocument ?? createEmptyCostumeVectorDocument();
       try {
@@ -742,12 +756,17 @@ export function useCostumeCanvasCommandController({
     }
 
     if (!isLoadRequestActive(requestId)) return;
+    setHostedLayerId(nextHostedLayerId);
+    setHostedLayerReady(true);
     loadedSessionKeyRef.current = sessionKey;
     lastCommittedSnapshotRef.current = null;
     saveHistory();
     markCurrentSnapshotPersisted(sessionKey);
   }, [
+    activeDocumentLayerId,
+    commitHostedLayerSurfaceSnapshot,
     fabricCanvasRef,
+    hostedLayerIdRef,
     isLoadRequestActive,
     lastCommittedSnapshotRef,
     loadBitmapLayer,
@@ -757,6 +776,8 @@ export function useCostumeCanvasCommandController({
     normalizeCanvasVectorStrokeUniform,
     saveHistory,
     setEditorMode,
+    setHostedLayerId,
+    setHostedLayerReady,
     suppressHistoryRef,
   ]);
 

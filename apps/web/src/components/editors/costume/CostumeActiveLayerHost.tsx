@@ -13,6 +13,8 @@ interface CostumeActiveLayerHostProps {
   editorModeState: CostumeEditorMode;
   fabricCanvasHostRef: RefObject<HTMLDivElement | null>;
   hasBitmapFloatingSelection: boolean;
+  hostReady: boolean;
+  layerZIndex: number;
   vectorGuideCanvasRef: RefObject<HTMLCanvasElement | null>;
   vectorStrokeCanvasRef: RefObject<HTMLCanvasElement | null>;
 }
@@ -27,6 +29,8 @@ export function CostumeActiveLayerHost({
   editorModeState,
   fabricCanvasHostRef,
   hasBitmapFloatingSelection,
+  hostReady,
+  layerZIndex,
   vectorGuideCanvasRef,
   vectorStrokeCanvasRef,
 }: CostumeActiveLayerHostProps) {
@@ -36,6 +40,7 @@ export function CostumeActiveLayerHost({
         style={{
           position: 'absolute',
           inset: 0,
+          zIndex: layerZIndex,
         }}
       >
         <div
@@ -60,7 +65,7 @@ export function CostumeActiveLayerHost({
             width: CANVAS_SIZE,
             height: CANVAS_SIZE,
             pointerEvents: 'none',
-            opacity: activeLayerVisible ? activeLayerOpacity : 0,
+            opacity: hostReady && activeLayerVisible ? activeLayerOpacity : 0,
           }}
         />
       </div>
@@ -93,7 +98,8 @@ export function CostumeActiveLayerHost({
             activeTool === 'select' ||
             (activeTool === 'box-select' && activeLayerVisible && !hasBitmapFloatingSelection && !activeLayerLocked)
           ) ? 'auto' : 'none',
-          opacity: activeLayerVisible ? activeLayerOpacity : 0,
+          opacity: hostReady && activeLayerVisible ? activeLayerOpacity : 0,
+          zIndex: layerZIndex + 1,
         }}
       />
 

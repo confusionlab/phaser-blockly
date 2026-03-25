@@ -9,6 +9,7 @@ import {
   setActiveCostumeLayer,
   setCostumeLayerVisibility,
 } from '../src/lib/costume/costumeDocument';
+import { getCostumeDocumentPreviewSignature } from '../src/lib/costume/costumeDocumentRender';
 
 test.describe('costume document visibility', () => {
   test('keeps the active layer selected when hiding the active layer', () => {
@@ -89,5 +90,34 @@ test.describe('costume document visibility', () => {
     expect(loadState.editorMode).toBe('vector');
     expect(loadState.bitmapAssetId).toBeNull();
     expect(loadState.vectorDocument).toEqual(createEmptyCostumeVectorDocument());
+  });
+
+  test('keeps the same preview signature when only the active layer selection changes', () => {
+    let document = createBlankCostumeDocument();
+    const secondLayer = createBitmapLayer({
+      name: 'Layer 2',
+      assetId: 'data:image/png;base64,LAYER_2',
+    });
+
+    document = insertCostumeLayerAfterActive(document, secondLayer);
+    const baseSignature = getCostumeDocumentPreviewSignature(document);
+    const switchedDocument = setActiveCostumeLayer(document, secondLayer.id);
+
+    expect(getCostumeDocumentPreviewSignature(switchedDocument)).toBe(baseSignature);
+  });
+
+  test('changes the preview signature when a visible layer presentation changes', () => {
+    let document = createBlankCostumeDocument();
+    const secondLayer = createBitmapLayer({
+      name: 'Layer 2',
+      assetId: 'data:image/png;base64,LAYER_2',
+    });
+
+    document = insertCostumeLayerAfterActive(document, secondLayer);
+    const baseSignature = getCostumeDocumentPreviewSignature(document);
+    const hiddenDocument = setCostumeLayerVisibility(document, secondLayer.id, false);
+
+    expect(hiddenDocument).not.toBeNull();
+    expect(getCostumeDocumentPreviewSignature(hiddenDocument!)).not.toBe(baseSignature);
   });
 });

@@ -1,4 +1,4 @@
-import { useRef, useState, memo, useEffect } from 'react';
+import { useRef, useState, memo, useEffect, useMemo } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import type { Id } from '@convex-generated/dataModel';
@@ -19,7 +19,11 @@ import {
   createBlankCostumeDocument,
   createBitmapCostumeDocument,
 } from '@/lib/costume/costumeDocument';
-import { renderCostumeDocumentPreview } from '@/lib/costume/costumeDocumentRender';
+import {
+  getCachedCostumeDocumentPreview,
+  getCostumeDocumentPreviewSignature,
+  renderCostumeDocumentPreview,
+} from '@/lib/costume/costumeDocumentRender';
 
 interface CostumeListProps {
   costumes: Costume[];
@@ -30,36 +34,38 @@ interface CostumeListProps {
   onRenameCostume: (index: number, name: string) => void;
 }
 
-function areCostumeBoundsEquivalent(
-  a: CostumeBounds | undefined,
-  b: CostumeBounds | undefined,
-): boolean {
-  if (!a && !b) {
-    return true;
-  }
-  if (!a || !b) {
-    return false;
-  }
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-}
-
 const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costume: Costume }) {
-  const [preview, setPreview] = useState<{ assetId: string; bounds?: CostumeBounds }>(() => ({
-    assetId: costume.assetId,
-    bounds: costume.bounds,
-  }));
+  const previewSignature = useMemo(
+    () => getCostumeDocumentPreviewSignature(costume.document),
+    [costume.document],
+  );
+  const [preview, setPreview] = useState<{ assetId: string; bounds?: CostumeBounds }>(() => {
+    const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
+    if (cachedPreview) {
+      return {
+        assetId: cachedPreview.dataUrl,
+        bounds: cachedPreview.bounds ?? undefined,
+      };
+    }
+
+    return {
+      assetId: costume.assetId,
+      bounds: costume.bounds,
+    };
+  });
 
   useEffect(() => {
     let cancelled = false;
-
-    setPreview((current) => (
-      current.assetId === costume.assetId && areCostumeBoundsEquivalent(current.bounds, costume.bounds)
-        ? current
-        : {
-            assetId: costume.assetId,
-            bounds: costume.bounds,
-          }
-    ));
+    const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
+    if (cachedPreview) {
+      setPreview({
+        assetId: cachedPreview.dataUrl,
+        bounds: cachedPreview.bounds ?? undefined,
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     void renderCostumeDocumentPreview(costume.document).then((rendered) => {
       if (cancelled) {
@@ -79,7 +85,7 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
     return () => {
       cancelled = true;
     };
-  }, [costume.assetId, costume.bounds, costume.document]);
+  }, [previewSignature]);
 
   if (preview.bounds && preview.bounds.width > 0 && preview.bounds.height > 0) {
     const scale = Math.min(1, 140 / Math.max(preview.bounds.width, preview.bounds.height));

@@ -19,13 +19,14 @@ interface CostumeCanvasStageProps {
   canZoomToSelection: boolean;
   colliderCanvasRef: RefObject<HTMLCanvasElement | null>;
   containerRef: RefObject<HTMLDivElement | null>;
+  documentLayers: CostumeLayer[];
   editorModeState: CostumeEditorMode;
   fabricCanvasHostRef: RefObject<HTMLDivElement | null>;
   hasBitmapFloatingSelection: boolean;
-  inactiveLayerSurfaceRefs: MutableRefObject<Map<string, HTMLCanvasElement>>;
-  inactiveLayersAboveActive: CostumeLayer[];
-  inactiveLayersBelowActive: CostumeLayer[];
+  hostedLayerId: string | null;
+  hostedLayerReady: boolean;
   isViewportPanning: boolean;
+  layerSurfaceRefs: MutableRefObject<Map<string, HTMLCanvasElement>>;
   maxZoom: number;
   minZoom: number;
   onRedo: () => void;
@@ -55,13 +56,14 @@ export function CostumeCanvasStage({
   canZoomToSelection,
   colliderCanvasRef,
   containerRef,
+  documentLayers,
   editorModeState,
   fabricCanvasHostRef,
   hasBitmapFloatingSelection,
-  inactiveLayerSurfaceRefs,
-  inactiveLayersAboveActive,
-  inactiveLayersBelowActive,
+  hostedLayerId,
+  hostedLayerReady,
   isViewportPanning,
+  layerSurfaceRefs,
   maxZoom,
   minZoom,
   onRedo,
@@ -80,13 +82,14 @@ export function CostumeCanvasStage({
   const canvasPreviewScale = zoom * DEFAULT_COSTUME_PREVIEW_SCALE;
   const canvasLeft = viewportSize.width / 2 - cameraCenter.x * canvasPreviewScale;
   const canvasTop = viewportSize.height / 2 - cameraCenter.y * canvasPreviewScale;
+  const hostedLayerIndex = documentLayers.findIndex((layer) => layer.id === hostedLayerId);
 
-  const setInactiveLayerSurfaceRef = (layerId: string, node: HTMLCanvasElement | null) => {
+  const setLayerSurfaceRef = (layerId: string, node: HTMLCanvasElement | null) => {
     if (node) {
-      inactiveLayerSurfaceRefs.current.set(layerId, node);
+      layerSurfaceRefs.current.set(layerId, node);
       return;
     }
-    inactiveLayerSurfaceRefs.current.delete(layerId);
+    layerSurfaceRefs.current.delete(layerId);
   };
 
   return (
@@ -139,12 +142,17 @@ export function CostumeCanvasStage({
               pointerEvents: 'none',
             }}
           >
-            {inactiveLayersBelowActive.map((layer) => (
+            {documentLayers.map((layer, index) => (
               <CostumeLayerSurface
                 key={layer.id}
-                ref={(node) => setInactiveLayerSurfaceRef(layer.id, node)}
+                ref={(node) => setLayerSurfaceRef(layer.id, node)}
                 layer={layer}
-                opacity={layer.visible ? layer.opacity : 0}
+                opacity={hostedLayerReady && layer.id === hostedLayerId
+                  ? 0
+                  : layer.visible
+                    ? layer.opacity
+                    : 0}
+                style={{ zIndex: index * 2 }}
               />
             ))}
           </div>
@@ -159,27 +167,11 @@ export function CostumeCanvasStage({
             editorModeState={editorModeState}
             fabricCanvasHostRef={fabricCanvasHostRef}
             hasBitmapFloatingSelection={hasBitmapFloatingSelection}
+            hostReady={hostedLayerReady}
+            layerZIndex={Math.max(1, hostedLayerIndex * 2 + 1)}
             vectorGuideCanvasRef={vectorGuideCanvasRef}
             vectorStrokeCanvasRef={vectorStrokeCanvasRef}
           />
-
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-            }}
-          >
-            {inactiveLayersAboveActive.map((layer) => (
-              <CostumeLayerSurface
-                key={layer.id}
-                ref={(node) => setInactiveLayerSurfaceRef(layer.id, node)}
-                layer={layer}
-                opacity={layer.visible ? layer.opacity : 0}
-              />
-            ))}
-          </div>
 
         </div>
 

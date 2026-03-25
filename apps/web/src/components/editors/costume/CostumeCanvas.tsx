@@ -156,7 +156,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const fabricCanvasHostRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement | null>(null);
-  const inactiveLayerSurfaceRefs = useRef(new Map<string, HTMLCanvasElement>());
+  const layerSurfaceRefs = useRef(new Map<string, HTMLCanvasElement>());
   const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -167,21 +167,25 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const documentLayers = costumeDocument?.layers ?? [];
   const activeDocumentLayer = useMemo(() => getActiveCostumeLayer(costumeDocument), [costumeDocument]);
-  const activeLayerOpacity = activeDocumentLayer?.opacity ?? 1;
-  const activeLayerVisible = activeDocumentLayer?.visible ?? true;
-  const activeLayerLocked = activeDocumentLayer?.locked ?? false;
-  const activeLayerIndex = useMemo(
-    () => documentLayers.findIndex((layer) => layer.id === activeDocumentLayer?.id),
-    [activeDocumentLayer?.id, documentLayers],
+  const [hostedLayerIdState, setHostedLayerIdState] = useState<string | null>(null);
+  const hostedLayerIdRef = useRef<string | null>(null);
+  const [isHostedLayerReadyState, setIsHostedLayerReadyState] = useState(false);
+  const isHostedLayerReadyRef = useRef(false);
+  const setHostedLayerId = useCallback((layerId: string | null) => {
+    hostedLayerIdRef.current = layerId;
+    setHostedLayerIdState(layerId);
+  }, []);
+  const setHostedLayerReady = useCallback((ready: boolean) => {
+    isHostedLayerReadyRef.current = ready;
+    setIsHostedLayerReadyState(ready);
+  }, []);
+  const hostedDocumentLayer = useMemo(
+    () => documentLayers.find((layer) => layer.id === hostedLayerIdState) ?? activeDocumentLayer ?? null,
+    [activeDocumentLayer, documentLayers, hostedLayerIdState],
   );
-  const inactiveLayersBelowActive = useMemo(
-    () => documentLayers.filter((layer, index) => layer.id !== activeDocumentLayer?.id && (activeLayerIndex < 0 || index < activeLayerIndex)),
-    [activeDocumentLayer?.id, activeLayerIndex, documentLayers],
-  );
-  const inactiveLayersAboveActive = useMemo(
-    () => documentLayers.filter((layer, index) => layer.id !== activeDocumentLayer?.id && activeLayerIndex >= 0 && index > activeLayerIndex),
-    [activeDocumentLayer?.id, activeLayerIndex, documentLayers],
-  );
+  const activeLayerOpacity = hostedDocumentLayer?.opacity ?? 1;
+  const activeLayerVisible = hostedDocumentLayer?.visible ?? true;
+  const activeLayerLocked = hostedDocumentLayer?.locked ?? false;
   const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const [canZoomToSelection, setCanZoomToSelection] = useState(false);
@@ -192,7 +196,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const activeLayerVisibleRef = useRef(activeLayerVisible);
   activeLayerVisibleRef.current = activeLayerVisible;
   const activeLayerLockedRef = useRef(activeLayerLocked);
-  activeLayerLockedRef.current = activeLayerLocked;
+  activeLayerLockedRef.current = activeLayerLocked || !isHostedLayerReadyState;
 
   const bitmapBrushKindRef = useRef(bitmapBrushKind);
   bitmapBrushKindRef.current = bitmapBrushKind;
@@ -389,7 +393,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       return;
     }
 
-    const nextOpacity = activeLayerVisible ? String(activeLayerOpacity) : '0';
+    const nextOpacity = isHostedLayerReadyState && activeLayerVisible ? String(activeLayerOpacity) : '0';
     if (fabricCanvas.wrapperEl) {
       fabricCanvas.wrapperEl.style.opacity = nextOpacity;
     }
@@ -399,7 +403,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (fabricCanvas.upperCanvasEl) {
       fabricCanvas.upperCanvasEl.style.opacity = nextOpacity;
     }
-  }, [activeLayerOpacity, activeLayerVisible]);
+  }, [activeLayerOpacity, activeLayerVisible, isHostedLayerReadyState]);
 
   const setEditorMode = useCallback((mode: CostumeEditorMode) => {
     editorModeRef.current = mode;
@@ -483,6 +487,26 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return fallback;
   }, []);
 
+  const commitHostedLayerSurfaceSnapshot = useCallback((layerId: string | null) => {
+    if (!layerId) {
+      return;
+    }
+
+    const surface = layerSurfaceRefs.current.get(layerId);
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!surface || !fabricCanvas) {
+      return;
+    }
+
+    const ctx = surface.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    ctx.clearRect(0, 0, surface.width, surface.height);
+    ctx.drawImage(fabricCanvas.toCanvasElement(1), 0, 0, surface.width, surface.height);
+  }, []);
+
   const {
     alignSelection,
     applyFill,
@@ -514,15 +538,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapSelectionDragModeRef,
     bitmapSelectionStartRef,
     brushColorRef,
+    commitHostedLayerSurfaceSnapshot,
     documentLayers,
     drawBitmapSelectionOverlay,
     editorModeRef,
     fabricCanvasRef,
     getActiveLayerCanvasElement,
     getSelectionBoundsSnapshot,
-    inactiveLayerSurfaceRefs,
+    hostedLayerIdRef,
     isLoadRequestActive,
+    isHostedLayerReadyRef,
     lastCommittedSnapshotRef,
+    layerSurfaceRefs,
     loadBitmapAsSingleVectorImage,
     loadBitmapLayer,
     loadRequestIdRef,
@@ -539,6 +566,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory,
     setEditorMode,
     setHasBitmapFloatingSelection,
+    setHostedLayerId,
+    setHostedLayerReady,
     suppressBitmapSelectionAutoCommitRef,
     suppressHistoryRef,
     syncSelectionState,
@@ -849,6 +878,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   useEffect(() => {
+    if (costumeDocument) {
+      return;
+    }
+    setHostedLayerId(null);
+    setHostedLayerReady(false);
+  }, [costumeDocument, setHostedLayerId, setHostedLayerReady]);
+
+  useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
 
@@ -908,13 +945,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       canZoomToSelection={canZoomToSelection}
       colliderCanvasRef={colliderCanvasRef}
       containerRef={containerRef}
+      documentLayers={documentLayers}
       editorModeState={editorModeState}
       fabricCanvasHostRef={fabricCanvasHostRef}
       hasBitmapFloatingSelection={hasBitmapFloatingSelection}
-      inactiveLayerSurfaceRefs={inactiveLayerSurfaceRefs}
-      inactiveLayersAboveActive={inactiveLayersAboveActive}
-      inactiveLayersBelowActive={inactiveLayersBelowActive}
+      hostedLayerId={hostedLayerIdState}
+      hostedLayerReady={isHostedLayerReadyState}
       isViewportPanning={isViewportPanning}
+      layerSurfaceRefs={layerSurfaceRefs}
       maxZoom={MAX_ZOOM}
       minZoom={MIN_ZOOM}
       onRedo={onRedo}
