@@ -201,7 +201,6 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     });
     fabricCanvasRef.current = fabricCanvas;
     onFabricCanvasReady();
-    let isBitmapBrushStrokeActive = false;
 
     const onMouseDown = (opt: any) => {
       const callbacks = callbacksRef.current;
@@ -215,17 +214,6 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       const floatingBitmapObject = bitmapFloatingObjectRef.current;
 
       if (!layerInteractive) {
-        return;
-      }
-
-      if (mode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
-        const brush = (fabricCanvas as any).freeDrawingBrush as {
-          onMouseDown?: (pointer: Point, options: { e: any }) => void;
-        } | undefined;
-        if (brush?.onMouseDown) {
-          brush.onMouseDown(pointer, { e: opt.e });
-          isBitmapBrushStrokeActive = true;
-        }
         return;
       }
 
@@ -512,21 +500,6 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onMouseMove = (opt: any) => {
       const callbacks = callbacksRef.current;
-      if (
-        isBitmapBrushStrokeActive &&
-        editorModeRef.current === 'bitmap' &&
-        (activeToolRef.current === 'brush' || activeToolRef.current === 'eraser') &&
-        opt.e
-      ) {
-        const brush = (fabricCanvas as any).freeDrawingBrush as {
-          onMouseMove?: (pointer: Point, options: { e: any }) => void;
-        } | undefined;
-        if (brush?.onMouseMove) {
-          brush.onMouseMove(fabricCanvas.getScenePoint(opt.e), { e: opt.e });
-        }
-        return;
-      }
-
       if (editorModeRef.current === 'vector' && activeToolRef.current === 'pen' && opt.e) {
         const pointer = fabricCanvas.getScenePoint(opt.e);
         if (penAnchorPlacementSessionRef.current) {
@@ -670,17 +643,8 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       fabricCanvas.requestRenderAll();
     };
 
-    const onMouseUp = (opt: any) => {
+    const onMouseUp = () => {
       const callbacks = callbacksRef.current;
-      if (isBitmapBrushStrokeActive) {
-        isBitmapBrushStrokeActive = false;
-        const brush = (fabricCanvas as any).freeDrawingBrush as {
-          onMouseUp?: (options: { e: any }) => void;
-        } | undefined;
-        brush?.onMouseUp?.({ e: opt?.e ?? null });
-        return;
-      }
-
       if (penAnchorPlacementSessionRef.current) {
         callbacks.commitCurrentPenPlacement();
         fabricCanvas.requestRenderAll();

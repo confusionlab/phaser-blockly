@@ -132,7 +132,7 @@ test.describe('Costume editor tools', () => {
 
     const beforeSamples = await readCheckerboardInkSamples(page);
 
-    await drawAcrossCostumeCanvas(page, 0.08, 0.08, 0.25, 0.25);
+    await drawAcrossCostumeCanvas(page, 0.22, 0.22, 0.40, 0.40);
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
 
