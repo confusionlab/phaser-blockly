@@ -32,8 +32,8 @@ export interface BrushCursorStyle {
 }
 
 export const BITMAP_BRUSH_OPTIONS: BitmapBrushOption[] = [
-  { value: 'hard-round', label: 'Harsh Circle' },
-  { value: 'airbrush', label: 'Airbrush' },
+  { value: 'hard-round', label: 'Hard' },
+  { value: 'airbrush', label: 'Soft' },
   { value: 'crayon', label: 'Crayon' },
 ];
 

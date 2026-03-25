@@ -298,13 +298,14 @@ const toolbarSliderPreviewSurfaceClassName =
   'pointer-events-none overflow-visible border-0 bg-transparent p-0 shadow-none';
 
 interface ToolbarPreviewSliderProps {
-  label: string;
+  label?: string;
   value: number;
   min: number;
   max: number;
   step?: number;
   onValueChange: (value: number) => void;
   preview: React.ReactNode;
+  labelDisplay?: 'left' | 'none';
   className?: string;
   sliderClassName?: string;
   valueClassName?: string;
@@ -319,6 +320,7 @@ const ToolbarPreviewSlider = memo(({
   step = 1,
   onValueChange,
   preview,
+  labelDisplay = 'left',
   className,
   sliderClassName,
   valueClassName,
@@ -346,7 +348,9 @@ const ToolbarPreviewSlider = memo(({
 
   return (
     <div className={cn('flex min-w-[136px] items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0', className)}>
-      <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
+      {labelDisplay === 'left' && label ? (
+        <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
+      ) : null}
       <div ref={anchorRef} className="relative flex min-w-0 grow items-center">
         <Slider.Root
           className={cn('relative flex h-4 w-full touch-none items-center', sliderClassName)}
@@ -890,7 +894,7 @@ export const CostumeToolbar = memo(({
                             size="sm"
                             className="h-8 min-w-[128px] justify-between gap-2 px-2 text-xs"
                           >
-                            <span>{BITMAP_BRUSH_OPTIONS.find((option) => option.value === bitmapBrushKind)?.label ?? 'Harsh Circle'}</span>
+                              <span>{BITMAP_BRUSH_OPTIONS.find((option) => option.value === bitmapBrushKind)?.label ?? 'Hard'}</span>
                             <ChevronDown className="size-3 shrink-0" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -987,7 +991,16 @@ export const CostumeToolbar = memo(({
                   {showVectorStyleControls && (
                     <>
                       <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                        <span className="whitespace-nowrap text-xs text-muted-foreground">Brush</span>
+                        <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
+                        <ToolbarColorControl
+                          label="Stroke"
+                          value={vectorStyle.strokeColor}
+                          menuId="stroke-color"
+                          openMenu={openMenu}
+                          onMenuOpenChange={handleMenuOpenChange}
+                          onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          labelDisplay="none"
+                        />
                         <DropdownMenu
                           open={openMenu === 'vector-stroke-brush'}
                           onOpenChange={(open) => handleMenuOpenChange('vector-stroke-brush', open)}
@@ -1015,10 +1028,27 @@ export const CostumeToolbar = memo(({
                             </DropdownMenuRadioGroup>
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        <ToolbarPreviewSlider
+                          value={vectorStyle.strokeWidth}
+                          onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
+                          min={0}
+                          max={50}
+                          labelDisplay="none"
+                          className="min-w-[124px] border-r-0 pr-0"
+                          sliderClassName="w-16"
+                          preview={(
+                            <StrokeWidthPreview
+                              thickness={vectorStyle.strokeWidth}
+                              color={vectorStyle.strokeColor}
+                              previewScale={previewScale}
+                            />
+                          )}
+                        />
                       </div>
 
                       {showVectorFillControl && (
-                        <>
+                        <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+                          <span className="whitespace-nowrap text-xs text-muted-foreground">Fill</span>
                           <ToolbarColorControl
                             label="Fill"
                             value={vectorStyle.fillColor}
@@ -1026,66 +1056,37 @@ export const CostumeToolbar = memo(({
                             openMenu={openMenu}
                             onMenuOpenChange={handleMenuOpenChange}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
-                            labelDisplay="left"
+                            labelDisplay="none"
                           />
-
-                          <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
-                            <span className="whitespace-nowrap text-xs text-muted-foreground">Texture</span>
-                            <DropdownMenu
-                              open={openMenu === 'vector-fill-texture'}
-                              onOpenChange={(open) => handleMenuOpenChange('vector-fill-texture', open)}
-                            >
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
-                                >
-                                  <span>{getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
-                                  <ChevronDown className="size-3 shrink-0" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
-                                <DropdownMenuRadioGroup
-                                  value={vectorStyle.fillTextureId}
-                                  onValueChange={(fillTextureId) => onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId })}
-                                >
-                                  {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
-                                    <DropdownMenuRadioItem key={option.value} value={option.value}>
-                                      {option.label}
-                                    </DropdownMenuRadioItem>
-                                  ))}
-                                </DropdownMenuRadioGroup>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </>
+                          <DropdownMenu
+                            open={openMenu === 'vector-fill-texture'}
+                            onOpenChange={(open) => handleMenuOpenChange('vector-fill-texture', open)}
+                          >
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
+                              >
+                                <span>{getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
+                                <ChevronDown className="size-3 shrink-0" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
+                              <DropdownMenuRadioGroup
+                                value={vectorStyle.fillTextureId}
+                                onValueChange={(fillTextureId) => onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId })}
+                              >
+                                {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
+                                  <DropdownMenuRadioItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </DropdownMenuRadioItem>
+                                ))}
+                              </DropdownMenuRadioGroup>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       )}
-
-                      <ToolbarColorControl
-                        label="Stroke"
-                        value={vectorStyle.strokeColor}
-                        menuId="stroke-color"
-                        openMenu={openMenu}
-                        onMenuOpenChange={handleMenuOpenChange}
-                        onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
-                        labelDisplay="left"
-                      />
-
-                      <ToolbarPreviewSlider
-                        label="Stroke"
-                        value={vectorStyle.strokeWidth}
-                        onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
-                        min={0}
-                        max={50}
-                        preview={(
-                          <StrokeWidthPreview
-                            thickness={vectorStyle.strokeWidth}
-                            color={vectorStyle.strokeColor}
-                            previewScale={previewScale}
-                          />
-                        )}
-                      />
                     </>
                   )}
 
