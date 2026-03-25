@@ -153,7 +153,7 @@ export function CostumeEditor() {
     strokeColor: '#000000',
     strokeWidth: 5,
   });
-  const [vectorHandleMode, setVectorHandleMode] = useState<VectorHandleMode>('pointed');
+  const [vectorHandleMode, setVectorHandleMode] = useState<VectorHandleMode>('linear');
   const [textStyle, setTextStyle] = useState<TextToolStyle>({
     fontFamily: 'Arial',
     fontSize: 32,

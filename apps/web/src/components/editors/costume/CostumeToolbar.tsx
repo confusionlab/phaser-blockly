@@ -62,9 +62,9 @@ import {
 export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
-export type EditableVectorHandleMode = 'pointed' | 'curved';
-export type VectorHandleMode = EditableVectorHandleMode | 'multiple';
 export type VectorPathNodeHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';
+export type EditableVectorHandleMode = VectorPathNodeHandleType;
+export type VectorHandleMode = EditableVectorHandleMode | 'multiple';
 export type AlignAction =
   | 'top-left'
   | 'top-center'
@@ -109,11 +109,11 @@ export interface VectorStyleCapabilities {
 }
 
 export function vectorHandleModeToPathNodeHandleType(mode: EditableVectorHandleMode): VectorPathNodeHandleType {
-  return mode === 'curved' ? 'smooth' : 'linear';
+  return mode;
 }
 
 export function pathNodeHandleTypeToVectorHandleMode(type: VectorPathNodeHandleType | null | undefined): EditableVectorHandleMode {
-  return type === 'linear' ? 'pointed' : 'curved';
+  return type ?? 'linear';
 }
 
 interface ToolDefinition {
@@ -265,7 +265,7 @@ const toolbarSliderThumbClassName =
 const toolbarSliderTrackClassName = 'relative h-1.5 w-full grow rounded-full bg-secondary';
 const toolbarSliderRangeClassName = 'absolute h-full rounded-full bg-primary';
 const toolbarSliderPreviewSurfaceClassName =
-  'pointer-events-none absolute bottom-full left-1/2 z-20 mb-2.5 -translate-x-1/2 rounded-[18px] border border-border/70 bg-background/95 px-3 py-3 shadow-[0_18px_40px_-22px_rgba(15,23,42,0.38)] backdrop-blur-xl animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-150';
+  'pointer-events-none overflow-visible rounded-[18px] border border-border/70 bg-background/95 px-3 py-3 shadow-[0_18px_40px_-22px_rgba(15,23,42,0.38)] backdrop-blur-xl';
 
 interface ToolbarPreviewSliderProps {
   label: string;
@@ -295,6 +295,7 @@ const ToolbarPreviewSlider = memo(({
   thumbClassName,
 }: ToolbarPreviewSliderProps) => {
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isPreviewVisible) {
@@ -316,12 +317,7 @@ const ToolbarPreviewSlider = memo(({
   return (
     <div className={cn('flex min-w-[136px] items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0', className)}>
       <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
-      <div className="relative flex min-w-0 grow items-center">
-        {isPreviewVisible && (
-          <div className={toolbarSliderPreviewSurfaceClassName} aria-hidden="true">
-            {preview}
-          </div>
-        )}
+      <div ref={anchorRef} className="relative flex min-w-0 grow items-center">
         <Slider.Root
           className={cn('relative flex h-4 w-full touch-none items-center', sliderClassName)}
           value={[value]}
@@ -341,6 +337,19 @@ const ToolbarPreviewSlider = memo(({
         </Slider.Root>
       </div>
       <span className={cn('w-8 text-right text-xs text-muted-foreground', valueClassName)}>{value}</span>
+      <AnchoredPopupSurface
+        open={isPreviewVisible}
+        anchorRef={anchorRef}
+        onClose={() => setIsPreviewVisible(false)}
+        side="top"
+        align="center"
+        sideOffset={toolbarPopupSideOffset}
+        className={toolbarSliderPreviewSurfaceClassName}
+      >
+        <div aria-hidden="true">
+          {preview}
+        </div>
+      </AnchoredPopupSurface>
     </div>
   );
 });
@@ -355,19 +364,26 @@ interface StrokeWidthPreviewProps {
 const StrokeWidthPreview = memo(({
   thickness,
   color,
-}: StrokeWidthPreviewProps) => (
-  <div className="flex h-14 w-[124px] items-center justify-center overflow-hidden rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))]">
-    {thickness > 0 && (
-      <div
-        className="w-20 rounded-full"
-        style={{
-          height: `${thickness}px`,
-          backgroundColor: color,
-        }}
-      />
-    )}
-  </div>
-));
+}: StrokeWidthPreviewProps) => {
+  const previewHeight = Math.max(72, thickness + 28);
+
+  return (
+    <div
+      className="flex w-[136px] items-center justify-center rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))] px-5 py-4"
+      style={{ minHeight: `${previewHeight}px` }}
+    >
+      {thickness > 0 && (
+        <div
+          className="w-full rounded-full"
+          style={{
+            height: `${thickness}px`,
+            backgroundColor: color,
+          }}
+        />
+      )}
+    </div>
+  );
+});
 
 StrokeWidthPreview.displayName = 'StrokeWidthPreview';
 
@@ -379,23 +395,35 @@ interface TextSizePreviewProps {
 const TextSizePreview = memo(({
   textStyle,
   color,
-}: TextSizePreviewProps) => (
-  <div className="flex h-[78px] w-[164px] items-center justify-center overflow-hidden rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))] px-4">
-    <span
-      className="max-w-full whitespace-nowrap text-center leading-none"
+}: TextSizePreviewProps) => {
+  const previewHeight = Math.max(96, Math.min(220, textStyle.fontSize + 44));
+  const previewWidth = Math.max(176, Math.min(320, textStyle.fontSize * 2.8));
+
+  return (
+    <div
+      className="flex items-center justify-center rounded-[14px] border border-border/60 bg-[linear-gradient(180deg,rgba(148,163,184,0.12),rgba(148,163,184,0.04))] px-5 py-4"
       style={{
-        color,
-        fontFamily: textStyle.fontFamily,
-        fontSize: `${textStyle.fontSize}px`,
-        fontWeight: textStyle.fontWeight,
-        fontStyle: textStyle.fontStyle,
-        textDecoration: textStyle.underline ? 'underline' : 'none',
+        minHeight: `${previewHeight}px`,
+        minWidth: `${previewWidth}px`,
       }}
     >
-      Text
-    </span>
-  </div>
-));
+      <span
+        className="whitespace-nowrap text-center"
+        style={{
+          color,
+          fontFamily: textStyle.fontFamily,
+          fontSize: `${textStyle.fontSize}px`,
+          fontWeight: textStyle.fontWeight,
+          fontStyle: textStyle.fontStyle,
+          textDecoration: textStyle.underline ? 'underline' : 'none',
+          lineHeight: 1.1,
+        }}
+      >
+        Text
+      </span>
+    </div>
+  );
+});
 
 TextSizePreview.displayName = 'TextSizePreview';
 
@@ -490,13 +518,25 @@ const alignGrid: Array<{ action: AlignAction; label: string; title: string }> = 
 ];
 
 const vectorHandleModeOptions: Array<{ value: EditableVectorHandleMode; label: string }> = [
-  { value: 'pointed', label: 'Pointed' },
-  { value: 'curved', label: 'Curved' },
+  { value: 'linear', label: 'Linear' },
+  { value: 'corner', label: 'No Mirror' },
+  { value: 'smooth', label: 'Mirror Angle' },
+  { value: 'symmetric', label: 'Mirror Angle and Length' },
 ];
 
 function getVectorHandleModeLabel(mode: VectorHandleMode) {
   if (mode === 'multiple') return 'Multiple';
-  return mode === 'curved' ? 'Curved' : 'Pointed';
+  switch (mode) {
+    case 'corner':
+      return 'No Mirror';
+    case 'smooth':
+      return 'Mirror Angle';
+    case 'symmetric':
+      return 'Mirror Angle and Length';
+    case 'linear':
+    default:
+      return 'Linear';
+  }
 }
 
 function getVectorStrokeBrushLabel(brushId: VectorStrokeBrushId) {
@@ -641,13 +681,13 @@ export const CostumeToolbar = memo(({
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-8 min-w-[120px] justify-between gap-2 px-2 text-xs"
+                            className="h-8 min-w-[176px] justify-between gap-2 px-2 text-xs"
                           >
                             <span>{getVectorHandleModeLabel(vectorHandleMode)}</span>
                             <ChevronDown className="size-3 shrink-0" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[140px]">
+                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[208px]">
                           {vectorHandleModeOptions.map((option) => {
                             const showIndicator = vectorHandleMode === 'multiple' || vectorHandleMode === option.value;
                             return (

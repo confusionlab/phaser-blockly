@@ -107,9 +107,66 @@ const PEN_TOOL_CLOSE_HIT_RADIUS_PX = 10;
 const PEN_TOOL_DRAG_THRESHOLD_PX = 4;
 const OBJECT_SELECTION_CORNER_SIZE = 12;
 const OBJECT_SELECTION_PADDING = 2;
+const ERASER_PREVIEW_CHECKER_SIZE = 16;
+
+let eraserPreviewCheckerTileCache: HTMLCanvasElement | null = null;
+let eraserPreviewCheckerTileKey = '';
 
 function getZoomInvariantCanvasMetric(metric: number, zoom: number) {
   return metric / Math.max(zoom, 0.0001);
+}
+
+function getEraserPreviewCheckerTile() {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  const computedStyle = window.getComputedStyle(document.documentElement);
+  const backgroundColor = computedStyle.getPropertyValue('--checkerboard-bg').trim() || '#f2f2f2';
+  const tileColor = computedStyle.getPropertyValue('--checkerboard-tile').trim() || '#e2e2e2';
+  const key = `${backgroundColor}|${tileColor}`;
+
+  if (eraserPreviewCheckerTileCache && eraserPreviewCheckerTileKey === key) {
+    return eraserPreviewCheckerTileCache;
+  }
+
+  const tile = document.createElement('canvas');
+  tile.width = ERASER_PREVIEW_CHECKER_SIZE;
+  tile.height = ERASER_PREVIEW_CHECKER_SIZE;
+  const tileCtx = tile.getContext('2d');
+  if (!tileCtx) {
+    return null;
+  }
+
+  tileCtx.fillStyle = backgroundColor;
+  tileCtx.fillRect(0, 0, tile.width, tile.height);
+  tileCtx.fillStyle = tileColor;
+  const halfSize = ERASER_PREVIEW_CHECKER_SIZE / 2;
+  tileCtx.fillRect(0, 0, halfSize, halfSize);
+  tileCtx.fillRect(halfSize, halfSize, halfSize, halfSize);
+
+  eraserPreviewCheckerTileCache = tile;
+  eraserPreviewCheckerTileKey = key;
+  return tile;
+}
+
+function fillEraserPreviewBackdrop(ctx: CanvasRenderingContext2D) {
+  const tile = getEraserPreviewCheckerTile();
+  if (!tile) {
+    return;
+  }
+
+  const pattern = ctx.createPattern(tile, 'repeat');
+  if (!pattern) {
+    return;
+  }
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'destination-over';
+  ctx.fillStyle = pattern;
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.restore();
 }
 
 function getStrokedShapeBoundsFromPathBounds(
@@ -130,6 +187,36 @@ function getStrokedShapeBoundsFromPathBounds(
     top: top - strokeInset,
     width,
     height,
+  };
+}
+
+function extractVisibleCanvasRegion(
+  sourceCanvas: HTMLCanvasElement,
+  alphaThreshold = 0,
+): { bounds: CostumeBounds; canvas: HTMLCanvasElement } | null {
+  const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+  if (!sourceCtx) {
+    return null;
+  }
+
+  const imageData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  const bounds = calculateBoundsFromImageData(imageData, alphaThreshold);
+  if (!bounds) {
+    return null;
+  }
+
+  const croppedCanvas = document.createElement('canvas');
+  croppedCanvas.width = bounds.width;
+  croppedCanvas.height = bounds.height;
+  const croppedCtx = croppedCanvas.getContext('2d');
+  if (!croppedCtx) {
+    return null;
+  }
+
+  croppedCtx.putImageData(imageData, -bounds.x, -bounds.y);
+  return {
+    bounds,
+    canvas: croppedCanvas,
   };
 }
 
@@ -207,7 +294,19 @@ function buildStarPoints(
 }
 
 function getEditableVectorHandleMode(mode: VectorHandleMode): Exclude<VectorHandleMode, 'multiple'> {
-  return mode === 'multiple' ? 'pointed' : mode;
+  return mode === 'multiple' ? 'linear' : mode;
+}
+
+function getEraserPreviewSourceCanvas(fabricCanvas: FabricCanvas): HTMLCanvasElement | null {
+  try {
+    if (typeof fabricCanvas.toCanvasElement === 'function') {
+      return fabricCanvas.toCanvasElement(1);
+    }
+  } catch {
+    // Fall back to the live lower canvas if Fabric snapshotting fails.
+  }
+
+  return (fabricCanvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl ?? null;
 }
 
 function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
@@ -238,10 +337,12 @@ class CompositePencilBrush extends PencilBrush {
   override _render(ctx: CanvasRenderingContext2D = this.canvas.contextTop) {
     if (this.compositeOperation === 'destination-out' && ctx === this.canvas.contextTop) {
       const previewCtx = this.canvas.contextTop;
-      const sourceCanvas = (this.canvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl;
+      const sourceCanvas = getEraserPreviewSourceCanvas(this.canvas);
 
       previewCtx.save();
       previewCtx.setTransform(1, 0, 0, 1, 0, 0);
+      previewCtx.globalCompositeOperation = 'source-over';
+      previewCtx.globalAlpha = 1;
       previewCtx.clearRect(0, 0, previewCtx.canvas.width, previewCtx.canvas.height);
       if (sourceCanvas) {
         previewCtx.drawImage(sourceCanvas, 0, 0);
@@ -250,6 +351,10 @@ class CompositePencilBrush extends PencilBrush {
     }
 
     super._render(ctx);
+
+    if (this.compositeOperation === 'destination-out' && ctx === this.canvas.contextTop) {
+      fillEraserPreviewBackdrop(this.canvas.contextTop);
+    }
   }
 
   override createPath(pathData: any) {
@@ -430,7 +535,15 @@ class BitmapStampBrush extends BaseBrush {
     const ctx = this.canvas.contextTop;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    if (this.compositeOperation === 'destination-out') {
+      const sourceCanvas = getEraserPreviewSourceCanvas(this.canvas);
+      if (sourceCanvas) {
+        ctx.drawImage(sourceCanvas, 0, 0);
+      }
+    }
     ctx.restore();
 
     if (!this.strokeCanvas) {
@@ -440,6 +553,10 @@ class BitmapStampBrush extends BaseBrush {
     this._saveAndTransform(ctx);
     ctx.drawImage(this.strokeCanvas, 0, 0);
     ctx.restore();
+
+    if (this.compositeOperation === 'destination-out') {
+      fillEraserPreviewBackdrop(this.canvas.contextTop);
+    }
   }
 }
 
@@ -2024,6 +2141,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return true;
   }, [updatePenAnchorPlacement]);
 
+  const syncPenPlacementToAltModifier = useCallback((enabled: boolean) => {
+    const session = penAnchorPlacementSessionRef.current;
+    if (!session) {
+      return false;
+    }
+    if (enabled) {
+      return setPenAnchorCuspMode(true);
+    }
+    return false;
+  }, [setPenAnchorCuspMode]);
+
   const discardPenDraft = useCallback(() => {
     penDraftRef.current = null;
     penAnchorPlacementSessionRef.current = null;
@@ -2138,7 +2266,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     draft.previewPoint = cloneScenePoint(pointer);
     penAnchorPlacementSessionRef.current = {
       anchorIndex,
-      handleRole: anchorIndex === 0 ? 'outgoing' : 'incoming',
+      // Match Figma-style pen placement: the drag direction controls the
+      // forward/outgoing handle, while the previous-side handle mirrors unless
+      // Alt breaks the relationship into a cusp.
+      handleRole: 'outgoing',
       startPointerScene: cloneScenePoint(pointer) ?? new Point(pointer.x, pointer.y),
       currentPointerScene: cloneScenePoint(pointer) ?? new Point(pointer.x, pointer.y),
       hasDragged: false,
@@ -2475,32 +2606,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (!fabricCanvas) return false;
     if (!isLoadRequestActive(requestId)) return false;
 
-    const bounds = calculateBoundsFromCanvas(bitmapCanvas);
+    const extractedRegion = extractVisibleCanvasRegion(bitmapCanvas, 0);
+    const bounds = extractedRegion?.bounds ?? null;
     let image: FabricImage | null = null;
 
-    if (bounds && bounds.width > 0 && bounds.height > 0) {
-      const croppedCanvas = document.createElement('canvas');
-      croppedCanvas.width = bounds.width;
-      croppedCanvas.height = bounds.height;
-      const croppedCtx = croppedCanvas.getContext('2d');
-      if (!croppedCtx) {
-        return false;
-      }
-
-      croppedCtx.drawImage(
-        bitmapCanvas,
-        bounds.x,
-        bounds.y,
-        bounds.width,
-        bounds.height,
-        0,
-        0,
-        bounds.width,
-        bounds.height
-      );
-
+    if (bounds && extractedRegion) {
       try {
-        image = await FabricImage.fromURL(croppedCanvas.toDataURL('image/png'));
+        image = await FabricImage.fromURL(extractedRegion.canvas.toDataURL('image/png'));
       } catch (error) {
         console.error('Failed to create vector image from bitmap bounds:', error);
         return false;
@@ -3181,7 +3293,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const syncedMode = handleModes.size > 1
       ? 'multiple'
-      : Array.from(handleModes)[0] ?? 'pointed';
+      : Array.from(handleModes)[0] ?? 'linear';
     pendingSelectionSyncedVectorHandleModeRef.current = syncedMode;
     onVectorHandleModeSyncRef.current?.(syncedMode);
   }, [getPathNodeHandleType, getSelectedPathAnchorIndices]);
@@ -5905,7 +6017,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       vectorStrokeCtxRef.current = null;
       vectorGuideCtxRef.current = null;
     };
-  }, [activateVectorPointEditing, applyFill, applyPointSelectionMarqueeSession, applyPointSelectionTransformSession, applyVectorPointControls, beginPointSelectionTransformSession, clearSelectedPathAnchors, commitBitmapSelection, commitCurrentPenPlacement, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorIndices, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, isPointSelectionToggleModifierPressed, loadBitmapLayer, movePathAnchorByDelta, renderVectorBrushStrokeOverlay, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, startPenAnchorPlacement, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint, updatePenAnchorPlacement]);
+  }, [activateVectorPointEditing, applyFill, applyPointSelectionMarqueeSession, applyPointSelectionTransformSession, applyVectorPointControls, applyVectorPointEditingAppearance, beginPointSelectionTransformSession, clearSelectedPathAnchors, commitBitmapSelection, commitCurrentPenPlacement, configureCanvasForTool, drawBitmapSelectionOverlay, enforcePathAnchorHandleType, ensurePathLikeObjectForVectorTool, flattenBitmapLayer, getPathAnchorDragState, getSelectedPathAnchorIndices, getSelectedPathAnchorTransformSnapshot, hitPointSelectionTransform, insertPathPointAtScenePosition, isPointSelectionToggleModifierPressed, loadBitmapLayer, movePathAnchorByDelta, renderVectorBrushStrokeOverlay, renderVectorPointEditingGuide, restoreAllOriginalControls, saveHistory, setEditorMode, setSelectedPathAnchors, setVectorPointEditingTarget, startPenAnchorPlacement, syncSelectionState, syncTextSelectionState, syncTextStyleFromSelection, syncVectorHandleModeFromSelection, syncVectorStyleFromSelection, toPathCommandPoint, updatePenAnchorPlacement]);
 
   // Sync tool behavior.
   useEffect(() => {
@@ -6300,7 +6412,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       window.removeEventListener('blur', endPan);
       container.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, []);
+  }, [clampCameraCenter]);
 
   // Bitmap marquee selection: drag box to extract a floating bitmap object with Fabric transform gizmos.
   useEffect(() => {
@@ -6512,7 +6624,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         event.preventDefault();
         if (!penModifierStateRef.current.alt) {
           penModifierStateRef.current.alt = true;
-          if (setPenAnchorCuspMode(true)) {
+          if (syncPenPlacementToAltModifier(true)) {
             fabricCanvasRef.current?.requestRenderAll();
           }
         }
@@ -6557,9 +6669,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           return;
         }
         penModifierStateRef.current.alt = false;
-        if (setPenAnchorCuspMode(false)) {
-          fabricCanvasRef.current?.requestRenderAll();
-        }
       }
     };
 
@@ -6569,7 +6678,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [finalizePenDraft, removeLastPenDraftAnchor, setPenAnchorCuspMode, setPenAnchorMoveMode]);
+  }, [finalizePenDraft, removeLastPenDraftAnchor, setPenAnchorMoveMode, syncPenPlacementToAltModifier]);
 
   // Expose imperative methods.
   useImperativeHandle(ref, () => ({
@@ -6659,6 +6768,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }), [
     applySnapshot,
     configureCanvasForTool,
+    createSnapshot,
     exportCostumeState,
     getCanvasElement,
     markCurrentSnapshotPersisted,
