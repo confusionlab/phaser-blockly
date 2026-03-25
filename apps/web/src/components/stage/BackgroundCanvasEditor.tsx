@@ -985,6 +985,8 @@ export function BackgroundCanvasEditor() {
         floatingSelection.canvas,
         -floatingSelection.canvas.width * 0.5,
         -floatingSelection.canvas.height * 0.5,
+        floatingSelection.canvas.width,
+        floatingSelection.canvas.height,
       );
       ctx.restore();
 
@@ -1188,7 +1190,7 @@ export function BackgroundCanvasEditor() {
     if (updated) {
       setRevision((value) => value + 1);
     }
-  }, [brushColor, brushSize, chunkSize, getOrCreateChunkCanvas, hardChunkLimit, rememberChunkBeforeMutation]);
+  }, [brushColor, brushSize, chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
 
   const paintStampedPoint = useCallback((
     worldX: number,
@@ -1267,7 +1269,7 @@ export function BackgroundCanvasEditor() {
     if (updated) {
       setRevision((value) => value + 1);
     }
-  }, [chunkSize, getOrCreateChunkCanvas, hardChunkLimit, rememberChunkBeforeMutation]);
+  }, [chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
 
   const paintSegment = useCallback((from: { x: number; y: number }, to: { x: number; y: number }, stroke: StrokeSession) => {
     const brushTool: BitmapBrushTool = tool === 'eraser' ? 'eraser' : 'brush';
@@ -1460,7 +1462,7 @@ export function BackgroundCanvasEditor() {
     }
 
     commitMutationSession(session);
-  }, [beginMutationSession, bitmapShapeStyle, chunkSize, commitMutationSession, getOrCreateChunkCanvas, hardChunkLimit, rememberChunkBeforeMutation]);
+  }, [beginMutationSession, bitmapShapeStyle, chunkSize, commitMutationSession, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
 
   const getFillRasterBounds = useCallback((worldX: number, worldY: number) => {
     const contentBounds = getChunkBoundsFromKeys(chunkKeySetRef.current, chunkSize);
@@ -1742,6 +1744,8 @@ export function BackgroundCanvasEditor() {
       selection.canvas,
       -selection.canvas.width * 0.5,
       -selection.canvas.height * 0.5,
+      selection.canvas.width,
+      selection.canvas.height,
     );
     rasterCtx.restore();
 
