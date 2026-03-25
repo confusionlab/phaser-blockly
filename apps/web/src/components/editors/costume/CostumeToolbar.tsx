@@ -1147,12 +1147,10 @@ export const CostumeToolbar = memo(({
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-8 min-w-[110px] justify-between gap-2 px-2 text-xs"
+                            className="h-8 gap-2 px-2 text-xs"
+                            aria-label={`Text alignment: ${activeTextAlign.label}`}
                           >
-                            <span className="inline-flex items-center gap-2">
-                              <ActiveTextAlignIcon className="size-3.5" />
-                              <span>{activeTextAlign.label}</span>
-                            </span>
+                            <ActiveTextAlignIcon className="size-3.5" />
                             <ChevronDown className="size-3 shrink-0" />
                           </Button>
                         </DropdownMenuTrigger>
