@@ -8,8 +8,10 @@ import type {
   Project,
 } from '@/types';
 import {
+  applyCanvasStateToCostumeDocument,
   cloneCostumeDocument,
   ensureCostumeDocument,
+  type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 
 export interface CostumeEditorTarget {
@@ -36,6 +38,12 @@ export interface CostumeEditorPersistedState {
 export interface CostumeEditorPersistedSession {
   target: CostumeEditorTarget;
   state: CostumeEditorPersistedState;
+}
+
+export interface ResolveCostumeEditorPersistedStateOptions {
+  workingState?: CostumeEditorPersistedState | null;
+  costume?: Costume | null;
+  liveCanvasState?: ActiveLayerCanvasState | null;
 }
 
 export type CostumeEditorOperation =
@@ -124,6 +132,51 @@ function areCostumeLayersEqual(a: CostumeLayer | undefined, b: CostumeLayer | un
   }
 
   return false;
+}
+
+function clonePersistedState(
+  state: CostumeEditorPersistedState | null | undefined,
+): CostumeEditorPersistedState | null {
+  if (!state) {
+    return null;
+  }
+
+  return {
+    assetId: state.assetId,
+    bounds: state.bounds ? { ...state.bounds } : undefined,
+    document: cloneCostumeDocument(state.document),
+  };
+}
+
+function createPersistedStateFromCostume(costume: Costume | null | undefined): CostumeEditorPersistedState | null {
+  if (!costume) {
+    return null;
+  }
+
+  return {
+    assetId: costume.assetId,
+    bounds: costume.bounds ? { ...costume.bounds } : undefined,
+    document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+  };
+}
+
+export function resolveCostumeEditorPersistedState(
+  options: ResolveCostumeEditorPersistedStateOptions,
+): CostumeEditorPersistedState | null {
+  const baseState = clonePersistedState(options.workingState)
+    ?? createPersistedStateFromCostume(options.costume);
+  if (!baseState) {
+    return null;
+  }
+
+  if (!options.liveCanvasState) {
+    return baseState;
+  }
+
+  return {
+    ...baseState,
+    document: applyCanvasStateToCostumeDocument(baseState.document, options.liveCanvasState),
+  };
 }
 
 export function applyCostumeEditorState(

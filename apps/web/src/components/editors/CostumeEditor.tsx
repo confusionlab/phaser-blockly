@@ -27,6 +27,7 @@ import type { Costume, ColliderConfig, CostumeDocument, CostumeEditorMode } from
 import {
   areCostumeDocumentsEqual,
   createCostumeEditorSession,
+  resolveCostumeEditorPersistedState,
   type CostumeEditorObjectTarget,
   type CostumeEditorOperation,
   type CostumeEditorPersistedSession,
@@ -42,7 +43,6 @@ import { DEFAULT_BITMAP_FILL_TEXTURE_ID } from '@/lib/background/bitmapFillCore'
 import { DEFAULT_VECTOR_STROKE_BRUSH_ID } from '@/lib/vector/vectorStrokeBrushCore';
 import { DEFAULT_VECTOR_FILL_TEXTURE_ID } from '@/lib/vector/vectorFillTextureCore';
 import {
-  applyCanvasStateToCostumeDocument,
   cloneCostumeDocument,
   createBitmapLayer,
   createVectorLayer,
@@ -159,6 +159,7 @@ export function CostumeEditor() {
   const loadRequestIdRef = useRef(0);
   const loadingOverlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flattenedPreviewRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoadingRef = useRef(true);
   const loadedSessionRef = useRef<CostumeEditorSession | null>(null);
   const currentSessionRef = useRef<CostumeEditorSession | null>(null);
@@ -275,38 +276,34 @@ export function CostumeEditor() {
     const state = canvasRef.current.exportCostumeState(session.key);
     if (!state?.activeLayerDataUrl) return null;
 
-    if (!currentCostume) {
-      return null;
-    }
-
-    return {
-      assetId: currentCostume.assetId,
-      bounds: currentCostume.bounds,
-      document: applyCanvasStateToCostumeDocument(currentCostume.document, {
+    return resolveCostumeEditorPersistedState({
+      workingState: workingPersistedStateRef.current,
+      costume: currentCostumeRef.current ?? null,
+      liveCanvasState: {
         ...state,
         dataUrl: state.activeLayerDataUrl,
-      }),
-    };
-  }, [currentCostume]);
+      },
+    });
+  }, []);
 
   const getWorkingPersistedState = useCallback((): CostumeEditorPersistedState | null => {
-    const workingPersistedState = clonePersistedState(workingPersistedStateRef.current);
-    if (workingPersistedState) {
-      return workingPersistedState;
+    const session = currentSessionRef.current;
+    if (
+      session &&
+      canvasRef.current?.hasUnsavedChanges(session.key) &&
+      isCanvasReadyForSession(session)
+    ) {
+      const liveCanvasState = getCanvasPersistedStateForSession(session, { skipLoadingGuard: true });
+      if (liveCanvasState) {
+        return liveCanvasState;
+      }
     }
 
-    if (currentSession && isCanvasReadyForSession(currentSession)) {
-      return getCanvasPersistedStateForSession(currentSession, { skipLoadingGuard: true });
-    }
-    if (!currentCostume) {
-      return null;
-    }
-    return {
-      assetId: currentCostume.assetId,
-      bounds: currentCostume.bounds,
-      document: currentCostume.document,
-    };
-  }, [currentCostume, currentSession, getCanvasPersistedStateForSession, isCanvasReadyForSession]);
+    return resolveCostumeEditorPersistedState({
+      workingState: workingPersistedStateRef.current,
+      costume: currentCostumeRef.current ?? null,
+    });
+  }, [getCanvasPersistedStateForSession, isCanvasReadyForSession]);
 
   const createPersistedStateFromDocument = useCallback((
     document: CostumeDocument | null | undefined,
@@ -468,45 +465,53 @@ export function CostumeEditor() {
     const requestId = ++flattenedPreviewRefreshIdRef.current;
     const nextDocument = cloneCostumeDocument(document);
 
-    void renderCostumeDocument(nextDocument).then((rendered) => {
-      if (flattenedPreviewRefreshIdRef.current !== requestId) {
-        return;
-      }
+    if (flattenedPreviewRefreshTimeoutRef.current) {
+      clearTimeout(flattenedPreviewRefreshTimeoutRef.current);
+    }
 
-      const project = useProjectStore.getState().project;
-      if (!project) {
-        return;
-      }
+    flattenedPreviewRefreshTimeoutRef.current = setTimeout(() => {
+      flattenedPreviewRefreshTimeoutRef.current = null;
 
-      const resolvedTarget = resolveCostumeEditorTarget(project, session);
-      if (!resolvedTarget || !areCostumeDocumentsEqual(resolvedTarget.costume.document, nextDocument)) {
-        return;
-      }
+      void renderCostumeDocument(nextDocument).then((rendered) => {
+        if (flattenedPreviewRefreshIdRef.current !== requestId) {
+          return;
+        }
 
-      const refreshedState: CostumeEditorPersistedState = {
-        assetId: rendered.dataUrl,
-        bounds: rendered.bounds ?? undefined,
-        document: nextDocument,
-      };
+        const project = useProjectStore.getState().project;
+        if (!project) {
+          return;
+        }
 
-      const didApply = updateCostumeFromEditor(session, refreshedState, {
-        recordHistory: false,
+        const resolvedTarget = resolveCostumeEditorTarget(project, session);
+        if (!resolvedTarget || !areCostumeDocumentsEqual(resolvedTarget.costume.document, nextDocument)) {
+          return;
+        }
+
+        const refreshedState: CostumeEditorPersistedState = {
+          assetId: rendered.dataUrl,
+          bounds: rendered.bounds ?? undefined,
+          document: nextDocument,
+        };
+
+        const didApply = updateCostumeFromEditor(session, refreshedState, {
+          recordHistory: false,
+        });
+        if (!didApply) {
+          return;
+        }
+
+        const currentHistoryDocument = documentHistoryRef.current[documentHistoryIndexRef.current] ?? null;
+        if (
+          currentSessionRef.current?.key === session.key &&
+          currentHistoryDocument &&
+          areCostumeDocumentsEqual(currentHistoryDocument, nextDocument)
+        ) {
+          workingPersistedStateRef.current = clonePersistedState(refreshedState);
+        }
+      }).catch((error) => {
+        console.warn('Failed to refresh flattened costume preview after document update.', error);
       });
-      if (!didApply) {
-        return;
-      }
-
-      const currentHistoryDocument = documentHistoryRef.current[documentHistoryIndexRef.current] ?? null;
-      if (
-        currentSessionRef.current?.key === session.key &&
-        currentHistoryDocument &&
-        areCostumeDocumentsEqual(currentHistoryDocument, nextDocument)
-      ) {
-        workingPersistedStateRef.current = clonePersistedState(refreshedState);
-      }
-    }).catch((error) => {
-      console.warn('Failed to refresh flattened costume preview after document update.', error);
-    });
+    }, 90);
   }, [updateCostumeFromEditor]);
   scheduleFlattenedPreviewRefreshRef.current = scheduleFlattenedPreviewRefresh;
 
@@ -767,6 +772,9 @@ export function CostumeEditor() {
       clearLoadingOverlayDelay();
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+      }
+      if (flattenedPreviewRefreshTimeoutRef.current) {
+        clearTimeout(flattenedPreviewRefreshTimeoutRef.current);
       }
       persistCanvasStateToSession(loadedSessionRef.current, {
         skipLoadingGuard: true,
