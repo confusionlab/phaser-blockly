@@ -7,6 +7,7 @@ import type { GameObject, ComponentDefinition } from '@/types';
 import { Button } from '@/components/ui/button';
 import { X, Crosshair } from 'lucide-react';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
 
 const EMPTY_COMPONENTS: ComponentDefinition[] = [];
 
@@ -203,8 +204,8 @@ function createPickerScene(
       const textureKey = `picker_${obj.id}_${currentCostume.id}`;
 
       if (!scene.textures.exists(textureKey)) {
-        const img = new Image();
-        img.onload = () => {
+        void loadImageSource(currentCostume.assetId).then((img) => {
+          if (!scene.sys.isActive()) return;
           if (scene.textures.exists(textureKey)) return;
           scene.textures.addImage(textureKey, img);
 
@@ -216,8 +217,9 @@ function createPickerScene(
           container.setSize(width, height);
 
           setupInteractive(container, width, height);
-        };
-        img.src = currentCostume.assetId;
+        }).catch((error) => {
+          console.warn('Failed to load object picker costume texture.', error);
+        });
       } else {
         const sprite = scene.add.image(0, 0, textureKey);
         container.add(sprite);

@@ -60,8 +60,10 @@ import {
 } from '@/lib/background/bitmapFillCore';
 import {
   buildBackgroundConfigFromDocument,
+  getBackgroundLayerRenderSignature,
   renderBackgroundLayerToChunkData,
 } from '@/lib/background/backgroundDocumentRender';
+import { getCachedImageSource, loadImageSource } from '@/lib/assets/imageSourceCache';
 import {
   cloneBackgroundDocument,
   createBitmapBackgroundLayer,
@@ -469,18 +471,9 @@ function getFallbackColor(background: BackgroundConfig | null | undefined): stri
   return '#87CEEB';
 }
 
-function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Failed to decode chunk image.'));
-    image.src = dataUrl;
-  });
-}
-
 async function dataUrlToCanvas(dataUrl: string, chunkSize: number): Promise<HTMLCanvasElement | null> {
   try {
-    const image = await loadImage(dataUrl);
+    const image = await loadImageSource(dataUrl);
     const canvas = createEmptyChunkCanvas(chunkSize);
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
@@ -490,6 +483,25 @@ async function dataUrlToCanvas(dataUrl: string, chunkSize: number): Promise<HTML
   } catch {
     return null;
   }
+}
+
+function areRenderedLayerChunkEntriesEqual(
+  left: Record<string, ChunkDataMap>,
+  right: Record<string, ChunkDataMap>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    if (!(key in right) || left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export function BackgroundCanvasEditor() {
@@ -514,6 +526,9 @@ export function BackgroundCanvasEditor() {
   const layerChunkCanvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const fillTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const fillTexturePromiseRef = useRef<Map<string, Promise<HTMLImageElement | null>>>(new Map());
+  const renderedLayerChunksRef = useRef<Record<string, ChunkDataMap>>({});
+  const renderedLayerChunkSignaturesRef = useRef<Record<string, string>>({});
+  const renderedLayerChunkRequestIdRef = useRef(0);
   const undoStackRef = useRef<ChunkDelta[]>([]);
   const redoStackRef = useRef<ChunkDelta[]>([]);
   const didMountRef = useRef(false);
@@ -734,22 +749,25 @@ export function BackgroundCanvasEditor() {
       return fillTextureCacheRef.current.get(texturePath) ?? null;
     }
 
+    const cachedImage = getCachedImageSource(texturePath);
+    if (cachedImage) {
+      fillTextureCacheRef.current.set(texturePath, cachedImage);
+      return cachedImage;
+    }
+
     if (!fillTexturePromiseRef.current.has(texturePath)) {
-      const loadPromise = new Promise<HTMLImageElement | null>((resolve) => {
-        const image = new Image();
-        image.onload = () => {
+      const loadPromise = loadImageSource(texturePath)
+        .then((image) => {
           fillTextureCacheRef.current.set(texturePath, image);
           fillTexturePromiseRef.current.delete(texturePath);
           setRevision((value) => value + 1);
-          resolve(image);
-        };
-        image.onerror = () => {
+          return image;
+        })
+        .catch(() => {
           fillTextureCacheRef.current.set(texturePath, null);
           fillTexturePromiseRef.current.delete(texturePath);
-          resolve(null);
-        };
-        image.src = texturePath;
-      });
+          return null;
+        });
       fillTexturePromiseRef.current.set(texturePath, loadPromise);
     }
 
@@ -970,27 +988,96 @@ export function BackgroundCanvasEditor() {
 
   useEffect(() => {
     if (!backgroundDocument) {
-      setRenderedLayerChunks({});
+      renderedLayerChunkRequestIdRef.current += 1;
+      renderedLayerChunksRef.current = {};
+      renderedLayerChunkSignaturesRef.current = {};
+      setRenderedLayerChunks((current) => (Object.keys(current).length === 0 ? current : {}));
       return;
     }
 
     let cancelled = false;
-    void Promise.all(backgroundDocument.layers.map(async (layer) => {
+    const requestId = renderedLayerChunkRequestIdRef.current + 1;
+    renderedLayerChunkRequestIdRef.current = requestId;
+
+    const currentEntries = renderedLayerChunksRef.current;
+    const currentSignatures = renderedLayerChunkSignaturesRef.current;
+    const nextEntries: Record<string, ChunkDataMap> = {};
+    const nextSignatures: Record<string, string> = {};
+    const pendingVectorLayers: Array<{
+      layer: BackgroundVectorLayer;
+      layerId: string;
+      signature: string;
+    }> = [];
+
+    for (const layer of backgroundDocument.layers) {
+      const signature = getBackgroundLayerRenderSignature(layer) ?? `${layer.kind}:empty`;
+      const cachedEntry = currentEntries[layer.id];
+      if (currentSignatures[layer.id] === signature && cachedEntry) {
+        nextEntries[layer.id] = cachedEntry;
+        nextSignatures[layer.id] = signature;
+        continue;
+      }
+
       if (isBitmapBackgroundLayer(layer)) {
-        return [layer.id, normalizeChunkDataMap(layer.bitmap.chunks)] as const;
+        nextEntries[layer.id] = normalizeChunkDataMap(layer.bitmap.chunks);
+        nextSignatures[layer.id] = signature;
+        continue;
       }
-      try {
-        return [layer.id, await renderBackgroundLayerToChunkData(layer, backgroundDocument.chunkSize)] as const;
-      } catch (error) {
-        console.warn('Failed to render background layer chunk surface.', error);
-        return [layer.id, {} as ChunkDataMap] as const;
+
+      if (cachedEntry) {
+        nextEntries[layer.id] = cachedEntry;
       }
-    })).then((entries) => {
-      if (cancelled) {
-        return;
+
+      if (isVectorBackgroundLayer(layer)) {
+        pendingVectorLayers.push({
+          layer,
+          layerId: layer.id,
+          signature,
+        });
       }
-      setRenderedLayerChunks(Object.fromEntries(entries));
-    });
+    }
+
+    const resolvedBaseEntries = areRenderedLayerChunkEntriesEqual(currentEntries, nextEntries)
+      ? currentEntries
+      : nextEntries;
+    renderedLayerChunksRef.current = resolvedBaseEntries;
+    renderedLayerChunkSignaturesRef.current = nextSignatures;
+    setRenderedLayerChunks((current) => (
+      areRenderedLayerChunkEntriesEqual(current, resolvedBaseEntries) ? current : resolvedBaseEntries
+    ));
+
+    for (const pendingLayer of pendingVectorLayers) {
+      void renderBackgroundLayerToChunkData(pendingLayer.layer, backgroundDocument.chunkSize).then((chunkData) => {
+        if (cancelled || renderedLayerChunkRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        setRenderedLayerChunks((current) => {
+          if (cancelled || renderedLayerChunkRequestIdRef.current !== requestId) {
+            return current;
+          }
+
+          const nextState = current[pendingLayer.layerId] === chunkData
+            ? current
+            : {
+                ...current,
+                [pendingLayer.layerId]: chunkData,
+              };
+          renderedLayerChunksRef.current = nextState;
+          if (renderedLayerChunkSignaturesRef.current[pendingLayer.layerId] !== pendingLayer.signature) {
+            renderedLayerChunkSignaturesRef.current = {
+              ...renderedLayerChunkSignaturesRef.current,
+              [pendingLayer.layerId]: pendingLayer.signature,
+            };
+          }
+          return nextState;
+        });
+      }).catch((error) => {
+        if (!cancelled && renderedLayerChunkRequestIdRef.current === requestId) {
+          console.warn('Failed to render background layer chunk surface.', error);
+        }
+      });
+    }
 
     return () => {
       cancelled = true;

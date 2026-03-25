@@ -1,11 +1,10 @@
 import type { CostumeAssetFrame } from '@/types';
 import { getCostumeAssetFrameSignature } from './costumeAssetFrame';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
 
-const MAX_CACHED_BITMAP_IMAGES = 128;
 const MAX_CACHED_BITMAP_SURFACES = 128;
 
-const bitmapImageCache = new Map<string, Promise<HTMLImageElement>>();
 const bitmapSurfaceCache = new Map<string, Promise<HTMLCanvasElement>>();
 
 function rememberCachedValue<T>(
@@ -28,22 +27,6 @@ function rememberCachedValue<T>(
   }
 
   return value;
-}
-
-async function loadBitmapImage(source: string): Promise<HTMLImageElement> {
-  const cached = bitmapImageCache.get(source);
-  if (cached) {
-    return await cached;
-  }
-
-  const pending = new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error(`Failed to load bitmap layer image: ${source.slice(0, 64)}`));
-    image.src = source;
-  });
-
-  return await rememberCachedValue(bitmapImageCache, source, pending, MAX_CACHED_BITMAP_IMAGES);
 }
 
 function getBitmapSourceDimensions(source: HTMLImageElement | HTMLCanvasElement): { width: number; height: number } {
@@ -130,7 +113,7 @@ export async function renderBitmapAssetToSurfaceCanvas(
     return await cached;
   }
 
-  const pending = loadBitmapImage(source)
+  const pending = loadImageSource(source)
     .then((image) => createBitmapSurfaceCanvas(image, assetFrame))
     .catch((error) => {
       bitmapSurfaceCache.delete(cacheKey);

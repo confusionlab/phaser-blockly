@@ -32,6 +32,7 @@ import {
 import { cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
 import { optimizeCostumeBitmapAssetSource } from '@/lib/costume/costumeAssetOptimization';
 import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
+import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
 export const CURRENT_SCHEMA_VERSION = 10;
@@ -331,6 +332,7 @@ function cacheObjectUrl(assetId: string, objectUrl: string): string {
 function clearManagedAssetObjectUrl(assetId: string): void {
   const objectUrl = objectUrlCache.get(assetId);
   if (objectUrl) {
+    invalidateImageSource(objectUrl);
     URL.revokeObjectURL(objectUrl);
     objectUrlCache.delete(assetId);
     objectUrlToAssetId.delete(objectUrl);

@@ -159,7 +159,12 @@ export async function renderCostumeLayerToCanvas(layer: CostumeLayer): Promise<H
     }
 
     return await renderVectorLayerDocumentToCanvas(layer.vector.fabricJson, COSTUME_CANVAS_SIZE);
-  })();
+  })().catch((error) => {
+    if (cacheKey) {
+      layerCanvasCache.delete(cacheKey);
+    }
+    throw error;
+  });
 
   if (!cacheKey) {
     return await pending;
@@ -244,7 +249,10 @@ export async function renderCostumeLayerThumbnailToDataUrl(
     }
 
     return drawLayerThumbnail(layerCanvas, size);
-  })();
+  })().catch((error) => {
+    layerThumbnailCache.delete(cacheKey);
+    throw error;
+  });
 
   return await rememberCachedValue(
     layerThumbnailCache,
@@ -269,7 +277,10 @@ async function renderCostumeLayerToPreviewSource(layer: CostumeLayer): Promise<s
     return await cached;
   }
 
-  const pending = renderCostumeLayerToDataUrl(layer);
+  const pending = renderCostumeLayerToDataUrl(layer).catch((error) => {
+    layerPreviewSourceCache.delete(cacheKey);
+    throw error;
+  });
   return await rememberCachedValue(
     layerPreviewSourceCache,
     cacheKey,

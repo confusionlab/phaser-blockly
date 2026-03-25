@@ -13,6 +13,7 @@ import {
   type VectorStrokeBrushId,
   type VectorStrokeBrushRenderStyle,
 } from '@/lib/vector/vectorStrokeBrushCore';
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 
 const MAX_VECTOR_STROKE_BRUSH_RENDER_CACHE_ENTRIES = 256;
@@ -71,18 +72,15 @@ export function resolveSharedTextureSource(
   registerVectorTextureReadyListener(normalizedTexturePath, onTextureSourceReady);
   if (!vectorTexturePending.has(normalizedTexturePath) && typeof Image !== 'undefined') {
     vectorTexturePending.add(normalizedTexturePath);
-    const image = new Image();
-    image.onload = () => {
+    void loadImageSource(normalizedTexturePath).then((image) => {
       vectorTexturePending.delete(normalizedTexturePath);
       vectorTextureCache.set(normalizedTexturePath, image);
       notifyVectorTextureReadyListeners(normalizedTexturePath);
-    };
-    image.onerror = () => {
+    }).catch(() => {
       vectorTexturePending.delete(normalizedTexturePath);
       vectorTextureCache.set(normalizedTexturePath, null);
       notifyVectorTextureReadyListeners(normalizedTexturePath);
-    };
-    image.src = normalizedTexturePath;
+    });
   }
 
   return null;

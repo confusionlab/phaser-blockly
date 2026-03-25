@@ -1,13 +1,14 @@
 import type { CostumeBounds } from '@/types';
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
 
 /**
  * Calculate the bounding box of visible (non-transparent) pixels in an image.
  * Returns null if the image is fully transparent.
  */
 export async function calculateVisibleBounds(dataUrl: string): Promise<CostumeBounds | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
+  try {
+    const img = await loadImageSource(dataUrl);
+    return await new Promise((resolve) => {
       const canvas = document.createElement('canvas');
       canvas.width = img.width;
       canvas.height = img.height;
@@ -21,10 +22,10 @@ export async function calculateVisibleBounds(dataUrl: string): Promise<CostumeBo
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const bounds = calculateBoundsFromImageData(imageData);
       resolve(bounds);
-    };
-    img.onerror = () => resolve(null);
-    img.src = dataUrl;
-  });
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

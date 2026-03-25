@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ChevronDown, ChevronUp, Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Shapes, Trash2 } from 'lucide-react';
@@ -9,6 +9,27 @@ const DEFAULT_LAYER_THUMBNAIL_SIZE = 44;
 interface LayerThumbnailEntry {
   dataUrl: string | null;
   signature: string;
+}
+
+function areLayerThumbnailEntriesEqual(
+  left: Record<string, LayerThumbnailEntry>,
+  right: Record<string, LayerThumbnailEntry>,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    const leftEntry = left[key];
+    const rightEntry = right[key];
+    if (!rightEntry || leftEntry.signature !== rightEntry.signature || leftEntry.dataUrl !== rightEntry.dataUrl) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export interface LayerPanelLayerShape {
@@ -165,6 +186,14 @@ export const LayerPanel = memo(({
       return;
     }
 
+    if (!areLayerThumbnailEntriesEqual(cachedEntries, nextCachedEntries)) {
+      startTransition(() => {
+        setLayerThumbnails((current) => (
+          areLayerThumbnailEntriesEqual(current, nextCachedEntries) ? current : nextCachedEntries
+        ));
+      });
+    }
+
     void Promise.all(layerThumbnailRequests.map(async ({ layer, signature }) => {
       const cachedEntry = cachedEntries[layer.id];
       if (cachedEntry && cachedEntry.signature === signature) {
@@ -183,7 +212,12 @@ export const LayerPanel = memo(({
         return;
       }
 
-      setLayerThumbnails(Object.fromEntries(entries));
+      const nextEntries = Object.fromEntries(entries);
+      startTransition(() => {
+        setLayerThumbnails((current) => (
+          areLayerThumbnailEntriesEqual(current, nextEntries) ? current : nextEntries
+        ));
+      });
     });
 
     return () => {

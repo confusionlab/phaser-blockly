@@ -94,8 +94,7 @@ async function openEditorFromProjectList(page: Page): Promise<void> {
   await expect(nameInput).toBeVisible({ timeout: 5000 });
   await nameInput.fill(`Background Test ${Date.now()}`);
   await page.getByRole('button', { name: /create/i }).last().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(700);
+  await expect(page.getByRole('radio', { name: /^scene$/i })).toBeVisible({ timeout: 10000 });
 }
 
 async function openBackgroundEditor(page: Page) {
@@ -121,7 +120,6 @@ async function openBackgroundEditor(page: Page) {
 test.describe('Background editor', () => {
   test('can draw and persist chunked background', async ({ page }) => {
     await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
     const { root, box } = await openBackgroundEditor(page);
 
@@ -147,7 +145,6 @@ test.describe('Background editor', () => {
 
   test('cancel discards uncommitted edits', async ({ page }) => {
     await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
     const { root, box } = await openBackgroundEditor(page);
 
@@ -172,7 +169,6 @@ test.describe('Background editor', () => {
 
   test('overlay undo and redo buttons mirror costume canvas controls', async ({ page }) => {
     await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
     const { box } = await openBackgroundEditor(page);
 
@@ -205,7 +201,6 @@ test.describe('Background editor', () => {
 
   test('keeps explicit bitmap and vector layers in the saved background document', async ({ page }) => {
     await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
     const { canvas, box } = await openBackgroundEditor(page);
 
@@ -260,7 +255,6 @@ test.describe('Background editor high-DPI selection rendering', () => {
 
   test('committing a floating selection preserves persisted background scale', async ({ page }) => {
     await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
 
     const { box } = await openBackgroundEditor(page);

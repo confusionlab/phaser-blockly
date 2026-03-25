@@ -3,6 +3,7 @@ import {
   getCostumeAssetCenterOffset,
   getCostumeVisibleCenterOffset,
 } from '@/lib/costume/costumeAssetFrame';
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { appendRuntimeLog } from './RuntimeEngine';
 import { setBodyGravityY } from './gravity';
 import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
@@ -521,9 +522,7 @@ export class RuntimeSprite {
 
     // Check if texture already exists
     if (!this.scene.textures.exists(textureKey)) {
-      // Load the texture from data URL
-      const img = new Image();
-      img.onload = () => {
+      void loadImageSource(costume.assetId).then((img) => {
         if (this.scene && this.scene.textures) {
           // Check again inside callback to handle race conditions
           if (!this.scene.textures.exists(textureKey)) {
@@ -531,8 +530,9 @@ export class RuntimeSprite {
           }
           this._createCostumeImage(textureKey);
         }
-      };
-      img.src = costume.assetId;
+      }).catch((error) => {
+        debugLog('error', `${this.name}: Failed to load costume asset (${String(error)})`);
+      });
     } else {
       this._createCostumeImage(textureKey);
     }

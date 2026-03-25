@@ -11,6 +11,7 @@ import {
   normalizeChunkDataMap,
   type ChunkDataMap,
 } from './chunkStore';
+import { decodeBackgroundChunkImage } from './chunkImageCache';
 import {
   getChunkBoundsFromKeys,
   getChunkRangeForWorldBounds,
@@ -29,8 +30,10 @@ import {
 
 const MAX_CACHED_BACKGROUND_VECTOR_LAYER_CHUNKS = 64;
 const MAX_CACHED_BACKGROUND_LAYER_THUMBNAILS = 128;
+const MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS = 32;
 const backgroundVectorLayerChunkCache = new Map<string, Promise<ChunkDataMap>>();
 const backgroundLayerThumbnailCache = new Map<string, Promise<string | null>>();
+const backgroundDocumentFlattenCache = new Map<string, Promise<ChunkDataMap>>();
 
 function hashString(value: string): string {
   let hash = 2166136261;
@@ -63,28 +66,20 @@ function rememberCachedValue<T>(
   return value;
 }
 
-function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Failed to decode background chunk image.'));
-    image.src = dataUrl;
-  });
-}
-
-async function dataUrlToCanvas(dataUrl: string, chunkSize: number): Promise<HTMLCanvasElement | null> {
+async function drawChunkSourceToContext(
+  ctx: CanvasRenderingContext2D,
+  source: string,
+  dx: number,
+  dy: number,
+  dWidth: number,
+  dHeight: number,
+): Promise<boolean> {
   try {
-    const image = await loadImage(dataUrl);
-    const canvas = createEmptyChunkCanvas(chunkSize);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return null;
-    }
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas;
+    const image = await decodeBackgroundChunkImage(source);
+    ctx.drawImage(image, dx, dy, dWidth, dHeight);
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -107,6 +102,15 @@ export function getBackgroundLayerRenderSignature(layer: BackgroundLayer): strin
 export function getBackgroundLayerThumbnailSignature(layer: BackgroundLayer, chunkSize: number, size: number): string {
   const normalizedSize = Math.max(1, Math.round(size));
   return `thumb:${normalizedSize}:${chunkSize}:${getBackgroundLayerRenderSignature(layer) ?? `${layer.kind}:empty`}`;
+}
+
+export function getBackgroundDocumentFlattenSignature(document: BackgroundDocument): string {
+  const layerSignature = document.layers.map((layer, index) => {
+    const opacityKey = Math.round(layer.opacity * 1000);
+    return `${index}:${layer.visible ? 1 : 0}:${opacityKey}:${getBackgroundLayerRenderSignature(layer) ?? `${layer.kind}:empty`}`;
+  }).join('|');
+
+  return `flatten:${document.chunkSize}:${hashString(layerSignature)}`;
 }
 
 function clampNumber(value: number, min: number, max: number) {
@@ -301,18 +305,18 @@ async function composeLayerChunksToCanvas(
     if (!parsedKey || !dataUrl) {
       continue;
     }
-    const chunkCanvas = await dataUrlToCanvas(dataUrl, chunkSize);
-    if (!chunkCanvas) {
-      continue;
-    }
     const chunkBounds = getChunkWorldBounds(parsedKey.cx, parsedKey.cy, chunkSize);
-    ctx.drawImage(
-      chunkCanvas,
+    const didDraw = await drawChunkSourceToContext(
+      ctx,
+      dataUrl,
       chunkBounds.left - bounds.left,
       bounds.top - chunkBounds.top,
       chunkSize,
       chunkSize,
     );
+    if (!didDraw) {
+      continue;
+    }
   }
 
   return canvas;
@@ -362,7 +366,10 @@ export async function renderBackgroundLayerThumbnailToDataUrl(
       normalizedSize,
     );
     return thumbnailCanvas.toDataURL('image/png');
-  })();
+  })().catch((error) => {
+    backgroundLayerThumbnailCache.delete(cacheKey);
+    throw error;
+  });
 
   return await rememberCachedValue(
     backgroundLayerThumbnailCache,
@@ -375,50 +382,77 @@ export async function renderBackgroundLayerThumbnailToDataUrl(
 export async function flattenBackgroundDocumentToChunkData(
   document: BackgroundDocument,
 ): Promise<ChunkDataMap> {
-  const perLayerChunks = await Promise.all(document.layers.map(async (layer) => {
-    if (!layer.visible || layer.opacity <= 0) {
-      return { layer, chunks: {} as ChunkDataMap };
-    }
-    return {
-      layer,
-      chunks: await renderBackgroundLayerToChunkData(layer, document.chunkSize),
-    };
-  }));
-
-  const allKeys = new Set<string>();
-  for (const { chunks } of perLayerChunks) {
-    Object.keys(chunks).forEach((key) => allKeys.add(key));
+  const cacheKey = getBackgroundDocumentFlattenSignature(document);
+  const cached = backgroundDocumentFlattenCache.get(cacheKey);
+  if (cached) {
+    return { ...(await cached) };
   }
 
-  const flattened: ChunkDataMap = {};
-  for (const key of allKeys) {
-    const composedCanvas = createEmptyChunkCanvas(document.chunkSize);
-    const composedCtx = composedCanvas.getContext('2d');
-    if (!composedCtx) {
-      continue;
+  const pending = (async (): Promise<ChunkDataMap> => {
+    const perLayerChunks = await Promise.all(document.layers.map(async (layer) => {
+      if (!layer.visible || layer.opacity <= 0) {
+        return { layer, chunks: {} as ChunkDataMap };
+      }
+      return {
+        layer,
+        chunks: await renderBackgroundLayerToChunkData(layer, document.chunkSize),
+      };
+    }));
+
+    const allKeys = new Set<string>();
+    for (const { chunks } of perLayerChunks) {
+      Object.keys(chunks).forEach((key) => allKeys.add(key));
     }
 
-    for (const { layer, chunks } of perLayerChunks) {
-      const dataUrl = chunks[key];
-      if (!dataUrl) {
+    const flattened: ChunkDataMap = {};
+    for (const key of allKeys) {
+      const contributors = perLayerChunks.flatMap(({ layer, chunks }) => {
+        const source = chunks[key];
+        return source ? [{ layer, source }] : [];
+      });
+
+      if (contributors.length === 1 && contributors[0]?.layer.opacity >= 0.999) {
+        flattened[key] = contributors[0].source;
         continue;
       }
-      const chunkCanvas = await dataUrlToCanvas(dataUrl, document.chunkSize);
-      if (!chunkCanvas) {
+
+      const composedCanvas = createEmptyChunkCanvas(document.chunkSize);
+      const composedCtx = composedCanvas.getContext('2d');
+      if (!composedCtx) {
         continue;
       }
-      composedCtx.save();
-      composedCtx.globalAlpha = layer.opacity;
-      composedCtx.drawImage(chunkCanvas, 0, 0, document.chunkSize, document.chunkSize);
-      composedCtx.restore();
+
+      for (const { layer, source } of contributors) {
+        composedCtx.save();
+        composedCtx.globalAlpha = layer.opacity;
+        await drawChunkSourceToContext(
+          composedCtx,
+          source,
+          0,
+          0,
+          document.chunkSize,
+          document.chunkSize,
+        );
+        composedCtx.restore();
+      }
+
+      if (!isChunkCanvasTransparent(composedCanvas)) {
+        flattened[key] = composedCanvas.toDataURL('image/png');
+      }
     }
 
-    if (!isChunkCanvasTransparent(composedCanvas)) {
-      flattened[key] = composedCanvas.toDataURL('image/png');
-    }
-  }
+    return flattened;
+  })().catch((error) => {
+    backgroundDocumentFlattenCache.delete(cacheKey);
+    throw error;
+  });
 
-  return flattened;
+  return { ...(await rememberCachedValue(
+    backgroundDocumentFlattenCache,
+    cacheKey,
+    pending,
+    MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS,
+  )) };
 }
 
 export async function buildBackgroundConfigFromDocument(

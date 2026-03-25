@@ -2,6 +2,8 @@
  * Utility functions for working with Convex storage
  */
 
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
+
 /**
  * Convert a data URL to a Blob for upload
  */
@@ -104,41 +106,31 @@ export async function generateThumbnail(
   dataUrl: string,
   maxSize: number = 128
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      let width = img.width;
-      let height = img.height;
+  const img = await loadImageSource(dataUrl);
+  const canvas = document.createElement("canvas");
+  let width = img.naturalWidth || img.width;
+  let height = img.naturalHeight || img.height;
 
-      // Scale down to fit within maxSize
-      if (width > height) {
-        if (width > maxSize) {
-          height = (height * maxSize) / width;
-          width = maxSize;
-        }
-      } else {
-        if (height > maxSize) {
-          width = (width * maxSize) / height;
-          height = maxSize;
-        }
-      }
+  if (width > height) {
+    if (width > maxSize) {
+      height = (height * maxSize) / width;
+      width = maxSize;
+    }
+  } else if (height > maxSize) {
+    width = (width * maxSize) / height;
+    height = maxSize;
+  }
 
-      canvas.width = width;
-      canvas.height = height;
+  canvas.width = width;
+  canvas.height = height;
 
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Could not get canvas context"));
-        return;
-      }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Could not get canvas context");
+  }
 
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL("image/png"));
-    };
-    img.onerror = reject;
-    img.src = dataUrl;
-  });
+  ctx.drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL("image/png");
 }
 
 /**

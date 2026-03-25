@@ -7,9 +7,54 @@
  */
 
 import { createBitmapSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
+import { invalidateImageSource, loadImageSource } from '@/lib/assets/imageSourceCache';
 
 const MAX_SIZE = 950;
 const WEBP_QUALITY = 0.85; // 85% quality - good balance of size and quality
+
+function getLoadedImageDimensions(image: HTMLImageElement): { width: number; height: number } {
+  return {
+    width: image.naturalWidth || image.width,
+    height: image.naturalHeight || image.height,
+  };
+}
+
+function encodeProcessedSurface(surfaceCanvas: HTMLCanvasElement): string {
+  const webpDataUrl = surfaceCanvas.toDataURL('image/webp', WEBP_QUALITY);
+  if (webpDataUrl.startsWith('data:image/webp')) {
+    return webpDataUrl;
+  }
+
+  console.warn('Browser does not support WebP encoding, using PNG');
+  return surfaceCanvas.toDataURL('image/png');
+}
+
+function processLoadedImage(image: HTMLImageElement): string {
+  const sourceDimensions = getLoadedImageDimensions(image);
+  let width = sourceDimensions.width;
+  let height = sourceDimensions.height;
+
+  if (width > MAX_SIZE || height > MAX_SIZE) {
+    const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height);
+    width = Math.round(width * ratio);
+    height = Math.round(height * ratio);
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Failed to get canvas context');
+  }
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, 0, 0, width, height);
+
+  return encodeProcessedSurface(createBitmapSurfaceCanvas(canvas));
+}
 
 /**
  * Process an image file: resize if needed and convert to WebP
@@ -17,70 +62,14 @@ const WEBP_QUALITY = 0.85; // 85% quality - good balance of size and quality
  * @returns Promise resolving to a WebP data URL
  */
 export async function processImage(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-
-    img.onload = () => {
-      try {
-        // Calculate new dimensions (fit within MAX_SIZE x MAX_SIZE)
-        let width = img.width;
-        let height = img.height;
-
-        if (width > MAX_SIZE || height > MAX_SIZE) {
-          const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-
-        // Create canvas and draw resized image
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'));
-          return;
-        }
-
-        // Use high-quality image smoothing for downscaling
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-
-        // Draw the image
-        ctx.drawImage(img, 0, 0, width, height);
-
-        const surfaceCanvas = createBitmapSurfaceCanvas(canvas);
-        const webpDataUrl = surfaceCanvas.toDataURL('image/webp', WEBP_QUALITY);
-
-        // Check if browser actually supports WebP encoding
-        // Some older browsers might fall back to PNG
-        if (webpDataUrl.startsWith('data:image/webp')) {
-          resolve(webpDataUrl);
-        } else {
-          // Fallback: browser doesn't support WebP encoding, use PNG
-          console.warn('Browser does not support WebP encoding, using PNG');
-          resolve(surfaceCanvas.toDataURL('image/png'));
-        }
-      } catch (error) {
-        reject(error);
-      }
-    };
-
-    img.onerror = () => {
-      reject(new Error('Failed to load image'));
-    };
-
-    // Load the image from file
-    const reader = new FileReader();
-    reader.onload = () => {
-      img.src = reader.result as string;
-    };
-    reader.onerror = () => {
-      reject(new Error('Failed to read file'));
-    };
-    reader.readAsDataURL(file);
-  });
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await loadImageSource(objectUrl);
+    return processLoadedImage(image);
+  } finally {
+    invalidateImageSource(objectUrl);
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 /**
@@ -89,68 +78,14 @@ export async function processImage(file: File): Promise<string> {
  * @returns Promise resolving to a WebP data URL
  */
 export async function processImageFromDataUrl(dataUrl: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-
-    img.onload = () => {
-      try {
-        // Calculate new dimensions (fit within MAX_SIZE x MAX_SIZE)
-        let width = img.width;
-        let height = img.height;
-
-        const needsResize = width > MAX_SIZE || height > MAX_SIZE;
-
-        if (needsResize) {
-          const ratio = Math.min(MAX_SIZE / width, MAX_SIZE / height);
-          width = Math.round(width * ratio);
-          height = Math.round(height * ratio);
-        }
-
-        // Create canvas and draw resized image
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'));
-          return;
-        }
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, width, height);
-
-        const surfaceCanvas = createBitmapSurfaceCanvas(canvas);
-        const webpDataUrl = surfaceCanvas.toDataURL('image/webp', WEBP_QUALITY);
-
-        if (webpDataUrl.startsWith('data:image/webp')) {
-          resolve(webpDataUrl);
-        } else {
-          console.warn('Browser does not support WebP encoding, using PNG');
-          resolve(surfaceCanvas.toDataURL('image/png'));
-        }
-      } catch (error) {
-        reject(error);
-      }
-    };
-
-    img.onerror = () => {
-      reject(new Error('Failed to load image'));
-    };
-
-    img.src = dataUrl;
-  });
+  const image = await loadImageSource(dataUrl);
+  return processLoadedImage(image);
 }
 
 /**
  * Get image dimensions from a data URL
  */
 export async function getImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.width, height: img.height });
-    img.onerror = () => reject(new Error('Failed to load image'));
-    img.src = dataUrl;
-  });
+  const image = await loadImageSource(dataUrl);
+  return getLoadedImageDimensions(image);
 }

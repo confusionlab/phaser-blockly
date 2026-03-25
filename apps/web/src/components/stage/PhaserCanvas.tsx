@@ -22,6 +22,7 @@ import { runInHistoryTransaction } from '@/store/universalHistory';
 import {
   getProjectedChunkSizePx,
 } from '@/lib/background/chunkMath';
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import {
   getSceneBackgroundBaseColor,
   getTiledBackgroundChunkSize,
@@ -1530,8 +1531,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             if (phaserScene.textures.exists(textureKey)) {
               commitCostumeSpriteVisual(currentCostume, textureKey);
             } else {
-              const img = new Image();
-              img.onload = () => {
+              void loadImageSource(currentCostume.assetId).then((img) => {
                 if (!targetContainer.active || !targetContainer.scene) return;
                 if ((targetContainer.getData('costumeVisualVersion') as number | undefined) !== nextVisualVersion) {
                   return;
@@ -1549,8 +1549,9 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                   phaserScene.textures.addImage(textureKey, img);
                 }
                 commitCostumeSpriteVisual(currentCostume, textureKey);
-              };
-              img.src = currentCostume.assetId;
+              }).catch((error) => {
+                console.warn('Failed to load costume texture source for stage sprite update.', error);
+              });
             }
           }
         }
@@ -3503,8 +3504,7 @@ function createObjectVisual(
     container.setData('bounds', currentCostume.bounds);
 
     // Load texture from data URL
-    const img = new Image();
-    img.onload = () => {
+    void loadImageSource(currentCostume.assetId).then((img) => {
       if (!container.active || !container.scene) return;
       if (scene.textures.exists(textureKey)) return; // Avoid double-add
       scene.textures.addImage(textureKey, img);
@@ -3517,8 +3517,9 @@ function createObjectVisual(
       if (selectionRect) container.sendToBack(selectionRect);
       if (hitRect) container.bringToTop(hitRect);
       updateContainerWithBounds(sprite, currentCostume.bounds, currentCostume.assetFrame);
-    };
-    img.src = currentCostume.assetId;
+    }).catch((error) => {
+      console.warn('Failed to load costume texture source for stage sprite creation.', error);
+    });
   } else {
     // No costume - create colored rectangle as placeholder
     const graphics = scene.add.graphics();

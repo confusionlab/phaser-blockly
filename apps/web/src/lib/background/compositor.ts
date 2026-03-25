@@ -5,11 +5,10 @@ import {
   getChunkWorldBounds,
   parseChunkKey,
 } from './chunkMath';
-
-const BACKGROUND_IMAGE_CACHE_LIMIT = 256;
-
-const backgroundDecodeCache = new Map<string, HTMLImageElement>();
-const backgroundDecodePending = new Map<string, Promise<HTMLImageElement>>();
+import {
+  decodeBackgroundChunkImage,
+  getCachedBackgroundChunkImage,
+} from './chunkImageCache';
 
 export interface UserSpaceViewport {
   left: number;
@@ -40,47 +39,6 @@ export interface TiledBackgroundCanvasRenderRequest {
   viewport: UserSpaceViewport;
   pixelWidth: number;
   pixelHeight: number;
-}
-
-function cacheDecodedBackgroundImage(dataUrl: string, image: HTMLImageElement): void {
-  if (backgroundDecodeCache.has(dataUrl)) {
-    backgroundDecodeCache.delete(dataUrl);
-  }
-  backgroundDecodeCache.set(dataUrl, image);
-  while (backgroundDecodeCache.size > BACKGROUND_IMAGE_CACHE_LIMIT) {
-    const oldestKey = backgroundDecodeCache.keys().next().value;
-    if (!oldestKey) break;
-    backgroundDecodeCache.delete(oldestKey);
-  }
-}
-
-export function decodeBackgroundImage(dataUrl: string): Promise<HTMLImageElement> {
-  const cached = backgroundDecodeCache.get(dataUrl);
-  if (cached) {
-    cacheDecodedBackgroundImage(dataUrl, cached);
-    return Promise.resolve(cached);
-  }
-
-  const pending = backgroundDecodePending.get(dataUrl);
-  if (pending) return pending;
-
-  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.decoding = 'async';
-    image.onload = () => {
-      cacheDecodedBackgroundImage(dataUrl, image);
-      backgroundDecodePending.delete(dataUrl);
-      resolve(image);
-    };
-    image.onerror = () => {
-      backgroundDecodePending.delete(dataUrl);
-      reject(new Error('Failed to decode background chunk image.'));
-    };
-    image.src = dataUrl;
-  });
-
-  backgroundDecodePending.set(dataUrl, promise);
-  return promise;
 }
 
 export function getSceneBackgroundBaseColor(background: BackgroundConfig | null | undefined): string {
@@ -221,7 +179,7 @@ export class TiledBackgroundCanvasCompositor {
     let drawnChunks = 0;
 
     for (const chunk of chunks) {
-      const image = backgroundDecodeCache.get(chunk.dataUrl);
+      const image = getCachedBackgroundChunkImage(chunk.dataUrl);
       if (image) {
         ctx.drawImage(image, chunk.x, chunk.y, chunk.width, chunk.height);
         drawnChunks += 1;
@@ -236,12 +194,12 @@ export class TiledBackgroundCanvasCompositor {
   }
 
   private ensureChunkDecode(dataUrl: string): void {
-    if (backgroundDecodeCache.has(dataUrl) || this.listeningKeys.has(dataUrl)) {
+    if (getCachedBackgroundChunkImage(dataUrl) || this.listeningKeys.has(dataUrl)) {
       return;
     }
 
     this.listeningKeys.add(dataUrl);
-    void decodeBackgroundImage(dataUrl)
+    void decodeBackgroundChunkImage(dataUrl)
       .catch(() => undefined)
       .finally(() => {
         this.listeningKeys.delete(dataUrl);
