@@ -34,10 +34,11 @@ import type {
   VectorStyleCapabilities,
   VectorToolStyle,
 } from './CostumeToolbar';
-import type { Costume, CostumeBounds, ColliderConfig, CostumeEditorMode, CostumeVectorDocument } from '@/types';
+import type { Costume, CostumeBounds, ColliderConfig, CostumeDocument, CostumeEditorMode, CostumeVectorDocument } from '@/types';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
+import { CostumeLayerSurface } from './CostumeLayerSurface';
 import Color from 'color';
 import {
   getBitmapBrushCursorStyle,
@@ -942,9 +943,7 @@ function buildPenDraftNodeHandleTypes(
 }
 
 export interface CostumeCanvasExportState {
-  dataUrl: string;
   activeLayerDataUrl: string;
-  bounds: CostumeBounds | null;
   editorMode: CostumeEditorMode;
   vectorDocument?: CostumeVectorDocument;
 }
@@ -974,15 +973,8 @@ export interface CostumeCanvasHandle {
   canRedo: () => boolean;
 }
 
-export interface CostumeCanvasLayerVisual {
-  layerId: string;
-  isActive: boolean;
-  opacity: number;
-  src: string | null;
-  visible: boolean;
-}
-
 interface CostumeCanvasProps {
+  costumeDocument: CostumeDocument | null;
   initialEditorMode: CostumeEditorMode;
   activeTool: DrawingTool;
   bitmapBrushKind: BitmapBrushKind;
@@ -1010,11 +1002,7 @@ interface CostumeCanvasProps {
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
   onViewScaleChange?: (scale: number) => void;
-  layerVisuals?: CostumeCanvasLayerVisual[];
-  activeLayerOpacity?: number;
-  activeLayerVisible?: boolean;
-  activeLayerLocked?: boolean;
-  onBitmapLayerPick?: (point: { x: number; y: number }) => void;
+  onBitmapLayerPick?: (layerId: string | null) => void;
 }
 
 function getFabricObjectType(obj: unknown): string {
@@ -1316,6 +1304,7 @@ function cloneHistorySnapshot(snapshot: CanvasHistorySnapshot): CanvasHistorySna
 }
 
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
+  costumeDocument,
   initialEditorMode,
   activeTool,
   bitmapBrushKind,
@@ -1343,10 +1332,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onTextSelectionChange,
   onSelectionStateChange,
   onViewScaleChange,
-  layerVisuals = [],
-  activeLayerOpacity = 1,
-  activeLayerVisible = true,
-  activeLayerLocked = false,
   onBitmapLayerPick,
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1354,7 +1339,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const fabricCanvasHostRef = useRef<HTMLDivElement>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement | null>(null);
-  const inactiveLayerImageRefs = useRef(new Map<string, HTMLImageElement>());
+  const inactiveLayerSurfaceRefs = useRef(new Map<string, HTMLCanvasElement>());
   const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1369,17 +1354,22 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [cameraCenter, setCameraCenter] = useState({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [isViewportPanning, setIsViewportPanning] = useState(false);
+  const documentLayers = costumeDocument?.layers ?? [];
+  const activeDocumentLayer = useMemo(() => getActiveCostumeLayer(costumeDocument), [costumeDocument]);
+  const activeLayerOpacity = activeDocumentLayer?.opacity ?? 1;
+  const activeLayerVisible = activeDocumentLayer?.visible ?? true;
+  const activeLayerLocked = activeDocumentLayer?.locked ?? false;
   const activeLayerIndex = useMemo(
-    () => layerVisuals.findIndex((layerVisual) => layerVisual.isActive),
-    [layerVisuals],
+    () => documentLayers.findIndex((layer) => layer.id === activeDocumentLayer?.id),
+    [activeDocumentLayer?.id, documentLayers],
   );
   const inactiveLayersBelowActive = useMemo(
-    () => layerVisuals.filter((layerVisual, index) => !layerVisual.isActive && (activeLayerIndex < 0 || index < activeLayerIndex)),
-    [activeLayerIndex, layerVisuals],
+    () => documentLayers.filter((layer, index) => layer.id !== activeDocumentLayer?.id && (activeLayerIndex < 0 || index < activeLayerIndex)),
+    [activeDocumentLayer?.id, activeLayerIndex, documentLayers],
   );
   const inactiveLayersAboveActive = useMemo(
-    () => layerVisuals.filter((layerVisual, index) => !layerVisual.isActive && activeLayerIndex >= 0 && index > activeLayerIndex),
-    [activeLayerIndex, layerVisuals],
+    () => documentLayers.filter((layer, index) => layer.id !== activeDocumentLayer?.id && activeLayerIndex >= 0 && index > activeLayerIndex),
+    [activeDocumentLayer?.id, activeLayerIndex, documentLayers],
   );
   const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
@@ -1473,8 +1463,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const vectorStrokeTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const vectorStrokeTexturePendingRef = useRef<Set<string>>(new Set());
 
-  const historyRef = useRef<CanvasHistorySnapshot[]>([]);
-  const historyIndexRef = useRef(-1);
+  const lastCommittedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
   const persistedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
   const hasUnsavedChangesRef = useRef(false);
 
@@ -2253,8 +2242,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         return baseCanvas;
       }
 
-      for (const layerVisual of layerVisuals) {
-        if (layerVisual.isActive) {
+      for (const layer of documentLayers) {
+        if (layer.id === activeDocumentLayer?.id) {
           composedCtx.save();
           composedCtx.globalAlpha = activeLayerVisible ? activeLayerOpacity : 0;
           composedCtx.drawImage(baseCanvas, 0, 0);
@@ -2263,18 +2252,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           continue;
         }
 
-        if (!layerVisual.visible || layerVisual.opacity <= 0) {
+        if (!layer.visible || layer.opacity <= 0) {
           continue;
         }
 
-        const layerImage = inactiveLayerImageRefs.current.get(layerVisual.layerId);
-        if (!layerImage || !layerImage.complete || layerImage.naturalWidth <= 0) {
+        const layerSurface = inactiveLayerSurfaceRefs.current.get(layer.id);
+        if (!layerSurface) {
           continue;
         }
 
         composedCtx.save();
-        composedCtx.globalAlpha = layerVisual.opacity;
-        composedCtx.drawImage(layerImage, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        composedCtx.globalAlpha = layer.opacity;
+        composedCtx.drawImage(layerSurface, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
         composedCtx.restore();
       }
       return composed;
@@ -2283,7 +2272,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fallback.width = CANVAS_SIZE;
     fallback.height = CANVAS_SIZE;
     return fallback;
-  }, [activeLayerOpacity, activeLayerVisible, layerVisuals, renderVectorBrushStrokeOverlay]);
+  }, [activeDocumentLayer?.id, activeLayerOpacity, activeLayerVisible, documentLayers, renderVectorBrushStrokeOverlay]);
 
   const getSelectionMousePos = useCallback((event: MouseEvent) => {
     const canvas = bitmapSelectionCanvasRef.current;
@@ -2299,6 +2288,37 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
   }, []);
 
+  const pickBitmapLayerAtPoint = useCallback((point: { x: number; y: number }): string | null => {
+    const x = Math.max(0, Math.min(CANVAS_SIZE - 1, Math.floor(point.x)));
+    const y = Math.max(0, Math.min(CANVAS_SIZE - 1, Math.floor(point.y)));
+
+    for (let index = documentLayers.length - 1; index >= 0; index -= 1) {
+      const layer = documentLayers[index];
+      if (!layer || !layer.visible || layer.opacity <= 0) {
+        continue;
+      }
+
+      const sourceCanvas = layer.id === activeDocumentLayer?.id
+        ? fabricCanvasRef.current?.toCanvasElement(1) ?? null
+        : inactiveLayerSurfaceRefs.current.get(layer.id) ?? null;
+      if (!sourceCanvas) {
+        continue;
+      }
+
+      const ctx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        continue;
+      }
+
+      const alpha = ctx.getImageData(x, y, 1, 1).data[3] ?? 0;
+      if (alpha > 0) {
+        return layer.id;
+      }
+    }
+
+    return null;
+  }, [activeDocumentLayer?.id, documentLayers]);
+
   const createSnapshot = useCallback((): CanvasHistorySnapshot => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) {
@@ -2309,12 +2329,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       };
     }
 
-    const composed = getCanvasElement();
-    const bitmapDataUrl = composed.toDataURL('image/png');
+    const activeLayerCanvas = fabricCanvas.toCanvasElement(1);
+    const bitmapDataUrl = activeLayerCanvas.toDataURL('image/png');
     const mode = editorModeRef.current;
     const vectorJson = mode === 'vector' ? JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS)) : null;
     return { mode, bitmapDataUrl, vectorJson };
-  }, [getCanvasElement]);
+  }, []);
 
   const updateDirtyStateFromSnapshot = useCallback((snapshot: CanvasHistorySnapshot | null) => {
     hasUnsavedChangesRef.current = !areHistorySnapshotsEqual(snapshot, persistedSnapshotRef.current);
@@ -2336,25 +2356,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const saveHistory = useCallback(() => {
     if (suppressHistoryRef.current) return;
     const snapshot = createSnapshot();
-    const current = historyRef.current[historyIndexRef.current];
-    if (
-      current &&
-      current.mode === snapshot.mode &&
-      current.bitmapDataUrl === snapshot.bitmapDataUrl &&
-      current.vectorJson === snapshot.vectorJson
-    ) {
+    if (areHistorySnapshotsEqual(snapshot, lastCommittedSnapshotRef.current)) {
       return;
     }
 
-    historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
-    historyRef.current.push(snapshot);
-    historyIndexRef.current = historyRef.current.length - 1;
-
-    if (historyRef.current.length > 50) {
-      historyRef.current.shift();
-      historyIndexRef.current -= 1;
-    }
-
+    lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
     updateDirtyStateFromSnapshot(snapshot);
     onHistoryChangeRef.current?.();
   }, [createSnapshot, updateDirtyStateFromSnapshot]);
@@ -3083,36 +3089,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return changed;
   }, []);
 
-  const applySnapshot = useCallback(async (snapshot: CanvasHistorySnapshot) => {
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) return;
-
-    suppressHistoryRef.current = true;
-    try {
-      if (snapshot.mode === 'vector' && snapshot.vectorJson) {
-        try {
-          const parsed = JSON.parse(snapshot.vectorJson);
-          fabricCanvas.clear();
-          await fabricCanvas.loadFromJSON(parsed);
-          normalizeCanvasVectorStrokeUniform();
-          fabricCanvas.requestRenderAll();
-          setEditorMode('vector');
-        } catch (error) {
-          console.warn('Failed to restore vector snapshot, falling back to bitmap:', error);
-          await loadBitmapLayer(snapshot.bitmapDataUrl, false);
-          setEditorMode('bitmap');
-        }
-      } else {
-        await loadBitmapLayer(snapshot.bitmapDataUrl, false);
-        setEditorMode('bitmap');
-      }
-    } finally {
-      suppressHistoryRef.current = false;
-      updateDirtyStateFromSnapshot(snapshot);
-      onHistoryChangeRef.current?.();
-    }
-  }, [loadBitmapLayer, normalizeCanvasVectorStrokeUniform, setEditorMode, updateDirtyStateFromSnapshot]);
-
   const applyFill = useCallback(async (x: number, y: number) => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || editorModeRef.current !== 'bitmap') return;
@@ -3172,24 +3148,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) {
       return {
-        dataUrl: '',
         activeLayerDataUrl: '',
-        bounds: null,
         editorMode: editorModeRef.current,
       };
     }
 
-    const composed = getCanvasElement();
-    const dataUrl = composed.toDataURL('image/webp', 0.85);
-    const bounds = calculateBoundsFromCanvas(composed);
     const activeLayerDataUrl = fabricCanvas.toCanvasElement(1).toDataURL('image/png');
 
     const mode = editorModeRef.current;
     if (mode === 'vector') {
       return {
-        dataUrl,
         activeLayerDataUrl,
-        bounds,
         editorMode: mode,
         vectorDocument: {
           engine: 'fabric',
@@ -3200,12 +3169,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     return {
-      dataUrl,
       activeLayerDataUrl,
-      bounds,
       editorMode: mode,
     };
-  }, [getCanvasElement]);
+  }, []);
 
   const deleteSelection = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -3516,8 +3483,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     if (!isLoadRequestActive(requestId)) return;
     loadedSessionKeyRef.current = sessionKey;
-    historyRef.current = [];
-    historyIndexRef.current = -1;
+    lastCommittedSnapshotRef.current = null;
     saveHistory();
     markCurrentSnapshotPersisted(sessionKey);
   }, [isLoadRequestActive, loadBitmapAsSingleVectorImage, loadBitmapLayer, markCurrentSnapshotPersisted, normalizeCanvasVectorStrokeUniform, saveHistory, setEditorMode]);
@@ -6688,8 +6654,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       drawBitmapSelectionOverlay();
     }
 
-    historyRef.current = [];
-    historyIndexRef.current = -1;
+    lastCommittedSnapshotRef.current = null;
     saveHistory();
     syncActiveLayerCanvasVisibility();
     configureCanvasForTool();
@@ -7125,14 +7090,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const handleMouseDown = (event: MouseEvent) => {
-      onBitmapLayerPickRef.current?.(getSelectionMousePos(event));
+      const layerId = pickBitmapLayerAtPoint(getSelectionMousePos(event));
+      onBitmapLayerPickRef.current?.(layerId);
     };
 
     overlayCanvas.addEventListener('mousedown', handleMouseDown);
     return () => {
       overlayCanvas.removeEventListener('mousedown', handleMouseDown);
     };
-  }, [activeTool, editorModeState, getSelectionMousePos, hasBitmapFloatingSelection]);
+  }, [activeTool, editorModeState, getSelectionMousePos, hasBitmapFloatingSelection, pickBitmapLayerAtPoint]);
 
   useEffect(() => {
     const overlayCanvas = bitmapSelectionCanvasRef.current;
@@ -7419,8 +7385,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       await loadBitmapLayer(dataUrl, false);
       setEditorMode('bitmap');
       loadedSessionKeyRef.current = sessionKey ?? null;
-      historyRef.current = [];
-      historyIndexRef.current = -1;
+      lastCommittedSnapshotRef.current = null;
       saveHistory();
       markCurrentSnapshotPersisted(sessionKey ?? null);
     },
@@ -7473,23 +7438,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     },
 
     undo: () => {
-      if (historyIndexRef.current <= 0) return;
-      historyIndexRef.current -= 1;
-      const snapshot = historyRef.current[historyIndexRef.current];
-      void applySnapshot(snapshot);
+      return;
     },
 
     redo: () => {
-      if (historyIndexRef.current >= historyRef.current.length - 1) return;
-      historyIndexRef.current += 1;
-      const snapshot = historyRef.current[historyIndexRef.current];
-      void applySnapshot(snapshot);
+      return;
     },
 
-    canUndo: () => historyIndexRef.current > 0,
-    canRedo: () => historyIndexRef.current < historyRef.current.length - 1,
+    canUndo: () => false,
+    canRedo: () => false,
   }), [
-    applySnapshot,
     configureCanvasForTool,
     createSnapshot,
     exportCostumeState,
@@ -7731,29 +7689,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               pointerEvents: 'none',
             }}
           >
-            {inactiveLayersBelowActive.map((layerVisual) => (
-              <img
-                key={layerVisual.layerId}
+            {inactiveLayersBelowActive.map((layer) => (
+              <CostumeLayerSurface
+                key={layer.id}
                 ref={(node) => {
                   if (node) {
-                    inactiveLayerImageRefs.current.set(layerVisual.layerId, node);
+                    inactiveLayerSurfaceRefs.current.set(layer.id, node);
                   } else {
-                    inactiveLayerImageRefs.current.delete(layerVisual.layerId);
+                    inactiveLayerSurfaceRefs.current.delete(layer.id);
                   }
                 }}
-                src={layerVisual.src ?? undefined}
-                alt=""
-                aria-hidden="true"
-                style={{
-                  width: CANVAS_SIZE,
-                  height: CANVAS_SIZE,
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                  opacity: layerVisual.visible ? layerVisual.opacity : 0,
-                }}
+                layer={layer}
+                opacity={layer.visible ? layer.opacity : 0}
               />
             ))}
           </div>
@@ -7799,29 +7746,18 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               pointerEvents: 'none',
             }}
           >
-            {inactiveLayersAboveActive.map((layerVisual) => (
-              <img
-                key={layerVisual.layerId}
+            {inactiveLayersAboveActive.map((layer) => (
+              <CostumeLayerSurface
+                key={layer.id}
                 ref={(node) => {
                   if (node) {
-                    inactiveLayerImageRefs.current.set(layerVisual.layerId, node);
+                    inactiveLayerSurfaceRefs.current.set(layer.id, node);
                   } else {
-                    inactiveLayerImageRefs.current.delete(layerVisual.layerId);
+                    inactiveLayerSurfaceRefs.current.delete(layer.id);
                   }
                 }}
-                src={layerVisual.src ?? undefined}
-                alt=""
-                aria-hidden="true"
-                style={{
-                  width: CANVAS_SIZE,
-                  height: CANVAS_SIZE,
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                  opacity: layerVisual.visible ? layerVisual.opacity : 0,
-                }}
+                layer={layer}
+                opacity={layer.visible ? layer.opacity : 0}
               />
             ))}
           </div>

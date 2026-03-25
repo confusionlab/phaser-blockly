@@ -19,6 +19,7 @@ import {
   createBlankCostumeDocument,
   createBitmapCostumeDocument,
 } from '@/lib/costume/costumeDocument';
+import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
 
 interface CostumeListProps {
   costumes: Costume[];
@@ -28,6 +29,91 @@ interface CostumeListProps {
   onDeleteCostume: (index: number) => void;
   onRenameCostume: (index: number, name: string) => void;
 }
+
+function areCostumeBoundsEquivalent(
+  a: CostumeBounds | undefined,
+  b: CostumeBounds | undefined,
+): boolean {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costume: Costume }) {
+  const [preview, setPreview] = useState<{ assetId: string; bounds?: CostumeBounds }>(() => ({
+    assetId: costume.assetId,
+    bounds: costume.bounds,
+  }));
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setPreview((current) => (
+      current.assetId === costume.assetId && areCostumeBoundsEquivalent(current.bounds, costume.bounds)
+        ? current
+        : {
+            assetId: costume.assetId,
+            bounds: costume.bounds,
+          }
+    ));
+
+    void renderCostumeDocument(costume.document).then((rendered) => {
+      if (cancelled) {
+        return;
+      }
+
+      setPreview({
+        assetId: rendered.dataUrl,
+        bounds: rendered.bounds ?? undefined,
+      });
+    }).catch((error) => {
+      if (!cancelled) {
+        console.warn('Failed to render costume list preview from document.', error);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [costume.assetId, costume.bounds, costume.document]);
+
+  if (preview.bounds && preview.bounds.width > 0 && preview.bounds.height > 0) {
+    const scale = Math.min(1, 140 / Math.max(preview.bounds.width, preview.bounds.height));
+    return (
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundImage: `url(${preview.assetId})`,
+          backgroundPosition: `${-preview.bounds.x}px ${-preview.bounds.y}px`,
+          backgroundSize: '1024px 1024px',
+          backgroundRepeat: 'no-repeat',
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          width: preview.bounds.width,
+          height: preview.bounds.height,
+          imageRendering: 'pixelated',
+          left: '50%',
+          top: '50%',
+          marginLeft: -(preview.bounds.width * scale) / 2,
+          marginTop: -(preview.bounds.height * scale) / 2,
+        }}
+      />
+    );
+  }
+
+  return (
+    <img
+      src={preview.assetId}
+      alt={costume.name}
+      className="h-full w-full object-contain"
+      style={{ imageRendering: 'pixelated' }}
+    />
+  );
+});
 
 export const CostumeList = memo(({
   costumes,
@@ -144,12 +230,16 @@ export const CostumeList = memo(({
 
     setSavingToLibrary(index);
     try {
+      const renderedCostume = await renderCostumeDocument(costume.document);
+      const resolvedAssetId = renderedCostume.dataUrl;
+      const resolvedBounds = renderedCostume.bounds ?? costume.bounds;
+
       // Generate thumbnail
-      const thumbnail = await generateThumbnail(costume.assetId, 128);
+      const thumbnail = await generateThumbnail(resolvedAssetId, 128);
 
       // Upload to Convex storage
       const { storageId, size, mimeType } = await uploadDataUrlToStorage(
-        costume.assetId,
+        resolvedAssetId,
         generateUploadUrl
       );
 
@@ -158,7 +248,7 @@ export const CostumeList = memo(({
         name: costume.name,
         storageId: storageId as Id<"_storage">,
         thumbnail,
-        bounds: costume.bounds,
+        bounds: resolvedBounds,
         document: cloneCostumeDocument(costume.document),
         mimeType,
         size,
@@ -257,36 +347,7 @@ export const CostumeList = memo(({
                 });
               }}
               media={
-                costume.bounds && costume.bounds.width > 0 && costume.bounds.height > 0 ? (
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      backgroundImage: `url(${costume.assetId})`,
-                      backgroundPosition: `${-costume.bounds.x}px ${-costume.bounds.y}px`,
-                      backgroundSize: '1024px 1024px',
-                      backgroundRepeat: 'no-repeat',
-                      transform: `scale(${Math.min(
-                        1,
-                        140 / Math.max(costume.bounds.width, costume.bounds.height)
-                      )})`,
-                      transformOrigin: 'top left',
-                      width: costume.bounds.width,
-                      height: costume.bounds.height,
-                      imageRendering: 'pixelated',
-                      left: '50%',
-                      top: '50%',
-                      marginLeft: -costume.bounds.width * Math.min(1, 140 / Math.max(costume.bounds.width, costume.bounds.height)) / 2,
-                      marginTop: -costume.bounds.height * Math.min(1, 140 / Math.max(costume.bounds.width, costume.bounds.height)) / 2,
-                    }}
-                  />
-                ) : (
-                  <img
-                    src={costume.assetId}
-                    alt={costume.name}
-                    className="h-full w-full object-contain"
-                    style={{ imageRendering: 'pixelated' }}
-                  />
-                )
+                <CostumeListPreview costume={costume} />
               }
             />
           ))

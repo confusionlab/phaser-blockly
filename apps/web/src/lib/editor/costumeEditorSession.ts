@@ -3,6 +3,7 @@ import type {
   Costume,
   CostumeBounds,
   CostumeDocument,
+  CostumeLayer,
   GameObject,
   Project,
 } from '@/types';
@@ -76,7 +77,53 @@ export function areCostumeDocumentsEqual(
 ): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
-  return JSON.stringify(a) === JSON.stringify(b);
+  if (a.version !== b.version || a.activeLayerId !== b.activeLayerId || a.layers.length !== b.layers.length) {
+    return false;
+  }
+
+  for (let index = 0; index < a.layers.length; index += 1) {
+    if (!areCostumeLayersEqual(a.layers[index], b.layers[index])) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areCostumeLayersEqual(a: CostumeLayer | undefined, b: CostumeLayer | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (
+    a.id !== b.id ||
+    a.name !== b.name ||
+    a.kind !== b.kind ||
+    a.visible !== b.visible ||
+    a.locked !== b.locked ||
+    a.opacity !== b.opacity ||
+    a.blendMode !== b.blendMode ||
+    a.mask !== b.mask ||
+    a.effects.length !== b.effects.length
+  ) {
+    return false;
+  }
+
+  if (a.kind === 'bitmap' && b.kind === 'bitmap') {
+    return (
+      a.width === b.width &&
+      a.height === b.height &&
+      a.bitmap.assetId === b.bitmap.assetId
+    );
+  }
+
+  if (a.kind === 'vector' && b.kind === 'vector') {
+    return (
+      a.vector.engine === b.vector.engine &&
+      a.vector.version === b.vector.version &&
+      a.vector.fabricJson === b.vector.fabricJson
+    );
+  }
+
+  return false;
 }
 
 export function applyCostumeEditorState(

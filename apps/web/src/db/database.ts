@@ -24,6 +24,7 @@ import {
   ensureCostumeDocument,
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
+import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
 export const CURRENT_SCHEMA_VERSION = 9;
@@ -532,13 +533,12 @@ async function normalizeCostumeAssetsForStorage(
   costume: { assetId: string; document?: unknown },
   refsById: Map<string, PersistedProjectAssetRef>,
 ): Promise<void> {
-  if (isLikelyAssetSource(costume.assetId)) {
-    const record = await ensureAssetRecordFromSource(costume.assetId, 'image');
-    addPersistedAssetRef(refsById, record.id, 'image');
-    costume.assetId = record.id;
-  }
-
   const document = ensureCostumeDocument(costume);
+  const renderedCostume = await renderCostumeDocument(document);
+  const runtimeAssetRecord = await ensureAssetRecordFromSource(renderedCostume.dataUrl, 'image');
+  addPersistedAssetRef(refsById, runtimeAssetRecord.id, 'image');
+  costume.assetId = runtimeAssetRecord.id;
+
   for (const layer of document.layers) {
     if (!isBitmapCostumeLayer(layer) || !isLikelyAssetSource(layer.bitmap.assetId)) {
       continue;
