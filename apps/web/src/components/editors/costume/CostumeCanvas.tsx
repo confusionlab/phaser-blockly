@@ -37,7 +37,6 @@ import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import {
-  getBitmapBrushCursorStyle,
   getBrushPaintColor,
   getCompositeOperation,
   type BitmapBrushKind,
@@ -61,13 +60,6 @@ import {
   type VectorFillTextureId,
 } from '@/lib/vector/vectorFillTextureCore';
 import {
-  clampCameraToWorldRect,
-  clampViewportZoom,
-  panCameraFromDrag,
-  panCameraFromWheel,
-  zoomCameraAtClientPoint,
-} from '@/lib/viewportNavigation';
-import {
   createEmptyCostumeVectorDocument,
   getActiveCostumeLayer,
   resolveActiveCostumeLayerEditorLoadState,
@@ -79,7 +71,6 @@ import {
   MIN_ZOOM,
   MAX_ZOOM,
   ZOOM_STEP,
-  MAX_PAN_OVERSCROLL_PX,
   HANDLE_SIZE,
   VECTOR_SELECTION_COLOR,
   VECTOR_SELECTION_CORNER_COLOR,
@@ -136,7 +127,6 @@ import {
   getQuadraticBezierPoint,
   getStrokedShapeBoundsFromPathBounds,
   getVectorStrokeSampleSpacing,
-  getZoomInvariantCanvasMetric,
   hashNumberTriplet,
   normalizeDegrees,
   normalizeRadians,
@@ -175,6 +165,8 @@ import {
   VECTOR_JSON_EXTRA_PROPS,
   VECTOR_POINT_CONTROL_STYLE,
 } from './costumeCanvasVectorRuntime';
+import { useCostumeCanvasColliderController } from './useCostumeCanvasColliderController';
+import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
 
 export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
 
@@ -285,13 +277,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const vectorStrokeCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const bitmapSelectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
-  const colliderCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
-
-  const [zoom, setZoom] = useState(1);
-  const [cameraCenter, setCameraCenter] = useState({ x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 });
-  const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
-  const [isViewportPanning, setIsViewportPanning] = useState(false);
   const documentLayers = costumeDocument?.layers ?? [];
   const activeDocumentLayer = useMemo(() => getActiveCostumeLayer(costumeDocument), [costumeDocument]);
   const activeLayerOpacity = activeDocumentLayer?.opacity ?? 1;
@@ -312,18 +298,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const [editorModeState, setEditorModeState] = useState<CostumeEditorMode>(initialEditorMode);
   const [hasBitmapFloatingSelection, setHasBitmapFloatingSelection] = useState(false);
   const [canZoomToSelection, setCanZoomToSelection] = useState(false);
-  const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
-  const cameraCenterRef = useRef(cameraCenter);
-  cameraCenterRef.current = cameraCenter;
-  const viewportSizeRef = useRef(viewportSize);
-  viewportSizeRef.current = viewportSize;
-  const panSessionRef = useRef<{
-    startX: number;
-    startY: number;
-    cameraStartX: number;
-    cameraStartY: number;
-  } | null>(null);
 
   const editorModeRef = useRef<CostumeEditorMode>(initialEditorMode);
   const activeToolRef = useRef(activeTool);
@@ -389,11 +363,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onSelectionStateChangeRef.current = onSelectionStateChange;
   const onBitmapLayerPickRef = useRef(onBitmapLayerPick);
   onBitmapLayerPickRef.current = onBitmapLayerPick;
-  const onViewScaleChangeRef = useRef(onViewScaleChange);
-  onViewScaleChangeRef.current = onViewScaleChange;
-
-  const colliderRef = useRef(collider);
-  colliderRef.current = collider;
 
   const suppressHistoryRef = useRef(false);
   const bitmapRasterCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -412,9 +381,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     object: any;
   } | null>(null);
 
-  const colliderDragModeRef = useRef<'none' | 'move' | 'resize-tl' | 'resize-tr' | 'resize-bl' | 'resize-br' | 'resize-l' | 'resize-r' | 'resize-t' | 'resize-b'>('none');
-  const colliderDragStartRef = useRef<{ x: number; y: number; collider: ColliderConfig } | null>(null);
-
   const bitmapFloatingObjectRef = useRef<any | null>(null);
   const bitmapSelectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const bitmapMarqueeRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -424,8 +390,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const loadRequestIdRef = useRef(0);
   const loadedSessionKeyRef = useRef<string | null>(null);
   const originalControlsRef = useRef<WeakMap<object, Record<string, Control> | undefined>>(new WeakMap());
-  const brushCursorEnabledRef = useRef(false);
-  const brushCursorPosRef = useRef<{ x: number; y: number } | null>(null);
   const activePathAnchorRef = useRef<{ path: any; anchorIndex: number } | null>(null);
   const selectedPathAnchorIndicesRef = useRef<number[]>([]);
   const vectorPointEditingTargetRef = useRef<any | null>(null);
@@ -442,6 +406,42 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const penModifierStateRef = useRef({
     alt: false,
     space: false,
+  });
+
+  const {
+    cameraCenter,
+    getZoomInvariantMetric,
+    isViewportPanning,
+    setZoomLevel,
+    syncBrushCursorOverlay,
+    viewportSize,
+    zoom,
+    zoomAroundViewportCenter,
+    zoomRef,
+    zoomToBounds,
+  } = useCostumeCanvasViewportController({
+    activeTool,
+    activeToolRef,
+    activeLayerLockedRef,
+    activeLayerVisibleRef,
+    bitmapBrushKind,
+    bitmapBrushKindRef,
+    brushColor,
+    brushColorRef,
+    brushCursorOverlayRef,
+    brushSize,
+    brushSizeRef,
+    containerRef,
+    editorModeRef,
+    editorModeState,
+    onViewScaleChange,
+  });
+
+  const { drawCollider } = useCostumeCanvasColliderController({
+    activeTool,
+    collider,
+    colliderCanvasRef,
+    onColliderChange,
   });
 
   const setVectorPointEditingTarget = useCallback((nextTarget: any | null) => {
@@ -538,44 +538,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
   }, [getSelectionBoundsSnapshot]);
 
-  const syncBrushCursorOverlay = useCallback(() => {
-    const overlay = brushCursorOverlayRef.current;
-    if (!overlay) return;
-
-    const mode = editorModeRef.current;
-    const tool = activeToolRef.current;
-    const layerInteractive = activeLayerVisibleRef.current && !activeLayerLockedRef.current;
-    const isBitmapBrushTool = layerInteractive && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
-    brushCursorEnabledRef.current = isBitmapBrushTool;
-
-    if (!isBitmapBrushTool) {
-      overlay.style.opacity = '0';
-      return;
-    }
-
-    const displayScale = BASE_VIEW_SCALE * zoomRef.current;
-    const cursorStyle = getBitmapBrushCursorStyle(
-      tool,
-      bitmapBrushKindRef.current,
-      brushColorRef.current,
-      brushSizeRef.current,
-      displayScale,
-    );
-    overlay.style.width = `${cursorStyle.diameter}px`;
-    overlay.style.height = `${cursorStyle.diameter}px`;
-    overlay.style.border = `${cursorStyle.borderWidth}px solid ${cursorStyle.stroke}`;
-    overlay.style.background = cursorStyle.fill;
-    overlay.style.boxShadow = cursorStyle.boxShadow ?? 'none';
-
-    const pos = brushCursorPosRef.current;
-    if (pos) {
-      overlay.style.transform = `translate(${pos.x}px, ${pos.y}px) translate(-50%, -50%)`;
-      overlay.style.opacity = '1';
-    } else {
-      overlay.style.opacity = '0';
-    }
-  }, []);
-
   const syncActiveLayerCanvasVisibility = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
       wrapperEl?: HTMLDivElement;
@@ -614,64 +576,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (typeof requestId !== 'number') return true;
     return loadRequestIdRef.current === requestId;
   }, []);
-
-  const clampZoom = useCallback((value: number) => {
-    return clampViewportZoom(value, MIN_ZOOM, MAX_ZOOM);
-  }, []);
-
-  const clampCameraCenter = useCallback((
-    nextCamera: { x: number; y: number },
-    zoomValue = zoomRef.current,
-    view = viewportSizeRef.current,
-  ) => {
-    return clampCameraToWorldRect(
-      nextCamera,
-      view,
-      BASE_VIEW_SCALE * zoomValue,
-      COSTUME_WORLD_RECT,
-      MAX_PAN_OVERSCROLL_PX,
-    );
-  }, []);
-
-  const getZoomInvariantMetric = useCallback((metric: number, zoomValue = zoomRef.current) => {
-    return getZoomInvariantCanvasMetric(metric, zoomValue);
-  }, []);
-
-  const zoomAtScreenPoint = useCallback((screenX: number, screenY: number, nextZoom: number) => {
-    const clampedZoom = clampZoom(nextZoom);
-    const currentZoom = zoomRef.current;
-    if (Math.abs(clampedZoom - currentZoom) < 0.0001) return;
-
-    const view = viewportSizeRef.current;
-    if (view.width <= 0 || view.height <= 0) {
-      setZoom(clampedZoom);
-      return;
-    }
-
-    const currentCamera = cameraCenterRef.current;
-    const beforeScale = BASE_VIEW_SCALE * currentZoom;
-    const afterScale = BASE_VIEW_SCALE * clampedZoom;
-
-    const worldBefore = {
-      x: (screenX - view.width / 2) / beforeScale + currentCamera.x,
-      y: (screenY - view.height / 2) / beforeScale + currentCamera.y,
-    };
-    const worldAfter = {
-      x: (screenX - view.width / 2) / afterScale + currentCamera.x,
-      y: (screenY - view.height / 2) / afterScale + currentCamera.y,
-    };
-
-    setCameraCenter(clampCameraCenter({
-      x: currentCamera.x + (worldBefore.x - worldAfter.x),
-      y: currentCamera.y + (worldBefore.y - worldAfter.y),
-    }, clampedZoom, view));
-    setZoom(clampedZoom);
-  }, [clampCameraCenter, clampZoom]);
-
-  const zoomAroundViewportCenter = useCallback((nextZoom: number) => {
-    const view = viewportSizeRef.current;
-    zoomAtScreenPoint(view.width / 2, view.height / 2, nextZoom);
-  }, [zoomAtScreenPoint]);
 
   const drawBitmapSelectionOverlay = useCallback(() => {
     const overlayCtx = bitmapSelectionCtxRef.current;
@@ -4839,103 +4743,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncSelectionState();
   }, [activateVectorPointEditing, activeLayerLocked, activeLayerVisible, applyVectorPointControls, applyVectorPointEditingAppearance, commitBitmapStampBrushStroke, getZoomInvariantMetric, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, setVectorPointEditingTarget, syncBrushCursorOverlay, syncSelectionState]);
 
-  // Draw collider overlay
-  const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
-    const colliderCtx = colliderCtxRef.current;
-    if (!colliderCtx) return;
-
-    colliderCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
-    if (!coll || coll.type === 'none') return;
-
-    const centerX = CANVAS_SIZE / 2 + coll.offsetX;
-    const centerY = CANVAS_SIZE / 2 + coll.offsetY;
-
-    colliderCtx.strokeStyle = '#22c55e';
-    colliderCtx.lineWidth = 3;
-    colliderCtx.setLineDash(editable ? [] : [8, 8]);
-
-    if (coll.type === 'box') {
-      colliderCtx.strokeRect(
-        centerX - coll.width / 2,
-        centerY - coll.height / 2,
-        coll.width,
-        coll.height
-      );
-    } else if (coll.type === 'circle') {
-      colliderCtx.beginPath();
-      colliderCtx.arc(centerX, centerY, coll.radius, 0, Math.PI * 2);
-      colliderCtx.stroke();
-    } else if (coll.type === 'capsule') {
-      const halfW = coll.width / 2;
-      const halfH = coll.height / 2;
-      const radius = Math.min(halfW, halfH);
-
-      colliderCtx.beginPath();
-      colliderCtx.moveTo(centerX - halfW + radius, centerY - halfH);
-      colliderCtx.lineTo(centerX + halfW - radius, centerY - halfH);
-      colliderCtx.arc(centerX + halfW - radius, centerY - halfH + radius, radius, -Math.PI / 2, 0);
-      colliderCtx.lineTo(centerX + halfW, centerY + halfH - radius);
-      colliderCtx.arc(centerX + halfW - radius, centerY + halfH - radius, radius, 0, Math.PI / 2);
-      colliderCtx.lineTo(centerX - halfW + radius, centerY + halfH);
-      colliderCtx.arc(centerX - halfW + radius, centerY + halfH - radius, radius, Math.PI / 2, Math.PI);
-      colliderCtx.lineTo(centerX - halfW, centerY - halfH + radius);
-      colliderCtx.arc(centerX - halfW + radius, centerY - halfH + radius, radius, Math.PI, Math.PI * 1.5);
-      colliderCtx.stroke();
-    }
-
-    colliderCtx.setLineDash([]);
-
-    if (editable) {
-      colliderCtx.fillStyle = '#ffffff';
-      colliderCtx.strokeStyle = '#22c55e';
-      colliderCtx.lineWidth = 2;
-
-      if (coll.type === 'box' || coll.type === 'capsule') {
-        const corners = [
-          { x: centerX - coll.width / 2, y: centerY - coll.height / 2 },
-          { x: centerX + coll.width / 2, y: centerY - coll.height / 2 },
-          { x: centerX - coll.width / 2, y: centerY + coll.height / 2 },
-          { x: centerX + coll.width / 2, y: centerY + coll.height / 2 },
-        ];
-        corners.forEach((corner) => {
-          colliderCtx.fillRect(corner.x - HANDLE_SIZE / 2, corner.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-          colliderCtx.strokeRect(corner.x - HANDLE_SIZE / 2, corner.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        });
-
-        const edges = [
-          { x: centerX, y: centerY - coll.height / 2 },
-          { x: centerX, y: centerY + coll.height / 2 },
-          { x: centerX - coll.width / 2, y: centerY },
-          { x: centerX + coll.width / 2, y: centerY },
-        ];
-        edges.forEach((edge) => {
-          colliderCtx.fillRect(edge.x - HANDLE_SIZE / 2, edge.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-          colliderCtx.strokeRect(edge.x - HANDLE_SIZE / 2, edge.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        });
-      } else if (coll.type === 'circle') {
-        const edges = [
-          { x: centerX, y: centerY - coll.radius },
-          { x: centerX, y: centerY + coll.radius },
-          { x: centerX - coll.radius, y: centerY },
-          { x: centerX + coll.radius, y: centerY },
-        ];
-        edges.forEach((edge) => {
-          colliderCtx.fillRect(edge.x - HANDLE_SIZE / 2, edge.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-          colliderCtx.strokeRect(edge.x - HANDLE_SIZE / 2, edge.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        });
-      }
-
-      colliderCtx.beginPath();
-      colliderCtx.arc(centerX, centerY, 8, 0, Math.PI * 2);
-      colliderCtx.fillStyle = '#22c55e';
-      colliderCtx.fill();
-      colliderCtx.strokeStyle = '#ffffff';
-      colliderCtx.lineWidth = 2;
-      colliderCtx.stroke();
-    }
-  }, []);
-
   // Initialize fabric canvas once.
   useEffect(() => {
     const fabricCanvasHost = fabricCanvasHostRef.current;
@@ -5574,10 +5381,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvas.on('text:editing:exited', onTextChanged);
     fabricCanvas.on('after:render', onAfterRender);
 
-    const colliderCanvas = colliderCanvasRef.current;
-    if (colliderCanvas) {
-      colliderCtxRef.current = colliderCanvas.getContext('2d');
-    }
     const vectorStrokeCanvas = vectorStrokeCanvasRef.current;
     if (vectorStrokeCanvas) {
       vectorStrokeCtxRef.current = vectorStrokeCanvas.getContext('2d');
@@ -5744,279 +5547,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvas.requestRenderAll();
     saveHistory();
   }, [brushColor, textStyle, vectorStyle, saveHistory]);
-
-  // Draw collider when collider/tool changes.
-  useEffect(() => {
-    drawCollider(collider, activeTool === 'collider');
-  }, [collider, activeTool, drawCollider]);
-
-  // Collider interactions.
-  useEffect(() => {
-    const colliderCanvas = colliderCanvasRef.current;
-    if (!colliderCanvas || activeTool !== 'collider') return;
-
-    const getMousePos = (e: MouseEvent) => {
-      const rect = colliderCanvas.getBoundingClientRect();
-      const scaleX = CANVAS_SIZE / rect.width;
-      const scaleY = CANVAS_SIZE / rect.height;
-      return {
-        x: (e.clientX - rect.left) * scaleX,
-        y: (e.clientY - rect.top) * scaleY,
-      };
-    };
-
-    const isNearPoint = (px: number, py: number, tx: number, ty: number, threshold = HANDLE_SIZE) => (
-      Math.abs(px - tx) <= threshold && Math.abs(py - ty) <= threshold
-    );
-
-    const handleMouseDown = (e: MouseEvent) => {
-      const coll = colliderRef.current;
-      if (!coll || coll.type === 'none') return;
-      const pos = getMousePos(e);
-      const centerX = CANVAS_SIZE / 2 + coll.offsetX;
-      const centerY = CANVAS_SIZE / 2 + coll.offsetY;
-
-      const handles = coll.type === 'circle'
-        ? {
-            t: { x: centerX, y: centerY - coll.radius },
-            b: { x: centerX, y: centerY + coll.radius },
-            l: { x: centerX - coll.radius, y: centerY },
-            r: { x: centerX + coll.radius, y: centerY },
-          }
-        : {
-            tl: { x: centerX - coll.width / 2, y: centerY - coll.height / 2 },
-            tr: { x: centerX + coll.width / 2, y: centerY - coll.height / 2 },
-            bl: { x: centerX - coll.width / 2, y: centerY + coll.height / 2 },
-            br: { x: centerX + coll.width / 2, y: centerY + coll.height / 2 },
-            t: { x: centerX, y: centerY - coll.height / 2 },
-            b: { x: centerX, y: centerY + coll.height / 2 },
-            l: { x: centerX - coll.width / 2, y: centerY },
-            r: { x: centerX + coll.width / 2, y: centerY },
-          };
-
-      if (coll.type !== 'circle') {
-        if (isNearPoint(pos.x, pos.y, handles.tl!.x, handles.tl!.y)) {
-          colliderDragModeRef.current = 'resize-tl';
-          colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-          return;
-        }
-        if (isNearPoint(pos.x, pos.y, handles.tr!.x, handles.tr!.y)) {
-          colliderDragModeRef.current = 'resize-tr';
-          colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-          return;
-        }
-        if (isNearPoint(pos.x, pos.y, handles.bl!.x, handles.bl!.y)) {
-          colliderDragModeRef.current = 'resize-bl';
-          colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-          return;
-        }
-        if (isNearPoint(pos.x, pos.y, handles.br!.x, handles.br!.y)) {
-          colliderDragModeRef.current = 'resize-br';
-          colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-          return;
-        }
-      }
-
-      if (isNearPoint(pos.x, pos.y, handles.t.x, handles.t.y)) {
-        colliderDragModeRef.current = 'resize-t';
-        colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-        return;
-      }
-      if (isNearPoint(pos.x, pos.y, handles.b.x, handles.b.y)) {
-        colliderDragModeRef.current = 'resize-b';
-        colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-        return;
-      }
-      if (isNearPoint(pos.x, pos.y, handles.l.x, handles.l.y)) {
-        colliderDragModeRef.current = 'resize-l';
-        colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-        return;
-      }
-      if (isNearPoint(pos.x, pos.y, handles.r.x, handles.r.y)) {
-        colliderDragModeRef.current = 'resize-r';
-        colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-        return;
-      }
-
-      let insideCollider = false;
-      if (coll.type === 'circle') {
-        const dist = Math.hypot(pos.x - centerX, pos.y - centerY);
-        insideCollider = dist <= coll.radius;
-      } else {
-        insideCollider = Math.abs(pos.x - centerX) <= coll.width / 2 &&
-          Math.abs(pos.y - centerY) <= coll.height / 2;
-      }
-
-      if (insideCollider) {
-        colliderDragModeRef.current = 'move';
-        colliderDragStartRef.current = { x: pos.x, y: pos.y, collider: { ...coll } };
-      }
-    };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const mode = colliderDragModeRef.current;
-      const dragStart = colliderDragStartRef.current;
-      if (mode === 'none' || !dragStart) return;
-
-      const pos = getMousePos(e);
-      const dx = pos.x - dragStart.x;
-      const dy = pos.y - dragStart.y;
-      const original = dragStart.collider;
-      const updated = { ...original };
-
-      if (mode === 'move') {
-        updated.offsetX = original.offsetX + dx;
-        updated.offsetY = original.offsetY + dy;
-      } else if (original.type === 'circle') {
-        const centerX = CANVAS_SIZE / 2 + original.offsetX;
-        const centerY = CANVAS_SIZE / 2 + original.offsetY;
-        updated.radius = Math.max(16, Math.hypot(pos.x - centerX, pos.y - centerY));
-      } else {
-        if (mode === 'resize-tl') {
-          updated.width = Math.max(32, original.width - dx);
-          updated.height = Math.max(32, original.height - dy);
-          updated.offsetX = original.offsetX + dx / 2;
-          updated.offsetY = original.offsetY + dy / 2;
-        } else if (mode === 'resize-tr') {
-          updated.width = Math.max(32, original.width + dx);
-          updated.height = Math.max(32, original.height - dy);
-          updated.offsetX = original.offsetX + dx / 2;
-          updated.offsetY = original.offsetY + dy / 2;
-        } else if (mode === 'resize-bl') {
-          updated.width = Math.max(32, original.width - dx);
-          updated.height = Math.max(32, original.height + dy);
-          updated.offsetX = original.offsetX + dx / 2;
-          updated.offsetY = original.offsetY + dy / 2;
-        } else if (mode === 'resize-br') {
-          updated.width = Math.max(32, original.width + dx);
-          updated.height = Math.max(32, original.height + dy);
-          updated.offsetX = original.offsetX + dx / 2;
-          updated.offsetY = original.offsetY + dy / 2;
-        } else if (mode === 'resize-t') {
-          updated.height = Math.max(32, original.height - dy);
-          updated.offsetY = original.offsetY + dy / 2;
-        } else if (mode === 'resize-b') {
-          updated.height = Math.max(32, original.height + dy);
-          updated.offsetY = original.offsetY + dy / 2;
-        } else if (mode === 'resize-l') {
-          updated.width = Math.max(32, original.width - dx);
-          updated.offsetX = original.offsetX + dx / 2;
-        } else if (mode === 'resize-r') {
-          updated.width = Math.max(32, original.width + dx);
-          updated.offsetX = original.offsetX + dx / 2;
-        }
-      }
-
-      onColliderChangeRef.current?.(updated);
-      drawCollider(updated, true);
-    };
-
-    const handleMouseUp = () => {
-      colliderDragModeRef.current = 'none';
-      colliderDragStartRef.current = null;
-    };
-
-    colliderCanvas.addEventListener('mousedown', handleMouseDown);
-    colliderCanvas.addEventListener('mousemove', handleMouseMove);
-    colliderCanvas.addEventListener('mouseup', handleMouseUp);
-    colliderCanvas.addEventListener('mouseleave', handleMouseUp);
-
-    return () => {
-      colliderCanvas.removeEventListener('mousedown', handleMouseDown);
-      colliderCanvas.removeEventListener('mousemove', handleMouseMove);
-      colliderCanvas.removeEventListener('mouseup', handleMouseUp);
-      colliderCanvas.removeEventListener('mouseleave', handleMouseUp);
-    };
-  }, [activeTool, drawCollider]);
-
-  // Keep viewport size in sync with panel size.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const updateViewportSize = () => {
-      const rect = container.getBoundingClientRect();
-      setViewportSize({
-        width: Math.max(1, rect.width),
-        height: Math.max(1, rect.height),
-      });
-    };
-
-    updateViewportSize();
-    const observer = new ResizeObserver(updateViewportSize);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    setCameraCenter((prev) => clampCameraCenter(prev));
-  }, [clampCameraCenter, viewportSize.height, viewportSize.width]);
-
-  // Stage-like pan behavior: middle/right mouse drag.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const handleMouseDown = (event: MouseEvent) => {
-      if (event.button !== 1 && event.button !== 2) return;
-      if (!container.contains(event.target as Node)) return;
-      event.preventDefault();
-
-      const camera = cameraCenterRef.current;
-      panSessionRef.current = {
-        startX: event.clientX,
-        startY: event.clientY,
-        cameraStartX: camera.x,
-        cameraStartY: camera.y,
-      };
-      setIsViewportPanning(true);
-    };
-
-    const handleMouseMove = (event: MouseEvent) => {
-      const pan = panSessionRef.current;
-      if (!pan) return;
-      event.preventDefault();
-      const currentScale = BASE_VIEW_SCALE * zoomRef.current;
-      setCameraCenter(
-        clampCameraCenter(
-          panCameraFromDrag(
-            { x: pan.cameraStartX, y: pan.cameraStartY },
-            event.clientX - pan.startX,
-            event.clientY - pan.startY,
-            currentScale,
-            'down',
-          ),
-          zoomRef.current,
-        ),
-      );
-    };
-
-    const endPan = () => {
-      if (!panSessionRef.current) return;
-      panSessionRef.current = null;
-      setIsViewportPanning(false);
-    };
-
-    const handleContextMenu = (event: MouseEvent) => {
-      if (container.contains(event.target as Node)) {
-        event.preventDefault();
-      }
-    };
-
-    container.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', endPan);
-    window.addEventListener('blur', endPan);
-    container.addEventListener('contextmenu', handleContextMenu);
-
-    return () => {
-      container.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', endPan);
-      window.removeEventListener('blur', endPan);
-      container.removeEventListener('contextmenu', handleContextMenu);
-    };
-  }, [clampCameraCenter]);
 
   // Bitmap marquee selection: drag box to extract a floating bitmap object with Fabric transform gizmos.
   useEffect(() => {
@@ -6405,98 +5935,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isTextEditing,
   ]);
 
-  // Natural wheel controls (stage-matched):
-  // - ctrl/cmd + wheel: zoom at cursor pivot.
-  // - plain wheel: pan viewport.
-  const handleWheel = useCallback((e: WheelEvent) => {
-    const container = containerRef.current;
-    if (!container) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (e.ctrlKey || e.metaKey) {
-      const rect = container.getBoundingClientRect();
-      const zoomDelta = -e.deltaY * 0.01;
-      const zoomFactor = Math.max(0.01, 1 + zoomDelta);
-      const nextZoom = clampZoom(zoomRef.current * zoomFactor);
-      setCameraCenter(
-        clampCameraCenter(
-          zoomCameraAtClientPoint(
-            e.clientX,
-            e.clientY,
-            rect,
-            cameraCenterRef.current,
-            BASE_VIEW_SCALE * zoomRef.current,
-            BASE_VIEW_SCALE * nextZoom,
-            'down',
-          ),
-          nextZoom,
-        ),
-      );
-      setZoom(nextZoom);
-      return;
-    }
-
-    const currentScale = BASE_VIEW_SCALE * zoomRef.current;
-    setCameraCenter((prev) => clampCameraCenter(
-      panCameraFromWheel(prev, e.deltaX, e.deltaY, currentScale, 'down'),
-    ));
-  }, [clampCameraCenter, clampZoom]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const onWheel = (event: WheelEvent) => handleWheel(event);
-    container.addEventListener('wheel', onWheel, { passive: false });
-
-    return () => {
-      container.removeEventListener('wheel', onWheel);
-    };
-  }, [handleWheel]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const onPointerMove = (event: PointerEvent) => {
-      const rect = container.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      brushCursorPosRef.current = { x, y };
-      const overlay = brushCursorOverlayRef.current;
-      if (!overlay) return;
-      overlay.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
-      if (brushCursorEnabledRef.current) {
-        overlay.style.opacity = '1';
-      }
-    };
-
-    const onPointerLeave = () => {
-      brushCursorPosRef.current = null;
-      const overlay = brushCursorOverlayRef.current;
-      if (overlay) {
-        overlay.style.opacity = '0';
-      }
-    };
-
-    container.addEventListener('pointermove', onPointerMove);
-    container.addEventListener('pointerleave', onPointerLeave);
-
-    return () => {
-      container.removeEventListener('pointermove', onPointerMove);
-      container.removeEventListener('pointerleave', onPointerLeave);
-    };
-  }, []);
-
-  useEffect(() => {
-    syncBrushCursorOverlay();
-  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, zoom, syncBrushCursorOverlay]);
-
-  useEffect(() => {
-    onViewScaleChangeRef.current?.(BASE_VIEW_SCALE * zoom);
-  }, [zoom]);
-
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
@@ -6526,38 +5964,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     activeObject?.setCoords?.();
     fabricCanvas.requestRenderAll();
     renderVectorPointEditingGuide();
-    drawCollider(colliderRef.current, activeToolRef.current === 'collider');
-  }, [drawCollider, getZoomInvariantMetric, renderVectorPointEditingGuide, zoom]);
-
-  const setZoomLevel = useCallback((nextZoom: number) => {
-    const clampedZoom = clampZoom(nextZoom);
-    setZoom(clampedZoom);
-    setCameraCenter((prev) => clampCameraCenter(prev, clampedZoom));
-  }, [clampCameraCenter, clampZoom]);
-
-  const zoomToBounds = useCallback((
-    bounds: { left: number; top: number; width: number; height: number },
-    paddingPx = 56,
-  ): boolean => {
-    const view = viewportSizeRef.current;
-    if (view.width <= 0 || view.height <= 0) return false;
-
-    const availableWidth = Math.max(1, view.width - paddingPx * 2);
-    const availableHeight = Math.max(1, view.height - paddingPx * 2);
-    const targetScale = Math.min(
-      availableWidth / Math.max(1, bounds.width),
-      availableHeight / Math.max(1, bounds.height),
-    );
-    const targetZoom = clampZoom(targetScale / BASE_VIEW_SCALE);
-    const targetCenter = clampCameraCenter({
-      x: bounds.left + bounds.width / 2,
-      y: bounds.top + bounds.height / 2,
-    }, targetZoom, view);
-
-    setZoom(targetZoom);
-    setCameraCenter(targetCenter);
-    return true;
-  }, [clampCameraCenter, clampZoom]);
+    drawCollider(collider, activeTool === 'collider');
+  }, [activeTool, collider, drawCollider, getZoomInvariantMetric, renderVectorPointEditingGuide, zoom]);
 
   const handleZoomToActualSize = useCallback(() => {
     setZoomLevel(1);
