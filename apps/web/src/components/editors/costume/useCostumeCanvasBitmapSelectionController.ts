@@ -27,8 +27,6 @@ interface UseCostumeCanvasBitmapSelectionControllerOptions {
   getSelectionMousePos: (event: MouseEvent) => { x: number; y: number };
   hasBitmapFloatingSelection: boolean;
   loadBitmapLayer: (dataUrl: string, selectable: boolean, requestId?: number) => Promise<boolean>;
-  onBitmapLayerPickRef: MutableRefObject<((layerId: string | null) => void) | undefined>;
-  pickBitmapLayerAtPoint: (point: { x: number; y: number }) => string | null;
   setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
   syncSelectionState: () => void;
 }
@@ -49,34 +47,13 @@ export function useCostumeCanvasBitmapSelectionController({
   getSelectionMousePos,
   hasBitmapFloatingSelection,
   loadBitmapLayer,
-  onBitmapLayerPickRef,
-  pickBitmapLayerAtPoint,
   setHasBitmapFloatingSelection,
   syncSelectionState,
 }: UseCostumeCanvasBitmapSelectionControllerOptions) {
   useEffect(() => {
     const overlayCanvas = bitmapSelectionCanvasRef.current;
     if (!overlayCanvas) return;
-    const isBitmapLayerPickMode = editorModeState === 'bitmap' && activeTool === 'select' && !hasBitmapFloatingSelection;
-    if (!isBitmapLayerPickMode) {
-      return;
-    }
-
-    const handleMouseDown = (event: MouseEvent) => {
-      const layerId = pickBitmapLayerAtPoint(getSelectionMousePos(event));
-      onBitmapLayerPickRef.current?.(layerId);
-    };
-
-    overlayCanvas.addEventListener('mousedown', handleMouseDown);
-    return () => {
-      overlayCanvas.removeEventListener('mousedown', handleMouseDown);
-    };
-  }, [activeTool, bitmapSelectionCanvasRef, editorModeState, getSelectionMousePos, hasBitmapFloatingSelection, onBitmapLayerPickRef, pickBitmapLayerAtPoint]);
-
-  useEffect(() => {
-    const overlayCanvas = bitmapSelectionCanvasRef.current;
-    if (!overlayCanvas) return;
-    const isBitmapSelect = editorModeState === 'bitmap' && activeTool === 'box-select';
+    const isBitmapSelect = editorModeState === 'bitmap' && activeTool === 'select';
     if (!isBitmapSelect || hasBitmapFloatingSelection) {
       drawBitmapSelectionOverlay();
       return;
@@ -229,7 +206,7 @@ export function useCostumeCanvasBitmapSelectionController({
   ]);
 
   useEffect(() => {
-    if (editorModeState === 'bitmap' && activeTool === 'box-select') {
+    if (editorModeState === 'bitmap' && activeTool === 'select') {
       return;
     }
     if (bitmapFloatingObjectRef.current) {

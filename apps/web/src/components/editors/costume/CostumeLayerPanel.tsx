@@ -113,6 +113,7 @@ export const CostumeLayerPanel = memo(({
                 key={layer.id}
                 type="button"
                 onClick={() => onSelectLayer(layer.id)}
+                aria-pressed={isActive}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors',
                   isActive ? 'border-primary bg-primary/8' : 'border-border hover:bg-accent/50',

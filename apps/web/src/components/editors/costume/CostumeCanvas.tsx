@@ -117,7 +117,6 @@ interface CostumeCanvasProps {
   onTextSelectionChange?: (hasTextSelection: boolean) => void;
   onSelectionStateChange?: (state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => void;
   onViewScaleChange?: (scale: number) => void;
-  onBitmapLayerPick?: (layerId: string | null) => void;
 }
 
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
@@ -149,7 +148,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onTextSelectionChange,
   onSelectionStateChange,
   onViewScaleChange,
-  onBitmapLayerPick,
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const textEditingHostRef = useRef<HTMLDivElement>(null);
@@ -265,8 +263,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   onTextSelectionChangeRef.current = onTextSelectionChange;
   const onSelectionStateChangeRef = useRef(onSelectionStateChange);
   onSelectionStateChangeRef.current = onSelectionStateChange;
-  const onBitmapLayerPickRef = useRef(onBitmapLayerPick);
-  onBitmapLayerPickRef.current = onBitmapLayerPick;
 
   const suppressHistoryRef = useRef(false);
   const bitmapRasterCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -553,7 +549,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isTextEditing,
     loadDocument,
     moveSelectionOrder,
-    pickBitmapLayerAtPoint,
     rotateSelection,
     switchEditorMode,
     syncActiveVectorStyle,
@@ -851,8 +846,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getSelectionMousePos,
     hasBitmapFloatingSelection,
     loadBitmapLayer,
-    onBitmapLayerPickRef,
-    pickBitmapLayerAtPoint,
     setHasBitmapFloatingSelection,
     syncSelectionState,
   });

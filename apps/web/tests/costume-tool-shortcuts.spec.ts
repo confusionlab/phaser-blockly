@@ -10,7 +10,7 @@ test.describe('costume tool shortcuts', () => {
     expect(resolveCostumeToolShortcut('b', 'bitmap')).toBe('brush');
     expect(resolveCostumeToolShortcut('e', 'bitmap')).toBe('eraser');
     expect(resolveCostumeToolShortcut('f', 'bitmap')).toBe('fill');
-    expect(resolveCostumeToolShortcut('m', 'bitmap')).toBe('box-select');
+    expect(resolveCostumeToolShortcut('m', 'bitmap')).toBe('select');
     expect(resolveCostumeToolShortcut('t', 'bitmap')).toBeNull();
     expect(resolveCostumeToolShortcut('l', 'vector')).toBe('line');
     expect(resolveCostumeToolShortcut('l', 'bitmap')).toBe('line');

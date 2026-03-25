@@ -217,7 +217,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         return;
       }
 
-      if (mode === 'bitmap' && tool === 'box-select' && floatingBitmapObject) {
+      if (mode === 'bitmap' && tool === 'select' && floatingBitmapObject) {
         if (!opt.target || opt.target !== floatingBitmapObject) {
           void callbacks.commitBitmapSelection();
         }
@@ -768,7 +768,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       const callbacks = callbacksRef.current;
       if (
         editorModeRef.current === 'bitmap' &&
-        activeToolRef.current === 'box-select' &&
+        activeToolRef.current === 'select' &&
         bitmapFloatingObjectRef.current &&
         !bitmapSelectionBusyRef.current &&
         !suppressBitmapSelectionAutoCommitRef.current

@@ -67,7 +67,7 @@ import {
 } from '@/lib/costume/costumeDocumentRender';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
-const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'box-select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
+const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
 const MAX_DOCUMENT_HISTORY_ENTRIES = 100;
 
 function clonePersistedState(
@@ -971,13 +971,6 @@ export function CostumeEditor() {
     });
   }, [commitDocumentMutation]);
 
-  const handleBitmapLayerPick = useCallback((layerId: string | null) => {
-    if (editorMode !== 'bitmap' || activeTool !== 'select' || !layerId) {
-      return;
-    }
-    handleSelectLayer(layerId);
-  }, [activeTool, editorMode, handleSelectLayer]);
-
   const handleAddVectorLayer = useCallback(() => {
     if (isLoadingRef.current) {
       return;
@@ -1493,7 +1486,6 @@ export function CostumeEditor() {
           onTextSelectionChange={setHasTextSelection}
           onSelectionStateChange={handleSelectionStateChange}
           onViewScaleChange={setCanvasPreviewScale}
-          onBitmapLayerPick={handleBitmapLayerPick}
         />
       </div>
 

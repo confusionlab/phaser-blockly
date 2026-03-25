@@ -110,10 +110,13 @@ export function CostumeActiveLayerOverlays({
           left: 0,
           width: CANVAS_SIZE,
           height: CANVAS_SIZE,
-          pointerEvents: editorModeState === 'bitmap' && (
-            activeTool === 'select' ||
-            (activeTool === 'box-select' && activeLayerVisible && !hasBitmapFloatingSelection && !activeLayerLocked)
-          ) ? 'auto' : 'none',
+          pointerEvents: editorModeState === 'bitmap' &&
+            activeTool === 'select' &&
+            activeLayerVisible &&
+            !hasBitmapFloatingSelection &&
+            !activeLayerLocked
+            ? 'auto'
+            : 'none',
           opacity: activeLayerVisible ? 1 : 0,
           zIndex: layerZIndex + 1,
         }}

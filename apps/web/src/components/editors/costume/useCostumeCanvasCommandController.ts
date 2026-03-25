@@ -201,39 +201,6 @@ export function useCostumeCanvasCommandController({
     };
   }, [bitmapSelectionCanvasRef]);
 
-  const pickBitmapLayerAtPoint = useCallback((point: { x: number; y: number }): string | null => {
-    const x = Math.max(0, Math.min(CANVAS_SIZE - 1, Math.floor(point.x)));
-    const y = Math.max(0, Math.min(CANVAS_SIZE - 1, Math.floor(point.y)));
-    const hostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId;
-    const canUseHostedLayer = isHostedLayerReadyRef.current;
-
-    for (let index = documentLayers.length - 1; index >= 0; index -= 1) {
-      const layer = documentLayers[index];
-      if (!layer || !layer.visible || layer.opacity <= 0) {
-        continue;
-      }
-
-      const sourceCanvas = canUseHostedLayer && layer.id === hostedLayerId
-        ? fabricCanvasRef.current?.toCanvasElement(1) ?? null
-        : layerSurfaceRefs.current.get(layer.id) ?? null;
-      if (!sourceCanvas) {
-        continue;
-      }
-
-      const ctx = sourceCanvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) {
-        continue;
-      }
-
-      const alpha = ctx.getImageData(x, y, 1, 1).data[3] ?? 0;
-      if (alpha > 0) {
-        return layer.id;
-      }
-    }
-
-    return null;
-  }, [activeDocumentLayerId, documentLayers, fabricCanvasRef, hostedLayerIdRef, isHostedLayerReadyRef, layerSurfaceRefs]);
-
   const applySelectionTransform = useCallback((transform: Parameters<typeof util.applyTransformToObject>[1]): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return false;
@@ -861,7 +828,6 @@ export function useCostumeCanvasCommandController({
     isTextEditing,
     loadDocument,
     moveSelectionOrder,
-    pickBitmapLayerAtPoint,
     rotateSelection,
     switchEditorMode,
     syncActiveVectorStyle,

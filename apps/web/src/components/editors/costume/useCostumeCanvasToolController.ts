@@ -192,7 +192,7 @@ export function useCostumeCanvasToolController({
     const isBitmapFloatingSelectionMode =
       layerInteractive &&
       mode === 'bitmap' &&
-      tool === 'box-select' &&
+      tool === 'select' &&
       !!floatingBitmapObject;
 
     restoreAllOriginalControls();

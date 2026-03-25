@@ -17,7 +17,7 @@ const VECTOR_COSTUME_TOOL_SHORTCUTS: Record<string, DrawingTool> = {
 };
 
 const BITMAP_COSTUME_TOOL_SHORTCUTS: Record<string, DrawingTool> = {
-  m: 'box-select',
+  m: 'select',
   b: 'brush',
   e: 'eraser',
   f: 'fill',

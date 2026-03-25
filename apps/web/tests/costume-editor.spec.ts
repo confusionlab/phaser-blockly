@@ -54,6 +54,15 @@ async function drawAcrossCostumeCanvas(page: Page, startXFactor: number, startYF
   await page.mouse.up();
 }
 
+async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) {
+  const box = await getCostumeCanvasBox(page);
+  const targetX = box.x + box.width * xFactor;
+  const targetY = box.y + box.height * yFactor;
+  await page.mouse.move(targetX, targetY);
+  await page.mouse.down();
+  await page.mouse.up();
+}
+
 async function waitForCostumeCanvasReady(page: Page): Promise<void> {
   const activeLayerVisual = page.getByTestId('costume-active-layer-visual');
   await expect(activeLayerVisual).toBeVisible({ timeout: 10000 });
@@ -139,5 +148,34 @@ test.describe('Costume editor tools', () => {
     await roundTripThroughCodeTab(page);
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+  });
+
+  test('bitmap select stays on the explicit layer and does not auto-switch from canvas clicks', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await expect(page.getByRole('button', { name: /box select/i })).toHaveCount(0);
+
+    await page.getByRole('button', { name: /^vector$/i }).click();
+    await expect(page.getByRole('button', { name: /^layer 2/i })).toBeVisible({ timeout: 10000 });
+    await waitForCostumeCanvasReady(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.56, 0.30, 0.80, 0.58);
+
+    const layer2Button = page.getByRole('button', { name: /^layer 2 vector$/i });
+    const layer1Button = page.getByRole('button', { name: /^layer 1 bitmap$/i });
+    await expect(layer2Button).toHaveAttribute('aria-pressed', 'true');
+
+    await layer1Button.click();
+    await waitForCostumeCanvasReady(page);
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await expect(layer1Button).toHaveAttribute('aria-pressed', 'true');
+    await expect(layer2Button).toHaveAttribute('aria-pressed', 'false');
+
+    await clickCostumeCanvas(page, 0.68, 0.44);
+
+    await expect(layer1Button).toHaveAttribute('aria-pressed', 'true');
+    await expect(layer2Button).toHaveAttribute('aria-pressed', 'false');
   });
 });

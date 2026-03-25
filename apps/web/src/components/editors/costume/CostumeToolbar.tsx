@@ -573,8 +573,7 @@ interface CostumeToolbarProps {
 }
 
 const bitmapPrimaryTools: ToolDefinition[] = [
-  { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
-  { tool: 'box-select', icon: <BoxSelectIcon />, label: 'Box Select' },
+  { tool: 'select', icon: <BoxSelectIcon />, label: 'Select' },
   { tool: 'brush', icon: <Paintbrush className="size-[18px]" />, label: 'Brush' },
   { tool: 'eraser', icon: <Eraser className="size-[18px]" />, label: 'Eraser' },
   { tool: 'fill', icon: <PaintBucket className="size-[18px]" />, label: 'Fill' },
@@ -716,7 +715,7 @@ export const CostumeToolbar = memo(({
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
   const shapeToolIsActive = showShapeTools && isShapeTool(activeTool);
-  const selectionTool = editorMode === 'bitmap' ? 'box-select' : 'select';
+  const selectionTool: DrawingTool = 'select';
   const showSelectionActions = selectionActionsEnabled && activeTool === selectionTool && !isVectorPointEditing && hasActiveSelection;
   const showVectorHandleControl = editorMode === 'vector' && isVectorPointEditing && hasSelectedVectorPoints;
   const showBitmapShapeStyleControls = editorMode === 'bitmap' && shapeToolIsActive;
