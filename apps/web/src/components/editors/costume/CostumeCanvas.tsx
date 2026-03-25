@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react';
+import { useEffect, useRef, useCallback, forwardRef, useMemo, useState } from 'react';
 import {
   Canvas as FabricCanvas,
   Path,
@@ -9,7 +9,7 @@ import {
   controlsUtils,
   util,
 } from 'fabric';
-import { calculateBoundsFromCanvas, calculateBoundsFromImageData } from '@/utils/imageBounds';
+import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import {
   pathNodeHandleTypeToVectorHandleMode,
   vectorHandleModeToPathNodeHandleType,
@@ -65,7 +65,6 @@ import {
   VECTOR_SELECTION_COLOR,
   VECTOR_SELECTION_CORNER_COLOR,
   VECTOR_SELECTION_CORNER_STROKE,
-  VECTOR_SELECTION_BORDER_OPACITY,
   VECTOR_SELECTION_BORDER_SCALE,
   CIRCLE_CUBIC_KAPPA,
   VECTOR_POINT_EDIT_GUIDE_STROKE,
@@ -85,7 +84,6 @@ import {
   OBJECT_SELECTION_CORNER_SIZE,
   OBJECT_SELECTION_PADDING,
   COSTUME_WORLD_RECT,
-  type CanvasHistorySnapshot,
   type CanvasSelectionBoundsSnapshot,
   type PathAnchorDragState,
   type PointSelectionTransformSession,
@@ -98,15 +96,12 @@ import {
   type PenDraftAnchor,
   type PenDraftState,
   type PenAnchorPlacementSession,
-  areHistorySnapshotsEqual,
   buildClosedPolylinePoints,
   buildPenDraftNodeHandleTypes,
   buildPenDraftPathData,
   buildPolylineArcTable,
   clampUnit,
-  cloneHistorySnapshot,
   clonePenDraftAnchor,
-  createActiveLayerCanvasStateFromSnapshot,
   createPenDraftAnchor,
   extractVisibleCanvasRegion,
   getCubicBezierPoint,
@@ -150,7 +145,12 @@ import {
 } from './costumeCanvasVectorRuntime';
 import { useCostumeCanvasColliderController } from './useCostumeCanvasColliderController';
 import { useCostumeCanvasFabricHostController } from './useCostumeCanvasFabricHostController';
+import { useCostumeCanvasHistoryController } from './useCostumeCanvasHistoryController';
+import { useCostumeCanvasImperativeHandle } from './useCostumeCanvasImperativeHandle';
+import { useCostumeCanvasBitmapSelectionController } from './useCostumeCanvasBitmapSelectionController';
+import { useCostumeCanvasPenHotkeys } from './useCostumeCanvasPenHotkeys';
 import { useCostumeCanvasToolController } from './useCostumeCanvasToolController';
+import { useCostumeCanvasVectorHandleSync } from './useCostumeCanvasVectorHandleSync';
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
 
 export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
@@ -355,10 +355,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const vectorStrokeTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const vectorStrokeTexturePendingRef = useRef<Set<string>>(new Set());
 
-  const lastCommittedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
-  const persistedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
-  const hasUnsavedChangesRef = useRef(false);
-
   const shapeDraftRef = useRef<{
     type: 'rectangle' | 'circle' | 'triangle' | 'star' | 'line';
     startX: number;
@@ -374,6 +370,19 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const suppressBitmapSelectionAutoCommitRef = useRef(false);
   const loadRequestIdRef = useRef(0);
   const loadedSessionKeyRef = useRef<string | null>(null);
+  const {
+    createSnapshot,
+    lastCommittedSnapshotRef,
+    markCurrentSnapshotPersisted,
+    persistedSnapshotRef,
+    saveHistory,
+  } = useCostumeCanvasHistoryController({
+    editorModeRef,
+    fabricCanvasRef,
+    loadedSessionKeyRef,
+    onHistoryChangeRef,
+    suppressHistoryRef,
+  });
   const originalControlsRef = useRef<WeakMap<object, Record<string, Control> | undefined>>(new WeakMap());
   const activePathAnchorRef = useRef<{ path: any; anchorIndex: number } | null>(null);
   const selectedPathAnchorIndicesRef = useRef<number[]>([]);
@@ -1157,52 +1166,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     return null;
   }, [activeDocumentLayer?.id, documentLayers]);
-
-  const createSnapshot = useCallback((): CanvasHistorySnapshot => {
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) {
-      return {
-        mode: editorModeRef.current,
-        bitmapDataUrl: '',
-        vectorJson: null,
-      };
-    }
-
-    const activeLayerCanvas = fabricCanvas.toCanvasElement(1);
-    const bitmapDataUrl = activeLayerCanvas.toDataURL('image/png');
-    const mode = editorModeRef.current;
-    const vectorJson = mode === 'vector' ? JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS)) : null;
-    return { mode, bitmapDataUrl, vectorJson };
-  }, []);
-
-  const updateDirtyStateFromSnapshot = useCallback((snapshot: CanvasHistorySnapshot | null) => {
-    hasUnsavedChangesRef.current = !areHistorySnapshotsEqual(snapshot, persistedSnapshotRef.current);
-  }, []);
-
-  const markSnapshotPersisted = useCallback((snapshot: CanvasHistorySnapshot | null) => {
-    persistedSnapshotRef.current = snapshot ? cloneHistorySnapshot(snapshot) : null;
-    hasUnsavedChangesRef.current = false;
-  }, []);
-
-  const markCurrentSnapshotPersisted = useCallback((sessionKey?: string | null) => {
-    if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
-      return;
-    }
-
-    markSnapshotPersisted(createSnapshot());
-  }, [createSnapshot, markSnapshotPersisted]);
-
-  const saveHistory = useCallback(() => {
-    if (suppressHistoryRef.current) return;
-    const snapshot = createSnapshot();
-    if (areHistorySnapshotsEqual(snapshot, lastCommittedSnapshotRef.current)) {
-      return;
-    }
-
-    lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
-    updateDirtyStateFromSnapshot(snapshot);
-    onHistoryChangeRef.current?.(createActiveLayerCanvasStateFromSnapshot(snapshot));
-  }, [createSnapshot, updateDirtyStateFromSnapshot]);
 
   const applySelectionTransform = useCallback((transform: Parameters<typeof util.applyTransformToObject>[1]): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -4610,55 +4573,21 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncActiveLayerCanvasVisibility();
   }, [syncActiveLayerCanvasVisibility]);
 
-  useEffect(() => {
-    const activeAnchor = activePathAnchorRef.current;
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!activeAnchor || !fabricCanvas) return;
-    if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'select') return;
-    if (!vectorPointEditingTargetRef.current) return;
-
-    const pendingSelectionSyncedMode = pendingSelectionSyncedVectorHandleModeRef.current;
-    if (pendingSelectionSyncedMode !== null) {
-      pendingSelectionSyncedVectorHandleModeRef.current = null;
-      if (pendingSelectionSyncedMode === vectorHandleMode) {
-        return;
-      }
-    }
-
-    if (vectorHandleMode === 'multiple') {
-      return;
-    }
-
-    const activeObject = fabricCanvas.getActiveObject() as any;
-    if (!activeObject || activeObject !== activeAnchor.path) return;
-    if (getFabricObjectType(activeObject) !== 'path') return;
-    const selectedAnchorIndices = getSelectedPathAnchorIndices(activeObject);
-    const targetAnchorIndices = selectedAnchorIndices.length > 0
-      ? selectedAnchorIndices
-      : [activeAnchor.anchorIndex];
-
-    let changed = false;
-    for (const anchorIndex of targetAnchorIndices) {
-      const currentHandleMode = pathNodeHandleTypeToVectorHandleMode(
-        getPathNodeHandleType(activeObject, anchorIndex) ?? 'linear',
-      );
-      if (currentHandleMode === vectorHandleMode) continue;
-
-      setPathNodeHandleType(
-        activeObject,
-        anchorIndex,
-        vectorHandleModeToPathNodeHandleType(getEditableVectorHandleMode(vectorHandleMode)),
-      );
-      enforcePathAnchorHandleType(activeObject, anchorIndex, null);
-      changed = true;
-    }
-
-    if (!changed) return;
-
-    syncPathControlPointVisibility(activeObject);
-    fabricCanvas.requestRenderAll();
-    saveHistory();
-  }, [enforcePathAnchorHandleType, getPathNodeHandleType, getSelectedPathAnchorIndices, saveHistory, setPathNodeHandleType, syncPathControlPointVisibility, vectorHandleMode]);
+  useCostumeCanvasVectorHandleSync({
+    activePathAnchorRef,
+    activeToolRef,
+    editorModeRef,
+    enforcePathAnchorHandleType,
+    fabricCanvasRef,
+    getPathNodeHandleType,
+    getSelectedPathAnchorIndices,
+    pendingSelectionSyncedVectorHandleModeRef,
+    saveHistory,
+    setPathNodeHandleType,
+    syncPathControlPointVisibility,
+    vectorHandleMode,
+    vectorPointEditingTargetRef,
+  });
 
   // Sync selected vector object style when controls change.
   useEffect(() => {
@@ -4727,184 +4656,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory();
   }, [brushColor, textStyle, vectorStyle, saveHistory]);
 
-  // Bitmap marquee selection: drag box to extract a floating bitmap object with Fabric transform gizmos.
-  useEffect(() => {
-    const overlayCanvas = bitmapSelectionCanvasRef.current;
-    if (!overlayCanvas) return;
-    const isBitmapLayerPickMode = editorModeState === 'bitmap' && activeTool === 'select' && !hasBitmapFloatingSelection;
-    if (!isBitmapLayerPickMode) {
-      return;
-    }
-
-    const handleMouseDown = (event: MouseEvent) => {
-      const layerId = pickBitmapLayerAtPoint(getSelectionMousePos(event));
-      onBitmapLayerPickRef.current?.(layerId);
-    };
-
-    overlayCanvas.addEventListener('mousedown', handleMouseDown);
-    return () => {
-      overlayCanvas.removeEventListener('mousedown', handleMouseDown);
-    };
-  }, [activeTool, editorModeState, getSelectionMousePos, hasBitmapFloatingSelection, pickBitmapLayerAtPoint]);
-
-  useEffect(() => {
-    const overlayCanvas = bitmapSelectionCanvasRef.current;
-    if (!overlayCanvas) return;
-    const isBitmapSelect = editorModeState === 'bitmap' && activeTool === 'box-select';
-    if (!isBitmapSelect || hasBitmapFloatingSelection) {
-      drawBitmapSelectionOverlay();
-      return;
-    }
-
-    const handleMouseDown = (event: MouseEvent) => {
-      if (bitmapSelectionBusyRef.current) return;
-      const pos = getSelectionMousePos(event);
-      bitmapSelectionDragModeRef.current = 'marquee';
-      bitmapSelectionStartRef.current = pos;
-      bitmapMarqueeRectRef.current = {
-        x: pos.x,
-        y: pos.y,
-        width: 0,
-        height: 0,
-      };
-      drawBitmapSelectionOverlay();
-    };
-
-    const handleMouseMove = (event: MouseEvent) => {
-      if (bitmapSelectionBusyRef.current) return;
-      const mode = bitmapSelectionDragModeRef.current;
-      if (mode === 'none') return;
-      const pos = getSelectionMousePos(event);
-
-      const start = bitmapSelectionStartRef.current;
-      if (!start) return;
-      const x = Math.min(start.x, pos.x);
-      const y = Math.min(start.y, pos.y);
-      const width = Math.abs(pos.x - start.x);
-      const height = Math.abs(pos.y - start.y);
-      bitmapMarqueeRectRef.current = { x, y, width, height };
-      drawBitmapSelectionOverlay();
-    };
-
-    const handleMouseUp = async () => {
-      const mode = bitmapSelectionDragModeRef.current;
-      if (mode === 'none') return;
-      bitmapSelectionDragModeRef.current = 'none';
-
-      const marquee = bitmapMarqueeRectRef.current;
-      bitmapSelectionStartRef.current = null;
-      bitmapMarqueeRectRef.current = null;
-      drawBitmapSelectionOverlay();
-
-      if (!marquee || marquee.width < 1 || marquee.height < 1) {
-        return;
-      }
-
-      const width = Math.max(1, Math.floor(marquee.width));
-      const height = Math.max(1, Math.floor(marquee.height));
-      const x = Math.floor(marquee.x);
-      const y = Math.floor(marquee.y);
-
-      const fabricCanvas = fabricCanvasRef.current;
-      if (!fabricCanvas || bitmapSelectionBusyRef.current) return;
-
-      bitmapSelectionBusyRef.current = true;
-      try {
-        const raster = fabricCanvas.toCanvasElement(1);
-        const rasterCtx = raster.getContext('2d', { willReadFrequently: true });
-        if (!rasterCtx) return;
-
-        const selectionImageData = rasterCtx.getImageData(x, y, width, height);
-        const visibleSelectionBounds = calculateBoundsFromImageData(selectionImageData, 0);
-        if (!visibleSelectionBounds) {
-          return;
-        }
-
-        rasterCtx.clearRect(x, y, width, height);
-        const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
-        if (!loaded) return;
-
-        const selectionCanvas = document.createElement('canvas');
-        selectionCanvas.width = visibleSelectionBounds.width;
-        selectionCanvas.height = visibleSelectionBounds.height;
-        const selectionCtx = selectionCanvas.getContext('2d');
-        if (!selectionCtx) return;
-        selectionCtx.putImageData(
-          selectionImageData,
-          -visibleSelectionBounds.x,
-          -visibleSelectionBounds.y,
-        );
-
-        const floatingImage = await FabricImage.fromURL(selectionCanvas.toDataURL('image/png'));
-        floatingImage.set({
-          left: x + visibleSelectionBounds.x + visibleSelectionBounds.width / 2,
-          top: y + visibleSelectionBounds.y + visibleSelectionBounds.height / 2,
-          originX: 'center',
-          originY: 'center',
-          selectable: true,
-          evented: true,
-          hasControls: true,
-          hasBorders: true,
-          lockMovementX: false,
-          lockMovementY: false,
-          lockRotation: false,
-          lockScalingX: false,
-          lockScalingY: false,
-        } as any);
-        (floatingImage as any).__bitmapFloatingSelection = true;
-        floatingImage.borderColor = VECTOR_SELECTION_COLOR;
-        floatingImage.borderScaleFactor = VECTOR_SELECTION_BORDER_SCALE;
-        floatingImage.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
-        floatingImage.cornerStyle = 'rect';
-        floatingImage.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
-        floatingImage.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
-        floatingImage.cornerSize = 12;
-        floatingImage.transparentCorners = false;
-
-        fabricCanvas.add(floatingImage);
-        fabricCanvas.setActiveObject(floatingImage);
-        bitmapFloatingObjectRef.current = floatingImage;
-        setHasBitmapFloatingSelection(true);
-        syncSelectionState();
-        configureCanvasForTool();
-        fabricCanvas.requestRenderAll();
-        drawBitmapSelectionOverlay();
-      } finally {
-        bitmapSelectionBusyRef.current = false;
-      }
-    };
-
-    overlayCanvas.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      overlayCanvas.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [
+  useCostumeCanvasBitmapSelectionController({
     activeTool,
+    bitmapFloatingObjectRef,
+    bitmapMarqueeRectRef,
+    bitmapSelectionBusyRef,
+    bitmapSelectionCanvasRef,
+    bitmapSelectionDragModeRef,
+    bitmapSelectionStartRef,
+    commitBitmapSelection,
     configureCanvasForTool,
     drawBitmapSelectionOverlay,
     editorModeState,
-    hasBitmapFloatingSelection,
+    fabricCanvasRef,
     getSelectionMousePos,
+    hasBitmapFloatingSelection,
     loadBitmapLayer,
+    onBitmapLayerPickRef,
+    pickBitmapLayerAtPoint,
+    setHasBitmapFloatingSelection,
     syncSelectionState,
-  ]);
-
-  // If we leave bitmap select mode with a floating selection, commit it to avoid losing pixels.
-  useEffect(() => {
-    if (editorModeState === 'bitmap' && activeTool === 'box-select') {
-      return;
-    }
-    if (bitmapFloatingObjectRef.current) {
-      void commitBitmapSelection();
-      return;
-    }
-    drawBitmapSelectionOverlay();
-  }, [activeTool, commitBitmapSelection, drawBitmapSelectionOverlay, editorModeState]);
+  });
 
   useEffect(() => {
     if (editorModeState === 'vector' && activeTool === 'pen') {
@@ -4925,194 +4697,43 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     fabricCanvasRef.current?.requestRenderAll();
   }, [activeTool, editorModeState, vectorStyle]);
 
-  useEffect(() => {
-    const shouldIgnorePenShortcutTarget = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) return false;
-      if (target.isContentEditable) return true;
-      const tagName = target.tagName.toLowerCase();
-      return tagName === 'input' || tagName === 'textarea' || tagName === 'select';
-    };
+  useCostumeCanvasPenHotkeys({
+    activeToolRef,
+    editorModeRef,
+    fabricCanvasRef,
+    finalizePenDraft,
+    penAnchorPlacementSessionRef,
+    penDraftRef,
+    penModifierStateRef,
+    removeLastPenDraftAnchor,
+    setPenAnchorMoveMode,
+    syncPenPlacementToAltModifier,
+  });
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'pen') {
-        return;
-      }
-      if (shouldIgnorePenShortcutTarget(event.target)) {
-        return;
-      }
-
-      if (event.key === ' ' && penAnchorPlacementSessionRef.current) {
-        event.preventDefault();
-        if (!penModifierStateRef.current.space) {
-          penModifierStateRef.current.space = true;
-          if (setPenAnchorMoveMode(true)) {
-            fabricCanvasRef.current?.requestRenderAll();
-          }
-        }
-        return;
-      }
-
-      if (event.key === 'Alt' && penAnchorPlacementSessionRef.current) {
-        event.preventDefault();
-        if (!penModifierStateRef.current.alt) {
-          penModifierStateRef.current.alt = true;
-          if (syncPenPlacementToAltModifier(true)) {
-            fabricCanvasRef.current?.requestRenderAll();
-          }
-        }
-        return;
-      }
-
-      if (!penDraftRef.current) {
-        return;
-      }
-
-      if (event.key === 'Enter' || event.key === 'Escape') {
-        event.preventDefault();
-        finalizePenDraft();
-        return;
-      }
-
-      if (event.key === 'Backspace' || event.key === 'Delete') {
-        event.preventDefault();
-        removeLastPenDraftAnchor();
-      }
-    };
-
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (editorModeRef.current !== 'vector' || activeToolRef.current !== 'pen') {
-        return;
-      }
-
-      if (event.key === ' ') {
-        if (!penModifierStateRef.current.space) {
-          return;
-        }
-        event.preventDefault();
-        penModifierStateRef.current.space = false;
-        if (setPenAnchorMoveMode(false)) {
-          fabricCanvasRef.current?.requestRenderAll();
-        }
-        return;
-      }
-
-      if (event.key === 'Alt') {
-        if (!penModifierStateRef.current.alt) {
-          return;
-        }
-        penModifierStateRef.current.alt = false;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [finalizePenDraft, removeLastPenDraftAnchor, setPenAnchorMoveMode, syncPenPlacementToAltModifier]);
-
-  // Expose imperative methods.
-  useImperativeHandle(ref, () => ({
-    toDataURL: () => {
-      const composed = getComposedCanvasElement();
-      return composed.toDataURL('image/webp', 0.85);
-    },
-
-    toDataURLWithBounds: () => {
-      const composed = getComposedCanvasElement();
-      return {
-        dataUrl: composed.toDataURL('image/webp', 0.85),
-        bounds: calculateBoundsFromCanvas(composed),
-      };
-    },
-
-    loadFromDataURL: async (dataUrl: string, sessionKey?: string | null) => {
-      loadedSessionKeyRef.current = null;
-      await loadBitmapLayer(dataUrl, false);
-      setEditorMode('bitmap');
-      loadedSessionKeyRef.current = sessionKey ?? null;
-      lastCommittedSnapshotRef.current = null;
-      saveHistory();
-      markCurrentSnapshotPersisted(sessionKey ?? null);
-    },
-
-    loadDocument,
-
-    exportCostumeState,
-
-    hasUnsavedChanges: (sessionKey?: string | null) => {
-      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
-        return false;
-      }
-      return !areHistorySnapshotsEqual(createSnapshot(), persistedSnapshotRef.current);
-    },
-
-    markPersisted: (sessionKey?: string | null) => {
-      markCurrentSnapshotPersisted(sessionKey);
-    },
-
-    setEditorMode: async (mode: CostumeEditorMode) => {
-      await switchEditorMode(mode);
-      configureCanvasForTool();
-    },
-
-    getEditorMode: () => editorModeRef.current,
-
-    getLoadedSessionKey: () => loadedSessionKeyRef.current,
-
-    deleteSelection,
-
-    duplicateSelection,
-
-    moveSelectionOrder,
-
-    flipSelection,
-
-    rotateSelection,
-
+  useCostumeCanvasImperativeHandle({
     alignSelection,
-
-    isTextEditing,
-
-    clear: () => {
-      void (async () => {
-        loadedSessionKeyRef.current = null;
-        await loadBitmapLayer('', false);
-        setEditorMode('bitmap');
-        saveHistory();
-      })();
-    },
-
-    undo: () => {
-      return;
-    },
-
-    redo: () => {
-      return;
-    },
-
-    canUndo: () => false,
-    canRedo: () => false,
-  }), [
     configureCanvasForTool,
     createSnapshot,
+    deleteSelection,
+    duplicateSelection,
     exportCostumeState,
+    flipSelection,
     getComposedCanvasElement,
-    markCurrentSnapshotPersisted,
+    isTextEditing,
+    lastCommittedSnapshotRef,
     loadBitmapLayer,
     loadDocument,
+    loadedSessionKeyRef,
+    markCurrentSnapshotPersisted,
+    moveSelectionOrder,
+    persistedSnapshotRef,
+    ref,
+    rotateSelection,
     saveHistory,
     setEditorMode,
     switchEditorMode,
-    deleteSelection,
-    duplicateSelection,
-    moveSelectionOrder,
-    flipSelection,
-    rotateSelection,
-    alignSelection,
-    isTextEditing,
-  ]);
+    editorModeRef,
+  });
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
