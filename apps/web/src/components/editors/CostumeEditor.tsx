@@ -52,6 +52,7 @@ import {
   getCostumeLayerById,
   getCostumeLayerIndex,
   insertCostumeLayerAfterActive,
+  isBitmapCostumeLayer,
   isVectorCostumeLayer,
   moveCostumeLayer,
   removeCostumeLayer,
@@ -175,6 +176,22 @@ export function CostumeEditor() {
   const currentCostumeLoadKey = currentCostume
     ? `${currentCostume.id}:${currentCostume.document.activeLayerId}`
     : null;
+  const layerSliceRenderKey = useMemo(() => {
+    if (!currentCostume) {
+      return null;
+    }
+
+    const activeLayerId = currentCostume.document.activeLayerId;
+    return currentCostume.document.layers.map((layer, index) => {
+      if (layer.id === activeLayerId) {
+        return `active:${index}:${layer.id}`;
+      }
+      if (isBitmapCostumeLayer(layer)) {
+        return `bitmap:${index}:${layer.id}:${layer.visible ? 1 : 0}:${layer.opacity}:${layer.bitmap.assetId ?? ''}`;
+      }
+      return `vector:${index}:${layer.id}:${layer.visible ? 1 : 0}:${layer.opacity}:${layer.vector.fabricJson}`;
+    }).join('|');
+  }, [currentCostume]);
   const currentSession = useMemo(() => {
     const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
     return target ? createCostumeEditorSession(target) : null;
@@ -250,19 +267,20 @@ export function CostumeEditor() {
     let cancelled = false;
 
     const renderLayerSlices = async () => {
-      if (!currentCostume) {
+      const sliceDocument = currentCostumeRef.current?.document ?? null;
+      if (!sliceDocument) {
         setUnderlaySrc(null);
         setOverlaySrc(null);
         return;
       }
 
       const [nextUnderlay, nextOverlay] = await Promise.all([
-        renderCostumeDocumentSlice(currentCostume.document, {
-          activeLayerId: currentCostume.document.activeLayerId,
+        renderCostumeDocumentSlice(sliceDocument, {
+          activeLayerId: sliceDocument.activeLayerId,
           placement: 'below',
         }),
-        renderCostumeDocumentSlice(currentCostume.document, {
-          activeLayerId: currentCostume.document.activeLayerId,
+        renderCostumeDocumentSlice(sliceDocument, {
+          activeLayerId: sliceDocument.activeLayerId,
           placement: 'above',
         }),
       ]);
@@ -280,7 +298,7 @@ export function CostumeEditor() {
     return () => {
       cancelled = true;
     };
-  }, [currentCostume, currentCostumeLoadKey]);
+  }, [currentCostume?.id, layerSliceRenderKey]);
 
   const isCanvasReadyForSession = useCallback((session: CostumeEditorSession | null): boolean => {
     if (!canvasRef.current || !session) {
@@ -894,7 +912,6 @@ export function CostumeEditor() {
     const currentDocument = currentCostumeRef.current?.document;
     const currentLayer = currentDocument ? getCostumeLayerById(currentDocument, layerId) : null;
     const nextVisible = currentLayer ? !currentLayer.visible : null;
-    const shouldReloadActiveLayer = currentDocument?.activeLayerId === layerId;
 
     void commitDocumentMutation((working) => {
       const layer = getCostumeLayerById(working.document, layerId);
@@ -903,8 +920,6 @@ export function CostumeEditor() {
         return null;
       }
       return setCostumeLayerVisibility(working.document, layerId, resolvedVisible);
-    }, {
-      forceReload: shouldReloadActiveLayer,
     });
   }, [commitDocumentMutation]);
 
