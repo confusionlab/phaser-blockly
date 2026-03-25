@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, forwardRef, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, forwardRef, useMemo, useState } from 'react';
 import {
   Canvas as FabricCanvas,
   Control,
@@ -154,7 +154,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const containerRef = useRef<HTMLDivElement>(null);
   const textEditingHostRef = useRef<HTMLDivElement>(null);
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
-  const fabricCanvasHostRef = useRef<HTMLDivElement>(null);
+  const fabricCanvasHostRef = useRef<HTMLDivElement | null>(null);
+  const [fabricCanvasHostElement, setFabricCanvasHostElement] = useState<HTMLDivElement | null>(null);
   const fabricCanvasElementRef = useRef<HTMLCanvasElement | null>(null);
   const layerSurfaceRefs = useRef(new Map<string, HTMLCanvasElement>());
   const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -171,6 +172,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const hostedLayerIdRef = useRef<string | null>(null);
   const [isHostedLayerReadyState, setIsHostedLayerReadyState] = useState(false);
   const isHostedLayerReadyRef = useRef(false);
+  const fabricCanvasReadyResolversRef = useRef<Array<() => void>>([]);
+  const setFabricCanvasHostNode = useCallback((node: HTMLDivElement | null) => {
+    if (fabricCanvasHostRef.current === node) {
+      return;
+    }
+    fabricCanvasHostRef.current = node;
+    setFabricCanvasHostElement(node);
+  }, []);
   const setHostedLayerId = useCallback((layerId: string | null) => {
     hostedLayerIdRef.current = layerId;
     setHostedLayerIdState(layerId);
@@ -178,6 +187,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const setHostedLayerReady = useCallback((ready: boolean) => {
     isHostedLayerReadyRef.current = ready;
     setIsHostedLayerReadyState(ready);
+  }, []);
+  const resolveFabricCanvasReady = useCallback(() => {
+    const pendingResolvers = fabricCanvasReadyResolversRef.current.splice(0);
+    pendingResolvers.forEach((resolve) => resolve());
   }, []);
   const hostedDocumentLayer = useMemo(
     () => documentLayers.find((layer) => layer.id === hostedLayerIdState) ?? activeDocumentLayer ?? null,
@@ -422,6 +435,26 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     return loadRequestIdRef.current === requestId;
   }, []);
 
+  const waitForFabricCanvas = useCallback(async (requestId?: number): Promise<FabricCanvas | null> => {
+    if (!isLoadRequestActive(requestId)) {
+      return null;
+    }
+
+    if (fabricCanvasRef.current) {
+      return fabricCanvasRef.current;
+    }
+
+    await new Promise<void>((resolve) => {
+      fabricCanvasReadyResolversRef.current.push(resolve);
+    });
+
+    if (!isLoadRequestActive(requestId)) {
+      return null;
+    }
+
+    return fabricCanvasRef.current;
+  }, [isLoadRequestActive]);
+
   const drawBitmapSelectionOverlay = useCallback(() => {
     const overlayCtx = bitmapSelectionCtxRef.current;
     if (!overlayCtx) return;
@@ -462,6 +495,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     setHasBitmapFloatingSelection,
     suppressHistoryRef,
     syncSelectionState,
+    waitForFabricCanvas,
   });
 
   const {
@@ -573,6 +607,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncSelectionState,
     textStyle,
     vectorStyle,
+    waitForFabricCanvas,
   });
 
   const {
@@ -727,6 +762,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     enforcePathAnchorHandleType,
     fabricCanvasElementRef,
     fabricCanvasHostRef,
+    fabricCanvasHostElement,
     fabricCanvasRef,
     flattenBitmapLayer,
     getPathAnchorDragState,
@@ -767,14 +803,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorStrokeCanvasRef,
     vectorStrokeCtxRef,
     vectorStyleRef,
+    onFabricCanvasReady: resolveFabricCanvasReady,
   });
 
   // Sync tool behavior.
-  useEffect(() => {
+  useLayoutEffect(() => {
     configureCanvasForTool();
   }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, vectorStyle, configureCanvasForTool]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     syncActiveLayerCanvasVisibility();
   }, [syncActiveLayerCanvasVisibility]);
 
@@ -886,6 +923,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, [costumeDocument, setHostedLayerId, setHostedLayerReady]);
 
   useEffect(() => {
+    return () => {
+      const pendingResolvers = fabricCanvasReadyResolversRef.current.splice(0);
+      pendingResolvers.forEach((resolve) => resolve());
+    };
+  }, []);
+
+  useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
 
@@ -947,9 +991,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       containerRef={containerRef}
       documentLayers={documentLayers}
       editorModeState={editorModeState}
-      fabricCanvasHostRef={fabricCanvasHostRef}
+      fabricCanvasHostRef={setFabricCanvasHostNode}
       hasBitmapFloatingSelection={hasBitmapFloatingSelection}
-      hostedLayerId={hostedLayerIdState}
+      hostedLayerId={hostedDocumentLayer?.id ?? null}
       hostedLayerReady={isHostedLayerReadyState}
       isViewportPanning={isViewportPanning}
       layerSurfaceRefs={layerSurfaceRefs}

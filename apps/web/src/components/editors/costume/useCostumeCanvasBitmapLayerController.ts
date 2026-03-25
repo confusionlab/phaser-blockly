@@ -22,6 +22,7 @@ interface UseCostumeCanvasBitmapLayerControllerOptions {
   setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
   suppressHistoryRef: MutableRefObject<boolean>;
   syncSelectionState: () => void;
+  waitForFabricCanvas: (requestId?: number) => Promise<FabricCanvas | null>;
 }
 
 export function useCostumeCanvasBitmapLayerController({
@@ -39,6 +40,7 @@ export function useCostumeCanvasBitmapLayerController({
   setHasBitmapFloatingSelection,
   suppressHistoryRef,
   syncSelectionState,
+  waitForFabricCanvas,
 }: UseCostumeCanvasBitmapLayerControllerOptions) {
   const applyBitmapLayerSource = useCallback((
     source: HTMLImageElement | HTMLCanvasElement | null,
@@ -100,6 +102,8 @@ export function useCostumeCanvasBitmapLayerController({
   ]);
 
   const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean, requestId?: number): Promise<boolean> => {
+    const fabricCanvas = await waitForFabricCanvas(requestId);
+    if (!fabricCanvas) return false;
     if (!isLoadRequestActive(requestId)) return false;
 
     let surfaceCanvas: HTMLCanvasElement | null = null;
@@ -114,7 +118,7 @@ export function useCostumeCanvasBitmapLayerController({
     }
 
     return applyBitmapLayerSource(surfaceCanvas, selectable);
-  }, [applyBitmapLayerSource, isLoadRequestActive]);
+  }, [applyBitmapLayerSource, isLoadRequestActive, waitForFabricCanvas]);
 
   const commitBitmapSelection = useCallback(async () => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -199,7 +203,7 @@ export function useCostumeCanvasBitmapLayerController({
   }, [queueBitmapRasterCommit]);
 
   const loadBitmapAsSingleVectorImage = useCallback(async (bitmapCanvas: HTMLCanvasElement, requestId?: number): Promise<boolean> => {
-    const fabricCanvas = fabricCanvasRef.current;
+    const fabricCanvas = await waitForFabricCanvas(requestId);
     if (!fabricCanvas) return false;
     if (!isLoadRequestActive(requestId)) return false;
 
@@ -240,7 +244,7 @@ export function useCostumeCanvasBitmapLayerController({
     } finally {
       suppressHistoryRef.current = false;
     }
-  }, [fabricCanvasRef, isLoadRequestActive, suppressHistoryRef]);
+  }, [isLoadRequestActive, suppressHistoryRef, waitForFabricCanvas]);
 
   const normalizeCanvasVectorStrokeUniform = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;

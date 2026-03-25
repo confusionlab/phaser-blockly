@@ -1,4 +1,4 @@
-import type { MutableRefObject, RefObject } from 'react';
+import type { MutableRefObject, Ref, RefObject } from 'react';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import type { CostumeEditorMode, CostumeLayer } from '@/types';
 import type { DrawingTool } from './CostumeToolbar';
@@ -21,7 +21,7 @@ interface CostumeCanvasStageProps {
   containerRef: RefObject<HTMLDivElement | null>;
   documentLayers: CostumeLayer[];
   editorModeState: CostumeEditorMode;
-  fabricCanvasHostRef: RefObject<HTMLDivElement | null>;
+  fabricCanvasHostRef: Ref<HTMLDivElement>;
   hasBitmapFloatingSelection: boolean;
   hostedLayerId: string | null;
   hostedLayerReady: boolean;
@@ -83,6 +83,7 @@ export function CostumeCanvasStage({
   const canvasLeft = viewportSize.width / 2 - cameraCenter.x * canvasPreviewScale;
   const canvasTop = viewportSize.height / 2 - cameraCenter.y * canvasPreviewScale;
   const hostedLayerIndex = documentLayers.findIndex((layer) => layer.id === hostedLayerId);
+  const hostedLayerVisualZIndex = Math.max(1, hostedLayerIndex >= 0 ? hostedLayerIndex * 2 + 1 : documentLayers.length * 2 + 1);
 
   const setLayerSurfaceRef = (layerId: string, node: HTMLCanvasElement | null) => {
     if (node) {
@@ -126,6 +127,7 @@ export function CostumeCanvasStage({
         />
 
         <div
+          data-testid="costume-canvas-surface"
           className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg"
           style={{
             width: CANVAS_SIZE,
@@ -161,19 +163,20 @@ export function CostumeCanvasStage({
                       : 0}
                   style={{ zIndex: index * 2 }}
                 />
-                {hostedLayerReady && layer.id === hostedLayerId ? (
-                  <CostumeActiveLayerVisual
-                    activeLayerOpacity={activeLayerOpacity}
-                    activeLayerVisible={activeLayerVisible}
-                    fabricCanvasHostRef={fabricCanvasHostRef}
-                    hostReady={hostedLayerReady}
-                    layerZIndex={index * 2 + 1}
-                    vectorStrokeCanvasRef={vectorStrokeCanvasRef}
-                  />
-                ) : null}
               </div>
             ))}
           </div>
+
+          {hostedLayerId ? (
+            <CostumeActiveLayerVisual
+              activeLayerOpacity={activeLayerOpacity}
+              activeLayerVisible={activeLayerVisible}
+              fabricCanvasHostRef={fabricCanvasHostRef}
+              hostReady={hostedLayerReady}
+              layerZIndex={hostedLayerVisualZIndex}
+              vectorStrokeCanvasRef={vectorStrokeCanvasRef}
+            />
+          ) : null}
 
           <CostumeActiveLayerOverlays
             activeLayerLocked={activeLayerLocked}

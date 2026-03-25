@@ -166,7 +166,9 @@ export function useCostumeCanvasToolController({
         brush.compositeOperation = compositeOperation;
       }
       (fabricCanvas as any).freeDrawingBrush = brush;
-      fabricCanvas.isDrawingMode = true;
+      // Drive bitmap brush strokes through the explicit Fabric mouse events so
+      // tool activation and drawing follow the same event path in all runtimes.
+      fabricCanvas.isDrawingMode = false;
     } else if (isVectorPencil) {
       const brush = new VectorPencilBrush(fabricCanvas, {
         strokeBrushId: vectorStyleRef.current.strokeBrushId,

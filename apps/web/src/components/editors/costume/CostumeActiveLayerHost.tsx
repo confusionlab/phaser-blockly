@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import type { Ref, RefObject } from 'react';
 import type { CostumeEditorMode } from '@/types';
 import type { DrawingTool } from './CostumeToolbar';
 import { CANVAS_SIZE } from './costumeCanvasShared';
@@ -6,7 +6,7 @@ import { CANVAS_SIZE } from './costumeCanvasShared';
 interface CostumeActiveLayerVisualProps {
   activeLayerOpacity: number;
   activeLayerVisible: boolean;
-  fabricCanvasHostRef: RefObject<HTMLDivElement | null>;
+  fabricCanvasHostRef: Ref<HTMLDivElement>;
   hostReady: boolean;
   layerZIndex: number;
   vectorStrokeCanvasRef: RefObject<HTMLCanvasElement | null>;
@@ -34,6 +34,8 @@ export function CostumeActiveLayerVisual({
 }: CostumeActiveLayerVisualProps) {
   return (
     <div
+      data-testid="costume-active-layer-visual"
+      data-host-ready={hostReady ? 'true' : 'false'}
       style={{
         position: 'absolute',
         inset: 0,
@@ -42,6 +44,7 @@ export function CostumeActiveLayerVisual({
     >
       <div
         ref={fabricCanvasHostRef}
+        data-testid="costume-active-layer-host"
         style={{
           position: 'absolute',
           top: 0,

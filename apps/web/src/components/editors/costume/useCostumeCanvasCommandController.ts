@@ -83,6 +83,7 @@ interface UseCostumeCanvasCommandControllerOptions {
   syncSelectionState: () => void;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
+  waitForFabricCanvas: (requestId?: number) => Promise<FabricCanvas | null>;
 }
 
 export function useCostumeCanvasCommandController({
@@ -132,6 +133,7 @@ export function useCostumeCanvasCommandController({
   syncSelectionState,
   textStyle,
   vectorStyle,
+  waitForFabricCanvas,
 }: UseCostumeCanvasCommandControllerOptions) {
   const getComposedCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -711,9 +713,9 @@ export function useCostumeCanvasCommandController({
   }, [editorModeRef, fabricCanvasRef]);
 
   const loadDocument = useCallback(async (sessionKey: string, costumeDocument: CostumeDocument) => {
-    const fabricCanvas = fabricCanvasRef.current;
-    if (!fabricCanvas) return;
     const requestId = ++loadRequestIdRef.current;
+    const fabricCanvas = await waitForFabricCanvas(requestId);
+    if (!fabricCanvas) return;
     const previousHostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId ?? null;
     commitHostedLayerSurfaceSnapshot(previousHostedLayerId);
     setHostedLayerReady(false);
@@ -765,7 +767,6 @@ export function useCostumeCanvasCommandController({
   }, [
     activeDocumentLayerId,
     commitHostedLayerSurfaceSnapshot,
-    fabricCanvasRef,
     hostedLayerIdRef,
     isLoadRequestActive,
     lastCommittedSnapshotRef,
@@ -779,6 +780,7 @@ export function useCostumeCanvasCommandController({
     setHostedLayerId,
     setHostedLayerReady,
     suppressHistoryRef,
+    waitForFabricCanvas,
   ]);
 
   const syncActiveVectorStyle = useCallback(() => {

@@ -25,6 +25,37 @@ import {
 import type { DrawingTool } from './CostumeToolbar';
 import type { CostumeEditorMode } from '@/types';
 
+type FabricCanvasHostRuntime = FabricCanvas & {
+  lowerCanvasEl?: HTMLCanvasElement;
+  upperCanvasEl?: HTMLCanvasElement;
+  wrapperEl?: HTMLDivElement;
+};
+
+function resolveFabricCanvasRootElement(
+  fabricCanvas: FabricCanvasHostRuntime,
+  fabricCanvasElement: HTMLCanvasElement | null,
+) {
+  return fabricCanvas.wrapperEl
+    ?? fabricCanvas.upperCanvasEl?.parentElement
+    ?? fabricCanvas.lowerCanvasEl?.parentElement
+    ?? fabricCanvasElement;
+}
+
+function attachFabricCanvasToHost(
+  host: HTMLDivElement,
+  fabricCanvas: FabricCanvasHostRuntime,
+  fabricCanvasElement: HTMLCanvasElement | null,
+) {
+  const rootElement = resolveFabricCanvasRootElement(fabricCanvas, fabricCanvasElement);
+  if (!rootElement) {
+    return;
+  }
+
+  if (rootElement.parentElement !== host || host.childNodes.length !== 1 || host.firstChild !== rootElement) {
+    host.replaceChildren(rootElement);
+  }
+}
+
 interface UseCostumeCanvasFabricHostControllerOptions {
   activeLayerLockedRef: MutableRefObject<boolean>;
   activeLayerVisibleRef: MutableRefObject<boolean>;
@@ -37,7 +68,8 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   brushColorRef: MutableRefObject<string>;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasElementRef: MutableRefObject<HTMLCanvasElement | null>;
-  fabricCanvasHostRef: RefObject<HTMLDivElement | null>;
+  fabricCanvasHostElement: HTMLDivElement | null;
+  fabricCanvasHostRef: MutableRefObject<HTMLDivElement | null>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   insertedPathAnchorDragSessionRef: MutableRefObject<any>;
   penAnchorPlacementSessionRef: MutableRefObject<any>;
@@ -55,6 +87,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   vectorStrokeCtxRef: MutableRefObject<CanvasRenderingContext2D | null>;
   vectorStyleRef: MutableRefObject<any>;
   bitmapShapeStyleRef: MutableRefObject<any>;
+  onFabricCanvasReady: () => void;
   activateVectorPointEditing: (target: any, saveConversionToHistory: boolean) => boolean;
   applyFill: (x: number, y: number) => void | Promise<void>;
   applyPointSelectionMarqueeSession: (session: any) => boolean;
@@ -97,11 +130,14 @@ interface UseCostumeCanvasFabricHostControllerOptions {
 export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFabricHostControllerOptions) {
   const callbacksRef = useRef(options);
   callbacksRef.current = options;
+  const disposeFabricCanvasRef = useRef<(() => void) | null>(null);
+  const hostElement = options.fabricCanvasHostElement;
 
   useEffect(() => {
     const {
       fabricCanvasHostRef,
       fabricCanvasRef,
+      onFabricCanvasReady,
       fabricCanvasElementRef,
       vectorStrokeCanvasRef,
       vectorStrokeCtxRef,
@@ -132,7 +168,18 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     } = callbacksRef.current;
 
     const fabricCanvasHost = fabricCanvasHostRef.current;
-    if (!fabricCanvasHost || fabricCanvasRef.current) return;
+    if (!fabricCanvasHost) {
+      return;
+    }
+
+    const existingFabricCanvas = fabricCanvasRef.current as FabricCanvasHostRuntime | null;
+    if (existingFabricCanvas) {
+      attachFabricCanvasToHost(fabricCanvasHost, existingFabricCanvas, fabricCanvasElementRef.current);
+      onFabricCanvasReady();
+      callbacksRef.current.syncActiveLayerCanvasVisibility();
+      callbacksRef.current.configureCanvasForTool();
+      return;
+    }
 
     fabricCanvasHost.replaceChildren();
     const fabricCanvasElement = document.createElement('canvas');
@@ -153,6 +200,8 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       selection: false,
     });
     fabricCanvasRef.current = fabricCanvas;
+    onFabricCanvasReady();
+    let isBitmapBrushStrokeActive = false;
 
     const onMouseDown = (opt: any) => {
       const callbacks = callbacksRef.current;
@@ -166,6 +215,17 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       const floatingBitmapObject = bitmapFloatingObjectRef.current;
 
       if (!layerInteractive) {
+        return;
+      }
+
+      if (mode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
+        const brush = (fabricCanvas as any).freeDrawingBrush as {
+          onMouseDown?: (pointer: Point, options: { e: any }) => void;
+        } | undefined;
+        if (brush?.onMouseDown) {
+          brush.onMouseDown(pointer, { e: opt.e });
+          isBitmapBrushStrokeActive = true;
+        }
         return;
       }
 
@@ -452,6 +512,21 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onMouseMove = (opt: any) => {
       const callbacks = callbacksRef.current;
+      if (
+        isBitmapBrushStrokeActive &&
+        editorModeRef.current === 'bitmap' &&
+        (activeToolRef.current === 'brush' || activeToolRef.current === 'eraser') &&
+        opt.e
+      ) {
+        const brush = (fabricCanvas as any).freeDrawingBrush as {
+          onMouseMove?: (pointer: Point, options: { e: any }) => void;
+        } | undefined;
+        if (brush?.onMouseMove) {
+          brush.onMouseMove(fabricCanvas.getScenePoint(opt.e), { e: opt.e });
+        }
+        return;
+      }
+
       if (editorModeRef.current === 'vector' && activeToolRef.current === 'pen' && opt.e) {
         const pointer = fabricCanvas.getScenePoint(opt.e);
         if (penAnchorPlacementSessionRef.current) {
@@ -595,8 +670,17 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       fabricCanvas.requestRenderAll();
     };
 
-    const onMouseUp = () => {
+    const onMouseUp = (opt: any) => {
       const callbacks = callbacksRef.current;
+      if (isBitmapBrushStrokeActive) {
+        isBitmapBrushStrokeActive = false;
+        const brush = (fabricCanvas as any).freeDrawingBrush as {
+          onMouseUp?: (options: { e: any }) => void;
+        } | undefined;
+        brush?.onMouseUp?.({ e: opt?.e ?? null });
+        return;
+      }
+
       if (penAnchorPlacementSessionRef.current) {
         callbacks.commitCurrentPenPlacement();
         fabricCanvas.requestRenderAll();
@@ -790,7 +874,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     callbacksRef.current.syncActiveLayerCanvasVisibility();
     callbacksRef.current.configureCanvasForTool();
 
-    return () => {
+    disposeFabricCanvasRef.current = () => {
       callbacksRef.current.restoreAllOriginalControls();
       fabricCanvas.off('mouse:down', onMouseDown);
       fabricCanvas.off('mouse:move', onMouseMove);
@@ -804,12 +888,19 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       fabricCanvas.off('text:editing:exited', onTextChanged);
       fabricCanvas.off('after:render', onAfterRender);
       fabricCanvas.dispose();
-      fabricCanvasHost.replaceChildren();
+      fabricCanvasHostRef.current?.replaceChildren();
       fabricCanvasElementRef.current = null;
       fabricCanvasRef.current = null;
       vectorStrokeCtxRef.current = null;
       vectorGuideCtxRef.current = null;
       bitmapSelectionCtxRef.current = null;
+    };
+  }, [hostElement]);
+
+  useEffect(() => {
+    return () => {
+      disposeFabricCanvasRef.current?.();
+      disposeFabricCanvasRef.current = null;
     };
   }, []);
 }
