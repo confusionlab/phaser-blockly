@@ -1352,7 +1352,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const containerRef = useRef<HTMLDivElement>(null);
   const textEditingHostRef = useRef<HTMLDivElement>(null);
   const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
-  const fabricCanvasElementRef = useRef<HTMLCanvasElement>(null);
+  const fabricCanvasHostRef = useRef<HTMLDivElement>(null);
+  const fabricCanvasElementRef = useRef<HTMLCanvasElement | null>(null);
   const inactiveLayerImageRefs = useRef(new Map<string, HTMLImageElement>());
   const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -6033,9 +6034,22 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   // Initialize fabric canvas once.
   useEffect(() => {
-    if (!fabricCanvasElementRef.current || fabricCanvasRef.current) return;
+    const fabricCanvasHost = fabricCanvasHostRef.current;
+    if (!fabricCanvasHost || fabricCanvasRef.current) return;
 
-    const fabricCanvas = new FabricCanvas(fabricCanvasElementRef.current, {
+    fabricCanvasHost.replaceChildren();
+    const fabricCanvasElement = document.createElement('canvas');
+    fabricCanvasElement.width = CANVAS_SIZE;
+    fabricCanvasElement.height = CANVAS_SIZE;
+    fabricCanvasElement.style.position = 'absolute';
+    fabricCanvasElement.style.top = '0';
+    fabricCanvasElement.style.left = '0';
+    fabricCanvasElement.style.width = `${CANVAS_SIZE}px`;
+    fabricCanvasElement.style.height = `${CANVAS_SIZE}px`;
+    fabricCanvasHost.appendChild(fabricCanvasElement);
+    fabricCanvasElementRef.current = fabricCanvasElement;
+
+    const fabricCanvas = new FabricCanvas(fabricCanvasElement, {
       width: CANVAS_SIZE,
       height: CANVAS_SIZE,
       preserveObjectStacking: true,
@@ -6694,6 +6708,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.off('text:editing:exited', onTextChanged);
       fabricCanvas.off('after:render', onAfterRender);
       fabricCanvas.dispose();
+      fabricCanvasHost.replaceChildren();
+      fabricCanvasElementRef.current = null;
       fabricCanvasRef.current = null;
       vectorStrokeCtxRef.current = null;
       vectorGuideCtxRef.current = null;
@@ -7748,17 +7764,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               inset: 0,
             }}
           >
-            <canvas
-              ref={fabricCanvasElementRef}
-              width={CANVAS_SIZE}
-              height={CANVAS_SIZE}
+            <div
+              ref={fabricCanvasHostRef}
               style={{
-                width: CANVAS_SIZE,
-                height: CANVAS_SIZE,
                 position: 'absolute',
                 top: 0,
                 left: 0,
-                opacity: activeLayerVisible ? activeLayerOpacity : 0,
+                width: CANVAS_SIZE,
+                height: CANVAS_SIZE,
               }}
             />
 
