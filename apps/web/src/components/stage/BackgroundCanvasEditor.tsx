@@ -9,6 +9,7 @@ import {
   type BitmapFillStyle,
   type BitmapShapeStyle,
   type DrawingTool as CostumeDrawingTool,
+  type SelectionFlipAxis,
   type TextToolStyle,
   type VectorHandleMode,
   type VectorStyleCapabilities,
@@ -2394,6 +2395,8 @@ export function BackgroundCanvasEditor() {
   }, [busy]);
 
   const handleToolbarMoveOrder = useCallback(() => {}, []);
+  const handleToolbarFlipSelection = useCallback((_axis: SelectionFlipAxis) => {}, []);
+  const handleToolbarRotateSelection = useCallback(() => {}, []);
   const handleToolbarVectorHandleModeChange = useCallback(() => {}, []);
   const handleToolbarAlign = useCallback(() => {}, []);
   const handleToolbarTextStyleChange = useCallback(() => {}, []);
@@ -2507,6 +2510,8 @@ export function BackgroundCanvasEditor() {
           onEditorModeChange={handleToolbarModeChange}
           onToolChange={handleToolbarToolChange}
           onMoveOrder={handleToolbarMoveOrder}
+          onFlipSelection={handleToolbarFlipSelection}
+          onRotateSelection={handleToolbarRotateSelection}
           vectorHandleMode={BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE}
           onVectorHandleModeChange={handleToolbarVectorHandleModeChange}
           onAlign={handleToolbarAlign}

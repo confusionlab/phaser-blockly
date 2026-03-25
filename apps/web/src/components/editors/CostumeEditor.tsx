@@ -10,6 +10,7 @@ import {
   type AlignAction,
   type DrawingTool,
   type MoveOrderAction,
+  type SelectionFlipAxis,
   type TextToolStyle,
   type VectorHandleMode,
   type VectorStyleCapabilities,
@@ -626,6 +627,20 @@ export function CostumeEditor() {
     canvasRef.current?.alignSelection(action);
   }, []);
 
+  const handleFlipSelection = useCallback((axis: SelectionFlipAxis) => {
+    if (isLoadingRef.current) {
+      return;
+    }
+    canvasRef.current?.flipSelection(axis);
+  }, []);
+
+  const handleRotateSelection = useCallback(() => {
+    if (isLoadingRef.current) {
+      return;
+    }
+    canvasRef.current?.rotateSelection();
+  }, []);
+
   const handleSelectionStateChange = useCallback((state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => {
     setHasCanvasSelection(state.hasSelection);
     setHasBitmapFloatingSelection(state.hasBitmapFloatingSelection);
@@ -748,6 +763,8 @@ export function CostumeEditor() {
           onEditorModeChange={handleEditorModeChange}
           onToolChange={handleToolChange}
           onMoveOrder={handleMoveOrder}
+          onFlipSelection={handleFlipSelection}
+          onRotateSelection={handleRotateSelection}
           vectorHandleMode={vectorHandleMode}
           onVectorHandleModeChange={(mode) => setVectorHandleMode(mode)}
           onAlign={handleAlign}

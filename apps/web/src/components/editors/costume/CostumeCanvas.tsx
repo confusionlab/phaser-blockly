@@ -14,6 +14,7 @@ import {
   Control,
   Point,
   controlsUtils,
+  util,
 } from 'fabric';
 import { calculateBoundsFromCanvas, calculateBoundsFromImageData } from '@/utils/imageBounds';
 import {
@@ -26,6 +27,7 @@ import type {
   BitmapShapeStyle,
   DrawingTool,
   MoveOrderAction,
+  SelectionFlipAxis,
   TextToolStyle,
   VectorHandleMode,
   VectorPathNodeHandleType,
@@ -768,6 +770,8 @@ export interface CostumeCanvasHandle {
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => boolean;
+  flipSelection: (axis: SelectionFlipAxis) => boolean;
+  rotateSelection: () => boolean;
   alignSelection: (action: AlignAction) => boolean;
   isTextEditing: () => boolean;
   clear: () => void;
@@ -1333,6 +1337,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
         height: Math.max(1, maxBottom - minTop),
       },
     };
+  }, []);
+
+  const restoreCanvasSelection = useCallback((selectedObjects: any[]) => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return;
+
+    const nextObjects = selectedObjects.filter((obj) => fabricCanvas.getObjects().includes(obj));
+    if (nextObjects.length === 0) {
+      fabricCanvas.discardActiveObject();
+      return;
+    }
+
+    if (nextObjects.length === 1) {
+      nextObjects[0].setCoords?.();
+      fabricCanvas.setActiveObject(nextObjects[0]);
+      return;
+    }
+
+    const nextSelection = new ActiveSelection(nextObjects, { canvas: fabricCanvas });
+    nextSelection.setCoords?.();
+    fabricCanvas.setActiveObject(nextSelection);
   }, []);
 
   const syncSelectionState = useCallback(() => {
@@ -1999,6 +2024,46 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     updateDirtyStateFromSnapshot(snapshot);
     onHistoryChangeRef.current?.();
   }, [createSnapshot, updateDirtyStateFromSnapshot]);
+
+  const applySelectionTransform = useCallback((transform: Parameters<typeof util.applyTransformToObject>[1]): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
+    const selectionSnapshot = getSelectionBoundsSnapshot();
+    if (!selectionSnapshot) return false;
+
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    const selectedObjects = selectionSnapshot.selectedObjects.filter(Boolean);
+    if (selectedObjects.length === 0) {
+      return false;
+    }
+
+    if (isActiveSelectionObject(activeObject)) {
+      fabricCanvas.discardActiveObject();
+    }
+
+    let changed = false;
+    for (const obj of selectedObjects) {
+      if (typeof obj?.calcTransformMatrix !== 'function') {
+        continue;
+      }
+      const nextMatrix = util.multiplyTransformMatrices(transform, obj.calcTransformMatrix());
+      util.applyTransformToObject(obj, nextMatrix);
+      obj.setCoords?.();
+      changed = true;
+    }
+
+    restoreCanvasSelection(selectedObjects);
+
+    if (!changed) {
+      return false;
+    }
+
+    fabricCanvas.requestRenderAll();
+    syncSelectionState();
+    saveHistory();
+    return true;
+  }, [getSelectionBoundsSnapshot, restoreCanvasSelection, saveHistory, syncSelectionState]);
 
   const mirrorPointAcrossAnchor = useCallback((anchor: Point, handlePoint: Point) => (
     new Point(
@@ -2921,6 +2986,30 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     saveHistory();
     return true;
   }, [saveHistory]);
+
+  const flipSelection = useCallback((axis: SelectionFlipAxis): boolean => {
+    const selectionSnapshot = getSelectionBoundsSnapshot();
+    if (!selectionSnapshot) return false;
+
+    const centerX = selectionSnapshot.bounds.left + selectionSnapshot.bounds.width / 2;
+    const centerY = selectionSnapshot.bounds.top + selectionSnapshot.bounds.height / 2;
+    const transform = util.multiplyTransformMatrixArray([
+      util.createTranslateMatrix(centerX, centerY),
+      util.createScaleMatrix(axis === 'horizontal' ? -1 : 1, axis === 'vertical' ? -1 : 1),
+      util.createTranslateMatrix(-centerX, -centerY),
+    ]);
+    return applySelectionTransform(transform);
+  }, [applySelectionTransform, getSelectionBoundsSnapshot]);
+
+  const rotateSelection = useCallback((): boolean => {
+    const selectionSnapshot = getSelectionBoundsSnapshot();
+    if (!selectionSnapshot) return false;
+
+    const centerX = selectionSnapshot.bounds.left + selectionSnapshot.bounds.width / 2;
+    const centerY = selectionSnapshot.bounds.top + selectionSnapshot.bounds.height / 2;
+    const transform = util.createRotateMatrix({ angle: 90 }, { x: centerX, y: centerY });
+    return applySelectionTransform(transform);
+  }, [applySelectionTransform, getSelectionBoundsSnapshot]);
 
   const alignSelection = useCallback((action: AlignAction): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -6759,6 +6848,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     moveSelectionOrder,
 
+    flipSelection,
+
+    rotateSelection,
+
     alignSelection,
 
     isTextEditing,
@@ -6803,6 +6896,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     deleteSelection,
     duplicateSelection,
     moveSelectionOrder,
+    flipSelection,
+    rotateSelection,
     alignSelection,
     isTextEditing,
   ]);

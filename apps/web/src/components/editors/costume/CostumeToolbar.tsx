@@ -29,6 +29,9 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  FlipHorizontal2,
+  FlipVertical2,
+  RotateCw,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -62,6 +65,7 @@ import {
 export type EditorMode = CostumeEditorMode;
 export type DrawingTool = 'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'line' | 'text' | 'collider';
 export type MoveOrderAction = 'forward' | 'backward' | 'front' | 'back';
+export type SelectionFlipAxis = 'horizontal' | 'vertical';
 export type VectorPathNodeHandleType = 'linear' | 'corner' | 'smooth' | 'symmetric';
 export type EditableVectorHandleMode = VectorPathNodeHandleType;
 export type VectorHandleMode = EditableVectorHandleMode | 'multiple';
@@ -197,6 +201,7 @@ interface ToolbarColorControlProps {
   openMenu: ToolbarMenuId | null;
   onMenuOpenChange: (menu: ToolbarMenuId, open: boolean) => void;
   onColorChange: (color: string) => void;
+  labelDisplay?: 'none' | 'left';
 }
 
 const ToolbarColorControl = memo(({
@@ -206,6 +211,7 @@ const ToolbarColorControl = memo(({
   openMenu,
   onMenuOpenChange,
   onColorChange,
+  labelDisplay = 'left',
 }: ToolbarColorControlProps) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const isOpen = openMenu === menuId;
@@ -222,21 +228,24 @@ const ToolbarColorControl = memo(({
   return (
     <>
       <div className="relative flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
+        {labelDisplay === 'left' && (
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
+        )}
         <button
           ref={buttonRef}
           type="button"
-          className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 text-xs font-medium transition-colors hover:bg-accent"
+          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent/60"
           onClick={() => onMenuOpenChange(menuId, !isOpen)}
           title={label}
+          aria-label={label}
           aria-expanded={isOpen}
           aria-haspopup="dialog"
         >
           <span
-            className="size-4 rounded border border-foreground/15"
+            className="size-6 rounded-md ring-1 ring-black/15"
             style={{ backgroundColor: value }}
             aria-hidden="true"
           />
-          <span>{label}</span>
         </button>
       </div>
 
@@ -447,6 +456,8 @@ interface CostumeToolbarProps {
   onEditorModeChange: (mode: EditorMode) => void;
   onToolChange: (tool: DrawingTool) => void;
   onMoveOrder: (action: MoveOrderAction) => void;
+  onFlipSelection: (axis: SelectionFlipAxis) => void;
+  onRotateSelection: () => void;
   vectorHandleMode: VectorHandleMode;
   onVectorHandleModeChange: (mode: EditableVectorHandleMode) => void;
   onAlign: (action: AlignAction) => void;
@@ -577,6 +588,8 @@ export const CostumeToolbar = memo(({
   onEditorModeChange,
   onToolChange,
   onMoveOrder,
+  onFlipSelection,
+  onRotateSelection,
   vectorHandleMode,
   onVectorHandleModeChange,
   onAlign,
@@ -736,7 +749,7 @@ export const CostumeToolbar = memo(({
                   )}
 
                   {showSelectionActions && (
-                    <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
+                    <div className="flex items-center gap-1 border-r pr-2 last:border-r-0 last:pr-0">
                       <DropdownMenu
                         open={openMenu === 'align'}
                         onOpenChange={(open) => handleMenuOpenChange('align', open)}
@@ -762,6 +775,36 @@ export const CostumeToolbar = memo(({
                           </div>
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Flip Horizontal"
+                        aria-label="Flip Horizontal"
+                        onClick={() => onFlipSelection('horizontal')}
+                      >
+                        <FlipHorizontal2 className="size-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Flip Vertical"
+                        aria-label="Flip Vertical"
+                        onClick={() => onFlipSelection('vertical')}
+                      >
+                        <FlipVertical2 className="size-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Rotate 90 Degrees"
+                        aria-label="Rotate 90 Degrees"
+                        onClick={onRotateSelection}
+                      >
+                        <RotateCw className="size-4" />
+                      </Button>
                     </div>
                   )}
 
@@ -773,6 +816,7 @@ export const CostumeToolbar = memo(({
                       openMenu={openMenu}
                       onMenuOpenChange={handleMenuOpenChange}
                       onColorChange={onColorChange}
+                      labelDisplay="none"
                     />
                   )}
 
@@ -852,6 +896,7 @@ export const CostumeToolbar = memo(({
                           openMenu={openMenu}
                           onMenuOpenChange={handleMenuOpenChange}
                           onColorChange={(fillColor) => onBitmapShapeStyleChange({ fillColor })}
+                          labelDisplay="left"
                         />
                       )}
 
@@ -862,6 +907,7 @@ export const CostumeToolbar = memo(({
                         openMenu={openMenu}
                         onMenuOpenChange={handleMenuOpenChange}
                         onColorChange={(strokeColor) => onBitmapShapeStyleChange({ strokeColor })}
+                        labelDisplay="left"
                       />
 
                       <ToolbarPreviewSlider
@@ -922,6 +968,7 @@ export const CostumeToolbar = memo(({
                             openMenu={openMenu}
                             onMenuOpenChange={handleMenuOpenChange}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            labelDisplay="left"
                           />
 
                           <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
@@ -964,6 +1011,7 @@ export const CostumeToolbar = memo(({
                         openMenu={openMenu}
                         onMenuOpenChange={handleMenuOpenChange}
                         onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                        labelDisplay="left"
                       />
 
                       <ToolbarPreviewSlider
