@@ -56,6 +56,7 @@ import {
   moveCostumeLayer,
   removeCostumeLayer,
   setActiveCostumeLayer,
+  setCostumeLayerVisibility,
   updateCostumeLayer,
 } from '@/lib/costume/costumeDocument';
 import {
@@ -865,9 +866,7 @@ export function CostumeEditor() {
       if (!layer) {
         return null;
       }
-      return updateCostumeLayer(working.document, layerId, {
-        visible: !layer.visible,
-      });
+      return setCostumeLayerVisibility(working.document, layerId, !layer.visible);
     }, {
       forceReload: true,
     });

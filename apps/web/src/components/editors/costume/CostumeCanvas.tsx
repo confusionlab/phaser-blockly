@@ -1382,6 +1382,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const editorModeRef = useRef<CostumeEditorMode>(initialEditorMode);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
+  const activeLayerVisibleRef = useRef(activeLayerVisible);
+  activeLayerVisibleRef.current = activeLayerVisible;
+  const activeLayerLockedRef = useRef(activeLayerLocked);
+  activeLayerLockedRef.current = activeLayerLocked;
 
   const bitmapBrushKindRef = useRef(bitmapBrushKind);
   bitmapBrushKindRef.current = bitmapBrushKind;
@@ -1578,10 +1582,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const syncSelectionState = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
-    const hasBitmap = !!bitmapFloatingObjectRef.current;
-    const hasActive = !!fabricCanvas?.getActiveObject();
+    const layerVisible = activeLayerVisibleRef.current;
+    const hasBitmap = layerVisible && !!bitmapFloatingObjectRef.current;
+    const hasActive = layerVisible && !!fabricCanvas?.getActiveObject();
     const hasSelection = hasBitmap || (editorModeRef.current === 'vector' && hasActive);
-    setCanZoomToSelection(!!getSelectionBoundsSnapshot());
+    setCanZoomToSelection(layerVisible && !!getSelectionBoundsSnapshot());
     onSelectionStateChangeRef.current?.({
       hasSelection,
       hasBitmapFloatingSelection: hasBitmap,
@@ -1594,7 +1599,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const mode = editorModeRef.current;
     const tool = activeToolRef.current;
-    const isBitmapBrushTool = mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
+    const layerInteractive = activeLayerVisibleRef.current && !activeLayerLockedRef.current;
+    const isBitmapBrushTool = layerInteractive && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
     brushCursorEnabledRef.current = isBitmapBrushTool;
 
     if (!isBitmapBrushTool) {
@@ -5697,12 +5703,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const mode = editorModeRef.current;
     const tool = activeToolRef.current;
     const layerLocked = activeLayerLocked;
+    const layerInteractive = activeLayerVisible && !layerLocked;
     const pointEditingTarget = vectorPointEditingTargetRef.current;
 
     if (pointEditingTarget && !fabricCanvas.getObjects().includes(pointEditingTarget)) {
       setVectorPointEditingTarget(null);
     }
-    if (vectorPointEditingTargetRef.current && (mode !== 'vector' || tool !== 'select')) {
+    if (vectorPointEditingTargetRef.current && (mode !== 'vector' || tool !== 'select' || !layerInteractive)) {
       restoreAllOriginalControls();
       setVectorPointEditingTarget(null);
     }
@@ -5711,8 +5718,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       normalizeCanvasVectorStrokeUniform();
     }
 
-    const isBitmapBrush = !layerLocked && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
-    const isVectorPencil = !layerLocked && mode === 'vector' && tool === 'brush';
+    const isBitmapBrush = layerInteractive && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
+    const isVectorPencil = layerInteractive && mode === 'vector' && tool === 'brush';
     if (isBitmapBrush) {
       const compositeOperation = getCompositeOperation(tool);
       const brush = bitmapBrushKindRef.current !== 'hard-round'
@@ -5749,12 +5756,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
     }
 
-    const isVectorPointMode = !layerLocked && mode === 'vector' && tool === 'select' && !!vectorPointEditingTargetRef.current;
-    const isVectorSelectionMode = !layerLocked && mode === 'vector' && tool === 'select' && !isVectorPointMode;
-    const isVectorTextMode = !layerLocked && mode === 'vector' && tool === 'text';
+    const isVectorPointMode = layerInteractive && mode === 'vector' && tool === 'select' && !!vectorPointEditingTargetRef.current;
+    const isVectorSelectionMode = layerInteractive && mode === 'vector' && tool === 'select' && !isVectorPointMode;
+    const isVectorTextMode = layerInteractive && mode === 'vector' && tool === 'text';
     const floatingBitmapObject = bitmapFloatingObjectRef.current;
     const isBitmapFloatingSelectionMode =
-      !layerLocked &&
+      layerInteractive &&
       mode === 'bitmap' &&
       tool === 'box-select' &&
       !!floatingBitmapObject;
@@ -5771,7 +5778,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
 
       const isPointEditingTarget = isVectorPointMode && obj === vectorPointEditingTargetRef.current;
-      const selectable = layerLocked
+      const selectable = !layerInteractive
         ? false
         : isVectorSelectionMode
         ? true
@@ -5820,7 +5827,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     });
 
     let activeObject = fabricCanvas.getActiveObject() as any;
-    if (layerLocked && activeObject) {
+    if (!layerInteractive && activeObject) {
       fabricCanvas.discardActiveObject();
       activeObject = null;
     }
@@ -5874,7 +5881,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyCanvasCursor(fabricCanvas, cursor);
     fabricCanvas.requestRenderAll();
     syncSelectionState();
-  }, [activateVectorPointEditing, activeLayerLocked, applyVectorPointControls, applyVectorPointEditingAppearance, commitBitmapStampBrushStroke, getZoomInvariantMetric, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, setVectorPointEditingTarget, syncBrushCursorOverlay, syncSelectionState]);
+  }, [activateVectorPointEditing, activeLayerLocked, activeLayerVisible, applyVectorPointControls, applyVectorPointEditingAppearance, commitBitmapStampBrushStroke, getZoomInvariantMetric, normalizeCanvasVectorStrokeUniform, restoreAllOriginalControls, restoreOriginalControls, setVectorPointEditingTarget, syncBrushCursorOverlay, syncSelectionState]);
 
   // Draw collider overlay
   const drawCollider = useCallback((coll: ColliderConfig | null, editable: boolean = false) => {
@@ -5992,7 +5999,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       const pointer = fabricCanvas.getScenePoint(opt.e);
       const mode = editorModeRef.current;
       const tool = activeToolRef.current;
+      const layerInteractive = activeLayerVisibleRef.current && !activeLayerLockedRef.current;
       const floatingBitmapObject = bitmapFloatingObjectRef.current;
+
+      if (!layerInteractive) {
+        return;
+      }
 
       if (mode === 'bitmap' && tool === 'box-select' && floatingBitmapObject) {
         if (!opt.target || opt.target !== floatingBitmapObject) {
@@ -7708,7 +7720,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
               left: 0,
               width: CANVAS_SIZE,
               height: CANVAS_SIZE,
-              pointerEvents: editorModeState === 'bitmap' && ((activeTool === 'box-select' && !hasBitmapFloatingSelection && !activeLayerLocked) || activeTool === 'select') ? 'auto' : 'none',
+              pointerEvents: editorModeState === 'bitmap' && (
+                activeTool === 'select' ||
+                (activeTool === 'box-select' && activeLayerVisible && !hasBitmapFloatingSelection && !activeLayerLocked)
+              ) ? 'auto' : 'none',
               opacity: activeLayerVisible ? activeLayerOpacity : 0,
             }}
           />
