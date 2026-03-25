@@ -298,6 +298,11 @@ function getEditableVectorHandleMode(mode: VectorHandleMode): Exclude<VectorHand
 }
 
 function getEraserPreviewSourceCanvas(fabricCanvas: FabricCanvas): HTMLCanvasElement | null {
+  const liveLowerCanvas = (fabricCanvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl;
+  if (liveLowerCanvas) {
+    return liveLowerCanvas;
+  }
+
   try {
     if (typeof fabricCanvas.toCanvasElement === 'function') {
       return fabricCanvas.toCanvasElement(1);
@@ -306,7 +311,7 @@ function getEraserPreviewSourceCanvas(fabricCanvas: FabricCanvas): HTMLCanvasEle
     // Fall back to the live lower canvas if Fabric snapshotting fails.
   }
 
-  return (fabricCanvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl ?? null;
+  return null;
 }
 
 function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
