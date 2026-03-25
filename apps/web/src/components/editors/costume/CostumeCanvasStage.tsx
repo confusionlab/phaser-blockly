@@ -2,7 +2,7 @@ import type { MutableRefObject, RefObject } from 'react';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import type { CostumeEditorMode, CostumeLayer } from '@/types';
 import type { DrawingTool } from './CostumeToolbar';
-import { CostumeActiveLayerHost } from './CostumeActiveLayerHost';
+import { CostumeActiveLayerOverlays, CostumeActiveLayerVisual } from './CostumeActiveLayerHost';
 import { CostumeLayerSurface } from './CostumeLayerSurface';
 import { CANVAS_SIZE, DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
 
@@ -143,34 +143,48 @@ export function CostumeCanvasStage({
             }}
           >
             {documentLayers.map((layer, index) => (
-              <CostumeLayerSurface
+              <div
                 key={layer.id}
-                ref={(node) => setLayerSurfaceRef(layer.id, node)}
-                layer={layer}
-                opacity={hostedLayerReady && layer.id === hostedLayerId
-                  ? 0
-                  : layer.visible
-                    ? layer.opacity
-                    : 0}
-                style={{ zIndex: index * 2 }}
-              />
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                }}
+              >
+                <CostumeLayerSurface
+                  ref={(node) => setLayerSurfaceRef(layer.id, node)}
+                  layer={layer}
+                  opacity={hostedLayerReady && layer.id === hostedLayerId
+                    ? 0
+                    : layer.visible
+                      ? layer.opacity
+                      : 0}
+                  style={{ zIndex: index * 2 }}
+                />
+                {hostedLayerReady && layer.id === hostedLayerId ? (
+                  <CostumeActiveLayerVisual
+                    activeLayerOpacity={activeLayerOpacity}
+                    activeLayerVisible={activeLayerVisible}
+                    fabricCanvasHostRef={fabricCanvasHostRef}
+                    hostReady={hostedLayerReady}
+                    layerZIndex={index * 2 + 1}
+                    vectorStrokeCanvasRef={vectorStrokeCanvasRef}
+                  />
+                ) : null}
+              </div>
             ))}
           </div>
 
-          <CostumeActiveLayerHost
+          <CostumeActiveLayerOverlays
             activeLayerLocked={activeLayerLocked}
-            activeLayerOpacity={activeLayerOpacity}
             activeLayerVisible={activeLayerVisible}
             activeTool={activeTool}
             bitmapSelectionCanvasRef={bitmapSelectionCanvasRef}
             colliderCanvasRef={colliderCanvasRef}
             editorModeState={editorModeState}
-            fabricCanvasHostRef={fabricCanvasHostRef}
             hasBitmapFloatingSelection={hasBitmapFloatingSelection}
-            hostReady={hostedLayerReady}
-            layerZIndex={Math.max(1, hostedLayerIndex * 2 + 1)}
+            layerZIndex={Math.max(2, hostedLayerIndex >= 0 ? hostedLayerIndex * 2 + 2 : documentLayers.length * 2 + 2)}
             vectorGuideCanvasRef={vectorGuideCanvasRef}
-            vectorStrokeCanvasRef={vectorStrokeCanvasRef}
           />
 
         </div>

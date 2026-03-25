@@ -3,73 +3,85 @@ import type { CostumeEditorMode } from '@/types';
 import type { DrawingTool } from './CostumeToolbar';
 import { CANVAS_SIZE } from './costumeCanvasShared';
 
-interface CostumeActiveLayerHostProps {
-  activeLayerLocked: boolean;
+interface CostumeActiveLayerVisualProps {
   activeLayerOpacity: number;
+  activeLayerVisible: boolean;
+  fabricCanvasHostRef: RefObject<HTMLDivElement | null>;
+  hostReady: boolean;
+  layerZIndex: number;
+  vectorStrokeCanvasRef: RefObject<HTMLCanvasElement | null>;
+}
+
+interface CostumeActiveLayerOverlaysProps {
+  activeLayerLocked: boolean;
   activeLayerVisible: boolean;
   activeTool: DrawingTool;
   bitmapSelectionCanvasRef: RefObject<HTMLCanvasElement | null>;
   colliderCanvasRef: RefObject<HTMLCanvasElement | null>;
   editorModeState: CostumeEditorMode;
-  fabricCanvasHostRef: RefObject<HTMLDivElement | null>;
   hasBitmapFloatingSelection: boolean;
-  hostReady: boolean;
   layerZIndex: number;
   vectorGuideCanvasRef: RefObject<HTMLCanvasElement | null>;
-  vectorStrokeCanvasRef: RefObject<HTMLCanvasElement | null>;
 }
 
-export function CostumeActiveLayerHost({
-  activeLayerLocked,
+export function CostumeActiveLayerVisual({
   activeLayerOpacity,
+  activeLayerVisible,
+  fabricCanvasHostRef,
+  hostReady,
+  layerZIndex,
+  vectorStrokeCanvasRef,
+}: CostumeActiveLayerVisualProps) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: layerZIndex,
+      }}
+    >
+      <div
+        ref={fabricCanvasHostRef}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: CANVAS_SIZE,
+          height: CANVAS_SIZE,
+        }}
+      />
+
+      <canvas
+        ref={vectorStrokeCanvasRef}
+        width={CANVAS_SIZE}
+        height={CANVAS_SIZE}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: CANVAS_SIZE,
+          height: CANVAS_SIZE,
+          pointerEvents: 'none',
+          opacity: hostReady && activeLayerVisible ? activeLayerOpacity : 0,
+        }}
+      />
+    </div>
+  );
+}
+
+export function CostumeActiveLayerOverlays({
+  activeLayerLocked,
   activeLayerVisible,
   activeTool,
   bitmapSelectionCanvasRef,
   colliderCanvasRef,
   editorModeState,
-  fabricCanvasHostRef,
   hasBitmapFloatingSelection,
-  hostReady,
   layerZIndex,
   vectorGuideCanvasRef,
-  vectorStrokeCanvasRef,
-}: CostumeActiveLayerHostProps) {
+}: CostumeActiveLayerOverlaysProps) {
   return (
     <>
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          zIndex: layerZIndex,
-        }}
-      >
-        <div
-          ref={fabricCanvasHostRef}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: CANVAS_SIZE,
-            height: CANVAS_SIZE,
-          }}
-        />
-
-        <canvas
-          ref={vectorStrokeCanvasRef}
-          width={CANVAS_SIZE}
-          height={CANVAS_SIZE}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: CANVAS_SIZE,
-            height: CANVAS_SIZE,
-            pointerEvents: 'none',
-            opacity: hostReady && activeLayerVisible ? activeLayerOpacity : 0,
-          }}
-        />
-      </div>
-
       <canvas
         ref={vectorGuideCanvasRef}
         width={CANVAS_SIZE}
@@ -81,6 +93,7 @@ export function CostumeActiveLayerHost({
           width: CANVAS_SIZE,
           height: CANVAS_SIZE,
           pointerEvents: 'none',
+          zIndex: layerZIndex,
         }}
       />
 
@@ -98,7 +111,7 @@ export function CostumeActiveLayerHost({
             activeTool === 'select' ||
             (activeTool === 'box-select' && activeLayerVisible && !hasBitmapFloatingSelection && !activeLayerLocked)
           ) ? 'auto' : 'none',
-          opacity: hostReady && activeLayerVisible ? activeLayerOpacity : 0,
+          opacity: activeLayerVisible ? 1 : 0,
           zIndex: layerZIndex + 1,
         }}
       />
@@ -114,6 +127,7 @@ export function CostumeActiveLayerHost({
           width: CANVAS_SIZE,
           height: CANVAS_SIZE,
           pointerEvents: activeTool === 'collider' ? 'auto' : 'none',
+          zIndex: layerZIndex + 2,
         }}
       />
     </>

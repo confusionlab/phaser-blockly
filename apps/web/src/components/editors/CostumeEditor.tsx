@@ -25,6 +25,7 @@ import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
 import { getEffectiveObjectProps } from '@/types';
 import type { Costume, ColliderConfig, CostumeDocument, CostumeEditorMode } from '@/types';
 import {
+  areCostumeBoundsEqual,
   areCostumeDocumentsEqual,
   createCostumeEditorSession,
   resolveCostumeEditorPersistedState,
@@ -81,6 +82,24 @@ function clonePersistedState(
     bounds: state.bounds ? { ...state.bounds } : undefined,
     document: cloneCostumeDocument(state.document),
   };
+}
+
+function arePersistedStatesEqual(
+  a: CostumeEditorPersistedState | null | undefined,
+  b: CostumeEditorPersistedState | null | undefined,
+): boolean {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+
+  return (
+    a.assetId === b.assetId &&
+    areCostumeBoundsEqual(a.bounds, b.bounds) &&
+    areCostumeDocumentsEqual(a.document, b.document)
+  );
 }
 
 function ensureToolForMode(mode: CostumeEditorMode, tool: DrawingTool): DrawingTool {
@@ -223,7 +242,7 @@ export function CostumeEditor() {
     ? getInitialCostumeEditorMode(editorCostume)
     : 'bitmap';
 
-  const [editorMode, setEditorMode] = useState<CostumeEditorMode>(initialEditorMode);
+  const [canvasEditorMode, setCanvasEditorMode] = useState<CostumeEditorMode>(initialEditorMode);
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
   const [brushColor, setBrushColor] = useState('#000000');
@@ -267,9 +286,12 @@ export function CostumeEditor() {
   const [canvasPreviewScale, setCanvasPreviewScale] = useState(DEFAULT_COSTUME_PREVIEW_SCALE);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
+  const editorMode: CostumeEditorMode = activeLayer
+    ? getActiveCostumeLayerKind(editorCostume?.document ?? null)
+    : canvasEditorMode;
 
   useEffect(() => {
-    setEditorMode((prev) => {
+    setCanvasEditorMode((prev) => {
       if (prev === initialEditorMode) return prev;
       return currentCostumeIdRef.current === null ? initialEditorMode : prev;
     });
@@ -291,7 +313,14 @@ export function CostumeEditor() {
     state: CostumeEditorPersistedState | null | undefined,
   ) => {
     const nextState = clonePersistedState(state);
-    workingPersistedStateSessionKeyRef.current = session?.key ?? null;
+    const nextSessionKey = session?.key ?? null;
+    if (
+      workingPersistedStateSessionKeyRef.current === nextSessionKey &&
+      arePersistedStatesEqual(workingPersistedStateRef.current, nextState)
+    ) {
+      return;
+    }
+    workingPersistedStateSessionKeyRef.current = nextSessionKey;
     workingPersistedStateRef.current = nextState;
     setWorkingPersistedStateState(nextState);
   }, []);
@@ -634,7 +663,7 @@ export function CostumeEditor() {
         await canvasRef.current.loadDocument(latestSession.key, cloneCostumeDocument(nextDocument));
         loadedSessionRef.current = latestSession;
         const resolvedMode = canvasRef.current.getEditorMode();
-        setEditorMode(resolvedMode);
+        setCanvasEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       }
 
@@ -698,13 +727,44 @@ export function CostumeEditor() {
     return () => registerCostumeUndo(null);
   }, [applyDocumentHistoryState, createPersistedStateFromDocument, persistCanvasStateToSession, registerCostumeUndo, syncDocumentHistoryFlags]);
 
-  const applyOperationToCurrentObject = useCallback((operation: CostumeEditorOperation): boolean => {
-    if (isLoadingRef.current || !currentObjectTarget) {
-      return false;
+  const resolvePersistedSessionForObjectOperation = useCallback((): CostumeEditorPersistedSession | undefined => {
+    const session = currentSessionRef.current;
+    if (!session) {
+      return undefined;
     }
 
     const loadedSession = loadedSessionRef.current;
-    if (loadedSession && !isCanvasReadyForSession(loadedSession)) {
+    if (
+      loadedSession?.key === session.key &&
+      isCanvasReadyForSession(loadedSession) &&
+      canvasRef.current?.hasUnsavedChanges(loadedSession.key)
+    ) {
+      const persistedState = getCanvasPersistedStateForSession(loadedSession, { skipLoadingGuard: true });
+      if (persistedState) {
+        return {
+          target: loadedSession,
+          state: persistedState,
+        };
+      }
+    }
+
+    const workingState = workingPersistedStateSessionKeyRef.current === session.key
+      ? workingPersistedStateRef.current
+      : null;
+    const fallbackState = clonePersistedState(workingState)
+      ?? createPersistedStateFromCostume(currentCostumeRef.current ?? null);
+    if (!fallbackState) {
+      return undefined;
+    }
+
+    return {
+      target: session,
+      state: fallbackState,
+    };
+  }, [createPersistedStateFromCostume, getCanvasPersistedStateForSession, isCanvasReadyForSession]);
+
+  const applyOperationToCurrentObject = useCallback((operation: CostumeEditorOperation): boolean => {
+    if (!currentObjectTarget) {
       return false;
     }
 
@@ -713,29 +773,25 @@ export function CostumeEditor() {
       saveTimeoutRef.current = null;
     }
 
-    const canPersistLoadedSession =
-      !!loadedSession &&
-      !!canvasRef.current?.hasUnsavedChanges(loadedSession.key);
-    const persistedState = canPersistLoadedSession
-      ? getCanvasPersistedStateForSession(loadedSession, { skipLoadingGuard: true })
-      : null;
-    const persistedSession: CostumeEditorPersistedSession | undefined =
-      loadedSession && persistedState
-        ? {
-            target: loadedSession,
-            state: persistedState,
-          }
-        : undefined;
+    const loadedSession = loadedSessionRef.current;
+    const persistedSession = resolvePersistedSessionForObjectOperation();
 
     const didApply = applyCostumeEditorOperation(currentObjectTarget, {
       persistedSession,
       operation,
     });
-    if (didApply && loadedSession && persistedSession) {
+    if (
+      didApply &&
+      loadedSession &&
+      persistedSession &&
+      persistedSession.target.sceneId === loadedSession.sceneId &&
+      persistedSession.target.objectId === loadedSession.objectId &&
+      persistedSession.target.costumeId === loadedSession.costumeId
+    ) {
       canvasRef.current?.markPersisted(loadedSession.key);
     }
     return didApply;
-  }, [applyCostumeEditorOperation, currentObjectTarget, getCanvasPersistedStateForSession, isCanvasReadyForSession]);
+  }, [applyCostumeEditorOperation, currentObjectTarget, resolvePersistedSessionForObjectOperation]);
 
   useEffect(() => {
     const previousSelection = previousSelectionRef.current;
@@ -768,7 +824,7 @@ export function CostumeEditor() {
       const requestId = ++loadRequestIdRef.current;
       beginSessionLoad(!!selectedObjectId);
       const fallbackMode: CostumeEditorMode = 'bitmap';
-      setEditorMode(fallbackMode);
+      setCanvasEditorMode(fallbackMode);
       setActiveTool((prev) => ensureToolForMode(fallbackMode, prev));
 
       canvasRef.current.loadFromDataURL('', null).finally(() => {
@@ -777,7 +833,7 @@ export function CostumeEditor() {
         resetDocumentHistory(null);
         finishSessionLoad();
         const resolvedMode = canvasRef.current?.getEditorMode() ?? fallbackMode;
-        setEditorMode(resolvedMode);
+        setCanvasEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
       return;
@@ -790,7 +846,7 @@ export function CostumeEditor() {
       beginSessionLoad(true);
 
       const nextMode = getInitialCostumeEditorMode(editorCostume);
-      setEditorMode(nextMode);
+      setCanvasEditorMode(nextMode);
       setActiveTool((prev) => ensureToolForMode(nextMode, prev));
 
       canvasRef.current.loadDocument(currentSession.key, cloneCostumeDocument(editorCostume.document)).finally(() => {
@@ -803,7 +859,7 @@ export function CostumeEditor() {
         });
         finishSessionLoad();
         const resolvedMode = canvasRef.current?.getEditorMode() ?? nextMode;
-        setEditorMode(resolvedMode);
+        setCanvasEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
@@ -853,7 +909,7 @@ export function CostumeEditor() {
   }, [applyDocumentHistoryState, getWorkingPersistedState, isCanvasReadyForSession, pushDocumentHistory, resolvePersistedStateWithCanvasState]);
 
   const handleSelectCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
+    if (!selectedSceneId || !selectedObjectId) return;
 
     const nextCostume = costumes[index];
     if (!nextCostume) return;
@@ -865,7 +921,7 @@ export function CostumeEditor() {
   }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
 
   const handleAddCostume = useCallback((costume: Costume) => {
-    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
+    if (!selectedSceneId || !selectedObjectId) return;
 
     applyOperationToCurrentObject({
       type: 'add',
@@ -874,7 +930,7 @@ export function CostumeEditor() {
   }, [applyOperationToCurrentObject, selectedObjectId, selectedSceneId]);
 
   const handleDeleteCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
+    if (!selectedSceneId || !selectedObjectId) return;
 
     const costume = costumes[index];
     if (!costume) return;
@@ -886,7 +942,7 @@ export function CostumeEditor() {
   }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
 
   const handleRenameCostume = useCallback((index: number, name: string) => {
-    if (!selectedSceneId || !selectedObjectId || isLoadingRef.current) return;
+    if (!selectedSceneId || !selectedObjectId) return;
 
     const costume = costumes[index];
     if (!costume) return;
@@ -1098,7 +1154,7 @@ export function CostumeEditor() {
   }, [commitDocumentMutation]);
 
   const handleCanvasModeChange = useCallback((mode: CostumeEditorMode) => {
-    setEditorMode(mode);
+    setCanvasEditorMode(mode);
     setActiveTool((prev) => ensureToolForMode(mode, prev));
     if (mode !== 'vector') {
       setIsVectorPointEditing(false);
@@ -1112,6 +1168,15 @@ export function CostumeEditor() {
     }
     setActiveTool(ensureToolForMode(editorMode, tool));
   }, [activeLayer, editorMode]);
+
+  useEffect(() => {
+    setActiveTool((prev) => ensureToolForMode(editorMode, prev));
+    if (editorMode !== 'vector') {
+      setIsVectorPointEditing(false);
+      setHasSelectedVectorPoints(false);
+      setHasTextSelection(false);
+    }
+  }, [editorMode]);
 
   useEffect(() => {
     if (
