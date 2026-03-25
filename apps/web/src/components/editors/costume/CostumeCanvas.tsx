@@ -130,6 +130,20 @@ function normalizeRadians(angleRadians: number) {
   return normalized;
 }
 
+function normalizeDegrees(angleDegrees: number) {
+  if (!Number.isFinite(angleDegrees)) {
+    return 0;
+  }
+
+  let normalized = angleDegrees % 360;
+  if (normalized <= -180) {
+    normalized += 360;
+  } else if (normalized > 180) {
+    normalized -= 360;
+  }
+  return normalized;
+}
+
 function getStrokedShapeBoundsFromPathBounds(
   startX: number,
   startY: number,
@@ -357,6 +371,42 @@ class CompositePencilBrush extends PencilBrush {
   override createPath(pathData: any) {
     const path = super.createPath(pathData);
     path.set('globalCompositeOperation', this.compositeOperation);
+    return path;
+  }
+}
+
+interface VectorPencilBrushOptions {
+  strokeBrushId: VectorStrokeBrushId;
+  strokeColor: string;
+  strokeWidth: number;
+}
+
+class VectorPencilBrush extends PencilBrush {
+  private readonly strokeBrushId: VectorStrokeBrushId;
+  private readonly strokeColor: string;
+  private readonly strokeWidthValue: number;
+
+  constructor(canvas: FabricCanvas, options: VectorPencilBrushOptions) {
+    super(canvas as any);
+    this.strokeBrushId = options.strokeBrushId;
+    this.strokeColor = options.strokeColor;
+    this.strokeWidthValue = Math.max(1, options.strokeWidth);
+    this.width = this.strokeWidthValue;
+    this.color = options.strokeColor;
+    this.decimate = 0.4;
+  }
+
+  override createPath(pathData: any) {
+    const path = super.createPath(pathData);
+    path.set({
+      fill: null,
+      stroke: getFabricStrokeValueForVectorBrush(this.strokeBrushId, this.strokeColor),
+      strokeWidth: this.strokeWidthValue,
+      strokeUniform: true,
+      noScaleCache: false,
+      vectorStrokeBrushId: this.strokeBrushId,
+      vectorStrokeColor: this.strokeColor,
+    } as any);
     return path;
   }
 }
@@ -3018,18 +3068,68 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, [saveHistory]);
 
   const flipSelection = useCallback((axis: SelectionFlipAxis): boolean => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) return false;
+
     const selectionSnapshot = getSelectionBoundsSnapshot();
     if (!selectionSnapshot) return false;
 
     const centerX = selectionSnapshot.bounds.left + selectionSnapshot.bounds.width / 2;
     const centerY = selectionSnapshot.bounds.top + selectionSnapshot.bounds.height / 2;
-    const transform = util.multiplyTransformMatrixArray([
-      util.createTranslateMatrix(centerX, centerY),
-      util.createScaleMatrix(axis === 'horizontal' ? -1 : 1, axis === 'vertical' ? -1 : 1),
-      util.createTranslateMatrix(-centerX, -centerY),
-    ]);
-    return applySelectionTransform(transform);
-  }, [applySelectionTransform, getSelectionBoundsSnapshot]);
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    const selectedObjects = selectionSnapshot.selectedObjects.filter(Boolean);
+    if (selectedObjects.length === 0) {
+      return false;
+    }
+
+    if (isActiveSelectionObject(activeObject)) {
+      fabricCanvas.discardActiveObject();
+    }
+
+    let changed = false;
+    for (const obj of selectedObjects) {
+      if (typeof obj?.getCenterPoint !== 'function') {
+        continue;
+      }
+
+      const currentCenter = obj.getCenterPoint();
+      const nextCenter = new Point(
+        axis === 'horizontal' ? centerX * 2 - currentCenter.x : currentCenter.x,
+        axis === 'vertical' ? centerY * 2 - currentCenter.y : currentCenter.y,
+      );
+      const nextAngle = normalizeDegrees(-((typeof obj.angle === 'number' ? obj.angle : 0)));
+      const currentFlipX = obj.flipX === true;
+      const currentFlipY = obj.flipY === true;
+
+      obj.set({
+        angle: nextAngle,
+        flipX: axis === 'horizontal' ? !currentFlipX : currentFlipX,
+        flipY: axis === 'vertical' ? !currentFlipY : currentFlipY,
+      });
+      if (typeof obj.setPositionByOrigin === 'function') {
+        obj.setPositionByOrigin(nextCenter, 'center', 'center');
+      } else {
+        obj.set({
+          left: nextCenter.x,
+          top: nextCenter.y,
+          originX: 'center',
+          originY: 'center',
+        });
+      }
+      obj.setCoords?.();
+      changed = true;
+    }
+
+    if (!changed) {
+      return false;
+    }
+
+    restoreCanvasSelection(selectedObjects);
+    fabricCanvas.requestRenderAll();
+    syncSelectionState();
+    saveHistory();
+    return true;
+  }, [getSelectionBoundsSnapshot, restoreCanvasSelection, saveHistory, syncSelectionState]);
 
   const rotateSelection = useCallback((): boolean => {
     const selectionSnapshot = getSelectionBoundsSnapshot();
@@ -5405,6 +5505,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     const isBitmapBrush = mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
+    const isVectorPencil = mode === 'vector' && tool === 'brush';
     if (isBitmapBrush) {
       const compositeOperation = getCompositeOperation(tool);
       const brush = bitmapBrushKindRef.current !== 'hard-round'
@@ -5421,6 +5522,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       if (brush instanceof CompositePencilBrush) {
         brush.compositeOperation = compositeOperation;
       }
+      (fabricCanvas as any).freeDrawingBrush = brush;
+      fabricCanvas.isDrawingMode = true;
+    } else if (isVectorPencil) {
+      const brush = new VectorPencilBrush(fabricCanvas, {
+        strokeBrushId: vectorStyleRef.current.strokeBrushId,
+        strokeColor: vectorStyleRef.current.strokeColor,
+        strokeWidth: vectorStyleRef.current.strokeWidth,
+      });
       (fabricCanvas as any).freeDrawingBrush = brush;
       fabricCanvas.isDrawingMode = true;
     } else {
@@ -5530,7 +5639,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     let cursor = 'default';
     if (mode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
       cursor = 'none';
-    } else if (tool === 'fill' || tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'triangle' || tool === 'star' || tool === 'pen') {
+    } else if (
+      tool === 'fill' ||
+      tool === 'line' ||
+      tool === 'circle' ||
+      tool === 'rectangle' ||
+      tool === 'triangle' ||
+      tool === 'star' ||
+      tool === 'pen' ||
+      (mode === 'vector' && tool === 'brush')
+    ) {
       cursor = 'crosshair';
     } else if (tool === 'text') {
       cursor = 'text';
@@ -6136,8 +6254,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       }
     };
 
-    const onPathCreated = () => {
+    const onPathCreated = (event: { path?: any }) => {
       if (editorModeRef.current !== 'bitmap') {
+        const createdPath = event?.path;
+        if (createdPath && editorModeRef.current === 'vector' && activeToolRef.current === 'brush') {
+          normalizeVectorObjectRendering(createdPath);
+          createdPath.setCoords?.();
+          syncVectorStyleFromSelection();
+          syncSelectionState();
+          fabricCanvas.requestRenderAll();
+        }
         saveHistory();
         return;
       }
@@ -6299,7 +6425,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   // Sync tool behavior.
   useEffect(() => {
     configureCanvasForTool();
-  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, configureCanvasForTool]);
+  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, vectorStyle, configureCanvasForTool]);
 
   useEffect(() => {
     const activeAnchor = activePathAnchorRef.current;

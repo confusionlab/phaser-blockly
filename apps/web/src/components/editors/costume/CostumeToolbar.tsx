@@ -16,6 +16,7 @@ import {
   MousePointer2,
   PenTool,
   Paintbrush,
+  Pencil,
   Eraser,
   PaintBucket,
   Circle,
@@ -570,6 +571,7 @@ const bitmapPrimaryTools: ToolDefinition[] = [
 const vectorPrimaryTools: ToolDefinition[] = [
   { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
   { tool: 'pen', icon: <PenTool className="size-[18px]" />, label: 'Pen' },
+  { tool: 'brush', icon: <Pencil className="size-[18px]" />, label: 'Pencil' },
 ];
 
 const vectorTrailingTools: ToolDefinition[] = [
@@ -725,10 +727,10 @@ export const CostumeToolbar = memo(({
   const showVectorStyleControls =
     editorMode === 'vector' &&
     !showTextControls &&
-    (showSelectionActions || isVectorPointEditing || shapeToolIsActive || activeTool === 'pen');
+    (showSelectionActions || isVectorPointEditing || shapeToolIsActive || activeTool === 'pen' || activeTool === 'brush');
   const showVectorFillControl =
     showVectorStyleControls &&
-    (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line');
+    (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line' && activeTool !== 'brush');
   const showTextToolbarControls = editorMode === 'vector' && showTextControls;
   const showVectorTopRowControls = showSelectionActions || showVectorHandleControl;
   const useVectorSelectionTwoRowLayout =
