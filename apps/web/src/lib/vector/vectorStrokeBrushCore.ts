@@ -10,27 +10,36 @@ export interface VectorStrokeBrushOption {
 export interface VectorStrokeBrushPreset {
   id: VectorStrokeBrushId;
   label: string;
-  kind: 'solid' | 'textured';
+  kind: 'solid' | 'bitmap-dab';
   texturePath?: string;
-  tileAspectRatio: number;
-  advanceRatio: number;
+  dabAspectRatio: number;
+  spacingRatio: number;
   opacity: number;
+  opacityJitter: number;
   scaleJitter: number;
   rotationJitter: number;
   scatterRatio: number;
+  variantCount: number;
 }
 
-export interface VectorStrokeBrushStamp {
-  advance: number;
+export interface VectorStrokeBrushBitmapDab {
+  height: number;
   image: HTMLCanvasElement;
   opacity: number;
+  width: number;
+}
+
+export interface VectorStrokeBrushRenderStyle {
+  dabs: VectorStrokeBrushBitmapDab[];
+  kind: 'solid' | 'bitmap-dab';
+  opacityJitter: number;
   rotationJitter: number;
   scaleJitter: number;
   scatter: number;
+  spacing: number;
 }
 
-const DEFAULT_TILE_BASE_WIDTH = 192;
-const DEFAULT_TILE_BASE_HEIGHT = 48;
+const MINIMUM_DAB_SIZE = 8;
 
 export const DEFAULT_VECTOR_STROKE_BRUSH_ID: VectorStrokeBrushId = 'solid';
 
@@ -46,45 +55,53 @@ export const VECTOR_STROKE_BRUSH_PRESETS: Record<VectorStrokeBrushId, VectorStro
     id: 'solid',
     label: 'Solid',
     kind: 'solid',
-    tileAspectRatio: 4,
-    advanceRatio: 0.5,
+    dabAspectRatio: 1,
+    spacingRatio: 0.2,
     opacity: 1,
+    opacityJitter: 0,
     scaleJitter: 0,
     rotationJitter: 0,
     scatterRatio: 0,
+    variantCount: 1,
   },
   marker: {
     id: 'marker',
     label: 'Marker',
-    kind: 'textured',
-    tileAspectRatio: 3.8,
-    advanceRatio: 0.46,
-    opacity: 0.88,
-    scaleJitter: 0.04,
-    rotationJitter: 0.03,
-    scatterRatio: 0.02,
+    kind: 'bitmap-dab',
+    dabAspectRatio: 1.35,
+    spacingRatio: 0.15,
+    opacity: 0.92,
+    opacityJitter: 0.08,
+    scaleJitter: 0.06,
+    rotationJitter: 0.06,
+    scatterRatio: 0.028,
+    variantCount: 3,
   },
   ink: {
     id: 'ink',
     label: 'Ink',
-    kind: 'textured',
-    tileAspectRatio: 4.6,
-    advanceRatio: 0.42,
-    opacity: 0.94,
-    scaleJitter: 0.06,
-    rotationJitter: 0.05,
-    scatterRatio: 0.018,
+    kind: 'bitmap-dab',
+    dabAspectRatio: 1.12,
+    spacingRatio: 0.13,
+    opacity: 0.96,
+    opacityJitter: 0.04,
+    scaleJitter: 0.04,
+    rotationJitter: 0.04,
+    scatterRatio: 0.016,
+    variantCount: 2,
   },
   chalk: {
     id: 'chalk',
     label: 'Chalk',
-    kind: 'textured',
-    tileAspectRatio: 3.5,
-    advanceRatio: 0.38,
+    kind: 'bitmap-dab',
+    dabAspectRatio: 1.08,
+    spacingRatio: 0.1,
     opacity: 0.78,
-    scaleJitter: 0.08,
-    rotationJitter: 0.08,
-    scatterRatio: 0.032,
+    opacityJitter: 0.14,
+    scaleJitter: 0.1,
+    rotationJitter: 0.12,
+    scatterRatio: 0.05,
+    variantCount: 4,
   },
 };
 
@@ -99,6 +116,18 @@ function hash2d(x: number, y: number) {
 
 function colorWithAlpha(color: string, alpha: number) {
   return Color(color).alpha(clampUnit(alpha)).rgb().string();
+}
+
+function clampByte(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  if (edge0 === edge1) {
+    return value < edge0 ? 0 : 1;
+  }
+  const t = clampUnit((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
 }
 
 function resolveTextureSourceDimension(value: unknown, fallback: number) {
@@ -121,115 +150,114 @@ function resolveTextureSourceDimension(value: unknown, fallback: number) {
   return fallback;
 }
 
-function createTileCanvas(width = DEFAULT_TILE_BASE_WIDTH, height = DEFAULT_TILE_BASE_HEIGHT) {
+function createBrushCanvas(width: number, height: number) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   return canvas;
 }
 
-function buildMarkerTile(color: string, width = DEFAULT_TILE_BASE_WIDTH, height = DEFAULT_TILE_BASE_HEIGHT) {
-  const canvas = createTileCanvas(width, height);
+function buildDabFromPixelMap(
+  width: number,
+  height: number,
+  fillPixel: (
+    x: number,
+    y: number,
+    rgba: Uint8ClampedArray,
+    pixelIndex: number,
+  ) => void,
+) {
+  const canvas = createBrushCanvas(width, height);
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     return canvas;
   }
 
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, colorWithAlpha(color, 0.35));
-  gradient.addColorStop(0.22, colorWithAlpha(color, 0.92));
-  gradient.addColorStop(0.78, colorWithAlpha(color, 0.92));
-  gradient.addColorStop(1, colorWithAlpha(color, 0.3));
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.globalCompositeOperation = 'destination-out';
-  for (let x = 0; x < width; x += 1) {
-    const centerBias = 1 - Math.abs(x / width - 0.5) * 1.8;
-    const topDepth = (hash2d(x * 0.41, 0.2) * 0.12 + 0.05) * centerBias;
-    const bottomDepth = (hash2d(x * 0.39, 1.3) * 0.12 + 0.05) * centerBias;
-    const topHeight = Math.max(1, Math.round(height * topDepth));
-    const bottomHeight = Math.max(1, Math.round(height * bottomDepth));
-    ctx.fillStyle = `rgba(0,0,0,${0.28 + hash2d(x * 0.17, 4.9) * 0.18})`;
-    ctx.fillRect(x, 0, 1, topHeight);
-    ctx.fillRect(x, height - bottomHeight, 1, bottomHeight);
-  }
-
-  ctx.globalCompositeOperation = 'source-over';
-  for (let index = 0; index < 18; index += 1) {
-    const streakY = height * (0.12 + index / 24);
-    ctx.strokeStyle = colorWithAlpha(color, 0.08 + hash2d(index * 2.7, 1.1) * 0.08);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, streakY + hash2d(index, 1.4) * 2);
-    ctx.lineTo(width, streakY + hash2d(index, 4.7) * 2);
-    ctx.stroke();
-  }
-
-  return canvas;
-}
-
-function buildInkTile(color: string, width = DEFAULT_TILE_BASE_WIDTH, height = DEFAULT_TILE_BASE_HEIGHT) {
-  const canvas = createTileCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return canvas;
-  }
-
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, colorWithAlpha(color, 0.18));
-  gradient.addColorStop(0.14, colorWithAlpha(color, 0.94));
-  gradient.addColorStop(0.86, colorWithAlpha(color, 0.96));
-  gradient.addColorStop(1, colorWithAlpha(color, 0.2));
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, width, height);
-
-  const imageData = ctx.getImageData(0, 0, width, height);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4;
-      const edge = Math.abs(y / Math.max(1, height - 1) - 0.5) * 2;
-      const grain = 0.9 + (hash2d(x * 0.23, y * 0.47) - 0.5) * 0.24;
-      const feather = 1 - Math.max(0, edge - 0.68) / 0.32;
-      const alpha = clampUnit((imageData.data[idx + 3] / 255) * grain * feather);
-      imageData.data[idx + 3] = Math.round(alpha * 255);
-    }
-  }
-  ctx.putImageData(imageData, 0, 0);
-  return canvas;
-}
-
-function buildChalkTile(color: string, width = DEFAULT_TILE_BASE_WIDTH, height = DEFAULT_TILE_BASE_HEIGHT) {
-  const canvas = createTileCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return canvas;
-  }
-
-  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
   const imageData = ctx.createImageData(width, height);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const idx = (y * width + x) * 4;
-      const edge = Math.abs(y / Math.max(1, height - 1) - 0.5) * 2;
-      const density = 1 - Math.max(0, edge - 0.6) / 0.4;
-      const grain = hash2d(x * 0.59, y * 0.73);
-      const voidNoise = hash2d(x * 1.27, y * 1.71);
-      let alpha = density * (0.24 + grain * 0.76);
-      if (voidNoise < 0.1) {
-        alpha *= 0.08;
-      } else if (voidNoise < 0.24) {
-        alpha *= 0.34;
-      }
-      const colorNoise = (hash2d(x * 0.31, y * 0.21) - 0.5) * 28;
-      imageData.data[idx] = Math.max(0, Math.min(255, Math.round(baseRed + colorNoise)));
-      imageData.data[idx + 1] = Math.max(0, Math.min(255, Math.round(baseGreen + colorNoise)));
-      imageData.data[idx + 2] = Math.max(0, Math.min(255, Math.round(baseBlue + colorNoise)));
-      imageData.data[idx + 3] = Math.max(0, Math.min(255, Math.round(clampUnit(alpha) * 255)));
+      fillPixel(x, y, imageData.data, (y * width + x) * 4);
     }
   }
   ctx.putImageData(imageData, 0, 0);
   return canvas;
+}
+
+function buildMarkerDab(color: string, width: number, height: number, seed: number) {
+  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
+  const radiusX = Math.max(1, width * (0.41 + hash2d(seed, 0.3) * 0.06));
+  const radiusY = Math.max(1, height * (0.36 + hash2d(seed, 0.8) * 0.05));
+  return buildDabFromPixelMap(width, height, (x, y, rgba, pixelIndex) => {
+    const dx = (x + 0.5 - width / 2) / radiusX;
+    const dy = (y + 0.5 - height / 2) / radiusY;
+    const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
+    const edgeNoise = (hash2d(x * 0.19 + seed * 13.1, y * 0.07 + seed * 4.3) - 0.5) * 0.2;
+    const profile = 1 - smoothstep(0.68 + edgeNoise, 1.02 + edgeNoise, ellipseDistance);
+    if (profile <= 0.001) {
+      return;
+    }
+    const centerWeight = 1 - Math.min(1, Math.abs(dy));
+    const streak = 0.8 + hash2d(x * 0.11 + seed * 2.3, y * 0.02 + seed * 8.7) * 0.2;
+    const alpha = clampUnit(profile * streak * (0.72 + centerWeight * 0.28));
+    rgba[pixelIndex] = clampByte(baseRed);
+    rgba[pixelIndex + 1] = clampByte(baseGreen);
+    rgba[pixelIndex + 2] = clampByte(baseBlue);
+    rgba[pixelIndex + 3] = clampByte(alpha * 255);
+  });
+}
+
+function buildInkDab(color: string, width: number, height: number, seed: number) {
+  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
+  const radiusX = Math.max(1, width * (0.38 + hash2d(seed, 1.1) * 0.04));
+  const radiusY = Math.max(1, height * (0.38 + hash2d(seed, 1.6) * 0.04));
+  return buildDabFromPixelMap(width, height, (x, y, rgba, pixelIndex) => {
+    const dx = (x + 0.5 - width / 2) / radiusX;
+    const dy = (y + 0.5 - height / 2) / radiusY;
+    const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
+    const edgeNoise = (hash2d(x * 0.17 + seed * 9.9, y * 0.17 + seed * 3.7) - 0.5) * 0.14;
+    const body = 1 - smoothstep(0.72 + edgeNoise, 1.01 + edgeNoise, ellipseDistance);
+    if (body <= 0.001) {
+      return;
+    }
+    const grain = 0.88 + (hash2d(x * 0.29 + seed * 1.5, y * 0.33 + seed * 5.4) - 0.5) * 0.18;
+    const pool = 1 - smoothstep(0.05, 0.8, ellipseDistance);
+    const alpha = clampUnit(body * grain * (0.9 + pool * 0.1));
+    rgba[pixelIndex] = clampByte(baseRed);
+    rgba[pixelIndex + 1] = clampByte(baseGreen);
+    rgba[pixelIndex + 2] = clampByte(baseBlue);
+    rgba[pixelIndex + 3] = clampByte(alpha * 255);
+  });
+}
+
+function buildChalkDab(color: string, width: number, height: number, seed: number) {
+  const [baseRed, baseGreen, baseBlue] = Color(color).rgb().array();
+  const radiusX = Math.max(1, width * (0.4 + hash2d(seed, 2.1) * 0.05));
+  const radiusY = Math.max(1, height * (0.4 + hash2d(seed, 2.6) * 0.05));
+  return buildDabFromPixelMap(width, height, (x, y, rgba, pixelIndex) => {
+    const dx = (x + 0.5 - width / 2) / radiusX;
+    const dy = (y + 0.5 - height / 2) / radiusY;
+    const ellipseDistance = Math.sqrt(dx * dx + dy * dy);
+    const edgeNoise = (hash2d(x * 0.13 + seed * 12.3, y * 0.19 + seed * 7.7) - 0.5) * 0.28;
+    const body = 1 - smoothstep(0.58 + edgeNoise, 1.08 + edgeNoise, ellipseDistance);
+    if (body <= 0.001) {
+      return;
+    }
+    const grain = hash2d(x * 0.63 + seed * 4.7, y * 0.59 + seed * 9.1);
+    const voidNoise = hash2d(x * 1.41 + seed * 2.9, y * 1.27 + seed * 6.1);
+    let alpha = body * (0.16 + grain * 0.84);
+    if (voidNoise < 0.08) {
+      alpha *= 0.05;
+    } else if (voidNoise < 0.18) {
+      alpha *= 0.18;
+    } else if (voidNoise < 0.32) {
+      alpha *= 0.42;
+    }
+    const colorNoise = (hash2d(x * 0.29 + seed * 3.1, y * 0.31 + seed * 8.3) - 0.5) * 30;
+    rgba[pixelIndex] = clampByte(baseRed + colorNoise);
+    rgba[pixelIndex + 1] = clampByte(baseGreen + colorNoise);
+    rgba[pixelIndex + 2] = clampByte(baseBlue + colorNoise);
+    rgba[pixelIndex + 3] = clampByte(clampUnit(alpha) * 255);
+  });
 }
 
 function tintTextureSource(
@@ -238,7 +266,7 @@ function tintTextureSource(
   width: number,
   height: number,
 ) {
-  const canvas = createTileCanvas(width, height);
+  const canvas = createBrushCanvas(width, height);
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     return canvas;
@@ -264,40 +292,52 @@ export function getVectorStrokeBrushPreset(brushId: VectorStrokeBrushId | null |
   return VECTOR_STROKE_BRUSH_PRESETS[brushId ?? DEFAULT_VECTOR_STROKE_BRUSH_ID] ?? VECTOR_STROKE_BRUSH_PRESETS[DEFAULT_VECTOR_STROKE_BRUSH_ID];
 }
 
-export function createVectorStrokeBrushStamp(
+export function createVectorStrokeBrushRenderStyle(
   brushId: VectorStrokeBrushId | null | undefined,
   strokeColor: string,
   strokeWidth: number,
   textureSource?: CanvasImageSource | null,
-): VectorStrokeBrushStamp | null {
+): VectorStrokeBrushRenderStyle {
   const preset = getVectorStrokeBrushPreset(brushId);
   if (preset.kind === 'solid') {
-    return null;
+    return {
+      kind: 'solid',
+      dabs: [],
+      spacing: Math.max(1, strokeWidth * 0.2),
+      opacityJitter: 0,
+      rotationJitter: 0,
+      scaleJitter: 0,
+      scatter: 0,
+    };
   }
 
-  const baseWidth = DEFAULT_TILE_BASE_WIDTH;
-  const baseHeight = Math.max(24, Math.round(baseWidth / Math.max(1, preset.tileAspectRatio)));
-  const tintedTexture = textureSource
-    ? tintTextureSource(textureSource, strokeColor, baseWidth, baseHeight)
-    : preset.id === 'marker'
-      ? buildMarkerTile(strokeColor, baseWidth, baseHeight)
-      : preset.id === 'ink'
-        ? buildInkTile(strokeColor, baseWidth, baseHeight)
-        : buildChalkTile(strokeColor, baseWidth, baseHeight);
-  const scale = Math.max(0.001, strokeWidth / Math.max(1, tintedTexture.height));
-  const scaledWidth = Math.max(1, Math.round(tintedTexture.width * scale));
-  const scaledHeight = Math.max(1, Math.round(tintedTexture.height * scale));
-  const scaledCanvas = createTileCanvas(scaledWidth, scaledHeight);
-  const scaledCtx = scaledCanvas.getContext('2d');
-  if (scaledCtx) {
-    scaledCtx.imageSmoothingEnabled = true;
-    scaledCtx.drawImage(tintedTexture, 0, 0, scaledWidth, scaledHeight);
+  const dabHeight = Math.max(MINIMUM_DAB_SIZE, Math.round(strokeWidth));
+  const dabWidth = Math.max(MINIMUM_DAB_SIZE, Math.round(dabHeight * preset.dabAspectRatio));
+  const dabCount = textureSource ? 1 : preset.variantCount;
+  const dabs: VectorStrokeBrushBitmapDab[] = [];
+
+  for (let index = 0; index < dabCount; index += 1) {
+    const seed = index + 1;
+    const image = textureSource
+      ? tintTextureSource(textureSource, strokeColor, dabWidth, dabHeight)
+      : preset.id === 'marker'
+        ? buildMarkerDab(strokeColor, dabWidth, dabHeight, seed)
+        : preset.id === 'ink'
+          ? buildInkDab(strokeColor, dabWidth, dabHeight, seed)
+          : buildChalkDab(strokeColor, dabWidth, dabHeight, seed);
+    dabs.push({
+      image,
+      width: image.width,
+      height: image.height,
+      opacity: preset.opacity,
+    });
   }
 
   return {
-    image: scaledCanvas,
-    advance: Math.max(1, scaledWidth * preset.advanceRatio),
-    opacity: preset.opacity,
+    kind: 'bitmap-dab',
+    dabs,
+    spacing: Math.max(1, strokeWidth * preset.spacingRatio),
+    opacityJitter: preset.opacityJitter,
     rotationJitter: preset.rotationJitter,
     scaleJitter: preset.scaleJitter,
     scatter: strokeWidth * preset.scatterRatio,

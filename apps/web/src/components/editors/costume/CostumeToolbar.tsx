@@ -529,6 +529,10 @@ interface CostumeToolbarProps {
   editorMode: EditorMode;
   activeTool: DrawingTool;
   hasActiveSelection: boolean;
+  toolVisibility?: {
+    showSelectTool?: boolean;
+    showShapeTools?: boolean;
+  };
   showModeSwitcher?: boolean;
   selectionActionsEnabled?: boolean;
   showTextControls: boolean;
@@ -660,6 +664,7 @@ export const CostumeToolbar = memo(({
   editorMode,
   activeTool,
   hasActiveSelection,
+  toolVisibility,
   showModeSwitcher = true,
   selectionActionsEnabled = true,
   showTextControls,
@@ -692,6 +697,8 @@ export const CostumeToolbar = memo(({
   onVectorStyleChange,
 }: CostumeToolbarProps) => {
   const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
+  const showSelectTool = toolVisibility?.showSelectTool ?? true;
+  const showShapeTools = toolVisibility?.showShapeTools ?? true;
 
   const handleMenuOpenChange = useCallback((menu: ToolbarMenuId, open: boolean) => {
     setOpenMenu((current) => {
@@ -702,10 +709,11 @@ export const CostumeToolbar = memo(({
 
   const isShapeMenuOpen = openMenu === 'shape-tools';
 
-  const leadingTools = editorMode === 'vector' ? vectorPrimaryTools : bitmapPrimaryTools;
+  const leadingTools = (editorMode === 'vector' ? vectorPrimaryTools : bitmapPrimaryTools)
+    .filter((tool) => showSelectTool || tool.tool !== 'select');
   const trailingTools = editorMode === 'vector' ? vectorTrailingTools : [];
   const currentShapeTool = shapeTools.find((tool) => tool.tool === activeTool) ?? shapeTools[0];
-  const shapeToolIsActive = isShapeTool(activeTool);
+  const shapeToolIsActive = showShapeTools && isShapeTool(activeTool);
   const showSelectionActions = selectionActionsEnabled && activeTool === 'select' && !isVectorPointEditing && hasActiveSelection;
   const showVectorHandleControl = editorMode === 'vector' && isVectorPointEditing && hasSelectedVectorPoints;
   const showBitmapShapeStyleControls = editorMode === 'bitmap' && shapeToolIsActive;
@@ -1394,79 +1402,81 @@ export const CostumeToolbar = memo(({
                     />
                   ))}
 
-                  <DropdownMenu
-                    open={isShapeMenuOpen}
-                    onOpenChange={(open) => handleMenuOpenChange('shape-tools', open)}
-                  >
-                    <div
-                      className={cn(
-                        'flex items-center gap-1 rounded-[18px] bg-transparent',
-                        shapeToolIsActive && floatingToolButtonActiveClass,
-                      )}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        setOpenMenu('shape-tools');
-                      }}
+                  {showShapeTools ? (
+                    <DropdownMenu
+                      open={isShapeMenuOpen}
+                      onOpenChange={(open) => handleMenuOpenChange('shape-tools', open)}
                     >
-                      <Button
-                        variant="ghost"
-                        size="sm"
+                      <div
                         className={cn(
-                          floatingToolButtonBaseClass,
-                          'h-11 rounded-[18px] !pl-3 !pr-0 text-sm',
-                          shapeToolIsActive && 'bg-transparent shadow-none',
+                          'flex items-center gap-1 rounded-[18px] bg-transparent',
+                          shapeToolIsActive && floatingToolButtonActiveClass,
                         )}
-                        onClick={() => onToolChange(currentShapeTool.tool)}
-                        title={currentShapeTool.label}
-                        aria-pressed={shapeToolIsActive}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          setOpenMenu('shape-tools');
+                        }}
                       >
-                        {currentShapeTool.icon}
-                      </Button>
-                      <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="sm"
                           className={cn(
                             floatingToolButtonBaseClass,
-                            'h-11 rounded-[18px] !pl-0 !pr-3 text-sm',
+                            'h-11 rounded-[18px] !pl-3 !pr-0 text-sm',
                             shapeToolIsActive && 'bg-transparent shadow-none',
                           )}
-                          title="Open shape tools"
-                          aria-label="Open shape tools"
-                          aria-expanded={isShapeMenuOpen}
+                          onClick={() => onToolChange(currentShapeTool.tool)}
+                          title={currentShapeTool.label}
+                          aria-pressed={shapeToolIsActive}
                         >
-                          <ChevronDown className="size-3.5 opacity-70" />
+                          {currentShapeTool.icon}
                         </Button>
-                      </DropdownMenuTrigger>
-                    </div>
-                    <DropdownMenuContent
-                      side="top"
-                      align="center"
-                      sideOffset={toolbarPopupSideOffset}
-                      className="min-w-[180px] rounded-2xl border p-2"
-                    >
-                      {shapeTools.map((shapeTool) => {
-                        const isActive = activeTool === shapeTool.tool;
-
-                        return (
-                          <DropdownMenuItem
-                            key={shapeTool.tool}
-                            className="flex items-center justify-between rounded-xl px-3 py-2 text-sm"
-                            onClick={() => {
-                              onToolChange(shapeTool.tool);
-                              setOpenMenu((current) => (current === 'shape-tools' ? null : current));
-                            }}
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={cn(
+                              floatingToolButtonBaseClass,
+                              'h-11 rounded-[18px] !pl-0 !pr-3 text-sm',
+                              shapeToolIsActive && 'bg-transparent shadow-none',
+                            )}
+                            title="Open shape tools"
+                            aria-label="Open shape tools"
+                            aria-expanded={isShapeMenuOpen}
                           >
-                            <span className="flex items-center gap-3">
-                              {shapeTool.icon}
-                              <span>{shapeTool.label}</span>
-                            </span>
-                            <Check className={cn('size-3.5 text-foreground/70', !isActive && 'opacity-0')} />
-                          </DropdownMenuItem>
-                        );
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                            <ChevronDown className="size-3.5 opacity-70" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </div>
+                      <DropdownMenuContent
+                        side="top"
+                        align="center"
+                        sideOffset={toolbarPopupSideOffset}
+                        className="min-w-[180px] rounded-2xl border p-2"
+                      >
+                        {shapeTools.map((shapeTool) => {
+                          const isActive = activeTool === shapeTool.tool;
+
+                          return (
+                            <DropdownMenuItem
+                              key={shapeTool.tool}
+                              className="flex items-center justify-between rounded-xl px-3 py-2 text-sm"
+                              onClick={() => {
+                                onToolChange(shapeTool.tool);
+                                setOpenMenu((current) => (current === 'shape-tools' ? null : current));
+                              }}
+                            >
+                              <span className="flex items-center gap-3">
+                                {shapeTool.icon}
+                                <span>{shapeTool.label}</span>
+                              </span>
+                              <Check className={cn('size-3.5 text-foreground/70', !isActive && 'opacity-0')} />
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : null}
 
                   {trailingTools.map(({ tool, icon, label }) => (
                     <FloatingToolButton

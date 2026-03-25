@@ -2541,6 +2541,10 @@ export function BackgroundCanvasEditor() {
           editorMode="bitmap"
           activeTool={tool}
           hasActiveSelection={hasFloatingSelection}
+          toolVisibility={{
+            showSelectTool: false,
+            showShapeTools: false,
+          }}
           showModeSwitcher={false}
           selectionActionsEnabled={false}
           showTextControls={false}
