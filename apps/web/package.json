@@ -13,5 +13,8 @@
     "test:headed": "playwright test --headed",
     "typecheck": "tsc -b --pretty false"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.8.11"
+  }
 }

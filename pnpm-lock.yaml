@@ -175,7 +175,11 @@ importers:
         specifier: ^8.0.4
         version: 8.0.5
 
-  apps/web: {}
+  apps/web:
+    devDependencies:
+      '@xmldom/xmldom':
+        specifier: ^0.8.11
+        version: 0.8.11
 
   packages/ui-shared:
     dependencies:
