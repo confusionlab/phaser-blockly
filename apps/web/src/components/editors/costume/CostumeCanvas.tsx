@@ -2465,21 +2465,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     onTextSelectionChangeRef.current?.(!!activeObject && isTextObject(activeObject));
   }, []);
 
-  const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean, requestId?: number): Promise<boolean> => {
+  const applyBitmapLayerSource = useCallback((
+    source: FabricImage | HTMLImageElement | HTMLCanvasElement | null,
+    selectable: boolean,
+  ): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return false;
-    if (!isLoadRequestActive(requestId)) return false;
 
-    let image: FabricImage | null = null;
-    if (dataUrl) {
-      try {
-        image = await FabricImage.fromURL(dataUrl);
-      } catch (error) {
-        console.error('Failed to load bitmap layer:', error);
-        return false;
-      }
-      if (!isLoadRequestActive(requestId)) return false;
-    }
+    const image = source
+      ? (source instanceof FabricImage ? source : new FabricImage(source as any))
+      : null;
 
     suppressHistoryRef.current = true;
     try {
@@ -2522,7 +2517,24 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     } finally {
       suppressHistoryRef.current = false;
     }
-  }, [drawBitmapSelectionOverlay, isLoadRequestActive, syncSelectionState]);
+  }, [drawBitmapSelectionOverlay, syncSelectionState]);
+
+  const loadBitmapLayer = useCallback(async (dataUrl: string, selectable: boolean, requestId?: number): Promise<boolean> => {
+    if (!isLoadRequestActive(requestId)) return false;
+
+    let image: FabricImage | null = null;
+    if (dataUrl) {
+      try {
+        image = await FabricImage.fromURL(dataUrl);
+      } catch (error) {
+        console.error('Failed to load bitmap layer:', error);
+        return false;
+      }
+      if (!isLoadRequestActive(requestId)) return false;
+    }
+
+    return applyBitmapLayerSource(image, selectable);
+  }, [applyBitmapLayerSource, isLoadRequestActive]);
 
   const commitBitmapSelection = useCallback(async () => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -2544,14 +2556,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       fabricCanvas.requestRenderAll();
 
       const raster = fabricCanvas.toCanvasElement(1);
-      const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
-      if (!loaded) return false;
+      const applied = applyBitmapLayerSource(raster, false);
+      if (!applied) return false;
       saveHistory();
       return true;
     } finally {
       bitmapSelectionBusyRef.current = false;
     }
-  }, [loadBitmapLayer, saveHistory]);
+  }, [applyBitmapLayerSource, saveHistory]);
 
   const queueBitmapRasterCommit = useCallback((
     mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,
@@ -2574,8 +2586,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
           await mutateRaster(raster, rasterCtx);
         }
 
-        const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
-        if (!loaded) {
+        const applied = applyBitmapLayerSource(raster, false);
+        if (!applied) {
           return;
         }
         saveHistory();
@@ -2586,7 +2598,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     bitmapRasterCommitQueueRef.current = nextCommit;
     return nextCommit;
-  }, [loadBitmapLayer, saveHistory]);
+  }, [applyBitmapLayerSource, saveHistory]);
 
   const flattenBitmapLayer = useCallback(async () => {
     await queueBitmapRasterCommit();
