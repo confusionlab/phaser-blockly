@@ -147,6 +147,30 @@ function AlignCanvasActionIcon({ action }: { action: AlignAction }) {
   );
 }
 
+function AlignMenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
+      <line x1="4" y1="4" x2="4" y2="20" stroke="currentColor" strokeWidth="1.6" opacity="0.45" />
+      <line x1="12" y1="4" x2="12" y2="20" stroke="currentColor" strokeWidth="1.6" opacity="0.45" />
+      <line x1="20" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="1.6" opacity="0.45" />
+      <rect x="6" y="7" width="4" height="4" rx="1.4" fill="currentColor" />
+      <rect x="10" y="10" width="4" height="4" rx="1.4" fill="currentColor" />
+      <rect x="14" y="13" width="4" height="4" rx="1.4" fill="currentColor" />
+    </svg>
+  );
+}
+
+function MoveOrderMenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-4" aria-hidden="true">
+      <rect x="5" y="7" width="10" height="10" rx="2" fill="currentColor" opacity="0.35" />
+      <rect x="9" y="4" width="10" height="10" rx="2" fill="currentColor" />
+      <path d="M12 20V11.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M9.5 14 12 11.5 14.5 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 interface FloatingToolButtonProps {
   tool: DrawingTool;
   icon: React.ReactNode;
@@ -706,9 +730,10 @@ export const CostumeToolbar = memo(({
     showVectorStyleControls &&
     (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line');
   const showTextToolbarControls = editorMode === 'vector' && showTextControls;
+  const showVectorTopRowControls = showSelectionActions || showVectorHandleControl;
   const useVectorSelectionTwoRowLayout =
     editorMode === 'vector' &&
-    showSelectionActions &&
+    showVectorTopRowControls &&
     showVectorStyleControls;
   const showContextualPropertyBar =
     showSelectionActions ||
@@ -739,38 +764,8 @@ export const CostumeToolbar = memo(({
       <FloatingBottomToolbarDock>
           {showContextualPropertyBar && (
             <FloatingBottomToolbar variant="property" testId="costume-toolbar-properties">
-                <div className={cn('min-w-max', useVectorSelectionTwoRowLayout ? 'flex flex-col gap-2' : 'flex items-center gap-2')}>
-                  <div className="flex min-w-max items-center gap-2">
-                  {editorMode === 'vector' && showSelectionActions && hasActiveSelection && (
-                    <div className="flex items-center border-r pr-2 last:border-r-0 last:pr-0">
-                      <DropdownMenu
-                        open={openMenu === 'move-order'}
-                        onOpenChange={(open) => handleMenuOpenChange('move-order', open)}
-                      >
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="h-8 gap-1 text-xs">
-                            Move Order
-                            <ChevronDown className="size-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">
-                          <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
-                            Move Forward
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => onMoveOrder('backward')}>
-                            Move Backward
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => onMoveOrder('front')}>
-                            Move To Front
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => onMoveOrder('back')}>
-                            Move To Back
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  )}
-
+                <div className={cn('min-w-max', useVectorSelectionTwoRowLayout ? 'flex flex-col items-center gap-2' : 'flex items-center justify-center gap-2')}>
+                  <div className="flex min-w-max items-center justify-center gap-2">
                   {showVectorHandleControl && (
                     <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                       <span className="whitespace-nowrap text-xs text-muted-foreground">Handles</span>
@@ -816,14 +811,52 @@ export const CostumeToolbar = memo(({
 
                   {showSelectionActions && (
                     <div className="flex items-center gap-1 border-r pr-2 last:border-r-0 last:pr-0">
+                      {editorMode === 'vector' && hasActiveSelection && (
+                        <DropdownMenu
+                          open={openMenu === 'move-order'}
+                          onOpenChange={(open) => handleMenuOpenChange('move-order', open)}
+                        >
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8"
+                              title="Move Order"
+                              aria-label="Move Order"
+                            >
+                              <MoveOrderMenuIcon />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">
+                            <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
+                              Move Forward
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onMoveOrder('backward')}>
+                              Move Backward
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onMoveOrder('front')}>
+                              Move To Front
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => onMoveOrder('back')}>
+                              Move To Back
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                       <DropdownMenu
                         open={openMenu === 'align'}
                         onOpenChange={(open) => handleMenuOpenChange('align', open)}
                       >
                         <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" disabled={alignDisabled}>
-                            Align
-                            <ChevronDown className="size-3" />
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            disabled={alignDisabled}
+                            title="Align"
+                            aria-label="Align"
+                          >
+                            <AlignMenuIcon />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="w-auto p-2">
@@ -1241,7 +1274,7 @@ export const CostumeToolbar = memo(({
                   </div>
 
                   {useVectorSelectionTwoRowLayout && (
-                    <div className="flex min-w-max items-center gap-2">
+                    <div className="flex min-w-max items-center justify-center gap-2">
                       <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                         <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
                         <ToolbarColorControl

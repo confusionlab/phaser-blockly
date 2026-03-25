@@ -115,6 +115,21 @@ function getZoomInvariantCanvasMetric(metric: number, zoom: number) {
   return metric / Math.max(zoom, 0.0001);
 }
 
+function normalizeRadians(angleRadians: number) {
+  const fullTurn = Math.PI * 2;
+  if (!Number.isFinite(angleRadians)) {
+    return 0;
+  }
+
+  let normalized = angleRadians % fullTurn;
+  if (normalized <= -Math.PI) {
+    normalized += fullTurn;
+  } else if (normalized > Math.PI) {
+    normalized -= fullTurn;
+  }
+  return normalized;
+}
+
 function getStrokedShapeBoundsFromPathBounds(
   startX: number,
   startY: number,
@@ -628,17 +643,19 @@ interface SelectedPathAnchorTransformSnapshot {
 }
 
 interface PointSelectionTransformBounds {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
+  center: Point;
   width: number;
   height: number;
-  center: Point;
+  rotationRadians: number;
+  topLeft: Point;
+  topRight: Point;
+  bottomRight: Point;
+  bottomLeft: Point;
 }
 
 interface PointSelectionTransformSnapshot {
   path: any;
+  selectionKey: string;
   anchors: SelectedPathAnchorTransformSnapshot[];
   bounds: PointSelectionTransformBounds;
 }
@@ -657,6 +674,12 @@ interface PointSelectionMarqueeSession {
   currentPointerScene: Point;
   initialSelectedAnchorIndices: number[];
   toggleSelection: boolean;
+}
+
+interface PointSelectionTransformFrameState {
+  path: any;
+  selectionKey: string;
+  rotationRadians: number;
 }
 
 interface PenDraftAnchor {
@@ -1276,6 +1299,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     anchorIndex: number;
     dragState: PathAnchorDragState;
   } | null>(null);
+  const pointSelectionTransformFrameRef = useRef<PointSelectionTransformFrameState | null>(null);
   const pointSelectionTransformSessionRef = useRef<PointSelectionTransformSession | null>(null);
   const pointSelectionMarqueeSessionRef = useRef<PointSelectionMarqueeSession | null>(null);
   const penDraftRef = useRef<PenDraftState | null>(null);
@@ -1294,6 +1318,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     activePathAnchorRef.current = null;
     selectedPathAnchorIndicesRef.current = [];
     insertedPathAnchorDragSessionRef.current = null;
+    pointSelectionTransformFrameRef.current = null;
     pointSelectionTransformSessionRef.current = null;
     pointSelectionMarqueeSessionRef.current = null;
     pendingSelectionSyncedVectorHandleModeRef.current = null;
@@ -3382,6 +3407,100 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     };
   }, []);
 
+  const getPointSelectionKey = useCallback((anchorIndices: number[]) => (
+    anchorIndices.join(',')
+  ), []);
+
+  const getPointSelectionTransformAxes = useCallback((rotationRadians: number) => {
+    const cos = Math.cos(rotationRadians);
+    const sin = Math.sin(rotationRadians);
+    return {
+      x: new Point(cos, sin),
+      y: new Point(-sin, cos),
+    };
+  }, []);
+
+  const toPointSelectionTransformLocalPoint = useCallback((
+    bounds: PointSelectionTransformBounds,
+    point: Point,
+  ) => {
+    const axes = getPointSelectionTransformAxes(bounds.rotationRadians);
+    const dx = point.x - bounds.center.x;
+    const dy = point.y - bounds.center.y;
+    return new Point(
+      dx * axes.x.x + dy * axes.x.y,
+      dx * axes.y.x + dy * axes.y.y,
+    );
+  }, [getPointSelectionTransformAxes]);
+
+  const toPointSelectionTransformScenePoint = useCallback((
+    bounds: PointSelectionTransformBounds,
+    point: Point,
+  ) => {
+    const axes = getPointSelectionTransformAxes(bounds.rotationRadians);
+    return new Point(
+      bounds.center.x + axes.x.x * point.x + axes.y.x * point.y,
+      bounds.center.y + axes.x.y * point.x + axes.y.y * point.y,
+    );
+  }, [getPointSelectionTransformAxes]);
+
+  const createPointSelectionTransformBounds = useCallback((
+    points: Point[],
+    rotationRadians: number,
+  ): PointSelectionTransformBounds | null => {
+    if (points.length < 2) {
+      return null;
+    }
+
+    const normalizedRotation = normalizeRadians(rotationRadians);
+    const axes = getPointSelectionTransformAxes(normalizedRotation);
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    for (const point of points) {
+      const projectionX = point.x * axes.x.x + point.y * axes.x.y;
+      const projectionY = point.x * axes.y.x + point.y * axes.y.y;
+      minX = Math.min(minX, projectionX);
+      maxX = Math.max(maxX, projectionX);
+      minY = Math.min(minY, projectionY);
+      maxY = Math.max(maxY, projectionY);
+    }
+
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    const center = new Point(
+      axes.x.x * ((minX + maxX) / 2) + axes.y.x * ((minY + maxY) / 2),
+      axes.x.y * ((minX + maxX) / 2) + axes.y.y * ((minY + maxY) / 2),
+    );
+
+    return {
+      center,
+      width,
+      height,
+      rotationRadians: normalizedRotation,
+      topLeft: new Point(
+        center.x - axes.x.x * halfWidth - axes.y.x * halfHeight,
+        center.y - axes.x.y * halfWidth - axes.y.y * halfHeight,
+      ),
+      topRight: new Point(
+        center.x + axes.x.x * halfWidth - axes.y.x * halfHeight,
+        center.y + axes.x.y * halfWidth - axes.y.y * halfHeight,
+      ),
+      bottomRight: new Point(
+        center.x + axes.x.x * halfWidth + axes.y.x * halfHeight,
+        center.y + axes.x.y * halfWidth + axes.y.y * halfHeight,
+      ),
+      bottomLeft: new Point(
+        center.x - axes.x.x * halfWidth + axes.y.x * halfHeight,
+        center.y - axes.x.y * halfWidth + axes.y.y * halfHeight,
+      ),
+    };
+  }, [getPointSelectionTransformAxes]);
+
   const hasPointSelectionMarqueeExceededThreshold = useCallback((session: PointSelectionMarqueeSession) => {
     const threshold = getZoomInvariantMetric(VECTOR_POINT_MARQUEE_DRAG_THRESHOLD_PX);
     return Math.hypot(
@@ -3474,6 +3593,22 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       ),
     ).sort((a, b) => a - b);
 
+    const selectionKey = getPointSelectionKey(normalized);
+    const currentTransformFrame = pointSelectionTransformFrameRef.current;
+    if (normalized.length < 2) {
+      pointSelectionTransformFrameRef.current = null;
+    } else if (
+      !currentTransformFrame ||
+      currentTransformFrame.path !== pathObj ||
+      currentTransformFrame.selectionKey !== selectionKey
+    ) {
+      pointSelectionTransformFrameRef.current = {
+        path: pathObj,
+        selectionKey,
+        rotationRadians: 0,
+      };
+    }
+
     selectedPathAnchorIndicesRef.current = normalized;
     if (normalized.length === 0) {
       activePathAnchorRef.current = null;
@@ -3502,11 +3637,12 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     onVectorPointSelectionChangeRef.current?.(normalized.length > 0);
     pathObj.setCoords?.();
     fabricCanvasRef.current?.requestRenderAll();
-  }, [normalizeAnchorIndex, syncPathAnchorSelectionAppearance, syncPathControlPointVisibility, syncVectorHandleModeFromSelection]);
+  }, [getPointSelectionKey, normalizeAnchorIndex, syncPathAnchorSelectionAppearance, syncPathControlPointVisibility, syncVectorHandleModeFromSelection]);
 
   const clearSelectedPathAnchors = useCallback((pathObj?: any) => {
     selectedPathAnchorIndicesRef.current = [];
     activePathAnchorRef.current = null;
+    pointSelectionTransformFrameRef.current = null;
     pendingSelectionSyncedVectorHandleModeRef.current = null;
     onVectorPointSelectionChangeRef.current?.(false);
     if (pathObj && getFabricObjectType(pathObj) === 'path') {
@@ -4202,6 +4338,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     const selectedAnchorIndices = getSelectedPathAnchorIndices(pathObj);
     if (selectedAnchorIndices.length < 2) return null;
+    const selectionKey = getPointSelectionKey(selectedAnchorIndices);
 
     const commands = getPathCommands(pathObj);
     const anchors: SelectedPathAnchorTransformSnapshot[] = [];
@@ -4231,37 +4368,33 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
     if (anchors.length < 2) return null;
 
-    let left = Number.POSITIVE_INFINITY;
-    let top = Number.POSITIVE_INFINITY;
-    let right = Number.NEGATIVE_INFINITY;
-    let bottom = Number.NEGATIVE_INFINITY;
-    for (const anchor of anchors) {
-      left = Math.min(left, anchor.anchorScene.x);
-      top = Math.min(top, anchor.anchorScene.y);
-      right = Math.max(right, anchor.anchorScene.x);
-      bottom = Math.max(bottom, anchor.anchorScene.y);
+    const preservedFrame = pointSelectionTransformFrameRef.current;
+    const preservedRotation = preservedFrame &&
+      preservedFrame.path === pathObj &&
+      preservedFrame.selectionKey === selectionKey
+      ? preservedFrame.rotationRadians
+      : 0;
+    const bounds = createPointSelectionTransformBounds(
+      anchors.map((anchor) => anchor.anchorScene),
+      preservedRotation,
+    );
+    if (!bounds) {
+      return null;
     }
 
-    const width = Math.max(1, right - left);
-    const height = Math.max(1, bottom - top);
     return {
       path: pathObj,
+      selectionKey,
       anchors,
-      bounds: {
-        left,
-        top,
-        right,
-        bottom,
-        width,
-        height,
-        center: new Point(left + width / 2, top + height / 2),
-      },
+      bounds,
     };
   }, [
+    createPointSelectionTransformBounds,
     findIncomingCubicCommandIndex,
     findOutgoingCubicCommandIndex,
     getAnchorPointForIndex,
     getCommandType,
+    getPointSelectionKey,
     getPathCommands,
     getSelectedPathAnchorIndices,
     toPathScenePoint,
@@ -4269,15 +4402,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const getPointSelectionTransformHandlePoints = useCallback((bounds: PointSelectionTransformBounds) => {
     const rotateOffset = getZoomInvariantMetric(VECTOR_POINT_SELECTION_ROTATE_OFFSET);
+    const halfHeight = bounds.height / 2;
     return {
-      topCenter: new Point(bounds.center.x, bounds.top),
-      rotate: new Point(bounds.center.x, bounds.top - rotateOffset),
-      scaleTl: new Point(bounds.left, bounds.top),
-      scaleTr: new Point(bounds.right, bounds.top),
-      scaleBr: new Point(bounds.right, bounds.bottom),
-      scaleBl: new Point(bounds.left, bounds.bottom),
+      topCenter: toPointSelectionTransformScenePoint(bounds, new Point(0, -halfHeight)),
+      rotate: toPointSelectionTransformScenePoint(bounds, new Point(0, -halfHeight - rotateOffset)),
+      scaleTl: bounds.topLeft,
+      scaleTr: bounds.topRight,
+      scaleBr: bounds.bottomRight,
+      scaleBl: bounds.bottomLeft,
     };
-  }, [getZoomInvariantMetric]);
+  }, [getZoomInvariantMetric, toPointSelectionTransformScenePoint]);
 
   const hitPointSelectionTransform = useCallback((
     snapshot: PointSelectionTransformSnapshot,
@@ -4298,17 +4432,16 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (isInsideHandle(handlePoints.scaleBr)) return 'scale-br';
     if (isInsideHandle(handlePoints.scaleBl)) return 'scale-bl';
 
+    const pointerLocal = toPointSelectionTransformLocalPoint(snapshot.bounds, pointerScene);
     if (
-      pointerScene.x >= snapshot.bounds.left - hitPadding &&
-      pointerScene.x <= snapshot.bounds.right + hitPadding &&
-      pointerScene.y >= snapshot.bounds.top - hitPadding &&
-      pointerScene.y <= snapshot.bounds.bottom + hitPadding
+      Math.abs(pointerLocal.x) <= snapshot.bounds.width / 2 + hitPadding &&
+      Math.abs(pointerLocal.y) <= snapshot.bounds.height / 2 + hitPadding
     ) {
       return 'move';
     }
 
     return null;
-  }, [getPointSelectionTransformHandlePoints, getZoomInvariantMetric]);
+  }, [getPointSelectionTransformHandlePoints, getZoomInvariantMetric, toPointSelectionTransformLocalPoint]);
 
   const rotateScenePointAround = useCallback((point: Point, center: Point, angleRadians: number) => {
     const dx = point.x - center.x;
@@ -4349,33 +4482,43 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const minimumSize = getZoomInvariantMetric(VECTOR_POINT_SELECTION_MIN_SIZE);
     const baseWidth = Math.max(bounds.width, minimumSize);
     const baseHeight = Math.max(bounds.height, minimumSize);
+    const pointLocal = toPointSelectionTransformLocalPoint(bounds, point);
+    const pointerLocal = toPointSelectionTransformLocalPoint(bounds, pointerScene);
 
-    let fixedPoint = new Point(bounds.left, bounds.top);
+    let fixedPointLocal = new Point(-bounds.width / 2, -bounds.height / 2);
     let scaleX = 1;
     let scaleY = 1;
     if (session.mode === 'scale-tl') {
-      fixedPoint = new Point(bounds.right, bounds.bottom);
-      scaleX = Math.max(minimumSize, fixedPoint.x - pointerScene.x) / baseWidth;
-      scaleY = Math.max(minimumSize, fixedPoint.y - pointerScene.y) / baseHeight;
+      fixedPointLocal = new Point(bounds.width / 2, bounds.height / 2);
+      scaleX = Math.max(minimumSize, fixedPointLocal.x - pointerLocal.x) / baseWidth;
+      scaleY = Math.max(minimumSize, fixedPointLocal.y - pointerLocal.y) / baseHeight;
     } else if (session.mode === 'scale-tr') {
-      fixedPoint = new Point(bounds.left, bounds.bottom);
-      scaleX = Math.max(minimumSize, pointerScene.x - fixedPoint.x) / baseWidth;
-      scaleY = Math.max(minimumSize, fixedPoint.y - pointerScene.y) / baseHeight;
+      fixedPointLocal = new Point(-bounds.width / 2, bounds.height / 2);
+      scaleX = Math.max(minimumSize, pointerLocal.x - fixedPointLocal.x) / baseWidth;
+      scaleY = Math.max(minimumSize, fixedPointLocal.y - pointerLocal.y) / baseHeight;
     } else if (session.mode === 'scale-br') {
-      fixedPoint = new Point(bounds.left, bounds.top);
-      scaleX = Math.max(minimumSize, pointerScene.x - fixedPoint.x) / baseWidth;
-      scaleY = Math.max(minimumSize, pointerScene.y - fixedPoint.y) / baseHeight;
+      fixedPointLocal = new Point(-bounds.width / 2, -bounds.height / 2);
+      scaleX = Math.max(minimumSize, pointerLocal.x - fixedPointLocal.x) / baseWidth;
+      scaleY = Math.max(minimumSize, pointerLocal.y - fixedPointLocal.y) / baseHeight;
     } else if (session.mode === 'scale-bl') {
-      fixedPoint = new Point(bounds.right, bounds.top);
-      scaleX = Math.max(minimumSize, fixedPoint.x - pointerScene.x) / baseWidth;
-      scaleY = Math.max(minimumSize, pointerScene.y - fixedPoint.y) / baseHeight;
+      fixedPointLocal = new Point(bounds.width / 2, -bounds.height / 2);
+      scaleX = Math.max(minimumSize, fixedPointLocal.x - pointerLocal.x) / baseWidth;
+      scaleY = Math.max(minimumSize, pointerLocal.y - fixedPointLocal.y) / baseHeight;
     }
 
-    return new Point(
-      fixedPoint.x + (point.x - fixedPoint.x) * scaleX,
-      fixedPoint.y + (point.y - fixedPoint.y) * scaleY,
+    return toPointSelectionTransformScenePoint(
+      bounds,
+      new Point(
+        fixedPointLocal.x + (pointLocal.x - fixedPointLocal.x) * scaleX,
+        fixedPointLocal.y + (pointLocal.y - fixedPointLocal.y) * scaleY,
+      ),
     );
-  }, [getZoomInvariantMetric, rotateScenePointAround]);
+  }, [
+    getZoomInvariantMetric,
+    rotateScenePointAround,
+    toPointSelectionTransformLocalPoint,
+    toPointSelectionTransformScenePoint,
+  ]);
 
   const beginPointSelectionTransformSession = useCallback((
     pathObj: any,
@@ -4443,6 +4586,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     if (!transformedAnyAnchor || !referenceCommandPoint) return false;
+
+    const nextRotation = session.mode === 'rotate'
+      ? normalizeRadians(
+          snapshot.bounds.rotationRadians +
+          (
+            Math.atan2(
+              pointerScene.y - snapshot.bounds.center.y,
+              pointerScene.x - snapshot.bounds.center.x,
+            ) -
+            Math.atan2(
+              session.startPointerScene.y - snapshot.bounds.center.y,
+              session.startPointerScene.x - snapshot.bounds.center.x,
+            )
+          ),
+        )
+      : snapshot.bounds.rotationRadians;
+    pointSelectionTransformFrameRef.current = {
+      path,
+      selectionKey: snapshot.selectionKey,
+      rotationRadians: nextRotation,
+    };
 
     path.set('dirty', true);
     stabilizePathAfterAnchorMutation(path, referenceCommandPoint);
@@ -4866,18 +5030,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       ctx.strokeStyle = VECTOR_SELECTION_COLOR;
       ctx.lineWidth = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE);
       ctx.setLineDash([]);
-      ctx.fillRect(
-        snapshot.bounds.left,
-        snapshot.bounds.top,
-        snapshot.bounds.width,
-        snapshot.bounds.height,
-      );
-      ctx.strokeRect(
-        snapshot.bounds.left,
-        snapshot.bounds.top,
-        snapshot.bounds.width,
-        snapshot.bounds.height,
-      );
+      ctx.beginPath();
+      ctx.moveTo(snapshot.bounds.topLeft.x, snapshot.bounds.topLeft.y);
+      ctx.lineTo(snapshot.bounds.topRight.x, snapshot.bounds.topRight.y);
+      ctx.lineTo(snapshot.bounds.bottomRight.x, snapshot.bounds.bottomRight.y);
+      ctx.lineTo(snapshot.bounds.bottomLeft.x, snapshot.bounds.bottomLeft.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
 
       ctx.beginPath();
       ctx.moveTo(handlePoints.topCenter.x, handlePoints.topCenter.y);
