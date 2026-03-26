@@ -69,6 +69,7 @@ import {
 } from '@/lib/editor/objectCommands';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
+import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -1671,10 +1672,12 @@ export function SpriteShelf() {
       onPointerEnter={() => setIsShelfHovered(true)}
       onPointerLeave={() => setIsShelfHovered(false)}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b">
+      <div className={`${panelHeaderClassNames.chrome} ${panelHeaderClassNames.splitRow}`}>
         <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
           <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-1 text-xs font-medium hover:text-primary transition-colors">
+            <button
+              className="inline-flex h-6 min-w-0 items-center gap-1 text-xs font-medium transition-colors hover:text-primary"
+            >
               {selectedScene.name}
               <ChevronRight className="size-3" />
             </button>
@@ -1793,15 +1796,15 @@ export function SpriteShelf() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="flex gap-1">
-          <Button size="icon-sm" variant="ghost" onClick={handleAddObject} title="Add Object">
+        <div className="flex items-center gap-1">
+          <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
             <Plus className="size-4" />
           </Button>
-          <Button size="icon-sm" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
+          <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
             <FolderPlus className="size-4" />
           </Button>
           <Button
-            size="icon-sm"
+            size="icon-xs"
             variant="ghost"
             onClick={() => setShowComponentLibrary(true)}
             title="Component Library"

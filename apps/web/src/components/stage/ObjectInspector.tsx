@@ -30,6 +30,7 @@ import {
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
+import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 type InspectorTab = 'object' | 'scene';
 type PhysicsBodyType = PhysicsConfig['bodyType'];
@@ -313,7 +314,7 @@ export function ObjectInspector() {
 
   return (
     <div className="inspector-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
-      <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
+      <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.row)}>
         <SegmentedControl
           ariaLabel="Inspector sections"
           className="w-full"

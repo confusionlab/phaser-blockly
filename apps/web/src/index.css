@@ -23,6 +23,11 @@ body {
   font-family: var(--font-sans);
 }
 
+/* Measured from the rendered inspector compact header and reused across side panels. */
+:root {
+  --editor-panel-header-height: 39.25px;
+}
+
 .app-shell {
   -webkit-user-select: none;
   user-select: none;

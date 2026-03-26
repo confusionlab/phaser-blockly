@@ -51,25 +51,25 @@ export function CanvasViewportOverlay({
       <div className="pointer-events-auto flex items-center gap-1">
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           className={overlayButtonClassName}
           onClick={onUndo}
           disabled={!canUndo}
           title="Undo"
           aria-label="Undo"
         >
-          <Undo2 className="size-4" />
+          <Undo2 className="size-3.5" />
         </Button>
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           className={overlayButtonClassName}
           onClick={onRedo}
           disabled={!canRedo}
           title="Redo"
           aria-label="Redo"
         >
-          <Redo2 className="size-4" />
+          <Redo2 className="size-3.5" />
         </Button>
       </div>
 
@@ -78,13 +78,13 @@ export function CanvasViewportOverlay({
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              size="sm"
-              className={cn(overlayButtonClassName, 'gap-1 px-2 text-xs font-medium')}
+              size="xs"
+              className={cn(overlayButtonClassName, 'gap-1 px-2 text-[11px] font-medium')}
               title="Zoom options"
               aria-label="Zoom options"
             >
               {Math.round(zoom * 100)}%
-              <ChevronDown className="size-3.5" />
+              <ChevronDown className="size-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="min-w-[220px]">

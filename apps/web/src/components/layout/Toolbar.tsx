@@ -7,13 +7,16 @@ import { useEditorStore } from '@/store/editorStore';
 import { downloadProject } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { ProjectHistoryDialog } from '@/components/dialogs/ProjectHistoryDialog';
-import { Button } from '@/components/ui/button';
-import { Upload, History, Sun, Moon } from 'lucide-react';
+import { ProductMenu } from './ProductMenu';
 
 export function Toolbar() {
   const navigate = useNavigate();
   const { project, isDirty, saveCurrentProject, closeProject, updateProjectName, openProject } = useProjectStore();
-  const { isDarkMode, toggleDarkMode, selectScene } = useEditorStore();
+  const {
+    isDarkMode,
+    selectScene,
+    toggleDarkMode,
+  } = useEditorStore();
   const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const [isEditingProjectName, setIsEditingProjectName] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState('');
@@ -103,14 +106,21 @@ export function Toolbar() {
     <>
       <div className="flex items-center justify-between h-12 px-4 bg-card border-b">
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => void handleGoHome()}
-            disabled={isSyncingCloud}
-            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-          >
-            <img src="/logo.png" alt="PochaCoding logo" className="w-8 h-8 object-contain dark:invert" />
-            <span className="font-semibold text-primary">PochaCoding</span>
-          </button>
+          <ProductMenu
+            isDarkMode={isDarkMode}
+            hasProject={!!project}
+            onExportProject={() => {
+              if (!project) return;
+              void downloadProject(project);
+            }}
+            onGoToDashboard={() => {
+              void handleGoHome();
+            }}
+            onOpenHistory={() => setHistoryOpen(true)}
+            onToggleTheme={() => {
+              void handleToggleDarkMode();
+            }}
+          />
 
           {project && (
             <div className="flex items-center gap-2">
@@ -150,43 +160,7 @@ export function Toolbar() {
 
         <div />
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => void handleToggleDarkMode()}
-            title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-          >
-            {isDarkMode ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
-
-          {project && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void downloadProject(project)}
-              title="Export project bundle"
-              disabled={isSyncingCloud}
-            >
-              <Upload className="size-4" />
-              Export
-            </Button>
-          )}
-
-          {project && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setHistoryOpen(true)}
-              disabled={isSyncingCloud}
-              title="Open version history"
-            >
-              <History className="size-4" />
-              History
-            </Button>
-          )}
-
-        </div>
+        <div />
       </div>
 
       <ProjectHistoryDialog

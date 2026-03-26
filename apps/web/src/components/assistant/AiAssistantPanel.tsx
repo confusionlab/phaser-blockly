@@ -54,6 +54,7 @@ import {
   createAssistantProjectSnapshot,
   createAssistantProjectVersion,
 } from '@/lib/assistant/projectState';
+import { assistantFeatureFlags } from '@/lib/assistant/config';
 import { cn } from '@/lib/utils';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
@@ -223,6 +224,10 @@ function AssistantThreadShell({
 }
 
 export function AiAssistantPanel() {
+  if (!assistantFeatureFlags.isEnabled) {
+    return null;
+  }
+
   const { user } = useUser();
   const convex = useConvex();
   const convexRef = useRef(convex);

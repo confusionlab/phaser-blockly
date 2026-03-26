@@ -15,6 +15,7 @@ import { CURRENT_SCHEMA_VERSION, createAutoCheckpoint, loadProject, migrateAllLo
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
+import { assistantFeatureFlags } from '@/lib/assistant/config';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { isBlocklyShortcutTarget, isTextEntryTarget } from '@/utils/keyboard';
@@ -22,6 +23,7 @@ import { deleteSceneObjectsWithHistory, duplicateSceneObjectsWithHistory } from 
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | null;
+const ASSISTANT_UI_ENABLED = assistantFeatureFlags.isEnabled;
 
 function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
@@ -287,7 +289,7 @@ export function EditorLayout() {
       return;
     }
 
-    if (assistantLockRunId) {
+    if (ASSISTANT_UI_ENABLED && assistantLockRunId) {
       e.preventDefault();
       return;
     }
@@ -709,7 +711,7 @@ export function EditorLayout() {
         </div>
       )}
 
-      {assistantLockRunId && !isBlockingCloudSync ? (
+      {ASSISTANT_UI_ENABLED && assistantLockRunId && !isBlockingCloudSync ? (
         <div className="fixed inset-0 z-[100250] bg-background/70 backdrop-blur-[1px] flex items-center justify-center">
           <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
             {assistantLockMessage ?? 'Assistant is working. The editor is temporarily locked.'}
@@ -717,7 +719,7 @@ export function EditorLayout() {
         </div>
       ) : null}
 
-      <AiAssistantPanel />
+      {ASSISTANT_UI_ENABLED ? <AiAssistantPanel /> : null}
     </div>,
   );
 }

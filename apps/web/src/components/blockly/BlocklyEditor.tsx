@@ -442,7 +442,13 @@ export function BlocklyEditor() {
   const [messageDialogSelectedId, setMessageDialogSelectedId] = useState<string | null>(null);
   const [dragSyncNonce, setDragSyncNonce] = useState(0);
 
-  const { selectedSceneId, selectedObjectId, selectedComponentId, activeObjectTab, registerCodeUndo } = useEditorStore();
+  const {
+    selectedSceneId,
+    selectedObjectId,
+    selectedComponentId,
+    activeObjectTab,
+    registerCodeUndo,
+  } = useEditorStore();
   const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage, updateComponent } = useProjectStore();
   const sceneDropdownStamp = project?.scenes
     .map((scene, index) => `${index}:${scene.id}:${scene.name}`)

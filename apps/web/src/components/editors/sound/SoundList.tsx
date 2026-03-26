@@ -155,30 +155,30 @@ export const SoundList = memo(({
           <>
             <Button
               variant="ghost"
-              size="icon-sm"
+              size="icon-xs"
               onClick={onOpenRecorder}
               title="Record sound"
               disabled={isProcessing}
             >
-              <Mic className="size-4" />
+              <Mic className="size-3.5" />
             </Button>
             <Button
               variant="ghost"
-              size="icon-sm"
+              size="icon-xs"
               onClick={() => fileInputRef.current?.click()}
               title="Import sound"
               disabled={isProcessing}
             >
-              {isProcessing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              {isProcessing ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
             </Button>
             <Button
               variant="ghost"
-              size="icon-sm"
+              size="icon-xs"
               onClick={() => setShowLibrary(true)}
               title="Browse library"
               disabled={isProcessing}
             >
-              <Library className="size-4" />
+              <Library className="size-3.5" />
             </Button>
             <input
               ref={fileInputRef}
