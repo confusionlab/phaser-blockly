@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Toolbar } from './Toolbar';
 import { ObjectEditor } from '../editors/ObjectEditor';
 import { StagePanel } from '../stage/StagePanel';
-import { PhaserCanvas } from '../stage/PhaserCanvas';
 import { ObjectPicker } from '../stage/ObjectPicker';
 import { BackgroundCanvasEditor } from '../stage/BackgroundCanvasEditor';
 import { WorldBoundaryEditor } from '../stage/WorldBoundaryEditor';
@@ -23,7 +22,7 @@ import { isBlocklyShortcutTarget, isTextEntryTarget } from '@/utils/keyboard';
 import { deleteSceneObjectsWithHistory, duplicateSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
 
 type HoveredPanel = 'code' | 'stage' | null;
-type FullscreenPanel = 'code' | 'stage' | null;
+type FullscreenPanel = 'code' | null;
 
 function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
@@ -62,6 +61,7 @@ export function EditorLayout() {
   const [isMainDividerDragging, setIsMainDividerDragging] = useState(false);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
+  const [isStageCanvasFullscreen, setIsStageCanvasFullscreen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMigratingProjects, setIsMigratingProjects] = useState(true);
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
@@ -256,6 +256,12 @@ export function EditorLayout() {
     stopPlaying();
   }, [isPlaying, isProjectLeaseBlocking, stopPlaying]);
 
+  useEffect(() => {
+    if (!project || isPlaying || backgroundEditorOpen || worldBoundaryEditorOpen) {
+      setIsStageCanvasFullscreen(false);
+    }
+  }, [backgroundEditorOpen, isPlaying, project, worldBoundaryEditorOpen]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
     const isTyping = isTextEntryTarget(e.target);
@@ -302,9 +308,10 @@ export function EditorLayout() {
     // Backtick for fullscreen toggle
     if (e.key === '`' && !isTyping) {
       e.preventDefault();
-      if (fullscreenPanel) {
-        // Exit fullscreen
+      if (fullscreenPanel === 'code') {
         setFullscreenPanel(null);
+      } else if (isStageCanvasFullscreen) {
+        setIsStageCanvasFullscreen(false);
       } else {
         const panelFromTarget = getPanelFromElement(target);
         const pointerPosition = lastPointerPositionRef.current;
@@ -314,8 +321,12 @@ export function EditorLayout() {
         const panelFromPointer = getPanelFromElement(elementUnderPointer);
         const panelToFullscreen = panelFromPointer ?? panelFromTarget ?? hoveredPanelRef.current;
 
-        if (panelToFullscreen) {
-          setFullscreenPanel(panelToFullscreen);
+        if (panelToFullscreen === 'code') {
+          setIsStageCanvasFullscreen(false);
+          setFullscreenPanel('code');
+        } else if (panelToFullscreen === 'stage') {
+          setFullscreenPanel(null);
+          setIsStageCanvasFullscreen(true);
         }
       }
       return;
@@ -339,8 +350,12 @@ export function EditorLayout() {
     // Escape to exit fullscreen or stop playing
     if (e.key === 'Escape' && !isTyping) {
       e.preventDefault();
-      if (fullscreenPanel) {
+      if (fullscreenPanel === 'code') {
         setFullscreenPanel(null);
+        return;
+      }
+      if (isStageCanvasFullscreen) {
+        setIsStageCanvasFullscreen(false);
         return;
       }
       if (isPlaying) {
@@ -475,6 +490,7 @@ export function EditorLayout() {
     project,
     stopPlaying,
     fullscreenPanel,
+    isStageCanvasFullscreen,
     undo,
     redo,
     selectedSceneId,
@@ -587,7 +603,13 @@ export function EditorLayout() {
   }
 
   if (isPlaying) {
-    return withProjectLeaseOverlay(<StagePanel fullscreen />);
+    return withProjectLeaseOverlay(
+      <StagePanel
+        fullscreen
+        isCanvasFullscreen={false}
+        onCanvasFullscreenChange={setIsStageCanvasFullscreen}
+      />,
+    );
   }
 
   if (backgroundEditorOpen) {
@@ -610,25 +632,6 @@ export function EditorLayout() {
         </div>
         <div className="flex-1 overflow-hidden">
           <ObjectEditor />
-        </div>
-      </div>,
-    );
-  }
-
-  // Fullscreen stage (canvas only, no properties)
-  if (fullscreenPanel === 'stage') {
-    return withProjectLeaseOverlay(
-      <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
-        <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
-          <span className="text-sm font-medium">Stage (Press ` or Esc to exit)</span>
-          <Button variant="ghost" size="icon-sm" onClick={() => setFullscreenPanel(null)}>
-            <X className="size-4" />
-          </Button>
-        </div>
-        <div className="flex-1 overflow-hidden p-1">
-          <div className="relative w-full h-full bg-card rounded-lg overflow-hidden">
-            <PhaserCanvas isPlaying={false} />
-          </div>
         </div>
       </div>,
     );
@@ -667,7 +670,11 @@ export function EditorLayout() {
               onMouseEnter={() => setHoveredPanel('stage')}
               onMouseLeave={() => setHoveredPanel(null)}
             >
-              <StagePanel deferEditorResize={isMainDividerDragging} />
+              <StagePanel
+                deferEditorResize={isMainDividerDragging}
+                isCanvasFullscreen={isStageCanvasFullscreen}
+                onCanvasFullscreenChange={setIsStageCanvasFullscreen}
+              />
             </div>
           </>
         ) : (

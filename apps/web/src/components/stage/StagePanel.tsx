@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils';
 interface StagePanelProps {
   fullscreen?: boolean;
   deferEditorResize?: boolean;
+  isCanvasFullscreen: boolean;
+  onCanvasFullscreenChange: (isFullscreen: boolean) => void;
 }
 
 function dispatchEditorResizeFreeze(active: boolean): void {
@@ -42,7 +44,12 @@ const stageOverlayToneClasses = {
   },
 } as const;
 
-export function StagePanel({ fullscreen = false, deferEditorResize = false }: StagePanelProps) {
+export function StagePanel({
+  fullscreen = false,
+  deferEditorResize = false,
+  isCanvasFullscreen,
+  onCanvasFullscreenChange,
+}: StagePanelProps) {
   const stopPlaying = useEditorStore((state) => state.stopPlaying);
   const isDarkMode = useEditorStore((state) => state.isDarkMode);
   const viewMode = useEditorStore((state) => state.viewMode);
@@ -51,12 +58,11 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
   const project = useProjectStore((state) => state.project);
   const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
-  const [isCanvasFullscreen, setIsCanvasFullscreen] = useState(false);
   const [isPanelResizeDragging, setIsPanelResizeDragging] = useState(false);
 
   const toggleCanvasFullscreen = useCallback(() => {
-    setIsCanvasFullscreen((current) => !current);
-  }, []);
+    onCanvasFullscreenChange(!isCanvasFullscreen);
+  }, [isCanvasFullscreen, onCanvasFullscreenChange]);
 
   const handleVerticalDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();

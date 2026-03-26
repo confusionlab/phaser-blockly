@@ -35,6 +35,34 @@ async function bootstrapEditorProject(page: Page, options: { projectName: string
 }
 
 test.describe('Keyboard shortcuts', () => {
+  test('backquote uses the stage fullscreen overlay instead of the legacy stage shell', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Shortcut ${Date.now()}`,
+    });
+
+    const stagePanel = page.locator('[data-editor-panel="stage"]');
+    await expect(stagePanel).toBeVisible();
+
+    const panelBox = await stagePanel.boundingBox();
+    expect(panelBox).not.toBeNull();
+    if (!panelBox) {
+      throw new Error('Stage panel bounding box was not available.');
+    }
+
+    await page.mouse.click(
+      panelBox.x + panelBox.width / 2,
+      panelBox.y + Math.min(panelBox.height / 2, 220),
+    );
+    await page.keyboard.press('Backquote');
+
+    await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible();
+    await expect(page.getByText('Stage (Press ` or Esc to exit)')).toHaveCount(0);
+
+    await page.keyboard.press('Backquote');
+
+    await expect(page.getByRole('button', { name: 'Fullscreen stage' })).toBeVisible();
+  });
+
   test('rename inputs suppress editor shortcuts and escape cancels rename', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Keyboard Test ${Date.now()}`,
