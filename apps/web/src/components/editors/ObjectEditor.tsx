@@ -98,36 +98,38 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
       )}
     >
       <div className="flex h-full min-h-0 min-w-0 flex-col gap-0">
-        <div className={cn(panelHeaderClassNames.chrome, 'h-[var(--editor-panel-header-height)]')}>
-          <div className="grid h-full w-full grid-cols-[1fr_auto_1fr] items-center gap-2">
-            <div aria-hidden="true" />
-            <div className="flex justify-center">
-              <SegmentedControl
-                ariaLabel="Object editor sections"
-                className="max-w-full"
-                layout="content"
-                options={sectionOptions}
-                value={activeObjectTab}
-                onValueChange={handleSectionChange}
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="size-6 rounded-full"
-                data-testid="object-editor-fullscreen-toggle"
-                title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                aria-pressed={isFullscreen}
-                onClick={toggleFullscreen}
-              >
-                {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-              </Button>
+        {hasCodeTarget ? (
+          <div className={cn(panelHeaderClassNames.chrome, 'h-[var(--editor-panel-header-height)]')}>
+            <div className="grid h-full w-full grid-cols-[1fr_auto_1fr] items-center gap-2">
+              <div aria-hidden="true" />
+              <div className="flex justify-center">
+                <SegmentedControl
+                  ariaLabel="Object editor sections"
+                  className="max-w-full"
+                  layout="content"
+                  options={sectionOptions}
+                  value={activeObjectTab}
+                  onValueChange={handleSectionChange}
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-6 rounded-full"
+                  data-testid="object-editor-fullscreen-toggle"
+                  title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                  aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                  aria-pressed={isFullscreen}
+                  onClick={toggleFullscreen}
+                >
+                  {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
           <div

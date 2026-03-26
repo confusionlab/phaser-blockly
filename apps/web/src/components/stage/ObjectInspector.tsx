@@ -332,7 +332,7 @@ export function ObjectInspector() {
             activeTab === 'object' ? 'z-10' : 'hidden',
           )}
         >
-          <div className="min-h-full min-w-0 px-4 py-3">
+          <div className="min-h-full min-w-0 px-3 py-3">
             <ObjectProperties
               objects={selectedObjects}
               sceneId={selectedSceneId}
@@ -349,7 +349,7 @@ export function ObjectInspector() {
             activeTab === 'scene' ? 'z-10' : 'hidden',
           )}
         >
-          <div className="min-h-full min-w-0 px-4 py-3">
+          <div className="min-h-full min-w-0 px-3 py-3">
             <SceneProperties
               scene={scene}
               updateScene={updateScene}
