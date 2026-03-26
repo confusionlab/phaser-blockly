@@ -6,7 +6,8 @@ import { BlocklyEditor } from '../blockly/BlocklyEditor';
 import { CostumeEditor } from './CostumeEditor';
 import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
-import { Code, Palette, Volume2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Code, Maximize2, Minimize2, Palette, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
@@ -17,7 +18,12 @@ const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
   { value: 'sounds', label: 'Sound', icon: <Volume2 className="size-3" /> },
 ];
 
-export function ObjectEditor() {
+interface ObjectEditorProps {
+  isFullscreen: boolean;
+  onFullscreenChange: (isFullscreen: boolean) => void;
+}
+
+export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorProps) {
   const { project } = useProjectStore();
   const {
     selectedSceneId,
@@ -71,6 +77,10 @@ export function ObjectEditor() {
     setActiveObjectTab(nextTab);
   }, [setActiveObjectTab]);
 
+  const toggleFullscreen = useCallback(() => {
+    onFullscreenChange(!isFullscreen);
+  }, [isFullscreen, onFullscreenChange]);
+
   const sectionOptions = objectEditorSections.map((section) => ({
     ...section,
     disabled: section.value !== 'code' && !hasObjectAssetTarget,
@@ -79,19 +89,38 @@ export function ObjectEditor() {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
       <div className="flex h-full min-h-0 min-w-0 flex-col gap-0">
-        {!emptyStateMessage ? (
-          <div className="flex shrink-0 justify-center border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
-            <SegmentedControl
-              ariaLabel="Object editor sections"
-              className="max-w-full"
-              layout="content"
-              options={sectionOptions}
-              size="large"
-              value={activeObjectTab}
-              onValueChange={handleSectionChange}
-            />
+        <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <div />
+            <div className="flex justify-center">
+              {!emptyStateMessage ? (
+                <SegmentedControl
+                  ariaLabel="Object editor sections"
+                  className="max-w-full"
+                  layout="content"
+                  options={sectionOptions}
+                  size="large"
+                  value={activeObjectTab}
+                  onValueChange={handleSectionChange}
+                />
+              ) : null}
+            </div>
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                data-testid="object-editor-fullscreen-toggle"
+                title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                aria-pressed={isFullscreen}
+                onClick={toggleFullscreen}
+              >
+                {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+              </Button>
+            </div>
           </div>
-        ) : null}
+        </div>
 
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
           <div

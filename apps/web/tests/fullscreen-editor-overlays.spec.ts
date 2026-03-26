@@ -61,7 +61,10 @@ async function enterFullscreenObjectEditor(page: Page): Promise<void> {
   );
   await page.keyboard.press('Backquote');
 
-  await expect(page.getByText('Code Editor (Press ` or Esc to exit)')).toBeVisible();
+  const fullscreenToggle = page.getByTestId('object-editor-fullscreen-toggle');
+  await expect(fullscreenToggle).toBeVisible();
+  await expect(fullscreenToggle).toHaveAttribute('aria-label', 'Exit fullscreen editor');
+  await expect(page.getByText('Code Editor (Press ` or Esc to exit)')).toHaveCount(0);
 }
 
 async function expectLocatorToBeTopmost(locator: Locator): Promise<void> {
@@ -77,6 +80,22 @@ async function expectLocatorToBeTopmost(locator: Locator): Promise<void> {
 }
 
 test.describe('Fullscreen editor overlays', () => {
+  test('Object editor toolbar button enters fullscreen without the legacy shell header', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Object Editor Fullscreen ${Date.now()}`,
+      addObject: true,
+    });
+
+    const fullscreenToggle = page.getByTestId('object-editor-fullscreen-toggle');
+    await expect(fullscreenToggle).toBeVisible();
+    await expect(fullscreenToggle).toHaveAttribute('aria-label', 'Fullscreen editor');
+
+    await fullscreenToggle.click();
+
+    await expect(fullscreenToggle).toHaveAttribute('aria-label', 'Exit fullscreen editor');
+    await expect(page.getByText('Code Editor (Press ` or Esc to exit)')).toHaveCount(0);
+  });
+
   test('Play mode overlay pill follows light mode', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Play Overlay Theme ${Date.now()}`,

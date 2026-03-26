@@ -15,7 +15,6 @@ import { CURRENT_SCHEMA_VERSION, createAutoCheckpoint, loadProject, migrateAllLo
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
-import { X } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { isBlocklyShortcutTarget, isTextEntryTarget } from '@/utils/keyboard';
@@ -262,6 +261,23 @@ export function EditorLayout() {
     }
   }, [backgroundEditorOpen, isPlaying, project, worldBoundaryEditorOpen]);
 
+  const handleCodeEditorFullscreenChange = useCallback((isFullscreen: boolean) => {
+    if (isFullscreen) {
+      setIsStageCanvasFullscreen(false);
+      setFullscreenPanel('code');
+      return;
+    }
+
+    setFullscreenPanel(null);
+  }, []);
+
+  const handleStageCanvasFullscreenChange = useCallback((isFullscreen: boolean) => {
+    if (isFullscreen) {
+      setFullscreenPanel(null);
+    }
+    setIsStageCanvasFullscreen(isFullscreen);
+  }, []);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
     const isTyping = isTextEntryTarget(e.target);
@@ -309,9 +325,9 @@ export function EditorLayout() {
     if (e.key === '`' && !isTyping) {
       e.preventDefault();
       if (fullscreenPanel === 'code') {
-        setFullscreenPanel(null);
+        handleCodeEditorFullscreenChange(false);
       } else if (isStageCanvasFullscreen) {
-        setIsStageCanvasFullscreen(false);
+        handleStageCanvasFullscreenChange(false);
       } else {
         const panelFromTarget = getPanelFromElement(target);
         const pointerPosition = lastPointerPositionRef.current;
@@ -322,11 +338,9 @@ export function EditorLayout() {
         const panelToFullscreen = panelFromPointer ?? panelFromTarget ?? hoveredPanelRef.current;
 
         if (panelToFullscreen === 'code') {
-          setIsStageCanvasFullscreen(false);
-          setFullscreenPanel('code');
+          handleCodeEditorFullscreenChange(true);
         } else if (panelToFullscreen === 'stage') {
-          setFullscreenPanel(null);
-          setIsStageCanvasFullscreen(true);
+          handleStageCanvasFullscreenChange(true);
         }
       }
       return;
@@ -351,11 +365,11 @@ export function EditorLayout() {
     if (e.key === 'Escape' && !isTyping) {
       e.preventDefault();
       if (fullscreenPanel === 'code') {
-        setFullscreenPanel(null);
+        handleCodeEditorFullscreenChange(false);
         return;
       }
       if (isStageCanvasFullscreen) {
-        setIsStageCanvasFullscreen(false);
+        handleStageCanvasFullscreenChange(false);
         return;
       }
       if (isPlaying) {
@@ -505,6 +519,8 @@ export function EditorLayout() {
     backgroundEditorOpen,
     backgroundShortcutHandler,
     cycleViewMode,
+    handleCodeEditorFullscreenChange,
+    handleStageCanvasFullscreenChange,
     assistantLockRunId,
     isProjectLeaseBlocking,
   ]);
@@ -607,7 +623,7 @@ export function EditorLayout() {
       <StagePanel
         fullscreen
         isCanvasFullscreen={false}
-        onCanvasFullscreenChange={setIsStageCanvasFullscreen}
+        onCanvasFullscreenChange={handleStageCanvasFullscreenChange}
       />,
     );
   }
@@ -623,16 +639,11 @@ export function EditorLayout() {
   // Fullscreen code editor
   if (fullscreenPanel === 'code') {
     return withProjectLeaseOverlay(
-      <div className="fixed inset-0 z-[100001] bg-background flex flex-col">
-        <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
-          <span className="text-sm font-medium">Code Editor (Press ` or Esc to exit)</span>
-          <Button variant="ghost" size="icon-sm" onClick={() => setFullscreenPanel(null)}>
-            <X className="size-4" />
-          </Button>
-        </div>
-        <div className="flex-1 overflow-hidden">
-          <ObjectEditor />
-        </div>
+      <div className="fixed inset-0 z-[100001] overflow-hidden bg-background">
+        <ObjectEditor
+          isFullscreen={true}
+          onFullscreenChange={handleCodeEditorFullscreenChange}
+        />
       </div>,
     );
   }
@@ -652,7 +663,10 @@ export function EditorLayout() {
               onMouseEnter={() => setHoveredPanel('code')}
               onMouseLeave={() => setHoveredPanel(null)}
             >
-              <ObjectEditor />
+              <ObjectEditor
+                isFullscreen={false}
+                onFullscreenChange={handleCodeEditorFullscreenChange}
+              />
             </div>
 
             {/* Resizable Divider */}
@@ -673,7 +687,7 @@ export function EditorLayout() {
               <StagePanel
                 deferEditorResize={isMainDividerDragging}
                 isCanvasFullscreen={isStageCanvasFullscreen}
-                onCanvasFullscreenChange={setIsStageCanvasFullscreen}
+                onCanvasFullscreenChange={handleStageCanvasFullscreenChange}
               />
             </div>
           </>
