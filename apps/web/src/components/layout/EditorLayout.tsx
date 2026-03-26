@@ -636,18 +636,6 @@ export function EditorLayout() {
     return withProjectLeaseOverlay(<WorldBoundaryEditor />);
   }
 
-  // Fullscreen code editor
-  if (fullscreenPanel === 'code') {
-    return withProjectLeaseOverlay(
-      <div className="fixed inset-0 z-[100001] overflow-hidden bg-background">
-        <ObjectEditor
-          isFullscreen={true}
-          onFullscreenChange={handleCodeEditorFullscreenChange}
-        />
-      </div>,
-    );
-  }
-
   return withProjectLeaseOverlay(
     <div className="relative flex flex-col h-screen bg-background">
       <Toolbar />
@@ -664,7 +652,7 @@ export function EditorLayout() {
               onMouseLeave={() => setHoveredPanel(null)}
             >
               <ObjectEditor
-                isFullscreen={false}
+                isFullscreen={fullscreenPanel === 'code'}
                 onFullscreenChange={handleCodeEditorFullscreenChange}
               />
             </div>

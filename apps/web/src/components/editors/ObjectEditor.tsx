@@ -78,6 +78,7 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [setActiveObjectTab]);
 
   const toggleFullscreen = useCallback(() => {
+    freezeEditorResizeForLayoutTransition();
     onFullscreenChange(!isFullscreen);
   }, [isFullscreen, onFullscreenChange]);
 
@@ -87,7 +88,12 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }));
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
+    <div
+      className={cn(
+        'flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card',
+        isFullscreen && 'fixed inset-0 z-[100001]',
+      )}
+    >
       <div className="flex h-full min-h-0 min-w-0 flex-col gap-0">
         <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">

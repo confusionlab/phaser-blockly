@@ -96,6 +96,81 @@ test.describe('Fullscreen editor overlays', () => {
     await expect(page.getByText('Code Editor (Press ` or Esc to exit)')).toHaveCount(0);
   });
 
+  test('Object editor fullscreen keeps the Blockly workspace mounted', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Object Editor Stable ${Date.now()}`,
+      addObject: true,
+    });
+
+    const blocklySvg = page.locator('.blocklySvg').first();
+    const fullscreenToggle = page.getByTestId('object-editor-fullscreen-toggle');
+    await expect(blocklySvg).toBeVisible();
+    await expect(fullscreenToggle).toBeVisible();
+
+    await page.evaluate(() => {
+      window['__pochaObjectEditorToggle'] = document.querySelector('[data-testid="object-editor-fullscreen-toggle"]');
+      window['__pochaBlocklySvg'] = document.querySelector('.blocklySvg');
+    });
+
+    await fullscreenToggle.click();
+    await expect(fullscreenToggle).toHaveAttribute('aria-label', 'Exit fullscreen editor');
+
+    const fullscreenIdentity = await page.evaluate(() => ({
+      sameToggle:
+        document.querySelector('[data-testid="object-editor-fullscreen-toggle"]') === window['__pochaObjectEditorToggle'],
+      sameBlocklySvg: document.querySelector('.blocklySvg') === window['__pochaBlocklySvg'],
+    }));
+    expect(fullscreenIdentity.sameToggle).toBe(true);
+    expect(fullscreenIdentity.sameBlocklySvg).toBe(true);
+
+    await page.keyboard.press('Backquote');
+    await expect(fullscreenToggle).toHaveAttribute('aria-label', 'Fullscreen editor');
+
+    const restoredIdentity = await page.evaluate(() => ({
+      sameToggle:
+        document.querySelector('[data-testid="object-editor-fullscreen-toggle"]') === window['__pochaObjectEditorToggle'],
+      sameBlocklySvg: document.querySelector('.blocklySvg') === window['__pochaBlocklySvg'],
+    }));
+    expect(restoredIdentity.sameToggle).toBe(true);
+    expect(restoredIdentity.sameBlocklySvg).toBe(true);
+  });
+
+  test('Stage fullscreen keeps the Phaser canvas mounted', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Stable ${Date.now()}`,
+    });
+
+    const stageHost = page.getByTestId('stage-phaser-host');
+    const stageCanvas = stageHost.locator('canvas').first();
+    await expect(stageHost).toBeVisible();
+    await expect(stageCanvas).toBeVisible();
+
+    await page.evaluate(() => {
+      window['__pochaStageHost'] = document.querySelector('[data-testid="stage-phaser-host"]');
+      window['__pochaStageCanvas'] = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+    });
+
+    await page.getByRole('button', { name: 'Fullscreen stage' }).click();
+    await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible();
+
+    const fullscreenIdentity = await page.evaluate(() => ({
+      sameHost: document.querySelector('[data-testid="stage-phaser-host"]') === window['__pochaStageHost'],
+      sameCanvas: document.querySelector('[data-testid="stage-phaser-host"] canvas') === window['__pochaStageCanvas'],
+    }));
+    expect(fullscreenIdentity.sameHost).toBe(true);
+    expect(fullscreenIdentity.sameCanvas).toBe(true);
+
+    await page.getByRole('button', { name: 'Exit fullscreen' }).click();
+    await expect(page.getByRole('button', { name: 'Fullscreen stage' })).toBeVisible();
+
+    const restoredIdentity = await page.evaluate(() => ({
+      sameHost: document.querySelector('[data-testid="stage-phaser-host"]') === window['__pochaStageHost'],
+      sameCanvas: document.querySelector('[data-testid="stage-phaser-host"] canvas') === window['__pochaStageCanvas'],
+    }));
+    expect(restoredIdentity.sameHost).toBe(true);
+    expect(restoredIdentity.sameCanvas).toBe(true);
+  });
+
   test('Play mode overlay pill follows light mode', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Play Overlay Theme ${Date.now()}`,

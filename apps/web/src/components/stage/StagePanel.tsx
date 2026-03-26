@@ -6,6 +6,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
+import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from 'lucide-react';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { cn } from '@/lib/utils';
@@ -61,6 +62,7 @@ export function StagePanel({
   const [isPanelResizeDragging, setIsPanelResizeDragging] = useState(false);
 
   const toggleCanvasFullscreen = useCallback(() => {
+    freezeEditorResizeForLayoutTransition();
     onCanvasFullscreenChange(!isCanvasFullscreen);
   }, [isCanvasFullscreen, onCanvasFullscreenChange]);
 
@@ -216,35 +218,26 @@ export function StagePanel({
     </OverlayPill>
   );
 
-  const fullscreenCanvasControls = (
-    <div className="absolute right-2 top-2 z-10">
-      {stageOverlayControls}
-    </div>
-  );
-
-  if (isCanvasFullscreen) {
-    return (
-      <div className="fixed inset-0 z-[100001] overflow-hidden bg-background">
-        {fullscreenCanvasControls}
-        <div
-          className="relative h-full w-full overflow-hidden"
-          style={stageShellStyle}
-        >
-          <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+    <div
+      className={cn(
+        'flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background',
+        isCanvasFullscreen && 'fixed inset-0 z-[100001]',
+      )}
+    >
       {/* Phaser canvas */}
-      <div className="min-h-0 shrink-0 overflow-hidden" style={{ height: `${100 - bottomHeightPercent}%` }}>
+      <div
+        className={cn(
+          'min-h-0 overflow-hidden',
+          isCanvasFullscreen ? 'flex-1' : 'shrink-0',
+        )}
+        style={isCanvasFullscreen ? undefined : { height: `${100 - bottomHeightPercent}%` }}
+      >
         <div
           className="relative h-full w-full overflow-hidden"
           style={stageShellStyle}
         >
-          <div className="absolute right-2 top-2 z-20">
+          <div className={cn('absolute right-2 top-2', isCanvasFullscreen ? 'z-10' : 'z-20')}>
             {stageOverlayControls}
           </div>
           <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
@@ -254,12 +247,22 @@ export function StagePanel({
       {/* Resizable vertical divider */}
       <div
         data-testid="stage-panel-vertical-divider"
-        className="app-resize-divider-y hover:text-primary cursor-row-resize transition-colors"
+        className={cn(
+          'app-resize-divider-y hover:text-primary cursor-row-resize transition-colors',
+          isCanvasFullscreen && 'hidden',
+        )}
         onMouseDown={handleVerticalDividerDrag}
       />
 
       {/* Bottom panel: Objects list (left) + Properties (right) */}
-      <div className="flex min-h-0 min-w-0 shrink-0 overflow-hidden" style={{ height: `${bottomHeightPercent}%` }}>
+      <div
+        aria-hidden={isCanvasFullscreen}
+        className={cn(
+          'flex min-h-0 min-w-0 shrink-0 overflow-hidden',
+          isCanvasFullscreen && 'hidden',
+        )}
+        style={isCanvasFullscreen ? undefined : { height: `${bottomHeightPercent}%` }}
+      >
         {/* Objects list */}
         <div className="min-h-0 overflow-hidden" style={{ width: `${objectsWidth}%` }}>
           <SpriteShelf />
