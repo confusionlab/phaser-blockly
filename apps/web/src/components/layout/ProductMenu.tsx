@@ -54,6 +54,7 @@ interface ProductMenuProps {
   onExportProject: () => void;
   onGoToDashboard: () => void;
   onOpenHistory: () => void;
+  onRenameProject: () => void;
   onToggleTheme: () => void;
 }
 
@@ -184,6 +185,7 @@ export function ProductMenu({
   onExportProject,
   onGoToDashboard,
   onOpenHistory,
+  onRenameProject,
   onToggleTheme,
 }: ProductMenuProps) {
   const [open, setOpen] = useState(false);
@@ -209,6 +211,14 @@ export function ProductMenu({
         label: 'Project',
         keywords: ['export', 'history', 'version'],
         children: [
+          {
+            kind: 'action',
+            id: 'rename-project',
+            label: 'Rename Project',
+            keywords: ['project', 'rename', 'title', 'name'],
+            onSelect: onRenameProject,
+          },
+          { kind: 'separator', id: 'project-actions-separator' },
           {
             kind: 'action',
             id: 'export-project',
@@ -250,6 +260,7 @@ export function ProductMenu({
     onExportProject,
     onGoToDashboard,
     onOpenHistory,
+    onRenameProject,
     onToggleTheme,
   ]);
 

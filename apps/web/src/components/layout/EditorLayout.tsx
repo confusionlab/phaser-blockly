@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Toolbar } from './Toolbar';
 import { ObjectEditor } from '../editors/ObjectEditor';
 import { StagePanel } from '../stage/StagePanel';
 import { ObjectPicker } from '../stage/ObjectPicker';
@@ -640,8 +639,6 @@ export function EditorLayout() {
 
   return withProjectLeaseOverlay(
     <div className="relative flex flex-col h-screen bg-background">
-      <Toolbar />
-
       <div className="flex flex-1 overflow-hidden">
         {project ? (
           <>
