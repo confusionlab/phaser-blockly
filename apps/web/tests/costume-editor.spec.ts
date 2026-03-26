@@ -78,6 +78,12 @@ async function expectLayerThumbnail(button: Locator): Promise<void> {
   }, { timeout: 10000 }).toMatch(/^data:image\/png;base64,/);
 }
 
+async function readLayerPanelWidth(page: Page): Promise<number> {
+  return await page.getByTestId('layer-panel').evaluate((element) => {
+    return Math.round((element as HTMLElement).getBoundingClientRect().width);
+  });
+}
+
 async function startLayerSelectionObserver(page: Page): Promise<void> {
   await page.evaluate(() => {
     const readButtons = () => Array.from(
@@ -338,5 +344,54 @@ test.describe('Costume editor tools', () => {
     });
 
     expect(invalidSnapshot).toBeUndefined();
+  });
+
+  test('shared layer hover keeps visibility toggle and inline rename interactive', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const layerRow = page.locator('[data-testid="layer-row"]').first();
+    await page.getByTestId('layer-add-button').hover();
+
+    const visibilityButton = layerRow.getByRole('button', { name: /^hide layer$/i });
+    await expect(visibilityButton).toBeVisible();
+    await visibilityButton.click();
+    await expect(layerRow.getByRole('button', { name: /^show layer$/i })).toBeVisible();
+
+    await layerRow.getByText(/^Layer 1$/i).dblclick();
+    const renameInput = layerRow.locator('input');
+    await expect(renameInput).toBeVisible();
+    await renameInput.fill('Sketch Layer');
+    await renameInput.press('Enter');
+
+    await expect(layerRow).toHaveAttribute('data-layer-name', 'Sketch Layer');
+    await expect(page.getByRole('button', { name: /^sketch layer bitmap$/i })).toBeVisible();
+  });
+
+  test('leaving the layer rail dismisses hover unless the context menu is open', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const layerRow = page.locator('[data-testid="layer-row"]').first();
+    const canvasSurface = page.getByTestId('costume-canvas-surface');
+
+    await page.getByTestId('layer-add-button').hover();
+    await expect.poll(async () => readLayerPanelWidth(page)).toBeGreaterThan(200);
+
+    await canvasSurface.hover();
+    await expect.poll(async () => readLayerPanelWidth(page)).toBeLessThan(120);
+
+    await page.getByTestId('layer-add-button').hover();
+    await layerRow.click({ button: 'right' });
+    const opacitySlider = page.getByLabel('Layer opacity');
+    await expect(opacitySlider).toBeVisible();
+    await opacitySlider.hover();
+    await expect.poll(async () => readLayerPanelWidth(page)).toBeGreaterThan(200);
+
+    await page.keyboard.press('Escape');
+    await canvasSurface.hover();
+    await expect.poll(async () => readLayerPanelWidth(page)).toBeLessThan(120);
   });
 });
