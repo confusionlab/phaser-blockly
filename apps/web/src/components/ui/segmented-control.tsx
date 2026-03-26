@@ -108,7 +108,7 @@ export function SegmentedControl<T extends string>({
     return null;
   }
 
-  const containerSizeClassName = 'h-9 rounded-[10px] p-[2px]';
+  const containerSizeClassName = 'h-7 rounded-[10px] p-[2px]';
   const thumbClassName = 'inset-y-[2px] rounded-[8px]';
   const optionSizeClassName = 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
 
