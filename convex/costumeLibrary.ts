@@ -91,10 +91,18 @@ export const list = query({
 
     return await Promise.all(
       items.map(async (item) => {
-        const { ownerUserId: _ownerUserId, ...rest } = item;
         return {
-          ...rest,
-        url: await ctx.storage.getUrl(item.storageId),
+          _id: item._id,
+          _creationTime: item._creationTime,
+          name: item.name,
+          storageId: item.storageId,
+          thumbnail: item.thumbnail,
+          bounds: item.bounds,
+          document: buildMigratedDocument(item as { document?: unknown; vectorDocument?: { fabricJson?: string } | null }),
+          mimeType: item.mimeType,
+          size: item.size,
+          createdAt: item.createdAt,
+          url: await ctx.storage.getUrl(item.storageId),
         };
       }),
     );

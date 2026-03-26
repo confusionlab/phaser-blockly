@@ -147,7 +147,7 @@ export function StagePanel({
         aria-label="Restart"
         className={cn(stageOverlayClasses.button, stageOverlayClasses.active)}
       >
-        <RotateCcw className="size-3" />
+        <RotateCcw className="size-3.5" />
       </button>
       <button
         type="button"
@@ -156,7 +156,7 @@ export function StagePanel({
         aria-label="Stop"
         className={stageOverlayClasses.stop}
       >
-        <Square className="size-3 fill-current" />
+        <Square className="size-3.5 fill-current" />
       </button>
     </OverlayPill>
   );
@@ -204,7 +204,7 @@ export function StagePanel({
         aria-label={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
         aria-pressed={isCanvasFullscreen}
       >
-        {isCanvasFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+        {isCanvasFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
       </button>
       <button
         type="button"

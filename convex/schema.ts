@@ -5,6 +5,13 @@ import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
 // Project data schema version. Keep aligned with src/db/database.ts.
 export const SCHEMA_VERSION = 9;
 
+const legacyEditorModeValidator = v.union(v.literal("bitmap"), v.literal("vector"));
+
+const legacyVectorDocumentValidator = v.object({
+  version: v.literal(1),
+  fabricJson: v.string(),
+});
+
 // Physics config validator
 const physicsValidator = v.object({
   enabled: v.boolean(),
@@ -67,7 +74,10 @@ export default defineSchema({
     storageId: v.id("_storage"),
     thumbnail: v.string(), // Base64 small preview
     bounds: v.optional(boundsValidator),
-    document: costumeDocumentValidator,
+    // Optional during rollout so legacy rows can deploy and self-migrate.
+    document: v.optional(costumeDocumentValidator),
+    editorMode: v.optional(legacyEditorModeValidator),
+    vectorDocument: v.optional(legacyVectorDocumentValidator),
     mimeType: v.string(),
     size: v.number(),
     createdAt: v.number(),
@@ -95,7 +105,10 @@ export default defineSchema({
         name: v.string(),
         storageId: v.id("_storage"),
         bounds: v.optional(boundsValidator),
-        document: costumeDocumentValidator,
+        // Optional during rollout so legacy rows can deploy and self-migrate.
+        document: v.optional(costumeDocumentValidator),
+        editorMode: v.optional(legacyEditorModeValidator),
+        vectorDocument: v.optional(legacyVectorDocumentValidator),
       }),
     ),
     sounds: v.array(

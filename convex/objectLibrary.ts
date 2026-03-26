@@ -169,7 +169,11 @@ export const list = query({
       items.map(async (item) => {
         const costumesWithUrls = await Promise.all(
           item.costumes.map(async (costume) => ({
-            ...costume,
+            id: costume.id,
+            name: costume.name,
+            storageId: costume.storageId,
+            bounds: costume.bounds,
+            document: buildMigratedCostumeDocument(costume as { document?: unknown; vectorDocument?: { fabricJson?: string } | null }),
             url: await ctx.storage.getUrl(costume.storageId),
           })),
         );
