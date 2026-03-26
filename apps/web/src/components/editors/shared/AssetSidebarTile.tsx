@@ -1,6 +1,6 @@
 import type { MouseEventHandler, ReactNode } from 'react';
 import { Card } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
 
@@ -43,14 +43,14 @@ export function AssetSidebarTile({
         {media}
       </div>
 
-      <Input
+      <InlineRenameField
         value={name}
         onChange={(event) => onNameChange(event.target.value)}
         onClick={(event) => event.stopPropagation()}
-        className={cn(
-          'mt-0.5 h-4 w-full border-none bg-transparent px-1 text-center text-[10px] leading-none shadow-none focus:bg-transparent focus-visible:bg-transparent dark:bg-transparent dark:focus:bg-transparent dark:focus-visible:bg-transparent',
-          inputClassName,
-        )}
+        onPointerDown={(event) => event.stopPropagation()}
+        className="mt-1 w-full"
+        textClassName={cn('px-1 text-center text-[10px] leading-none', inputClassName)}
+        outlineClassName="inset-x-0 inset-y-[-2px] rounded-sm bg-background/90"
       />
 
       <div className="absolute left-1 top-1 text-[10px] font-medium text-foreground/80">

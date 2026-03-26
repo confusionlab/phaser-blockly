@@ -14,8 +14,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { NameInputDialog } from '@/components/dialogs/NameInputDialog';
 
 type HistoryFilter = 'all' | 'manual';
+type CheckpointDialogState =
+  | { mode: 'create' }
+  | { mode: 'rename'; revisionId: string };
 
 interface ProjectHistoryDialogProps {
   project: Project | null;
@@ -52,6 +56,9 @@ export function ProjectHistoryDialog({
   const [revisions, setRevisions] = useState<ProjectRevision[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [checkpointDialogState, setCheckpointDialogState] = useState<CheckpointDialogState | null>(null);
+  const [checkpointNameDraft, setCheckpointNameDraft] = useState('');
+  const [checkpointError, setCheckpointError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     if (!project) {
@@ -85,48 +92,60 @@ export function ProjectHistoryDialog({
   }, [project]);
 
   const handleRenameCheckpoint = useCallback(async (revision: ProjectRevision) => {
-    if (!project) return;
-
-    const currentName = revision.checkpointName ?? '';
-    const nextName = window.prompt('Checkpoint name', currentName);
-    if (nextName === null) return;
-
-    const trimmed = nextName.trim();
-    if (!trimmed) {
-      alert('Checkpoint name cannot be empty.');
-      return;
-    }
-
-    try {
-      await renameCheckpoint(project.id, revision.id, trimmed);
-      await reload();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to rename checkpoint.');
-    }
-  }, [project, reload]);
+    setCheckpointDialogState({ mode: 'rename', revisionId: revision.id });
+    setCheckpointNameDraft(revision.checkpointName ?? '');
+    setCheckpointError(null);
+  }, []);
 
   const handleCreateCheckpoint = useCallback(async () => {
-    if (!project) return;
+    setCheckpointDialogState({ mode: 'create' });
+    setCheckpointNameDraft('');
+    setCheckpointError(null);
+  }, []);
 
-    const checkpointName = window.prompt('Checkpoint name');
-    if (checkpointName === null) return;
+  const handleCheckpointDialogOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      return;
+    }
 
-    const normalized = checkpointName.trim();
+    setCheckpointDialogState(null);
+    setCheckpointNameDraft('');
+    setCheckpointError(null);
+  }, []);
+
+  const handleSubmitCheckpointName = useCallback(async () => {
+    if (!project || !checkpointDialogState) return;
+
+    const normalized = checkpointNameDraft.trim();
     if (!normalized) {
-      alert('Checkpoint name cannot be empty.');
+      setCheckpointError('Checkpoint name cannot be empty.');
       return;
     }
 
     try {
-      const created = await createManualCheckpoint(project, normalized);
-      if (!created) {
-        alert('No content changes since the latest revision, but your project is still safe with autosave.');
+      if (checkpointDialogState.mode === 'create') {
+        const created = await createManualCheckpoint(project, normalized);
+        if (!created) {
+          alert('No content changes since the latest revision, but your project is still safe with autosave.');
+        }
+      } else {
+        await renameCheckpoint(project.id, checkpointDialogState.revisionId, normalized);
       }
+
+      setCheckpointDialogState(null);
+      setCheckpointNameDraft('');
+      setCheckpointError(null);
       await reload();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to create checkpoint.');
+      setCheckpointError(
+        error instanceof Error
+          ? error.message
+          : (checkpointDialogState.mode === 'create'
+            ? 'Failed to create checkpoint.'
+            : 'Failed to rename checkpoint.'),
+      );
     }
-  }, [project, reload]);
+  }, [checkpointDialogState, checkpointNameDraft, project, reload]);
 
   const handleRestore = useCallback(async (revision: ProjectRevision) => {
     if (!project) return;
@@ -244,6 +263,22 @@ export function ProjectHistoryDialog({
 
         {errorMessage && <div className="text-sm text-destructive">{errorMessage}</div>}
       </DialogContent>
+      <NameInputDialog
+        open={checkpointDialogState !== null}
+        title={checkpointDialogState?.mode === 'create' ? 'Create Checkpoint' : 'Rename Checkpoint'}
+        label="Checkpoint name"
+        value={checkpointNameDraft}
+        submitLabel={checkpointDialogState?.mode === 'create' ? 'Create Checkpoint' : 'Save'}
+        error={checkpointError}
+        onValueChange={(value) => {
+          setCheckpointNameDraft(value);
+          setCheckpointError(null);
+        }}
+        onOpenChange={handleCheckpointDialogOpenChange}
+        onSubmit={() => {
+          void handleSubmitCheckpointName();
+        }}
+      />
     </Dialog>
   );
 }

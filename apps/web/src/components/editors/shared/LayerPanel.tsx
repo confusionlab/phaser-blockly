@@ -18,7 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from 'lucide-react';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
@@ -614,39 +614,35 @@ export const LayerPanel = memo(({
                             <LayerKindIcon layer={layer} />
                           </span>
 
-                          {isEditing ? (
-                            <Input
-                              value={renameDraft}
-                              onChange={(event) => setRenameDraft(event.target.value)}
-                              onBlur={() => commitInlineRename(layer.id)}
-                              onClick={(event) => event.stopPropagation()}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onKeyDown={(event) => {
-                                event.stopPropagation();
-                                if (event.key === 'Enter') {
-                                  event.preventDefault();
-                                  commitInlineRename(layer.id);
-                                }
-                                if (event.key === 'Escape') {
-                                  event.preventDefault();
-                                  cancelInlineRename();
-                                }
-                              }}
-                              autoFocus
-                              className="h-8 min-w-0 flex-1 border-transparent bg-muted/45 text-sm shadow-none focus-visible:border-primary/40 focus-visible:bg-background"
-                            />
-                          ) : (
-                            <span
-                              className="min-w-0 flex-1 truncate text-sm font-medium"
-                              onDoubleClick={(event) => {
+                          <InlineRenameField
+                            editing={isEditing}
+                            value={isEditing ? renameDraft : layer.name}
+                            onChange={(event) => setRenameDraft(event.target.value)}
+                            onBlur={() => commitInlineRename(layer.id)}
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => {
+                              event.stopPropagation();
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                commitInlineRename(layer.id);
+                              }
+                              if (event.key === 'Escape') {
+                                event.preventDefault();
+                                cancelInlineRename();
+                              }
+                            }}
+                            autoFocus={isEditing}
+                            className="min-w-0 flex-1"
+                            textClassName="min-w-0 truncate text-sm font-medium leading-5"
+                            displayProps={{
+                              onDoubleClick: (event) => {
                                 event.preventDefault();
                                 event.stopPropagation();
                                 startInlineRename(layer);
-                              }}
-                            >
-                              {layer.name}
-                            </span>
-                          )}
+                              },
+                            }}
+                          />
                         </div>
 
                         <button

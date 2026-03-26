@@ -118,49 +118,44 @@ export function SceneTabs() {
           }`}
           style={editingId === scene.id && editWidth ? { width: `${editWidth}px` } : undefined}
         >
-          {editingId === scene.id ? (
-            <InlineRenameField
-              value={editName}
-              onChange={e => {
-                setEditName(e.target.value);
+          <InlineRenameField
+            editing={editingId === scene.id}
+            value={editingId === scene.id ? editName : scene.name}
+            onChange={e => {
+              setEditName(e.target.value);
+              setEditError(null);
+            }}
+            onBlur={handleSaveEdit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                handleSaveEdit();
+              }
+              if (e.key === 'Escape') {
+                cancelEditOnBlurRef.current = true;
+                setEditingId(null);
+                setEditName('');
                 setEditError(null);
-              }}
-              onBlur={handleSaveEdit}
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  handleSaveEdit();
-                }
-                if (e.key === 'Escape') {
-                  cancelEditOnBlurRef.current = true;
-                  setEditingId(null);
-                  setEditName('');
-                  setEditError(null);
-                  setEditWidth(null);
-                }
-              }}
-              className="flex-1 min-w-0"
-              inputClassName="text-sm font-medium leading-5 text-current"
-              invalid={!!editError}
-              autoFocus
-              onClick={e => e.stopPropagation()}
-              onPointerDown={e => e.stopPropagation()}
-            />
-          ) : (
-            <>
-              <span className="text-sm font-medium">{scene.name}</span>
-              {project.scenes.length > 1 && (
-                <button
-                  onClick={(e) => handleDeleteScene(scene.id, e)}
-                  className={`opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center ${
-                    selectedSceneId === scene.id
-                      ? 'hover:bg-primary-foreground/20'
-                      : 'hover:bg-secondary-foreground/20'
-                  }`}
-                >
-                  <X className="size-3" />
-                </button>
-              )}
-            </>
+                setEditWidth(null);
+              }
+            }}
+            className="flex-1 min-w-0"
+            textClassName="truncate text-sm font-medium leading-5 text-current"
+            invalid={!!editError}
+            autoFocus={editingId === scene.id}
+            onClick={e => e.stopPropagation()}
+            onPointerDown={e => e.stopPropagation()}
+          />
+          {editingId !== scene.id && project.scenes.length > 1 && (
+            <button
+              onClick={(e) => handleDeleteScene(scene.id, e)}
+              className={`opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center ${
+                selectedSceneId === scene.id
+                  ? 'hover:bg-primary-foreground/20'
+                  : 'hover:bg-secondary-foreground/20'
+              }`}
+            >
+              <X className="size-3" />
+            </button>
           )}
         </div>
       ))}

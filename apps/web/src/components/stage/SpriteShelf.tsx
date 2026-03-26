@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useLayoutEffect } from 'react';
+import { useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -313,7 +313,7 @@ export function SpriteShelf() {
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
 
-  const focusInputCaretAtEnd = (input: HTMLInputElement | null) => {
+  const focusInputCaretAtEnd = useCallback((input: HTMLInputElement | null) => {
     if (!input) {
       return;
     }
@@ -321,14 +321,14 @@ export function SpriteShelf() {
     input.focus();
     const caretIndex = input.value.length;
     input.setSelectionRange(caretIndex, caretIndex);
-  };
+  }, []);
 
-  const stabilizeInlineRenameFocus = (input: HTMLInputElement | null) => {
+  const stabilizeInlineRenameFocus = useCallback((input: HTMLInputElement | null) => {
     focusInputCaretAtEnd(input);
     queueMicrotask(() => {
       focusInputCaretAtEnd(input);
     });
-  };
+  }, [focusInputCaretAtEnd]);
 
   useLayoutEffect(() => {
     if (!editingObjectId && !editingFolderId) {
@@ -336,7 +336,7 @@ export function SpriteShelf() {
     }
 
     stabilizeInlineRenameFocus(inputRef.current);
-  }, [editingObjectId, editingFolderId]);
+  }, [editingObjectId, editingFolderId, stabilizeInlineRenameFocus]);
 
   useLayoutEffect(() => {
     if (!editingSceneId) {
@@ -344,7 +344,7 @@ export function SpriteShelf() {
     }
 
     stabilizeInlineRenameFocus(sceneInputRef.current);
-  }, [editingSceneId]);
+  }, [editingSceneId, stabilizeInlineRenameFocus]);
 
   useEffect(() => {
     if (!editingSceneId || typeof document === 'undefined') {
@@ -1608,42 +1608,35 @@ export function SpriteShelf() {
             )}
 
             <div className="ml-1.5 flex flex-1 min-w-0 items-center">
-              {isObjectEditing ? (
-                <InlineRenameField
-                  key={`rename-${inlineRenameSessionId}`}
-                  ref={inputRef}
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
-                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename, cancelActiveInlineRename)}
-                  data-hotkeys="ignore"
-                  onClick={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className="flex-1 min-w-0"
-                  outlineClassName="inset-x-0"
-                  autoFocus
-                />
-              ) : isFolderEditing ? (
-                <InlineRenameField
-                  key={`rename-${inlineRenameSessionId}`}
-                  ref={inputRef}
-                  value={folderEditName}
-                  onChange={(e) => setFolderEditName(e.target.value)}
-                  onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
-                  onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename, cancelActiveInlineRename)}
-                  data-hotkeys="ignore"
-                  onClick={(e) => e.stopPropagation()}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className="flex-1 min-w-0"
-                  outlineClassName="inset-x-0"
-                  autoFocus
-                />
-              ) : (
-                <span className={`block truncate text-xs ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : ''}`}>
-                  {item.name}
-                  {isComponentInstance && <Component className="ml-1 inline-block size-3 opacity-60" />}
-                </span>
-              )}
+              <InlineRenameField
+                key={(isObjectEditing || isFolderEditing) ? `rename-${inlineRenameSessionId}` : `label-${item.key}`}
+                ref={inputRef}
+                editing={isObjectEditing || isFolderEditing}
+                value={isObjectEditing ? editName : (isFolderEditing ? folderEditName : item.name)}
+                onChange={(e) => {
+                  if (isObjectEditing) {
+                    setEditName(e.target.value);
+                    return;
+                  }
+                  setFolderEditName(e.target.value);
+                }}
+                onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
+                onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename, cancelActiveInlineRename)}
+                data-hotkeys="ignore"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="flex-1 min-w-0"
+                outlineClassName="inset-x-0"
+                textClassName={`truncate text-xs leading-5 ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : 'text-foreground'}`}
+                autoFocus={isObjectEditing || isFolderEditing}
+                focusBehavior="caret-end"
+                displayValue={
+                  <>
+                    {item.name}
+                    {isComponentInstance && <Component className="ml-1 inline-block size-3 opacity-60" />}
+                  </>
+                }
+              />
             </div>
             </div>
           </div>
@@ -1721,8 +1714,9 @@ export function SpriteShelf() {
                     onClick={(e) => e.stopPropagation()}
                     invalid={!!sceneEditError}
                     className="flex-1 min-w-0"
-                    inputClassName="text-sm leading-5 text-foreground"
+                    textClassName="text-sm leading-5 text-foreground"
                     autoFocus
+                    focusBehavior="caret-end"
                   />
                   <div className="h-6 w-6 shrink-0 opacity-0" aria-hidden="true" />
                 </div>

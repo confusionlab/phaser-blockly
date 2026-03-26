@@ -1,5 +1,7 @@
 import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useMutation } from 'convex/react';
+import { api } from '@convex-generated/api';
 import { ObjectEditor } from '../editors/ObjectEditor';
 import { StagePanel } from '../stage/StagePanel';
 import { ObjectPicker } from '../stage/ObjectPicker';
@@ -7,10 +9,18 @@ import { BackgroundCanvasEditor } from '../stage/BackgroundCanvasEditor';
 import { WorldBoundaryEditor } from '../stage/WorldBoundaryEditor';
 import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
+import { ProjectHistoryDialog } from '../dialogs/ProjectHistoryDialog';
 import { AiAssistantPanel } from '../assistant/AiAssistantPanel';
+import { EditorTopBar } from '@/components/layout/EditorTopBar';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { CURRENT_SCHEMA_VERSION, createAutoCheckpoint, loadProject, migrateAllLocalProjects } from '@/db/database';
+import {
+  CURRENT_SCHEMA_VERSION,
+  createAutoCheckpoint,
+  downloadProject,
+  loadProject,
+  migrateAllLocalProjects,
+} from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
@@ -31,9 +41,19 @@ function dispatchEditorResizeFreeze(active: boolean): void {
 export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { project, isDirty, openProject, saveCurrentProject, closeProject, duplicateObject, removeObject } = useProjectStore();
+  const {
+    project,
+    isDirty,
+    openProject,
+    saveCurrentProject,
+    closeProject,
+    duplicateObject,
+    removeObject,
+    updateProjectName,
+  } = useProjectStore();
   const {
     isPlaying,
+    isDarkMode,
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
@@ -57,17 +77,21 @@ export function EditorLayout() {
     assistantLockRunId,
     assistantLockMessage,
   } = useEditorStore();
+  const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const [dividerPosition, setDividerPosition] = useState(60);
   const [isMainDividerDragging, setIsMainDividerDragging] = useState(false);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isStageCanvasFullscreen, setIsStageCanvasFullscreen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMigratingProjects, setIsMigratingProjects] = useState(true);
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const hoveredPanelRef = useRef<HoveredPanel>(null);
   const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
   const isBlockingCloudSyncRef = useRef(false);
+  const isMountedRef = useRef(true);
   const activeProjectId = project?.id ?? null;
   const leaseProjectId = projectId ?? activeProjectId;
   const {
@@ -90,6 +114,12 @@ export function EditorLayout() {
     syncOnUnmount: false,
     checkpointIntervalMs: 10 * 60 * 1000,
   });
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
 
   useEffect(() => {
@@ -248,6 +278,59 @@ export function EditorLayout() {
       console.error('[ProjectLease] Failed to refresh project after takeover:', error);
     }
   }, [leaseProjectId, openProject, syncProjectFromCloud, takeOverLease]);
+
+  const syncCurrentProjectToCloud = useCallback(async (): Promise<boolean> => {
+    if (!project) {
+      return true;
+    }
+
+    setIsSyncingCloud(true);
+    try {
+      await saveCurrentProject();
+
+      if (!isCloudWriteEnabled) {
+        return true;
+      }
+
+      const synced = await syncProjectToCloud(project.id);
+      if (!synced) {
+        alert('Cloud sync failed. Please try Upload/Update to Cloud again.');
+        return false;
+      }
+
+      return true;
+    } finally {
+      if (isMountedRef.current) {
+        setIsSyncingCloud(false);
+      }
+    }
+  }, [isCloudWriteEnabled, project, saveCurrentProject, syncProjectToCloud]);
+
+  const handleGoToDashboard = useCallback(async () => {
+    if (isSyncingCloud) {
+      return;
+    }
+
+    if (project) {
+      const synced = await syncCurrentProjectToCloud();
+      if (!synced) {
+        return;
+      }
+    }
+
+    closeProject();
+    navigate('/');
+  }, [closeProject, isSyncingCloud, navigate, project, syncCurrentProjectToCloud]);
+
+  const handleToggleDarkMode = useCallback(async () => {
+    const nextIsDarkMode = !isDarkMode;
+    useEditorStore.getState().toggleDarkMode();
+    try {
+      await updateMySettings({ isDarkMode: nextIsDarkMode });
+    } catch (error) {
+      console.error('[UserSettings] Failed to persist dark mode setting:', error);
+    }
+  }, [isDarkMode, updateMySettings]);
 
   useEffect(() => {
     if (!isProjectLeaseBlocking || !isPlaying) {
@@ -639,7 +722,30 @@ export function EditorLayout() {
 
   return withProjectLeaseOverlay(
     <div className="relative flex flex-col h-screen bg-background">
-      <div className="flex flex-1 overflow-hidden">
+      {project ? (
+        <EditorTopBar
+          hasProject={!!project}
+          isDarkMode={isDarkMode}
+          projectName={project.name}
+          projectNameDisabled={isSyncingCloud}
+          onExportProject={() => {
+            if (!project || isSyncingCloud) {
+              return;
+            }
+            void downloadProject(project);
+          }}
+          onGoToDashboard={() => {
+            void handleGoToDashboard();
+          }}
+          onOpenHistory={() => setHistoryOpen(true)}
+          onProjectNameCommit={(name) => updateProjectName(name)}
+          onToggleTheme={() => {
+            void handleToggleDarkMode();
+          }}
+        />
+      ) : null}
+
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {project ? (
           <>
             {/* Object Editor - Left Panel */}
@@ -690,6 +796,19 @@ export function EditorLayout() {
         />
       )}
 
+      <ProjectHistoryDialog
+        project={project}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onRestoredProject={(restoredProject) => {
+          openProject(restoredProject);
+          if (restoredProject.scenes.length > 0) {
+            selectScene(restoredProject.scenes[0].id, { recordHistory: false });
+          }
+          navigate(`/project/${restoredProject.id}`);
+        }}
+      />
+
       <PlayValidationDialog
         open={showPlayValidationDialog}
         issues={playValidationIssues}
@@ -702,6 +821,14 @@ export function EditorLayout() {
 
       {isBlockingCloudSync && (
         <div className="fixed inset-0 z-[100002] bg-black/45 flex items-center justify-center">
+          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
+            Please wait, Uploading/Syncing to Cloud.
+          </div>
+        </div>
+      )}
+
+      {isSyncingCloud && !isBlockingCloudSync && (
+        <div className="fixed inset-0 z-[100003] bg-black/45 flex items-center justify-center">
           <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
             Please wait, Uploading/Syncing to Cloud.
           </div>

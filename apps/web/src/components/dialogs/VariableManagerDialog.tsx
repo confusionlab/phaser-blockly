@@ -6,7 +6,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Trash2, Pencil, Check, X } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -184,11 +184,12 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
           <span className="text-lg flex-shrink-0">{getTypeIcon(variable.type)}</span>
           {isEditing ? (
             <div className="flex items-center gap-2 flex-1">
-              <Input
+              <InlineRenameField
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
-                className="h-7 text-sm"
                 autoFocus
+                className="flex-1"
+                textClassName="text-sm leading-5"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') onSaveRename(variable.id);
                   if (e.key === 'Escape') cancelEditing();

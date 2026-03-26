@@ -90,17 +90,15 @@ test.describe('Keyboard shortcuts', () => {
     const projectName = `Keyboard Test ${Date.now()}`;
     await bootstrapEditorProject(page, { projectName });
 
-    const projectNameButton = page.getByRole('button', { name: projectName }).first();
-    const originalName = await projectNameButton.textContent();
-    expect(originalName).toBeTruthy();
-
-    await projectNameButton.click();
     const renameInput = page.getByLabel('Project name');
     await expect(renameInput).toBeVisible();
+    const originalName = await renameInput.inputValue();
+    expect(originalName).toBeTruthy();
+
     await renameInput.fill('Should Not Save');
     await page.keyboard.press('Escape');
 
-    await expect(page.getByRole('button', { name: originalName ?? '' }).first()).toBeVisible();
+    await expect(renameInput).toHaveValue(originalName ?? '');
     await expect(page.getByText(/^Should Not Save$/)).toHaveCount(0);
   });
 });
