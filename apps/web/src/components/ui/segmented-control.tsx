@@ -17,7 +17,6 @@ type SegmentedControlProps<T extends string> = Omit<React.HTMLAttributes<HTMLDiv
   onValueChange: (value: T) => void;
   optionClassName?: string;
   layout?: 'fill' | 'content';
-  size?: 'small' | 'large';
 };
 
 export function SegmentedControl<T extends string>({
@@ -27,7 +26,6 @@ export function SegmentedControl<T extends string>({
   onValueChange,
   optionClassName,
   options,
-  size = 'large',
   style,
   value,
   ...props
@@ -110,16 +108,9 @@ export function SegmentedControl<T extends string>({
     return null;
   }
 
-  const isLarge = size === 'large';
-  const containerSizeClassName = isLarge
-    ? 'rounded-[14px] p-[3px]'
-    : 'rounded-[10px] p-[2px]';
-  const thumbClassName = isLarge
-    ? 'inset-y-[3px] rounded-[11px]'
-    : 'inset-y-[2px] rounded-[8px]';
-  const optionSizeClassName = isLarge
-    ? 'min-h-[34px] gap-1.5 rounded-[11px] px-3 py-0 text-[13px]'
-    : 'min-h-[20px] gap-1 rounded-[8px] px-2 py-0 text-[11px]';
+  const containerSizeClassName = 'h-[calc(var(--editor-panel-header-height)-4px)] rounded-[10px] p-[2px]';
+  const thumbClassName = 'inset-y-[2px] rounded-[8px]';
+  const optionSizeClassName = 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
 
   const thumbStyle: React.CSSProperties = layout === 'content'
     ? {

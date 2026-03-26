@@ -2,10 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ProductMenu } from '@/components/layout/ProductMenu';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import {
-  EDITOR_CHROME_BORDER_CLASS_NAME,
-  EDITOR_CHROME_ROW_CLASS_NAME,
-} from '@/components/layout/editorChrome';
+import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 interface EditorTopBarProps {
   hasProject: boolean;
@@ -80,12 +77,12 @@ export function EditorTopBar({
   return (
     <div
       className={cn(
-        'shrink-0 bg-background px-3',
-        EDITOR_CHROME_ROW_CLASS_NAME,
-        EDITOR_CHROME_BORDER_CLASS_NAME,
+        panelHeaderClassNames.chrome,
+        'h-[var(--editor-panel-header-height)]',
+        'bg-background',
       )}
     >
-      <div className="grid h-full grid-cols-[1fr_auto_1fr] items-center gap-3">
+      <div className="grid h-full w-full grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="flex min-w-0 justify-start">
           <ProductMenu
             isDarkMode={isDarkMode}

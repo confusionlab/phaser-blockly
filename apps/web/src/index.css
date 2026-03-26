@@ -23,9 +23,9 @@ body {
   font-family: var(--font-sans);
 }
 
-/* Measured from the rendered inspector compact header and reused across side panels. */
+/* Shared editor chrome row height across the editor shell and side panels. */
 :root {
-  --editor-panel-header-height: 39.25px;
+  --editor-panel-header-height: 40px;
 }
 
 .app-shell {

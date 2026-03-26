@@ -319,7 +319,6 @@ export function ObjectInspector() {
           ariaLabel="Inspector sections"
           className="w-full"
           options={inspectorTabs}
-          size="small"
           value={activeTab}
           onValueChange={handleSegmentedTabChange}
         />

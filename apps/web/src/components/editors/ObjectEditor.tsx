@@ -11,10 +11,7 @@ import { Code, Maximize2, Minimize2, Palette, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
-import {
-  EDITOR_CHROME_BORDER_CLASS_NAME,
-  EDITOR_CHROME_ROW_CLASS_NAME,
-} from '@/components/layout/editorChrome';
+import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
   { value: 'code', label: 'Code', icon: <Code className="size-3" /> },
@@ -101,8 +98,8 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
       )}
     >
       <div className="flex h-full min-h-0 min-w-0 flex-col gap-0">
-        <div className={cn('shrink-0 px-3', EDITOR_CHROME_ROW_CLASS_NAME, EDITOR_CHROME_BORDER_CLASS_NAME)}>
-          <div className="grid h-full grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div className={cn(panelHeaderClassNames.chrome, 'h-[var(--editor-panel-header-height)]')}>
+          <div className="grid h-full w-full grid-cols-[1fr_auto_1fr] items-center gap-2">
             <div aria-hidden="true" />
             <div className="flex justify-center">
               <SegmentedControl
@@ -110,7 +107,6 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
                 className="max-w-full"
                 layout="content"
                 options={sectionOptions}
-                size="large"
                 value={activeObjectTab}
                 onValueChange={handleSectionChange}
               />
