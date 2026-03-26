@@ -24,6 +24,10 @@ import {
 } from '@/lib/background/chunkMath';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import {
+  getScrollCameraForViewportCenter,
+  getViewportCenterFromScrollCamera,
+} from '@/lib/viewportNavigation';
+import {
   getSceneBackgroundBaseColor,
   getTiledBackgroundChunkSize,
   isTiledBackground,
@@ -64,8 +68,6 @@ type FrozenStageFrame = {
   src: string;
   width: number;
   height: number;
-  right: number;
-  top: number;
 };
 
 type PendingCostumeVisualTarget = {
@@ -114,6 +116,14 @@ function hashTextureInput(value: string): string {
 
 function getCostumeTextureKey(objectId: string, costumeId: string, assetId: string): string {
   return `costume_${objectId}_${costumeId}_${hashTextureInput(assetId)}`;
+}
+
+function getElementRenderSize(element: HTMLElement): { width: number; height: number } {
+  const rect = element.getBoundingClientRect();
+  return {
+    width: Math.max(1, Math.round(rect.width || element.clientWidth || 1)),
+    height: Math.max(1, Math.round(rect.height || element.clientHeight || 1)),
+  };
 }
 
 function getPendingCostumeVisualTarget(
@@ -527,21 +537,17 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
   const captureFrozenStageFrame = useCallback((): FrozenStageFrame | null => {
     const canvas = gameRef.current?.canvas;
-    const host = containerRef.current;
-    if (!canvas || !host || canvas.width <= 0 || canvas.height <= 0) {
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
       return null;
     }
 
     const src = canvas.toDataURL('image/png');
     const canvasRect = canvas.getBoundingClientRect();
-    const hostRect = host.getBoundingClientRect();
 
     return {
       src,
       width: canvasRect.width,
       height: canvasRect.height,
-      right: hostRect.right - canvasRect.right,
-      top: canvasRect.top - hostRect.top,
     };
   }, []);
 
@@ -838,11 +844,12 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       console.log(`[PhaserCanvas] Creating game #${thisCreationId}`);
 
       // Editor mode uses container size for infinite canvas, play mode uses game dimensions
+      const containerSize = getElementRenderSize(container);
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         parent: container,
-        width: isPlaying ? canvasWidth : container.clientWidth,
-        height: isPlaying ? canvasHeight : container.clientHeight,
+        width: isPlaying ? canvasWidth : containerSize.width,
+        height: isPlaying ? canvasHeight : containerSize.height,
         render: isPlaying ? undefined : {
           preserveDrawingBuffer: true,
         },
@@ -1022,8 +1029,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       const game = gameRef.current;
       if (!host || !game) return;
 
-      const nextWidth = Math.max(1, Math.round(host.clientWidth));
-      const nextHeight = Math.max(1, Math.round(host.clientHeight));
+      const { width: nextWidth, height: nextHeight } = getElementRenderSize(host);
       if (game.scale.width === nextWidth && game.scale.height === nextHeight) {
         return;
       }
@@ -1178,9 +1184,24 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       camera.centerOn(canvasW / 2, canvasH / 2);
     } else {
       // Editor mode - full viewport
+      const previousCenter = getViewportCenterFromScrollCamera(
+        {
+          scrollX: camera.scrollX,
+          scrollY: camera.scrollY,
+          zoom: camera.zoom || DEFAULT_EDITOR_CAMERA_ZOOM,
+        },
+        { width: camera.width, height: camera.height },
+      );
+      const nextZoom = camera.zoom || DEFAULT_EDITOR_CAMERA_ZOOM;
       camera.setViewport(0, 0, containerWidth, containerHeight);
-      camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
-      camera.centerOn(canvasW / 2, canvasH / 2);
+      camera.setZoom(nextZoom);
+      const nextScroll = getScrollCameraForViewportCenter(
+        previousCenter,
+        { width: containerWidth, height: containerHeight },
+        nextZoom,
+      );
+      camera.scrollX = nextScroll.scrollX;
+      camera.scrollY = nextScroll.scrollY;
     }
 
     const renderer = phaserScene.game.renderer as { config?: { backgroundColor?: Phaser.Display.Color } };
@@ -1674,15 +1695,16 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           alt=""
           aria-hidden="true"
           data-testid="stage-frozen-frame"
-          className="pointer-events-none absolute inset-0 z-10 h-full w-full select-none"
+          className="pointer-events-none absolute z-10 select-none"
           style={{
-            inset: 'auto',
-            right: `${frozenStageFrame.right}px`,
-            top: `${frozenStageFrame.top}px`,
+            left: '50%',
+            top: '50%',
             width: `${frozenStageFrame.width}px`,
             height: `${frozenStageFrame.height}px`,
             maxWidth: 'none',
             maxHeight: 'none',
+            transform: 'translate3d(-50%, -50%, 0)',
+            transformOrigin: 'center center',
           }}
           draggable={false}
         />
@@ -1904,13 +1926,25 @@ function createEditorScene(
     } else {
       // Editor mode - full viewport, free pan
       const previousZoom = camera.zoom;
-      const previousScrollX = camera.scrollX;
-      const previousScrollY = camera.scrollY;
+      const previousCenter = getViewportCenterFromScrollCamera(
+        {
+          scrollX: camera.scrollX,
+          scrollY: camera.scrollY,
+          zoom: previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM,
+        },
+        { width: camera.width, height: camera.height },
+      );
       camera.setViewport(0, 0, containerWidth, containerHeight);
       if (options.preserveEditorCamera) {
-        camera.setZoom(previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM);
-        camera.scrollX = previousScrollX;
-        camera.scrollY = previousScrollY;
+        const nextZoom = previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM;
+        camera.setZoom(nextZoom);
+        const nextScroll = getScrollCameraForViewportCenter(
+          previousCenter,
+          { width: containerWidth, height: containerHeight },
+          nextZoom,
+        );
+        camera.scrollX = nextScroll.scrollX;
+        camera.scrollY = nextScroll.scrollY;
       } else {
         camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
         camera.centerOn(canvasWidth / 2, canvasHeight / 2);

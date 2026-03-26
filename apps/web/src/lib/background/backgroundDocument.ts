@@ -22,6 +22,7 @@ import {
   getDocumentLayerIndex,
   insertDocumentLayerAfterActive,
   moveDocumentLayer,
+  reorderDocumentLayer,
   removeDocumentLayer,
   setActiveDocumentLayer,
 } from '@/lib/layers/layerDocument';
@@ -306,6 +307,14 @@ export function duplicateBackgroundLayer(document: BackgroundDocument, layerId: 
 
 export function removeBackgroundLayer(document: BackgroundDocument, layerId: string): BackgroundDocument | null {
   return removeDocumentLayer(document, layerId, cloneBackgroundDocument);
+}
+
+export function reorderBackgroundLayer(
+  document: BackgroundDocument,
+  layerId: string,
+  targetIndex: number,
+): BackgroundDocument | null {
+  return reorderDocumentLayer(document, layerId, targetIndex, cloneBackgroundDocument);
 }
 
 export function moveBackgroundLayer(

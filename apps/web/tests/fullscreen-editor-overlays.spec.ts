@@ -79,6 +79,45 @@ async function expectLocatorToBeTopmost(locator: Locator): Promise<void> {
   )).toBe(true);
 }
 
+async function captureStageTransitionFrame(
+  page: Page,
+  buttonLabel: 'Fullscreen stage' | 'Exit fullscreen',
+): Promise<{
+  hostCenterX: number;
+  hostCenterY: number;
+  frozenCenterX: number;
+  frozenCenterY: number;
+}> {
+  return page.evaluate((label) => {
+    const button = Array.from(document.querySelectorAll('button')).find(
+      (node) => node.getAttribute('aria-label') === label,
+    );
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error(`Stage transition button not found: ${label}`);
+    }
+
+    button.click();
+
+    const host = document.querySelector('[data-testid="stage-phaser-host"]');
+    const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+    if (!(host instanceof HTMLElement)) {
+      throw new Error('Stage host is missing during fullscreen transition.');
+    }
+    if (!(frozen instanceof HTMLImageElement)) {
+      throw new Error('Frozen stage frame is missing during fullscreen transition.');
+    }
+
+    const hostRect = host.getBoundingClientRect();
+    const frozenRect = frozen.getBoundingClientRect();
+    return {
+      hostCenterX: hostRect.left + hostRect.width / 2,
+      hostCenterY: hostRect.top + hostRect.height / 2,
+      frozenCenterX: frozenRect.left + frozenRect.width / 2,
+      frozenCenterY: frozenRect.top + frozenRect.height / 2,
+    };
+  }, buttonLabel);
+}
+
 test.describe('Fullscreen editor overlays', () => {
   test('Object editor toolbar button enters fullscreen without the legacy shell header', async ({ page }) => {
     await bootstrapEditorProject(page, {
@@ -169,6 +208,31 @@ test.describe('Fullscreen editor overlays', () => {
     }));
     expect(restoredIdentity.sameHost).toBe(true);
     expect(restoredIdentity.sameCanvas).toBe(true);
+  });
+
+  test.describe('Stage fullscreen transition anchoring', () => {
+    test.use({
+      viewport: { width: 1440, height: 960 },
+      deviceScaleFactor: 2,
+    });
+
+    test('Frozen stage frame stays centered when entering and exiting fullscreen', async ({ page }) => {
+      await bootstrapEditorProject(page, {
+        projectName: `Stage Center Anchor ${Date.now()}`,
+      });
+
+      const enterTransition = await captureStageTransitionFrame(page, 'Fullscreen stage');
+      expect(enterTransition.frozenCenterX).toBeCloseTo(enterTransition.hostCenterX, 0);
+      expect(enterTransition.frozenCenterY).toBeCloseTo(enterTransition.hostCenterY, 0);
+
+      await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible();
+
+      const exitTransition = await captureStageTransitionFrame(page, 'Exit fullscreen');
+      expect(exitTransition.frozenCenterX).toBeCloseTo(exitTransition.hostCenterX, 0);
+      expect(exitTransition.frozenCenterY).toBeCloseTo(exitTransition.hostCenterY, 0);
+
+      await expect(page.getByRole('button', { name: 'Fullscreen stage' })).toBeVisible();
+    });
   });
 
   test('Play mode overlay pill follows light mode', async ({ page }) => {

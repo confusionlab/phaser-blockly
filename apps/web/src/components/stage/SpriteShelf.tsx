@@ -863,6 +863,12 @@ export function SpriteShelf() {
     });
   };
 
+  const handleEmptyShelfCreateObjectClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handleAddObject();
+  };
+
   const handleAddFolder = (parentId: string | null = null, assignObjectIds?: string[]) => {
     runInHistoryTransaction('sprite-shelf:add-folder', () => {
       const newFolder: SceneFolder = {
@@ -1813,12 +1819,16 @@ export function SpriteShelf() {
       >
         <div className="min-h-full">
           {selectedScene.objects.length === 0 && folders.length === 0 ? (
-            <div
-              className="flex h-full flex-col items-center justify-center p-4 text-muted-foreground"
-              onClick={handleEmptyShelfClick}
-            >
-              <span className="mb-2 text-2xl">📦</span>
-              <span className="text-center text-xs">No objects yet</span>
+            <div className="flex h-full items-center justify-center p-4">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto rounded-full px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                onClick={handleEmptyShelfCreateObjectClick}
+              >
+                + Create an object
+              </Button>
             </div>
           ) : (
             <div

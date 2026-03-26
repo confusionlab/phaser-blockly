@@ -127,6 +127,34 @@ export function removeDocumentLayer<TLayer extends SharedLayerDocumentLayer, TDo
   return nextDocument;
 }
 
+export function reorderDocumentLayer<TLayer extends SharedLayerDocumentLayer, TDocument extends SharedLayerDocument<TLayer>>(
+  document: TDocument,
+  layerId: string,
+  targetIndex: number,
+  cloneDocument: (document: TDocument) => TDocument,
+): TDocument | null {
+  const layerIndex = getDocumentLayerIndex(document, layerId);
+  if (layerIndex < 0) {
+    return null;
+  }
+
+  const clampedTargetIndex = Math.max(0, Math.min(targetIndex, document.layers.length - 1));
+  if (clampedTargetIndex === layerIndex) {
+    return null;
+  }
+
+  const nextDocument = cloneDocument(document);
+  const nextLayers = [...nextDocument.layers];
+  const [layer] = nextLayers.splice(layerIndex, 1);
+  if (!layer) {
+    return null;
+  }
+
+  nextLayers.splice(clampedTargetIndex, 0, layer);
+  nextDocument.layers = nextLayers;
+  return nextDocument;
+}
+
 export function moveDocumentLayer<TLayer extends SharedLayerDocumentLayer, TDocument extends SharedLayerDocument<TLayer>>(
   document: TDocument,
   layerId: string,
@@ -139,14 +167,5 @@ export function moveDocumentLayer<TLayer extends SharedLayerDocumentLayer, TDocu
   }
 
   const targetIndex = direction === 'up' ? layerIndex + 1 : layerIndex - 1;
-  if (targetIndex < 0 || targetIndex >= document.layers.length) {
-    return null;
-  }
-
-  const nextDocument = cloneDocument(document);
-  const nextLayers = [...nextDocument.layers];
-  const [layer] = nextLayers.splice(layerIndex, 1);
-  nextLayers.splice(targetIndex, 0, layer);
-  nextDocument.layers = nextLayers;
-  return nextDocument;
+  return reorderDocumentLayer(document, layerId, targetIndex, cloneDocument);
 }

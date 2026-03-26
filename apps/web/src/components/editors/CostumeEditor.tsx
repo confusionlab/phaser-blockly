@@ -54,7 +54,7 @@ import {
   getCostumeLayerIndex,
   insertCostumeLayerAfterActive,
   isVectorCostumeLayer,
-  moveCostumeLayer,
+  reorderCostumeLayer,
   removeCostumeLayer,
   setActiveCostumeLayer,
   setCostumeLayerVisibility,
@@ -1023,8 +1023,8 @@ export function CostumeEditor() {
     void commitDocumentMutation((working) => removeCostumeLayer(working.document, layerId));
   }, [commitDocumentMutation]);
 
-  const handleMoveLayer = useCallback((layerId: string, direction: 'up' | 'down') => {
-    void commitDocumentMutation((working) => moveCostumeLayer(working.document, layerId, direction), {
+  const handleReorderLayer = useCallback((layerId: string, targetIndex: number) => {
+    void commitDocumentMutation((working) => reorderCostumeLayer(working.document, layerId, targetIndex), {
       forceReload: false,
     });
   }, [commitDocumentMutation]);
@@ -1433,58 +1433,59 @@ export function CostumeEditor() {
           />
         ) : null}
 
-        <CostumeCanvas
-          ref={canvasRef}
-          costumeDocument={editorCostume?.document ?? null}
-          initialEditorMode={initialEditorMode}
-          isVisible={activeObjectTab === 'costumes'}
-          activeTool={activeTool}
-          bitmapBrushKind={bitmapBrushKind}
-          brushColor={brushColor}
-          brushSize={brushSize}
-          bitmapFillStyle={bitmapFillStyle}
-          bitmapShapeStyle={bitmapShapeStyle}
-          vectorHandleMode={vectorHandleMode}
-          textStyle={textStyle}
-          vectorStyle={vectorStyle}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          collider={collider}
-          onHistoryChange={handleHistoryChange}
-          onColliderChange={handleColliderChange}
-          onModeChange={handleCanvasModeChange}
-          onTextStyleSync={handleTextStyleChange}
-          onVectorStyleSync={handleVectorStyleChange}
-          onVectorHandleModeSync={setVectorHandleMode}
-          onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
-          onVectorPointEditingChange={setIsVectorPointEditing}
-          onVectorPointSelectionChange={setHasSelectedVectorPoints}
-          onTextSelectionChange={setHasTextSelection}
-          onSelectionStateChange={handleSelectionStateChange}
-          onViewScaleChange={setCanvasPreviewScale}
-        />
+        <div className="relative flex min-h-0 min-w-0 flex-1">
+          <CostumeCanvas
+            ref={canvasRef}
+            costumeDocument={editorCostume?.document ?? null}
+            initialEditorMode={initialEditorMode}
+            isVisible={activeObjectTab === 'costumes'}
+            activeTool={activeTool}
+            bitmapBrushKind={bitmapBrushKind}
+            brushColor={brushColor}
+            brushSize={brushSize}
+            bitmapFillStyle={bitmapFillStyle}
+            bitmapShapeStyle={bitmapShapeStyle}
+            vectorHandleMode={vectorHandleMode}
+            textStyle={textStyle}
+            vectorStyle={vectorStyle}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            collider={collider}
+            onHistoryChange={handleHistoryChange}
+            onColliderChange={handleColliderChange}
+            onModeChange={handleCanvasModeChange}
+            onTextStyleSync={handleTextStyleChange}
+            onVectorStyleSync={handleVectorStyleChange}
+            onVectorHandleModeSync={setVectorHandleMode}
+            onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
+            onVectorPointEditingChange={setIsVectorPointEditing}
+            onVectorPointSelectionChange={setHasSelectedVectorPoints}
+            onTextSelectionChange={setHasTextSelection}
+            onSelectionStateChange={handleSelectionStateChange}
+            onViewScaleChange={setCanvasPreviewScale}
+          />
+          {editorCostume ? (
+            <CostumeLayerPanel
+              document={editorCostume.document}
+              activeLayer={activeLayer}
+              onSelectLayer={handleSelectLayer}
+              onAddBitmapLayer={handleAddBitmapLayer}
+              onAddVectorLayer={handleAddVectorLayer}
+              onDuplicateLayer={handleDuplicateLayer}
+              onDeleteLayer={handleDeleteLayer}
+              onReorderLayer={handleReorderLayer}
+              onToggleVisibility={handleToggleLayerVisibility}
+              onToggleLocked={handleToggleLayerLocked}
+              onRenameLayer={handleRenameLayer}
+              onOpacityChange={handleLayerOpacityChange}
+              onMergeDown={handleMergeLayerDown}
+              onRasterizeLayer={handleRasterizeLayer}
+            />
+          ) : null}
+        </div>
       </div>
-
-      {editorCostume ? (
-        <CostumeLayerPanel
-          document={editorCostume.document}
-          activeLayer={activeLayer}
-          onSelectLayer={handleSelectLayer}
-          onAddBitmapLayer={handleAddBitmapLayer}
-          onAddVectorLayer={handleAddVectorLayer}
-          onDuplicateLayer={handleDuplicateLayer}
-          onDeleteLayer={handleDeleteLayer}
-          onMoveLayer={handleMoveLayer}
-          onToggleVisibility={handleToggleLayerVisibility}
-          onToggleLocked={handleToggleLayerLocked}
-          onRenameLayer={handleRenameLayer}
-          onOpacityChange={handleLayerOpacityChange}
-          onMergeDown={handleMergeLayerDown}
-          onRasterizeLayer={handleRasterizeLayer}
-        />
-      ) : null}
 
       {isSessionLoading && (
         <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-background/70 text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>

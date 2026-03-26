@@ -3,12 +3,12 @@ import {
   DEFAULT_BACKGROUND_CHUNK_SIZE,
   getChunkRangeForWorldBounds,
   getChunkWorldBounds,
-  parseChunkKey,
 } from './chunkMath';
 import {
   decodeBackgroundChunkImage,
   getCachedBackgroundChunkImage,
 } from './chunkImageCache';
+import { getCachedBackgroundChunkIndex } from './chunkIndex';
 
 export interface UserSpaceViewport {
   left: number;
@@ -103,21 +103,12 @@ export function getVisibleTiledBackgroundScreenChunks(
     margin,
   );
 
+  const chunkIndex = getCachedBackgroundChunkIndex(background.chunks);
   const chunks: TiledBackgroundScreenChunk[] = [];
-  for (const [key, dataUrl] of Object.entries(background.chunks)) {
-    if (!dataUrl) continue;
-    const parsed = parseChunkKey(key);
-    if (!parsed) continue;
-    if (
-      parsed.cx < visibleRange.minCx ||
-      parsed.cx > visibleRange.maxCx ||
-      parsed.cy < visibleRange.minCy ||
-      parsed.cy > visibleRange.maxCy
-    ) {
-      continue;
-    }
+  for (const entry of chunkIndex.query(visibleRange)) {
+    if (!entry.value) continue;
 
-    const bounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
+    const bounds = getChunkWorldBounds(entry.cx, entry.cy, chunkSize);
     const x = ((bounds.left - viewport.left) / viewportWidth) * targetWidth;
     const y = ((viewport.top - bounds.top) / viewportHeight) * targetHeight;
     const width = ((bounds.right - bounds.left) / viewportWidth) * targetWidth;
@@ -128,8 +119,8 @@ export function getVisibleTiledBackgroundScreenChunks(
     }
 
     chunks.push({
-      key,
-      dataUrl,
+      key: entry.key,
+      dataUrl: entry.value,
       x,
       y,
       width,

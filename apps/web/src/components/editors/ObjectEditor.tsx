@@ -95,11 +95,11 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
       )}
     >
       <div className="flex h-full min-h-0 min-w-0 flex-col gap-0">
-        <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-            <div />
-            <div className="flex justify-center">
-              {!emptyStateMessage ? (
+        {!emptyStateMessage ? (
+          <div className="shrink-0 border-b border-zinc-200/80 px-3 py-1.5 dark:border-white/10">
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+              <div />
+              <div className="flex justify-center">
                 <SegmentedControl
                   ariaLabel="Object editor sections"
                   className="max-w-full"
@@ -109,24 +109,24 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
                   value={activeObjectTab}
                   onValueChange={handleSectionChange}
                 />
-              ) : null}
-            </div>
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                data-testid="object-editor-fullscreen-toggle"
-                title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                aria-pressed={isFullscreen}
-                onClick={toggleFullscreen}
-              >
-                {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-              </Button>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  data-testid="object-editor-fullscreen-toggle"
+                  title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                  aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                  aria-pressed={isFullscreen}
+                  onClick={toggleFullscreen}
+                >
+                  {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
           <div

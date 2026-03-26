@@ -101,16 +101,25 @@ async function readSavedBackgroundVectorObjectCount(page: Page): Promise<number>
 }
 
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
-  await page.locator('input[type="range"]').evaluate((input, nextValue) => {
+  await page.locator('[data-testid="layer-row"][aria-pressed="true"]').click({ button: 'right' });
+  const slider = page.getByLabel('Layer opacity');
+  await expect(slider).toBeVisible();
+  await slider.evaluate((input, nextValue) => {
     const slider = input as HTMLInputElement;
     slider.value = String(nextValue);
     slider.dispatchEvent(new Event('input', { bubbles: true }));
     slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
   }, opacityPercent);
+  await page.keyboard.press('Escape');
 }
 
 function backgroundLayerRow(page: Page, index: number) {
   return page.locator('[data-testid="layer-row"]').nth(index);
+}
+
+async function addVectorLayer(page: Page): Promise<void> {
+  await page.getByTestId('layer-add-button').click();
+  await page.getByRole('menuitem', { name: /^vector$/i }).click();
 }
 
 async function openEditorFromProjectList(page: Page): Promise<void> {
@@ -241,7 +250,7 @@ test.describe('Background editor', () => {
     await page.mouse.up();
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
 
-    await page.getByRole('button', { name: /^vector$/i }).click();
+    await addVectorLayer(page);
     const vectorLayerButton = backgroundLayerRow(page, 0);
     await expect(vectorLayerButton).toHaveAttribute('data-layer-kind', 'vector');
     await expect(vectorLayerButton).toHaveAttribute('aria-pressed', 'true');
@@ -280,7 +289,7 @@ test.describe('Background editor', () => {
     await openEditorFromProjectList(page);
 
     let editor = await openBackgroundEditor(page);
-    await page.getByRole('button', { name: /^vector$/i }).click();
+    await addVectorLayer(page);
     await page.getByRole('button', { name: /^rectangle$/i }).click();
     await page.mouse.move(editor.box.x + editor.box.width * 0.55, editor.box.y + editor.box.height * 0.35);
     await page.mouse.down();

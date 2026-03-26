@@ -33,6 +33,10 @@ import {
   worldToChunkLocal,
 } from '@/lib/background/chunkMath';
 import {
+  getCachedBackgroundChunkIndex,
+  MutableBackgroundChunkIndex,
+} from '@/lib/background/chunkIndex';
+import {
   DEFAULT_BACKGROUND_HARD_CHUNK_LIMIT,
   DEFAULT_BACKGROUND_SOFT_CHUNK_LIMIT,
   canCreateChunk,
@@ -76,7 +80,7 @@ import {
   insertBackgroundLayerAfterActive,
   isBitmapBackgroundLayer,
   isVectorBackgroundLayer,
-  moveBackgroundLayer,
+  reorderBackgroundLayer,
   removeBackgroundLayer,
   setActiveBackgroundLayer,
   setBackgroundLayerVisibility,
@@ -124,6 +128,7 @@ type BackgroundDrawingTool = Extract<CostumeDrawingTool, 'select' | 'brush' | 'e
 type MutationSession = {
   touched: Set<string>;
   before: Record<string, string | null>;
+  serializedAfter: Record<string, string | null>;
 };
 
 type StrokeSession = MutationSession & {
@@ -523,12 +528,15 @@ export function BackgroundCanvasEditor() {
   const chunkCanvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const chunkDataRef = useRef<ChunkDataMap>({});
   const chunkKeySetRef = useRef<Set<string>>(new Set());
+  const activeChunkIndexRef = useRef(new MutableBackgroundChunkIndex<true>());
   const layerChunkCanvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const fillTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const fillTexturePromiseRef = useRef<Map<string, Promise<HTMLImageElement | null>>>(new Map());
   const renderedLayerChunksRef = useRef<Record<string, ChunkDataMap>>({});
   const renderedLayerChunkSignaturesRef = useRef<Record<string, string>>({});
   const renderedLayerChunkRequestIdRef = useRef(0);
+  const bitmapStateTaskQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const bitmapStateEpochRef = useRef(0);
   const undoStackRef = useRef<ChunkDelta[]>([]);
   const redoStackRef = useRef<ChunkDelta[]>([]);
   const didMountRef = useRef(false);
@@ -680,6 +688,23 @@ export function BackgroundCanvasEditor() {
   const syncActiveChunkCount = useCallback(() => {
     setActiveChunkCount(chunkKeySetRef.current.size);
   }, []);
+
+  const replaceActiveBitmapLayerState = useCallback((
+    nextState: {
+      chunkData: ChunkDataMap;
+      chunkCanvases: Map<string, HTMLCanvasElement>;
+      chunkKeys: Set<string>;
+    },
+  ) => {
+    chunkDataRef.current = nextState.chunkData;
+    chunkCanvasesRef.current = nextState.chunkCanvases;
+    chunkKeySetRef.current = nextState.chunkKeys;
+    activeChunkIndexRef.current.clear();
+    for (const key of nextState.chunkKeys) {
+      activeChunkIndexRef.current.set(key, true);
+    }
+    syncActiveChunkCount();
+  }, [syncActiveChunkCount]);
 
   const fitToContent = useCallback(() => {
     const chunkKeys = new Set<string>();
@@ -835,6 +860,8 @@ export function BackgroundCanvasEditor() {
     layer: BackgroundLayer | null,
     nextChunkSize: number,
   ) => {
+    bitmapStateEpochRef.current += 1;
+    const epoch = bitmapStateEpochRef.current;
     chunkCanvasesRef.current.clear();
     loadingChunkKeysRef.current.clear();
     layerChunkCanvasCacheRef.current.clear();
@@ -845,19 +872,35 @@ export function BackgroundCanvasEditor() {
     setHasFloatingSelection(false);
 
     const initialChunks = isBitmapBackgroundLayer(layer) ? normalizeChunkDataMap(layer.bitmap.chunks) : {};
-    chunkDataRef.current = { ...initialChunks };
-    chunkKeySetRef.current = new Set(Object.keys(initialChunks));
-    syncActiveChunkCount();
-
-    for (const [key, dataUrl] of Object.entries(initialChunks)) {
+    replaceActiveBitmapLayerState({
+      chunkData: { ...initialChunks },
+      chunkCanvases: new Map(),
+      chunkKeys: new Set(Object.keys(initialChunks)),
+    });
+    const nextChunkCanvases = new Map<string, HTMLCanvasElement>();
+    const decodedEntries = await Promise.all(Object.entries(initialChunks).map(async ([key, dataUrl]) => {
       const decoded = await dataUrlToCanvas(dataUrl, nextChunkSize);
+      return [key, decoded] as const;
+    }));
+
+    if (bitmapStateEpochRef.current !== epoch) {
+      return;
+    }
+
+    for (const [key, decoded] of decodedEntries) {
       if (decoded) {
-        chunkCanvasesRef.current.set(key, decoded);
+        nextChunkCanvases.set(key, decoded);
       }
     }
 
+    replaceActiveBitmapLayerState({
+      chunkData: { ...initialChunks },
+      chunkCanvases: nextChunkCanvases,
+      chunkKeys: new Set(Object.keys(initialChunks)),
+    });
+
     setRevision((value) => value + 1);
-  }, [syncActiveChunkCount]);
+  }, [replaceActiveBitmapLayerState]);
 
   const loadActiveBitmapLayerState = useCallback(async (layer: BackgroundLayer | null) => {
     await loadBitmapLayerStateForChunkSize(layer, chunkSize);
@@ -945,9 +988,23 @@ export function BackgroundCanvasEditor() {
     await rasterOperationQueueRef.current.catch(() => undefined);
   }, []);
 
+  const enqueueBitmapStateTask = useCallback((task: (epoch: number) => Promise<void>) => {
+    const epoch = bitmapStateEpochRef.current;
+    const run = bitmapStateTaskQueueRef.current
+      .catch(() => undefined)
+      .then(() => task(epoch));
+    bitmapStateTaskQueueRef.current = run.catch(() => undefined);
+    return run;
+  }, []);
+
+  const awaitBitmapStateTasks = useCallback(async () => {
+    await bitmapStateTaskQueueRef.current.catch(() => undefined);
+  }, []);
+
   const ensureChunkCanvasLoaded = useCallback(async (key: string): Promise<HTMLCanvasElement | null> => {
     const existing = chunkCanvasesRef.current.get(key);
     if (existing) return existing;
+    const epoch = bitmapStateEpochRef.current;
     const serialized = chunkDataRef.current[key];
     if (!serialized) return null;
     if (loadingChunkKeysRef.current.has(key)) return null;
@@ -956,6 +1013,9 @@ export function BackgroundCanvasEditor() {
     const decoded = await dataUrlToCanvas(serialized, chunkSize);
     loadingChunkKeysRef.current.delete(key);
     if (!decoded) return null;
+    if (epoch !== bitmapStateEpochRef.current || chunkDataRef.current[key] !== serialized) {
+      return null;
+    }
 
     chunkCanvasesRef.current.set(key, decoded);
     setRevision((value) => value + 1);
@@ -1201,6 +1261,15 @@ export function BackgroundCanvasEditor() {
     ctx.fillRect(0, 0, viewport.width, viewport.height);
 
     const chunkPixelSize = chunkSize * zoom;
+    const safeZoom = Math.max(1e-6, zoom);
+    const visibleChunkRange = getChunkRangeForWorldBounds(
+      camera.x - viewport.width / (2 * safeZoom),
+      camera.x + viewport.width / (2 * safeZoom),
+      camera.y - viewport.height / (2 * safeZoom),
+      camera.y + viewport.height / (2 * safeZoom),
+      chunkSize,
+      1,
+    );
     const drawLayerChunks = (
       layer: BackgroundLayer,
       chunks: ChunkDataMap,
@@ -1215,29 +1284,42 @@ export function BackgroundCanvasEditor() {
       ctx.save();
       ctx.globalAlpha = layer.opacity;
 
-      for (const [key, dataUrl] of Object.entries(chunks)) {
-        const parsed = parseChunkKey(key);
-        if (!parsed) continue;
-        const bounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
-        const topLeft = worldToScreen(bounds.left, bounds.top);
-        if (topLeft.x + width < 0 || topLeft.y + height < 0 || topLeft.x > viewport.width || topLeft.y > viewport.height) {
-          continue;
-        }
+      if (options?.useActiveBitmapCache) {
+        for (const visibleChunk of activeChunkIndexRef.current.query(visibleChunkRange)) {
+          const key = visibleChunk.key;
+          const bounds = getChunkWorldBounds(visibleChunk.cx, visibleChunk.cy, chunkSize);
+          const topLeft = worldToScreen(bounds.left, bounds.top);
+          if (topLeft.x + width < 0 || topLeft.y + height < 0 || topLeft.x > viewport.width || topLeft.y > viewport.height) {
+            continue;
+          }
 
-        if (options?.useActiveBitmapCache) {
           const chunkCanvas = chunkCanvasesRef.current.get(key);
           if (chunkCanvas) {
             ctx.drawImage(chunkCanvas, topLeft.x, topLeft.y, width, height);
             continue;
           }
+
+          const dataUrl = chunkDataRef.current[key];
           if (dataUrl) {
             void ensureChunkCanvasLoaded(key);
             ctx.strokeStyle = 'rgba(255,255,255,0.25)';
             ctx.strokeRect(topLeft.x, topLeft.y, width, height);
           }
+        }
+
+        ctx.restore();
+        return;
+      }
+
+      for (const visibleChunk of getCachedBackgroundChunkIndex(chunks).query(visibleChunkRange)) {
+        const key = visibleChunk.key;
+        const bounds = getChunkWorldBounds(visibleChunk.cx, visibleChunk.cy, chunkSize);
+        const topLeft = worldToScreen(bounds.left, bounds.top);
+        if (topLeft.x + width < 0 || topLeft.y + height < 0 || topLeft.x > viewport.width || topLeft.y > viewport.height) {
           continue;
         }
 
+        const dataUrl = visibleChunk.value;
         const cacheKey = `${layer.id}:${key}:${dataUrl}`;
         const chunkCanvas = layerChunkCanvasCacheRef.current.get(cacheKey);
         if (chunkCanvas) {
@@ -1245,11 +1327,9 @@ export function BackgroundCanvasEditor() {
           continue;
         }
 
-        if (dataUrl) {
-          void ensureLayerChunkCanvasLoaded(cacheKey, dataUrl);
-          ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-          ctx.strokeRect(topLeft.x, topLeft.y, width, height);
-        }
+        void ensureLayerChunkCanvasLoaded(cacheKey, dataUrl);
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.strokeRect(topLeft.x, topLeft.y, width, height);
       }
 
       ctx.restore();
@@ -1430,6 +1510,8 @@ export function BackgroundCanvasEditor() {
     bitmapShapeStyle.strokeWidth,
     brushColor,
     brushSize,
+    camera.x,
+    camera.y,
     cameraBounds.bottom,
     cameraBounds.left,
     cameraBounds.right,
@@ -1454,16 +1536,21 @@ export function BackgroundCanvasEditor() {
   }, [render, revision, camera, zoom, tool, brushColor, brushSize, viewport, isPanning]);
 
   const getExistingChunkSnapshot = useCallback((key: string): string | null => {
+    const serialized = chunkDataRef.current[key];
+    if (serialized) {
+      return serialized;
+    }
     const canvas = chunkCanvasesRef.current.get(key);
     if (canvas) {
       return canvas.toDataURL('image/png');
     }
-    return chunkDataRef.current[key] ?? null;
+    return null;
   }, []);
 
   const beginMutationSession = useCallback((): MutationSession => ({
     touched: new Set(),
     before: {},
+    serializedAfter: {},
   }), []);
 
   const rememberChunkBeforeMutation = useCallback((session: MutationSession, key: string) => {
@@ -1489,6 +1576,7 @@ export function BackgroundCanvasEditor() {
     const created = createEmptyChunkCanvas(chunkSize);
     chunkCanvasesRef.current.set(key, created);
     chunkKeySetRef.current.add(key);
+    activeChunkIndexRef.current.set(key, true);
     syncActiveChunkCount();
     updateWarnings();
     return created;
@@ -1684,8 +1772,25 @@ export function BackgroundCanvasEditor() {
 
     const after: Record<string, string | null> = {};
     const before = session.before;
+    const serializedAfter = session.serializedAfter;
 
     for (const key of session.touched) {
+      if (key in serializedAfter) {
+        const value = serializedAfter[key] ?? null;
+        if (value === null) {
+          chunkCanvasesRef.current.delete(key);
+          delete chunkDataRef.current[key];
+          chunkKeySetRef.current.delete(key);
+          activeChunkIndexRef.current.delete(key);
+        } else {
+          chunkDataRef.current[key] = value;
+          chunkKeySetRef.current.add(key);
+          activeChunkIndexRef.current.set(key, true);
+        }
+        after[key] = value;
+        continue;
+      }
+
       const canvas = chunkCanvasesRef.current.get(key);
       if (!canvas) {
         const current = chunkDataRef.current[key] ?? null;
@@ -1697,6 +1802,7 @@ export function BackgroundCanvasEditor() {
         chunkCanvasesRef.current.delete(key);
         delete chunkDataRef.current[key];
         chunkKeySetRef.current.delete(key);
+        activeChunkIndexRef.current.delete(key);
         after[key] = null;
         continue;
       }
@@ -1704,6 +1810,7 @@ export function BackgroundCanvasEditor() {
       const dataUrl = canvas.toDataURL('image/png');
       chunkDataRef.current[key] = dataUrl;
       chunkKeySetRef.current.add(key);
+      activeChunkIndexRef.current.set(key, true);
       after[key] = dataUrl;
     }
 
@@ -1741,28 +1848,41 @@ export function BackgroundCanvasEditor() {
   }, [commitMutationSession]);
 
   const applyDeltaRecord = useCallback(async (record: Record<string, string | null>) => {
+    const nextChunkData: ChunkDataMap = { ...chunkDataRef.current };
+    const nextChunkCanvases = new Map(chunkCanvasesRef.current);
+    const nextChunkKeys = new Set(chunkKeySetRef.current);
+
+    const decodeTasks: Array<Promise<void>> = [];
     for (const [key, value] of Object.entries(record)) {
       if (!value) {
-        delete chunkDataRef.current[key];
-        chunkCanvasesRef.current.delete(key);
-        chunkKeySetRef.current.delete(key);
+        delete nextChunkData[key];
+        nextChunkCanvases.delete(key);
+        nextChunkKeys.delete(key);
         continue;
       }
 
-      chunkDataRef.current[key] = value;
-      chunkKeySetRef.current.add(key);
-      const decoded = await dataUrlToCanvas(value, chunkSize);
-      if (decoded) {
-        chunkCanvasesRef.current.set(key, decoded);
-      } else {
-        chunkCanvasesRef.current.delete(key);
-      }
+      nextChunkData[key] = value;
+      nextChunkKeys.add(key);
+      decodeTasks.push(
+        dataUrlToCanvas(value, chunkSize).then((decoded) => {
+          if (decoded) {
+            nextChunkCanvases.set(key, decoded);
+          } else {
+            nextChunkCanvases.delete(key);
+          }
+        }),
+      );
     }
 
-    syncActiveChunkCount();
+    await Promise.all(decodeTasks);
+    replaceActiveBitmapLayerState({
+      chunkData: nextChunkData,
+      chunkCanvases: nextChunkCanvases,
+      chunkKeys: nextChunkKeys,
+    });
     updateWarnings();
     setRevision((value) => value + 1);
-  }, [chunkSize, syncActiveChunkCount, updateWarnings]);
+  }, [chunkSize, replaceActiveBitmapLayerState, updateWarnings]);
 
   const commitShapeDraft = useCallback((draft: ShapeDraftSession) => {
     const shapeStyle = bitmapShapeStyle;
@@ -1957,12 +2077,17 @@ export function BackgroundCanvasEditor() {
         delete chunkDataRef.current[key];
         chunkCanvasesRef.current.delete(key);
         chunkKeySetRef.current.delete(key);
+        activeChunkIndexRef.current.delete(key);
+        session.serializedAfter[key] = null;
         continue;
       }
 
       chunkCanvasesRef.current.set(key, nextCanvas);
-      chunkDataRef.current[key] = nextCanvas.toDataURL('image/png');
       chunkKeySetRef.current.add(key);
+      activeChunkIndexRef.current.set(key, true);
+      const dataUrl = nextCanvas.toDataURL('image/png');
+      chunkDataRef.current[key] = dataUrl;
+      session.serializedAfter[key] = dataUrl;
     }
 
     syncActiveChunkCount();
@@ -2232,12 +2357,17 @@ export function BackgroundCanvasEditor() {
     if (!delta) return;
     redoStackRef.current.push(delta);
     syncUndoRedoAvailability();
-    void applyDeltaRecord(delta.before);
+    void enqueueBitmapStateTask(async (epoch) => {
+      if (epoch !== bitmapStateEpochRef.current) {
+        return;
+      }
+      await applyDeltaRecord(delta.before);
+    });
     setIsDirty(
       undoStackRef.current.length > 0 ||
       backgroundColorRef.current !== initialBackgroundColorRef.current,
     );
-  }, [applyDeltaRecord, commitFloatingSelection, editorMode, syncUndoRedoAvailability]);
+  }, [applyDeltaRecord, commitFloatingSelection, editorMode, enqueueBitmapStateTask, syncUndoRedoAvailability]);
 
   const redo = useCallback(() => {
     if (editorMode === 'vector') {
@@ -2255,12 +2385,17 @@ export function BackgroundCanvasEditor() {
     if (!delta) return;
     undoStackRef.current.push(delta);
     syncUndoRedoAvailability();
-    void applyDeltaRecord(delta.after);
+    void enqueueBitmapStateTask(async (epoch) => {
+      if (epoch !== bitmapStateEpochRef.current) {
+        return;
+      }
+      await applyDeltaRecord(delta.after);
+    });
     setIsDirty(
       undoStackRef.current.length > 0 ||
       backgroundColorRef.current !== initialBackgroundColorRef.current,
     );
-  }, [applyDeltaRecord, commitFloatingSelection, editorMode, syncUndoRedoAvailability]);
+  }, [applyDeltaRecord, commitFloatingSelection, editorMode, enqueueBitmapStateTask, syncUndoRedoAvailability]);
 
   const flushActiveInteraction = useCallback(async () => {
     if (editorMode === 'vector' && isShapeTool(tool) && isDrawing) {
@@ -2295,6 +2430,7 @@ export function BackgroundCanvasEditor() {
       setIsDrawing(false);
     }
 
+    await awaitBitmapStateTasks();
     await awaitRasterOperations();
 
     if (floatingSelectionRef.current) {
@@ -2305,7 +2441,7 @@ export function BackgroundCanvasEditor() {
     }
 
     return true;
-  }, [awaitRasterOperations, commitFloatingSelection, commitShapeDraft, editorMode, finalizeStroke, isDrawing, tool]);
+  }, [awaitBitmapStateTasks, awaitRasterOperations, commitFloatingSelection, commitShapeDraft, editorMode, finalizeStroke, isDrawing, tool]);
 
   const handleSelectLayer = useCallback(async (layerId: string) => {
     if (busy || !backgroundDocumentRef.current || backgroundDocumentRef.current.activeLayerId === layerId) {
@@ -2385,7 +2521,7 @@ export function BackgroundCanvasEditor() {
     await applyNextDocumentState(nextDocument);
   }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
 
-  const handleMoveLayer = useCallback(async (layerId: string, direction: 'up' | 'down') => {
+  const handleReorderLayer = useCallback(async (layerId: string, targetIndex: number) => {
     if (!backgroundDocumentRef.current) {
       return;
     }
@@ -2394,7 +2530,7 @@ export function BackgroundCanvasEditor() {
       return;
     }
     const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
-    const nextDocument = moveBackgroundLayer(persistedDocument, layerId, direction);
+    const nextDocument = reorderBackgroundLayer(persistedDocument, layerId, targetIndex);
     if (!nextDocument) {
       return;
     }
@@ -3237,23 +3373,23 @@ export function BackgroundCanvasEditor() {
               onSelectionChange={setHasVectorSelection}
             />
           ) : null}
+          {backgroundDocument ? (
+            <BackgroundLayerPanel
+              document={backgroundDocument}
+              activeLayer={activeLayer}
+              onSelectLayer={(layerId) => { void handleSelectLayer(layerId); }}
+              onAddBitmapLayer={() => { void handleAddBitmapLayer(); }}
+              onAddVectorLayer={() => { void handleAddVectorLayer(); }}
+              onDuplicateLayer={(layerId) => { void handleDuplicateLayer(layerId); }}
+              onDeleteLayer={(layerId) => { void handleDeleteLayer(layerId); }}
+              onReorderLayer={(layerId, targetIndex) => { void handleReorderLayer(layerId, targetIndex); }}
+              onToggleVisibility={(layerId) => { void handleToggleLayerVisibility(layerId); }}
+              onToggleLocked={(layerId) => { void handleToggleLayerLocked(layerId); }}
+              onRenameLayer={(layerId, name) => { void handleRenameLayer(layerId, name); }}
+              onOpacityChange={(layerId, opacity) => { void handleLayerOpacityChange(layerId, opacity); }}
+            />
+          ) : null}
         </div>
-        {backgroundDocument ? (
-          <BackgroundLayerPanel
-            document={backgroundDocument}
-            activeLayer={activeLayer}
-            onSelectLayer={(layerId) => { void handleSelectLayer(layerId); }}
-            onAddBitmapLayer={() => { void handleAddBitmapLayer(); }}
-            onAddVectorLayer={() => { void handleAddVectorLayer(); }}
-            onDuplicateLayer={(layerId) => { void handleDuplicateLayer(layerId); }}
-            onDeleteLayer={(layerId) => { void handleDeleteLayer(layerId); }}
-            onMoveLayer={(layerId, direction) => { void handleMoveLayer(layerId, direction); }}
-            onToggleVisibility={(layerId) => { void handleToggleLayerVisibility(layerId); }}
-            onToggleLocked={(layerId) => { void handleToggleLayerLocked(layerId); }}
-            onRenameLayer={(layerId, name) => { void handleRenameLayer(layerId, name); }}
-            onOpacityChange={(layerId, opacity) => { void handleLayerOpacityChange(layerId, opacity); }}
-          />
-        ) : null}
       </div>
     </div>
   );

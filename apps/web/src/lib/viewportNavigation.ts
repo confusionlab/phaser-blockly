@@ -12,6 +12,12 @@ export interface ViewportCamera {
   y: number;
 }
 
+export interface ScrollViewportCamera {
+  scrollX: number;
+  scrollY: number;
+  zoom: number;
+}
+
 export interface WorldRect {
   left: number;
   top: number;
@@ -139,6 +145,29 @@ export function panCameraFromDrag(
   return {
     x: camera.x - deltaX / pixelsPerWorldUnit,
     y: axis === 'up' ? camera.y + deltaY / pixelsPerWorldUnit : camera.y - deltaY / pixelsPerWorldUnit,
+  };
+}
+
+export function getViewportCenterFromScrollCamera(
+  camera: ScrollViewportCamera,
+  viewport: Pick<ViewportRect, 'width' | 'height'>,
+): ViewportCamera {
+  const zoom = camera.zoom > 0 ? camera.zoom : 1;
+  return {
+    x: camera.scrollX + viewport.width / (2 * zoom),
+    y: camera.scrollY + viewport.height / (2 * zoom),
+  };
+}
+
+export function getScrollCameraForViewportCenter(
+  center: ViewportCamera,
+  viewport: Pick<ViewportRect, 'width' | 'height'>,
+  zoom: number,
+): Pick<ScrollViewportCamera, 'scrollX' | 'scrollY'> {
+  const safeZoom = zoom > 0 ? zoom : 1;
+  return {
+    scrollX: center.x - viewport.width / (2 * safeZoom),
+    scrollY: center.y - viewport.height / (2 * safeZoom),
   };
 }
 

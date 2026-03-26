@@ -1,1 +1,1 @@
-export const NO_OBJECT_SELECTED_MESSAGE = 'Nothing selected';
+export const NO_OBJECT_SELECTED_MESSAGE = 'Select an object';

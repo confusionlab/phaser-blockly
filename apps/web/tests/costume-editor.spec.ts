@@ -26,8 +26,13 @@ async function openCostumeEditor(page: Page): Promise<void> {
   await expect(costumeTab).toBeVisible({ timeout: 10000 });
   await costumeTab.click();
 
-  await expect(page.getByText('Layers')).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId('layer-add-button')).toBeVisible({ timeout: 10000 });
   await waitForCostumeCanvasReady(page);
+}
+
+async function addVectorLayer(page: Page): Promise<void> {
+  await page.getByTestId('layer-add-button').click();
+  await page.getByRole('menuitem', { name: /^vector$/i }).click();
 }
 
 async function getCostumeCanvasBox(page: Page) {
@@ -76,9 +81,9 @@ async function expectLayerThumbnail(button: Locator): Promise<void> {
 async function startLayerSelectionObserver(page: Page): Promise<void> {
   await page.evaluate(() => {
     const readButtons = () => Array.from(
-      document.querySelectorAll('button[aria-pressed]'),
+      document.querySelectorAll('[data-testid="layer-row"][aria-pressed]'),
     ).map((button) => ({
-      label: button.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+      label: button.getAttribute('aria-label') ?? button.textContent?.replace(/\s+/g, ' ').trim() ?? '',
       pressed: button.getAttribute('aria-pressed') === 'true',
     }));
 
@@ -196,7 +201,7 @@ test.describe('Costume editor tools', () => {
     await page.waitForLoadState('networkidle');
     await openCostumeEditor(page);
 
-    await page.getByRole('button', { name: /^vector$/i }).click();
+    await addVectorLayer(page);
     await expect(page.getByRole('button', { name: /^layer 2/i })).toBeVisible({ timeout: 10000 });
     await waitForCostumeCanvasReady(page);
     await page.getByRole('button', { name: /^rectangle$/i }).click();
@@ -241,7 +246,7 @@ test.describe('Costume editor tools', () => {
     await page.getByRole('button', { name: /^brush$/i }).click();
     await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.36, 0.34);
 
-    await page.getByRole('button', { name: /^vector$/i }).click();
+    await addVectorLayer(page);
     const vectorLayerButton = page.getByRole('button', { name: /^layer 2 vector$/i });
     const bitmapLayerButton = page.getByRole('button', { name: /^layer 1 bitmap$/i });
     await expect(vectorLayerButton).toBeVisible({ timeout: 10000 });
@@ -271,7 +276,7 @@ test.describe('Costume editor tools', () => {
 
     await expect(page.getByRole('button', { name: /box select/i })).toHaveCount(0);
 
-    await page.getByRole('button', { name: /^vector$/i }).click();
+    await addVectorLayer(page);
     await expect(page.getByRole('button', { name: /^layer 2/i })).toBeVisible({ timeout: 10000 });
     await waitForCostumeCanvasReady(page);
     await page.getByRole('button', { name: /^rectangle$/i }).click();
@@ -303,7 +308,7 @@ test.describe('Costume editor tools', () => {
     await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.36, 0.34);
     await expectLayerThumbnail(bitmapLayerButton);
 
-    await page.getByRole('button', { name: /^vector$/i }).click();
+    await addVectorLayer(page);
     const vectorLayerButton = page.getByRole('button', { name: /^layer 2 vector$/i });
     await expect(vectorLayerButton).toBeVisible({ timeout: 10000 });
     await waitForCostumeCanvasReady(page);
@@ -318,7 +323,7 @@ test.describe('Costume editor tools', () => {
     await openCostumeEditor(page);
 
     await startLayerSelectionObserver(page);
-    await page.getByRole('button', { name: /^vector$/i }).click();
+    await addVectorLayer(page);
 
     const layer2Button = page.getByRole('button', { name: /^layer 2 vector$/i });
     const layer1Button = page.getByRole('button', { name: /^layer 1 bitmap$/i });

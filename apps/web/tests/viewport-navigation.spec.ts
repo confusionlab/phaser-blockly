@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { clampCameraToWorldRect } from '../src/lib/viewportNavigation';
+import {
+  clampCameraToWorldRect,
+  getScrollCameraForViewportCenter,
+  getViewportCenterFromScrollCamera,
+} from '../src/lib/viewportNavigation';
 
 test.describe('viewport navigation bounds', () => {
   test('keeps a smaller world rect anchored near the viewport center', () => {
@@ -42,5 +46,25 @@ test.describe('viewport navigation bounds', () => {
     );
 
     expect(clamped).toBe(camera);
+  });
+
+  test('preserves viewport center when the viewport size changes', () => {
+    const originalCenter = getViewportCenterFromScrollCamera(
+      { scrollX: 120, scrollY: 80, zoom: 0.5 },
+      { width: 640, height: 360 },
+    );
+
+    const resizedScroll = getScrollCameraForViewportCenter(
+      originalCenter,
+      { width: 1_600, height: 900 },
+      0.5,
+    );
+
+    const resizedCenter = getViewportCenterFromScrollCamera(
+      { scrollX: resizedScroll.scrollX, scrollY: resizedScroll.scrollY, zoom: 0.5 },
+      { width: 1_600, height: 900 },
+    );
+
+    expect(resizedCenter).toEqual(originalCenter);
   });
 });

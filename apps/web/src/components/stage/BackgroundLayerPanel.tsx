@@ -14,7 +14,7 @@ interface BackgroundLayerPanelProps {
   onAddVectorLayer: () => void;
   onDuplicateLayer: (layerId: string) => void;
   onDeleteLayer: (layerId: string) => void;
-  onMoveLayer: (layerId: string, direction: 'up' | 'down') => void;
+  onReorderLayer: (layerId: string, targetIndex: number) => void;
   onToggleVisibility: (layerId: string) => void;
   onToggleLocked: (layerId: string) => void;
   onRenameLayer: (layerId: string, name: string) => void;
@@ -39,7 +39,7 @@ export function BackgroundLayerPanel(props: BackgroundLayerPanelProps) {
       onAddVectorLayer={props.onAddVectorLayer}
       onDuplicateLayer={props.onDuplicateLayer}
       onDeleteLayer={props.onDeleteLayer}
-      onMoveLayer={props.onMoveLayer}
+      onReorderLayer={props.onReorderLayer}
       onToggleVisibility={props.onToggleVisibility}
       onToggleLocked={props.onToggleLocked}
       onRenameLayer={props.onRenameLayer}

@@ -66,6 +66,21 @@ async function clickNearBottomRight(locator: Locator, inset = 16): Promise<void>
 }
 
 test.describe('Empty selection interactions', () => {
+  test('empty object shelf offers a create object button', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Empty Shelf Create ${Date.now()}`,
+    });
+
+    const createObjectButton = page.getByRole('button', { name: '+ Create an object' });
+    await expect(createObjectButton).toBeVisible();
+
+    await createObjectButton.click();
+
+    await expect(page.getByText(/^Object 1$/)).toBeVisible();
+    await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBeTruthy();
+    await expect(createObjectButton).toHaveCount(0);
+  });
+
   test('clicking empty shelf space or empty stage space clears object selection', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Empty Selection ${Date.now()}`,
@@ -89,10 +104,11 @@ test.describe('Empty selection interactions', () => {
       selectedComponentId: null,
       activeObjectTab: 'code',
     });
-    await expect(page.getByText('Nothing selected')).toHaveCount(2);
+    await expect(page.getByText('Select an object')).toHaveCount(2);
     await expect(page.getByRole('tab', { name: 'Code' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'Costumes' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'Sounds' })).toHaveCount(0);
+    await expect(page.getByTestId('object-editor-fullscreen-toggle')).toHaveCount(0);
 
     await page.getByText(/^Object 1$/).click();
     await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBeTruthy();
@@ -107,6 +123,7 @@ test.describe('Empty selection interactions', () => {
       selectedComponentId: null,
       activeObjectTab: 'code',
     });
-    await expect(page.getByText('Nothing selected')).toHaveCount(2);
+    await expect(page.getByText('Select an object')).toHaveCount(2);
+    await expect(page.getByTestId('object-editor-fullscreen-toggle')).toHaveCount(0);
   });
 });

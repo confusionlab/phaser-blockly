@@ -23,6 +23,7 @@ import {
   getDocumentLayerIndex,
   insertDocumentLayerAfterActive,
   moveDocumentLayer,
+  reorderDocumentLayer,
   removeDocumentLayer,
   setActiveDocumentLayer,
 } from '@/lib/layers/layerDocument';
@@ -303,6 +304,10 @@ export function duplicateCostumeLayer(document: CostumeDocument, layerId: string
 
 export function removeCostumeLayer(document: CostumeDocument, layerId: string): CostumeDocument | null {
   return removeDocumentLayer(document, layerId, cloneCostumeDocument);
+}
+
+export function reorderCostumeLayer(document: CostumeDocument, layerId: string, targetIndex: number): CostumeDocument | null {
+  return reorderDocumentLayer(document, layerId, targetIndex, cloneCostumeDocument);
 }
 
 export function moveCostumeLayer(document: CostumeDocument, layerId: string, direction: 'up' | 'down'): CostumeDocument | null {

@@ -123,13 +123,8 @@ interface ToolDefinition {
   label: string;
 }
 
-function BoxSelectIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden="true">
-      <rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" strokeDasharray="2.5 2.5" strokeWidth="1.8" />
-      <path d="M9 12h6M12 9v6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
-    </svg>
-  );
+function SelectToolIcon() {
+  return <MousePointer2 className="size-[18px]" aria-hidden="true" />;
 }
 
 function AlignCanvasActionIcon({ action }: { action: AlignAction }) {
@@ -576,14 +571,14 @@ interface CostumeToolbarProps {
 }
 
 const bitmapPrimaryTools: ToolDefinition[] = [
-  { tool: 'select', icon: <BoxSelectIcon />, label: 'Select' },
+  { tool: 'select', icon: <SelectToolIcon />, label: 'Select' },
   { tool: 'brush', icon: <Paintbrush className="size-[18px]" />, label: 'Brush' },
   { tool: 'eraser', icon: <Eraser className="size-[18px]" />, label: 'Eraser' },
   { tool: 'fill', icon: <PaintBucket className="size-[18px]" />, label: 'Fill' },
 ];
 
 const vectorPrimaryTools: ToolDefinition[] = [
-  { tool: 'select', icon: <MousePointer2 className="size-[18px]" />, label: 'Select' },
+  { tool: 'select', icon: <SelectToolIcon />, label: 'Select' },
   { tool: 'pen', icon: <PenTool className="size-[18px]" />, label: 'Pen' },
   { tool: 'brush', icon: <Pencil className="size-[18px]" />, label: 'Pencil' },
 ];
