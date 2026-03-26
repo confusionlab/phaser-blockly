@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ProductMenu } from '@/components/layout/ProductMenu';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import {
   EDITOR_CHROME_BORDER_CLASS_NAME,
@@ -101,48 +100,40 @@ export function EditorTopBar({
 
         <div className="flex min-w-0 justify-center">
           {hasProject ? (
-            <div className="flex w-full max-w-[360px] items-center gap-3 rounded-full border border-border/70 bg-card px-3 shadow-xs">
-              <Label
-                htmlFor={inputId}
-                className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/80"
-              >
-                Project
-              </Label>
-              <Input
-                id={inputId}
-                ref={inputRef}
-                type="text"
-                value={draftName}
-                disabled={projectNameDisabled}
-                aria-label="Project name"
-                spellCheck={false}
-                className="h-8 border-0 bg-transparent px-0 text-center text-sm font-medium shadow-none focus-visible:ring-0"
-                onChange={(event) => setDraftName(event.target.value)}
-                onBlur={() => {
-                  if (skipBlurCommitRef.current) {
-                    skipBlurCommitRef.current = false;
-                    return;
-                  }
+            <Input
+              id={inputId}
+              ref={inputRef}
+              type="text"
+              value={draftName}
+              disabled={projectNameDisabled}
+              aria-label="Project name"
+              spellCheck={false}
+              className="h-8 w-full max-w-[360px] border-0 bg-transparent px-0 text-center text-sm font-medium text-foreground shadow-none focus-visible:ring-0"
+              onChange={(event) => setDraftName(event.target.value)}
+              onBlur={() => {
+                if (skipBlurCommitRef.current) {
+                  skipBlurCommitRef.current = false;
+                  return;
+                }
 
-                  void commitDraftName();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    if (commitDraftName()) {
-                      event.currentTarget.blur();
-                    }
-                    return;
-                  }
-
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    restoreLastCommittedName();
+                void commitDraftName();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  if (commitDraftName()) {
                     event.currentTarget.blur();
                   }
-                }}
-              />
-            </div>
+                  return;
+                }
+
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  restoreLastCommittedName();
+                  event.currentTarget.blur();
+                }
+              }}
+            />
           ) : null}
         </div>
 
