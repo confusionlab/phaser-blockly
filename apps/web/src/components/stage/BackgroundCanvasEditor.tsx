@@ -521,21 +521,25 @@ export function BackgroundCanvasEditor() {
   const floatingSelectionRef = useRef<BackgroundFloatingSelection | null>(null);
   const floatingSelectionTransformRef = useRef<BackgroundFloatingSelectionTransformSession | null>(null);
   const floatingSelectionBusyRef = useRef(false);
-  const rasterOperationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const rasterOperationBusyRef = useRef(false);
   const panSessionRef = useRef<PanSession | null>(null);
-  const loadingChunkKeysRef = useRef<Set<string>>(new Set());
+  const activeChunkDecodePromisesRef = useRef<Map<string, {
+    source: string;
+    chunkSize: number;
+    promise: Promise<HTMLCanvasElement | null>;
+  }>>(new Map());
   const chunkCanvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const chunkDataRef = useRef<ChunkDataMap>({});
   const chunkKeySetRef = useRef<Set<string>>(new Set());
   const activeChunkIndexRef = useRef(new MutableBackgroundChunkIndex<true>());
   const layerChunkCanvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const layerChunkDecodePromisesRef = useRef<Map<string, Promise<HTMLCanvasElement | null>>>(new Map());
   const fillTextureCacheRef = useRef<Map<string, HTMLImageElement | null>>(new Map());
   const fillTexturePromiseRef = useRef<Map<string, Promise<HTMLImageElement | null>>>(new Map());
   const renderedLayerChunksRef = useRef<Record<string, ChunkDataMap>>({});
   const renderedLayerChunkSignaturesRef = useRef<Record<string, string>>({});
   const renderedLayerChunkRequestIdRef = useRef(0);
-  const bitmapStateTaskQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const bitmapWorkQueueRef = useRef<Promise<void>>(Promise.resolve());
   const bitmapStateEpochRef = useRef(0);
   const undoStackRef = useRef<ChunkDelta[]>([]);
   const redoStackRef = useRef<ChunkDelta[]>([]);
@@ -856,6 +860,49 @@ export function BackgroundCanvasEditor() {
     );
   }, [editorMode]);
 
+  const decodeActiveChunkCanvas = useCallback((
+    key: string,
+    serialized: string,
+    targetChunkSize: number,
+  ): Promise<HTMLCanvasElement | null> => {
+    const existing = activeChunkDecodePromisesRef.current.get(key);
+    if (existing?.source === serialized && existing.chunkSize === targetChunkSize) {
+      return existing.promise;
+    }
+
+    const promise = dataUrlToCanvas(serialized, targetChunkSize).finally(() => {
+      const latest = activeChunkDecodePromisesRef.current.get(key);
+      if (latest?.promise === promise) {
+        activeChunkDecodePromisesRef.current.delete(key);
+      }
+    });
+    activeChunkDecodePromisesRef.current.set(key, {
+      source: serialized,
+      chunkSize: targetChunkSize,
+      promise,
+    });
+    return promise;
+  }, []);
+
+  const decodeLayerChunkCanvas = useCallback((
+    cacheKey: string,
+    dataUrl: string,
+  ): Promise<HTMLCanvasElement | null> => {
+    const existing = layerChunkDecodePromisesRef.current.get(cacheKey);
+    if (existing) {
+      return existing;
+    }
+
+    const promise = dataUrlToCanvas(dataUrl, chunkSize).finally(() => {
+      const latest = layerChunkDecodePromisesRef.current.get(cacheKey);
+      if (latest === promise) {
+        layerChunkDecodePromisesRef.current.delete(cacheKey);
+      }
+    });
+    layerChunkDecodePromisesRef.current.set(cacheKey, promise);
+    return promise;
+  }, [chunkSize]);
+
   const loadBitmapLayerStateForChunkSize = useCallback(async (
     layer: BackgroundLayer | null,
     nextChunkSize: number,
@@ -863,8 +910,9 @@ export function BackgroundCanvasEditor() {
     bitmapStateEpochRef.current += 1;
     const epoch = bitmapStateEpochRef.current;
     chunkCanvasesRef.current.clear();
-    loadingChunkKeysRef.current.clear();
+    activeChunkDecodePromisesRef.current.clear();
     layerChunkCanvasCacheRef.current.clear();
+    layerChunkDecodePromisesRef.current.clear();
     selectionMarqueeRef.current = null;
     floatingSelectionRef.current = null;
     floatingSelectionTransformRef.current = null;
@@ -879,7 +927,7 @@ export function BackgroundCanvasEditor() {
     });
     const nextChunkCanvases = new Map<string, HTMLCanvasElement>();
     const decodedEntries = await Promise.all(Object.entries(initialChunks).map(async ([key, dataUrl]) => {
-      const decoded = await dataUrlToCanvas(dataUrl, nextChunkSize);
+      const decoded = await decodeActiveChunkCanvas(key, dataUrl, nextChunkSize);
       return [key, decoded] as const;
     }));
 
@@ -900,7 +948,7 @@ export function BackgroundCanvasEditor() {
     });
 
     setRevision((value) => value + 1);
-  }, [replaceActiveBitmapLayerState]);
+  }, [decodeActiveChunkCanvas, replaceActiveBitmapLayerState]);
 
   const loadActiveBitmapLayerState = useCallback(async (layer: BackgroundLayer | null) => {
     await loadBitmapLayerStateForChunkSize(layer, chunkSize);
@@ -966,40 +1014,54 @@ export function BackgroundCanvasEditor() {
     );
   }, [hasFloatingSelection, isDirty, isDrawing, isRasterOperationBusy]);
 
-  const enqueueRasterOperation = useCallback((operation: () => Promise<void>) => {
-    const run = rasterOperationQueueRef.current
+  const enqueueBitmapWork = useCallback((
+    task: (epoch: number) => Promise<void>,
+    options?: { trackRasterBusy?: boolean },
+  ) => {
+    const epoch = bitmapStateEpochRef.current;
+    const run = bitmapWorkQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        rasterOperationBusyRef.current = true;
-        setIsRasterOperationBusy(true);
+        if (options?.trackRasterBusy) {
+          rasterOperationBusyRef.current = true;
+          setIsRasterOperationBusy(true);
+        }
         try {
-          await operation();
+          if (epoch !== bitmapStateEpochRef.current) {
+            return;
+          }
+          await task(epoch);
         } finally {
-          rasterOperationBusyRef.current = false;
-          setIsRasterOperationBusy(false);
+          if (options?.trackRasterBusy) {
+            rasterOperationBusyRef.current = false;
+            setIsRasterOperationBusy(false);
+          }
         }
       });
 
-    rasterOperationQueueRef.current = run.catch(() => undefined);
+    bitmapWorkQueueRef.current = run.catch(() => undefined);
     return run;
+  }, []);
+
+  const enqueueRasterOperation = useCallback((task: (epoch: number) => Promise<void>) => {
+    return enqueueBitmapWork(task, { trackRasterBusy: true });
+  }, [enqueueBitmapWork]);
+
+  const enqueueBitmapStateTask = useCallback((task: (epoch: number) => Promise<void>) => {
+    return enqueueBitmapWork(task);
+  }, [enqueueBitmapWork]);
+
+  const awaitBitmapWork = useCallback(async () => {
+    await bitmapWorkQueueRef.current.catch(() => undefined);
   }, []);
 
   const awaitRasterOperations = useCallback(async () => {
-    await rasterOperationQueueRef.current.catch(() => undefined);
-  }, []);
-
-  const enqueueBitmapStateTask = useCallback((task: (epoch: number) => Promise<void>) => {
-    const epoch = bitmapStateEpochRef.current;
-    const run = bitmapStateTaskQueueRef.current
-      .catch(() => undefined)
-      .then(() => task(epoch));
-    bitmapStateTaskQueueRef.current = run.catch(() => undefined);
-    return run;
-  }, []);
+    await awaitBitmapWork();
+  }, [awaitBitmapWork]);
 
   const awaitBitmapStateTasks = useCallback(async () => {
-    await bitmapStateTaskQueueRef.current.catch(() => undefined);
-  }, []);
+    await awaitBitmapWork();
+  }, [awaitBitmapWork]);
 
   const ensureChunkCanvasLoaded = useCallback(async (key: string): Promise<HTMLCanvasElement | null> => {
     const existing = chunkCanvasesRef.current.get(key);
@@ -1007,20 +1069,22 @@ export function BackgroundCanvasEditor() {
     const epoch = bitmapStateEpochRef.current;
     const serialized = chunkDataRef.current[key];
     if (!serialized) return null;
-    if (loadingChunkKeysRef.current.has(key)) return null;
 
-    loadingChunkKeysRef.current.add(key);
-    const decoded = await dataUrlToCanvas(serialized, chunkSize);
-    loadingChunkKeysRef.current.delete(key);
+    const decoded = await decodeActiveChunkCanvas(key, serialized, chunkSize);
     if (!decoded) return null;
     if (epoch !== bitmapStateEpochRef.current || chunkDataRef.current[key] !== serialized) {
       return null;
     }
 
+    const latest = chunkCanvasesRef.current.get(key);
+    if (latest) {
+      return latest;
+    }
+
     chunkCanvasesRef.current.set(key, decoded);
     setRevision((value) => value + 1);
     return decoded;
-  }, [chunkSize]);
+  }, [chunkSize, decodeActiveChunkCanvas]);
 
   const ensureLayerChunkCanvasLoaded = useCallback(async (
     cacheKey: string,
@@ -1030,14 +1094,20 @@ export function BackgroundCanvasEditor() {
     if (existing) {
       return existing;
     }
-    const decoded = await dataUrlToCanvas(dataUrl, chunkSize);
+    const decoded = await decodeLayerChunkCanvas(cacheKey, dataUrl);
     if (!decoded) {
       return null;
     }
+
+    const latest = layerChunkCanvasCacheRef.current.get(cacheKey);
+    if (latest) {
+      return latest;
+    }
+
     layerChunkCanvasCacheRef.current.set(cacheKey, decoded);
     setRevision((value) => value + 1);
     return decoded;
-  }, [chunkSize]);
+  }, [decodeLayerChunkCanvas]);
 
   const loadFromBackgroundConfig = useCallback(async () => {
     if (!scene) return;
@@ -1050,8 +1120,9 @@ export function BackgroundCanvasEditor() {
     setCanUndo(false);
     setCanRedo(false);
     chunkCanvasesRef.current.clear();
-    loadingChunkKeysRef.current.clear();
+    activeChunkDecodePromisesRef.current.clear();
     layerChunkCanvasCacheRef.current.clear();
+    layerChunkDecodePromisesRef.current.clear();
     selectionMarqueeRef.current = null;
     floatingSelectionRef.current = null;
     floatingSelectionTransformRef.current = null;
@@ -1320,7 +1391,7 @@ export function BackgroundCanvasEditor() {
         }
 
         const dataUrl = visibleChunk.value;
-        const cacheKey = `${layer.id}:${key}:${dataUrl}`;
+        const cacheKey = `${layer.id}:${key}:${chunkSize}:${dataUrl}`;
         const chunkCanvas = layerChunkCanvasCacheRef.current.get(cacheKey);
         if (chunkCanvas) {
           ctx.drawImage(chunkCanvas, topLeft.x, topLeft.y, width, height);
@@ -1847,7 +1918,10 @@ export function BackgroundCanvasEditor() {
     commitMutationSession(stroke);
   }, [commitMutationSession]);
 
-  const applyDeltaRecord = useCallback(async (record: Record<string, string | null>) => {
+  const applyDeltaRecord = useCallback(async (
+    record: Record<string, string | null>,
+    expectedEpoch: number = bitmapStateEpochRef.current,
+  ) => {
     const nextChunkData: ChunkDataMap = { ...chunkDataRef.current };
     const nextChunkCanvases = new Map(chunkCanvasesRef.current);
     const nextChunkKeys = new Set(chunkKeySetRef.current);
@@ -1864,7 +1938,7 @@ export function BackgroundCanvasEditor() {
       nextChunkData[key] = value;
       nextChunkKeys.add(key);
       decodeTasks.push(
-        dataUrlToCanvas(value, chunkSize).then((decoded) => {
+        decodeActiveChunkCanvas(key, value, chunkSize).then((decoded) => {
           if (decoded) {
             nextChunkCanvases.set(key, decoded);
           } else {
@@ -1875,6 +1949,9 @@ export function BackgroundCanvasEditor() {
     }
 
     await Promise.all(decodeTasks);
+    if (expectedEpoch !== bitmapStateEpochRef.current) {
+      return;
+    }
     replaceActiveBitmapLayerState({
       chunkData: nextChunkData,
       chunkCanvases: nextChunkCanvases,
@@ -1882,7 +1959,7 @@ export function BackgroundCanvasEditor() {
     });
     updateWarnings();
     setRevision((value) => value + 1);
-  }, [chunkSize, replaceActiveBitmapLayerState, updateWarnings]);
+  }, [chunkSize, decodeActiveChunkCanvas, replaceActiveBitmapLayerState, updateWarnings]);
 
   const commitShapeDraft = useCallback((draft: ShapeDraftSession) => {
     const shapeStyle = bitmapShapeStyle;
@@ -2107,14 +2184,20 @@ export function BackgroundCanvasEditor() {
     return true;
   }, [applyRasterCanvasToChunks, commitMutationSession]);
 
-  const applyFill = useCallback(async (worldX: number, worldY: number) => {
+  const applyFill = useCallback(async (expectedEpoch: number, worldX: number, worldY: number) => {
+    if (expectedEpoch !== bitmapStateEpochRef.current) {
+      return;
+    }
     const bounds = getFillRasterBounds(worldX, worldY);
     const rasterized = await rasterizeChunksForBounds(bounds);
-    if (!rasterized) {
+    if (!rasterized || expectedEpoch !== bitmapStateEpochRef.current) {
       return;
     }
 
     const textureSource = await ensureBitmapFillTextureSource(bitmapFillStyle.textureId);
+    if (expectedEpoch !== bitmapStateEpochRef.current) {
+      return;
+    }
 
     const startX = Math.floor(worldX - bounds.left);
     const startY = Math.floor(bounds.top - worldY);
@@ -2275,7 +2358,10 @@ export function BackgroundCanvasEditor() {
     return true;
   }, [commitMutationSession]);
 
-  const extractFloatingSelection = useCallback(async (bounds: WorldRect) => {
+  const extractFloatingSelection = useCallback(async (expectedEpoch: number, bounds: WorldRect) => {
+    if (expectedEpoch !== bitmapStateEpochRef.current) {
+      return false;
+    }
     if (floatingSelectionBusyRef.current) {
       return false;
     }
@@ -2295,7 +2381,7 @@ export function BackgroundCanvasEditor() {
     floatingSelectionBusyRef.current = true;
     try {
       const rasterized = await rasterizeChunksForBounds(normalizedBounds);
-      if (!rasterized) {
+      if (!rasterized || expectedEpoch !== bitmapStateEpochRef.current) {
         return false;
       }
 
@@ -2317,7 +2403,7 @@ export function BackgroundCanvasEditor() {
       rasterized.ctx.clearRect(0, 0, normalizedBounds.width, normalizedBounds.height);
       const pendingMutationSession = beginMutationSession();
       const didApplyExtraction = applyRasterCanvasToChunks(rasterized.canvas, normalizedBounds, pendingMutationSession);
-      if (!didApplyExtraction) {
+      if (!didApplyExtraction || expectedEpoch !== bitmapStateEpochRef.current) {
         return false;
       }
 
@@ -2361,7 +2447,7 @@ export function BackgroundCanvasEditor() {
       if (epoch !== bitmapStateEpochRef.current) {
         return;
       }
-      await applyDeltaRecord(delta.before);
+      await applyDeltaRecord(delta.before, epoch);
     });
     setIsDirty(
       undoStackRef.current.length > 0 ||
@@ -2389,7 +2475,7 @@ export function BackgroundCanvasEditor() {
       if (epoch !== bitmapStateEpochRef.current) {
         return;
       }
-      await applyDeltaRecord(delta.after);
+      await applyDeltaRecord(delta.after, epoch);
     });
     setIsDirty(
       undoStackRef.current.length > 0 ||
@@ -2947,8 +3033,8 @@ export function BackgroundCanvasEditor() {
       }
 
       if (tool === 'fill') {
-        void enqueueRasterOperation(async () => {
-          await applyFill(world.x, world.y);
+        void enqueueRasterOperation(async (epoch) => {
+          await applyFill(epoch, world.x, world.y);
         });
         event.preventDefault();
         return;
@@ -3118,8 +3204,8 @@ export function BackgroundCanvasEditor() {
       setIsDrawing(false);
       const marqueeBounds = getWorldRectFromPoints(marqueeSession.startWorld, marqueeSession.currentWorld);
       if (marqueeBounds.width >= 1 && marqueeBounds.height >= 1) {
-        void enqueueRasterOperation(async () => {
-          await extractFloatingSelection(marqueeBounds);
+        void enqueueRasterOperation(async (epoch) => {
+          await extractFloatingSelection(epoch, marqueeBounds);
         });
       } else {
         setRevision((value) => value + 1);

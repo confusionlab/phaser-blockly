@@ -127,8 +127,8 @@ function LayerThumbnailPreview({
       data-testid={thumbnailTestId}
       draggable={false}
       className={cn(
-        'relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[14px] bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]',
-        isActive && 'ring-[3px] ring-[#C6E2FF]',
+        'relative z-10 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[14px]',
+        isActive ? 'bg-transparent shadow-none' : 'bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]',
         !layer.visible && 'opacity-70',
       )}
     >
@@ -472,18 +472,18 @@ export const LayerPanel = memo(({
           )}
         >
           <div className="flex flex-col items-start gap-3">
-            <div className="relative group/layer-add">
+            <div className="relative flex w-11 justify-center group/layer-add">
               {canAddLayer ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       data-testid="layer-add-button"
                       size="icon-sm"
-                      variant="outline"
-                      className="h-12 w-12 rounded-[18px] border-border/50 bg-background/70 hover:border-primary/40 hover:bg-background/80"
+                      variant="ghost"
+                      className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-background/80 hover:text-foreground"
                       aria-label="Add layer"
                     >
-                      <Plus className="size-4" />
+                      <Plus className="size-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent side="right" align="start" sideOffset={10} className="min-w-36 rounded-xl">
@@ -502,13 +502,13 @@ export const LayerPanel = memo(({
                   <Button
                     data-testid="layer-add-button"
                     size="icon-sm"
-                    variant="outline"
+                    variant="ghost"
                     disabled
                     aria-label="Add layer"
                     title={maxLayerTooltip}
-                    className="h-12 w-12 rounded-[18px] border-border/50 bg-background/70"
+                    className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/layer-add:bg-background/80"
                   >
-                    <Plus className="size-4" />
+                    <Plus className="size-3.5" />
                   </Button>
                   <div
                     role="tooltip"
@@ -528,6 +528,7 @@ export const LayerPanel = memo(({
                 const isEditing = editingLayerId === layer.id;
                 const isDragged = draggedLayerId === layer.id;
                 const ariaLabel = getLayerButtonLabel(layer);
+                const activeHighlightWidth = isPanelExpanded ? '100%' : '2.75rem';
 
                 return (
                   <div
@@ -555,10 +556,19 @@ export const LayerPanel = memo(({
                       onDrop={handleLayerDrop}
                       onDragEnd={clearLayerDragState}
                       className={cn(
-                        'flex w-full items-center gap-3 py-1 text-left outline-none',
+                        'relative flex w-full items-center gap-3 text-left outline-none',
                         isDragged && 'opacity-45',
                       )}
                     >
+                      <div
+                        aria-hidden="true"
+                        className={cn(
+                          'pointer-events-none absolute inset-y-0 left-0 rounded-[14px] bg-[#C6E2FF] transition-[width,opacity] duration-200 ease-out dark:bg-[#4A5879]',
+                          isActive ? 'opacity-100' : 'opacity-0',
+                        )}
+                        style={{ width: activeHighlightWidth }}
+                      />
+
                       <LayerThumbnailPreview
                         layer={layer}
                         isActive={isActive}
@@ -568,47 +578,49 @@ export const LayerPanel = memo(({
 
                       <div
                         className={cn(
-                          'flex min-w-0 flex-1 items-center gap-2 overflow-hidden max-w-0 opacity-0 pointer-events-none transition-[max-width,opacity] duration-150 ease-out',
+                          'relative z-10 flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden max-w-0 opacity-0 pointer-events-none transition-[max-width,opacity] duration-150 ease-out',
                           isPanelExpanded && 'max-w-44 pointer-events-auto opacity-100',
                         )}
                       >
-                        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-muted/65 text-muted-foreground">
-                          <LayerKindIcon layer={layer} />
-                        </span>
-
-                        {isEditing ? (
-                          <Input
-                            value={renameDraft}
-                            onChange={(event) => setRenameDraft(event.target.value)}
-                            onBlur={() => commitInlineRename(layer.id)}
-                            onClick={(event) => event.stopPropagation()}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onKeyDown={(event) => {
-                              event.stopPropagation();
-                              if (event.key === 'Enter') {
-                                event.preventDefault();
-                                commitInlineRename(layer.id);
-                              }
-                              if (event.key === 'Escape') {
-                                event.preventDefault();
-                                cancelInlineRename();
-                              }
-                            }}
-                            autoFocus
-                            className="h-8 min-w-0 flex-1 border-transparent bg-muted/45 text-sm shadow-none focus-visible:border-primary/40 focus-visible:bg-background"
-                          />
-                        ) : (
-                          <span
-                            className="min-w-0 flex-1 truncate text-sm font-medium"
-                            onDoubleClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              startInlineRename(layer);
-                            }}
-                          >
-                            {layer.name}
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                          <span className="inline-flex shrink-0 text-muted-foreground">
+                            <LayerKindIcon layer={layer} />
                           </span>
-                        )}
+
+                          {isEditing ? (
+                            <Input
+                              value={renameDraft}
+                              onChange={(event) => setRenameDraft(event.target.value)}
+                              onBlur={() => commitInlineRename(layer.id)}
+                              onClick={(event) => event.stopPropagation()}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => {
+                                event.stopPropagation();
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  commitInlineRename(layer.id);
+                                }
+                                if (event.key === 'Escape') {
+                                  event.preventDefault();
+                                  cancelInlineRename();
+                                }
+                              }}
+                              autoFocus
+                              className="h-8 min-w-0 flex-1 border-transparent bg-muted/45 text-sm shadow-none focus-visible:border-primary/40 focus-visible:bg-background"
+                            />
+                          ) : (
+                            <span
+                              className="min-w-0 flex-1 truncate text-sm font-medium"
+                              onDoubleClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                startInlineRename(layer);
+                              }}
+                            >
+                              {layer.name}
+                            </span>
+                          )}
+                        </div>
 
                         <button
                           type="button"
