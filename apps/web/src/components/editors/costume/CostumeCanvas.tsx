@@ -26,6 +26,7 @@ import type {
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import { type BitmapBrushKind } from '@/lib/background/brushCore';
 import {
+  cloneCostumeDocument,
   getActiveCostumeLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
@@ -99,6 +100,7 @@ export interface CostumeCanvasHandle {
 interface CostumeCanvasProps {
   costumeDocument: CostumeDocument | null;
   initialEditorMode: CostumeEditorMode;
+  isVisible: boolean;
   activeTool: DrawingTool;
   bitmapBrushKind: BitmapBrushKind;
   brushColor: string;
@@ -130,6 +132,7 @@ interface CostumeCanvasProps {
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
   costumeDocument,
   initialEditorMode,
+  isVisible,
   activeTool,
   bitmapBrushKind,
   brushColor,
@@ -212,10 +215,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const editorModeRef = useRef<CostumeEditorMode>(initialEditorMode);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
+  const activeLayerOpacityRef = useRef(activeLayerOpacity);
+  activeLayerOpacityRef.current = activeLayerOpacity;
   const activeLayerVisibleRef = useRef(activeLayerVisible);
   activeLayerVisibleRef.current = activeLayerVisible;
   const activeLayerLockedRef = useRef(activeLayerLocked);
   activeLayerLockedRef.current = activeLayerLocked || !isHostedLayerReadyState;
+  const isVisibleRef = useRef(isVisible);
+  isVisibleRef.current = isVisible;
+  const previousVisibilityRef = useRef(isVisible);
+  const pendingVisibilityHostRenderRef = useRef(false);
+  const visibilityHostRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const bitmapBrushKindRef = useRef(bitmapBrushKind);
   bitmapBrushKindRef.current = bitmapBrushKind;
@@ -320,6 +330,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     cameraCenter,
     getZoomInvariantMetric,
     isViewportPanning,
+    refreshViewportSize,
     setZoomLevel,
     syncBrushCursorOverlay,
     viewportSize,
@@ -342,6 +353,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     containerRef,
     editorModeRef,
     editorModeState,
+    isVisible,
     onViewScaleChange,
   });
 
@@ -397,6 +409,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorStyleRef,
   });
 
+  const clearVisibilityHostRecoveryTimeout = useCallback(() => {
+    if (visibilityHostRecoveryTimeoutRef.current) {
+      clearTimeout(visibilityHostRecoveryTimeoutRef.current);
+      visibilityHostRecoveryTimeoutRef.current = null;
+    }
+  }, []);
+
   const syncActiveLayerCanvasVisibility = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
       wrapperEl?: HTMLDivElement;
@@ -407,7 +426,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       return;
     }
 
-    const nextOpacity = isHostedLayerReadyState && activeLayerVisible ? String(activeLayerOpacity) : '0';
+    const nextOpacity = isVisibleRef.current && isHostedLayerReadyRef.current && activeLayerVisibleRef.current
+      ? String(activeLayerOpacityRef.current)
+      : '0';
     if (fabricCanvas.wrapperEl) {
       fabricCanvas.wrapperEl.style.opacity = nextOpacity;
     }
@@ -417,7 +438,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (fabricCanvas.upperCanvasEl) {
       fabricCanvas.upperCanvasEl.style.opacity = nextOpacity;
     }
-  }, [activeLayerOpacity, activeLayerVisible, isHostedLayerReadyState]);
+  }, []);
 
   const setEditorMode = useCallback((mode: CostumeEditorMode) => {
     editorModeRef.current = mode;
@@ -613,6 +634,32 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     waitForFabricCanvas,
   });
 
+  const handleFabricCanvasAfterRender = useCallback(() => {
+    if (!isVisibleRef.current || !pendingVisibilityHostRenderRef.current) {
+      return;
+    }
+
+    pendingVisibilityHostRenderRef.current = false;
+    clearVisibilityHostRecoveryTimeout();
+    setHostedLayerReady(true);
+    syncActiveLayerCanvasVisibility();
+  }, [clearVisibilityHostRecoveryTimeout, setHostedLayerReady, syncActiveLayerCanvasVisibility]);
+
+  const rehydrateHostedLayerAfterVisibilityChange = useCallback(async (): Promise<boolean> => {
+    const sessionKey = loadedSessionKeyRef.current;
+    if (!sessionKey || !costumeDocument) {
+      return false;
+    }
+
+    try {
+      await loadDocument(sessionKey, cloneCostumeDocument(costumeDocument));
+      return true;
+    } catch (error) {
+      console.warn('Failed to rehydrate the hosted costume layer after returning to the costume tab.', error);
+      return false;
+    }
+  }, [costumeDocument, loadDocument]);
+
   const {
     applyPointSelectionMarqueeSession,
     applyPointSelectionTransformSession,
@@ -798,6 +845,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncVectorStyleFromSelection,
     textEditingHostRef,
     textStyleRef,
+    isVisible,
     toPathCommandPoint,
     updatePenAnchorPlacement,
     vectorGuideCanvasRef,
@@ -807,6 +855,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorStrokeCtxRef,
     vectorStyleRef,
     onFabricCanvasReady: resolveFabricCanvasReady,
+    onFabricCanvasAfterRender: handleFabricCanvasAfterRender,
   });
 
   // Sync tool behavior.
@@ -816,7 +865,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   useLayoutEffect(() => {
     syncActiveLayerCanvasVisibility();
-  }, [syncActiveLayerCanvasVisibility]);
+  }, [activeLayerOpacity, activeLayerVisible, isHostedLayerReadyState, isVisible, syncActiveLayerCanvasVisibility]);
 
   useCostumeCanvasVectorHandleSync({
     activePathAnchorRef,
@@ -919,16 +968,84 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (costumeDocument) {
       return;
     }
+    clearVisibilityHostRecoveryTimeout();
+    pendingVisibilityHostRenderRef.current = false;
     setHostedLayerId(null);
     setHostedLayerReady(false);
-  }, [costumeDocument, setHostedLayerId, setHostedLayerReady]);
+  }, [clearVisibilityHostRecoveryTimeout, costumeDocument, setHostedLayerId, setHostedLayerReady]);
+
+  useEffect(() => {
+    const wasVisible = previousVisibilityRef.current;
+    previousVisibilityRef.current = isVisible;
+
+    if (wasVisible === isVisible) {
+      return;
+    }
+
+    const hostedLayerId = hostedLayerIdRef.current ?? hostedDocumentLayer?.id ?? activeDocumentLayer?.id ?? null;
+    const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & { calcOffset?: () => void }) | null;
+
+    if (!isVisible) {
+      clearVisibilityHostRecoveryTimeout();
+      pendingVisibilityHostRenderRef.current = false;
+      if (hostedLayerId && fabricCanvas) {
+        commitHostedLayerSurfaceSnapshot(hostedLayerId);
+      }
+      setHostedLayerReady(false);
+      syncActiveLayerCanvasVisibility();
+      return;
+    }
+
+    refreshViewportSize();
+
+    if (!hostedLayerId || !fabricCanvas) {
+      return;
+    }
+
+    pendingVisibilityHostRenderRef.current = true;
+    setHostedLayerReady(false);
+    syncActiveLayerCanvasVisibility();
+    fabricCanvas.calcOffset?.();
+    fabricCanvas.requestRenderAll();
+
+    clearVisibilityHostRecoveryTimeout();
+    visibilityHostRecoveryTimeoutRef.current = setTimeout(() => {
+      if (!isVisibleRef.current || !pendingVisibilityHostRenderRef.current) {
+        return;
+      }
+
+      void rehydrateHostedLayerAfterVisibilityChange().then((didRehydrate) => {
+        if (!pendingVisibilityHostRenderRef.current) {
+          return;
+        }
+        pendingVisibilityHostRenderRef.current = false;
+        clearVisibilityHostRecoveryTimeout();
+        if (!didRehydrate) {
+          return;
+        }
+        setHostedLayerReady(true);
+        syncActiveLayerCanvasVisibility();
+      });
+    }, 180);
+  }, [
+    activeDocumentLayer?.id,
+    clearVisibilityHostRecoveryTimeout,
+    commitHostedLayerSurfaceSnapshot,
+    hostedDocumentLayer?.id,
+    isVisible,
+    refreshViewportSize,
+    rehydrateHostedLayerAfterVisibilityChange,
+    setHostedLayerReady,
+    syncActiveLayerCanvasVisibility,
+  ]);
 
   useEffect(() => {
     return () => {
+      clearVisibilityHostRecoveryTimeout();
       const pendingResolvers = fabricCanvasReadyResolversRef.current.splice(0);
       pendingResolvers.forEach((resolve) => resolve());
     };
-  }, []);
+  }, [clearVisibilityHostRecoveryTimeout]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;

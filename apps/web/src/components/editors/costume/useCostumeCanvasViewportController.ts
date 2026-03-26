@@ -33,6 +33,7 @@ interface UseCostumeCanvasViewportControllerOptions {
   containerRef: RefObject<HTMLDivElement | null>;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   editorModeState: CostumeEditorMode;
+  isVisible: boolean;
   onViewScaleChange?: (scale: number) => void;
 }
 
@@ -51,6 +52,7 @@ export function useCostumeCanvasViewportController({
   containerRef,
   editorModeRef,
   editorModeState,
+  isVisible,
   onViewScaleChange,
 }: UseCostumeCanvasViewportControllerOptions) {
   const [zoom, setZoom] = useState(1);
@@ -94,6 +96,19 @@ export function useCostumeCanvasViewportController({
   const getZoomInvariantMetric = useCallback((metric: number, zoomValue = zoomRef.current) => {
     return getZoomInvariantCanvasMetric(metric, zoomValue);
   }, []);
+
+  const updateViewportSize = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    setViewportSize({
+      width: Math.max(1, rect.width),
+      height: Math.max(1, rect.height),
+    });
+  }, [containerRef]);
 
   const zoomAtScreenPoint = useCallback((screenX: number, screenY: number, nextZoom: number) => {
     const clampedZoom = clampZoom(nextZoom);
@@ -247,19 +262,22 @@ export function useCostumeCanvasViewportController({
     const container = containerRef.current;
     if (!container) return;
 
-    const updateViewportSize = () => {
-      const rect = container.getBoundingClientRect();
-      setViewportSize({
-        width: Math.max(1, rect.width),
-        height: Math.max(1, rect.height),
-      });
-    };
-
     updateViewportSize();
     const observer = new ResizeObserver(updateViewportSize);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [containerRef]);
+  }, [containerRef, updateViewportSize]);
+
+  useEffect(() => {
+    if (!isVisible) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      updateViewportSize();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isVisible, updateViewportSize]);
 
   useEffect(() => {
     setCameraCenter((prev) => clampCameraCenter(prev));
@@ -390,6 +408,7 @@ export function useCostumeCanvasViewportController({
     clampZoom,
     getZoomInvariantMetric,
     isViewportPanning,
+    refreshViewportSize: updateViewportSize,
     setZoomLevel,
     syncBrushCursorOverlay,
     viewportSize,

@@ -166,6 +166,30 @@ async function readCheckerboardInkSamples(page: Page): Promise<number> {
   });
 }
 
+async function readHostedLayerInkSamples(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
+    if (!(hostedCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = hostedCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, hostedCanvas.width, hostedCanvas.height);
+    let opaqueSamples = 0;
+    for (let index = 3; index < data.length; index += 4 * 193) {
+      if ((data[index] ?? 0) > 0) {
+        opaqueSamples += 1;
+      }
+    }
+
+    return opaqueSamples;
+  });
+}
+
 test.describe('Costume editor tools', () => {
   test('vector layers render shapes and reload cleanly after a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
@@ -205,6 +229,37 @@ test.describe('Costume editor tools', () => {
     await roundTripThroughCodeTab(page);
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+  });
+
+  test('active hosted layer stays visible after switching away from and back to the costume tab', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.36, 0.34);
+
+    await page.getByRole('button', { name: /^vector$/i }).click();
+    const vectorLayerButton = page.getByRole('button', { name: /^layer 2 vector$/i });
+    const bitmapLayerButton = page.getByRole('button', { name: /^layer 1 bitmap$/i });
+    await expect(vectorLayerButton).toBeVisible({ timeout: 10000 });
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.54, 0.28, 0.80, 0.54);
+
+    await bitmapLayerButton.click();
+    await waitForCostumeCanvasReady(page);
+    await vectorLayerButton.click();
+    await waitForCostumeCanvasReady(page);
+
+    const hostedSamplesBefore = await readHostedLayerInkSamples(page);
+    expect(hostedSamplesBefore).toBeGreaterThan(0);
+
+    await roundTripThroughCodeTab(page);
+
+    await expect(vectorLayerButton).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
   test('bitmap select stays on the explicit layer and does not auto-switch from canvas clicks', async ({ page }) => {

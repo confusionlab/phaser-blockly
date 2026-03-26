@@ -1437,6 +1437,7 @@ export function CostumeEditor() {
           ref={canvasRef}
           costumeDocument={editorCostume?.document ?? null}
           initialEditorMode={initialEditorMode}
+          isVisible={activeObjectTab === 'costumes'}
           activeTool={activeTool}
           bitmapBrushKind={bitmapBrushKind}
           brushColor={brushColor}

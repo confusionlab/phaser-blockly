@@ -26,7 +26,9 @@ import type { DrawingTool } from './CostumeToolbar';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 
 type FabricCanvasHostRuntime = FabricCanvas & {
+  calcOffset?: () => void;
   lowerCanvasEl?: HTMLCanvasElement;
+  requestRenderAll: () => void;
   upperCanvasEl?: HTMLCanvasElement;
   wrapperEl?: HTMLDivElement;
 };
@@ -71,6 +73,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   fabricCanvasHostElement: HTMLDivElement | null;
   fabricCanvasHostRef: MutableRefObject<HTMLDivElement | null>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
+  isVisible: boolean;
   insertedPathAnchorDragSessionRef: MutableRefObject<any>;
   penAnchorPlacementSessionRef: MutableRefObject<any>;
   penDraftRef: MutableRefObject<any>;
@@ -88,6 +91,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   vectorStyleRef: MutableRefObject<any>;
   bitmapShapeStyleRef: MutableRefObject<any>;
   onFabricCanvasReady: () => void;
+  onFabricCanvasAfterRender: () => void;
   activateVectorPointEditing: (target: any, saveConversionToHistory: boolean) => boolean;
   applyFill: (x: number, y: number) => void | Promise<void>;
   applyPointSelectionMarqueeSession: (session: any) => boolean;
@@ -137,6 +141,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
   callbacksRef.current = options;
   const disposeFabricCanvasRef = useRef<(() => void) | null>(null);
   const hostElement = options.fabricCanvasHostElement;
+  const isVisible = options.isVisible;
 
   useEffect(() => {
     const {
@@ -182,7 +187,11 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       attachFabricCanvasToHost(fabricCanvasHost, existingFabricCanvas, fabricCanvasElementRef.current);
       onFabricCanvasReady();
       callbacksRef.current.syncActiveLayerCanvasVisibility();
-      callbacksRef.current.configureCanvasForTool();
+      if (isVisible) {
+        existingFabricCanvas.calcOffset?.();
+        callbacksRef.current.configureCanvasForTool();
+        existingFabricCanvas.requestRenderAll();
+      }
       return;
     }
 
@@ -767,6 +776,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         callbacksRef.current.renderVectorBrushStrokeOverlay(vectorStrokeCtx);
       }
       callbacksRef.current.renderVectorPointEditingGuide();
+      callbacksRef.current.onFabricCanvasAfterRender();
     };
 
     const onSelectionCleared = () => {
@@ -864,7 +874,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       vectorGuideCtxRef.current = null;
       bitmapSelectionCtxRef.current = null;
     };
-  }, [hostElement]);
+  }, [hostElement, isVisible]);
 
   useEffect(() => {
     return () => {
