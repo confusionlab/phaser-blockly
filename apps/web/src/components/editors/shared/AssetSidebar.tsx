@@ -18,7 +18,7 @@ export function AssetSidebar({
   return (
     <aside className={cn('flex h-full w-36 flex-col border-r bg-muted/30', className)}>
       {actions ? (
-        <div className="flex items-center justify-center px-2 py-2">
+        <div className="flex items-center justify-center px-3 py-3">
           <div className="flex gap-1">{actions}</div>
         </div>
       ) : null}

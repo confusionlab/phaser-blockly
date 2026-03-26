@@ -47,7 +47,7 @@ export function CanvasViewportOverlay({
   const showSelectionZoomAction = typeof onZoomToSelection === 'function';
 
   return (
-    <div className={cn('pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-4 py-3', className)}>
+    <div className={cn('pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-3 py-3', className)}>
       <div className="pointer-events-auto flex items-center gap-1">
         <Button
           variant="ghost"

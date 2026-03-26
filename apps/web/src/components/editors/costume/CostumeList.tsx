@@ -323,37 +323,34 @@ export const CostumeList = memo(({
           <>
             <Button
               variant="ghost"
-              size="icon"
-              className="size-6"
+              size="icon-sm"
               onClick={handleAddBlank}
               title="New blank costume"
               disabled={isProcessing}
             >
-              <Plus className="size-3" />
+              <Plus className="size-4" />
             </Button>
             <Button
               variant="ghost"
-              size="icon"
-              className="size-6"
+              size="icon-sm"
               onClick={handleUploadClick}
               title="Import image"
               disabled={isProcessing}
             >
               {isProcessing ? (
-                <Loader2 className="size-3 animate-spin" />
+                <Loader2 className="size-4 animate-spin" />
               ) : (
-                <Upload className="size-3" />
+                <Upload className="size-4" />
               )}
             </Button>
             <Button
               variant="ghost"
-              size="icon"
-              className="size-6"
+              size="icon-sm"
               onClick={() => setShowLibrary(true)}
               title="Browse library"
               disabled={isProcessing}
             >
-              <Library className="size-3" />
+              <Library className="size-4" />
             </Button>
             <input
               ref={fileInputRef}
