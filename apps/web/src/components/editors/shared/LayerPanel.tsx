@@ -139,7 +139,7 @@ function LayerThumbnailPreview({
         'relative z-10 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[14px] transition-[background-color,box-shadow] duration-150 ease-out',
         isActive
           ? 'bg-transparent shadow-none'
-          : 'bg-background shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] group-hover/layer-row:bg-transparent group-hover/layer-row:shadow-none dark:bg-muted/45 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] dark:group-hover/layer-row:bg-transparent dark:group-hover/layer-row:shadow-none',
+          : 'bg-background shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] group-hover/layer-row:bg-transparent group-hover/layer-row:shadow-none dark:bg-background dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] dark:group-hover/layer-row:bg-transparent dark:group-hover/layer-row:shadow-none',
         !layer.visible && 'opacity-70',
       )}
     >

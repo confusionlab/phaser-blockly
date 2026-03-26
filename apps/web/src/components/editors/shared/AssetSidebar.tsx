@@ -18,7 +18,7 @@ export function AssetSidebar({
   contentClassName,
 }: AssetSidebarProps) {
   return (
-    <aside className={cn('flex h-full w-48 flex-col border-r bg-muted/30', className)}>
+    <aside className={cn('flex h-full w-32 flex-col border-r bg-muted/30', className)}>
       <div className="flex items-center justify-between px-2 py-2">
         <span className="text-xs font-medium">{title}</span>
         {actions ? <div className="flex gap-1">{actions}</div> : null}

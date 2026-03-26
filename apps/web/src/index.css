@@ -172,9 +172,13 @@ body {
 }
 
 .blocklyScrollbarHandle {
-  fill: var(--blockly-scrollbar-thumb) !important;
+  fill: var(--scrollbar-thumb) !important;
   rx: calc(var(--scrollbar-size) / 2) !important;
   ry: calc(var(--scrollbar-size) / 2) !important;
+}
+
+.blocklyScrollbarHandle:hover {
+  fill: var(--scrollbar-thumb-hover) !important;
 }
 
 [data-blockly-editor="true"][data-has-code-target="false"] .blocklyScrollbarHorizontal,
@@ -210,6 +214,10 @@ body {
 }
 
 /* Custom scrollbar */
+* {
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
 ::-webkit-scrollbar {
   width: var(--scrollbar-size);
   height: var(--scrollbar-size);
@@ -217,16 +225,22 @@ body {
 
 ::-webkit-scrollbar-track {
   background: var(--scrollbar-track);
-  border-radius: calc(var(--scrollbar-size) / 2);
+  border-radius: var(--scrollbar-radius);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: calc(var(--scrollbar-size) / 2);
+  background-color: var(--scrollbar-thumb);
+  border: var(--scrollbar-padding) solid transparent;
+  border-radius: var(--scrollbar-radius);
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .hide-scrollbar {
@@ -240,6 +254,30 @@ body {
 
 .scrollbar-gutter-stable {
   scrollbar-gutter: stable both-edges;
+}
+
+[data-slot="scroll-area-scrollbar"] {
+  box-sizing: border-box;
+  padding: var(--scrollbar-padding);
+  background: var(--scrollbar-track);
+  border-radius: var(--scrollbar-radius);
+}
+
+[data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
+  width: var(--scrollbar-size);
+}
+
+[data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  height: var(--scrollbar-size);
+}
+
+[data-slot="scroll-area-thumb"] {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--scrollbar-radius);
+}
+
+[data-slot="scroll-area-scrollbar"]:hover [data-slot="scroll-area-thumb"] {
+  background: var(--scrollbar-thumb-hover);
 }
 
 .inspector-panel [data-slot="scroll-area-viewport"] {
@@ -423,10 +461,12 @@ body {
   --sidebar-border: oklch(0.923 0.003 48.717);
   --sidebar-ring: oklch(0.709 0.01 56.259);
 
-  --scrollbar-size: 12px;
-  --scrollbar-track: oklch(0.96 0.001 106.42);
-  --scrollbar-thumb: oklch(0.81 0.003 56.04);
-  --scrollbar-thumb-hover: oklch(0.71 0.006 56.04);
+  --scrollbar-size: 8px;
+  --scrollbar-padding: 2px;
+  --scrollbar-radius: 999px;
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: oklch(0.216 0.006 56.043 / 0.18);
+  --scrollbar-thumb-hover: oklch(0.216 0.006 56.043 / 0.28);
 
   --blockly-workspace-bg: oklch(0.97 0.001 106.42);
   --blockly-toolbox-bg: oklch(1 0 0);
@@ -436,10 +476,10 @@ body {
   --blockly-toolbox-selected-fg: oklch(0.216 0.006 56.043);
   --blockly-flyout-bg: oklch(0.985 0.001 106.423);
   --blockly-flyout-fg: oklch(0.216 0.006 56.043);
-  --blockly-scrollbar-thumb: oklch(0.72 0.008 56.04);
-
   --checkerboard-tile: oklch(0.88 0.002 56.04);
   --checkerboard-bg: oklch(0.94 0.001 56.04);
+  --checkerboard-soft-tile: oklch(0.905 0.0015 56.04);
+  --checkerboard-soft-bg: oklch(0.94 0.001 56.04);
 }
 
 .dark {
@@ -475,9 +515,9 @@ body {
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.553 0.013 58.071);
 
-  --scrollbar-track: oklch(0.24 0.006 56.04);
-  --scrollbar-thumb: oklch(0.44 0.01 56.04);
-  --scrollbar-thumb-hover: oklch(0.56 0.013 56.04);
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: oklch(0.985 0.001 106.423 / 0.18);
+  --scrollbar-thumb-hover: oklch(0.985 0.001 106.423 / 0.28);
 
   --blockly-workspace-bg: oklch(0.2 0.006 56.04);
   --blockly-toolbox-bg: oklch(0.24 0.006 56.04);
@@ -487,10 +527,10 @@ body {
   --blockly-toolbox-selected-fg: oklch(0.95 0.002 106.423);
   --blockly-flyout-bg: oklch(0.26 0.007 56.04);
   --blockly-flyout-fg: oklch(0.93 0.002 106.423);
-  --blockly-scrollbar-thumb: oklch(0.47 0.01 56.04);
-
   --checkerboard-tile: oklch(0.34 0.007 56.04);
   --checkerboard-bg: oklch(0.28 0.006 56.04);
+  --checkerboard-soft-tile: oklch(0.305 0.006 56.04);
+  --checkerboard-soft-bg: oklch(0.28 0.006 56.04);
 }
 
 .assistant-panel-theme {
@@ -637,6 +677,17 @@ body {
 .checkerboard-bg-sm {
   background-size: 10px 10px;
   background-position: 0 0, 0 5px, 5px -5px, -5px 0;
+}
+
+.checkerboard-bg-soft {
+  background-image:
+    linear-gradient(45deg, var(--checkerboard-soft-tile) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checkerboard-soft-tile) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checkerboard-soft-tile) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checkerboard-soft-tile) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background-color: var(--checkerboard-soft-bg);
 }
 
 .app-divider-x {

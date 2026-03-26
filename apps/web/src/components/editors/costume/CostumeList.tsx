@@ -40,6 +40,8 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
     () => getCostumeDocumentPreviewSignature(costume.document),
     [costume.document],
   );
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const [previewContainerSize, setPreviewContainerSize] = useState(0);
   const [preview, setPreview] = useState<{ assetFrame?: CostumeAssetFrame | null; assetId: string; bounds?: CostumeBounds }>(() => {
     const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
     if (cachedPreview) {
@@ -92,40 +94,68 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
     };
   }, [previewSignature]);
 
+  useEffect(() => {
+    const element = previewContainerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateSize = (width: number, height: number) => {
+      setPreviewContainerSize(Math.max(0, Math.min(width, height)));
+    };
+
+    updateSize(element.clientWidth, element.clientHeight);
+
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(([entry]) => {
+      updateSize(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   if (preview.bounds && preview.bounds.width > 0 && preview.bounds.height > 0) {
-    const scale = Math.min(1, 140 / Math.max(preview.bounds.width, preview.bounds.height));
+    const fitSize = previewContainerSize > 0 ? previewContainerSize * 0.85 : 140;
+    const scale = Math.min(1, fitSize / Math.max(preview.bounds.width, preview.bounds.height));
     const localBounds = getCostumeBoundsInAssetSpace(preview.bounds, preview.assetFrame);
     return (
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundImage: `url(${preview.assetId})`,
-          backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
-          backgroundSize: preview.assetFrame
-            ? `${preview.assetFrame.width}px ${preview.assetFrame.height}px`
-            : '1024px 1024px',
-          backgroundRepeat: 'no-repeat',
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
-          width: preview.bounds.width,
-          height: preview.bounds.height,
-          imageRendering: 'pixelated',
-          left: '50%',
-          top: '50%',
-          marginLeft: -(preview.bounds.width * scale) / 2,
-          marginTop: -(preview.bounds.height * scale) / 2,
-        }}
-      />
+      <div ref={previewContainerRef} className="relative h-full w-full">
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `url(${preview.assetId})`,
+            backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
+            backgroundSize: preview.assetFrame
+              ? `${preview.assetFrame.width}px ${preview.assetFrame.height}px`
+              : '1024px 1024px',
+            backgroundRepeat: 'no-repeat',
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            width: preview.bounds.width,
+            height: preview.bounds.height,
+            imageRendering: 'pixelated',
+            left: '50%',
+            top: '50%',
+            marginLeft: -(preview.bounds.width * scale) / 2,
+            marginTop: -(preview.bounds.height * scale) / 2,
+          }}
+        />
+      </div>
     );
   }
 
   return (
-    <img
-      src={preview.assetId}
-      alt={costume.name}
-      className="h-full w-full object-contain"
-      style={{ imageRendering: 'pixelated' }}
-    />
+    <div ref={previewContainerRef} className="h-full w-full">
+      <img
+        src={preview.assetId}
+        alt={costume.name}
+        className="h-full w-full object-contain"
+        style={{ imageRendering: 'pixelated' }}
+      />
+    </div>
   );
 });
 
