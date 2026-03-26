@@ -73,7 +73,6 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   fabricCanvasHostElement: HTMLDivElement | null;
   fabricCanvasHostRef: MutableRefObject<HTMLDivElement | null>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
-  isVisible: boolean;
   insertedPathAnchorDragSessionRef: MutableRefObject<any>;
   penAnchorPlacementSessionRef: MutableRefObject<any>;
   penDraftRef: MutableRefObject<any>;
@@ -141,7 +140,6 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
   callbacksRef.current = options;
   const disposeFabricCanvasRef = useRef<(() => void) | null>(null);
   const hostElement = options.fabricCanvasHostElement;
-  const isVisible = options.isVisible;
 
   useEffect(() => {
     const {
@@ -187,11 +185,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       attachFabricCanvasToHost(fabricCanvasHost, existingFabricCanvas, fabricCanvasElementRef.current);
       onFabricCanvasReady();
       callbacksRef.current.syncActiveLayerCanvasVisibility();
-      if (isVisible) {
-        existingFabricCanvas.calcOffset?.();
-        callbacksRef.current.configureCanvasForTool();
-        existingFabricCanvas.requestRenderAll();
-      }
+      callbacksRef.current.configureCanvasForTool();
       return;
     }
 
@@ -874,7 +868,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       vectorGuideCtxRef.current = null;
       bitmapSelectionCtxRef.current = null;
     };
-  }, [hostElement, isVisible]);
+  }, [hostElement]);
 
   useEffect(() => {
     return () => {

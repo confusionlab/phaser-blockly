@@ -26,7 +26,6 @@ import type {
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import { type BitmapBrushKind } from '@/lib/background/brushCore';
 import {
-  cloneCostumeDocument,
   getActiveCostumeLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
@@ -225,7 +224,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   isVisibleRef.current = isVisible;
   const previousVisibilityRef = useRef(isVisible);
   const pendingVisibilityHostRenderRef = useRef(false);
-  const visibilityHostRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const bitmapBrushKindRef = useRef(bitmapBrushKind);
   bitmapBrushKindRef.current = bitmapBrushKind;
@@ -408,13 +406,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncSelectionState,
     vectorStyleRef,
   });
-
-  const clearVisibilityHostRecoveryTimeout = useCallback(() => {
-    if (visibilityHostRecoveryTimeoutRef.current) {
-      clearTimeout(visibilityHostRecoveryTimeoutRef.current);
-      visibilityHostRecoveryTimeoutRef.current = null;
-    }
-  }, []);
 
   const syncActiveLayerCanvasVisibility = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
@@ -640,25 +631,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     }
 
     pendingVisibilityHostRenderRef.current = false;
-    clearVisibilityHostRecoveryTimeout();
     setHostedLayerReady(true);
     syncActiveLayerCanvasVisibility();
-  }, [clearVisibilityHostRecoveryTimeout, setHostedLayerReady, syncActiveLayerCanvasVisibility]);
-
-  const rehydrateHostedLayerAfterVisibilityChange = useCallback(async (): Promise<boolean> => {
-    const sessionKey = loadedSessionKeyRef.current;
-    if (!sessionKey || !costumeDocument) {
-      return false;
-    }
-
-    try {
-      await loadDocument(sessionKey, cloneCostumeDocument(costumeDocument));
-      return true;
-    } catch (error) {
-      console.warn('Failed to rehydrate the hosted costume layer after returning to the costume tab.', error);
-      return false;
-    }
-  }, [costumeDocument, loadDocument]);
+  }, [setHostedLayerReady, syncActiveLayerCanvasVisibility]);
 
   const {
     applyPointSelectionMarqueeSession,
@@ -845,7 +820,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncVectorStyleFromSelection,
     textEditingHostRef,
     textStyleRef,
-    isVisible,
     toPathCommandPoint,
     updatePenAnchorPlacement,
     vectorGuideCanvasRef,
@@ -968,12 +942,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (costumeDocument) {
       return;
     }
-    clearVisibilityHostRecoveryTimeout();
     pendingVisibilityHostRenderRef.current = false;
     setHostedLayerId(null);
     setHostedLayerReady(false);
-  }, [clearVisibilityHostRecoveryTimeout, costumeDocument, setHostedLayerId, setHostedLayerReady]);
+  }, [costumeDocument, setHostedLayerId, setHostedLayerReady]);
 
+  // Keep tab visibility resume owned here so the Fabric host can stay low-level.
+  // When the tab is hidden we fall back to the static layer surface, and when it
+  // becomes visible again we only trust the live host after its next real paint.
   useEffect(() => {
     const wasVisible = previousVisibilityRef.current;
     previousVisibilityRef.current = isVisible;
@@ -986,7 +962,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & { calcOffset?: () => void }) | null;
 
     if (!isVisible) {
-      clearVisibilityHostRecoveryTimeout();
       pendingVisibilityHostRenderRef.current = false;
       if (hostedLayerId && fabricCanvas) {
         commitHostedLayerSurfaceSnapshot(hostedLayerId);
@@ -999,6 +974,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     refreshViewportSize();
 
     if (!hostedLayerId || !fabricCanvas) {
+      pendingVisibilityHostRenderRef.current = false;
       return;
     }
 
@@ -1006,46 +982,27 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     setHostedLayerReady(false);
     syncActiveLayerCanvasVisibility();
     fabricCanvas.calcOffset?.();
+    syncSelectionState();
+    configureCanvasForTool();
     fabricCanvas.requestRenderAll();
-
-    clearVisibilityHostRecoveryTimeout();
-    visibilityHostRecoveryTimeoutRef.current = setTimeout(() => {
-      if (!isVisibleRef.current || !pendingVisibilityHostRenderRef.current) {
-        return;
-      }
-
-      void rehydrateHostedLayerAfterVisibilityChange().then((didRehydrate) => {
-        if (!pendingVisibilityHostRenderRef.current) {
-          return;
-        }
-        pendingVisibilityHostRenderRef.current = false;
-        clearVisibilityHostRecoveryTimeout();
-        if (!didRehydrate) {
-          return;
-        }
-        setHostedLayerReady(true);
-        syncActiveLayerCanvasVisibility();
-      });
-    }, 180);
   }, [
     activeDocumentLayer?.id,
-    clearVisibilityHostRecoveryTimeout,
     commitHostedLayerSurfaceSnapshot,
+    configureCanvasForTool,
     hostedDocumentLayer?.id,
     isVisible,
     refreshViewportSize,
-    rehydrateHostedLayerAfterVisibilityChange,
     setHostedLayerReady,
+    syncSelectionState,
     syncActiveLayerCanvasVisibility,
   ]);
 
   useEffect(() => {
     return () => {
-      clearVisibilityHostRecoveryTimeout();
       const pendingResolvers = fabricCanvasReadyResolversRef.current.splice(0);
       pendingResolvers.forEach((resolve) => resolve());
     };
-  }, [clearVisibilityHostRecoveryTimeout]);
+  }, []);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;

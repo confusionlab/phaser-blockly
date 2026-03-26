@@ -130,31 +130,34 @@ export function StagePanel({ fullscreen = false, deferEditorResize = false }: St
   const stageShellStyle = viewMode === 'editor'
     ? { backgroundColor: editorStageSurfaceColor }
     : { backgroundColor: '#000000' };
+  const playModeControls = (
+    <OverlayPill tone={stageOverlayTone} size="compact">
+      <button
+        type="button"
+        onClick={handleRestartPlaying}
+        title="Restart"
+        aria-label="Restart"
+        className={cn(stageOverlayClasses.button, stageOverlayClasses.active)}
+      >
+        <RotateCcw className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={stopPlaying}
+        title="Stop"
+        aria-label="Stop"
+        className={stageOverlayClasses.stop}
+      >
+        <Square className="size-3.5 fill-current" />
+      </button>
+    </OverlayPill>
+  );
 
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-[100001] overflow-hidden bg-black">
         <div className="absolute right-2 top-2 z-10">
-          <OverlayPill tone="dark" size="compact">
-            <button
-              type="button"
-              onClick={handleRestartPlaying}
-              title="Restart"
-              aria-label="Restart"
-              className={cn(stageOverlayToneClasses.dark.button, stageOverlayToneClasses.dark.active)}
-            >
-              <RotateCcw className="size-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={stopPlaying}
-              title="Stop"
-              aria-label="Stop"
-              className={stageOverlayToneClasses.dark.stop}
-            >
-              <Square className="size-3.5 fill-current" />
-            </button>
-          </OverlayPill>
+          {playModeControls}
         </div>
         <div className="h-full w-full">
           <PhaserCanvas isPlaying={true} />

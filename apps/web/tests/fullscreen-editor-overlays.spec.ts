@@ -77,6 +77,25 @@ async function expectLocatorToBeTopmost(locator: Locator): Promise<void> {
 }
 
 test.describe('Fullscreen editor overlays', () => {
+  test('Play mode overlay pill follows light mode', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Play Overlay Theme ${Date.now()}`,
+    });
+
+    await page.evaluate(async () => {
+      const { useEditorStore } = await import('/src/store/editorStore.ts');
+      useEditorStore.getState().setDarkMode(false);
+      useEditorStore.getState().startPlaying();
+    });
+
+    const overlayPill = page.locator('[data-slot="overlay-pill"]').first();
+    await expect(overlayPill).toBeVisible();
+
+    const overlayClasses = await overlayPill.evaluate((element) => element.className);
+    expect(overlayClasses).toContain('bg-white/36');
+    expect(overlayClasses).not.toContain('bg-black/58');
+  });
+
   test('Blockly dropdowns stay above the fullscreen code editor shell', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Fullscreen Blockly ${Date.now()}`,

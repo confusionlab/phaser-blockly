@@ -225,10 +225,12 @@ test.describe('Costume editor tools', () => {
     await drawAcrossCostumeCanvas(page, 0.22, 0.22, 0.40, 0.40);
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
 
     await roundTripThroughCodeTab(page);
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
   test('active hosted layer stays visible after switching away from and back to the costume tab', async ({ page }) => {
