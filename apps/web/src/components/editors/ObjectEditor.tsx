@@ -231,13 +231,14 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
                 type="button"
                 variant="ghost"
                 size="icon-sm"
+                className="size-6 rounded-full"
                 data-testid="object-editor-fullscreen-toggle"
                 title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
                 aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
                 aria-pressed={isFullscreen}
                 onClick={toggleFullscreen}
               >
-                {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
               </Button>
             </div>
           </div>
