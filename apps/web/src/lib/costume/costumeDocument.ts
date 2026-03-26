@@ -342,6 +342,7 @@ export function setCostumeLayerVisibility(
 export interface ActiveLayerCanvasState {
   editorMode: CostumeLayerKind;
   dataUrl: string;
+  bitmapAssetFrame?: CostumeAssetFrame | null;
   vectorDocument?: CostumeVectorDocument;
 }
 
@@ -390,7 +391,7 @@ export function applyCanvasStateToCostumeDocument(
     height: COSTUME_CANVAS_SIZE,
     bitmap: {
       assetId: state.dataUrl || null,
-      assetFrame: undefined,
+      assetFrame: cloneCostumeAssetFrame(state.bitmapAssetFrame) ?? undefined,
     },
   };
   return nextDocument;

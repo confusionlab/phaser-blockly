@@ -67,8 +67,11 @@ import {
 } from '@/lib/costume/costumeAssetFrame';
 import {
   renderCostumeDocument,
-  renderCostumeLayerStackToDataUrl,
 } from '@/lib/costume/costumeDocumentRender';
+import {
+  mergeCostumeLayers,
+  rasterizeCostumeLayer,
+} from '@/lib/costume/costumeLayerOperations';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
@@ -386,6 +389,7 @@ export function CostumeEditor() {
     return resolvePersistedStateWithCanvasState({
       editorMode: state.editorMode,
       dataUrl: state.activeLayerDataUrl,
+      bitmapAssetFrame: state.bitmapAssetFrame,
       vectorDocument: state.vectorDocument,
     }, getWorkingPersistedState());
   }, [getWorkingPersistedState, resolvePersistedStateWithCanvasState]);
@@ -899,7 +903,7 @@ export function CostumeEditor() {
     };
   }, [clearLoadingOverlayDelay, persistCanvasStateToSession]);
 
-  const handleHistoryChange = useCallback((liveCanvasState: ActiveLayerCanvasState) => {
+  const handleHistoryChange = useCallback((_liveCanvasState: ActiveLayerCanvasState) => {
     if (isLoadingRef.current) {
       return;
     }
@@ -909,10 +913,9 @@ export function CostumeEditor() {
       return;
     }
 
-    const persistedState = resolvePersistedStateWithCanvasState(
-      liveCanvasState,
-      getWorkingPersistedState(),
-    );
+    const persistedState = getCanvasPersistedStateForSession(loadedSession, {
+      skipLoadingGuard: true,
+    });
     if (!persistedState) {
       return;
     }
@@ -925,7 +928,7 @@ export function CostumeEditor() {
       canvasRef.current?.markPersisted(loadedSession.key);
       scheduleFlattenedPreviewRefreshRef.current(loadedSession, persistedState.document);
     }
-  }, [applyDocumentHistoryState, getWorkingPersistedState, isCanvasReadyForSession, pushDocumentHistory, resolvePersistedStateWithCanvasState]);
+  }, [applyDocumentHistoryState, getCanvasPersistedStateForSession, isCanvasReadyForSession, pushDocumentHistory]);
 
   const handleSelectCostume = useCallback((index: number) => {
     if (!selectedSceneId || !selectedObjectId) return;
@@ -1074,7 +1077,10 @@ export function CostumeEditor() {
         return null;
       }
 
-      const rasterizedDataUrl = await renderCostumeLayerStackToDataUrl([layer]);
+      const rasterizedLayer = await rasterizeCostumeLayer(layer);
+      if (!rasterizedLayer) {
+        return null;
+      }
       const nextDocument = updateCostumeLayer(working.document, layerId, {});
       if (!nextDocument) {
         return null;
@@ -1083,22 +1089,7 @@ export function CostumeEditor() {
       if (layerIndex < 0) {
         return null;
       }
-      nextDocument.layers[layerIndex] = {
-        id: layer.id,
-        name: layer.name,
-        visible: layer.visible,
-        locked: layer.locked,
-        opacity: layer.opacity,
-        blendMode: layer.blendMode,
-        mask: null,
-        effects: [...layer.effects],
-        kind: 'bitmap',
-        width: 1024,
-        height: 1024,
-        bitmap: {
-          assetId: rasterizedDataUrl,
-        },
-      };
+      nextDocument.layers[layerIndex] = rasterizedLayer;
       return nextDocument;
     });
   }, [commitDocumentMutation]);
@@ -1116,40 +1107,7 @@ export function CostumeEditor() {
         return null;
       }
 
-      let mergedLayer: typeof lowerLayer;
-      if (isVectorCostumeLayer(lowerLayer) && isVectorCostumeLayer(upperLayer)) {
-        const lowerJson = JSON.parse(lowerLayer.vector.fabricJson) as { objects?: unknown[]; [key: string]: unknown };
-        const upperJson = JSON.parse(upperLayer.vector.fabricJson) as { objects?: unknown[]; [key: string]: unknown };
-        mergedLayer = {
-          ...lowerLayer,
-          vector: {
-            engine: 'fabric',
-            version: 1,
-            fabricJson: JSON.stringify({
-              ...lowerJson,
-              objects: [...(Array.isArray(lowerJson.objects) ? lowerJson.objects : []), ...(Array.isArray(upperJson.objects) ? upperJson.objects : [])],
-            }),
-          },
-        };
-      } else {
-        const mergedDataUrl = await renderCostumeLayerStackToDataUrl([lowerLayer, upperLayer]);
-        mergedLayer = {
-          id: lowerLayer.id,
-          name: lowerLayer.name,
-          visible: lowerLayer.visible,
-          locked: lowerLayer.locked,
-          opacity: lowerLayer.opacity,
-          blendMode: lowerLayer.blendMode,
-          mask: null,
-          effects: [...lowerLayer.effects],
-          kind: 'bitmap',
-          width: 1024,
-          height: 1024,
-          bitmap: {
-            assetId: mergedDataUrl,
-          },
-        };
-      }
+      const mergedLayer = await mergeCostumeLayers(lowerLayer, upperLayer);
 
       const nextDocument = {
         ...working.document,

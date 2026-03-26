@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  applyCanvasStateToCostumeDocument,
   createBlankCostumeDocument,
   createBitmapLayer,
   createEmptyCostumeVectorDocument,
@@ -119,5 +120,38 @@ test.describe('costume document visibility', () => {
 
     expect(hiddenDocument).not.toBeNull();
     expect(getCostumeDocumentPreviewSignature(hiddenDocument!)).not.toBe(baseSignature);
+  });
+
+  test('preserves trimmed bitmap asset frames when applying canvas state', () => {
+    const document = createBlankCostumeDocument();
+    const bitmapLayer = createBitmapLayer({
+      name: 'Bitmap Layer',
+      assetId: 'data:image/png;base64,ORIGINAL',
+    });
+    const withBitmap = setActiveCostumeLayer(
+      insertCostumeLayerAfterActive(document, bitmapLayer),
+      bitmapLayer.id,
+    );
+
+    const nextDocument = applyCanvasStateToCostumeDocument(withBitmap, {
+      editorMode: 'bitmap',
+      dataUrl: 'data:image/png;base64,UPDATED',
+      bitmapAssetFrame: {
+        x: 128,
+        y: 256,
+        width: 320,
+        height: 240,
+      },
+    });
+
+    const activeLayer = nextDocument.layers.find((layer) => layer.id === bitmapLayer.id);
+    expect(activeLayer?.kind).toBe('bitmap');
+    expect(activeLayer?.bitmap.assetId).toBe('data:image/png;base64,UPDATED');
+    expect(activeLayer?.bitmap.assetFrame).toEqual({
+      x: 128,
+      y: 256,
+      width: 320,
+      height: 240,
+    });
   });
 });

@@ -80,6 +80,35 @@ async function readBackgroundDocumentSummary(page: Page): Promise<{
   });
 }
 
+async function readSavedBackgroundVectorObjectCount(page: Page): Promise<number> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return 0;
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as { objects?: unknown[] };
+      return Array.isArray(parsed.objects) ? parsed.objects.length : 0;
+    } catch {
+      return -1;
+    }
+  });
+}
+
+async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
+  await page.locator('input[type="range"]').evaluate((input, nextValue) => {
+    const slider = input as HTMLInputElement;
+    slider.value = String(nextValue);
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  }, opacityPercent);
+}
+
 function backgroundLayerRow(page: Page, index: number) {
   return page.locator('[data-testid="layer-row"]').nth(index);
 }
@@ -245,6 +274,101 @@ test.describe('Background editor', () => {
     await page.getByRole('button', { name: /cancel/i }).first().click();
     await expect(reopened.root).toBeHidden();
   });
+
+  test('vector undo and redo round-trip through the saved background document', async ({ page }) => {
+    await page.goto(BACKGROUND_EDITOR_TEST_URL);
+    await openEditorFromProjectList(page);
+
+    let editor = await openBackgroundEditor(page);
+    await page.getByRole('button', { name: /^vector$/i }).click();
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.55, editor.box.y + editor.box.height * 0.35);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.74, editor.box.y + editor.box.height * 0.54);
+    await page.mouse.up();
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+    const redoButton = page.getByRole('button', { name: /^redo$/i });
+    await expect(undoButton).toBeEnabled();
+    await undoButton.click();
+    await expect(redoButton).toBeEnabled();
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+    await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(0);
+
+    editor = await openBackgroundEditor(page);
+    const vectorLayerButton = backgroundLayerRow(page, 0);
+    await vectorLayerButton.click();
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.42);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.68, editor.box.y + editor.box.height * 0.58);
+    await page.mouse.up();
+
+    await expect(undoButton).toBeEnabled();
+    await undoButton.click();
+    await expect(redoButton).toBeEnabled();
+    await redoButton.click();
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+    await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(1);
+  });
+
+  test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {
+    await page.goto(BACKGROUND_EDITOR_TEST_URL);
+    await openEditorFromProjectList(page);
+
+    await page.evaluate(async () => {
+      const [
+        { useProjectStore },
+        { buildBackgroundConfigFromDocument },
+        { createBlankBackgroundDocument, createVectorBackgroundLayer },
+      ] = await Promise.all([
+        import('/src/store/projectStore.ts'),
+        import('/src/lib/background/backgroundDocumentRender.ts'),
+        import('/src/lib/background/backgroundDocument.ts'),
+      ]);
+
+      const store = useProjectStore.getState();
+      const scene = store.project?.scenes[0];
+      if (!scene) {
+        throw new Error('Missing scene for malformed vector background test.');
+      }
+
+      const document = createBlankBackgroundDocument();
+      const brokenVectorLayer = createVectorBackgroundLayer({
+        name: 'Broken Vector',
+        fabricJson: '{',
+      });
+      const nextDocument = {
+        ...document,
+        activeLayerId: brokenVectorLayer.id,
+        layers: [
+          document.layers[0],
+          brokenVectorLayer,
+        ],
+      };
+
+      const background = await buildBackgroundConfigFromDocument(nextDocument, {
+        baseColor: '#87CEEB',
+        scrollFactor: scene.background?.scrollFactor,
+      });
+
+      store.updateScene(scene.id, { background });
+    });
+
+    const { root, box } = await openBackgroundEditor(page);
+    await expect(backgroundLayerRow(page, 0)).toHaveAttribute('data-layer-kind', 'vector');
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await page.mouse.move(box.x + box.width * 0.54, box.y + box.height * 0.36);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.72, box.y + box.height * 0.52);
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(root).toBeHidden();
+    await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(1);
+  });
 });
 
 test.describe('Background editor high-DPI selection rendering', () => {
@@ -283,6 +407,43 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await expect(reopened.root.getByText('Selection')).toBeVisible();
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(page.getByTestId('background-editor-root')).toBeHidden();
+
+    const nextDarkPixels = await readPersistedDarkPixelCount(page);
+    expect(nextDarkPixels).toBeGreaterThan(0);
+    expect(nextDarkPixels).toBeGreaterThan(Math.floor(baselineDarkPixels * 0.75));
+    expect(nextDarkPixels).toBeLessThan(Math.ceil(baselineDarkPixels * 1.25));
+  });
+
+  test('layer opacity changes do not discard floating bitmap selections', async ({ page }) => {
+    await page.goto(BACKGROUND_EDITOR_TEST_URL);
+    await openEditorFromProjectList(page);
+
+    const initialEditor = await openBackgroundEditor(page);
+    const startX = initialEditor.box.x + initialEditor.box.width * 0.42;
+    const startY = initialEditor.box.y + initialEditor.box.height * 0.42;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + initialEditor.box.width * 0.1, startY + initialEditor.box.height * 0.08);
+    await page.mouse.up();
+
+    await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(initialEditor.root).toBeHidden();
+
+    const baselineDarkPixels = await readPersistedDarkPixelCount(page);
+    expect(baselineDarkPixels).toBeGreaterThan(0);
+
+    const reopened = await openBackgroundEditor(page);
+    await page.keyboard.press('v');
+    await page.mouse.move(reopened.box.x + reopened.box.width * 0.34, reopened.box.y + reopened.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(reopened.box.x + reopened.box.width * 0.66, reopened.box.y + reopened.box.height * 0.66);
+    await page.mouse.up();
+
+    await expect(reopened.root.getByText('Selection')).toBeVisible();
+    await setActiveLayerOpacity(page, 60);
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(reopened.root).toBeHidden();
 
     const nextDarkPixels = await readPersistedDarkPixelCount(page);
     expect(nextDarkPixels).toBeGreaterThan(0);

@@ -5,6 +5,7 @@ import {
   createEmptyCostumeVectorDocument,
   resolveActiveCostumeLayerEditorLoadState,
 } from '@/lib/costume/costumeDocument';
+import { optimizeCostumeRasterCanvas } from '@/lib/costume/costumeAssetOptimization';
 import type {
   AlignAction,
   BitmapFillStyle,
@@ -404,6 +405,7 @@ export function useCostumeCanvasCommandController({
   const exportCostumeState = useCallback((sessionKey?: string | null): {
     activeLayerDataUrl: string;
     editorMode: CostumeEditorMode;
+    bitmapAssetFrame?: CostumeAssetFrame | null;
     vectorDocument?: CostumeVectorDocument;
   } | null => {
     if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
@@ -418,7 +420,9 @@ export function useCostumeCanvasCommandController({
       };
     }
 
-    const activeLayerDataUrl = fabricCanvas.toCanvasElement(1).toDataURL('image/png');
+    const activeLayerCanvas = fabricCanvas.toCanvasElement(1);
+    const optimizedBitmap = optimizeCostumeRasterCanvas(activeLayerCanvas);
+    const activeLayerDataUrl = optimizedBitmap.dataUrl;
 
     if (editorModeRef.current === 'vector') {
       return {
@@ -435,6 +439,7 @@ export function useCostumeCanvasCommandController({
     return {
       activeLayerDataUrl,
       editorMode: editorModeRef.current,
+      bitmapAssetFrame: optimizedBitmap.assetFrame ?? null,
     };
   }, [editorModeRef, fabricCanvasRef, loadedSessionKeyRef]);
 

@@ -15,7 +15,14 @@ import type {
   VectorStyleCapabilities,
   VectorToolStyle,
 } from './CostumeToolbar';
-import type { CostumeBounds, ColliderConfig, CostumeDocument, CostumeEditorMode, CostumeVectorDocument } from '@/types';
+import type {
+  CostumeAssetFrame,
+  CostumeBounds,
+  ColliderConfig,
+  CostumeDocument,
+  CostumeEditorMode,
+  CostumeVectorDocument,
+} from '@/types';
 import { CostumeCanvasStage } from './CostumeCanvasStage';
 import { type BitmapBrushKind } from '@/lib/background/brushCore';
 import {
@@ -60,6 +67,7 @@ export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
 export interface CostumeCanvasExportState {
   activeLayerDataUrl: string;
   editorMode: CostumeEditorMode;
+  bitmapAssetFrame?: CostumeAssetFrame | null;
   vectorDocument?: CostumeVectorDocument;
 }
 

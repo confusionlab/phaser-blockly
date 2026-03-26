@@ -668,9 +668,14 @@ export function BackgroundCanvasEditor() {
   }, []);
 
   const syncUndoRedoAvailability = useCallback(() => {
+    if (editorMode === 'vector') {
+      setCanUndo(vectorCanvasRef.current?.canUndo() ?? false);
+      setCanRedo(vectorCanvasRef.current?.canRedo() ?? false);
+      return;
+    }
     setCanUndo(undoStackRef.current.length > 0);
     setCanRedo(redoStackRef.current.length > 0);
-  }, []);
+  }, [editorMode]);
 
   const syncActiveChunkCount = useCallback(() => {
     setActiveChunkCount(chunkKeySetRef.current.size);
@@ -809,7 +814,27 @@ export function BackgroundCanvasEditor() {
     setRevision((value) => value + 1);
   }, []);
 
-  const loadActiveBitmapLayerState = useCallback(async (layer: BackgroundLayer | null) => {
+  const handleVectorHistoryStateChange = useCallback((state: {
+    canUndo: boolean;
+    canRedo: boolean;
+    isDirty: boolean;
+  }) => {
+    activeLayerDirtyRef.current = state.isDirty;
+    if (editorMode === 'vector') {
+      setCanUndo(state.canUndo);
+      setCanRedo(state.canRedo);
+    }
+    setIsDirty(
+      state.isDirty ||
+      undoStackRef.current.length > 0 ||
+      backgroundColorRef.current !== initialBackgroundColorRef.current,
+    );
+  }, [editorMode]);
+
+  const loadBitmapLayerStateForChunkSize = useCallback(async (
+    layer: BackgroundLayer | null,
+    nextChunkSize: number,
+  ) => {
     chunkCanvasesRef.current.clear();
     loadingChunkKeysRef.current.clear();
     layerChunkCanvasCacheRef.current.clear();
@@ -825,14 +850,18 @@ export function BackgroundCanvasEditor() {
     syncActiveChunkCount();
 
     for (const [key, dataUrl] of Object.entries(initialChunks)) {
-      const decoded = await dataUrlToCanvas(dataUrl, chunkSize);
+      const decoded = await dataUrlToCanvas(dataUrl, nextChunkSize);
       if (decoded) {
         chunkCanvasesRef.current.set(key, decoded);
       }
     }
 
     setRevision((value) => value + 1);
-  }, [chunkSize, syncActiveChunkCount]);
+  }, [syncActiveChunkCount]);
+
+  const loadActiveBitmapLayerState = useCallback(async (layer: BackgroundLayer | null) => {
+    await loadBitmapLayerStateForChunkSize(layer, chunkSize);
+  }, [chunkSize, loadBitmapLayerStateForChunkSize]);
 
   const persistActiveLayerIntoDocument = useCallback((document: BackgroundDocument | null): BackgroundDocument | null => {
     if (!document) {
@@ -958,7 +987,8 @@ export function BackgroundCanvasEditor() {
     setHasFloatingSelection(false);
     undoStackRef.current = [];
     redoStackRef.current = [];
-    syncUndoRedoAvailability();
+    setCanUndo(false);
+    setCanRedo(false);
     chunkCanvasesRef.current.clear();
     loadingChunkKeysRef.current.clear();
     layerChunkCanvasCacheRef.current.clear();
@@ -974,12 +1004,12 @@ export function BackgroundCanvasEditor() {
     initialBackgroundColorRef.current = initialBackgroundColor;
     setBackgroundColor(initialBackgroundColor);
     const initialLayer = getActiveBackgroundLayer(initialDocument);
-    await loadActiveBitmapLayerState(initialLayer);
+    await loadBitmapLayerStateForChunkSize(initialLayer, initialDocument.chunkSize);
     setTool(getActiveBackgroundLayerKind(initialDocument) === 'vector' ? 'select' : 'brush');
 
     setBusy(false);
     setRevision((value) => value + 1);
-  }, [loadActiveBitmapLayerState, replaceBackgroundDocument, scene, syncUndoRedoAvailability]);
+  }, [loadBitmapLayerStateForChunkSize, replaceBackgroundDocument, scene]);
 
   useEffect(() => {
     if (!scene) return;
@@ -1147,11 +1177,6 @@ export function BackgroundCanvasEditor() {
   }, [revision, updateWarnings]);
 
   useEffect(() => {
-    if (editorMode === 'vector') {
-      setCanUndo(false);
-      setCanRedo(false);
-      return;
-    }
     syncUndoRedoAvailability();
   }, [editorMode, revision, syncUndoRedoAvailability]);
 
@@ -2192,6 +2217,11 @@ export function BackgroundCanvasEditor() {
   }, [applyRasterCanvasToChunks, beginMutationSession, rasterizeChunksForBounds]);
 
   const undo = useCallback(() => {
+    if (editorMode === 'vector') {
+      vectorCanvasRef.current?.undo();
+      syncUndoRedoAvailability();
+      return;
+    }
     if (floatingSelectionRef.current) {
       const didCommitSelection = commitFloatingSelection();
       if (!didCommitSelection) {
@@ -2207,9 +2237,14 @@ export function BackgroundCanvasEditor() {
       undoStackRef.current.length > 0 ||
       backgroundColorRef.current !== initialBackgroundColorRef.current,
     );
-  }, [applyDeltaRecord, commitFloatingSelection, syncUndoRedoAvailability]);
+  }, [applyDeltaRecord, commitFloatingSelection, editorMode, syncUndoRedoAvailability]);
 
   const redo = useCallback(() => {
+    if (editorMode === 'vector') {
+      vectorCanvasRef.current?.redo();
+      syncUndoRedoAvailability();
+      return;
+    }
     if (floatingSelectionRef.current) {
       const didCommitSelection = commitFloatingSelection();
       if (!didCommitSelection) {
@@ -2225,12 +2260,16 @@ export function BackgroundCanvasEditor() {
       undoStackRef.current.length > 0 ||
       backgroundColorRef.current !== initialBackgroundColorRef.current,
     );
-  }, [applyDeltaRecord, commitFloatingSelection, syncUndoRedoAvailability]);
+  }, [applyDeltaRecord, commitFloatingSelection, editorMode, syncUndoRedoAvailability]);
 
   const flushActiveInteraction = useCallback(async () => {
     if (editorMode === 'vector' && isShapeTool(tool) && isDrawing) {
       vectorCanvasRef.current?.commitShape();
       setIsDrawing(false);
+    }
+
+    if (editorMode === 'vector') {
+      await vectorCanvasRef.current?.awaitIdle();
     }
 
     if (drawingStrokeRef.current) {
@@ -2366,6 +2405,10 @@ export function BackgroundCanvasEditor() {
     if (!backgroundDocumentRef.current) {
       return;
     }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
+      return;
+    }
     const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
     const currentLayer = getBackgroundLayerById(persistedDocument, layerId);
     if (!currentLayer) {
@@ -2376,10 +2419,14 @@ export function BackgroundCanvasEditor() {
       return;
     }
     await applyNextDocumentState(nextDocument, { preserveTool: true });
-  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
+  }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
 
   const handleToggleLayerLocked = useCallback(async (layerId: string) => {
     if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
       return;
     }
     const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
@@ -2392,10 +2439,14 @@ export function BackgroundCanvasEditor() {
       return;
     }
     await applyNextDocumentState(nextDocument, { preserveTool: true });
-  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
+  }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
 
   const handleRenameLayer = useCallback(async (layerId: string, name: string) => {
     if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
       return;
     }
     const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
@@ -2404,10 +2455,14 @@ export function BackgroundCanvasEditor() {
       return;
     }
     await applyNextDocumentState(nextDocument, { preserveTool: true });
-  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
+  }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
 
   const handleLayerOpacityChange = useCallback(async (layerId: string, opacity: number) => {
     if (!backgroundDocumentRef.current) {
+      return;
+    }
+    const didFlush = await flushActiveInteraction();
+    if (!didFlush) {
       return;
     }
     const persistedDocument = persistActiveLayerIntoDocument(backgroundDocumentRef.current) ?? backgroundDocumentRef.current;
@@ -2416,7 +2471,7 @@ export function BackgroundCanvasEditor() {
       return;
     }
     await applyNextDocumentState(nextDocument, { preserveTool: true });
-  }, [applyNextDocumentState, persistActiveLayerIntoDocument]);
+  }, [applyNextDocumentState, flushActiveInteraction, persistActiveLayerIntoDocument]);
 
   const handleDone = useCallback(async () => {
     if (!scene) {
@@ -2472,12 +2527,12 @@ export function BackgroundCanvasEditor() {
     const handler: UndoRedoHandler = {
       undo,
       redo,
-      canUndo: () => undoStackRef.current.length > 0,
-      canRedo: () => redoStackRef.current.length > 0,
+      canUndo: () => (editorMode === 'vector' ? (vectorCanvasRef.current?.canUndo() ?? false) : undoStackRef.current.length > 0),
+      canRedo: () => (editorMode === 'vector' ? (vectorCanvasRef.current?.canRedo() ?? false) : redoStackRef.current.length > 0),
     };
     registerBackgroundUndo(handler);
     return () => registerBackgroundUndo(null);
-  }, [redo, registerBackgroundUndo, undo]);
+  }, [editorMode, redo, registerBackgroundUndo, undo]);
 
   useEffect(() => {
     const shortcutHandler = (event: KeyboardEvent): boolean => {
@@ -2563,7 +2618,6 @@ export function BackgroundCanvasEditor() {
       if ((event.key === 'Delete' || event.key === 'Backspace') && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (editorMode === 'vector' && vectorCanvasRef.current?.deleteSelection()) {
           event.preventDefault();
-          markActiveLayerDirty();
           return true;
         }
         if (deleteFloatingSelection()) {
@@ -2607,7 +2661,7 @@ export function BackgroundCanvasEditor() {
 
     registerBackgroundShortcutHandler(shortcutHandler);
     return () => registerBackgroundShortcutHandler(null);
-  }, [commitFloatingSelection, deleteFloatingSelection, editorMode, handleCancel, handleDone, isDrawing, markActiveLayerDirty, redo, registerBackgroundShortcutHandler, tool, undo]);
+  }, [commitFloatingSelection, deleteFloatingSelection, editorMode, handleCancel, handleDone, isDrawing, redo, registerBackgroundShortcutHandler, tool, undo]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -2994,22 +3048,19 @@ export function BackgroundCanvasEditor() {
       return;
     }
     vectorCanvasRef.current?.moveSelectionOrder(action);
-    markActiveLayerDirty();
-  }, [editorMode, markActiveLayerDirty]);
+  }, [editorMode]);
   const handleToolbarFlipSelection = useCallback((axis: SelectionFlipAxis) => {
     if (editorMode !== 'vector') {
       return;
     }
     vectorCanvasRef.current?.flipSelection(axis);
-    markActiveLayerDirty();
-  }, [editorMode, markActiveLayerDirty]);
+  }, [editorMode]);
   const handleToolbarRotateSelection = useCallback(() => {
     if (editorMode !== 'vector') {
       return;
     }
     vectorCanvasRef.current?.rotateSelection();
-    markActiveLayerDirty();
-  }, [editorMode, markActiveLayerDirty]);
+  }, [editorMode]);
   const handleToolbarVectorHandleModeChange = useCallback(() => {}, []);
   const handleToolbarAlign = useCallback(() => {}, []);
   const handleToolbarTextStyleChange = useCallback(() => {}, []);
@@ -3182,6 +3233,7 @@ export function BackgroundCanvasEditor() {
               vectorStyle={vectorStyle}
               interactive={editorMode === 'vector'}
               onDirty={markActiveLayerDirty}
+              onHistoryStateChange={handleVectorHistoryStateChange}
               onSelectionChange={setHasVectorSelection}
             />
           ) : null}

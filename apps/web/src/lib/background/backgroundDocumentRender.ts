@@ -20,6 +20,7 @@ import {
   parseChunkKey,
 } from './chunkMath';
 import {
+  EMPTY_BACKGROUND_VECTOR_FABRIC_JSON,
   isBitmapBackgroundLayer,
   isVectorBackgroundLayer,
 } from './backgroundDocument';
@@ -193,7 +194,13 @@ export async function renderBackgroundVectorLayerToChunkData(
     });
 
     try {
-      const parsed = JSON.parse(layer.vector.fabricJson);
+      let parsed: string | Record<string, any>;
+      try {
+        parsed = JSON.parse(layer.vector.fabricJson);
+      } catch (error) {
+        console.warn('Invalid background vector document. Rendering an empty layer instead.', error);
+        parsed = JSON.parse(EMPTY_BACKGROUND_VECTOR_FABRIC_JSON);
+      }
       await vectorCanvas.loadFromJSON(parsed);
       for (const obj of vectorCanvas.getObjects() as any[]) {
         normalizeVectorObjectRendering(obj);

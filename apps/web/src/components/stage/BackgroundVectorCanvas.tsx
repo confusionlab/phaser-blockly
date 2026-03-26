@@ -33,6 +33,7 @@ import {
   getVectorStyleTargets,
   normalizeVectorObjectRendering,
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
+import { EMPTY_BACKGROUND_VECTOR_FABRIC_JSON } from '@/lib/background/backgroundDocument';
 
 type WorldPoint = { x: number; y: number };
 
@@ -65,6 +66,11 @@ export interface BackgroundVectorCanvasHandle {
   updateShape: (currentWorld: WorldPoint) => void;
   commitShape: () => boolean;
   cancelShape: () => void;
+  awaitIdle: () => Promise<void>;
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
   serialize: () => BackgroundVectorDocument | null;
   deleteSelection: () => boolean;
   moveSelectionOrder: (action: MoveOrderAction) => void;
@@ -81,6 +87,7 @@ interface BackgroundVectorCanvasProps {
   vectorStyle: VectorToolStyle;
   interactive: boolean;
   onDirty: () => void;
+  onHistoryStateChange: (state: { canUndo: boolean; canRedo: boolean; isDirty: boolean }) => void;
   onSelectionChange: (hasSelection: boolean) => void;
 }
 
@@ -168,21 +175,156 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   vectorStyle,
   interactive,
   onDirty,
+  onHistoryStateChange,
   onSelectionChange,
 }, ref) => {
   const hostElementRef = useRef<HTMLDivElement | null>(null);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const loadedLayerKeyRef = useRef<string | null>(null);
+  const loadRequestIdRef = useRef(0);
   const shapeDraftRef = useRef<VectorShapeDraft | null>(null);
+  const shapeDraftHistoryBaselineRef = useRef<number | null>(null);
   const vectorStyleRef = useRef(vectorStyle);
   const onDirtyRef = useRef(onDirty);
+  const onHistoryStateChangeRef = useRef(onHistoryStateChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const suppressDirtyRef = useRef(false);
+  const pendingLoadPromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const ignoreCanvasHistoryEventsRef = useRef(false);
+  const skipNextObjectModifiedTargetRef = useRef<object | null>(null);
+  const historySnapshotsRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
 
   vectorStyleRef.current = vectorStyle;
   onDirtyRef.current = onDirty;
+  onHistoryStateChangeRef.current = onHistoryStateChange;
   onSelectionChangeRef.current = onSelectionChange;
+
+  const emitHistoryState = useMemo(() => () => {
+    const historyIndex = historyIndexRef.current;
+    const historyLength = historySnapshotsRef.current.length;
+    onHistoryStateChangeRef.current({
+      canUndo: historyIndex > 0,
+      canRedo: historyIndex >= 0 && historyIndex < historyLength - 1,
+      isDirty: historyIndex > 0,
+    });
+  }, []);
+
+  const clearHistory = useMemo(() => () => {
+    historySnapshotsRef.current = [];
+    historyIndexRef.current = -1;
+    emitHistoryState();
+  }, [emitHistoryState]);
+
+  const serializeCanvas = useMemo(() => () => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) {
+      return null;
+    }
+
+    return JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS));
+  }, []);
+
+  const resetHistory = useMemo(() => () => {
+    const snapshot = serializeCanvas();
+    if (!snapshot) {
+      clearHistory();
+      return;
+    }
+
+    historySnapshotsRef.current = [snapshot];
+    historyIndexRef.current = 0;
+    emitHistoryState();
+  }, [clearHistory, emitHistoryState, serializeCanvas]);
+
+  const recordHistorySnapshot = useMemo(() => () => {
+    if (suppressDirtyRef.current) {
+      return false;
+    }
+
+    const snapshot = serializeCanvas();
+    if (!snapshot) {
+      return false;
+    }
+
+    const currentSnapshot = historySnapshotsRef.current[historyIndexRef.current] ?? null;
+    if (snapshot === currentSnapshot) {
+      emitHistoryState();
+      return false;
+    }
+
+    const nextHistory = historySnapshotsRef.current.slice(0, historyIndexRef.current + 1);
+    nextHistory.push(snapshot);
+    historySnapshotsRef.current = nextHistory;
+    historyIndexRef.current = nextHistory.length - 1;
+    emitHistoryState();
+    onDirtyRef.current();
+    return true;
+  }, [emitHistoryState, serializeCanvas]);
+
+  const ignoreCanvasHistoryEventsTemporarily = useMemo(() => () => {
+    ignoreCanvasHistoryEventsRef.current = true;
+    window.setTimeout(() => {
+      ignoreCanvasHistoryEventsRef.current = false;
+    }, 100);
+  }, []);
+
+  const loadSerializedDocument = useMemo(() => (
+    json: string,
+    options?: { logInvalid?: boolean; resetHistory?: boolean },
+  ) => {
+    const loadPromise = (async () => {
+      const fabricCanvas = fabricCanvasRef.current;
+      if (!fabricCanvas) {
+        return false;
+      }
+
+      const requestId = ++loadRequestIdRef.current;
+      let parsed: string | Record<string, any>;
+      try {
+        parsed = JSON.parse(json);
+      } catch (error) {
+        if (options?.logInvalid !== false) {
+          console.warn('Invalid background vector document. Loading an empty layer instead.', error);
+        }
+        parsed = JSON.parse(EMPTY_BACKGROUND_VECTOR_FABRIC_JSON);
+      }
+
+      suppressDirtyRef.current = true;
+      try {
+        await fabricCanvas.loadFromJSON(parsed);
+        if (loadRequestIdRef.current !== requestId) {
+          return false;
+        }
+
+        fabricCanvas.discardActiveObject();
+        for (const obj of fabricCanvas.getObjects()) {
+          normalizeVectorObjectRendering(obj);
+        }
+        onSelectionChangeRef.current(false);
+        applyViewportTransform(fabricCanvas, viewport, camera, zoom);
+        if (options?.resetHistory !== false) {
+          resetHistory();
+        } else {
+          emitHistoryState();
+        }
+        return true;
+      } finally {
+        if (loadRequestIdRef.current === requestId) {
+          suppressDirtyRef.current = false;
+        }
+      }
+    })();
+
+    const idlePromise = loadPromise.then(() => undefined, () => undefined);
+    pendingLoadPromiseRef.current = idlePromise;
+    return loadPromise.finally(() => {
+      if (pendingLoadPromiseRef.current === idlePromise) {
+        pendingLoadPromiseRef.current = Promise.resolve();
+      }
+    });
+  }, [camera, emitHistoryState, resetHistory, viewport, zoom]);
 
   const supportsPointerEvents = useMemo(
     () => interactive && (activeTool === 'select' || activeTool === 'brush'),
@@ -220,33 +362,41 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     fabricCanvas.selectionBorderColor = '#0ea5e9';
     fabricCanvas.selectionDashArray = [6, 4];
     fabricCanvas.on('path:created', (event) => {
+      if (ignoreCanvasHistoryEventsRef.current) {
+        return;
+      }
       const createdPath = event.path;
       if (createdPath) {
         normalizeVectorObjectRendering(createdPath);
         createdPath.setCoords?.();
       }
-      if (!suppressDirtyRef.current) {
-        onDirtyRef.current();
-      }
+      recordHistorySnapshot();
       fabricCanvas.requestRenderAll();
     });
-    fabricCanvas.on('object:modified', () => {
-      if (!suppressDirtyRef.current) {
-        onDirtyRef.current();
+    fabricCanvas.on('object:modified', (event) => {
+      if (ignoreCanvasHistoryEventsRef.current) {
+        return;
       }
+      if (event.target && skipNextObjectModifiedTargetRef.current === event.target) {
+        skipNextObjectModifiedTargetRef.current = null;
+        return;
+      }
+      recordHistorySnapshot();
     });
     fabricCanvas.on('object:removed', () => {
-      if (!suppressDirtyRef.current) {
-        onDirtyRef.current();
+      if (ignoreCanvasHistoryEventsRef.current) {
+        return;
       }
+      recordHistorySnapshot();
     });
     fabricCanvas.on('object:added', (event) => {
+      if (ignoreCanvasHistoryEventsRef.current) {
+        return;
+      }
       if (shapeDraftRef.current?.object === event.target) {
         return;
       }
-      if (!suppressDirtyRef.current) {
-        onDirtyRef.current();
-      }
+      recordHistorySnapshot();
     });
     fabricCanvas.on('selection:created', () => {
       onSelectionChangeRef.current(true);
@@ -266,7 +416,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     return () => {
       shapeDraftRef.current = null;
+      shapeDraftHistoryBaselineRef.current = null;
       loadedLayerKeyRef.current = null;
+      loadRequestIdRef.current += 1;
+      clearHistory();
       onSelectionChangeRef.current(false);
       try {
         fabricCanvas.dispose();
@@ -276,7 +429,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         fabricCanvasRef.current = null;
       }
     };
-  }, []);
+  }, [clearHistory, recordHistorySnapshot]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -295,6 +448,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     if (!layer) {
       fabricCanvas.clear();
       loadedLayerKeyRef.current = null;
+      shapeDraftHistoryBaselineRef.current = null;
+      clearHistory();
       onSelectionChangeRef.current(false);
       fabricCanvas.requestRenderAll();
       return;
@@ -306,17 +461,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
 
     shapeDraftRef.current = null;
+    shapeDraftHistoryBaselineRef.current = null;
     loadedLayerKeyRef.current = layerKey;
-    suppressDirtyRef.current = true;
-    void fabricCanvas.loadFromJSON(JSON.parse(layer.vector.fabricJson)).then(() => {
-      for (const obj of fabricCanvas.getObjects()) {
-        normalizeVectorObjectRendering(obj);
-      }
-      applyViewportTransform(fabricCanvas, viewport, camera, zoom);
-    }).finally(() => {
-      suppressDirtyRef.current = false;
-    });
-  }, [camera, layer, onSelectionChange, viewport, zoom]);
+    void loadSerializedDocument(layer.vector.fabricJson, { logInvalid: true, resetHistory: true });
+  }, [clearHistory, layer, loadSerializedDocument]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -394,8 +542,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       }
 
       normalizeVectorObjectRendering(draft.object);
+      ignoreCanvasHistoryEventsRef.current = true;
       fabricCanvas.add(draft.object);
       shapeDraftRef.current = draft;
+      shapeDraftHistoryBaselineRef.current = historyIndexRef.current;
       fabricCanvas.requestRenderAll();
       return true;
     },
@@ -446,9 +596,24 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       if (!draft) {
         return false;
       }
+      ignoreCanvasHistoryEventsTemporarily();
+      skipNextObjectModifiedTargetRef.current = draft.object;
       draft.object.setCoords?.();
       shapeDraftRef.current = null;
-      onDirtyRef.current();
+      recordHistorySnapshot();
+      const baselineIndex = shapeDraftHistoryBaselineRef.current;
+      const currentSnapshot = historySnapshotsRef.current[historyIndexRef.current] ?? null;
+      if (baselineIndex !== null && currentSnapshot) {
+        const nextHistory = [
+          ...historySnapshotsRef.current.slice(0, baselineIndex + 1),
+          currentSnapshot,
+          ...historySnapshotsRef.current.slice(historyIndexRef.current + 1),
+        ];
+        historySnapshotsRef.current = nextHistory;
+        historyIndexRef.current = Math.min(nextHistory.length - 1, baselineIndex + 1);
+        emitHistoryState();
+      }
+      shapeDraftHistoryBaselineRef.current = null;
       fabricCanvasRef.current?.requestRenderAll();
       return true;
     },
@@ -456,11 +621,48 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       const fabricCanvas = fabricCanvasRef.current;
       const draft = shapeDraftRef.current;
       shapeDraftRef.current = null;
+      shapeDraftHistoryBaselineRef.current = null;
+      ignoreCanvasHistoryEventsRef.current = false;
       if (!fabricCanvas || !draft) {
         return;
       }
       fabricCanvas.remove(draft.object);
       fabricCanvas.requestRenderAll();
+    },
+    awaitIdle() {
+      return pendingLoadPromiseRef.current;
+    },
+    undo() {
+      const nextIndex = historyIndexRef.current - 1;
+      const snapshot = historySnapshotsRef.current[nextIndex];
+      if (nextIndex < 0 || !snapshot) {
+        return;
+      }
+      historyIndexRef.current = nextIndex;
+      void loadSerializedDocument(snapshot, { logInvalid: false, resetHistory: false }).then((loaded) => {
+        if (loaded) {
+          emitHistoryState();
+        }
+      });
+    },
+    redo() {
+      const nextIndex = historyIndexRef.current + 1;
+      const snapshot = historySnapshotsRef.current[nextIndex];
+      if (nextIndex >= historySnapshotsRef.current.length || !snapshot) {
+        return;
+      }
+      historyIndexRef.current = nextIndex;
+      void loadSerializedDocument(snapshot, { logInvalid: false, resetHistory: false }).then((loaded) => {
+        if (loaded) {
+          emitHistoryState();
+        }
+      });
+    },
+    canUndo() {
+      return historyIndexRef.current > 0;
+    },
+    canRedo() {
+      return historyIndexRef.current >= 0 && historyIndexRef.current < historySnapshotsRef.current.length - 1;
     },
     serialize() {
       const fabricCanvas = fabricCanvasRef.current;
@@ -486,8 +688,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       fabricCanvas.discardActiveObject();
       objects.forEach((obj) => fabricCanvas.remove(obj));
       fabricCanvas.requestRenderAll();
-      onDirtyRef.current();
-      return true;
+      return recordHistorySnapshot();
     },
     moveSelectionOrder(action) {
       const fabricCanvas = fabricCanvasRef.current;
@@ -508,7 +709,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         }
       }
       fabricCanvas.requestRenderAll();
-      onDirtyRef.current();
+      recordHistorySnapshot();
     },
     flipSelection(axis) {
       const fabricCanvas = fabricCanvasRef.current;
@@ -526,7 +727,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         target.setCoords?.();
       }
       fabricCanvas.requestRenderAll();
-      onDirtyRef.current();
+      recordHistorySnapshot();
     },
     rotateSelection() {
       const fabricCanvas = fabricCanvasRef.current;
@@ -537,9 +738,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       activeObject.rotate(((activeObject.angle ?? 0) + 90) % 360);
       activeObject.setCoords?.();
       fabricCanvas.requestRenderAll();
-      onDirtyRef.current();
+      recordHistorySnapshot();
     },
-  }), [activeTool, camera, interactive, layer, vectorStyle, viewport, zoom]);
+  }), [activeTool, emitHistoryState, ignoreCanvasHistoryEventsTemporarily, interactive, layer, loadSerializedDocument, recordHistorySnapshot]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -556,9 +757,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
     if (didChange) {
       fabricCanvas.requestRenderAll();
-      onDirtyRef.current();
+      recordHistorySnapshot();
     }
-  }, [vectorStyle.fillColor, vectorStyle.fillTextureId, vectorStyle.strokeBrushId, vectorStyle.strokeColor, vectorStyle.strokeWidth]);
+  }, [recordHistorySnapshot, vectorStyle.fillColor, vectorStyle.fillTextureId, vectorStyle.strokeBrushId, vectorStyle.strokeColor, vectorStyle.strokeWidth]);
 
   return (
     <div
