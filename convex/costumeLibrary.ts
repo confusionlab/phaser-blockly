@@ -10,60 +10,6 @@ async function requireAuthenticatedUserId(ctx: any): Promise<string> {
   return identity.subject;
 }
 
-function buildMigratedDocument(item: {
-  document?: unknown;
-  vectorDocument?: { fabricJson?: string } | null;
-}): any {
-  if (item.document) {
-    return item.document;
-  }
-
-  const layerId = crypto.randomUUID();
-  if (item.vectorDocument?.fabricJson) {
-    return {
-      version: 1,
-      activeLayerId: layerId,
-      layers: [{
-        id: layerId,
-        name: "Layer 1",
-        visible: true,
-        locked: false,
-        opacity: 1,
-        blendMode: "normal" as const,
-        mask: null,
-        effects: [],
-        kind: "vector" as const,
-        vector: {
-          engine: "fabric" as const,
-          version: 1 as const,
-          fabricJson: item.vectorDocument.fabricJson,
-        },
-      }],
-    };
-  }
-
-  return {
-    version: 1,
-    activeLayerId: layerId,
-    layers: [{
-      id: layerId,
-      name: "Layer 1",
-      visible: true,
-      locked: false,
-      opacity: 1,
-      blendMode: "normal" as const,
-      mask: null,
-      effects: [],
-      kind: "bitmap" as const,
-      width: 1024,
-      height: 1024,
-      bitmap: {
-        assetId: null,
-      },
-    }],
-  };
-}
-
 const costumeWithUrlValidator = v.object({
   _id: v.id("costumeLibrary"),
   _creationTime: v.number(),
@@ -98,7 +44,7 @@ export const list = query({
           storageId: item.storageId,
           thumbnail: item.thumbnail,
           bounds: item.bounds,
-          document: buildMigratedDocument(item as { document?: unknown; vectorDocument?: { fabricJson?: string } | null }),
+          document: item.document,
           mimeType: item.mimeType,
           size: item.size,
           createdAt: item.createdAt,
@@ -164,37 +110,5 @@ export const rename = mutation({
     }
     await ctx.db.patch(args.id, { name: args.name });
     return null;
-  },
-});
-
-export const migrateLegacyDocuments = mutation({
-  args: {},
-  returns: v.object({
-    migrated: v.number(),
-    skipped: v.number(),
-  }),
-  handler: async (ctx) => {
-    const ownerUserId = await requireAuthenticatedUserId(ctx);
-    const items = await ctx.db
-      .query("costumeLibrary")
-      .withIndex("by_ownerUserId_and_createdAt", (q) => q.eq("ownerUserId", ownerUserId))
-      .collect();
-
-    let migrated = 0;
-    let skipped = 0;
-
-    for (const item of items) {
-      if ((item as { document?: unknown }).document) {
-        skipped += 1;
-        continue;
-      }
-
-      await ctx.db.patch(item._id, {
-        document: buildMigratedDocument(item as { document?: unknown; vectorDocument?: { fabricJson?: string } | null }),
-      });
-      migrated += 1;
-    }
-
-    return { migrated, skipped };
   },
 });

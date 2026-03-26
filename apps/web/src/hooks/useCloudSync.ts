@@ -202,8 +202,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const upsertProjectAssetMutation = useMutation(api.projectAssets.upsert);
   const listRevisionsMutation = useMutation(api.projects.listRevisionsForSync);
   const removeProjectMutation = useMutation(api.projects.remove);
-  const migrateCostumeLibraryMutation = useMutation(api.costumeLibrary.migrateLegacyDocuments);
-  const migrateObjectLibraryMutation = useMutation(api.objectLibrary.migrateLegacyDocuments);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const cloudProjects = useQuery(
     api.projects.listFull,
@@ -213,7 +211,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const isSyncingRef = useRef(false);
   const currentProjectIdRef = useRef(currentProjectId);
   const currentProjectRef = useRef<Project | null>(currentProject);
-  const hasRunLibraryMigrationRef = useRef(false);
 
   currentProjectIdRef.current = currentProjectId;
   currentProjectRef.current = currentProject;
@@ -818,26 +815,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       void syncAllFromCloud();
     }
   }, [enabled, syncOnMount, cloudProjects, syncAllFromCloud]);
-
-  useEffect(() => {
-    if (!enabled || !isConvexAuthenticated || hasRunLibraryMigrationRef.current) {
-      return;
-    }
-
-    hasRunLibraryMigrationRef.current = true;
-    void Promise.all([
-      migrateCostumeLibraryMutation({}),
-      migrateObjectLibraryMutation({}),
-    ]).catch((error) => {
-      hasRunLibraryMigrationRef.current = false;
-      console.error('[CloudSync] Failed to migrate legacy library costume documents:', error);
-    });
-  }, [
-    enabled,
-    isConvexAuthenticated,
-    migrateCostumeLibraryMutation,
-    migrateObjectLibraryMutation,
-  ]);
 
   // Debounced background sync from the latest in-memory edit timestamp.
   useEffect(() => {
