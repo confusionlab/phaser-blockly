@@ -84,6 +84,44 @@ async function readLayerPanelWidth(page: Page): Promise<number> {
   });
 }
 
+async function readActiveCostumeLayerOpacity(page: Page): Promise<number | null> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project as {
+      scenes?: Array<{
+        objects?: Array<{
+          currentCostumeIndex?: number;
+          costumes?: Array<{
+            document?: {
+              activeLayerId?: string;
+              layers?: Array<{ id: string; opacity?: number }>;
+            };
+          }>;
+        }>;
+      }>;
+    } | null;
+
+    const object = project?.scenes?.[0]?.objects?.[0];
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const activeLayerId = costume?.document?.activeLayerId;
+    const activeLayer = costume?.document?.layers?.find((layer) => layer.id === activeLayerId);
+    return typeof activeLayer?.opacity === 'number' ? activeLayer.opacity : null;
+  });
+}
+
+async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
+  await page.locator('[data-testid="layer-row"][aria-pressed="true"]').click({ button: 'right' });
+  const slider = page.getByLabel('Layer opacity');
+  await expect(slider).toBeVisible();
+  await slider.evaluate((input, nextValue) => {
+    const slider = input as HTMLInputElement;
+    slider.value = String(nextValue);
+    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  }, opacityPercent);
+  await page.keyboard.press('Escape');
+}
+
 async function startLayerSelectionObserver(page: Page): Promise<void> {
   await page.evaluate(() => {
     const readButtons = () => Array.from(
@@ -393,5 +431,23 @@ test.describe('Costume editor tools', () => {
     await page.keyboard.press('Escape');
     await canvasSurface.hover();
     await expect.poll(async () => readLayerPanelWidth(page)).toBeLessThan(120);
+  });
+
+  test('layer opacity slider commits endpoint values on release', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await setActiveLayerOpacity(page, 60);
+    await expect.poll(async () => readActiveCostumeLayerOpacity(page)).toBe(0.6);
+
+    await setActiveLayerOpacity(page, 100);
+    await expect.poll(async () => readActiveCostumeLayerOpacity(page)).toBe(1);
+
+    await setActiveLayerOpacity(page, 35);
+    await expect.poll(async () => readActiveCostumeLayerOpacity(page)).toBe(0.35);
+
+    await setActiveLayerOpacity(page, 0);
+    await expect.poll(async () => readActiveCostumeLayerOpacity(page)).toBe(0);
   });
 });

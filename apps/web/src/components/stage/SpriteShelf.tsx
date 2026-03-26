@@ -68,6 +68,7 @@ import {
   duplicateSceneObjectsWithHistory,
 } from '@/lib/editor/objectCommands';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
+import { layerRowHighlightClassNames } from '@/lib/ui/layerRowHighlightTokens';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -1454,9 +1455,9 @@ export function SpriteShelf() {
       && nextVisibleItem?.type === 'object'
       && selectedIdsInScene.includes(nextVisibleItem.id);
     const rowHighlightClass = isSelected
-      ? 'bg-[#C6E2FF] dark:bg-[#4A5879]'
+      ? layerRowHighlightClassNames.selected
       : isDropOn
-        ? 'bg-[#EEF7FF] dark:bg-[#183955]'
+        ? layerRowHighlightClassNames.dropTarget
         : '';
     const rowShapeClass = isSelected || isDropOn
       ? connectsToPrevious
@@ -1470,7 +1471,7 @@ export function SpriteShelf() {
     const rowPaddingClass = 'px-1 pt-1';
     const rowContentPaddingClass = 'py-1';
     const indentDepth = Math.max(0, level - 1);
-    const rowHoverClass = 'bg-[#E7EAEE] dark:bg-[#434A58]';
+    const rowHoverClass = layerRowHighlightClassNames.hover;
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1769,7 +1770,7 @@ export function SpriteShelf() {
                     sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'after'
                       ? 'border-b-2 border-primary'
                       : ''
-                  } focus:bg-[#E7EAEE] dark:focus:bg-[#434A58]`}
+                  } ${layerRowHighlightClassNames.hoverFocus}`}
                 >
                   <GripVertical className="size-3 text-muted-foreground/70" />
                   <span className="flex-1">{scene.name}</span>

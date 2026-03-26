@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from 'lucide-react';
+import { layerRowHighlightClassNames } from '@/lib/ui/layerRowHighlightTokens';
 import { cn } from '@/lib/utils';
 
 const DEFAULT_LAYER_THUMBNAIL_SIZE = 44;
@@ -66,6 +67,14 @@ function getTransparentDragImage(): HTMLCanvasElement | null {
   canvas.height = 1;
   transparentDragImage = canvas;
   return transparentDragImage;
+}
+
+function clampOpacityPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 export interface LayerPanelLayerShape {
@@ -127,8 +136,10 @@ function LayerThumbnailPreview({
       data-testid={thumbnailTestId}
       draggable={false}
       className={cn(
-        'relative z-10 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[14px]',
-        isActive ? 'bg-transparent shadow-none' : 'bg-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]',
+        'relative z-10 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[14px] transition-[background-color,box-shadow] duration-150 ease-out',
+        isActive
+          ? 'bg-transparent shadow-none'
+          : 'bg-background shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] group-hover/layer-row:bg-transparent group-hover/layer-row:shadow-none dark:bg-muted/45 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] dark:group-hover/layer-row:bg-transparent dark:group-hover/layer-row:shadow-none',
         !layer.visible && 'opacity-70',
       )}
     >
@@ -173,7 +184,7 @@ export const LayerPanel = memo(({
   onOpacityChange,
   onMergeDown,
   onRasterizeLayer,
-  mergeActionLabel = 'Merge',
+  mergeActionLabel = 'Merge Down',
   showMergeAction = false,
   showRasterizeAction = false,
   thumbnailTestId = 'layer-thumbnail',
@@ -291,7 +302,7 @@ export const LayerPanel = memo(({
     }
 
     setContextMenuPosition({ left: contextMenu.x, top: contextMenu.y });
-    setContextMenuOpacityDraft(Math.round(contextMenuLayer.opacity * 100));
+    setContextMenuOpacityDraft(clampOpacityPercent(contextMenuLayer.opacity * 100));
   }, [contextMenu, contextMenuLayer]);
 
   useEffect(() => {
@@ -369,16 +380,21 @@ export const LayerPanel = memo(({
     setRenameDraft('');
   };
 
-  const commitContextMenuOpacity = () => {
+  const commitContextMenuOpacity = (nextDraft = contextMenuOpacityDraft) => {
     if (!contextMenuLayer) {
       return;
     }
 
-    if (Math.round(contextMenuLayer.opacity * 100) === contextMenuOpacityDraft) {
+    const clampedDraft = clampOpacityPercent(nextDraft);
+    if (clampedDraft !== contextMenuOpacityDraft) {
+      setContextMenuOpacityDraft(clampedDraft);
+    }
+
+    if (clampOpacityPercent(contextMenuLayer.opacity * 100) === clampedDraft) {
       return;
     }
 
-    onOpacityChange(contextMenuLayer.id, contextMenuOpacityDraft / 100);
+    onOpacityChange(contextMenuLayer.id, clampedDraft / 100);
   };
 
   const clearLayerDragState = () => {
@@ -471,7 +487,7 @@ export const LayerPanel = memo(({
               : 'w-20 bg-transparent shadow-none',
           )}
         >
-          <div className="flex flex-col items-start gap-3">
+          <div className="flex flex-col items-start gap-1">
             <div className="relative flex w-11 justify-center group/layer-add">
               {canAddLayer ? (
                 <DropdownMenu>
@@ -556,14 +572,25 @@ export const LayerPanel = memo(({
                       onDrop={handleLayerDrop}
                       onDragEnd={clearLayerDragState}
                       className={cn(
-                        'relative flex w-full items-center gap-3 text-left outline-none',
+                        'group/layer-row relative flex w-full items-center gap-3 text-left outline-none',
                         isDragged && 'opacity-45',
                       )}
                     >
+                      {!isActive ? (
+                        <div
+                          aria-hidden="true"
+                          className={cn(
+                            'pointer-events-none absolute inset-0 rounded-[14px] opacity-0 transition-opacity group-hover/layer-row:opacity-100',
+                            layerRowHighlightClassNames.hover,
+                          )}
+                        />
+                      ) : null}
+
                       <div
                         aria-hidden="true"
                         className={cn(
-                          'pointer-events-none absolute inset-y-0 left-0 rounded-[14px] bg-[#C6E2FF] transition-[width,opacity] duration-200 ease-out dark:bg-[#4A5879]',
+                          'pointer-events-none absolute inset-y-0 left-0 rounded-[14px] transition-[width,opacity] duration-200 ease-out',
+                          layerRowHighlightClassNames.selected,
                           isActive ? 'opacity-100' : 'opacity-0',
                         )}
                         style={{ width: activeHighlightWidth }}
@@ -670,10 +697,10 @@ export const LayerPanel = memo(({
                 max={100}
                 step={1}
                 value={contextMenuOpacityDraft}
-                onChange={(event) => setContextMenuOpacityDraft(Number(event.target.value))}
-                onPointerUp={commitContextMenuOpacity}
-                onKeyUp={commitContextMenuOpacity}
-                onBlur={commitContextMenuOpacity}
+                onChange={(event) => setContextMenuOpacityDraft(clampOpacityPercent(Number(event.target.value)))}
+                onPointerUp={(event) => commitContextMenuOpacity(Number(event.currentTarget.value))}
+                onKeyUp={(event) => commitContextMenuOpacity(Number(event.currentTarget.value))}
+                onBlur={(event) => commitContextMenuOpacity(Number(event.currentTarget.value))}
                 className="w-full accent-primary"
               />
             </div>
