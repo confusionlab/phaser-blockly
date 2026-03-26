@@ -151,7 +151,6 @@ export const SoundList = memo(({
   return (
     <>
       <AssetSidebar
-        title="Sounds"
         actions={
           <>
             <Button

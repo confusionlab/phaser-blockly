@@ -1,6 +1,7 @@
 import type { MouseEventHandler, ReactNode } from 'react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
 
 interface AssetSidebarTileProps {
@@ -33,8 +34,8 @@ export function AssetSidebarTile({
       onClick={onClick}
       onContextMenu={onContextMenu}
       className={cn(
-        'group relative cursor-pointer p-1.5 transition-colors',
-        selected ? 'bg-primary/5 ring-2 ring-primary' : 'hover:bg-accent',
+        'group relative cursor-pointer border-transparent p-1.5 shadow-none transition-colors',
+        selected ? selectionSurfaceClassNames.selected : selectionSurfaceClassNames.interactiveHover,
         cardClassName,
       )}
     >
@@ -47,7 +48,7 @@ export function AssetSidebarTile({
         onChange={(event) => onNameChange(event.target.value)}
         onClick={(event) => event.stopPropagation()}
         className={cn(
-          'mt-0.5 h-4 w-full border-none bg-transparent px-1 text-center text-[10px] leading-none shadow-none focus:bg-background',
+          'mt-0.5 h-4 w-full border-none bg-transparent px-1 text-center text-[10px] leading-none shadow-none focus:bg-transparent focus-visible:bg-transparent dark:bg-transparent dark:focus:bg-transparent dark:focus-visible:bg-transparent',
           inputClassName,
         )}
       />

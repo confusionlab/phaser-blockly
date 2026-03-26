@@ -49,16 +49,18 @@ import type { Variable } from '@/types';
 // Register Blockly toolbox plugins once at module load.
 registerPinnableContinuousToolbox();
 
-const DEFAULT_SCROLLBAR_SIZE = 12;
+const DEFAULT_SCROLLBAR_SIZE = 4;
+const BLOCKLY_SCROLLBAR_THICKNESS_OFFSET = 5;
 
-function getGlobalScrollbarSize(): number {
+function getBlocklyScrollbarThickness(): number {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return DEFAULT_SCROLLBAR_SIZE;
+    return DEFAULT_SCROLLBAR_SIZE + BLOCKLY_SCROLLBAR_THICKNESS_OFFSET;
   }
 
   const rawValue = window.getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-size').trim();
   const parsedValue = Number.parseFloat(rawValue);
-  return Number.isFinite(parsedValue) ? parsedValue : DEFAULT_SCROLLBAR_SIZE;
+  const visualSize = Number.isFinite(parsedValue) ? parsedValue : DEFAULT_SCROLLBAR_SIZE;
+  return visualSize + BLOCKLY_SCROLLBAR_THICKNESS_OFFSET;
 }
 
 // Global clipboard for cross-object block copying
@@ -777,7 +779,7 @@ export function BlocklyEditor() {
   useEffect(() => {
     if (!containerRef.current) return;
     setInitialPinnableToolboxPinnedState(toolboxPinnedRef.current);
-    Blockly.Scrollbar.scrollbarThickness = getGlobalScrollbarSize();
+    Blockly.Scrollbar.scrollbarThickness = getBlocklyScrollbarThickness();
 
     if (loadingResetTimeoutRef.current !== null) {
       window.clearTimeout(loadingResetTimeoutRef.current);

@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from 'lucide-react';
-import { layerRowHighlightClassNames } from '@/lib/ui/layerRowHighlightTokens';
+import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
 
 const DEFAULT_LAYER_THUMBNAIL_SIZE = 44;
@@ -581,7 +581,7 @@ export const LayerPanel = memo(({
                           aria-hidden="true"
                           className={cn(
                             'pointer-events-none absolute inset-0 rounded-[14px] opacity-0 transition-opacity group-hover/layer-row:opacity-100',
-                            layerRowHighlightClassNames.hover,
+                            selectionSurfaceClassNames.hover,
                           )}
                         />
                       ) : null}
@@ -590,7 +590,7 @@ export const LayerPanel = memo(({
                         aria-hidden="true"
                         className={cn(
                           'pointer-events-none absolute inset-y-0 left-0 rounded-[14px] transition-[width,opacity] duration-200 ease-out',
-                          layerRowHighlightClassNames.selected,
+                          selectionSurfaceClassNames.selected,
                           isActive ? 'opacity-100' : 'opacity-0',
                         )}
                         style={{ width: activeHighlightWidth }}

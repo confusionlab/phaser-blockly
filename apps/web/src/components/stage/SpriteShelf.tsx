@@ -68,7 +68,7 @@ import {
   duplicateSceneObjectsWithHistory,
 } from '@/lib/editor/objectCommands';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
-import { layerRowHighlightClassNames } from '@/lib/ui/layerRowHighlightTokens';
+import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -1455,9 +1455,9 @@ export function SpriteShelf() {
       && nextVisibleItem?.type === 'object'
       && selectedIdsInScene.includes(nextVisibleItem.id);
     const rowHighlightClass = isSelected
-      ? layerRowHighlightClassNames.selected
+      ? selectionSurfaceClassNames.selected
       : isDropOn
-        ? layerRowHighlightClassNames.dropTarget
+        ? selectionSurfaceClassNames.dropTarget
         : '';
     const rowShapeClass = isSelected || isDropOn
       ? connectsToPrevious
@@ -1471,7 +1471,7 @@ export function SpriteShelf() {
     const rowPaddingClass = 'px-1 pt-1';
     const rowContentPaddingClass = 'py-1';
     const indentDepth = Math.max(0, level - 1);
-    const rowHoverClass = layerRowHighlightClassNames.hover;
+    const rowHoverClass = selectionSurfaceClassNames.hover;
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1688,7 +1688,7 @@ export function SpriteShelf() {
                 <div
                   key={scene.id}
                   className={`flex items-center gap-2 rounded-sm px-2 py-1.5 ${
-                    scene.id === selectedSceneId ? 'bg-accent' : ''
+                    scene.id === selectedSceneId ? selectionSurfaceClassNames.selected : ''
                   }`}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
@@ -1761,7 +1761,7 @@ export function SpriteShelf() {
                     });
                   }}
                   className={`group flex items-center justify-between ${
-                    scene.id === selectedSceneId ? 'bg-accent' : ''
+                    scene.id === selectedSceneId ? selectionSurfaceClassNames.selected : ''
                   } ${
                     sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'before'
                       ? 'border-t-2 border-primary'
@@ -1770,7 +1770,7 @@ export function SpriteShelf() {
                     sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'after'
                       ? 'border-b-2 border-primary'
                       : ''
-                  } ${layerRowHighlightClassNames.hoverFocus}`}
+                  } ${selectionSurfaceClassNames.hoverFocus}`}
                 >
                   <GripVertical className="size-3 text-muted-foreground/70" />
                   <span className="flex-1">{scene.name}</span>

@@ -319,7 +319,6 @@ export const CostumeList = memo(({
   return (
     <>
       <AssetSidebar
-        title="Costumes"
         actions={
           <>
             <Button
