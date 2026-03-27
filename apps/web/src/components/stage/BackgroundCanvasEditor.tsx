@@ -43,6 +43,7 @@ import {
   createEmptyChunkCanvas,
   estimateSerializedChunkBytes,
   evaluateChunkLimits,
+  getChunkCanvasContext,
   isChunkCanvasTransparent,
   normalizeChunkDataMap,
   type ChunkDataMap,
@@ -480,7 +481,7 @@ async function dataUrlToCanvas(dataUrl: string, chunkSize: number): Promise<HTML
   try {
     const image = await loadImageSource(dataUrl);
     const canvas = createEmptyChunkCanvas(chunkSize);
-    const ctx = canvas.getContext('2d');
+    const ctx = getChunkCanvasContext(canvas);
     if (!ctx) return null;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
@@ -1705,7 +1706,7 @@ export function BackgroundCanvasEditor() {
         continue;
       }
 
-      const ctx = chunkCanvas.getContext('2d');
+      const ctx = getChunkCanvasContext(chunkCanvas);
       if (!ctx) continue;
       ctx.save();
       ctx.globalCompositeOperation = composite;
@@ -1779,7 +1780,7 @@ export function BackgroundCanvasEditor() {
         continue;
       }
 
-      const ctx = chunkCanvas.getContext('2d');
+      const ctx = getChunkCanvasContext(chunkCanvas);
       if (!ctx) continue;
       ctx.save();
       ctx.globalCompositeOperation = getCompositeOperation(brushTool);
@@ -2000,7 +2001,7 @@ export function BackgroundCanvasEditor() {
         continue;
       }
 
-      const ctx = chunkCanvas.getContext('2d');
+      const ctx = getChunkCanvasContext(chunkCanvas);
       if (!ctx) {
         continue;
       }
@@ -2112,7 +2113,7 @@ export function BackgroundCanvasEditor() {
       rememberChunkBeforeMutation(session, key);
 
       const nextCanvas = createEmptyChunkCanvas(chunkSize);
-      const nextCtx = nextCanvas.getContext('2d');
+      const nextCtx = getChunkCanvasContext(nextCanvas);
       if (!nextCtx) {
         continue;
       }

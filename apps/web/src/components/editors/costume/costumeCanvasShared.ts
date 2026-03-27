@@ -1,5 +1,6 @@
 import { Point } from 'fabric';
 import type { CostumeEditorMode } from '@/types';
+import { readCanvasImageData } from '@/utils/canvas2d';
 import type { VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 
@@ -100,12 +101,10 @@ export function extractVisibleCanvasRegion(
   sourceCanvas: HTMLCanvasElement,
   alphaThreshold = 0,
 ): { bounds: { x: number; y: number; width: number; height: number }; canvas: HTMLCanvasElement } | null {
-  const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
-  if (!sourceCtx) {
+  const imageData = readCanvasImageData(sourceCanvas);
+  if (!imageData) {
     return null;
   }
-
-  const imageData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
   let minX = sourceCanvas.width;
   let minY = sourceCanvas.height;
   let maxX = -1;

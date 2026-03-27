@@ -1,4 +1,5 @@
 import type { CostumeAssetFrame, CostumeBounds, CostumeDocument, CostumeLayer } from '@/types';
+import { getCanvas2dContext } from '@/utils/canvas2d';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { COSTUME_CANVAS_SIZE, isBitmapCostumeLayer, isVectorCostumeLayer } from './costumeDocument';
 import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
@@ -334,7 +335,7 @@ export async function renderCostumeLayerStackToCanvas(layers: CostumeLayer[]): P
   const canvas = document.createElement('canvas');
   canvas.width = COSTUME_CANVAS_SIZE;
   canvas.height = COSTUME_CANVAS_SIZE;
-  const ctx = canvas.getContext('2d');
+  const ctx = getCanvas2dContext(canvas, 'readback');
   if (!ctx) {
     return canvas;
   }

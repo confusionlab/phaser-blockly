@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { ActiveSelection, Point, util, type Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
+import { getCanvas2dContext } from '@/utils/canvas2d';
 import {
   createEmptyCostumeVectorDocument,
   resolveActiveCostumeLayerEditorLoadState,
@@ -150,7 +151,7 @@ export function useCostumeCanvasCommandController({
     const composed = document.createElement('canvas');
     composed.width = CANVAS_SIZE;
     composed.height = CANVAS_SIZE;
-    const composedCtx = composed.getContext('2d');
+    const composedCtx = getCanvas2dContext(composed, 'readback');
     if (!composedCtx) {
       return baseCanvas ?? composed;
     }

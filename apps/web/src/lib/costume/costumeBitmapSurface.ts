@@ -1,4 +1,5 @@
 import type { CostumeAssetFrame } from '@/types';
+import { getCanvas2dContext } from '@/utils/canvas2d';
 import { getCostumeAssetFrameSignature } from './costumeAssetFrame';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
@@ -51,7 +52,7 @@ export function createBitmapSurfaceCanvas(
     const canvas = document.createElement('canvas');
     canvas.width = assetFrame.sourceWidth;
     canvas.height = assetFrame.sourceHeight;
-    const ctx = canvas.getContext('2d');
+    const ctx = getCanvas2dContext(canvas, 'readback');
     if (!ctx) {
       return canvas;
     }
@@ -72,7 +73,7 @@ export function createBitmapSurfaceCanvas(
   const canvas = document.createElement('canvas');
   canvas.width = COSTUME_CANVAS_SIZE;
   canvas.height = COSTUME_CANVAS_SIZE;
-  const ctx = canvas.getContext('2d');
+  const ctx = getCanvas2dContext(canvas, 'readback');
   if (!ctx) {
     return canvas;
   }

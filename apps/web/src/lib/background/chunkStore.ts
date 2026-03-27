@@ -1,4 +1,5 @@
 import type { BackgroundConfig, BackgroundDocument } from '@/types';
+import { getCanvas2dContext, readCanvasImageData } from '@/utils/canvas2d';
 import { DEFAULT_BACKGROUND_CHUNK_SIZE } from './chunkMath';
 
 export const DEFAULT_BACKGROUND_SOFT_CHUNK_LIMIT = 400;
@@ -44,13 +45,16 @@ export function canCreateChunk(
   return !evaluateChunkLimits(chunkCount, softLimit, hardLimit).hardExceeded;
 }
 
+export function getChunkCanvasContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  return getCanvas2dContext(canvas, 'readback');
+}
+
 export function isChunkCanvasTransparent(canvas: HTMLCanvasElement): boolean {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return true;
   const { width, height } = canvas;
   if (width === 0 || height === 0) return true;
 
-  const imageData = ctx.getImageData(0, 0, width, height).data;
+  const imageData = readCanvasImageData(canvas)?.data;
+  if (!imageData) return true;
   for (let i = 3; i < imageData.length; i += 4) {
     if (imageData[i] !== 0) {
       return false;

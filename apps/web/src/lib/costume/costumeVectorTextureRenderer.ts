@@ -14,6 +14,7 @@ import {
   type VectorStrokeBrushRenderStyle,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
+import { getCanvas2dContext } from '@/utils/canvas2d';
 import { COSTUME_CANVAS_SIZE } from './costumeDocument';
 
 const MAX_VECTOR_STROKE_BRUSH_RENDER_CACHE_ENTRIES = 256;
@@ -895,7 +896,7 @@ export async function renderVectorLayerDocumentToCanvas(
     const snapshotCanvas = document.createElement('canvas');
     snapshotCanvas.width = canvasSize;
     snapshotCanvas.height = canvasSize;
-    const snapshotCtx = snapshotCanvas.getContext('2d');
+    const snapshotCtx = getCanvas2dContext(snapshotCanvas, 'readback');
     if (!snapshotCtx) {
       return null;
     }

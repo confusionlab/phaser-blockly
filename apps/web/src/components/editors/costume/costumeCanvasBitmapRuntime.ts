@@ -3,6 +3,7 @@ import {
   getBitmapBrushStampDefinition,
   type BitmapBrushKind,
 } from '@/lib/background/brushCore';
+import { getCanvas2dContext } from '@/utils/canvas2d';
 
 export interface BitmapStampBrushCommitPayload {
   alphaThreshold: number;
@@ -236,7 +237,7 @@ export class BitmapStampBrush extends BaseBrush {
     strokeCanvas.width = width;
     strokeCanvas.height = height;
     this.strokeCanvas = strokeCanvas;
-    this.strokeCtx = strokeCanvas.getContext('2d');
+    this.strokeCtx = getCanvas2dContext(strokeCanvas, 'readback');
     this.lastPoint = null;
     this.accumulatedDistance = 0;
   }

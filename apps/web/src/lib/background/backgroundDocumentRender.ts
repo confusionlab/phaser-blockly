@@ -7,6 +7,7 @@ import type {
 } from '@/types';
 import {
   createEmptyChunkCanvas,
+  getChunkCanvasContext,
   isChunkCanvasTransparent,
   normalizeChunkDataMap,
   type ChunkDataMap,
@@ -230,7 +231,7 @@ export async function renderBackgroundVectorLayerToChunkData(
 
         const chunkBounds = getChunkWorldBounds(parsedKey.cx, parsedKey.cy, chunkSize);
         const snapshotCanvas = createEmptyChunkCanvas(chunkSize);
-        const snapshotCtx = snapshotCanvas.getContext('2d');
+        const snapshotCtx = getChunkCanvasContext(snapshotCanvas);
         if (!snapshotCtx) {
           continue;
         }
@@ -424,7 +425,7 @@ export async function flattenBackgroundDocumentToChunkData(
       }
 
       const composedCanvas = createEmptyChunkCanvas(document.chunkSize);
-      const composedCtx = composedCanvas.getContext('2d');
+      const composedCtx = getChunkCanvasContext(composedCanvas);
       if (!composedCtx) {
         continue;
       }

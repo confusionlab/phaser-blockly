@@ -1,5 +1,6 @@
 import type { CostumeBounds } from '@/types';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
+import { getCanvas2dContext, readCanvasImageData } from './canvas2d';
 
 /**
  * Calculate the bounding box of visible (non-transparent) pixels in an image.
@@ -12,7 +13,7 @@ export async function calculateVisibleBounds(dataUrl: string): Promise<CostumeBo
       const canvas = document.createElement('canvas');
       canvas.width = img.width;
       canvas.height = img.height;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const ctx = getCanvas2dContext(canvas, 'readback');
       if (!ctx) {
         resolve(null);
         return;
@@ -72,9 +73,7 @@ export function calculateBoundsFromImageData(imageData: ImageData, alphaThreshol
  * Calculate bounds from a canvas element directly.
  */
 export function calculateBoundsFromCanvas(canvas: HTMLCanvasElement, alphaThreshold: number = 10): CostumeBounds | null {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return null;
-
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const imageData = readCanvasImageData(canvas);
+  if (!imageData) return null;
   return calculateBoundsFromImageData(imageData, alphaThreshold);
 }
