@@ -20,6 +20,11 @@ const projectSummaryValidator = v.object({
   storageId: v.optional(v.id("_storage")),
   dataSizeBytes: v.optional(v.number()),
   assetIds: v.optional(managedAssetIdsValidator),
+  revisionCount: v.optional(v.number()),
+  latestRevisionId: v.optional(v.string()),
+  latestRevisionCreatedAt: v.optional(v.number()),
+  latestRevisionContentHash: v.optional(v.string()),
+  revisionsUpdatedAt: v.optional(v.number()),
 });
 
 const fullProjectValidator = v.object({
@@ -33,6 +38,11 @@ const fullProjectValidator = v.object({
   storageId: v.optional(v.id("_storage")),
   dataSizeBytes: v.optional(v.number()),
   assetIds: v.optional(managedAssetIdsValidator),
+  revisionCount: v.optional(v.number()),
+  latestRevisionId: v.optional(v.string()),
+  latestRevisionCreatedAt: v.optional(v.number()),
+  latestRevisionContentHash: v.optional(v.string()),
+  revisionsUpdatedAt: v.optional(v.number()),
   data: v.optional(v.string()),
   dataUrl: v.union(v.string(), v.null()),
 });
@@ -83,6 +93,7 @@ const revisionReasonValidator = v.union(
 const revisionSyncMetadataValidator = v.object({
   revisionId: v.string(),
   createdAt: v.number(),
+  updatedAt: v.number(),
   schemaVersion: v.optional(schemaVersionValidator),
   contentHash: v.optional(v.string()),
   assetIds: v.optional(managedAssetIdsValidator),
@@ -103,6 +114,7 @@ const revisionSyncPayloadValidator = v.object({
   dataSizeBytes: v.optional(v.number()),
   contentHash: v.optional(v.string()),
   createdAt: v.number(),
+  updatedAt: v.optional(v.number()),
   schemaVersion: v.optional(schemaVersionValidator),
   appVersion: v.optional(v.string()),
   reason: revisionReasonValidator,
@@ -122,6 +134,7 @@ const revisionSummaryValidator = v.object({
   dataSizeBytes: v.optional(v.number()),
   contentHash: v.string(),
   createdAt: v.number(),
+  updatedAt: v.number(),
   schemaVersion: v.number(),
   appVersion: v.optional(v.string()),
   reason: revisionReasonValidator,
@@ -131,6 +144,14 @@ const revisionSummaryValidator = v.object({
   assetIds: v.optional(managedAssetIdsValidator),
   data: v.optional(v.string()),
   dataUrl: v.union(v.string(), v.null()),
+});
+
+const revisionSyncStateValidator = v.object({
+  revisionCount: v.number(),
+  latestRevisionId: v.union(v.string(), v.null()),
+  latestRevisionCreatedAt: v.union(v.number(), v.null()),
+  latestRevisionContentHash: v.union(v.string(), v.null()),
+  revisionsUpdatedAt: v.union(v.number(), v.null()),
 });
 
 const projectSyncPlanValidator = v.object({
@@ -165,6 +186,11 @@ type StoredProject = {
   appVersion?: string;
   contentHash?: string;
   assetIds?: string[];
+  revisionCount?: number;
+  latestRevisionId?: string;
+  latestRevisionCreatedAt?: number;
+  latestRevisionContentHash?: string;
+  revisionsUpdatedAt?: number;
 };
 
 type SyncPayload = {
@@ -210,6 +236,7 @@ type StoredProjectRevision = {
   dataSizeBytes?: number;
   contentHash: string;
   createdAt: number;
+  updatedAt?: number;
   schemaVersion: number | string;
   appVersion?: string;
   reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
@@ -231,6 +258,7 @@ type RevisionSyncPayload = {
   dataSizeBytes?: number;
   contentHash?: string;
   createdAt: number;
+  updatedAt?: number;
   schemaVersion?: number | string;
   appVersion?: string;
   reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
@@ -243,12 +271,21 @@ type RevisionSyncPayload = {
 type RevisionSyncMetadata = {
   revisionId: string;
   createdAt: number;
+  updatedAt: number;
   schemaVersion?: number | string;
   contentHash?: string;
   assetIds?: string[];
   reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
   checkpointName?: string;
   isCheckpoint: boolean;
+};
+
+type RevisionSyncState = {
+  revisionCount: number;
+  latestRevisionId: string | null;
+  latestRevisionCreatedAt: number | null;
+  latestRevisionContentHash: string | null;
+  revisionsUpdatedAt: number | null;
 };
 
 const FNV64_OFFSET = 0xcbf29ce484222325n;
@@ -295,6 +332,65 @@ function normalizeManagedAssetIds(assetIds: unknown): string[] {
     assetIds.filter((assetId): assetId is string => typeof assetId === "string" && MANAGED_ASSET_ID_PATTERN.test(assetId.trim()))
       .map((assetId) => assetId.trim()),
   ));
+}
+
+function createEmptyRevisionSyncState(): RevisionSyncState {
+  return {
+    revisionCount: 0,
+    latestRevisionId: null,
+    latestRevisionCreatedAt: null,
+    latestRevisionContentHash: null,
+    revisionsUpdatedAt: null,
+  };
+}
+
+function getRevisionUpdatedAt(revision: Pick<StoredProjectRevision, "createdAt"> & Partial<Pick<StoredProjectRevision, "updatedAt">>): number {
+  return typeof revision.updatedAt === "number" && Number.isFinite(revision.updatedAt)
+    ? revision.updatedAt
+    : revision.createdAt;
+}
+
+function buildRevisionMetadataFingerprint(
+  revision: Pick<RevisionSyncMetadata, "contentHash" | "checkpointName" | "reason" | "isCheckpoint" | "assetIds">,
+): string {
+  return [
+    normalizeContentHash(revision.contentHash) ?? "",
+    revision.checkpointName ?? "",
+    revision.reason,
+    revision.isCheckpoint ? "1" : "0",
+    Array.from(new Set(normalizeManagedAssetIds(revision.assetIds))).sort().join(","),
+  ].join("|");
+}
+
+function revisionSyncStateFromProject(project: StoredProject | null): RevisionSyncState {
+  if (!project) {
+    return createEmptyRevisionSyncState();
+  }
+
+  return {
+    revisionCount:
+      typeof project.revisionCount === "number" && Number.isFinite(project.revisionCount)
+        ? Math.max(0, Math.floor(project.revisionCount))
+        : 0,
+    latestRevisionId: typeof project.latestRevisionId === "string" ? project.latestRevisionId : null,
+    latestRevisionCreatedAt:
+      typeof project.latestRevisionCreatedAt === "number" && Number.isFinite(project.latestRevisionCreatedAt)
+        ? project.latestRevisionCreatedAt
+        : null,
+    latestRevisionContentHash: normalizeContentHash(project.latestRevisionContentHash) ?? null,
+    revisionsUpdatedAt:
+      typeof project.revisionsUpdatedAt === "number" && Number.isFinite(project.revisionsUpdatedAt)
+        ? project.revisionsUpdatedAt
+        : null,
+  };
+}
+
+function hasStoredRevisionSyncState(project: StoredProject | null): boolean {
+  return !!project && (
+    typeof project.revisionCount === "number"
+    || typeof project.revisionsUpdatedAt === "number"
+    || typeof project.latestRevisionId === "string"
+  );
 }
 
 export function selectUncoveredAssetIdsForSync(
@@ -423,7 +519,9 @@ export function planProjectSyncAction(
 export function planRevisionSyncAction(
   existing: {
     createdAt: number;
+    updatedAt?: number;
     contentHash: string;
+    assetIds?: string[];
     checkpointName?: string;
     reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
     isCheckpoint: boolean;
@@ -437,24 +535,47 @@ export function planRevisionSyncAction(
     };
   }
 
-  const shouldUpload =
-    incoming.createdAt > existing.createdAt ||
-    (incoming.createdAt === existing.createdAt &&
-      ((normalizeContentHash(incoming.contentHash) ?? "") !== existing.contentHash ||
-        incoming.checkpointName !== existing.checkpointName ||
-        incoming.reason !== existing.reason ||
-        incoming.isCheckpoint !== existing.isCheckpoint));
-
-  if (shouldUpload) {
+  const existingUpdatedAt = getRevisionUpdatedAt(existing);
+  if (incoming.updatedAt > existingUpdatedAt) {
     return {
       action: "upload",
       reason: "local revision is newer",
     };
   }
 
+  if (incoming.updatedAt < existingUpdatedAt) {
+    return {
+      action: "skip",
+      reason: "cloud revision is newer",
+    };
+  }
+
+  const existingFingerprint = buildRevisionMetadataFingerprint({
+    contentHash: existing.contentHash,
+    checkpointName: existing.checkpointName,
+    reason: existing.reason,
+    isCheckpoint: existing.isCheckpoint,
+    assetIds: existing.assetIds ?? [],
+  });
+  const incomingFingerprint = buildRevisionMetadataFingerprint(incoming);
+
+  if (incomingFingerprint === existingFingerprint) {
+    return {
+      action: "skip",
+      reason: "cloud revision is newer or equal",
+    };
+  }
+
+  if (incomingFingerprint > existingFingerprint) {
+    return {
+      action: "upload",
+      reason: "same timestamp conflict resolved in favor of local revision metadata",
+    };
+  }
+
   return {
     action: "skip",
-    reason: "cloud revision is newer or equal",
+    reason: "same timestamp conflict resolved in favor of cloud revision metadata",
   };
 }
 
@@ -527,11 +648,107 @@ async function listRevisionsByProjectLocalId(
     .collect()) as StoredProjectRevision[];
 }
 
+function summarizeRevisionSyncState(revisions: readonly StoredProjectRevision[]): RevisionSyncState {
+  if (revisions.length === 0) {
+    return createEmptyRevisionSyncState();
+  }
+
+  let latest = revisions[0];
+  let revisionsUpdatedAt = getRevisionUpdatedAt(revisions[0]);
+  for (const revision of revisions) {
+    if (revision.createdAt > latest.createdAt) {
+      latest = revision;
+    }
+    const candidateUpdatedAt = getRevisionUpdatedAt(revision);
+    if (candidateUpdatedAt > revisionsUpdatedAt) {
+      revisionsUpdatedAt = candidateUpdatedAt;
+    }
+  }
+
+  return {
+    revisionCount: revisions.length,
+    latestRevisionId: latest.revisionId,
+    latestRevisionCreatedAt: latest.createdAt,
+    latestRevisionContentHash: latest.contentHash,
+    revisionsUpdatedAt,
+  };
+}
+
 async function listRevisionsForOwner(ctx: any, ownerUserId: string): Promise<StoredProjectRevision[]> {
   return (await ctx.db
     .query("projectRevisions")
     .withIndex("by_ownerUserId_and_createdAt", (q: any) => q.eq("ownerUserId", ownerUserId))
     .collect()) as StoredProjectRevision[];
+}
+
+function withRevisionSyncState<T extends Record<string, unknown>>(target: T, revisionState: RevisionSyncState): T & {
+  revisionCount: number;
+  latestRevisionId?: string;
+  latestRevisionCreatedAt?: number;
+  latestRevisionContentHash?: string;
+  revisionsUpdatedAt?: number;
+} {
+  const next = {
+    ...target,
+    revisionCount: revisionState.revisionCount,
+  } as T & {
+    revisionCount: number;
+    latestRevisionId?: string;
+    latestRevisionCreatedAt?: number;
+    latestRevisionContentHash?: string;
+    revisionsUpdatedAt?: number;
+  };
+
+  if (revisionState.latestRevisionId !== null) {
+    next.latestRevisionId = revisionState.latestRevisionId;
+  }
+  if (revisionState.latestRevisionCreatedAt !== null) {
+    next.latestRevisionCreatedAt = revisionState.latestRevisionCreatedAt;
+  }
+  if (revisionState.latestRevisionContentHash !== null) {
+    next.latestRevisionContentHash = revisionState.latestRevisionContentHash;
+  }
+  if (revisionState.revisionsUpdatedAt !== null) {
+    next.revisionsUpdatedAt = revisionState.revisionsUpdatedAt;
+  }
+
+  return next;
+}
+
+function projectWithRevisionSyncState(project: StoredProject, revisionState: RevisionSyncState): StoredProject {
+  const nextProject = withRevisionSyncState({
+    ...project,
+  }, revisionState) as StoredProject;
+
+  if (revisionState.latestRevisionId === null) {
+    delete nextProject.latestRevisionId;
+    delete nextProject.latestRevisionCreatedAt;
+    delete nextProject.latestRevisionContentHash;
+  }
+  if (revisionState.revisionsUpdatedAt === null) {
+    delete nextProject.revisionsUpdatedAt;
+  }
+
+  return nextProject;
+}
+
+async function syncStoredProjectRevisionState(
+  ctx: any,
+  ownerUserId: string,
+  projectLocalId: string,
+): Promise<RevisionSyncState> {
+  const projects = await listProjectsByLocalId(ctx, ownerUserId, projectLocalId);
+  const project = pickCanonicalProject(projects);
+  const revisionState = summarizeRevisionSyncState(
+    await listRevisionsByProjectLocalId(ctx, ownerUserId, projectLocalId),
+  );
+
+  if (!project) {
+    return revisionState;
+  }
+
+  await ctx.db.replace(project._id, projectWithRevisionSyncState(project, revisionState));
+  return revisionState;
 }
 
 type StoredProjectAsset = {
@@ -685,6 +902,7 @@ async function garbageCollectProjectAssets(
 }
 
 function toSummary(project: StoredProject) {
+  const revisionState = revisionSyncStateFromProject(project);
   const summary: {
     _id: Id<"projects">;
     localId: string;
@@ -697,6 +915,11 @@ function toSummary(project: StoredProject) {
     storageId?: Id<"_storage">;
     dataSizeBytes?: number;
     assetIds?: string[];
+    revisionCount?: number;
+    latestRevisionId?: string;
+    latestRevisionCreatedAt?: number;
+    latestRevisionContentHash?: string;
+    revisionsUpdatedAt?: number;
   } = {
     _id: project._id,
     localId: project.localId,
@@ -704,6 +927,7 @@ function toSummary(project: StoredProject) {
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     schemaVersion: normalizeSchemaVersion(project.schemaVersion),
+    revisionCount: revisionState.revisionCount,
   };
 
   if (project.appVersion !== undefined) {
@@ -721,11 +945,24 @@ function toSummary(project: StoredProject) {
   if (project.assetIds !== undefined) {
     summary.assetIds = normalizeManagedAssetIds(project.assetIds);
   }
+  if (revisionState.latestRevisionId !== null) {
+    summary.latestRevisionId = revisionState.latestRevisionId;
+  }
+  if (revisionState.latestRevisionCreatedAt !== null) {
+    summary.latestRevisionCreatedAt = revisionState.latestRevisionCreatedAt;
+  }
+  if (revisionState.latestRevisionContentHash !== null) {
+    summary.latestRevisionContentHash = revisionState.latestRevisionContentHash;
+  }
+  if (revisionState.revisionsUpdatedAt !== null) {
+    summary.revisionsUpdatedAt = revisionState.revisionsUpdatedAt;
+  }
 
   return summary;
 }
 
 async function toFull(ctx: any, project: StoredProject) {
+  const revisionState = revisionSyncStateFromProject(project);
   const result: {
     localId: string;
     name: string;
@@ -737,6 +974,11 @@ async function toFull(ctx: any, project: StoredProject) {
     storageId?: Id<"_storage">;
     dataSizeBytes?: number;
     assetIds?: string[];
+    revisionCount?: number;
+    latestRevisionId?: string;
+    latestRevisionCreatedAt?: number;
+    latestRevisionContentHash?: string;
+    revisionsUpdatedAt?: number;
     data?: string;
     dataUrl: string | null;
   } = {
@@ -745,6 +987,7 @@ async function toFull(ctx: any, project: StoredProject) {
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     schemaVersion: normalizeSchemaVersion(project.schemaVersion),
+    revisionCount: revisionState.revisionCount,
     dataUrl: project.storageId ? await ctx.storage.getUrl(project.storageId) : null,
   };
 
@@ -762,6 +1005,18 @@ async function toFull(ctx: any, project: StoredProject) {
   }
   if (project.assetIds !== undefined) {
     result.assetIds = normalizeManagedAssetIds(project.assetIds);
+  }
+  if (revisionState.latestRevisionId !== null) {
+    result.latestRevisionId = revisionState.latestRevisionId;
+  }
+  if (revisionState.latestRevisionCreatedAt !== null) {
+    result.latestRevisionCreatedAt = revisionState.latestRevisionCreatedAt;
+  }
+  if (revisionState.latestRevisionContentHash !== null) {
+    result.latestRevisionContentHash = revisionState.latestRevisionContentHash;
+  }
+  if (revisionState.revisionsUpdatedAt !== null) {
+    result.revisionsUpdatedAt = revisionState.revisionsUpdatedAt;
   }
   if (project.data !== undefined) {
     result.data = project.data;
@@ -781,6 +1036,7 @@ async function toRevisionFull(ctx: any, revision: StoredProjectRevision) {
     dataSizeBytes?: number;
     contentHash: string;
     createdAt: number;
+    updatedAt: number;
     schemaVersion: number;
     appVersion?: string;
     reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
@@ -798,6 +1054,7 @@ async function toRevisionFull(ctx: any, revision: StoredProjectRevision) {
     baseRevisionId: revision.baseRevisionId,
     contentHash: revision.contentHash,
     createdAt: revision.createdAt,
+    updatedAt: getRevisionUpdatedAt(revision),
     schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
     reason: revision.reason,
     isCheckpoint: revision.isCheckpoint,
@@ -843,6 +1100,7 @@ function toRevisionDocument(ownerUserId: string, payload: RevisionSyncPayload) {
     dataSizeBytes?: number;
     contentHash: string;
     createdAt: number;
+    updatedAt: number;
     schemaVersion: number;
     appVersion?: string;
     reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
@@ -859,6 +1117,7 @@ function toRevisionDocument(ownerUserId: string, payload: RevisionSyncPayload) {
     baseRevisionId: payload.baseRevisionId,
     contentHash,
     createdAt: payload.createdAt,
+    updatedAt: typeof payload.updatedAt === "number" && Number.isFinite(payload.updatedAt) ? payload.updatedAt : payload.createdAt,
     schemaVersion: normalizeSchemaVersion(payload.schemaVersion),
     reason: payload.reason,
     checkpointName: payload.checkpointName,
@@ -910,12 +1169,17 @@ async function upsertProjectRevision(ctx: any, ownerUserId: string, payload: Rev
   }
 
   const shouldUpdate =
-    nextDocument.createdAt > existing.createdAt ||
-    (nextDocument.createdAt === existing.createdAt &&
-      (nextDocument.contentHash !== existing.contentHash ||
-        nextDocument.checkpointName !== existing.checkpointName ||
-        nextDocument.reason !== existing.reason ||
-        nextDocument.isCheckpoint !== existing.isCheckpoint));
+    planRevisionSyncAction(existing, {
+      revisionId: nextDocument.revisionId,
+      createdAt: nextDocument.createdAt,
+      updatedAt: nextDocument.updatedAt,
+      schemaVersion: nextDocument.schemaVersion,
+      contentHash: nextDocument.contentHash,
+      assetIds: nextDocument.assetIds,
+      reason: nextDocument.reason,
+      checkpointName: nextDocument.checkpointName,
+      isCheckpoint: nextDocument.isCheckpoint,
+    }).action === "upload";
 
   if (!shouldUpdate) {
     const uploadedStorageId =
@@ -948,6 +1212,7 @@ function toProjectDocument(
   payload: SyncPayload,
   normalizedSchemaVersion: number,
   createdAt: number,
+  revisionState: RevisionSyncState = createEmptyRevisionSyncState(),
 ) {
   const contentHash =
     normalizeContentHash(payload.contentHash) ??
@@ -964,6 +1229,11 @@ function toProjectDocument(
     contentHash?: string;
     dataSizeBytes?: number;
     assetIds?: string[];
+    revisionCount: number;
+    latestRevisionId?: string;
+    latestRevisionCreatedAt?: number;
+    latestRevisionContentHash?: string;
+    revisionsUpdatedAt?: number;
   } = {
     ownerUserId,
     localId: payload.localId,
@@ -971,6 +1241,7 @@ function toProjectDocument(
     createdAt,
     updatedAt: payload.updatedAt,
     schemaVersion: normalizedSchemaVersion,
+    revisionCount: revisionState.revisionCount,
   };
 
   if (payload.appVersion !== undefined) {
@@ -984,6 +1255,18 @@ function toProjectDocument(
   }
   if (payload.assetIds !== undefined) {
     base.assetIds = normalizeManagedAssetIds(payload.assetIds);
+  }
+  if (revisionState.latestRevisionId !== null) {
+    base.latestRevisionId = revisionState.latestRevisionId;
+  }
+  if (revisionState.latestRevisionCreatedAt !== null) {
+    base.latestRevisionCreatedAt = revisionState.latestRevisionCreatedAt;
+  }
+  if (revisionState.latestRevisionContentHash !== null) {
+    base.latestRevisionContentHash = revisionState.latestRevisionContentHash;
+  }
+  if (revisionState.revisionsUpdatedAt !== null) {
+    base.revisionsUpdatedAt = revisionState.revisionsUpdatedAt;
   }
 
   if (payload.storageId) {
@@ -1090,7 +1373,13 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
         : undefined
       : existing.storageId;
 
-    const nextDocument = toProjectDocument(ownerUserId, payload, incomingSchemaVersion, existing.createdAt);
+    const nextDocument = toProjectDocument(
+      ownerUserId,
+      payload,
+      incomingSchemaVersion,
+      existing.createdAt,
+      revisionSyncStateFromProject(existing),
+    );
     await ctx.db.replace(existing._id, nextDocument);
 
     await cleanupStorage(ctx, staleStorageId);
@@ -1102,7 +1391,13 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
     return { action: "updated" as const, id: existing._id };
   }
 
-  const nextDocument = toProjectDocument(ownerUserId, payload, incomingSchemaVersion, payload.createdAt);
+  const nextDocument = toProjectDocument(
+    ownerUserId,
+    payload,
+    incomingSchemaVersion,
+    payload.createdAt,
+    createEmptyRevisionSyncState(),
+  );
   const id = await ctx.db.insert("projects", nextDocument);
   await garbageCollectProjectAssets(ctx, ownerUserId, normalizeManagedAssetIds(nextDocument.assetIds));
 
@@ -1158,6 +1453,26 @@ export const getFullProject = query({
   },
 });
 
+export const getRevisionSyncState = query({
+  args: { localId: v.string() },
+  returns: revisionSyncStateValidator,
+  handler: async (ctx, args) => {
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const projects = await listProjectsByLocalId(ctx, ownerUserId, args.localId);
+    const project = pickCanonicalProject(projects);
+    if (!project) {
+      return createEmptyRevisionSyncState();
+    }
+    if (hasStoredRevisionSyncState(project)) {
+      return revisionSyncStateFromProject(project);
+    }
+
+    return summarizeRevisionSyncState(
+      await listRevisionsByProjectLocalId(ctx, ownerUserId, args.localId),
+    );
+  },
+});
+
 export const planSync = query({
   args: {
     project: syncMetadataValidator,
@@ -1178,7 +1493,7 @@ export const planSync = query({
     }
 
     const revisionsById = new Map<string, StoredProjectRevision>();
-    if (project) {
+    if (project && args.revisions.length > 0) {
       const existingRevisions = await listRevisionsByProjectLocalId(ctx, ownerUserId, args.project.localId);
       for (const revision of existingRevisions) {
         revisionsById.set(revision.revisionId, revision);
@@ -1299,6 +1614,7 @@ export const syncRevisions = mutation({
     let updated = 0;
     let skipped = 0;
     const checkedProjects = new Map<string, boolean>();
+    const touchedProjectIds = new Set<string>();
 
     for (const revision of args.revisions as RevisionSyncPayload[]) {
       const projectLocalId = revision.localProjectId;
@@ -1316,11 +1632,17 @@ export const syncRevisions = mutation({
       const result = await upsertProjectRevision(ctx, ownerUserId, revision);
       if (result.action === "created") {
         created += 1;
+        touchedProjectIds.add(projectLocalId);
       } else if (result.action === "updated") {
         updated += 1;
+        touchedProjectIds.add(projectLocalId);
       } else {
         skipped += 1;
       }
+    }
+
+    for (const projectLocalId of touchedProjectIds) {
+      await syncStoredProjectRevisionState(ctx, ownerUserId, projectLocalId);
     }
 
     return { created, updated, skipped };
@@ -1409,24 +1731,6 @@ export const listRevisions = query({
   },
 });
 
-export const listRevisionsForSync = mutation({
-  args: {
-    localId: v.string(),
-  },
-  returns: v.array(revisionSummaryValidator),
-  handler: async (ctx, args) => {
-    const ownerUserId = await requireAuthenticatedUserId(ctx);
-    const projects = await listProjectsByLocalId(ctx, ownerUserId, args.localId);
-    if (projects.length === 0) {
-      return [];
-    }
-
-    const revisions = await listRevisionsByProjectLocalId(ctx, ownerUserId, args.localId);
-    const sorted = revisions.slice().sort((a, b) => b.createdAt - a.createdAt);
-    return await Promise.all(sorted.map((revision) => toRevisionFull(ctx, revision)));
-  },
-});
-
 export const renameCheckpoint = mutation({
   args: {
     localId: v.string(),
@@ -1454,7 +1758,9 @@ export const renameCheckpoint = mutation({
 
     await ctx.db.patch(revision._id, {
       checkpointName: normalizedName,
+      updatedAt: Date.now(),
     });
+    await syncStoredProjectRevisionState(ctx, ownerUserId, args.localId);
     return { updated: true };
   },
 });
@@ -1481,6 +1787,7 @@ export const deleteRevision = mutation({
       await cleanupStorage(ctx, revision.storageId);
     }
     await ctx.db.delete(revision._id);
+    await syncStoredProjectRevisionState(ctx, ownerUserId, args.localId);
     return { deleted: true };
   },
 });

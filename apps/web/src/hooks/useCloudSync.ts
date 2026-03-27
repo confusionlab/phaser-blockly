@@ -10,6 +10,7 @@ import {
   getManagedAssetMetadata,
   getProjectForSync,
   getProjectRevisionSyncMetadata,
+  getProjectRevisionSyncState,
   getProjectRevisionsForSync,
   getProjectSyncMetadata,
   hasManagedAsset,
@@ -20,6 +21,7 @@ import {
   type ManagedAssetKind,
   type ProjectRevisionSyncMetadata,
   type ProjectRevisionSyncPayload,
+  type ProjectRevisionSyncState,
   type ProjectSyncMetadata,
   type ProjectSyncPayload,
 } from '@/db/database';
@@ -57,6 +59,11 @@ interface CloudProjectRecord {
   storageId?: Id<'_storage'>;
   dataSizeBytes?: number;
   assetIds?: string[];
+  revisionCount?: number;
+  latestRevisionId?: string | null;
+  latestRevisionCreatedAt?: number | null;
+  latestRevisionContentHash?: string | null;
+  revisionsUpdatedAt?: number | null;
   data?: string;
   dataUrl: string | null;
 }
@@ -71,6 +78,7 @@ interface CloudRevisionRecord {
   dataSizeBytes?: number;
   contentHash: string;
   createdAt: number;
+  updatedAt: number;
   schemaVersion: number | string;
   appVersion?: string;
   reason: 'manual_checkpoint' | 'auto_checkpoint' | 'import' | 'restore' | 'edit_revision';
@@ -104,6 +112,14 @@ interface CloudManagedAssetRecord {
   size: number;
   storageId: Id<'_storage'>;
   url: string | null;
+}
+
+interface CloudRevisionSyncState {
+  revisionCount: number;
+  latestRevisionId: string | null;
+  latestRevisionCreatedAt: number | null;
+  latestRevisionContentHash: string | null;
+  revisionsUpdatedAt: number | null;
 }
 
 interface CloudProjectSyncPlan {
@@ -223,6 +239,46 @@ function collectPlannedMissingAssetIds(
   return hasPlannedAssetIds ? Array.from(assetIds) : undefined;
 }
 
+function buildProjectSyncSignature(project: Pick<ProjectSyncMetadata, 'updatedAt' | 'schemaVersion' | 'contentHash'>): string {
+  return `${project.updatedAt}:${project.schemaVersion}:${normalizeContentHash(project.contentHash)}`;
+}
+
+function buildRevisionSyncSignature(revisionState: Pick<
+  ProjectRevisionSyncState | CloudRevisionSyncState,
+  'revisionCount' | 'latestRevisionId' | 'latestRevisionCreatedAt' | 'latestRevisionContentHash' | 'revisionsUpdatedAt'
+>): string {
+  return [
+    revisionState.revisionCount,
+    revisionState.latestRevisionId ?? '',
+    revisionState.latestRevisionCreatedAt ?? '',
+    normalizeContentHash(revisionState.latestRevisionContentHash ?? undefined),
+    revisionState.revisionsUpdatedAt ?? '',
+  ].join(':');
+}
+
+function revisionSyncStatesMatch(
+  localState: ProjectRevisionSyncState,
+  cloudState: CloudRevisionSyncState,
+): boolean {
+  return buildRevisionSyncSignature(localState) === buildRevisionSyncSignature(cloudState);
+}
+
+function isCloudRevisionStateLikelyAhead(
+  localState: ProjectRevisionSyncState,
+  cloudState: CloudRevisionSyncState,
+): boolean {
+  const localUpdatedAt = localState.revisionsUpdatedAt ?? Number.NEGATIVE_INFINITY;
+  const cloudUpdatedAt = cloudState.revisionsUpdatedAt ?? Number.NEGATIVE_INFINITY;
+  if (cloudUpdatedAt > localUpdatedAt) {
+    return true;
+  }
+  if (cloudUpdatedAt < localUpdatedAt) {
+    return false;
+  }
+
+  return cloudState.revisionCount > localState.revisionCount;
+}
+
 function toProjectSyncMetadata(payload: Pick<ProjectSyncPayload, 'localId' | 'updatedAt' | 'schemaVersion' | 'contentHash' | 'assetIds'>): ProjectSyncMetadata {
   return {
     localId: payload.localId,
@@ -282,7 +338,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const syncSingleMutation = useMutation(api.projects.sync);
   const syncRevisionsMutation = useMutation(api.projects.syncRevisions);
   const upsertProjectAssetMutation = useMutation(api.projectAssets.upsert);
-  const listRevisionsMutation = useMutation(api.projects.listRevisionsForSync);
   const removeProjectMutation = useMutation(api.projects.remove);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const cloudProjects = useQuery(
@@ -293,9 +348,58 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const isSyncingRef = useRef(false);
   const currentProjectIdRef = useRef(currentProjectId);
   const currentProjectRef = useRef<Project | null>(currentProject);
+  const inFlightProjectSyncRef = useRef(new Map<string, { signature: string; promise: Promise<boolean> }>());
+  const payloadCacheRef = useRef(new Map<string, { updatedAt: number; payload: ProjectSyncPayload }>());
 
   currentProjectIdRef.current = currentProjectId;
   currentProjectRef.current = currentProject;
+
+  const getCachedProjectSyncPayload = useCallback(async (project: Project): Promise<ProjectSyncPayload> => {
+    const cached = payloadCacheRef.current.get(project.id);
+    const updatedAt = project.updatedAt.getTime();
+    if (cached && cached.updatedAt === updatedAt) {
+      return cached.payload;
+    }
+
+    const payload = await createProjectSyncPayload(project);
+    payloadCacheRef.current.set(project.id, {
+      updatedAt,
+      payload,
+    });
+    return payload;
+  }, []);
+
+  const getCloudRevisionSyncState = useCallback(async (projectId: string): Promise<CloudRevisionSyncState> => {
+    return (await convex.query(api.projects.getRevisionSyncState, {
+      localId: projectId,
+    })) as CloudRevisionSyncState;
+  }, [convex]);
+
+  const runProjectSyncSerially = useCallback(
+    async (projectId: string, signature: string, executor: () => Promise<boolean>): Promise<boolean> => {
+      const existing = inFlightProjectSyncRef.current.get(projectId);
+      if (existing) {
+        if (existing.signature === signature) {
+          return await existing.promise;
+        }
+        try {
+          await existing.promise;
+        } catch {
+          // Let the newer sync attempt continue after the previous one settles.
+        }
+      }
+
+      const promise = executor().finally(() => {
+        const current = inFlightProjectSyncRef.current.get(projectId);
+        if (current?.promise === promise) {
+          inFlightProjectSyncRef.current.delete(projectId);
+        }
+      });
+      inFlightProjectSyncRef.current.set(projectId, { signature, promise });
+      return await promise;
+    },
+    [],
+  );
 
   const getCloudProjectsFull = useCallback(async (): Promise<CloudProjectRecord[]> => {
     if (cloudProjects) {
@@ -305,6 +409,12 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     const fetchedProjects = await convex.query(api.projects.listFull, {});
     return dedupeCloudProjectsByLocalId(fetchedProjects as CloudProjectRecord[]);
   }, [cloudProjects, convex]);
+
+  const getCloudRevisions = useCallback(async (localId: string): Promise<CloudRevisionRecord[]> => {
+    return (await convex.query(api.projects.listRevisions, {
+      localId,
+    })) as CloudRevisionRecord[];
+  }, [convex]);
 
   const toStorageSyncPayload = useCallback(
     async (payload: ProjectSyncPayload): Promise<StorageSyncPayload> => {
@@ -375,6 +485,55 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       })) as CloudProjectSyncPlan;
     },
     [convex],
+  );
+
+  const prepareRevisionSyncPlan = useCallback(
+    async (
+      projectMetadata: ProjectSyncMetadata,
+      localRevisionState: ProjectRevisionSyncState,
+    ): Promise<{
+      revisionIdsToUpload: string[];
+      plannedMissingAssetIds?: string[];
+      shouldPullFromCloud: boolean;
+    }> => {
+      const cloudRevisionState = await getCloudRevisionSyncState(projectMetadata.localId);
+      if (revisionSyncStatesMatch(localRevisionState, cloudRevisionState)) {
+        return { revisionIdsToUpload: [], shouldPullFromCloud: false };
+      }
+
+      if (localRevisionState.revisionCount === 0) {
+        return {
+          revisionIdsToUpload: [],
+          shouldPullFromCloud: cloudRevisionState.revisionCount > 0,
+        };
+      }
+
+      const revisionMetadata = await getProjectRevisionSyncMetadata(projectMetadata.localId);
+      if (revisionMetadata.length === 0) {
+        return {
+          revisionIdsToUpload: [],
+          shouldPullFromCloud: cloudRevisionState.revisionCount > 0,
+        };
+      }
+
+      const fullPlan = await planSync(projectMetadata, revisionMetadata);
+      const revisionIdsToUpload = fullPlan.revisions
+        .filter((revision) => revision.action === 'upload')
+        .map((revision) => revision.revisionId);
+      const shouldPullFromCloud =
+        isCloudRevisionStateLikelyAhead(localRevisionState, cloudRevisionState)
+        || revisionIdsToUpload.length === 0;
+
+      return {
+        revisionIdsToUpload,
+        plannedMissingAssetIds: collectPlannedMissingAssetIds(fullPlan, {
+          revisionIds: revisionIdsToUpload,
+          includeProject: false,
+        }),
+        shouldPullFromCloud,
+      };
+    },
+    [getCloudRevisionSyncState, planSync],
   );
 
   const ensureAssetRefsInCloud = useCallback(
@@ -583,24 +742,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     [enabled, ensureAssetIdsInCloud, planSync, syncSingleMutation, toStorageSyncPayload],
   );
 
-  const syncProjectObjectToCloud = useCallback(
-    async (project: Project) => {
-      if (!enabled) {
-        return;
-      }
-      try {
-        const payload = await createProjectSyncPayload(project);
-        const outcome = await syncPayloadToCloud(payload);
-        if (outcome === 'pull') {
-          console.warn(`[CloudSync] Skipped pushing in-memory project "${project.id}" because cloud has a newer copy.`);
-        }
-      } catch (error) {
-        console.error('[CloudSync] Failed to sync in-memory project:', error);
-      }
-    },
-    [enabled, syncPayloadToCloud],
-  );
-
   const syncProjectRevisionsToCloud = useCallback(
     async (projectId: string, revisionIds?: readonly string[], plannedMissingAssetIds?: readonly string[]) => {
       if (!enabled) {
@@ -639,6 +780,96 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       return await syncRevisionsMutation({ revisions: storageRevisions });
     },
     [enabled, ensureRevisionAssetsInCloud, syncRevisionsMutation, toStorageRevisionPayload],
+  );
+
+  const hydrateCloudRevisions = useCallback(
+    async (revisionRecords: CloudRevisionRecord[]): Promise<ProjectRevisionSyncPayload[]> => {
+      return await Promise.all(
+        revisionRecords.map(async (revision) => {
+          const revisionData = await loadRevisionDataFromCloud(revision);
+          const assetIds = revision.assetIds
+            ?? collectPersistedAssetRefsFromSerializedProjectData(revisionData).map((assetRef) => assetRef.assetId);
+          return {
+            localProjectId: revision.projectLocalId,
+            revisionId: revision.revisionId,
+            parentRevisionId: revision.parentRevisionId,
+            kind: revision.kind,
+            baseRevisionId: revision.baseRevisionId,
+            data: revisionData,
+            assetIds,
+            contentHash: revision.contentHash,
+            createdAt: revision.createdAt,
+            updatedAt: revision.updatedAt,
+            schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
+            appVersion: revision.appVersion,
+            reason: revision.reason,
+            checkpointName: revision.checkpointName,
+            isCheckpoint: revision.isCheckpoint,
+            restoredFromRevisionId: revision.restoredFromRevisionId,
+          } satisfies ProjectRevisionSyncPayload;
+        }),
+      );
+    },
+    [],
+  );
+
+  const reconcileProjectRevisionsFromCloud = useCallback(async (localId: string) => {
+    const revisionRecords = await getCloudRevisions(localId);
+    const hydratedRevisions = await hydrateCloudRevisions(revisionRecords);
+    const revisionAssetIds = Array.from(new Set(hydratedRevisions.flatMap((revision) => revision.assetIds)));
+    await ensureAssetIdsAvailableLocally(revisionAssetIds);
+    return await syncProjectRevisionsFromCloud(localId, hydratedRevisions);
+  }, [ensureAssetIdsAvailableLocally, getCloudRevisions, hydrateCloudRevisions]);
+
+  const syncProjectObjectToCloud = useCallback(
+    async (project: Project) => {
+      if (!enabled) {
+        return;
+      }
+      try {
+        const [payload, localRevisionState] = await Promise.all([
+          getCachedProjectSyncPayload(project),
+          getProjectRevisionSyncState(project.id),
+        ]);
+        const projectMetadata = toProjectSyncMetadata(payload);
+        const signature = `${buildProjectSyncSignature(projectMetadata)}|${buildRevisionSyncSignature(localRevisionState)}`;
+
+        await runProjectSyncSerially(project.id, signature, async () => {
+          const outcome = await syncPayloadToCloud(payload);
+          if (outcome === 'pull') {
+            console.warn(`[CloudSync] Skipped pushing in-memory project "${project.id}" because cloud has a newer copy.`);
+            return false;
+          }
+          if (outcome === 'error') {
+            return false;
+          }
+
+          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+            projectMetadata,
+            localRevisionState,
+          );
+          if (revisionIdsToUpload.length > 0) {
+            await syncProjectRevisionsToCloud(project.id, revisionIdsToUpload, plannedMissingAssetIds);
+          }
+          if (shouldPullFromCloud) {
+            await reconcileProjectRevisionsFromCloud(project.id);
+          }
+
+          return true;
+        });
+      } catch (error) {
+        console.error('[CloudSync] Failed to sync in-memory project:', error);
+      }
+    },
+    [
+      enabled,
+      getCachedProjectSyncPayload,
+      prepareRevisionSyncPlan,
+      reconcileProjectRevisionsFromCloud,
+      runProjectSyncSerially,
+      syncPayloadToCloud,
+      syncProjectRevisionsToCloud,
+    ],
   );
 
   const runWithRetry = useCallback(async (fn: () => Promise<void>, attempts = 2) => {
@@ -695,31 +926,8 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     try {
       const data = await loadProjectDataFromCloud(candidate);
       try {
-        const revisionRecords = await listRevisionsMutation({ localId });
-        const hydratedRevisions = await Promise.all(
-          (revisionRecords as CloudRevisionRecord[]).map(async (revision) => {
-            const revisionData = await loadRevisionDataFromCloud(revision);
-            const assetIds = revision.assetIds
-              ?? collectPersistedAssetRefsFromSerializedProjectData(revisionData).map((assetRef) => assetRef.assetId);
-            return {
-              localProjectId: revision.projectLocalId,
-              revisionId: revision.revisionId,
-              parentRevisionId: revision.parentRevisionId,
-              kind: revision.kind,
-              baseRevisionId: revision.baseRevisionId,
-              data: revisionData,
-              assetIds,
-              contentHash: revision.contentHash,
-              createdAt: revision.createdAt,
-              schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
-              appVersion: revision.appVersion,
-              reason: revision.reason,
-              checkpointName: revision.checkpointName,
-              isCheckpoint: revision.isCheckpoint,
-                restoredFromRevisionId: revision.restoredFromRevisionId,
-              } satisfies ProjectRevisionSyncPayload;
-            }),
-        );
+        const revisionRecords = await getCloudRevisions(localId);
+        const hydratedRevisions = await hydrateCloudRevisions(revisionRecords);
         await ensureCloudProjectAssetsLocally(data, hydratedRevisions);
         await syncProjectFromCloud({
           ...candidate,
@@ -739,7 +947,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       console.error(`[CloudSync] Failed to reconcile local project "${localId}" from cloud:`, error);
       return false;
     }
-  }, [cloudProjects, convex, ensureCloudProjectAssetsLocally, listRevisionsMutation]);
+  }, [cloudProjects, convex, ensureCloudProjectAssetsLocally, getCloudRevisions, hydrateCloudRevisions]);
 
   // Sync all local projects to cloud
   const syncAllToCloud = useCallback(async () => {
@@ -757,30 +965,29 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
       const storageProjects: StorageSyncPayload[] = [];
       const revisionUploadIdsByProject = new Map<string, string[]>();
-      const syncPlansByProject = new Map<string, CloudProjectSyncPlan>();
+      const revisionAssetIdsByProject = new Map<string, string[] | undefined>();
+      const revisionPullsByProject = new Map<string, boolean>();
 
       for (const localProject of localProjects) {
         try {
-          const revisionMetadata = await getProjectRevisionSyncMetadata(localProject.localId);
-          const plan = await planSync(
-            toProjectSyncMetadata(localProject),
-            revisionMetadata,
-          );
-          syncPlansByProject.set(localProject.localId, plan);
+          const projectMetadata = toProjectSyncMetadata(localProject);
+          const localRevisionState = await getProjectRevisionSyncState(localProject.localId);
 
-          revisionUploadIdsByProject.set(
-            localProject.localId,
-            plan.revisions
-              .filter((revision) => revision.action === 'upload')
-              .map((revision) => revision.revisionId),
-          );
-
+          const plan = await planSync(projectMetadata, []);
           if (plan.project.action === 'pull') {
             console.warn(
               `[CloudSync] Skipping "${localProject.localId}" because cloud has a newer copy (${plan.project.reason}).`,
             );
             continue;
           }
+
+          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+            projectMetadata,
+            localRevisionState,
+          );
+          revisionUploadIdsByProject.set(localProject.localId, revisionIdsToUpload);
+          revisionAssetIdsByProject.set(localProject.localId, plannedMissingAssetIds);
+          revisionPullsByProject.set(localProject.localId, shouldPullFromCloud);
 
           if (plan.project.action !== 'upload') {
             continue;
@@ -804,15 +1011,18 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
       for (const localProject of localProjects) {
         try {
+          if (!revisionUploadIdsByProject.has(localProject.localId)) {
+            continue;
+          }
           const revisionIds = revisionUploadIdsByProject.get(localProject.localId);
-          const plan = syncPlansByProject.get(localProject.localId);
           await syncProjectRevisionsToCloud(
             localProject.localId,
             revisionIds,
-            plan
-              ? collectPlannedMissingAssetIds(plan, { revisionIds, includeProject: false })
-              : undefined,
+            revisionAssetIdsByProject.get(localProject.localId),
           );
+          if (revisionPullsByProject.get(localProject.localId)) {
+            await reconcileProjectRevisionsFromCloud(localProject.localId);
+          }
         } catch (error) {
           console.error(`[CloudSync] Failed to sync revisions for "${localProject.localId}":`, error);
         }
@@ -822,61 +1032,76 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [enabled, ensureAssetIdsInCloud, planSync, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
+  }, [enabled, ensureAssetIdsInCloud, planSync, prepareRevisionSyncPlan, reconcileProjectRevisionsFromCloud, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
 
   // Sync a single project to cloud by local project id
   const syncProjectToCloud = useCallback(
     async (projectId: string) => {
       if (!enabled) return false;
       try {
-        const [projectMetadata, revisionMetadata] = await Promise.all([
+        const [projectMetadata, localRevisionState] = await Promise.all([
           getProjectSyncMetadata(projectId),
-          getProjectRevisionSyncMetadata(projectId),
+          getProjectRevisionSyncState(projectId),
         ]);
         if (!projectMetadata) return false;
+        const signature = `${buildProjectSyncSignature(projectMetadata)}|${buildRevisionSyncSignature(localRevisionState)}`;
 
-        const plan = await planSync(projectMetadata, revisionMetadata);
-        const revisionIdsToUpload = plan.revisions
-          .filter((revision) => revision.action === 'upload')
-          .map((revision) => revision.revisionId);
-
-        if (plan.project.action === 'pull') {
-          await reconcileProjectFromCloud(projectId);
-          return false;
-        }
-
-        if (plan.project.action === 'upload') {
-          const project = await getProjectForSync(projectId);
-          if (!project) return false;
-
-          console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
-          await ensureAssetIdsInCloud(
-            plan.project.missingAssetIds ?? project.assetIds,
-            { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
-          );
-          const storagePayload = await toStorageSyncPayload(project);
-          const result = await syncSingleMutation(storagePayload);
-          console.log('[CloudSync] Single sync result:', result);
-
-          if (result.action === 'skipped' && result.reason !== 'already in sync') {
+        return await runProjectSyncSerially(projectId, signature, async () => {
+          const projectPlanResult = await planSync(projectMetadata, []);
+          if (projectPlanResult.project.action === 'pull') {
             await reconcileProjectFromCloud(projectId);
             return false;
           }
-        }
 
-        await syncProjectRevisionsToCloud(
-          projectId,
-          revisionIdsToUpload,
-          collectPlannedMissingAssetIds(plan, { revisionIds: revisionIdsToUpload, includeProject: false }),
-        );
+          if (projectPlanResult.project.action === 'upload') {
+            const project = await getProjectForSync(projectId);
+            if (!project) return false;
 
-        return true;
+            console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
+            await ensureAssetIdsInCloud(
+              projectPlanResult.project.missingAssetIds ?? project.assetIds,
+              { skipRemoteCheck: projectPlanResult.project.missingAssetIds !== undefined },
+            );
+            const storagePayload = await toStorageSyncPayload(project);
+            const result = await syncSingleMutation(storagePayload);
+            console.log('[CloudSync] Single sync result:', result);
+
+            if (result.action === 'skipped' && result.reason !== 'already in sync') {
+              await reconcileProjectFromCloud(projectId);
+              return false;
+            }
+          }
+
+          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+            projectMetadata,
+            localRevisionState,
+          );
+          if (revisionIdsToUpload.length > 0) {
+            await syncProjectRevisionsToCloud(projectId, revisionIdsToUpload, plannedMissingAssetIds);
+          }
+          if (shouldPullFromCloud) {
+            await reconcileProjectRevisionsFromCloud(projectId);
+          }
+
+          return true;
+        });
       } catch (error) {
         console.error('[CloudSync] Failed to sync project:', error);
         return false;
       }
     },
-    [enabled, ensureAssetIdsInCloud, planSync, reconcileProjectFromCloud, syncProjectRevisionsToCloud, syncSingleMutation, toStorageSyncPayload],
+    [
+      enabled,
+      ensureAssetIdsInCloud,
+      planSync,
+      prepareRevisionSyncPlan,
+      reconcileProjectFromCloud,
+      reconcileProjectRevisionsFromCloud,
+      runProjectSyncSerially,
+      syncProjectRevisionsToCloud,
+      syncSingleMutation,
+      toStorageSyncPayload,
+    ],
   );
 
   const deleteProjectFromCloud = useCallback(
@@ -908,31 +1133,8 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           try {
             const data = await loadProjectDataFromCloud(cloudProject);
             try {
-              const revisionRecords = await listRevisionsMutation({ localId: cloudProject.localId });
-              const hydratedRevisions = await Promise.all(
-                (revisionRecords as CloudRevisionRecord[]).map(async (revision) => {
-                  const revisionData = await loadRevisionDataFromCloud(revision);
-                  const assetIds = revision.assetIds
-                    ?? collectPersistedAssetRefsFromSerializedProjectData(revisionData).map((assetRef) => assetRef.assetId);
-                  return {
-                    localProjectId: revision.projectLocalId,
-                    revisionId: revision.revisionId,
-                    parentRevisionId: revision.parentRevisionId,
-                    kind: revision.kind,
-                    baseRevisionId: revision.baseRevisionId,
-                    data: revisionData,
-                    assetIds,
-                    contentHash: revision.contentHash,
-                    createdAt: revision.createdAt,
-                    schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
-                    appVersion: revision.appVersion,
-                    reason: revision.reason,
-                    checkpointName: revision.checkpointName,
-                    isCheckpoint: revision.isCheckpoint,
-                    restoredFromRevisionId: revision.restoredFromRevisionId,
-                  } satisfies ProjectRevisionSyncPayload;
-                }),
-              );
+              const revisionRecords = await getCloudRevisions(cloudProject.localId);
+              const hydratedRevisions = await hydrateCloudRevisions(revisionRecords);
               await ensureCloudProjectAssetsLocally(data, hydratedRevisions);
               const result = await syncProjectFromCloud({
                 ...cloudProject,
@@ -980,7 +1182,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [ensureCloudProjectAssetsLocally, getCloudProjectsFull, listRevisionsMutation, syncProjectToCloud]);
+  }, [ensureCloudProjectAssetsLocally, getCloudProjectsFull, getCloudRevisions, hydrateCloudRevisions, syncProjectToCloud]);
 
   // Run a full two-way reconciliation:
   // 1) push all local projects up, then 2) pull cloud projects down.
@@ -996,26 +1198,37 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
         const storageProjects: StorageSyncPayload[] = [];
         const revisionUploadIdsByProject = new Map<string, string[]>();
-        const syncPlansByProject = new Map<string, CloudProjectSyncPlan>();
+        const revisionAssetIdsByProject = new Map<string, string[] | undefined>();
+        const revisionPullsByProject = new Map<string, boolean>();
         for (const localProject of localProjects) {
           try {
-            const revisionMetadata = await getProjectRevisionSyncMetadata(localProject.localId);
-            const plan = await planSync(
-              toProjectSyncMetadata(localProject),
-              revisionMetadata,
-            );
-            syncPlansByProject.set(localProject.localId, plan);
+            const projectMetadata = toProjectSyncMetadata(localProject);
+            const localRevisionState = await getProjectRevisionSyncState(localProject.localId);
 
-            revisionUploadIdsByProject.set(
-              localProject.localId,
-              plan.revisions
-                .filter((revision) => revision.action === 'upload')
-                .map((revision) => revision.revisionId),
-            );
+            const plan = await planSync(projectMetadata, []);
 
-            if (plan.project.action !== 'upload') {
+            if (plan.project.action === 'pull') {
               continue;
             }
+
+            if (plan.project.action !== 'upload') {
+              const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+                projectMetadata,
+                localRevisionState,
+              );
+              revisionUploadIdsByProject.set(localProject.localId, revisionIdsToUpload);
+              revisionAssetIdsByProject.set(localProject.localId, plannedMissingAssetIds);
+              revisionPullsByProject.set(localProject.localId, shouldPullFromCloud);
+              continue;
+            }
+
+            const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+              projectMetadata,
+              localRevisionState,
+            );
+            revisionUploadIdsByProject.set(localProject.localId, revisionIdsToUpload);
+            revisionAssetIdsByProject.set(localProject.localId, plannedMissingAssetIds);
+            revisionPullsByProject.set(localProject.localId, shouldPullFromCloud);
 
             await ensureAssetIdsInCloud(
               plan.project.missingAssetIds ?? localProject.assetIds,
@@ -1033,15 +1246,18 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         }
 
         for (const localProject of localProjects) {
+          if (!revisionUploadIdsByProject.has(localProject.localId)) {
+            continue;
+          }
           const revisionIds = revisionUploadIdsByProject.get(localProject.localId);
-          const plan = syncPlansByProject.get(localProject.localId);
           await syncProjectRevisionsToCloud(
             localProject.localId,
             revisionIds,
-            plan
-              ? collectPlannedMissingAssetIds(plan, { revisionIds, includeProject: false })
-              : undefined,
+            revisionAssetIdsByProject.get(localProject.localId),
           );
+          if (revisionPullsByProject.get(localProject.localId)) {
+            await reconcileProjectRevisionsFromCloud(localProject.localId);
+          }
         }
       });
 
@@ -1051,31 +1267,8 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           await Promise.all(normalizedCloudProjects.map(async (cloudProject) => {
             try {
               const data = await loadProjectDataFromCloud(cloudProject);
-              const revisionRecords = await listRevisionsMutation({ localId: cloudProject.localId });
-              const hydratedRevisions = await Promise.all(
-                (revisionRecords as CloudRevisionRecord[]).map(async (revision) => {
-                  const revisionData = await loadRevisionDataFromCloud(revision);
-                  const assetIds = revision.assetIds
-                    ?? collectPersistedAssetRefsFromSerializedProjectData(revisionData).map((assetRef) => assetRef.assetId);
-                  return {
-                    localProjectId: revision.projectLocalId,
-                    revisionId: revision.revisionId,
-                    parentRevisionId: revision.parentRevisionId,
-                    kind: revision.kind,
-                    baseRevisionId: revision.baseRevisionId,
-                    data: revisionData,
-                    assetIds,
-                    contentHash: revision.contentHash,
-                    createdAt: revision.createdAt,
-                    schemaVersion: normalizeSchemaVersion(revision.schemaVersion),
-                    appVersion: revision.appVersion,
-                    reason: revision.reason,
-                    checkpointName: revision.checkpointName,
-                    isCheckpoint: revision.isCheckpoint,
-                    restoredFromRevisionId: revision.restoredFromRevisionId,
-                  } satisfies ProjectRevisionSyncPayload;
-                }),
-              );
+              const revisionRecords = await getCloudRevisions(cloudProject.localId);
+              const hydratedRevisions = await hydrateCloudRevisions(revisionRecords);
               await ensureCloudProjectAssetsLocally(data, hydratedRevisions);
               await syncProjectFromCloud({
                 ...cloudProject,
@@ -1093,7 +1286,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [enabled, ensureAssetIdsInCloud, ensureCloudProjectAssetsLocally, getCloudProjectsFull, listRevisionsMutation, planSync, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
+  }, [enabled, ensureAssetIdsInCloud, ensureCloudProjectAssetsLocally, getCloudProjectsFull, getCloudRevisions, hydrateCloudRevisions, planSync, prepareRevisionSyncPlan, reconcileProjectRevisionsFromCloud, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
 
   // Sync on mount if requested
   useEffect(() => {

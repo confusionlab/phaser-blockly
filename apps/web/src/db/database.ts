@@ -54,6 +54,11 @@ interface ProjectRecord extends ProjectRecordV1 {
   appVersion?: string;
   contentHash?: string;
   assetIds?: string[];
+  revisionCount?: number;
+  latestRevisionId?: string | null;
+  latestRevisionCreatedAt?: number | null;
+  latestRevisionContentHash?: string | null;
+  revisionsUpdatedAt?: number | null;
 }
 
 export type ProjectRevisionReason =
@@ -75,6 +80,7 @@ interface ProjectRevisionRecord {
   patch?: string;
   contentHash: string;
   createdAt: Date;
+  updatedAt: Date;
   schemaVersion: number;
   appVersion?: string;
   reason: ProjectRevisionReason;
@@ -894,11 +900,63 @@ async function deserializeProjectFromRecord(record: ProjectRecord): Promise<{
   };
 }
 
-async function toProjectRecord(project: Project, updatedAt: Date = new Date()): Promise<ProjectRecord> {
+function createEmptyProjectRevisionSyncState(): ProjectRevisionSyncState {
+  return {
+    revisionCount: 0,
+    latestRevisionId: null,
+    latestRevisionCreatedAt: null,
+    latestRevisionContentHash: null,
+    revisionsUpdatedAt: null,
+  };
+}
+
+function getProjectRevisionSyncStateFromRecord(record: Partial<ProjectRecord> | undefined | null): ProjectRevisionSyncState {
+  if (!record) {
+    return createEmptyProjectRevisionSyncState();
+  }
+
+  const revisionCount = typeof record.revisionCount === 'number' && Number.isFinite(record.revisionCount)
+    ? Math.max(0, Math.floor(record.revisionCount))
+    : 0;
+  const latestRevisionCreatedAt = typeof record.latestRevisionCreatedAt === 'number' && Number.isFinite(record.latestRevisionCreatedAt)
+    ? record.latestRevisionCreatedAt
+    : null;
+  const revisionsUpdatedAt = typeof record.revisionsUpdatedAt === 'number' && Number.isFinite(record.revisionsUpdatedAt)
+    ? record.revisionsUpdatedAt
+    : null;
+
+  return {
+    revisionCount,
+    latestRevisionId: typeof record.latestRevisionId === 'string' ? record.latestRevisionId : null,
+    latestRevisionCreatedAt,
+    latestRevisionContentHash: normalizeContentHash(record.latestRevisionContentHash) ?? null,
+    revisionsUpdatedAt,
+  };
+}
+
+function applyProjectRevisionSyncStateToRecord(
+  record: ProjectRecord,
+  revisionState: ProjectRevisionSyncState,
+): ProjectRecord {
+  return {
+    ...record,
+    revisionCount: revisionState.revisionCount,
+    latestRevisionId: revisionState.latestRevisionId,
+    latestRevisionCreatedAt: revisionState.latestRevisionCreatedAt,
+    latestRevisionContentHash: revisionState.latestRevisionContentHash,
+    revisionsUpdatedAt: revisionState.revisionsUpdatedAt,
+  };
+}
+
+async function toProjectRecord(
+  project: Project,
+  updatedAt: Date = new Date(),
+  existingRecord: ProjectRecord | null = null,
+): Promise<ProjectRecord> {
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
   const { projectData, assetRefs } = await normalizeProjectAssetsForStorage(rest);
   const data = JSON.stringify(projectData);
-  return {
+  return applyProjectRevisionSyncStateToRecord({
     id: project.id,
     name: project.name,
     createdAt: new Date(project.createdAt),
@@ -908,7 +966,7 @@ async function toProjectRecord(project: Project, updatedAt: Date = new Date()): 
     appVersion: APP_VERSION,
     contentHash: computeContentHash(data),
     assetIds: assetRefs.map((assetRef) => assetRef.assetId),
-  };
+  }, getProjectRevisionSyncStateFromRecord(existingRecord));
 }
 
 class GameMakerDatabase extends Dexie {
@@ -968,7 +1026,7 @@ export const db = new GameMakerDatabase();
 
 export async function saveProject(project: Project): Promise<Project> {
   const existing = await db.projects.get(project.id);
-  const record = await toProjectRecord(project);
+  const record = await toProjectRecord(project, new Date(project.updatedAt), existing ?? null);
   await db.projects.put(record);
   const touchedAssetIds = new Set<string>([
     ...getPersistedAssetIdsFromRecord(record, record.data),
@@ -991,7 +1049,7 @@ export async function loadProject(id: string): Promise<Project | null> {
   const { project, migrated } = await deserializeProjectFromRecord(normalizedRecord);
 
   if (migrated) {
-    await db.projects.put(await toProjectRecord(project, project.updatedAt));
+    await db.projects.put(await toProjectRecord(project, project.updatedAt, normalizedRecord));
   }
 
   return project;
@@ -1126,6 +1184,55 @@ async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRe
     }
   }
   return null;
+}
+
+function getRevisionUpdatedAtTime(revision: Pick<ProjectRevisionRecord, 'createdAt'> & Partial<Pick<ProjectRevisionRecord, 'updatedAt'>>): number {
+  const candidate = revision.updatedAt instanceof Date
+    ? revision.updatedAt.getTime()
+    : revision.createdAt.getTime();
+  return Number.isFinite(candidate) ? candidate : revision.createdAt.getTime();
+}
+
+function summarizeProjectRevisionSyncState(revisions: readonly ProjectRevisionRecord[]): ProjectRevisionSyncState {
+  if (revisions.length === 0) {
+    return createEmptyProjectRevisionSyncState();
+  }
+
+  let latestRevision = revisions[0];
+  let revisionsUpdatedAt = getRevisionUpdatedAtTime(revisions[0]);
+  for (const revision of revisions) {
+    if (revision.createdAt.getTime() > latestRevision.createdAt.getTime()) {
+      latestRevision = revision;
+    }
+    const candidateUpdatedAt = getRevisionUpdatedAtTime(revision);
+    if (candidateUpdatedAt > revisionsUpdatedAt) {
+      revisionsUpdatedAt = candidateUpdatedAt;
+    }
+  }
+
+  return {
+    revisionCount: revisions.length,
+    latestRevisionId: latestRevision.id,
+    latestRevisionCreatedAt: latestRevision.createdAt.getTime(),
+    latestRevisionContentHash: latestRevision.contentHash,
+    revisionsUpdatedAt,
+  };
+}
+
+async function refreshStoredProjectRevisionSyncState(projectId: string): Promise<ProjectRevisionSyncState> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return createEmptyProjectRevisionSyncState();
+  }
+
+  const [projectRecord, revisions] = await Promise.all([
+    db.projects.get(projectId),
+    getProjectRevisionsAscending(projectId),
+  ]);
+  const revisionState = summarizeProjectRevisionSyncState(revisions);
+  if (projectRecord) {
+    await db.projects.put(applyProjectRevisionSyncStateToRecord(projectRecord, revisionState));
+  }
+  return revisionState;
 }
 
 async function buildRevisionData(project: Project): Promise<{ serializedData: string; contentHash: string; assetIds: string[] }> {
@@ -1496,6 +1603,7 @@ export async function createRevision(
   const revisionId = crypto.randomUUID();
   const revisions = await getProjectRevisionsAscending(project.id);
   const revisionsById = new Map(revisions.map((revision) => [revision.id, revision]));
+  const revisionTimestamp = new Date();
 
   let record: ProjectRevisionRecord | null = null;
   if (reason === 'auto_checkpoint' && latestRevision) {
@@ -1525,7 +1633,8 @@ export async function createRevision(
           snapshotData: undefined,
           patch: serializedDelta,
           contentHash,
-          createdAt: new Date(),
+          createdAt: revisionTimestamp,
+          updatedAt: revisionTimestamp,
           schemaVersion: CURRENT_SCHEMA_VERSION,
           appVersion: APP_VERSION,
           reason,
@@ -1550,7 +1659,8 @@ export async function createRevision(
       snapshotData: serializedData,
       patch: undefined,
       contentHash,
-      createdAt: new Date(),
+      createdAt: revisionTimestamp,
+      updatedAt: revisionTimestamp,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       appVersion: APP_VERSION,
       reason,
@@ -1562,6 +1672,7 @@ export async function createRevision(
   }
 
   await db.projectRevisions.put(record);
+  await refreshStoredProjectRevisionSyncState(project.id);
   return toPublicRevision(record);
 }
 
@@ -1630,8 +1741,10 @@ export async function renameCheckpoint(
   const updated: ProjectRevisionRecord = {
     ...revision,
     checkpointName: normalizedName,
+    updatedAt: new Date(),
   };
   await db.projectRevisions.put(updated);
+  await refreshStoredProjectRevisionSyncState(projectId);
   return toPublicRevision(updated);
 }
 
@@ -1708,6 +1821,7 @@ export async function restoreAsNewProject(projectId: string, revisionId: string)
       baseRevisionId: mappedBaseRevisionId,
       restoredFromRevisionId: mappedRestoredFrom,
       createdAt: new Date(revision.createdAt),
+      updatedAt: new Date(getRevisionUpdatedAtTime(revision)),
     });
   }
 
@@ -1802,6 +1916,7 @@ export interface ProjectRevisionSyncPayload {
   assetIds: string[];
   contentHash: string;
   createdAt: number;
+  updatedAt: number;
   schemaVersion: number;
   appVersion?: string;
   reason: ProjectRevisionReason;
@@ -1813,12 +1928,21 @@ export interface ProjectRevisionSyncPayload {
 export interface ProjectRevisionSyncMetadata {
   revisionId: string;
   createdAt: number;
+  updatedAt: number;
   schemaVersion: number;
   contentHash: string;
   assetIds: string[];
   reason: ProjectRevisionReason;
   checkpointName?: string;
   isCheckpoint: boolean;
+}
+
+export interface ProjectRevisionSyncState {
+  revisionCount: number;
+  latestRevisionId: string | null;
+  latestRevisionCreatedAt: number | null;
+  latestRevisionContentHash: string | null;
+  revisionsUpdatedAt: number | null;
 }
 
 const FNV64_OFFSET = 0xcbf29ce484222325n;
@@ -1922,6 +2046,7 @@ function revisionRecordToSyncPayload(record: ProjectRevisionRecord): ProjectRevi
     assetIds: getPersistedAssetIdsFromRecord(record, data),
     contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(data),
     createdAt: record.createdAt.getTime(),
+    updatedAt: getRevisionUpdatedAtTime(record),
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
     appVersion: record.appVersion ?? APP_VERSION,
     reason: record.reason,
@@ -1936,6 +2061,7 @@ function revisionRecordToSyncMetadata(record: ProjectRevisionRecord): ProjectRev
   return {
     revisionId: record.id,
     createdAt: record.createdAt.getTime(),
+    updatedAt: getRevisionUpdatedAtTime(record),
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
     contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(data),
     assetIds: getPersistedAssetIdsFromRecord(record, data),
@@ -1943,6 +2069,45 @@ function revisionRecordToSyncMetadata(record: ProjectRevisionRecord): ProjectRev
     checkpointName: record.checkpointName,
     isCheckpoint: record.isCheckpoint,
   };
+}
+
+function buildRevisionSyncFingerprint(
+  revision: Pick<ProjectRevisionSyncMetadata, 'contentHash' | 'checkpointName' | 'reason' | 'isCheckpoint' | 'assetIds'>,
+): string {
+  return [
+    normalizeContentHash(revision.contentHash) ?? '',
+    revision.checkpointName ?? '',
+    revision.reason,
+    revision.isCheckpoint ? '1' : '0',
+    Array.from(new Set(revision.assetIds)).sort().join(','),
+  ].join('|');
+}
+
+function shouldReplaceRevisionRecord(
+  existing: Pick<ProjectRevisionRecord, 'createdAt' | 'contentHash' | 'checkpointName' | 'reason' | 'isCheckpoint' | 'assetIds'> & Partial<Pick<ProjectRevisionRecord, 'updatedAt'>>,
+  incoming: ProjectRevisionSyncMetadata,
+): boolean {
+  const existingUpdatedAt = getRevisionUpdatedAtTime(existing);
+  if (incoming.updatedAt > existingUpdatedAt) {
+    return true;
+  }
+  if (incoming.updatedAt < existingUpdatedAt) {
+    return false;
+  }
+
+  const existingFingerprint = buildRevisionSyncFingerprint({
+    contentHash: existing.contentHash,
+    checkpointName: existing.checkpointName,
+    reason: existing.reason,
+    isCheckpoint: existing.isCheckpoint,
+    assetIds: existing.assetIds ?? [],
+  });
+  const incomingFingerprint = buildRevisionSyncFingerprint(incoming);
+  if (incomingFingerprint === existingFingerprint) {
+    return false;
+  }
+
+  return incomingFingerprint > existingFingerprint;
 }
 
 // Get all local projects for batch sync
@@ -1969,6 +2134,26 @@ export async function getProjectSyncMetadata(id: string): Promise<ProjectSyncMet
 export async function getProjectRevisionSyncMetadata(projectId: string): Promise<ProjectRevisionSyncMetadata[]> {
   const revisions = await getProjectRevisionsAscending(projectId);
   return revisions.map(revisionRecordToSyncMetadata);
+}
+
+export async function getProjectRevisionSyncState(projectId: string): Promise<ProjectRevisionSyncState> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return createEmptyProjectRevisionSyncState();
+  }
+
+  const projectRecord = await db.projects.get(projectId);
+  const storedState = getProjectRevisionSyncStateFromRecord(projectRecord);
+  const hasStoredRevisionState = projectRecord
+    && (
+      typeof projectRecord.revisionCount === 'number'
+      || typeof projectRecord.revisionsUpdatedAt === 'number'
+      || typeof projectRecord.latestRevisionId === 'string'
+    );
+  if (hasStoredRevisionState) {
+    return storedState;
+  }
+
+  return await refreshStoredProjectRevisionSyncState(projectId);
 }
 
 export async function getProjectRevisionsForSync(
@@ -2028,6 +2213,11 @@ export async function syncProjectFromCloud(cloudProject: {
   schemaVersion: number | string;
   appVersion?: string;
   contentHash?: string;
+  revisionCount?: number | null;
+  latestRevisionId?: string | null;
+  latestRevisionCreatedAt?: number | null;
+  latestRevisionContentHash?: string | null;
+  revisionsUpdatedAt?: number | null;
 }): Promise<{ action: 'created' | 'updated' | 'skipped'; reason?: string; migrated?: boolean }> {
   const cloudSchemaVersion = normalizeSchemaVersion(cloudProject.schemaVersion);
 
@@ -2091,6 +2281,13 @@ export async function syncProjectFromCloud(cloudProject: {
           .filter((assetId): assetId is string => isManagedAssetId(assetId)),
       ),
     ),
+    revisionCount: typeof cloudProject.revisionCount === 'number' ? cloudProject.revisionCount : undefined,
+    latestRevisionId: typeof cloudProject.latestRevisionId === 'string' ? cloudProject.latestRevisionId : undefined,
+    latestRevisionCreatedAt:
+      typeof cloudProject.latestRevisionCreatedAt === 'number' ? cloudProject.latestRevisionCreatedAt : undefined,
+    latestRevisionContentHash: normalizeContentHash(cloudProject.latestRevisionContentHash) ?? undefined,
+    revisionsUpdatedAt:
+      typeof cloudProject.revisionsUpdatedAt === 'number' ? cloudProject.revisionsUpdatedAt : undefined,
   };
 
   const existing = await db.projects.get(cloudProject.localId);
@@ -2149,10 +2346,14 @@ export async function syncProjectFromCloud(cloudProject: {
     return { action: 'skipped', reason };
   }
 
-  await db.projects.put(incomingRecord);
+  const finalIncomingRecord =
+    incomingRecord.revisionCount === undefined
+      ? applyProjectRevisionSyncStateToRecord(incomingRecord, getProjectRevisionSyncStateFromRecord(existing))
+      : incomingRecord;
+  await db.projects.put(finalIncomingRecord);
   await garbageCollectManagedAssets(new Set<string>([
     ...getPersistedAssetIdsFromRecord(existing, existing.data),
-    ...getPersistedAssetIdsFromRecord(incomingRecord, incomingRecord.data),
+    ...getPersistedAssetIdsFromRecord(finalIncomingRecord, finalIncomingRecord.data),
   ]));
   return { action: 'updated', migrated, reason };
 }
@@ -2208,6 +2409,7 @@ export async function syncProjectRevisionsFromCloud(
       patch: incomingKind === 'delta' ? payload.data : undefined,
       contentHash: normalizeContentHash(payload.contentHash) ?? computeContentHash(payload.data),
       createdAt: new Date(payload.createdAt),
+      updatedAt: new Date(payload.updatedAt ?? payload.createdAt),
       schemaVersion: incomingSchemaVersion,
       appVersion: payload.appVersion,
       reason: incomingReason,
@@ -2230,13 +2432,7 @@ export async function syncProjectRevisionsFromCloud(
       continue;
     }
 
-    const shouldUpdate =
-      incomingRecord.createdAt.getTime() > existing.createdAt.getTime() ||
-      (incomingRecord.createdAt.getTime() === existing.createdAt.getTime() &&
-        (incomingRecord.contentHash !== existing.contentHash ||
-          incomingRecord.checkpointName !== existing.checkpointName ||
-          incomingRecord.reason !== existing.reason ||
-          incomingRecord.isCheckpoint !== existing.isCheckpoint));
+    const shouldUpdate = shouldReplaceRevisionRecord(existing, revisionRecordToSyncMetadata(incomingRecord));
 
     if (!shouldUpdate) {
       skipped += 1;
@@ -2249,6 +2445,10 @@ export async function syncProjectRevisionsFromCloud(
       ...getPersistedAssetIdsFromRecord(incomingRecord, incomingRecord.snapshotData ?? incomingRecord.patch),
     ]));
     updated += 1;
+  }
+
+  if (created > 0 || updated > 0) {
+    await refreshStoredProjectRevisionSyncState(projectId);
   }
 
   return { created, updated, skipped, migrated };

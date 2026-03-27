@@ -69,6 +69,7 @@ test.describe('cloud sync planning', () => {
     const result = planRevisionSyncAction(null, {
       revisionId: 'revision-1',
       createdAt: 1_000,
+      updatedAt: 1_000,
       schemaVersion: 9,
       contentHash: 'aaaaaaaaaaaaaaaa',
       reason: 'auto_checkpoint',
@@ -94,6 +95,7 @@ test.describe('cloud sync planning', () => {
       {
         revisionId: 'revision-1',
         createdAt: 1_000,
+        updatedAt: 1_000,
         schemaVersion: 9,
         contentHash: 'aaaaaaaaaaaaaaaa',
         reason: 'manual_checkpoint',
@@ -105,6 +107,34 @@ test.describe('cloud sync planning', () => {
     expect(result).toEqual({
       action: 'skip',
       reason: 'cloud revision is newer or equal',
+    });
+  });
+
+  test('uploads revision metadata changes when updatedAt is newer but createdAt is unchanged', () => {
+    const result = planRevisionSyncAction(
+      {
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        contentHash: 'aaaaaaaaaaaaaaaa',
+        checkpointName: 'Old Name',
+        reason: 'manual_checkpoint',
+        isCheckpoint: true,
+      },
+      {
+        revisionId: 'revision-1',
+        createdAt: 1_000,
+        updatedAt: 2_000,
+        schemaVersion: 9,
+        contentHash: 'aaaaaaaaaaaaaaaa',
+        reason: 'manual_checkpoint',
+        checkpointName: 'New Name',
+        isCheckpoint: true,
+      },
+    );
+
+    expect(result).toEqual({
+      action: 'upload',
+      reason: 'local revision is newer',
     });
   });
 

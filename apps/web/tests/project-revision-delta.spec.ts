@@ -107,4 +107,33 @@ test.describe('project revision deltas', () => {
     const restoredProject = await restoreAsNewProject(project.id, deltaRevision!.id);
     expect(restoredProject.settings.backgroundColor).toBe('#abcdef');
   });
+
+  test('updates persisted revision sync state when an older checkpoint is renamed', async () => {
+    const {
+      createManualCheckpoint,
+      getProjectRevisionSyncState,
+      renameCheckpoint,
+      saveProject,
+    } = await loadDatabaseModules();
+
+    let project = createDefaultProject('Revision Sync State Fixture');
+    project = await saveProject(project);
+
+    const firstCheckpoint = await createManualCheckpoint(project, 'First');
+    expect(firstCheckpoint).not.toBeNull();
+
+    const changedProject = withUpdatedProject(project, {
+      backgroundColor: '#654321',
+    });
+    const secondCheckpoint = await createManualCheckpoint(changedProject, 'Second');
+    expect(secondCheckpoint).not.toBeNull();
+
+    const beforeRename = await getProjectRevisionSyncState(project.id);
+    await renameCheckpoint(project.id, firstCheckpoint!.id, 'First Renamed');
+    const afterRename = await getProjectRevisionSyncState(project.id);
+
+    expect(afterRename.latestRevisionId).toBe(secondCheckpoint!.id);
+    expect(afterRename.revisionCount).toBe(beforeRename.revisionCount);
+    expect(afterRename.revisionsUpdatedAt).toBeGreaterThan(beforeRename.revisionsUpdatedAt ?? 0);
+  });
 });

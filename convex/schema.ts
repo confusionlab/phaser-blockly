@@ -132,6 +132,11 @@ export default defineSchema({
     appVersion: v.optional(v.string()),
     contentHash: v.optional(v.string()),
     assetIds: v.optional(v.array(v.string())),
+    revisionCount: v.optional(v.number()),
+    latestRevisionId: v.optional(v.string()),
+    latestRevisionCreatedAt: v.optional(v.number()),
+    latestRevisionContentHash: v.optional(v.string()),
+    revisionsUpdatedAt: v.optional(v.number()),
   })
     .index("by_localId", ["localId"])
     .index("by_ownerUserId_and_localId", ["ownerUserId", "localId"])
@@ -150,6 +155,7 @@ export default defineSchema({
     dataSizeBytes: v.optional(v.number()),
     contentHash: v.string(),
     createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
     schemaVersion: v.union(v.number(), v.string()),
     appVersion: v.optional(v.string()),
     reason: v.union(
