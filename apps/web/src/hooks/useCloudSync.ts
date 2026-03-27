@@ -118,6 +118,10 @@ interface CloudProjectSyncPlan {
   }>;
 }
 
+function formatUploadSizeMb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(3)} MB`;
+}
+
 async function loadProjectDataFromCloud(cloudProject: CloudProjectRecord): Promise<string> {
   if (typeof cloudProject.data === 'string') {
     return cloudProject.data;
@@ -257,6 +261,9 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       }
 
       const uploadResult = (await uploadResponse.json()) as { storageId: string };
+      console.log(
+        `[CloudSync] Uploaded project "${metadata.localId}" payload (${formatUploadSizeMb(blob.size)}).`,
+      );
       return {
         ...metadata,
         storageId: uploadResult.storageId as Id<'_storage'>,
@@ -283,6 +290,9 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       }
 
       const uploadResult = (await uploadResponse.json()) as { storageId: string };
+      console.log(
+        `[CloudSync] Uploaded revision "${metadata.revisionId}" for project "${metadata.localProjectId}" (${formatUploadSizeMb(blob.size)}).`,
+      );
       return {
         ...metadata,
         storageId: uploadResult.storageId as Id<'_storage'>,
@@ -345,6 +355,9 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         }
 
         const uploadResult = (await uploadResponse.json()) as { storageId: string };
+        console.log(
+          `[CloudSync] Uploaded asset "${assetId}" (${formatUploadSizeMb(blob.size)}).`,
+        );
         await upsertProjectAssetMutation({
           assetId,
           kind: assetRef.kind,
