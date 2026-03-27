@@ -1442,6 +1442,13 @@ export interface ProjectSyncPayload {
   contentHash: string;
 }
 
+export interface ProjectSyncMetadata {
+  localId: string;
+  updatedAt: number;
+  schemaVersion: number;
+  contentHash: string;
+}
+
 export interface ProjectRevisionSyncPayload {
   localProjectId: string;
   revisionId: string;
@@ -1458,6 +1465,16 @@ export interface ProjectRevisionSyncPayload {
   checkpointName?: string;
   isCheckpoint: boolean;
   restoredFromRevisionId?: string;
+}
+
+export interface ProjectRevisionSyncMetadata {
+  revisionId: string;
+  createdAt: number;
+  schemaVersion: number;
+  contentHash: string;
+  reason: ProjectRevisionReason;
+  checkpointName?: string;
+  isCheckpoint: boolean;
 }
 
 const FNV64_OFFSET = 0xcbf29ce484222325n;
@@ -1539,6 +1556,15 @@ function recordToSyncPayload(record: ProjectRecord): ProjectSyncPayload {
   };
 }
 
+function recordToSyncMetadata(record: ProjectRecord): ProjectSyncMetadata {
+  return {
+    localId: record.id,
+    updatedAt: record.updatedAt.getTime(),
+    schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+    contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(record.data),
+  };
+}
+
 function revisionRecordToSyncPayload(record: ProjectRevisionRecord): ProjectRevisionSyncPayload {
   const data = record.snapshotData ?? record.patch ?? '';
   return {
@@ -1560,6 +1586,19 @@ function revisionRecordToSyncPayload(record: ProjectRevisionRecord): ProjectRevi
   };
 }
 
+function revisionRecordToSyncMetadata(record: ProjectRevisionRecord): ProjectRevisionSyncMetadata {
+  const data = record.snapshotData ?? record.patch ?? '';
+  return {
+    revisionId: record.id,
+    createdAt: record.createdAt.getTime(),
+    schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+    contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(data),
+    reason: record.reason,
+    checkpointName: record.checkpointName,
+    isCheckpoint: record.isCheckpoint,
+  };
+}
+
 // Get all local projects for batch sync
 export async function getAllProjectsForSync(): Promise<ProjectSyncPayload[]> {
   const records = await db.projects.toArray();
@@ -1569,9 +1608,32 @@ export async function getAllProjectsForSync(): Promise<ProjectSyncPayload[]> {
   }));
 }
 
-export async function getProjectRevisionsForSync(projectId: string): Promise<ProjectRevisionSyncPayload[]> {
+export async function getProjectSyncMetadata(id: string): Promise<ProjectSyncMetadata | null> {
+  const record = await db.projects.get(id);
+  if (!record) {
+    return null;
+  }
+
+  return recordToSyncMetadata({
+    ...record,
+    schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+  });
+}
+
+export async function getProjectRevisionSyncMetadata(projectId: string): Promise<ProjectRevisionSyncMetadata[]> {
   const revisions = await getProjectRevisionsAscending(projectId);
-  return revisions.map(revisionRecordToSyncPayload);
+  return revisions.map(revisionRecordToSyncMetadata);
+}
+
+export async function getProjectRevisionsForSync(
+  projectId: string,
+  revisionIds?: readonly string[],
+): Promise<ProjectRevisionSyncPayload[]> {
+  const revisions = await getProjectRevisionsAscending(projectId);
+  const revisionIdSet = revisionIds ? new Set(revisionIds) : null;
+  return revisions
+    .filter((revision) => !revisionIdSet || revisionIdSet.has(revision.id))
+    .map(revisionRecordToSyncPayload);
 }
 
 export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Promise<{ deleted: number }> {

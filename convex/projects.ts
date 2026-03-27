@@ -49,6 +49,13 @@ const syncBatchResultValidator = v.object({
   reason: v.optional(v.string()),
 });
 
+const syncMetadataValidator = v.object({
+  localId: v.string(),
+  updatedAt: v.number(),
+  schemaVersion: v.optional(schemaVersionValidator),
+  contentHash: v.optional(v.string()),
+});
+
 const syncPayloadValidator = v.object({
   localId: v.string(),
   name: v.string(),
@@ -71,6 +78,16 @@ const revisionReasonValidator = v.union(
   v.literal("restore"),
   v.literal("edit_revision"),
 );
+
+const revisionSyncMetadataValidator = v.object({
+  revisionId: v.string(),
+  createdAt: v.number(),
+  schemaVersion: v.optional(schemaVersionValidator),
+  contentHash: v.optional(v.string()),
+  reason: revisionReasonValidator,
+  checkpointName: v.optional(v.string()),
+  isCheckpoint: v.boolean(),
+});
 
 const revisionSyncPayloadValidator = v.object({
   localProjectId: v.string(),
@@ -114,6 +131,22 @@ const revisionSummaryValidator = v.object({
   dataUrl: v.union(v.string(), v.null()),
 });
 
+const projectSyncPlanValidator = v.object({
+  action: v.union(v.literal("upload"), v.literal("skip"), v.literal("pull")),
+  reason: v.string(),
+});
+
+const revisionSyncPlanValidator = v.object({
+  revisionId: v.string(),
+  action: v.union(v.literal("upload"), v.literal("skip")),
+  reason: v.string(),
+});
+
+const syncPlanResultValidator = v.object({
+  project: projectSyncPlanValidator,
+  revisions: v.array(revisionSyncPlanValidator),
+});
+
 type StoredProject = {
   _id: Id<"projects">;
   ownerUserId?: string;
@@ -142,6 +175,13 @@ type SyncPayload = {
   appVersion?: string;
   contentHash?: string;
   assetIds?: string[];
+};
+
+type SyncMetadata = {
+  localId: string;
+  updatedAt: number;
+  schemaVersion?: number | string;
+  contentHash?: string;
 };
 
 async function requireAuthenticatedUserId(ctx: any): Promise<string> {
@@ -195,6 +235,16 @@ type RevisionSyncPayload = {
   assetIds?: string[];
 };
 
+type RevisionSyncMetadata = {
+  revisionId: string;
+  createdAt: number;
+  schemaVersion?: number | string;
+  contentHash?: string;
+  reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
+  checkpointName?: string;
+  isCheckpoint: boolean;
+};
+
 const FNV64_OFFSET = 0xcbf29ce484222325n;
 const FNV64_PRIME = 0x100000001b3n;
 const FNV64_MASK = 0xffffffffffffffffn;
@@ -239,6 +289,117 @@ function normalizeManagedAssetIds(assetIds: unknown): string[] {
     assetIds.filter((assetId): assetId is string => typeof assetId === "string" && MANAGED_ASSET_ID_PATTERN.test(assetId.trim()))
       .map((assetId) => assetId.trim()),
   ));
+}
+
+export function planProjectSyncAction(
+  existing: {
+    updatedAt: number;
+    schemaVersion: number | string;
+    contentHash?: string;
+  } | null,
+  incoming: SyncMetadata,
+): { action: "upload" | "skip" | "pull"; reason: string } {
+  if (!existing) {
+    return {
+      action: "upload",
+      reason: "cloud project is missing",
+    };
+  }
+
+  const incomingSchemaVersion = normalizeSchemaVersion(incoming.schemaVersion);
+  const existingSchemaVersion = normalizeSchemaVersion(existing.schemaVersion);
+  if (incomingSchemaVersion < existingSchemaVersion) {
+    return {
+      action: "pull",
+      reason: `schema downgrade blocked (incoming v${incomingSchemaVersion}, cloud v${existingSchemaVersion})`,
+    };
+  }
+
+  const incomingHash = normalizeContentHash(incoming.contentHash);
+  const existingHash = normalizeContentHash(existing.contentHash);
+  const sameTimestamp = incoming.updatedAt === existing.updatedAt;
+  const sameSchema = incomingSchemaVersion === existingSchemaVersion;
+
+  const shouldUpload =
+    incomingSchemaVersion > existingSchemaVersion ||
+    incoming.updatedAt > existing.updatedAt ||
+    (sameTimestamp &&
+      sameSchema &&
+      incomingHash !== null &&
+      existingHash !== null &&
+      incomingHash !== existingHash &&
+      incomingHash > existingHash);
+
+  if (shouldUpload) {
+    return {
+      action: "upload",
+      reason: incomingSchemaVersion > existingSchemaVersion ? "incoming schema is newer" : "local project is newer",
+    };
+  }
+
+  if (sameTimestamp && sameSchema && incomingHash !== null && existingHash !== null) {
+    if (incomingHash === existingHash) {
+      return {
+        action: "skip",
+        reason: "already in sync",
+      };
+    }
+
+    return {
+      action: "pull",
+      reason: "same timestamp conflict resolved in favor of cloud hash",
+    };
+  }
+
+  if (incoming.updatedAt < existing.updatedAt) {
+    return {
+      action: "pull",
+      reason: "cloud project is newer",
+    };
+  }
+
+  return {
+    action: "pull",
+    reason: "cloud version is newer or equal",
+  };
+}
+
+export function planRevisionSyncAction(
+  existing: {
+    createdAt: number;
+    contentHash: string;
+    checkpointName?: string;
+    reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
+    isCheckpoint: boolean;
+  } | null,
+  incoming: RevisionSyncMetadata,
+): { action: "upload" | "skip"; reason: string } {
+  if (!existing) {
+    return {
+      action: "upload",
+      reason: "cloud revision is missing",
+    };
+  }
+
+  const shouldUpload =
+    incoming.createdAt > existing.createdAt ||
+    (incoming.createdAt === existing.createdAt &&
+      ((normalizeContentHash(incoming.contentHash) ?? "") !== existing.contentHash ||
+        incoming.checkpointName !== existing.checkpointName ||
+        incoming.reason !== existing.reason ||
+        incoming.isCheckpoint !== existing.isCheckpoint));
+
+  if (shouldUpload) {
+    return {
+      action: "upload",
+      reason: "local revision is newer",
+    };
+  }
+
+  return {
+    action: "skip",
+    reason: "cloud revision is newer or equal",
+  };
 }
 
 function compareProjectPriority(a: StoredProject, b: StoredProject): number {
@@ -938,6 +1099,43 @@ export const getFullProject = query({
     }
 
     return await toFull(ctx, project);
+  },
+});
+
+export const planSync = query({
+  args: {
+    project: syncMetadataValidator,
+    revisions: v.array(revisionSyncMetadataValidator),
+  },
+  returns: syncPlanResultValidator,
+  handler: async (ctx, args) => {
+    const ownerUserId = await requireAuthenticatedUserId(ctx);
+    const projects = await listProjectsByLocalId(ctx, ownerUserId, args.project.localId);
+    const project = pickCanonicalProject(projects);
+    const projectPlan = planProjectSyncAction(project, args.project);
+
+    if (projectPlan.action === "pull") {
+      return {
+        project: projectPlan,
+        revisions: [],
+      };
+    }
+
+    const revisionsById = new Map<string, StoredProjectRevision>();
+    if (project) {
+      const existingRevisions = await listRevisionsByProjectLocalId(ctx, ownerUserId, args.project.localId);
+      for (const revision of existingRevisions) {
+        revisionsById.set(revision.revisionId, revision);
+      }
+    }
+
+    return {
+      project: projectPlan,
+      revisions: args.revisions.map((revision) => ({
+        revisionId: revision.revisionId,
+        ...planRevisionSyncAction(revisionsById.get(revision.revisionId) ?? null, revision),
+      })),
+    };
   },
 });
 

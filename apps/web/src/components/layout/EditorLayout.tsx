@@ -112,7 +112,7 @@ export function EditorLayout() {
     currentProject: project,
     isDirty,
     syncOnUnmount: false,
-    checkpointIntervalMs: 10 * 60 * 1000,
+    checkpointIntervalMs: 5 * 60 * 1000,
   });
 
   useEffect(() => {
@@ -143,7 +143,7 @@ export function EditorLayout() {
       const latestProject = useProjectStore.getState().project;
       if (!latestProject) return;
       void createAutoCheckpoint(latestProject);
-    }, 2 * 60 * 1000);
+    }, 5 * 60 * 1000);
 
     return () => window.clearInterval(intervalId);
   }, [activeProjectId, isCloudWriteEnabled]);
