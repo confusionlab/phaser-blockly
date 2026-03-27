@@ -1950,6 +1950,7 @@ function createEditorScene(
         camera.centerOn(canvasWidth / 2, canvasHeight / 2);
       }
     }
+
   };
 
   // Initialize view mode

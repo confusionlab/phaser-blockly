@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ProductMenu } from '@/components/layout/ProductMenu';
-import { Input } from '@/components/ui/input';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { cn } from '@/lib/utils';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
@@ -28,9 +28,11 @@ export function EditorTopBar({
   onToggleTheme,
 }: EditorTopBarProps) {
   const inputId = useId();
+  const renameSurfaceRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastCommittedNameRef = useRef(projectName ?? '');
-  const skipBlurCommitRef = useRef(false);
+  const shouldSelectAllOnOpenRef = useRef(false);
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [draftName, setDraftName] = useState(projectName ?? '');
 
   useEffect(() => {
@@ -39,18 +41,26 @@ export function EditorTopBar({
     lastCommittedNameRef.current = nextName;
   }, [projectName]);
 
-  const focusProjectNameInput = useCallback(() => {
-    const input = inputRef.current;
-    if (!input || projectNameDisabled) {
+  const openRenameSurface = useCallback((focusBehavior: 'select-all' | 'caret-end' = 'caret-end') => {
+    if (projectNameDisabled) {
       return;
     }
 
-    input.focus({ preventScroll: true });
-    queueMicrotask(() => input.select());
+    shouldSelectAllOnOpenRef.current = focusBehavior === 'select-all';
+    setDraftName(lastCommittedNameRef.current);
+    setIsRenameOpen(true);
   }, [projectNameDisabled]);
 
-  const commitDraftName = useCallback((): boolean => {
+  const closeRenameSurface = useCallback(() => {
+    shouldSelectAllOnOpenRef.current = false;
+    setIsRenameOpen(false);
+  }, []);
+
+  const commitDraftName = useCallback((options?: { close?: boolean }): boolean => {
     if (!hasProject) {
+      if (options?.close) {
+        closeRenameSurface();
+      }
       return true;
     }
 
@@ -66,13 +76,98 @@ export function EditorTopBar({
 
     lastCommittedNameRef.current = trimmedName;
     setDraftName(trimmedName);
+    if (options?.close) {
+      closeRenameSurface();
+    }
     return true;
-  }, [draftName, hasProject, onProjectNameCommit]);
+  }, [closeRenameSurface, draftName, hasProject, onProjectNameCommit]);
 
   const restoreLastCommittedName = useCallback(() => {
-    skipBlurCommitRef.current = true;
     setDraftName(lastCommittedNameRef.current);
-  }, []);
+    closeRenameSurface();
+  }, [closeRenameSurface]);
+
+  useEffect(() => {
+    if (!isRenameOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (renameSurfaceRef.current?.contains(target)) {
+        return;
+      }
+
+      restoreLastCommittedName();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      event.preventDefault();
+      restoreLastCommittedName();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isRenameOpen, restoreLastCommittedName]);
+
+  useEffect(() => {
+    if (!isRenameOpen) {
+      return;
+    }
+
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+
+    input.focus({ preventScroll: true });
+    queueMicrotask(() => {
+      input.focus({ preventScroll: true });
+      if (shouldSelectAllOnOpenRef.current) {
+        input.select();
+        return;
+      }
+
+      const end = input.value.length;
+      input.setSelectionRange(end, end);
+    });
+  }, [isRenameOpen]);
+
+  const renameFocusBehavior = shouldSelectAllOnOpenRef.current ? 'select-all' : 'caret-end';
+
+  const handleRenameTriggerClick = useCallback(() => {
+    if (projectNameDisabled) {
+      return;
+    }
+
+    if (isRenameOpen) {
+      inputRef.current?.focus({ preventScroll: true });
+      return;
+    }
+
+    openRenameSurface('caret-end');
+  }, [isRenameOpen, openRenameSurface, projectNameDisabled]);
+
+  const focusProjectNameInput = useCallback(() => {
+    openRenameSurface('select-all');
+  }, [openRenameSurface]);
+
+  const displayedProjectName = draftName.trim() || lastCommittedNameRef.current || 'Untitled project';
+
+  const popupRowLabelClassName = 'text-[15px] font-medium text-foreground/65';
+  const popupFieldClassName = 'min-h-14 rounded-2xl bg-muted/70 px-5 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]';
 
   return (
     <div
@@ -95,42 +190,62 @@ export function EditorTopBar({
           />
         </div>
 
-        <div className="flex min-w-0 justify-center">
+        <div className="relative flex min-w-0 justify-center">
           {hasProject ? (
-            <Input
-              id={inputId}
-              ref={inputRef}
-              type="text"
-              value={draftName}
-              disabled={projectNameDisabled}
-              aria-label="Project name"
-              spellCheck={false}
-              className="h-8 w-full max-w-[360px] border-0 bg-transparent px-0 text-center text-sm font-medium text-foreground shadow-none focus-visible:ring-0"
-              onChange={(event) => setDraftName(event.target.value)}
-              onBlur={() => {
-                if (skipBlurCommitRef.current) {
-                  skipBlurCommitRef.current = false;
-                  return;
-                }
+            <div ref={renameSurfaceRef} className="relative flex min-w-0 flex-col items-center">
+              <button
+                type="button"
+                disabled={projectNameDisabled}
+                aria-expanded={isRenameOpen}
+                aria-controls={isRenameOpen ? inputId : undefined}
+                className={cn(
+                  'max-w-[360px] truncate rounded-xl px-3 py-1.5 text-center text-sm font-medium text-foreground transition-colors',
+                  projectNameDisabled
+                    ? 'cursor-not-allowed opacity-60'
+                    : 'hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                )}
+                onClick={handleRenameTriggerClick}
+              >
+                {displayedProjectName}
+              </button>
 
-                void commitDraftName();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  if (commitDraftName()) {
-                    event.currentTarget.blur();
-                  }
-                  return;
-                }
+              {isRenameOpen ? (
+                <div className="absolute top-full z-[var(--z-editor-popup)] mt-3 w-[520px] max-w-[calc(100vw-2rem)] rounded-[28px] border border-white/60 bg-background/95 p-7 shadow-[0_30px_80px_rgba(15,23,42,0.18)] backdrop-blur-xl">
+                  <div className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-x-7 gap-y-5">
+                    <div className={popupRowLabelClassName}>Name</div>
+                    <div className={popupFieldClassName}>
+                      <InlineRenameField
+                        id={inputId}
+                        ref={inputRef}
+                        value={draftName}
+                        onChange={(event) => setDraftName(event.target.value)}
+                        placeholder="Untitled project"
+                        autoFocus
+                        editing
+                        spellCheck={false}
+                        focusBehavior={renameFocusBehavior}
+                        className="w-full"
+                        outlineClassName="hidden"
+                        inputClassName="text-xl font-semibold leading-none text-foreground placeholder:text-foreground/35"
+                        textClassName="text-xl font-semibold leading-none"
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void commitDraftName({ close: true });
+                            return;
+                          }
 
-                if (event.key === 'Escape') {
-                  event.preventDefault();
-                  restoreLastCommittedName();
-                  event.currentTarget.blur();
-                }
-              }}
-            />
+                          if (event.key === 'Escape') {
+                            event.preventDefault();
+                            restoreLastCommittedName();
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
 

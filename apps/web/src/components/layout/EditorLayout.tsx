@@ -59,7 +59,7 @@ export function EditorLayout() {
     selectedObjectIds,
     showProjectDialog,
     setShowProjectDialog,
-    selectScene,
+    reconcileSelectionToProject,
     selectObjects,
     stopPlaying,
     undo,
@@ -248,13 +248,10 @@ export function EditorLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMigratingProjects, projectId]);
 
-  // Select first scene when project changes
+  // Keep selection aligned with the active project as projects open, close, or change shape.
   useEffect(() => {
-    if (project && project.scenes.length > 0) {
-      selectScene(project.scenes[0].id, { recordHistory: false });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id]);
+    reconcileSelectionToProject(project, { recordHistory: false });
+  }, [project, reconcileSelectionToProject]);
 
   // Navigate to project URL when project is opened
   const handleProjectOpen = useCallback((openedProject: { id: string }) => {
@@ -802,9 +799,6 @@ export function EditorLayout() {
         onOpenChange={setHistoryOpen}
         onRestoredProject={(restoredProject) => {
           openProject(restoredProject);
-          if (restoredProject.scenes.length > 0) {
-            selectScene(restoredProject.scenes[0].id, { recordHistory: false });
-          }
           navigate(`/project/${restoredProject.id}`);
         }}
       />

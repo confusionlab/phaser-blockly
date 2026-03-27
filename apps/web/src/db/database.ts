@@ -1028,6 +1028,25 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 const MAX_CHECKPOINT_NAME_LENGTH = 80;
+const REVISION_DELTA_FORMAT = 'pocha-project-delta-v1';
+const MAX_AUTO_CHECKPOINT_DELTA_CHAIN_LENGTH = 6;
+const MAX_AUTO_CHECKPOINT_DELTA_SIZE_RATIO = 0.75;
+
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+type RevisionDeltaPathSegment = string | number;
+
+type RevisionDeltaOperation =
+  | { op: 'set'; path: RevisionDeltaPathSegment[]; value: JsonValue }
+  | { op: 'delete'; path: RevisionDeltaPathSegment[] };
+
+type SerializedProjectDelta = {
+  format: typeof REVISION_DELTA_FORMAT;
+  parentContentHash: string;
+  resultContentHash: string;
+  ops: RevisionDeltaOperation[];
+};
 
 type RevisionCreateOptions = {
   isCheckpoint?: boolean;
@@ -1043,16 +1062,11 @@ function isNonEmptyStringKey(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-type RevisionRangeBound = Date | typeof Dexie.minKey | typeof Dexie.maxKey;
+const MIN_INDEXED_DB_DATE = new Date(-8_640_000_000_000_000);
+const MAX_INDEXED_DB_DATE = new Date(8_640_000_000_000_000);
 
-function getProjectRevisionCreatedAtRange(projectId: string): [lower: [string, RevisionRangeBound], upper: [string, RevisionRangeBound]] {
-  return [[projectId, Dexie.minKey], [projectId, Dexie.maxKey]];
-}
-
-function getProjectCheckpointCreatedAtRange(
-  projectId: string,
-): [lower: [string, true, RevisionRangeBound], upper: [string, true, RevisionRangeBound]] {
-  return [[projectId, true, Dexie.minKey], [projectId, true, Dexie.maxKey]];
+function getProjectRevisionCreatedAtRange(projectId: string): [lower: [string, Date], upper: [string, Date]] {
+  return [[projectId, MIN_INDEXED_DB_DATE], [projectId, MAX_INDEXED_DB_DATE]];
 }
 
 function toPublicRevision(record: ProjectRevisionRecord): ProjectRevision {
@@ -1104,13 +1118,14 @@ async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRe
     return null;
   }
 
-  const [lowerBound, upperBound] = getProjectCheckpointCreatedAtRange(projectId);
-  const candidates = await db.projectRevisions
-    .where('[projectId+isCheckpoint+createdAt]')
-    .between(lowerBound, upperBound)
-    .reverse()
-    .first();
-  return candidates ?? null;
+  const revisions = await getProjectRevisionsAscending(projectId);
+  for (let index = revisions.length - 1; index >= 0; index -= 1) {
+    const revision = revisions[index];
+    if (revision?.isCheckpoint) {
+      return revision;
+    }
+  }
+  return null;
 }
 
 async function buildRevisionData(project: Project): Promise<{ serializedData: string; contentHash: string; assetIds: string[] }> {
@@ -1124,6 +1139,274 @@ async function buildRevisionData(project: Project): Promise<{ serializedData: st
 
 function parseRevisionProjectData(serializedData: string): Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'> {
   return JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+}
+
+function isPlainJsonObject(value: JsonValue | undefined): value is { [key: string]: JsonValue } {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneJsonValue<T extends JsonValue>(value: T): T {
+  return structuredClone(value);
+}
+
+function diffJsonValue(
+  current: JsonValue,
+  next: JsonValue,
+  path: RevisionDeltaPathSegment[],
+  operations: RevisionDeltaOperation[],
+): void {
+  if (Object.is(current, next)) {
+    return;
+  }
+
+  if (Array.isArray(current) && Array.isArray(next)) {
+    if (current.length !== next.length) {
+      operations.push({ op: 'set', path, value: cloneJsonValue(next) });
+      return;
+    }
+
+    for (let index = 0; index < current.length; index += 1) {
+      diffJsonValue(current[index] as JsonValue, next[index] as JsonValue, [...path, index], operations);
+    }
+    return;
+  }
+
+  if (isPlainJsonObject(current) && isPlainJsonObject(next)) {
+    const keySet = new Set([...Object.keys(current), ...Object.keys(next)]);
+    for (const key of keySet) {
+      const currentHasKey = Object.prototype.hasOwnProperty.call(current, key);
+      const nextHasKey = Object.prototype.hasOwnProperty.call(next, key);
+      if (!nextHasKey) {
+        operations.push({ op: 'delete', path: [...path, key] });
+        continue;
+      }
+      if (!currentHasKey) {
+        operations.push({ op: 'set', path: [...path, key], value: cloneJsonValue(next[key] as JsonValue) });
+        continue;
+      }
+      diffJsonValue(current[key] as JsonValue, next[key] as JsonValue, [...path, key], operations);
+    }
+    return;
+  }
+
+  operations.push({ op: 'set', path, value: cloneJsonValue(next) });
+}
+
+function createSerializedProjectDelta(
+  baseSerializedData: string,
+  nextSerializedData: string,
+  parentContentHash: string,
+  resultContentHash: string,
+): SerializedProjectDelta {
+  const current = JSON.parse(baseSerializedData) as JsonValue;
+  const next = JSON.parse(nextSerializedData) as JsonValue;
+  const ops: RevisionDeltaOperation[] = [];
+  diffJsonValue(current, next, [], ops);
+  return {
+    format: REVISION_DELTA_FORMAT,
+    parentContentHash,
+    resultContentHash,
+    ops,
+  };
+}
+
+function parseSerializedProjectDelta(value: string | undefined): SerializedProjectDelta | null {
+  if (typeof value !== 'string' || value.length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<SerializedProjectDelta>;
+    if (parsed?.format !== REVISION_DELTA_FORMAT || !Array.isArray(parsed.ops)) {
+      return null;
+    }
+    return parsed as SerializedProjectDelta;
+  } catch {
+    return null;
+  }
+}
+
+function applySetOperation(root: JsonValue, path: RevisionDeltaPathSegment[], value: JsonValue): JsonValue {
+  if (path.length === 0) {
+    return cloneJsonValue(value);
+  }
+
+  let cursor: JsonValue = root;
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const segment = path[index];
+    const nextSegment = path[index + 1];
+
+    if (typeof segment === 'number') {
+      if (!Array.isArray(cursor)) {
+        throw new Error('Invalid delta path: expected array parent.');
+      }
+      if (cursor[segment] === undefined) {
+        cursor[segment] = typeof nextSegment === 'number' ? [] : {};
+      }
+      cursor = cursor[segment] as JsonValue;
+      continue;
+    }
+
+    if (!isPlainJsonObject(cursor)) {
+      throw new Error('Invalid delta path: expected object parent.');
+    }
+    if (cursor[segment] === undefined) {
+      cursor[segment] = typeof nextSegment === 'number' ? [] : {};
+    }
+    cursor = cursor[segment] as JsonValue;
+  }
+
+  const lastSegment = path[path.length - 1];
+  if (typeof lastSegment === 'number') {
+    if (!Array.isArray(cursor)) {
+      throw new Error('Invalid delta path: expected array for terminal set.');
+    }
+    cursor[lastSegment] = cloneJsonValue(value);
+    return root;
+  }
+
+  if (!isPlainJsonObject(cursor)) {
+    throw new Error('Invalid delta path: expected object for terminal set.');
+  }
+  cursor[lastSegment] = cloneJsonValue(value);
+  return root;
+}
+
+function applyDeleteOperation(root: JsonValue, path: RevisionDeltaPathSegment[]): JsonValue {
+  if (path.length === 0) {
+    throw new Error('Invalid delta path: cannot delete root.');
+  }
+
+  let cursor: JsonValue = root;
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const segment = path[index];
+    if (typeof segment === 'number') {
+      if (!Array.isArray(cursor)) {
+        throw new Error('Invalid delta path: expected array parent.');
+      }
+      cursor = cursor[segment] as JsonValue;
+      continue;
+    }
+
+    if (!isPlainJsonObject(cursor)) {
+      throw new Error('Invalid delta path: expected object parent.');
+    }
+    cursor = cursor[segment] as JsonValue;
+  }
+
+  const lastSegment = path[path.length - 1];
+  if (typeof lastSegment === 'number') {
+    if (!Array.isArray(cursor)) {
+      throw new Error('Invalid delta path: expected array for terminal delete.');
+    }
+    cursor.splice(lastSegment, 1);
+    return root;
+  }
+
+  if (!isPlainJsonObject(cursor)) {
+    throw new Error('Invalid delta path: expected object for terminal delete.');
+  }
+  delete cursor[lastSegment];
+  return root;
+}
+
+function applySerializedProjectDelta(baseSerializedData: string, delta: SerializedProjectDelta): string {
+  const base = JSON.parse(baseSerializedData) as JsonValue;
+  let next = cloneJsonValue(base);
+
+  for (const operation of delta.ops) {
+    if (operation.op === 'set') {
+      next = applySetOperation(next, operation.path, operation.value);
+      continue;
+    }
+    next = applyDeleteOperation(next, operation.path);
+  }
+
+  return JSON.stringify(next);
+}
+
+type MaterializedRevisionData = {
+  serializedData: string;
+  schemaVersion: number;
+  assetIds: string[];
+};
+
+function getRevisionDeltaDepth(
+  record: ProjectRevisionRecord | null,
+  revisionsById: Map<string, ProjectRevisionRecord>,
+): number {
+  let depth = 0;
+  let current = record;
+  while (current?.kind === 'delta' && current.parentRevisionId) {
+    depth += 1;
+    current = revisionsById.get(current.parentRevisionId) ?? null;
+  }
+  return depth;
+}
+
+function materializeRevisionRecord(
+  record: ProjectRevisionRecord,
+  revisionsById: Map<string, ProjectRevisionRecord>,
+  memo: Map<string, MaterializedRevisionData>,
+): MaterializedRevisionData {
+  const cached = memo.get(record.id);
+  if (cached) {
+    return cached;
+  }
+
+  if (record.snapshotData) {
+    const materialized = {
+      serializedData: record.snapshotData,
+      schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+      assetIds: getPersistedAssetIdsFromRecord(record, record.snapshotData),
+    } satisfies MaterializedRevisionData;
+    memo.set(record.id, materialized);
+    return materialized;
+  }
+
+  if (!record.patch) {
+    throw new Error(`Revision "${record.id}" is missing serialized revision data.`);
+  }
+
+  const parsedDelta = parseSerializedProjectDelta(record.patch);
+  if (!parsedDelta) {
+    const materialized = {
+      serializedData: record.patch,
+      schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+      assetIds: getPersistedAssetIdsFromRecord(record, record.patch),
+    } satisfies MaterializedRevisionData;
+    memo.set(record.id, materialized);
+    return materialized;
+  }
+
+  if (!record.parentRevisionId) {
+    throw new Error(`Delta revision "${record.id}" is missing a parent revision.`);
+  }
+
+  const parentRecord = revisionsById.get(record.parentRevisionId);
+  if (!parentRecord) {
+    throw new Error(`Parent revision "${record.parentRevisionId}" was not found for delta revision "${record.id}".`);
+  }
+
+  const parentMaterialized = materializeRevisionRecord(parentRecord, revisionsById, memo);
+  const parentHash = computeContentHash(parentMaterialized.serializedData);
+  if (parsedDelta.parentContentHash !== parentHash) {
+    throw new Error(`Delta revision "${record.id}" has an unexpected parent content hash.`);
+  }
+
+  const serializedData = applySerializedProjectDelta(parentMaterialized.serializedData, parsedDelta);
+  const nextHash = computeContentHash(serializedData);
+  if (parsedDelta.resultContentHash !== nextHash || record.contentHash !== nextHash) {
+    throw new Error(`Delta revision "${record.id}" failed integrity verification.`);
+  }
+
+  const materialized = {
+    serializedData,
+    schemaVersion: normalizeSchemaVersion(record.schemaVersion),
+    assetIds: getPersistedAssetIdsFromRecord(record, serializedData),
+  } satisfies MaterializedRevisionData;
+  memo.set(record.id, materialized);
+  return materialized;
 }
 
 function migrateSerializedProjectDataToCurrentSchema(
@@ -1211,24 +1494,72 @@ export async function createRevision(
   }
 
   const revisionId = crypto.randomUUID();
-  const record: ProjectRevisionRecord = {
-    id: revisionId,
-    projectId: project.id,
-    parentRevisionId: latestRevision?.id,
-    kind: 'snapshot',
-    baseRevisionId: revisionId,
-    snapshotData: serializedData,
-    patch: undefined,
-    contentHash,
-    createdAt: new Date(),
-    schemaVersion: CURRENT_SCHEMA_VERSION,
-    appVersion: APP_VERSION,
-    reason,
-    checkpointName,
-    isCheckpoint,
-    restoredFromRevisionId: options.restoredFromRevisionId,
-    assetIds,
-  };
+  const revisions = await getProjectRevisionsAscending(project.id);
+  const revisionsById = new Map(revisions.map((revision) => [revision.id, revision]));
+
+  let record: ProjectRevisionRecord | null = null;
+  if (reason === 'auto_checkpoint' && latestRevision) {
+    try {
+      const latestMaterialized = materializeRevisionRecord(latestRevision, revisionsById, new Map());
+      const delta = createSerializedProjectDelta(
+        latestMaterialized.serializedData,
+        serializedData,
+        latestRevision.contentHash,
+        contentHash,
+      );
+      const serializedDelta = JSON.stringify(delta);
+      const roundTripSerializedData = applySerializedProjectDelta(latestMaterialized.serializedData, delta);
+      const nextDeltaDepth = getRevisionDeltaDepth(latestRevision, revisionsById) + 1;
+      const shouldStoreAsDelta =
+        roundTripSerializedData === serializedData &&
+        serializedDelta.length < Math.floor(serializedData.length * MAX_AUTO_CHECKPOINT_DELTA_SIZE_RATIO) &&
+        nextDeltaDepth <= MAX_AUTO_CHECKPOINT_DELTA_CHAIN_LENGTH;
+
+      if (shouldStoreAsDelta) {
+        record = {
+          id: revisionId,
+          projectId: project.id,
+          parentRevisionId: latestRevision.id,
+          kind: 'delta',
+          baseRevisionId: latestRevision.kind === 'snapshot' ? latestRevision.id : latestRevision.baseRevisionId,
+          snapshotData: undefined,
+          patch: serializedDelta,
+          contentHash,
+          createdAt: new Date(),
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          appVersion: APP_VERSION,
+          reason,
+          checkpointName,
+          isCheckpoint,
+          restoredFromRevisionId: options.restoredFromRevisionId,
+          assetIds,
+        };
+      }
+    } catch (error) {
+      console.warn('[Revisions] Falling back to snapshot auto-checkpoint:', error);
+    }
+  }
+
+  if (!record) {
+    record = {
+      id: revisionId,
+      projectId: project.id,
+      parentRevisionId: latestRevision?.id,
+      kind: 'snapshot',
+      baseRevisionId: revisionId,
+      snapshotData: serializedData,
+      patch: undefined,
+      contentHash,
+      createdAt: new Date(),
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      appVersion: APP_VERSION,
+      reason,
+      checkpointName,
+      isCheckpoint,
+      restoredFromRevisionId: options.restoredFromRevisionId,
+      assetIds,
+    };
+  }
 
   await db.projectRevisions.put(record);
   return toPublicRevision(record);
@@ -1317,11 +1648,22 @@ export async function restoreAsNewProject(projectId: string, revisionId: string)
   }
 
   const targetRevision = revisions[targetIndex];
-  if (!targetRevision.snapshotData) {
-    throw new Error('Only snapshot revisions are currently restorable.');
-  }
-
-  const parsedData = await hydrateProjectAssetsFromStorage(parseRevisionProjectData(targetRevision.snapshotData));
+  const materializedTarget = materializeRevisionRecord(
+    targetRevision,
+    new Map(revisions.map((revision) => [revision.id, revision])),
+    new Map(),
+  );
+  const migratedTarget = migrateSerializedProjectDataToCurrentSchema(
+    materializedTarget.serializedData,
+    materializedTarget.schemaVersion,
+    {
+      id: projectId,
+      name: sourceProject.name,
+      createdAt: new Date(targetRevision.createdAt),
+      updatedAt: new Date(targetRevision.createdAt),
+    },
+  );
+  const parsedData = await hydrateProjectAssetsFromStorage(parseRevisionProjectData(migratedTarget.serializedData));
   const restoreLabel = targetRevision.checkpointName
     ? targetRevision.checkpointName
     : formatRestoreTimestamp(new Date(targetRevision.createdAt));
@@ -1823,7 +2165,7 @@ export async function syncProjectRevisionsFromCloud(
   let created = 0;
   let updated = 0;
   let skipped = 0;
-  let migrated = 0;
+  const migrated = 0;
 
   for (const payload of cloudRevisions) {
     if (payload.localProjectId !== projectId) {
@@ -1832,20 +2174,6 @@ export async function syncProjectRevisionsFromCloud(
     }
 
     const incomingSchemaVersion = normalizeSchemaVersion(payload.schemaVersion);
-    const migratedRevision = migrateSerializedProjectDataToCurrentSchema(
-      payload.data,
-      incomingSchemaVersion,
-      {
-        id: payload.localProjectId,
-        name: projectExists.name,
-        createdAt: new Date(payload.createdAt),
-        updatedAt: new Date(payload.createdAt),
-      },
-    );
-    if (migratedRevision.migrated) {
-      migrated += 1;
-    }
-
     const incomingKind: ProjectRevisionKind = payload.kind === 'delta' ? 'delta' : 'snapshot';
     const incomingReason: ProjectRevisionReason = (
       ['manual_checkpoint', 'auto_checkpoint', 'import', 'restore', 'edit_revision'] as ProjectRevisionReason[]
@@ -1853,29 +2181,36 @@ export async function syncProjectRevisionsFromCloud(
       ? payload.reason
       : 'edit_revision';
 
+    const incomingAssetIds = Array.from(
+      new Set(
+        (
+          payload.assetIds
+          ?? (incomingKind === 'snapshot'
+            ? collectPersistedAssetRefsFromSerializedProjectData(payload.data).map((assetRef) => assetRef.assetId)
+            : (parseSerializedProjectDelta(payload.data) === null
+              ? collectPersistedAssetRefsFromSerializedProjectData(payload.data).map((assetRef) => assetRef.assetId)
+              : []))
+        ).filter((assetId): assetId is string => isManagedAssetId(assetId)),
+      ),
+    );
+
     const incomingRecord: ProjectRevisionRecord = {
       id: payload.revisionId,
       projectId: payload.localProjectId,
       parentRevisionId: payload.parentRevisionId,
       kind: incomingKind,
       baseRevisionId: payload.baseRevisionId,
-      snapshotData: incomingKind === 'snapshot' ? migratedRevision.serializedData : undefined,
-      patch: incomingKind === 'delta' ? migratedRevision.serializedData : undefined,
-      contentHash: normalizeContentHash(payload.contentHash) ?? computeContentHash(migratedRevision.serializedData),
+      snapshotData: incomingKind === 'snapshot' ? payload.data : undefined,
+      patch: incomingKind === 'delta' ? payload.data : undefined,
+      contentHash: normalizeContentHash(payload.contentHash) ?? computeContentHash(payload.data),
       createdAt: new Date(payload.createdAt),
-      schemaVersion: migratedRevision.schemaVersion,
+      schemaVersion: incomingSchemaVersion,
       appVersion: payload.appVersion,
       reason: incomingReason,
       checkpointName: payload.checkpointName ? normalizeCheckpointName(payload.checkpointName) : undefined,
       isCheckpoint: Boolean(payload.isCheckpoint),
       restoredFromRevisionId: payload.restoredFromRevisionId,
-      assetIds: Array.from(
-        new Set(
-          (payload.assetIds ?? collectPersistedAssetRefsFromSerializedProjectData(migratedRevision.serializedData)
-            .map((assetRef) => assetRef.assetId))
-            .filter((assetId): assetId is string => isManagedAssetId(assetId)),
-        ),
-      ),
+      assetIds: incomingAssetIds,
     };
 
     const existing = await db.projectRevisions.get(incomingRecord.id);

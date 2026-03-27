@@ -679,8 +679,8 @@ function createDefaultObject(name: string, order: number, objectId?: string): As
   return {
     id: objectId ?? createId('object'),
     name,
-    x: 400,
-    y: 300,
+    x: 0,
+    y: 0,
     scaleX: 1,
     scaleY: 1,
     rotation: 0,

@@ -112,9 +112,6 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
       const project = await loadProject(projectId);
       if (project) {
         openProject(project);
-        if (project.scenes.length > 0) {
-          selectScene(project.scenes[0].id, { recordHistory: false });
-        }
         if (onProjectOpen) {
           onProjectOpen(project);
         } else {
@@ -163,9 +160,6 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
     try {
       const project = await importProjectFromFile(file);
       openProject(project);
-      if (project.scenes.length > 0) {
-        selectScene(project.scenes[0].id, { recordHistory: false });
-      }
       loadProjectsList();
       if (onProjectOpen) {
         onProjectOpen(project);

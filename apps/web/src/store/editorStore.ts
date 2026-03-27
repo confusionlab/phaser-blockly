@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { PlayValidationIssue } from '@/lib/playValidation';
 import type { Project } from '@/types';
+import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import {
   canRedoHistory,
   canUndoHistory,
@@ -45,6 +46,11 @@ type SelectionHistoryOptions = {
   recordHistory?: boolean;
 };
 
+type ProjectSelectionTarget = {
+  sceneId: string | null;
+  objectId: string | null;
+};
+
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) {
     return false;
@@ -77,6 +83,30 @@ function projectContainsFolder(project: Project, sceneId: string | null, folderI
 function projectContainsComponent(project: Project, componentId: string | null): boolean {
   if (!componentId) return false;
   return (project.components || []).some((component) => component.id === componentId);
+}
+
+function getInitialProjectSelection(project: Project | null): ProjectSelectionTarget {
+  if (!project || project.scenes.length === 0) {
+    return {
+      sceneId: null,
+      objectId: null,
+    };
+  }
+
+  for (const scene of project.scenes) {
+    const firstObjectId = getSceneObjectsInLayerOrder(scene)[0]?.id ?? null;
+    if (firstObjectId) {
+      return {
+        sceneId: scene.id,
+        objectId: firstObjectId,
+      };
+    }
+  }
+
+  return {
+    sceneId: project.scenes[0]?.id ?? null,
+    objectId: null,
+  };
 }
 
 interface EditorStore {
@@ -135,6 +165,7 @@ interface EditorStore {
   selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
   selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
   clearSelection: (options?: SelectionHistoryOptions) => void;
+  initializeSelectionForProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   reconcileSelectionToProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
   openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
@@ -542,6 +573,54 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     });
   },
 
+  initializeSelectionForProject: (project, options) => {
+    const state = get();
+    const initialSelection = getInitialProjectSelection(project);
+    const nextSelectedSceneId = initialSelection.sceneId;
+    const nextSelectedFolderId = null;
+    const nextSelectedObjectId = initialSelection.objectId;
+    const nextSelectedObjectIds = nextSelectedObjectId ? [nextSelectedObjectId] : [];
+    const nextSelectedComponentId = null;
+    const recordHistory = options?.recordHistory !== false;
+    const didChange =
+      state.selectedSceneId !== nextSelectedSceneId ||
+      state.selectedFolderId !== nextSelectedFolderId ||
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId;
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
+    }
+
+    const applySelection = () => {
+      set({
+        selectedSceneId: nextSelectedSceneId,
+        selectedFolderId: nextSelectedFolderId,
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+        costumeColliderEditorRequest: null,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:project-open', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:project-open', () => {
+      beforeSelectionChange?.({ source: 'selection:project-open', recordHistory: true });
+      applySelection();
+    });
+  },
+
   reconcileSelectionToProject: (project, options) => {
     const state = get();
     const fallbackSceneId = project?.scenes[0]?.id ?? null;
@@ -615,7 +694,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   setZoom: (zoom) => {
-    set({ zoom: Math.max(0.25, Math.min(4, zoom)) });
+    set({ zoom: Math.max(0.1, Math.min(10, zoom)) });
   },
 
   setPan: (x, y) => {

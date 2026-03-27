@@ -58,6 +58,7 @@ import {
   cloneCostume,
   ensureCostumeDocument,
 } from '@/lib/costume/costumeDocument';
+import { useEditorStore } from '@/store/editorStore';
 
 interface ProjectStore {
   project: Project | null;
@@ -612,6 +613,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     seedUpdatedAt(normalizedProject);
     set({ project: normalizedProject, isDirty: false });
     resetHistory();
+    useEditorStore.getState().initializeSelectionForProject(normalizedProject, { recordHistory: false });
   },
 
   saveCurrentProject: async () => {

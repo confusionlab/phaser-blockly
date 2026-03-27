@@ -370,6 +370,33 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     [ensureAssetRefsInCloud],
   );
 
+  const ensureAssetIdsInCloud = useCallback(
+    async (assetIds: readonly string[]) => {
+      const refsById = new Map<string, PersistedAssetRef>();
+      for (const assetId of assetIds) {
+        if (!assetId) continue;
+        const metadata = await getManagedAssetMetadata(assetId);
+        if (!metadata) {
+          throw new Error(`Missing local metadata for asset ${assetId}`);
+        }
+        refsById.set(assetId, {
+          assetId,
+          kind: metadata.kind,
+        });
+      }
+      await ensureAssetRefsInCloud(Array.from(refsById.values()));
+    },
+    [ensureAssetRefsInCloud],
+  );
+
+  const ensureRevisionAssetsInCloud = useCallback(
+    async (revisions: ProjectRevisionSyncPayload[]) => {
+      const assetIds = Array.from(new Set(revisions.flatMap((revision) => revision.assetIds)));
+      await ensureAssetIdsInCloud(assetIds);
+    },
+    [ensureAssetIdsInCloud],
+  );
+
   const ensureAssetRefsAvailableLocally = useCallback(
     async (assetRefs: PersistedAssetRef[]) => {
       const missingRefs: PersistedAssetRef[] = [];
@@ -420,6 +447,45 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       await ensureAssetRefsAvailableLocally(Array.from(refsById.values()));
     },
     [ensureAssetRefsAvailableLocally],
+  );
+
+  const ensureAssetIdsAvailableLocally = useCallback(
+    async (assetIds: readonly string[]) => {
+      const missingIds: string[] = [];
+      for (const assetId of assetIds) {
+        if (!(await hasManagedAsset(assetId))) {
+          missingIds.push(assetId);
+        }
+      }
+
+      if (missingIds.length === 0) {
+        return;
+      }
+
+      const cloudAssets = await convex.query(api.projectAssets.getMany, {
+        assetIds: missingIds,
+      });
+
+      const assetsById = new Map(
+        (cloudAssets as CloudManagedAssetRecord[]).map((asset) => [asset.assetId, asset]),
+      );
+
+      for (const assetId of missingIds) {
+        const cloudAsset = assetsById.get(assetId);
+        if (!cloudAsset?.url) {
+          throw new Error(`Cloud asset ${assetId} is unavailable`);
+        }
+
+        const response = await fetch(cloudAsset.url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch cloud asset ${assetId} (${response.status})`);
+        }
+
+        const blob = await response.blob();
+        await storeManagedAsset(assetId, blob, cloudAsset.kind);
+      }
+    },
+    [convex],
   );
 
   const syncPayloadToCloud = useCallback(
@@ -480,7 +546,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return { created: 0, updated: 0, skipped: 0 };
       }
 
-      await ensureSerializedAssetsInCloud(revisions.map((revision) => revision.data));
+      await ensureRevisionAssetsInCloud(revisions);
 
       const storageRevisions: StorageRevisionSyncPayload[] = [];
       for (const revision of revisions) {
@@ -498,7 +564,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
       return await syncRevisionsMutation({ revisions: storageRevisions });
     },
-    [enabled, ensureSerializedAssetsInCloud, syncRevisionsMutation, toStorageRevisionPayload],
+    [enabled, ensureRevisionAssetsInCloud, syncRevisionsMutation, toStorageRevisionPayload],
   );
 
   const runWithRetry = useCallback(async (fn: () => Promise<void>, attempts = 2) => {
@@ -522,10 +588,11 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   const ensureCloudProjectAssetsLocally = useCallback(
     async (projectData: string, revisionPayloads: ProjectRevisionSyncPayload[] = []) => {
-      const serializedPayloads = [projectData, ...revisionPayloads.map((revision) => revision.data)];
-      await ensureSerializedAssetsAvailableLocally(serializedPayloads);
+      const revisionAssetIds = Array.from(new Set(revisionPayloads.flatMap((revision) => revision.assetIds)));
+      await ensureSerializedAssetsAvailableLocally([projectData]);
+      await ensureAssetIdsAvailableLocally(revisionAssetIds);
     },
-    [ensureSerializedAssetsAvailableLocally],
+    [ensureAssetIdsAvailableLocally, ensureSerializedAssetsAvailableLocally],
   );
 
   const reconcileProjectFromCloud = useCallback(async (localId: string): Promise<boolean> => {
