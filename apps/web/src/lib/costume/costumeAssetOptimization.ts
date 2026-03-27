@@ -4,7 +4,6 @@ import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
 
 export const COSTUME_ASSET_MIME_TYPE = 'image/webp';
 export const COSTUME_ASSET_QUALITY = 0.85;
-export const PERSISTED_COSTUME_ASSET_MIME_TYPE = 'image/png';
 
 export interface CostumeRasterEncodingOptions {
   mimeType?: string;

@@ -110,6 +110,17 @@ test.describe('costume asset persistence', () => {
       const savedEditedProject = await saveProject(editedProject);
       const editedPayload = await createProjectSyncPayload(savedEditedProject);
 
+      const editedSavedCostume = savedEditedProject.scenes[0]!.objects[0]!.costumes[0]!;
+      const editedSavedLayer = editedSavedCostume.document.layers[0];
+      if (!editedSavedLayer || editedSavedLayer.kind !== 'bitmap' || !editedSavedLayer.bitmap.persistedAssetId || !editedSavedCostume.persistedAssetId) {
+        throw new Error('Expected persisted costume asset metadata.');
+      }
+
+      const [persistedLayerRecord, persistedCostumeRecord] = await Promise.all([
+        db.assets.get(editedSavedLayer.bitmap.persistedAssetId),
+        db.assets.get(editedSavedCostume.persistedAssetId),
+      ]);
+
       const resavedProject = await saveProject(savedEditedProject);
       const resavedPayload = await createProjectSyncPayload(resavedProject);
 
@@ -128,6 +139,8 @@ test.describe('costume asset persistence', () => {
         resavedAssetIds: resavedPayload.assetIds,
         afterEdit: diffAssetIds(initialPayload.assetIds, editedPayload.assetIds),
         afterResave: diffAssetIds(editedPayload.assetIds, resavedPayload.assetIds),
+        persistedLayerMimeType: persistedLayerRecord?.mimeType ?? null,
+        persistedCostumeMimeType: persistedCostumeRecord?.mimeType ?? null,
       };
     });
 
@@ -137,5 +150,85 @@ test.describe('costume asset persistence', () => {
     expect(result.afterResave.added).toEqual([]);
     expect(result.afterResave.removed).toEqual([]);
     expect(result.resavedAssetIds).toEqual(result.editedAssetIds);
+    expect(result.persistedLayerMimeType).toBe('image/webp');
+    expect(result.persistedCostumeMimeType).toBe('image/webp');
+  });
+
+  test('reuses the saved flattened asset when the runtime preview changes but the document signature does not', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const [
+        { createBitmapCostumeDocument },
+        { createDefaultGameObject, createDefaultProject },
+        { renderCostumeDocument },
+        { createProjectSyncPayload, db, saveProject },
+      ] = await Promise.all([
+        import('/src/lib/costume/costumeDocument.ts'),
+        import('/src/types/index.ts'),
+        import('/src/lib/costume/costumeDocumentRender.ts'),
+        import('/src/db/database.ts'),
+      ]);
+
+      await db.projectRevisions.clear();
+      await db.projects.clear();
+      await db.assets.clear();
+      await db.reusables.clear();
+
+      const createBitmapSource = (fillStyle: string) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 96;
+        canvas.height = 96;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('Failed to create costume source canvas.');
+        }
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = fillStyle;
+        ctx.fillRect(12, 16, 52, 48);
+        return canvas.toDataURL('image/png');
+      };
+
+      const project = createDefaultProject('Costume Signature Reuse Fixture');
+      const object = createDefaultGameObject('Hero');
+      project.scenes[0]!.objects = [object];
+
+      const redSource = createBitmapSource('#ef4444');
+      object.costumes = [
+        {
+          ...object.costumes[0]!,
+          name: 'Red',
+          assetId: redSource,
+          document: createBitmapCostumeDocument(redSource, 'Red Layer'),
+        },
+      ];
+
+      const savedProject = await saveProject(project);
+      const savedCostume = savedProject.scenes[0]!.objects[0]!.costumes[0]!;
+      const initialPayload = await createProjectSyncPayload(savedProject);
+
+      const transientProject = structuredClone(savedProject);
+      transientProject.updatedAt = new Date(savedProject.updatedAt.getTime() + 1_000);
+      const transientCostume = transientProject.scenes[0]!.objects[0]!.costumes[0]!;
+      transientCostume.assetId = (await renderCostumeDocument(transientCostume.document)).dataUrl;
+
+      const resavedProject = await saveProject(transientProject);
+      const resavedCostume = resavedProject.scenes[0]!.objects[0]!.costumes[0]!;
+      const resavedPayload = await createProjectSyncPayload(resavedProject);
+
+      return {
+        initialAssetIds: initialPayload.assetIds,
+        resavedAssetIds: resavedPayload.assetIds,
+        initialPersistedAssetId: savedCostume.persistedAssetId ?? null,
+        resavedPersistedAssetId: resavedCostume.persistedAssetId ?? null,
+        initialRenderSignature: savedCostume.renderSignature ?? null,
+        resavedRenderSignature: resavedCostume.renderSignature ?? null,
+      };
+    });
+
+    expect(result.resavedAssetIds).toEqual(result.initialAssetIds);
+    expect(result.resavedPersistedAssetId).toBe(result.initialPersistedAssetId);
+    expect(result.resavedRenderSignature).toBe(result.initialRenderSignature);
   });
 });

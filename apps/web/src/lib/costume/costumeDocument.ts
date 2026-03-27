@@ -59,12 +59,16 @@ function sanitizeBitmapContentRef(value: unknown): CostumeBitmapContentRef {
   if (!value || typeof value !== 'object') {
     return { assetId: null };
   }
-  const maybe = value as { assetId?: unknown; assetFrame?: unknown };
+  const maybe = value as { assetId?: unknown; assetFrame?: unknown; persistedAssetId?: unknown };
+  const persistedAssetId = typeof maybe.persistedAssetId === 'string' && maybe.persistedAssetId.trim().length > 0
+    ? maybe.persistedAssetId
+    : undefined;
   return {
     assetId: typeof maybe.assetId === 'string' && maybe.assetId.trim().length > 0
       ? maybe.assetId
       : null,
     assetFrame: sanitizeCostumeAssetFrame(maybe.assetFrame),
+    persistedAssetId,
   };
 }
 
@@ -118,6 +122,7 @@ export function cloneCostumeLayer(layer: CostumeLayer): CostumeLayer {
       bitmap: {
         ...layer.bitmap,
         assetFrame: cloneCostumeAssetFrame(layer.bitmap.assetFrame),
+        persistedAssetId: layer.bitmap.persistedAssetId,
       },
       effects: [...layer.effects],
     };
@@ -159,11 +164,12 @@ export function createBitmapLayer(options: {
     effects: [],
     width: COSTUME_CANVAS_SIZE,
     height: COSTUME_CANVAS_SIZE,
-    bitmap: {
-      assetId: typeof options.assetId === 'string' && options.assetId.trim().length > 0 ? options.assetId : null,
-      assetFrame: cloneCostumeAssetFrame(options.assetFrame),
-    },
-  };
+      bitmap: {
+        assetId: typeof options.assetId === 'string' && options.assetId.trim().length > 0 ? options.assetId : null,
+        assetFrame: cloneCostumeAssetFrame(options.assetFrame),
+        persistedAssetId: undefined,
+      },
+    };
 }
 
 export function createVectorLayer(options: {
@@ -397,6 +403,7 @@ export function applyCanvasStateToCostumeDocument(
     bitmap: {
       assetId: state.dataUrl || null,
       assetFrame: cloneCostumeAssetFrame(state.bitmapAssetFrame) ?? undefined,
+      persistedAssetId: activeLayer.kind === 'bitmap' ? activeLayer.bitmap.persistedAssetId : undefined,
     },
   };
   return nextDocument;
@@ -501,6 +508,8 @@ export function ensureCostumeDocument(costume: LegacyCostumeShape): CostumeDocum
 export function cloneCostume(costume: Costume): Costume {
   return {
     ...costume,
+    persistedAssetId: costume.persistedAssetId,
+    renderSignature: costume.renderSignature,
     bounds: costume.bounds ? { ...costume.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(costume.document),

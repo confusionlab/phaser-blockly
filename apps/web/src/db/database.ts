@@ -32,10 +32,12 @@ import {
 } from '@/lib/background/backgroundDocument';
 import { cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
 import {
-  PERSISTED_COSTUME_ASSET_MIME_TYPE,
   optimizeCostumeBitmapAssetSource,
 } from '@/lib/costume/costumeAssetOptimization';
-import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
+import {
+  getCostumeDocumentPreviewSignature,
+  renderCostumeDocument,
+} from '@/lib/costume/costumeDocumentRender';
 import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
@@ -565,6 +567,50 @@ function getManagedAssetIdForSource(source: unknown): string | null {
   return cachedId && isManagedAssetId(cachedId) ? cachedId : null;
 }
 
+function getManagedAssetHash(assetId: unknown): string | null {
+  if (!isManagedAssetId(assetId)) {
+    return null;
+  }
+
+  const match = assetId.match(MANAGED_ASSET_ID_PATTERN);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+async function sourceMatchesManagedAssetId(source: string, assetId: string | undefined): Promise<boolean> {
+  const expectedHash = getManagedAssetHash(assetId);
+  if (!expectedHash) {
+    return false;
+  }
+
+  try {
+    const blob = await fetchBlobFromSource(source);
+    const actualHash = await computeSha256Hex(blob);
+    return actualHash === expectedHash;
+  } catch {
+    return false;
+  }
+}
+
+function applyPersistedBitmapAssetRefs(
+  document: ReturnType<typeof cloneCostumeDocument>,
+  refs: Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>,
+): ReturnType<typeof cloneCostumeDocument> {
+  for (const layer of document.layers) {
+    if (!isBitmapCostumeLayer(layer)) {
+      continue;
+    }
+    const persistedRef = refs.get(layer.id);
+    if (!persistedRef) {
+      continue;
+    }
+    layer.bitmap.assetId = persistedRef.assetId;
+    layer.bitmap.assetFrame = cloneCostumeAssetFrame(persistedRef.assetFrame);
+    layer.bitmap.persistedAssetId = persistedRef.assetId;
+  }
+
+  return document;
+}
+
 function addPersistedAssetRef(
   refsById: Map<string, PersistedProjectAssetRef>,
   assetId: string,
@@ -577,11 +623,10 @@ function addPersistedAssetRef(
 }
 
 async function normalizeCostumeAssetsForStorage(
-  costume: { assetId: string; assetFrame?: unknown; document?: unknown },
+  costume: { assetId: string; assetFrame?: unknown; document?: unknown; persistedAssetId?: unknown; renderSignature?: unknown },
   refsById: Map<string, PersistedProjectAssetRef>,
 ): Promise<void> {
   const document = ensureCostumeDocument(costume);
-  let shouldRegenerateFlattenedCostume = false;
   const persistedBitmapLayerRefs = new Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>();
 
   for (const layer of document.layers) {
@@ -595,53 +640,70 @@ async function normalizeCostumeAssetsForStorage(
         assetId: existingManagedAssetId,
         assetFrame: cloneCostumeAssetFrame(layer.bitmap.assetFrame),
       });
+      layer.bitmap.persistedAssetId = existingManagedAssetId;
       continue;
     }
+
+    if (
+      typeof layer.bitmap.persistedAssetId === 'string' &&
+      await sourceMatchesManagedAssetId(layer.bitmap.assetId, layer.bitmap.persistedAssetId)
+    ) {
+      addPersistedAssetRef(refsById, layer.bitmap.persistedAssetId, 'image');
+      persistedBitmapLayerRefs.set(layer.id, {
+        assetId: layer.bitmap.persistedAssetId,
+        assetFrame: cloneCostumeAssetFrame(layer.bitmap.assetFrame),
+      });
+      continue;
+    }
+
     const optimizedLayerAsset = await optimizeCostumeBitmapAssetSource(
       layer.bitmap.assetId,
       layer.bitmap.assetFrame,
-      { mimeType: PERSISTED_COSTUME_ASSET_MIME_TYPE },
     );
     if (!optimizedLayerAsset) {
       continue;
     }
-    shouldRegenerateFlattenedCostume = true;
     const record = await ensureAssetRecordFromSource(optimizedLayerAsset.dataUrl, 'image');
     addPersistedAssetRef(refsById, record.id, 'image');
     layer.bitmap.assetId = optimizedLayerAsset.dataUrl;
     layer.bitmap.assetFrame = cloneCostumeAssetFrame(optimizedLayerAsset.assetFrame);
+    layer.bitmap.persistedAssetId = record.id;
     persistedBitmapLayerRefs.set(layer.id, {
       assetId: record.id,
       assetFrame: cloneCostumeAssetFrame(optimizedLayerAsset.assetFrame),
     });
   }
 
-  const existingFlattenedAssetId = getManagedAssetIdForSource(costume.assetId);
-  if (!shouldRegenerateFlattenedCostume && existingFlattenedAssetId) {
+  const canonicalDocument = applyPersistedBitmapAssetRefs(
+    cloneCostumeDocument(document),
+    persistedBitmapLayerRefs,
+  );
+  const renderSignature = getCostumeDocumentPreviewSignature(canonicalDocument);
+  const existingFlattenedAssetId = getManagedAssetIdForSource(costume.assetId)
+    ?? (typeof costume.persistedAssetId === 'string' && isManagedAssetId(costume.persistedAssetId)
+      ? costume.persistedAssetId
+      : null);
+
+  if (
+    existingFlattenedAssetId &&
+    typeof costume.renderSignature === 'string' &&
+    costume.renderSignature === renderSignature
+  ) {
     addPersistedAssetRef(refsById, existingFlattenedAssetId, 'image');
     costume.assetId = existingFlattenedAssetId;
+    costume.persistedAssetId = existingFlattenedAssetId;
+    costume.renderSignature = renderSignature;
   } else {
-    const renderedCostume = await renderCostumeDocument(document, {
-      mimeType: PERSISTED_COSTUME_ASSET_MIME_TYPE,
-    });
+    const renderedCostume = await renderCostumeDocument(document);
     const runtimeAssetRecord = await ensureAssetRecordFromSource(renderedCostume.dataUrl, 'image');
     addPersistedAssetRef(refsById, runtimeAssetRecord.id, 'image');
     costume.assetId = runtimeAssetRecord.id;
+    costume.persistedAssetId = runtimeAssetRecord.id;
+    costume.renderSignature = renderSignature;
     (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(renderedCostume.assetFrame);
   }
 
-  for (const layer of document.layers) {
-    if (!isBitmapCostumeLayer(layer)) {
-      continue;
-    }
-    const persistedRef = persistedBitmapLayerRefs.get(layer.id);
-    if (!persistedRef) {
-      continue;
-    }
-    layer.bitmap.assetId = persistedRef.assetId;
-    layer.bitmap.assetFrame = cloneCostumeAssetFrame(persistedRef.assetFrame);
-  }
-
+  applyPersistedBitmapAssetRefs(document, persistedBitmapLayerRefs);
   (costume as { document: unknown }).document = cloneCostumeDocument(document);
 }
 

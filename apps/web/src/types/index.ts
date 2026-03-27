@@ -186,6 +186,7 @@ export type CostumeLayerEffect = never;
 export interface CostumeBitmapContentRef {
   assetId: string | null;
   assetFrame?: CostumeAssetFrame;
+  persistedAssetId?: string;
 }
 
 export interface CostumeVectorDocument {
@@ -234,6 +235,8 @@ export interface Costume {
   id: string;
   name: string;
   assetId: string; // Reference to Asset
+  persistedAssetId?: string; // Canonical saved flattened asset reference
+  renderSignature?: string; // Canonical visual signature for the saved flattened asset
   bounds?: CostumeBounds; // Bounding box of visible (non-transparent) pixels
   assetFrame?: CostumeAssetFrame; // Placement metadata for cropped runtime assets
   document: CostumeDocument;
