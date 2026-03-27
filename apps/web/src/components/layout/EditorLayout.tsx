@@ -116,6 +116,7 @@ export function EditorLayout() {
   });
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
