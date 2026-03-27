@@ -19,7 +19,28 @@ test.describe('cloud sync planning', () => {
 
     expect(result).toEqual({
       action: 'skip',
-      reason: 'already in sync',
+      reason: 'content already in sync',
+    });
+  });
+
+  test('skips project upload when only the timestamp is newer but content matches', () => {
+    const result = planProjectSyncAction(
+      {
+        updatedAt: 1_000,
+        schemaVersion: 9,
+        contentHash: 'aaaaaaaaaaaaaaaa',
+      },
+      {
+        localId: 'project-1',
+        updatedAt: 2_000,
+        schemaVersion: 9,
+        contentHash: 'aaaaaaaaaaaaaaaa',
+      },
+    );
+
+    expect(result).toEqual({
+      action: 'skip',
+      reason: 'content already in sync',
     });
   });
 

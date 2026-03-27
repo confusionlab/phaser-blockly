@@ -319,6 +319,14 @@ export function planProjectSyncAction(
   const existingHash = normalizeContentHash(existing.contentHash);
   const sameTimestamp = incoming.updatedAt === existing.updatedAt;
   const sameSchema = incomingSchemaVersion === existingSchemaVersion;
+  const matchingHashes = sameSchema && incomingHash !== null && existingHash !== null && incomingHash === existingHash;
+
+  if (matchingHashes) {
+    return {
+      action: "skip",
+      reason: "content already in sync",
+    };
+  }
 
   const shouldUpload =
     incomingSchemaVersion > existingSchemaVersion ||
