@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from 'dexie';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type {
   BackgroundConfig,
+  CostumeAssetFrame,
   MessageDefinition,
   Project,
   ReusableObject,
@@ -30,7 +31,10 @@ import {
   isBitmapBackgroundLayer,
 } from '@/lib/background/backgroundDocument';
 import { cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
-import { optimizeCostumeBitmapAssetSource } from '@/lib/costume/costumeAssetOptimization';
+import {
+  PERSISTED_COSTUME_ASSET_MIME_TYPE,
+  optimizeCostumeBitmapAssetSource,
+} from '@/lib/costume/costumeAssetOptimization';
 import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
 import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
 
@@ -548,6 +552,19 @@ function rememberResolvedManagedAsset(assetId: string, source: string): void {
   sourceToManagedAssetIdCache.set(source, assetId);
 }
 
+function getManagedAssetIdForSource(source: unknown): string | null {
+  if (typeof source !== 'string' || source.trim().length === 0) {
+    return null;
+  }
+
+  if (isManagedAssetId(source)) {
+    return source;
+  }
+
+  const cachedId = sourceToManagedAssetIdCache.get(source) ?? objectUrlToAssetId.get(source);
+  return cachedId && isManagedAssetId(cachedId) ? cachedId : null;
+}
+
 function addPersistedAssetRef(
   refsById: Map<string, PersistedProjectAssetRef>,
   assetId: string,
@@ -564,28 +581,67 @@ async function normalizeCostumeAssetsForStorage(
   refsById: Map<string, PersistedProjectAssetRef>,
 ): Promise<void> {
   const document = ensureCostumeDocument(costume);
-  const renderedCostume = await renderCostumeDocument(document);
-  const runtimeAssetRecord = await ensureAssetRecordFromSource(renderedCostume.dataUrl, 'image');
-  addPersistedAssetRef(refsById, runtimeAssetRecord.id, 'image');
-  costume.assetId = runtimeAssetRecord.id;
-  (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(renderedCostume.assetFrame);
+  let shouldRegenerateFlattenedCostume = false;
+  const persistedBitmapLayerRefs = new Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>();
 
   for (const layer of document.layers) {
     if (!isBitmapCostumeLayer(layer) || !isLikelyAssetSource(layer.bitmap.assetId)) {
       continue;
     }
+    const existingManagedAssetId = getManagedAssetIdForSource(layer.bitmap.assetId);
+    if (existingManagedAssetId) {
+      addPersistedAssetRef(refsById, existingManagedAssetId, 'image');
+      persistedBitmapLayerRefs.set(layer.id, {
+        assetId: existingManagedAssetId,
+        assetFrame: cloneCostumeAssetFrame(layer.bitmap.assetFrame),
+      });
+      continue;
+    }
     const optimizedLayerAsset = await optimizeCostumeBitmapAssetSource(
       layer.bitmap.assetId,
       layer.bitmap.assetFrame,
+      { mimeType: PERSISTED_COSTUME_ASSET_MIME_TYPE },
     );
     if (!optimizedLayerAsset) {
       continue;
     }
+    shouldRegenerateFlattenedCostume = true;
     const record = await ensureAssetRecordFromSource(optimizedLayerAsset.dataUrl, 'image');
     addPersistedAssetRef(refsById, record.id, 'image');
-    layer.bitmap.assetId = record.id;
+    layer.bitmap.assetId = optimizedLayerAsset.dataUrl;
     layer.bitmap.assetFrame = cloneCostumeAssetFrame(optimizedLayerAsset.assetFrame);
+    persistedBitmapLayerRefs.set(layer.id, {
+      assetId: record.id,
+      assetFrame: cloneCostumeAssetFrame(optimizedLayerAsset.assetFrame),
+    });
   }
+
+  const existingFlattenedAssetId = getManagedAssetIdForSource(costume.assetId);
+  if (!shouldRegenerateFlattenedCostume && existingFlattenedAssetId) {
+    addPersistedAssetRef(refsById, existingFlattenedAssetId, 'image');
+    costume.assetId = existingFlattenedAssetId;
+  } else {
+    const renderedCostume = await renderCostumeDocument(document, {
+      mimeType: PERSISTED_COSTUME_ASSET_MIME_TYPE,
+    });
+    const runtimeAssetRecord = await ensureAssetRecordFromSource(renderedCostume.dataUrl, 'image');
+    addPersistedAssetRef(refsById, runtimeAssetRecord.id, 'image');
+    costume.assetId = runtimeAssetRecord.id;
+    (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(renderedCostume.assetFrame);
+  }
+
+  for (const layer of document.layers) {
+    if (!isBitmapCostumeLayer(layer)) {
+      continue;
+    }
+    const persistedRef = persistedBitmapLayerRefs.get(layer.id);
+    if (!persistedRef) {
+      continue;
+    }
+    layer.bitmap.assetId = persistedRef.assetId;
+    layer.bitmap.assetFrame = cloneCostumeAssetFrame(persistedRef.assetFrame);
+  }
+
   (costume as { document: unknown }).document = cloneCostumeDocument(document);
 }
 

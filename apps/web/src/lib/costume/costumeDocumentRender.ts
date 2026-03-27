@@ -7,7 +7,10 @@ import {
   cloneCostumeAssetFrame,
   getCostumeAssetFrameSignature,
 } from './costumeAssetFrame';
-import { optimizeCostumeRasterCanvas } from './costumeAssetOptimization';
+import {
+  type CostumeRasterEncodingOptions,
+  optimizeCostumeRasterCanvas,
+} from './costumeAssetOptimization';
 import { renderVectorLayerDocumentToCanvas } from './costumeVectorTextureRenderer';
 import {
   canUseCostumeDocumentPreviewWorker,
@@ -372,11 +375,31 @@ export async function renderCostumeDocument(document: CostumeDocument): Promise<
   assetFrame?: CostumeAssetFrame;
   dataUrl: string;
   bounds: CostumeBounds | null;
+}>;
+export async function renderCostumeDocument(
+  document: CostumeDocument,
+  options?: CostumeRasterEncodingOptions,
+): Promise<{
+  canvas: HTMLCanvasElement;
+  assetFrame?: CostumeAssetFrame;
+  dataUrl: string;
+  bounds: CostumeBounds | null;
+}>;
+export async function renderCostumeDocument(
+  document: CostumeDocument,
+  options: CostumeRasterEncodingOptions = {},
+): Promise<{
+  canvas: HTMLCanvasElement;
+  assetFrame?: CostumeAssetFrame;
+  dataUrl: string;
+  bounds: CostumeBounds | null;
 }> {
   if (canUseCostumeDocumentPreviewWorker()) {
     try {
       const renderableLayers = await createRenderableCostumePreviewLayers(document);
       const rendered = await renderCostumePreviewLayersInWorker(COSTUME_CANVAS_SIZE, renderableLayers, {
+        mimeType: options.mimeType,
+        quality: options.quality,
         trimTransparentFrame: true,
       });
       const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(
@@ -401,7 +424,7 @@ export async function renderCostumeDocument(document: CostumeDocument): Promise<
   }
 
   const composedCanvas = await renderCostumeLayerStackToCanvas(document.layers);
-  return optimizeCostumeRasterCanvas(composedCanvas);
+  return optimizeCostumeRasterCanvas(composedCanvas, options);
 }
 
 async function createRenderableCostumePreviewLayers(

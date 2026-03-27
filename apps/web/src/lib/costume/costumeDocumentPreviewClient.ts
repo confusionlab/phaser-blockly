@@ -74,7 +74,7 @@ export function canUseCostumeDocumentPreviewWorker(): boolean {
 export function renderCostumePreviewLayersInWorker(
   canvasSize: number,
   layers: RenderableCostumePreviewLayer[],
-  options: { trimTransparentFrame?: boolean } = {},
+  options: { trimTransparentFrame?: boolean; mimeType?: string; quality?: number } = {},
 ): Promise<{ assetFrame?: CostumeAssetFrame | null; bounds: CostumeBounds | null; dataUrl: string }> {
   const worker = ensurePreviewWorker();
   const requestId = nextRequestId++;
@@ -82,6 +82,8 @@ export function renderCostumePreviewLayersInWorker(
     requestId,
     canvasSize,
     layers,
+    mimeType: options.mimeType,
+    quality: options.quality,
     trimTransparentFrame: options.trimTransparentFrame === true,
   };
 

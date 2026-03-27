@@ -4,6 +4,12 @@ import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
 
 export const COSTUME_ASSET_MIME_TYPE = 'image/webp';
 export const COSTUME_ASSET_QUALITY = 0.85;
+export const PERSISTED_COSTUME_ASSET_MIME_TYPE = 'image/png';
+
+export interface CostumeRasterEncodingOptions {
+  mimeType?: string;
+  quality?: number;
+}
 
 function cropCanvasToFrame(
   sourceCanvas: HTMLCanvasElement,
@@ -62,8 +68,20 @@ export interface OptimizedCostumeRasterAsset {
   dataUrl: string;
 }
 
+function canvasToEncodedDataUrl(
+  canvas: HTMLCanvasElement,
+  options: CostumeRasterEncodingOptions = {},
+): string {
+  const mimeType = options.mimeType ?? COSTUME_ASSET_MIME_TYPE;
+  if (mimeType === 'image/png') {
+    return canvas.toDataURL(mimeType);
+  }
+  return canvas.toDataURL(mimeType, options.quality ?? COSTUME_ASSET_QUALITY);
+}
+
 export function optimizeCostumeRasterCanvas(
   sourceCanvas: HTMLCanvasElement,
+  options: CostumeRasterEncodingOptions = {},
 ): OptimizedCostumeRasterAsset {
   const bounds = calculateBoundsFromCanvas(sourceCanvas);
   const cropBounds = calculateBoundsFromCanvas(sourceCanvas, 0);
@@ -74,18 +92,19 @@ export function optimizeCostumeRasterCanvas(
     canvas,
     bounds,
     assetFrame,
-    dataUrl: canvas.toDataURL(COSTUME_ASSET_MIME_TYPE, COSTUME_ASSET_QUALITY),
+    dataUrl: canvasToEncodedDataUrl(canvas, options),
   };
 }
 
 export async function optimizeCostumeBitmapAssetSource(
   source: string,
   assetFrame?: CostumeAssetFrame | null,
+  options: CostumeRasterEncodingOptions = {},
 ): Promise<OptimizedCostumeRasterAsset | null> {
   const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(source, assetFrame);
   if (!surfaceCanvas) {
     return null;
   }
 
-  return optimizeCostumeRasterCanvas(surfaceCanvas);
+  return optimizeCostumeRasterCanvas(surfaceCanvas, options);
 }

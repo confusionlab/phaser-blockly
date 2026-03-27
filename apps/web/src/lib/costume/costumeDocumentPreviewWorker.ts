@@ -92,8 +92,10 @@ async function renderPreview(request: CostumeDocumentPreviewWorkerRequest): Prom
   }
 
   const previewBlob = await targetCanvas.convertToBlob({
-    type: 'image/webp',
-    quality: 0.85,
+    type: request.mimeType ?? 'image/webp',
+    ...(request.mimeType === 'image/png'
+      ? {}
+      : { quality: request.quality ?? 0.85 }),
   });
 
   return {

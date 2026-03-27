@@ -9,6 +9,8 @@ export interface RenderableCostumePreviewLayer {
 export interface CostumeDocumentPreviewWorkerRequest {
   canvasSize: number;
   layers: RenderableCostumePreviewLayer[];
+  mimeType?: string;
+  quality?: number;
   trimTransparentFrame?: boolean;
   requestId: number;
 }
