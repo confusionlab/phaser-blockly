@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { planProjectSyncAction, planRevisionSyncAction } from '../../../convex/projects';
+import { planProjectSyncAction, planRevisionSyncAction, selectUncoveredAssetIdsForSync } from '../../../convex/projects';
 
 test.describe('cloud sync planning', () => {
   test('skips project upload when hashes already match', () => {
@@ -106,5 +106,26 @@ test.describe('cloud sync planning', () => {
       action: 'skip',
       reason: 'cloud revision is newer or equal',
     });
+  });
+
+  test('only schedules uncovered asset ids for upload', () => {
+    const coveredAssetIds = new Set([
+      `asset:${'a'.repeat(64)}`,
+      `asset:${'b'.repeat(64)}`,
+    ]);
+
+    expect(
+      selectUncoveredAssetIdsForSync(
+        [
+          `asset:${'a'.repeat(64)}`,
+          `asset:${'c'.repeat(64)}`,
+          `asset:${'c'.repeat(64)}`,
+          'not-an-asset-id',
+        ],
+        coveredAssetIds,
+      ),
+    ).toEqual([
+      `asset:${'c'.repeat(64)}`,
+    ]);
   });
 });

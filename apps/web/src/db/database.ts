@@ -1789,6 +1789,7 @@ export interface ProjectSyncMetadata {
   updatedAt: number;
   schemaVersion: number;
   contentHash: string;
+  assetIds: string[];
 }
 
 export interface ProjectRevisionSyncPayload {
@@ -1814,6 +1815,7 @@ export interface ProjectRevisionSyncMetadata {
   createdAt: number;
   schemaVersion: number;
   contentHash: string;
+  assetIds: string[];
   reason: ProjectRevisionReason;
   checkpointName?: string;
   isCheckpoint: boolean;
@@ -1904,6 +1906,7 @@ function recordToSyncMetadata(record: ProjectRecord): ProjectSyncMetadata {
     updatedAt: record.updatedAt.getTime(),
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
     contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(record.data),
+    assetIds: getPersistedAssetIdsFromRecord(record, record.data),
   };
 }
 
@@ -1935,6 +1938,7 @@ function revisionRecordToSyncMetadata(record: ProjectRevisionRecord): ProjectRev
     createdAt: record.createdAt.getTime(),
     schemaVersion: normalizeSchemaVersion(record.schemaVersion),
     contentHash: normalizeContentHash(record.contentHash) ?? computeContentHash(data),
+    assetIds: getPersistedAssetIdsFromRecord(record, data),
     reason: record.reason,
     checkpointName: record.checkpointName,
     isCheckpoint: record.isCheckpoint,

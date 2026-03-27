@@ -54,6 +54,7 @@ const syncMetadataValidator = v.object({
   updatedAt: v.number(),
   schemaVersion: v.optional(schemaVersionValidator),
   contentHash: v.optional(v.string()),
+  assetIds: v.optional(managedAssetIdsValidator),
 });
 
 const syncPayloadValidator = v.object({
@@ -84,6 +85,7 @@ const revisionSyncMetadataValidator = v.object({
   createdAt: v.number(),
   schemaVersion: v.optional(schemaVersionValidator),
   contentHash: v.optional(v.string()),
+  assetIds: v.optional(managedAssetIdsValidator),
   reason: revisionReasonValidator,
   checkpointName: v.optional(v.string()),
   isCheckpoint: v.boolean(),
@@ -134,12 +136,14 @@ const revisionSummaryValidator = v.object({
 const projectSyncPlanValidator = v.object({
   action: v.union(v.literal("upload"), v.literal("skip"), v.literal("pull")),
   reason: v.string(),
+  missingAssetIds: v.optional(managedAssetIdsValidator),
 });
 
 const revisionSyncPlanValidator = v.object({
   revisionId: v.string(),
   action: v.union(v.literal("upload"), v.literal("skip")),
   reason: v.string(),
+  missingAssetIds: v.optional(managedAssetIdsValidator),
 });
 
 const syncPlanResultValidator = v.object({
@@ -182,6 +186,7 @@ type SyncMetadata = {
   updatedAt: number;
   schemaVersion?: number | string;
   contentHash?: string;
+  assetIds?: string[];
 };
 
 async function requireAuthenticatedUserId(ctx: any): Promise<string> {
@@ -240,6 +245,7 @@ type RevisionSyncMetadata = {
   createdAt: number;
   schemaVersion?: number | string;
   contentHash?: string;
+  assetIds?: string[];
   reason: "manual_checkpoint" | "auto_checkpoint" | "import" | "restore" | "edit_revision";
   checkpointName?: string;
   isCheckpoint: boolean;
@@ -289,6 +295,48 @@ function normalizeManagedAssetIds(assetIds: unknown): string[] {
     assetIds.filter((assetId): assetId is string => typeof assetId === "string" && MANAGED_ASSET_ID_PATTERN.test(assetId.trim()))
       .map((assetId) => assetId.trim()),
   ));
+}
+
+export function selectUncoveredAssetIdsForSync(
+  incomingAssetIds: unknown,
+  coveredAssetIds: ReadonlySet<string>,
+): string[] {
+  return normalizeManagedAssetIds(incomingAssetIds).filter((assetId) => !coveredAssetIds.has(assetId));
+}
+
+function collectCoveredCloudAssetIds(
+  project: StoredProject | null,
+  revisions: Iterable<StoredProjectRevision>,
+): Set<string> {
+  const coveredAssetIds = new Set<string>(normalizeManagedAssetIds(project?.assetIds));
+  for (const revision of revisions) {
+    for (const assetId of normalizeManagedAssetIds(revision.assetIds)) {
+      coveredAssetIds.add(assetId);
+    }
+  }
+  return coveredAssetIds;
+}
+
+async function listMissingOwnedAssetIds(
+  ctx: any,
+  ownerUserId: string,
+  assetIds: readonly string[],
+): Promise<string[]> {
+  const uniqueIds = normalizeManagedAssetIds(assetIds);
+  if (uniqueIds.length === 0) {
+    return [];
+  }
+
+  const rows = await Promise.all(
+    uniqueIds.map(async (assetId) => {
+      return await ctx.db
+        .query("projectAssets")
+        .withIndex("by_ownerUserId_and_assetId", (q: any) => q.eq("ownerUserId", ownerUserId).eq("assetId", assetId))
+        .first();
+    }),
+  );
+
+  return uniqueIds.filter((_assetId, index) => !rows[index]);
 }
 
 export function planProjectSyncAction(
@@ -1137,11 +1185,58 @@ export const planSync = query({
       }
     }
 
+    const coveredAssetIds = collectCoveredCloudAssetIds(project, revisionsById.values());
+    let plannedProject: {
+      action: "upload" | "skip" | "pull";
+      reason: string;
+      missingAssetIds?: string[];
+    } = { ...projectPlan };
+    if (projectPlan.action === "upload") {
+      const candidateProjectAssetIds = selectUncoveredAssetIdsForSync(args.project.assetIds, coveredAssetIds);
+      const missingAssetIds = await listMissingOwnedAssetIds(ctx, ownerUserId, candidateProjectAssetIds);
+      if (missingAssetIds.length > 0) {
+        plannedProject = {
+          ...plannedProject,
+          missingAssetIds,
+        };
+      }
+      for (const assetId of normalizeManagedAssetIds(args.project.assetIds)) {
+        coveredAssetIds.add(assetId);
+      }
+    }
+
     return {
-      project: projectPlan,
-      revisions: args.revisions.map((revision) => ({
-        revisionId: revision.revisionId,
-        ...planRevisionSyncAction(revisionsById.get(revision.revisionId) ?? null, revision),
+      project: plannedProject,
+      revisions: await Promise.all(args.revisions.map(async (revision) => {
+        const revisionPlan = planRevisionSyncAction(revisionsById.get(revision.revisionId) ?? null, revision);
+        const plannedRevision: {
+          revisionId: string;
+          action: "upload" | "skip";
+          reason: string;
+          missingAssetIds?: string[];
+        } = {
+          revisionId: revision.revisionId,
+          ...revisionPlan,
+        };
+
+        if (revisionPlan.action !== "upload") {
+          return plannedRevision;
+        }
+
+        const candidateRevisionAssetIds = selectUncoveredAssetIdsForSync(revision.assetIds, coveredAssetIds);
+        const missingAssetIds = await listMissingOwnedAssetIds(ctx, ownerUserId, candidateRevisionAssetIds);
+        for (const assetId of normalizeManagedAssetIds(revision.assetIds)) {
+          coveredAssetIds.add(assetId);
+        }
+
+        if (missingAssetIds.length === 0) {
+          return plannedRevision;
+        }
+
+        return {
+          ...plannedRevision,
+          missingAssetIds,
+        };
       })),
     };
   },

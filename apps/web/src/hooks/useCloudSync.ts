@@ -110,11 +110,13 @@ interface CloudProjectSyncPlan {
   project: {
     action: 'upload' | 'skip' | 'pull';
     reason: string;
+    missingAssetIds?: string[];
   };
   revisions: Array<{
     revisionId: string;
     action: 'upload' | 'skip';
     reason: string;
+    missingAssetIds?: string[];
   }>;
 }
 
@@ -171,12 +173,63 @@ function normalizeContentHash(hash: string | undefined): string {
   return typeof hash === 'string' ? hash.trim().toLowerCase() : '';
 }
 
-function toProjectSyncMetadata(payload: Pick<ProjectSyncPayload, 'localId' | 'updatedAt' | 'schemaVersion' | 'contentHash'>): ProjectSyncMetadata {
+const ASSET_UPLOAD_CONCURRENCY = 4;
+
+async function runWithConcurrencyLimit<TItem>(
+  items: readonly TItem[],
+  concurrency: number,
+  worker: (item: TItem) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) {
+    return;
+  }
+
+  let nextIndex = 0;
+  const laneCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: laneCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        await worker(items[currentIndex]);
+      }
+    }),
+  );
+}
+
+function collectPlannedMissingAssetIds(
+  plan: CloudProjectSyncPlan,
+  options: {
+    revisionIds?: readonly string[];
+    includeProject?: boolean;
+  } = {},
+): string[] | undefined {
+  const revisionIdSet = options.revisionIds ? new Set(options.revisionIds) : null;
+  const assetIds = new Set<string>(options.includeProject === false ? [] : (plan.project.missingAssetIds ?? []));
+  let hasPlannedAssetIds = options.includeProject !== false && plan.project.missingAssetIds !== undefined;
+
+  for (const revision of plan.revisions) {
+    if (revisionIdSet && !revisionIdSet.has(revision.revisionId)) {
+      continue;
+    }
+    if (revision.missingAssetIds !== undefined) {
+      hasPlannedAssetIds = true;
+    }
+    for (const assetId of revision.missingAssetIds ?? []) {
+      assetIds.add(assetId);
+    }
+  }
+
+  return hasPlannedAssetIds ? Array.from(assetIds) : undefined;
+}
+
+function toProjectSyncMetadata(payload: Pick<ProjectSyncPayload, 'localId' | 'updatedAt' | 'schemaVersion' | 'contentHash' | 'assetIds'>): ProjectSyncMetadata {
   return {
     localId: payload.localId,
     updatedAt: payload.updatedAt,
     schemaVersion: payload.schemaVersion,
     contentHash: payload.contentHash,
+    assetIds: payload.assetIds,
   };
 }
 
@@ -325,7 +378,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   );
 
   const ensureAssetRefsInCloud = useCallback(
-    async (assetRefs: PersistedAssetRef[]) => {
+    async (assetRefs: PersistedAssetRef[], options: { skipRemoteCheck?: boolean } = {}) => {
       const uniqueRefs = Array.from(
         assetRefs.reduce((map, assetRef) => {
           if (!assetRef.assetId) return map;
@@ -338,13 +391,18 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return;
       }
 
-      const missingIds = await convex.query(api.projectAssets.listMissing, {
-        assetIds: uniqueRefs.map((assetRef) => assetRef.assetId),
-      });
+      const refsById = new Map(uniqueRefs.map((assetRef) => [assetRef.assetId, assetRef]));
+      const assetIdsToUpload = options.skipRemoteCheck
+        ? uniqueRefs.map((assetRef) => assetRef.assetId)
+        : await convex.query(api.projectAssets.listMissing, {
+            assetIds: uniqueRefs.map((assetRef) => assetRef.assetId),
+          });
 
-      for (const assetId of missingIds as string[]) {
-        const assetRef = uniqueRefs.find((ref) => ref.assetId === assetId);
-        if (!assetRef) continue;
+      await runWithConcurrencyLimit(assetIdsToUpload as string[], ASSET_UPLOAD_CONCURRENCY, async (assetId) => {
+        const assetRef = refsById.get(assetId);
+        if (!assetRef) {
+          return;
+        }
 
         const blob = await getManagedAssetBlob(assetId);
         const metadata = await getManagedAssetMetadata(assetId);
@@ -374,26 +432,13 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           size: metadata.size,
           storageId: uploadResult.storageId as Id<'_storage'>,
         });
-      }
+      });
     },
     [convex, generateAssetUploadUrlMutation, upsertProjectAssetMutation],
   );
 
-  const ensureSerializedAssetsInCloud = useCallback(
-    async (serializedProjectPayloads: string[]) => {
-      const refsById = new Map<string, PersistedAssetRef>();
-      for (const serializedData of serializedProjectPayloads) {
-        for (const assetRef of collectPersistedAssetRefsFromSerializedProjectData(serializedData)) {
-          refsById.set(assetRef.assetId, assetRef);
-        }
-      }
-      await ensureAssetRefsInCloud(Array.from(refsById.values()));
-    },
-    [ensureAssetRefsInCloud],
-  );
-
   const ensureAssetIdsInCloud = useCallback(
-    async (assetIds: readonly string[]) => {
+    async (assetIds: readonly string[], options: { skipRemoteCheck?: boolean } = {}) => {
       const refsById = new Map<string, PersistedAssetRef>();
       for (const assetId of assetIds) {
         if (!assetId) continue;
@@ -406,15 +451,14 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           kind: metadata.kind,
         });
       }
-      await ensureAssetRefsInCloud(Array.from(refsById.values()));
+      await ensureAssetRefsInCloud(Array.from(refsById.values()), options);
     },
     [ensureAssetRefsInCloud],
   );
 
   const ensureRevisionAssetsInCloud = useCallback(
-    async (revisions: ProjectRevisionSyncPayload[]) => {
-      const assetIds = Array.from(new Set(revisions.flatMap((revision) => revision.assetIds)));
-      await ensureAssetIdsInCloud(assetIds);
+    async (assetIds: readonly string[], options: { skipRemoteCheck?: boolean } = {}) => {
+      await ensureAssetIdsInCloud(Array.from(new Set(assetIds)), options);
     },
     [ensureAssetIdsInCloud],
   );
@@ -521,7 +565,10 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           return plan.project.action === 'pull' ? 'pull' as const : 'skipped' as const;
         }
 
-        await ensureSerializedAssetsInCloud([payload.data]);
+        await ensureAssetIdsInCloud(
+          plan.project.missingAssetIds ?? payload.assetIds,
+          { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
+        );
         const storagePayload = await toStorageSyncPayload(payload);
         const result = await syncSingleMutation(storagePayload);
         if (result.action === 'skipped' && result.reason !== 'already in sync') {
@@ -533,7 +580,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return 'error' as const;
       }
     },
-    [enabled, ensureSerializedAssetsInCloud, planSync, syncSingleMutation, toStorageSyncPayload],
+    [enabled, ensureAssetIdsInCloud, planSync, syncSingleMutation, toStorageSyncPayload],
   );
 
   const syncProjectObjectToCloud = useCallback(
@@ -555,7 +602,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   );
 
   const syncProjectRevisionsToCloud = useCallback(
-    async (projectId: string, revisionIds?: readonly string[]) => {
+    async (projectId: string, revisionIds?: readonly string[], plannedMissingAssetIds?: readonly string[]) => {
       if (!enabled) {
         return { created: 0, updated: 0, skipped: 0 };
       }
@@ -568,7 +615,12 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return { created: 0, updated: 0, skipped: 0 };
       }
 
-      await ensureRevisionAssetsInCloud(revisions);
+      if (plannedMissingAssetIds !== undefined) {
+        await ensureRevisionAssetsInCloud(plannedMissingAssetIds, { skipRemoteCheck: true });
+      } else {
+        const revisionAssetIds = Array.from(new Set(revisions.flatMap((revision) => revision.assetIds)));
+        await ensureRevisionAssetsInCloud(revisionAssetIds);
+      }
 
       const storageRevisions: StorageRevisionSyncPayload[] = [];
       for (const revision of revisions) {
@@ -705,6 +757,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
       const storageProjects: StorageSyncPayload[] = [];
       const revisionUploadIdsByProject = new Map<string, string[]>();
+      const syncPlansByProject = new Map<string, CloudProjectSyncPlan>();
 
       for (const localProject of localProjects) {
         try {
@@ -713,6 +766,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             toProjectSyncMetadata(localProject),
             revisionMetadata,
           );
+          syncPlansByProject.set(localProject.localId, plan);
 
           revisionUploadIdsByProject.set(
             localProject.localId,
@@ -732,7 +786,10 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             continue;
           }
 
-          await ensureSerializedAssetsInCloud([localProject.data]);
+          await ensureAssetIdsInCloud(
+            plan.project.missingAssetIds ?? localProject.assetIds,
+            { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
+          );
           const storageProject = await toStorageSyncPayload(localProject);
           storageProjects.push(storageProject);
         } catch (error) {
@@ -747,7 +804,15 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
       for (const localProject of localProjects) {
         try {
-          await syncProjectRevisionsToCloud(localProject.localId, revisionUploadIdsByProject.get(localProject.localId));
+          const revisionIds = revisionUploadIdsByProject.get(localProject.localId);
+          const plan = syncPlansByProject.get(localProject.localId);
+          await syncProjectRevisionsToCloud(
+            localProject.localId,
+            revisionIds,
+            plan
+              ? collectPlannedMissingAssetIds(plan, { revisionIds, includeProject: false })
+              : undefined,
+          );
         } catch (error) {
           console.error(`[CloudSync] Failed to sync revisions for "${localProject.localId}":`, error);
         }
@@ -757,7 +822,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [enabled, ensureSerializedAssetsInCloud, planSync, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
+  }, [enabled, ensureAssetIdsInCloud, planSync, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
 
   // Sync a single project to cloud by local project id
   const syncProjectToCloud = useCallback(
@@ -785,7 +850,10 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           if (!project) return false;
 
           console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
-          await ensureSerializedAssetsInCloud([project.data]);
+          await ensureAssetIdsInCloud(
+            plan.project.missingAssetIds ?? project.assetIds,
+            { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
+          );
           const storagePayload = await toStorageSyncPayload(project);
           const result = await syncSingleMutation(storagePayload);
           console.log('[CloudSync] Single sync result:', result);
@@ -796,7 +864,11 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           }
         }
 
-        await syncProjectRevisionsToCloud(projectId, revisionIdsToUpload);
+        await syncProjectRevisionsToCloud(
+          projectId,
+          revisionIdsToUpload,
+          collectPlannedMissingAssetIds(plan, { revisionIds: revisionIdsToUpload, includeProject: false }),
+        );
 
         return true;
       } catch (error) {
@@ -804,7 +876,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return false;
       }
     },
-    [enabled, ensureSerializedAssetsInCloud, planSync, reconcileProjectFromCloud, syncProjectRevisionsToCloud, syncSingleMutation, toStorageSyncPayload],
+    [enabled, ensureAssetIdsInCloud, planSync, reconcileProjectFromCloud, syncProjectRevisionsToCloud, syncSingleMutation, toStorageSyncPayload],
   );
 
   const deleteProjectFromCloud = useCallback(
@@ -924,6 +996,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
         const storageProjects: StorageSyncPayload[] = [];
         const revisionUploadIdsByProject = new Map<string, string[]>();
+        const syncPlansByProject = new Map<string, CloudProjectSyncPlan>();
         for (const localProject of localProjects) {
           try {
             const revisionMetadata = await getProjectRevisionSyncMetadata(localProject.localId);
@@ -931,6 +1004,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
               toProjectSyncMetadata(localProject),
               revisionMetadata,
             );
+            syncPlansByProject.set(localProject.localId, plan);
 
             revisionUploadIdsByProject.set(
               localProject.localId,
@@ -943,7 +1017,10 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
               continue;
             }
 
-            await ensureSerializedAssetsInCloud([localProject.data]);
+            await ensureAssetIdsInCloud(
+              plan.project.missingAssetIds ?? localProject.assetIds,
+              { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
+            );
             const storageProject = await toStorageSyncPayload(localProject);
             storageProjects.push(storageProject);
           } catch (error) {
@@ -956,7 +1033,15 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         }
 
         for (const localProject of localProjects) {
-          await syncProjectRevisionsToCloud(localProject.localId, revisionUploadIdsByProject.get(localProject.localId));
+          const revisionIds = revisionUploadIdsByProject.get(localProject.localId);
+          const plan = syncPlansByProject.get(localProject.localId);
+          await syncProjectRevisionsToCloud(
+            localProject.localId,
+            revisionIds,
+            plan
+              ? collectPlannedMissingAssetIds(plan, { revisionIds, includeProject: false })
+              : undefined,
+          );
         }
       });
 
@@ -1008,7 +1093,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [enabled, ensureCloudProjectAssetsLocally, ensureSerializedAssetsInCloud, getCloudProjectsFull, listRevisionsMutation, planSync, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
+  }, [enabled, ensureAssetIdsInCloud, ensureCloudProjectAssetsLocally, getCloudProjectsFull, listRevisionsMutation, planSync, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
 
   // Sync on mount if requested
   useEffect(() => {
