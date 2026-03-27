@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { NameInputDialog } from '@/components/dialogs/NameInputDialog';
+import { useCloudSync } from '@/hooks/useCloudSync';
 
 type HistoryFilter = 'all' | 'manual';
 type CheckpointDialogState =
@@ -52,6 +53,14 @@ export function ProjectHistoryDialog({
   onOpenChange,
   onRestoredProject,
 }: ProjectHistoryDialogProps) {
+  const { syncProjectToCloud } = useCloudSync({
+    currentProjectId: project?.id ?? null,
+    syncOnMount: false,
+    syncOnUnmount: false,
+    enableCloudProjectListQuery: false,
+    checkpointIntervalMs: 0,
+    backgroundSyncDebounceMs: 0,
+  });
   const [filter, setFilter] = useState<HistoryFilter>('all');
   const [revisions, setRevisions] = useState<ProjectRevision[]>([]);
   const [loading, setLoading] = useState(false);
@@ -127,9 +136,12 @@ export function ProjectHistoryDialog({
         const created = await createManualCheckpoint(project, normalized);
         if (!created) {
           alert('No content changes since the latest revision, but your project is still safe with autosave.');
+        } else {
+          void syncProjectToCloud(project.id);
         }
       } else {
         await renameCheckpoint(project.id, checkpointDialogState.revisionId, normalized);
+        void syncProjectToCloud(project.id);
       }
 
       setCheckpointDialogState(null);
@@ -145,7 +157,7 @@ export function ProjectHistoryDialog({
             : 'Failed to rename checkpoint.'),
       );
     }
-  }, [checkpointDialogState, checkpointNameDraft, project, reload]);
+  }, [checkpointDialogState, checkpointNameDraft, project, reload, syncProjectToCloud]);
 
   const handleRestore = useCallback(async (revision: ProjectRevision) => {
     if (!project) return;
