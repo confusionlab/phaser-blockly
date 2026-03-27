@@ -218,7 +218,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     isDirty = false,
     syncOnUnmount = true,
     checkpointIntervalMs = 45_000,
-    enableCloudProjectListQuery = true,
+    enableCloudProjectListQuery = false,
     backgroundSyncDebounceMs = 15_000,
   } = options;
 
@@ -243,6 +243,15 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   currentProjectIdRef.current = currentProjectId;
   currentProjectRef.current = currentProject;
+
+  const getCloudProjectsFull = useCallback(async (): Promise<CloudProjectRecord[]> => {
+    if (cloudProjects) {
+      return dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]);
+    }
+
+    const fetchedProjects = await convex.query(api.projects.listFull, {});
+    return dedupeCloudProjectsByLocalId(fetchedProjects as CloudProjectRecord[]);
+  }, [cloudProjects, convex]);
 
   const toStorageSyncPayload = useCallback(
     async (payload: ProjectSyncPayload): Promise<StorageSyncPayload> => {
@@ -814,12 +823,12 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   // Sync all cloud projects to local
   const syncAllFromCloud = useCallback(async (options: { pruneLocal?: boolean } = {}) => {
-    if (cloudProjects === undefined || isSyncingRef.current) return;
+    if (isSyncingRef.current) return;
     isSyncingRef.current = true;
 
     try {
       const { pruneLocal = false } = options;
-      const normalizedCloudProjects = dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]);
+      const normalizedCloudProjects = await getCloudProjectsFull();
       console.log(`[CloudSync] Syncing ${normalizedCloudProjects.length} projects from cloud...`);
 
       const results = await Promise.all(
@@ -899,7 +908,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [cloudProjects, ensureCloudProjectAssetsLocally, listRevisionsMutation, syncProjectToCloud]);
+  }, [ensureCloudProjectAssetsLocally, getCloudProjectsFull, listRevisionsMutation, syncProjectToCloud]);
 
   // Run a full two-way reconciliation:
   // 1) push all local projects up, then 2) pull cloud projects down.
@@ -951,8 +960,8 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         }
       });
 
-      if (cloudProjects) {
-        const normalizedCloudProjects = dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]);
+      {
+        const normalizedCloudProjects = await getCloudProjectsFull();
         await runWithRetry(async () => {
           await Promise.all(normalizedCloudProjects.map(async (cloudProject) => {
             try {
@@ -999,14 +1008,14 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     } finally {
       isSyncingRef.current = false;
     }
-  }, [cloudProjects, enabled, ensureCloudProjectAssetsLocally, ensureSerializedAssetsInCloud, listRevisionsMutation, planSync, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
+  }, [enabled, ensureCloudProjectAssetsLocally, ensureSerializedAssetsInCloud, getCloudProjectsFull, listRevisionsMutation, planSync, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
 
   // Sync on mount if requested
   useEffect(() => {
-    if (enabled && syncOnMount && cloudProjects) {
+    if (enabled && syncOnMount) {
       void syncAllFromCloud();
     }
-  }, [enabled, syncOnMount, cloudProjects, syncAllFromCloud]);
+  }, [enabled, syncOnMount, syncAllFromCloud]);
 
   // Debounced background sync from the latest in-memory edit timestamp.
   useEffect(() => {
@@ -1089,7 +1098,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   // Fire-and-forget flush for page lifecycle changes without anonymous beacon route.
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !isDirty) {
       return;
     }
 
@@ -1118,7 +1127,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       window.removeEventListener('pagehide', flushCurrentProject);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [enabled, syncProjectObjectToCloud, syncProjectToCloud]);
+  }, [enabled, isDirty, syncProjectObjectToCloud, syncProjectToCloud]);
 
   const isProjectInCloud = useCallback(
     (projectId: string) => {

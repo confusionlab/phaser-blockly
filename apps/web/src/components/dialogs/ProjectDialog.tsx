@@ -3,7 +3,16 @@ import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { listProjects, loadProject, deleteProject, downloadProject, importProjectFromFile, saveProject } from '@/db/database';
+import {
+  listProjects,
+  loadProject,
+  deleteProject,
+  downloadProject,
+  getProjectSyncMetadata,
+  importProjectFromFile,
+  saveProject,
+  type ProjectSyncMetadata,
+} from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import {
   Dialog,
@@ -31,6 +40,69 @@ interface ProjectListItem {
   updatedAt: Date;
 }
 
+type CloudProjectSummary = {
+  localId: string;
+  updatedAt: number;
+  schemaVersion: number;
+  contentHash?: string;
+};
+
+function normalizeSchemaVersion(version: number | string | undefined): number {
+  if (typeof version === 'number' && Number.isFinite(version) && version >= 1) {
+    return Math.floor(version);
+  }
+  if (typeof version === 'string') {
+    const parsed = Number.parseFloat(version);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.floor(parsed);
+    }
+  }
+  return 1;
+}
+
+function normalizeContentHash(hash: string | undefined): string {
+  return typeof hash === 'string' ? hash.trim().toLowerCase() : '';
+}
+
+function shouldPullProjectBeforeOpen(
+  cloudProject: CloudProjectSummary | null,
+  localProject: ProjectSyncMetadata | null,
+): boolean {
+  if (!cloudProject) {
+    return false;
+  }
+
+  if (!localProject) {
+    return true;
+  }
+
+  const cloudSchemaVersion = normalizeSchemaVersion(cloudProject.schemaVersion);
+  const localSchemaVersion = normalizeSchemaVersion(localProject.schemaVersion);
+  if (localSchemaVersion < cloudSchemaVersion) {
+    return true;
+  }
+
+  const cloudHash = normalizeContentHash(cloudProject.contentHash);
+  const localHash = normalizeContentHash(localProject.contentHash);
+  if (localSchemaVersion === cloudSchemaVersion && cloudHash && localHash && cloudHash === localHash) {
+    return false;
+  }
+
+  if (cloudProject.updatedAt > localProject.updatedAt) {
+    return true;
+  }
+
+  if (cloudProject.updatedAt < localProject.updatedAt) {
+    return false;
+  }
+
+  if (localSchemaVersion !== cloudSchemaVersion) {
+    return cloudSchemaVersion > localSchemaVersion;
+  }
+
+  return !!(cloudHash && localHash && cloudHash > localHash);
+}
+
 export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: ProjectDialogProps) {
   const { project: currentProject, newProject, openProject } = useProjectStore();
   const { selectScene } = useEditorStore();
@@ -46,7 +118,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   // Cloud sync hook
   const { syncAllFromCloud, syncProjectFromCloud, deleteProjectFromCloud } = useCloudSync({
     syncOnMount: false,
-    enableCloudProjectListQuery: mode !== 'page',
+    enableCloudProjectListQuery: false,
   });
   const cloudProjectSummaries = useQuery(
     api.projects.list,
@@ -105,11 +177,23 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const handleOpenProject = async (projectId: string) => {
     setLoading(true);
     try {
-      if (mode === 'page') {
+      const cloudProject = mode === 'page'
+        ? (cloudProjectSummaries?.find((project) => project.localId === projectId) ?? null)
+        : null;
+      const localProjectMetadata = mode === 'page'
+        ? await getProjectSyncMetadata(projectId)
+        : null;
+
+      if (mode === 'page' && shouldPullProjectBeforeOpen(cloudProject, localProjectMetadata)) {
         await syncProjectFromCloud(projectId);
       }
 
-      const project = await loadProject(projectId);
+      let project = await loadProject(projectId);
+      if (!project && mode === 'page') {
+        await syncProjectFromCloud(projectId);
+        project = await loadProject(projectId);
+      }
+
       if (project) {
         openProject(project);
         if (onProjectOpen) {

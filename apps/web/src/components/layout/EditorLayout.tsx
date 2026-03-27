@@ -107,7 +107,8 @@ export function EditorLayout() {
   // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
   const { syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
     enabled: isCloudWriteEnabled,
-    syncOnMount: true,
+    syncOnMount: false,
+    enableCloudProjectListQuery: false,
     currentProjectId: project?.id ?? null,
     currentProject: project,
     isDirty,
@@ -151,7 +152,7 @@ export function EditorLayout() {
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!project || !isCloudWriteEnabled || isBlockingCloudSyncRef.current) {
+      if (!project || !isCloudWriteEnabled || isBlockingCloudSyncRef.current || !isDirty) {
         return;
       }
 
@@ -173,7 +174,7 @@ export function EditorLayout() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isCloudWriteEnabled, project, saveCurrentProject, syncProjectToCloud]);
+  }, [isCloudWriteEnabled, isDirty, project, saveCurrentProject, syncProjectToCloud]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {
