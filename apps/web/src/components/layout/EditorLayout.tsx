@@ -309,7 +309,10 @@ export function EditorLayout() {
       return;
     }
 
-    if (project) {
+    const projectIdToClose = project?.id ?? null;
+    const shouldBlockForSync = !!project && isDirty;
+
+    if (project && shouldBlockForSync) {
       const synced = await syncCurrentProjectToCloud();
       if (!synced) {
         return;
@@ -318,7 +321,11 @@ export function EditorLayout() {
 
     closeProject();
     navigate('/');
-  }, [closeProject, isSyncingCloud, navigate, project, syncCurrentProjectToCloud]);
+
+    if (projectIdToClose && !shouldBlockForSync && isCloudWriteEnabled) {
+      void syncProjectToCloud(projectIdToClose);
+    }
+  }, [closeProject, isCloudWriteEnabled, isDirty, isSyncingCloud, navigate, project, syncCurrentProjectToCloud, syncProjectToCloud]);
 
   const handleToggleDarkMode = useCallback(async () => {
     const nextIsDarkMode = !isDarkMode;
