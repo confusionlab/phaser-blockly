@@ -7,6 +7,7 @@ import type { CostumeCanvasExportState, CostumeCanvasHandle } from './CostumeCan
 
 interface UseCostumeCanvasImperativeHandleOptions {
   alignSelection: (action: any) => boolean;
+  bitmapRasterCommitQueueRef: MutableRefObject<Promise<void>>;
   configureCanvasForTool: () => void;
   createSnapshot: () => any;
   deleteSelection: () => boolean;
@@ -38,6 +39,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
 
 export function useCostumeCanvasImperativeHandle({
   alignSelection,
+  bitmapRasterCommitQueueRef,
   configureCanvasForTool,
   createSnapshot,
   deleteSelection,
@@ -86,6 +88,10 @@ export function useCostumeCanvasImperativeHandle({
     },
 
     loadDocument,
+
+    flushPendingBitmapCommits: async () => {
+      await bitmapRasterCommitQueueRef.current.catch(() => undefined);
+    },
 
     exportCostumeState,
 
@@ -148,6 +154,7 @@ export function useCostumeCanvasImperativeHandle({
     canRedo: () => false,
   }), [
     alignSelection,
+    bitmapRasterCommitQueueRef,
     configureCanvasForTool,
     createSnapshot,
     deleteSelection,

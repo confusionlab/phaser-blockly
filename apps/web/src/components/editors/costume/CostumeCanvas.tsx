@@ -76,6 +76,7 @@ export interface CostumeCanvasHandle {
   toDataURLWithBounds: () => { dataUrl: string; bounds: CostumeBounds | null };
   loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
   loadDocument: (sessionKey: string, document: CostumeDocument) => Promise<void>;
+  flushPendingBitmapCommits: () => Promise<void>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   hasUnsavedChanges: (sessionKey?: string | null) => boolean;
   markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => void;
@@ -916,6 +917,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   useCostumeCanvasImperativeHandle({
     alignSelection,
+    bitmapRasterCommitQueueRef,
     configureCanvasForTool,
     createSnapshot,
     deleteSelection,

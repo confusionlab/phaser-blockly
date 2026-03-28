@@ -228,6 +228,18 @@ async function readHostedLayerInkSamples(page: Page): Promise<number> {
   });
 }
 
+async function readCurrentCostumeDocumentSignature(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const scene = project?.scenes?.[0];
+    const object = scene?.objects?.[0];
+    const currentCostumeIndex = object?.currentCostumeIndex ?? 0;
+    const document = object?.costumes?.[currentCostumeIndex]?.document;
+    return document ? JSON.stringify(document) : null;
+  });
+}
+
 test.describe('Costume editor tools', () => {
   test('vector layers render shapes and reload cleanly after a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
@@ -313,6 +325,72 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(beforeEraseSamples);
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('rapid bitmap stroke undo and redo keep editor and persisted costume state aligned', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+    const redoButton = page.getByRole('button', { name: /^redo$/i });
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.16, 0.16, 0.64, 0.64);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    const baseSamples = await readCheckerboardInkSamples(page);
+    await expect.poll(async () => !!(await readCurrentCostumeDocumentSignature(page)), { timeout: 10000 }).toBe(true);
+    const baseDocumentSignature = await readCurrentCostumeDocumentSignature(page);
+    expect(baseDocumentSignature).toBeTruthy();
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    for (const yFactor of [0.24, 0.34, 0.44, 0.54]) {
+      await drawAcrossCostumeCanvas(page, 0.20, yFactor, 0.60, yFactor);
+    }
+
+    let undoCount = 0;
+    for (let index = 0; index < 10; index += 1) {
+      const currentSignature = await readCurrentCostumeDocumentSignature(page);
+      const currentSamples = await readCheckerboardInkSamples(page);
+      if (currentSignature === baseDocumentSignature && currentSamples === baseSamples) {
+        break;
+      }
+      if (!await undoButton.isEnabled()) {
+        break;
+      }
+      await undoButton.click();
+      undoCount += 1;
+      await expect.poll(async () => {
+        const nextSignature = await readCurrentCostumeDocumentSignature(page);
+        const nextSamples = await readCheckerboardInkSamples(page);
+        return nextSignature !== currentSignature || nextSamples !== currentSamples;
+      }, { timeout: 10000 }).toBe(true);
+    }
+    expect(undoCount).toBeGreaterThan(0);
+
+    await expect.poll(async () => readCurrentCostumeDocumentSignature(page), { timeout: 10000 }).toBe(baseDocumentSignature);
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBe(baseSamples);
+
+    let redoCount = 0;
+    for (let index = 0; index < undoCount; index += 1) {
+      await expect(redoButton).toBeEnabled({ timeout: 10000 });
+      const currentSignature = await readCurrentCostumeDocumentSignature(page);
+      const currentSamples = await readCheckerboardInkSamples(page);
+      await redoButton.click();
+      redoCount += 1;
+      await expect.poll(async () => {
+        const nextSignature = await readCurrentCostumeDocumentSignature(page);
+        const nextSamples = await readCheckerboardInkSamples(page);
+        return nextSignature !== currentSignature || nextSamples !== currentSamples;
+      }, { timeout: 10000 }).toBe(true);
+    }
+    expect(redoCount).toBe(undoCount);
+
+    await expect.poll(async () => (await readCurrentCostumeDocumentSignature(page)) !== baseDocumentSignature, { timeout: 10000 }).toBe(true);
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples);
+    await expect(redoButton).toBeDisabled({ timeout: 10000 });
   });
 
   test('active hosted layer stays visible after switching away from and back to the costume tab', async ({ page }) => {

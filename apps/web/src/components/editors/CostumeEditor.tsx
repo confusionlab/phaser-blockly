@@ -629,6 +629,30 @@ export function CostumeEditor() {
       return Promise.resolve(false);
     }
 
+    const loadPersistedStateIntoCanvas = async (
+      session: CostumeEditorSession,
+      state: CostumeEditorPersistedState,
+    ): Promise<boolean> => {
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return false;
+      }
+
+      currentCostumeIdRef.current = `${session.costumeId}:${state.document.activeLayerId}`;
+      await canvas.loadDocument(session.key, cloneCostumeDocument(state.document));
+
+      const latestSession = currentSessionRef.current;
+      if (!latestSession || latestSession.key !== session.key) {
+        return false;
+      }
+
+      loadedSessionRef.current = latestSession;
+      const resolvedMode = canvas.getEditorMode();
+      setCanvasEditorMode(resolvedMode);
+      setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
+      return true;
+    };
+
     const runCommit = async () => {
       const session = currentSessionRef.current;
       if (!session || session.key !== queuedSessionKey) {
@@ -680,13 +704,8 @@ export function CostumeEditor() {
         return false;
       }
 
-      if (shouldReloadCanvas && canvasRef.current && currentCostumeRef.current) {
-        currentCostumeIdRef.current = `${currentCostumeRef.current.id}:${nextDocument.activeLayerId}`;
-        await canvasRef.current.loadDocument(latestSession.key, cloneCostumeDocument(nextDocument));
-        loadedSessionRef.current = latestSession;
-        const resolvedMode = canvasRef.current.getEditorMode();
-        setCanvasEditorMode(resolvedMode);
-        setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
+      if (shouldReloadCanvas) {
+        await loadPersistedStateIntoCanvas(latestSession, resolvedNextState);
       }
 
       if (options.skipRuntimePreviewRefresh !== true) {
@@ -701,37 +720,85 @@ export function CostumeEditor() {
     return queuedCommit;
   }, [applyDocumentHistoryState, getWorkingPersistedState, pushDocumentHistory, replaceDocumentHistoryHead, scheduleFlattenedPreviewRefresh]);
 
+  const navigateDocumentHistory = useCallback((direction: 'undo' | 'redo') => {
+    const queuedSessionKey = loadedSessionRef.current?.key ?? null;
+    if (!queuedSessionKey) {
+      return Promise.resolve(false);
+    }
+
+    const runNavigation = async () => {
+      await canvasRef.current?.flushPendingBitmapCommits();
+
+      if (isLoadingRef.current) {
+        return false;
+      }
+
+      const session = loadedSessionRef.current;
+      if (!session || session.key !== queuedSessionKey) {
+        return false;
+      }
+
+      const currentIndex = documentHistoryIndexRef.current;
+      const nextIndex = direction === 'undo'
+        ? currentIndex - 1
+        : currentIndex + 1;
+      const nextSnapshot = documentHistoryRef.current[nextIndex];
+      if (!nextSnapshot) {
+        syncDocumentHistoryFlags();
+        return false;
+      }
+
+      const previousIndex = currentIndex;
+      documentHistoryIndexRef.current = nextIndex;
+      const state = createPersistedStateFromDocument(nextSnapshot);
+      if (!state) {
+        documentHistoryIndexRef.current = previousIndex;
+        syncDocumentHistoryFlags();
+        return false;
+      }
+      syncDocumentHistoryFlags();
+      const didApply = applyDocumentHistoryState(session, state, {
+        recordHistory: false,
+        refreshRuntimePreview: true,
+      });
+      if (!didApply) {
+        documentHistoryIndexRef.current = previousIndex;
+        syncDocumentHistoryFlags();
+        return false;
+      }
+
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        return true;
+      }
+
+      currentCostumeIdRef.current = `${session.costumeId}:${state.document.activeLayerId}`;
+      await canvas.loadDocument(session.key, cloneCostumeDocument(state.document));
+
+      const latestSession = currentSessionRef.current;
+      if (!latestSession || latestSession.key !== session.key) {
+        return false;
+      }
+
+      loadedSessionRef.current = latestSession;
+      const resolvedMode = canvas.getEditorMode();
+      setCanvasEditorMode(resolvedMode);
+      setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
+      return true;
+    };
+
+    const queuedNavigation = documentMutationChainRef.current.then(runNavigation, runNavigation);
+    documentMutationChainRef.current = queuedNavigation.then(() => undefined, () => undefined);
+    return queuedNavigation;
+  }, [applyDocumentHistoryState, createPersistedStateFromDocument, syncDocumentHistoryFlags]);
+
   useEffect(() => {
     const handler: UndoRedoHandler = {
       undo: () => {
-        const session = loadedSessionRef.current;
-        if (!session || documentHistoryIndexRef.current <= 0) {
-          return;
-        }
-        documentHistoryIndexRef.current -= 1;
-        const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
-        const state = createPersistedStateFromDocument(snapshot);
-        syncDocumentHistoryFlags();
-        applyDocumentHistoryState(session, state, {
-          recordHistory: false,
-          forceReload: true,
-          refreshRuntimePreview: true,
-        });
+        void navigateDocumentHistory('undo');
       },
       redo: () => {
-        const session = loadedSessionRef.current;
-        if (!session || documentHistoryIndexRef.current >= documentHistoryRef.current.length - 1) {
-          return;
-        }
-        documentHistoryIndexRef.current += 1;
-        const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
-        const state = createPersistedStateFromDocument(snapshot);
-        syncDocumentHistoryFlags();
-        applyDocumentHistoryState(session, state, {
-          recordHistory: false,
-          forceReload: true,
-          refreshRuntimePreview: true,
-        });
+        void navigateDocumentHistory('redo');
       },
       canUndo: () => documentHistoryIndexRef.current > 0,
       canRedo: () => documentHistoryIndexRef.current >= 0 && documentHistoryIndexRef.current < documentHistoryRef.current.length - 1,
@@ -747,7 +814,7 @@ export function CostumeEditor() {
     };
     registerCostumeUndo(handler);
     return () => registerCostumeUndo(null);
-  }, [applyDocumentHistoryState, createPersistedStateFromDocument, persistCanvasStateToSession, registerCostumeUndo, syncDocumentHistoryFlags]);
+  }, [navigateDocumentHistory, persistCanvasStateToSession, registerCostumeUndo]);
 
   const resolvePersistedSessionForObjectOperation = useCallback((): CostumeEditorPersistedSession | undefined => {
     const session = currentSessionRef.current;
@@ -1349,41 +1416,12 @@ export function CostumeEditor() {
   }, [isCanvasReadyForSession, updateObject]);
 
   const handleUndo = useCallback(() => {
-    const session = loadedSessionRef.current;
-    if (isLoadingRef.current || !session || documentHistoryIndexRef.current <= 0) {
-      return;
-    }
-    documentHistoryIndexRef.current -= 1;
-    const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
-    const state = createPersistedStateFromDocument(snapshot);
-    syncDocumentHistoryFlags();
-    applyDocumentHistoryState(session, state, {
-      recordHistory: false,
-      forceReload: true,
-      refreshRuntimePreview: true,
-    });
-  }, [applyDocumentHistoryState, createPersistedStateFromDocument, syncDocumentHistoryFlags]);
+    void navigateDocumentHistory('undo');
+  }, [navigateDocumentHistory]);
 
   const handleRedo = useCallback(() => {
-    const session = loadedSessionRef.current;
-    if (
-      isLoadingRef.current ||
-      !session ||
-      documentHistoryIndexRef.current < 0 ||
-      documentHistoryIndexRef.current >= documentHistoryRef.current.length - 1
-    ) {
-      return;
-    }
-    documentHistoryIndexRef.current += 1;
-    const snapshot = documentHistoryRef.current[documentHistoryIndexRef.current];
-    const state = createPersistedStateFromDocument(snapshot);
-    syncDocumentHistoryFlags();
-    applyDocumentHistoryState(session, state, {
-      recordHistory: false,
-      forceReload: true,
-      refreshRuntimePreview: true,
-    });
-  }, [applyDocumentHistoryState, createPersistedStateFromDocument, syncDocumentHistoryFlags]);
+    void navigateDocumentHistory('redo');
+  }, [navigateDocumentHistory]);
 
   if (!object) {
     return (
