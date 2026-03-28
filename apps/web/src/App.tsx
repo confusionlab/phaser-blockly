@@ -1,19 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
-import { SignIn, UserButton, useUser } from '@clerk/clerk-react';
+import { SignIn, UserButton, useAuth, useUser } from '@clerk/clerk-react';
 import { EditorLayout } from './components/layout/EditorLayout';
 import { ProjectExplorerLayout } from './components/layout/ProjectExplorerLayout';
 import { DebugPanel } from './components/debug/DebugPanel';
 import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
-import {
-  clearAuthenticatedSessionHint,
-  hasRecentAuthenticatedSessionHint,
-  persistAuthenticatedSessionHint,
-  shouldWarmStartProjectExplorer,
-} from '@/lib/authSessionHint';
+import { shouldWarmStartProjectExplorer } from '@/lib/authWarmStart';
 import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls';
 
 const E2E_AUTH_BYPASS = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
@@ -122,37 +117,13 @@ function PreparingAuthenticationScreen() {
 function AuthGate() {
   const location = useLocation();
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const [hasRecentSessionHint, setHasRecentSessionHint] = useState(() => (
-    typeof window !== 'undefined'
-      ? hasRecentAuthenticatedSessionHint(window.localStorage)
-      : false
-  ));
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    if (isAuthenticated) {
-      persistAuthenticatedSessionHint(window.localStorage);
-      if (!hasRecentSessionHint) {
-        setHasRecentSessionHint(true);
-      }
-      return;
-    }
-
-    if (!isLoading) {
-      clearAuthenticatedSessionHint(window.localStorage);
-      if (hasRecentSessionHint) {
-        setHasRecentSessionHint(false);
-      }
-    }
-  }, [hasRecentSessionHint, isAuthenticated, isLoading]);
+  const { isLoaded: isClerkLoaded, isSignedIn } = useAuth();
 
   if (shouldWarmStartProjectExplorer({
-    hasRecentSessionHint,
-    isAuthenticated,
-    isLoading,
+    clerkLoaded: isClerkLoaded,
+    clerkSignedIn: isSignedIn ?? false,
+    convexAuthenticated: isAuthenticated,
+    convexLoading: isLoading,
     pathname: location.pathname,
   })) {
     return <AppShell authBootstrapState="reconnecting" isAuthenticated={false} />;

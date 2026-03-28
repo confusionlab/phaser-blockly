@@ -146,6 +146,26 @@ function fileRowClassName(options: {
   );
 }
 
+function ExplorerLoadingRows() {
+  return (
+    <div className="flex h-full min-h-[280px] flex-col">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div
+          key={`loading-row:${index}`}
+          className="flex items-center gap-4 border-b border-border/70 px-4 py-3"
+        >
+          <div className="h-16 w-28 shrink-0 animate-pulse rounded-2xl bg-slate-200/80" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="h-4 w-40 animate-pulse rounded-full bg-slate-200/80" />
+            <div className="h-3 w-24 animate-pulse rounded-full bg-slate-100" />
+          </div>
+          <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-100" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ProjectExplorerPage({
   authBootstrapState = 'steady',
   onProjectHydratedFromCloud,
@@ -951,7 +971,11 @@ export function ProjectExplorerPage({
         <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/75 bg-white/80 shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur">
           <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
             <div className="text-sm font-medium text-slate-700">
-              {visibleItems.length === 0 ? 'Empty folder' : `${visibleItems.length} item${visibleItems.length === 1 ? '' : 's'}`}
+              {isInitialLoading
+                ? 'Loading projects...'
+                : visibleItems.length === 0
+                  ? 'Empty folder'
+                  : `${visibleItems.length} item${visibleItems.length === 1 ? '' : 's'}`}
             </div>
             {importError ? <div className="text-sm text-destructive">{importError}</div> : null}
           </div>
@@ -967,7 +991,9 @@ export function ProjectExplorerPage({
               setSelectionAnchorKey(null);
             }}
           >
-            {visibleItems.length === 0 ? (
+            {isInitialLoading ? (
+              <ExplorerLoadingRows />
+            ) : visibleItems.length === 0 ? (
               <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-4 px-6 text-center text-slate-500">
                 <div className="flex size-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                   <FolderOpen className="size-8" />
@@ -1228,14 +1254,6 @@ export function ProjectExplorerPage({
         </div>
       ) : null}
 
-      {isInitialLoading ? (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/45 backdrop-blur-[2px]">
-          <div className="inline-flex items-center gap-3 rounded-full border border-white/80 bg-white/85 px-4 py-2 text-sm text-slate-600 shadow-sm">
-            <Loader2 className="size-4 animate-spin" />
-            Loading workspace
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
