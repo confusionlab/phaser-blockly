@@ -80,6 +80,7 @@ type PendingTrashConfirmation =
   | null;
 
 type ProjectExplorerPageProps = {
+  authBootstrapState?: 'steady' | 'reconnecting';
   onProjectHydratedFromCloud?: (project: { id: string; updatedAt: Date }) => void;
   onProjectOpen?: (project: { id: string }) => void;
 };
@@ -145,6 +146,7 @@ function fileRowClassName(options: {
 }
 
 export function ProjectExplorerPage({
+  authBootstrapState = 'steady',
   onProjectHydratedFromCloud,
   onProjectOpen,
 }: ProjectExplorerPageProps) {
@@ -752,6 +754,12 @@ export function ProjectExplorerPage({
             <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-600">
               Organize projects into folders, drag them around, and keep a visual snapshot of each game’s first stage right on the root page.
             </p>
+            {authBootstrapState === 'reconnecting' ? (
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
+                <Loader2 className="size-3.5 animate-spin text-sky-600" />
+                Reconnecting to cloud...
+              </div>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-2 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur">

@@ -4,7 +4,11 @@ import { useNavigate } from 'react-router-dom';
 import { ProjectExplorerPage } from '@/components/home/ProjectExplorerPage';
 import { useProjectStore } from '@/store/projectStore';
 
-export function ProjectExplorerLayout() {
+export function ProjectExplorerLayout({
+  authBootstrapState = 'steady',
+}: {
+  authBootstrapState?: 'steady' | 'reconnecting';
+}) {
   const navigate = useNavigate();
   const project = useProjectStore((state) => state.project);
 
@@ -24,5 +28,10 @@ export function ProjectExplorerLayout() {
     return null;
   }
 
-  return <ProjectExplorerPage onProjectOpen={handleProjectOpen} />;
+  return (
+    <ProjectExplorerPage
+      authBootstrapState={authBootstrapState}
+      onProjectOpen={handleProjectOpen}
+    />
+  );
 }

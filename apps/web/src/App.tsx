@@ -1,7 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
-import { Authenticated, AuthLoading, Unauthenticated } from 'convex/react';
-import { useQuery } from 'convex/react';
+import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { SignIn, UserButton, useUser } from '@clerk/clerk-react';
 import { EditorLayout } from './components/layout/EditorLayout';
@@ -9,6 +8,12 @@ import { ProjectExplorerLayout } from './components/layout/ProjectExplorerLayout
 import { DebugPanel } from './components/debug/DebugPanel';
 import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
+import {
+  clearAuthenticatedSessionHint,
+  hasRecentAuthenticatedSessionHint,
+  persistAuthenticatedSessionHint,
+  shouldWarmStartProjectExplorer,
+} from '@/lib/authSessionHint';
 import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls';
 
 const E2E_AUTH_BYPASS = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
@@ -100,26 +105,79 @@ function AuthenticatedShell() {
   );
 }
 
+function PreparingAuthenticationScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+      Preparing authentication...
+    </div>
+  );
+}
+
+function WarmProjectExplorerShell() {
+  return (
+    <div className="app-shell h-full">
+      <ProjectExplorerLayout authBootstrapState="reconnecting" />
+      <DebugPanel />
+    </div>
+  );
+}
+
+function AuthGate() {
+  const location = useLocation();
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const [hasRecentSessionHint, setHasRecentSessionHint] = useState(() => (
+    typeof window !== 'undefined'
+      ? hasRecentAuthenticatedSessionHint(window.localStorage)
+      : false
+  ));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (isAuthenticated) {
+      persistAuthenticatedSessionHint(window.localStorage);
+      if (!hasRecentSessionHint) {
+        setHasRecentSessionHint(true);
+      }
+      return;
+    }
+
+    if (!isLoading) {
+      clearAuthenticatedSessionHint(window.localStorage);
+      if (hasRecentSessionHint) {
+        setHasRecentSessionHint(false);
+      }
+    }
+  }, [hasRecentSessionHint, isAuthenticated, isLoading]);
+
+  if (shouldWarmStartProjectExplorer({
+    hasRecentSessionHint,
+    isAuthenticated,
+    isLoading,
+    pathname: location.pathname,
+  })) {
+    return <WarmProjectExplorerShell />;
+  }
+
+  if (isLoading) {
+    return <PreparingAuthenticationScreen />;
+  }
+
+  if (!isAuthenticated) {
+    return <SignedOutScreen />;
+  }
+
+  return <AuthenticatedShell />;
+}
+
 function App() {
   if (E2E_AUTH_BYPASS) {
     return <AuthenticatedShell />;
   }
 
-  return (
-    <>
-      <AuthLoading>
-        <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
-          Preparing authentication...
-        </div>
-      </AuthLoading>
-      <Unauthenticated>
-        <SignedOutScreen />
-      </Unauthenticated>
-      <Authenticated>
-        <AuthenticatedShell />
-      </Authenticated>
-    </>
-  );
+  return <AuthGate />;
 }
 
 export default App;
