@@ -5,6 +5,7 @@ import { api } from '@convex-generated/api';
 import {
   collectPersistedAssetRefsFromSerializedProjectData,
   createProjectSyncPayload,
+  getProjectExplorerSyncPayload,
   getAllProjectsForSync,
   getManagedAssetBlob,
   getManagedAssetMetadata,
@@ -16,9 +17,11 @@ import {
   hasManagedAsset,
   pruneLocalProjectsNotInCloud,
   storeManagedAsset,
+  syncProjectExplorerStateFromCloud,
   syncProjectFromCloud,
   syncProjectRevisionsFromCloud,
   type ManagedAssetKind,
+  type ProjectExplorerSyncPayload,
   type ProjectRevisionSyncMetadata,
   type ProjectRevisionSyncPayload,
   type ProjectRevisionSyncState,
@@ -72,6 +75,13 @@ interface CloudProjectRecord {
   revisionsUpdatedAt?: number | null;
   data?: string;
   dataUrl: string | null;
+}
+
+interface CloudProjectExplorerRecord {
+  stateJson: string;
+  updatedAt: number;
+  contentHash: string;
+  assetIds?: string[];
 }
 
 interface CloudRevisionRecord {
@@ -140,6 +150,21 @@ interface CloudProjectSyncPlan {
     reason: string;
     missingAssetIds?: string[];
   }>;
+  cloudRevisionState: CloudRevisionSyncState;
+}
+
+interface CloudProjectSyncMutationResult {
+  action: 'created' | 'updated' | 'skipped';
+  id: Id<'projects'>;
+  reason?: string;
+  cloudRevisionState: CloudRevisionSyncState;
+}
+
+interface CloudProjectSyncBatchMutationResult {
+  localId: string;
+  action: 'created' | 'updated' | 'skipped';
+  reason?: string;
+  cloudRevisionState: CloudRevisionSyncState;
 }
 
 export type CloudProjectSyncStatus = 'saved' | 'pulled' | 'skipped' | 'error';
@@ -291,6 +316,37 @@ function buildProjectSyncSignature(project: Pick<ProjectSyncMetadata, 'updatedAt
   return `${project.updatedAt}:${project.schemaVersion}:${normalizeContentHash(project.contentHash)}`;
 }
 
+function buildProjectExplorerSyncSignature(explorer: {
+  updatedAt: number;
+  contentHash: string;
+  assetIds: readonly string[];
+}): string {
+  return [
+    explorer.updatedAt,
+    normalizeContentHash(explorer.contentHash),
+    Array.from(new Set(explorer.assetIds)).sort().join(','),
+  ].join(':');
+}
+
+function toCloudProjectExplorerPayload(payload: ProjectExplorerSyncPayload): CloudProjectExplorerRecord {
+  return {
+    stateJson: payload.data,
+    updatedAt: payload.updatedAt,
+    contentHash: payload.contentHash,
+    assetIds: payload.assetIds,
+  };
+}
+
+function toLocalProjectExplorerSyncPayload(cloudRecord: CloudProjectExplorerRecord): {
+  data: string;
+  updatedAt: number;
+} {
+  return {
+    data: cloudRecord.stateJson,
+    updatedAt: cloudRecord.updatedAt,
+  };
+}
+
 function buildRevisionSyncSignature(revisionState: Pick<
   ProjectRevisionSyncState | CloudRevisionSyncState,
   'revisionCount' | 'latestRevisionId' | 'latestRevisionCreatedAt' | 'latestRevisionContentHash' | 'revisionsUpdatedAt'
@@ -385,6 +441,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const convex = useConvex();
   const generateUploadUrlMutation = useMutation(api.projects.generateUploadUrl);
   const generateAssetUploadUrlMutation = useMutation(api.projectAssets.generateUploadUrl);
+  const syncProjectExplorerMutation = useMutation(api.projectExplorer.sync);
   const syncMutation = useMutation(api.projects.syncBatch);
   const syncSingleMutation = useMutation(api.projects.sync);
   const syncRevisionsMutation = useMutation(api.projects.syncRevisions);
@@ -551,12 +608,16 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     async (
       projectMetadata: ProjectSyncMetadata,
       localRevisionState: ProjectRevisionSyncState,
+      options: {
+        cloudRevisionState?: CloudRevisionSyncState;
+      } = {},
     ): Promise<{
       revisionIdsToUpload: string[];
       plannedMissingAssetIds?: string[];
       shouldPullFromCloud: boolean;
     }> => {
-      const cloudRevisionState = await getCloudRevisionSyncState(projectMetadata.localId);
+      const cloudRevisionState = options.cloudRevisionState
+        ?? await getCloudRevisionSyncState(projectMetadata.localId);
       if (revisionSyncStatesMatch(localRevisionState, cloudRevisionState)) {
         return { revisionIdsToUpload: [], shouldPullFromCloud: false };
       }
@@ -773,20 +834,97 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     [convex],
   );
 
+  const getCloudProjectExplorer = useCallback(async (): Promise<CloudProjectExplorerRecord | null> => {
+    return (await convex.query(api.projectExplorer.get, {})) as CloudProjectExplorerRecord | null;
+  }, [convex]);
+
+  const reconcileProjectExplorerFromCloud = useCallback(async (): Promise<boolean> => {
+    const cloudExplorer = await getCloudProjectExplorer();
+    if (!cloudExplorer) {
+      return false;
+    }
+
+    if ((cloudExplorer.assetIds?.length ?? 0) > 0) {
+      await ensureAssetIdsAvailableLocally(cloudExplorer.assetIds ?? []);
+    }
+
+    const result = await syncProjectExplorerStateFromCloud(toLocalProjectExplorerSyncPayload(cloudExplorer));
+    return result.merged;
+  }, [ensureAssetIdsAvailableLocally, getCloudProjectExplorer]);
+
+  const syncProjectExplorerToCloud = useCallback(async (): Promise<CloudProjectSyncStatus> => {
+    if (!enabled) {
+      return 'skipped';
+    }
+
+    try {
+      const remoteExplorer = await getCloudProjectExplorer();
+      if (remoteExplorer) {
+        if ((remoteExplorer.assetIds?.length ?? 0) > 0) {
+          await ensureAssetIdsAvailableLocally(remoteExplorer.assetIds ?? []);
+        }
+        await syncProjectExplorerStateFromCloud(toLocalProjectExplorerSyncPayload(remoteExplorer));
+      }
+
+      const payload = await getProjectExplorerSyncPayload();
+      if (
+        remoteExplorer &&
+        buildProjectExplorerSyncSignature({
+          updatedAt: remoteExplorer.updatedAt,
+          contentHash: remoteExplorer.contentHash,
+          assetIds: remoteExplorer.assetIds ?? [],
+        }) === buildProjectExplorerSyncSignature(payload)
+      ) {
+        return 'skipped';
+      }
+
+      await ensureAssetIdsInCloud(payload.assetIds);
+      const result = await syncProjectExplorerMutation(toCloudProjectExplorerPayload(payload));
+      if (result.action === 'skipped' && result.reason !== 'already in sync') {
+        const nextRemoteExplorer = await getCloudProjectExplorer();
+        if (nextRemoteExplorer) {
+          if ((nextRemoteExplorer.assetIds?.length ?? 0) > 0) {
+            await ensureAssetIdsAvailableLocally(nextRemoteExplorer.assetIds ?? []);
+          }
+          await syncProjectExplorerStateFromCloud(toLocalProjectExplorerSyncPayload(nextRemoteExplorer));
+          return 'pulled';
+        }
+      }
+
+      return result.action === 'skipped' ? 'skipped' : 'saved';
+    } catch (error) {
+      console.error('[CloudSync] Failed to sync project explorer:', error);
+      return 'error';
+    }
+  }, [
+    enabled,
+    ensureAssetIdsAvailableLocally,
+    ensureAssetIdsInCloud,
+    getCloudProjectExplorer,
+    syncProjectExplorerMutation,
+  ]);
+
   const syncPayloadToCloud = useCallback(
     async (
       payload: ProjectSyncPayload,
       phaseDurationsMs?: CloudProjectSyncPhaseDurations,
-    ) => {
+    ): Promise<{
+      outcome: 'uploaded' | 'pull' | 'skipped' | 'error';
+      cloudRevisionState?: CloudRevisionSyncState;
+    }> => {
       if (!enabled) {
-        return 'skipped' as const;
+        return {
+          outcome: 'skipped',
+        };
       }
       try {
         const plan = await measureCloudSyncPhase(phaseDurationsMs, 'planProject', async () => {
           return await planSync(toProjectSyncMetadata(payload));
         });
         if (plan.project.action !== 'upload') {
-          return plan.project.action === 'pull' ? 'pull' as const : 'skipped' as const;
+          return {
+            outcome: plan.project.action === 'pull' ? 'pull' : 'skipped',
+          };
         }
 
         await measureCloudSyncPhase(phaseDurationsMs, 'ensureProjectAssets', async () => {
@@ -799,15 +937,23 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           return await toStorageSyncPayload(payload);
         });
         const result = await measureCloudSyncPhase(phaseDurationsMs, 'commitProjectMetadata', async () => {
-          return await syncSingleMutation(storagePayload);
+          return await syncSingleMutation(storagePayload) as CloudProjectSyncMutationResult;
         });
         if (result.action === 'skipped' && result.reason !== 'already in sync') {
-          return 'pull' as const;
+          return {
+            outcome: 'pull',
+            cloudRevisionState: result.cloudRevisionState,
+          };
         }
-        return 'uploaded' as const;
+        return {
+          outcome: 'uploaded',
+          cloudRevisionState: result.cloudRevisionState,
+        };
       } catch (error) {
         console.error('[CloudSync] Failed to sync payload:', error);
-        return 'error' as const;
+        return {
+          outcome: 'error',
+        };
       }
     },
     [enabled, ensureAssetIdsInCloud, planSync, syncSingleMutation, toStorageSyncPayload],
@@ -989,7 +1135,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         const signature = `${buildProjectSyncSignature(projectMetadata)}|${buildRevisionSyncSignature(localRevisionState)}`;
 
         finalStatus = await runProjectSyncSerially(project.id, signature, async () => {
-          const outcome = await syncPayloadToCloud(payload, phaseDurationsMs);
+          const { outcome, cloudRevisionState } = await syncPayloadToCloud(payload, phaseDurationsMs);
           if (outcome === 'pull') {
             await reconcileProjectFromCloud(project.id);
             console.warn(`[CloudSync] Skipped pushing in-memory project "${project.id}" because cloud has a newer copy.`);
@@ -1007,6 +1153,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             return await prepareRevisionSyncPlan(
               projectMetadata,
               localRevisionState,
+              { cloudRevisionState },
             );
           });
           if (revisionIdsToUpload.length > 0) {
@@ -1057,82 +1204,111 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
     try {
       const localProjects = await getAllProjectsForSync();
-      if (localProjects.length === 0) {
-        isSyncingRef.current = false;
-        return;
-      }
+      if (localProjects.length > 0) {
+        console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
+        const storageProjects: StorageSyncPayload[] = [];
+        const syncedCloudRevisionStatesByProject = new Map<string, CloudRevisionSyncState>();
+        const revisionUploadIdsByProject = new Map<string, string[]>();
+        const revisionAssetIdsByProject = new Map<string, string[] | undefined>();
+        const revisionPullsByProject = new Map<string, boolean>();
 
-      console.log(`[CloudSync] Syncing ${localProjects.length} projects to cloud...`);
-      const storageProjects: StorageSyncPayload[] = [];
-      const revisionUploadIdsByProject = new Map<string, string[]>();
-      const revisionAssetIdsByProject = new Map<string, string[] | undefined>();
-      const revisionPullsByProject = new Map<string, boolean>();
+        for (const localProject of localProjects) {
+          try {
+            const projectMetadata = toProjectSyncMetadata(localProject);
+            const localRevisionState = await getProjectRevisionSyncState(localProject.localId);
 
-      for (const localProject of localProjects) {
-        try {
-          const projectMetadata = toProjectSyncMetadata(localProject);
-          const localRevisionState = await getProjectRevisionSyncState(localProject.localId);
+            const plan = await planSync(projectMetadata, []);
+            if (plan.project.action === 'pull') {
+              console.warn(
+                `[CloudSync] Skipping "${localProject.localId}" because cloud has a newer copy (${plan.project.reason}).`,
+              );
+              continue;
+            }
 
-          const plan = await planSync(projectMetadata, []);
-          if (plan.project.action === 'pull') {
-            console.warn(
-              `[CloudSync] Skipping "${localProject.localId}" because cloud has a newer copy (${plan.project.reason}).`,
+            const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+              projectMetadata,
+              localRevisionState,
             );
-            continue;
+            revisionUploadIdsByProject.set(localProject.localId, revisionIdsToUpload);
+            revisionAssetIdsByProject.set(localProject.localId, plannedMissingAssetIds);
+            revisionPullsByProject.set(localProject.localId, shouldPullFromCloud);
+
+            if (plan.project.action !== 'upload') {
+              continue;
+            }
+
+            await ensureAssetIdsInCloud(
+              plan.project.missingAssetIds ?? localProject.assetIds,
+              { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
+            );
+            const storageProject = await toStorageSyncPayload(localProject);
+            storageProjects.push(storageProject);
+          } catch (error) {
+            console.error(`[CloudSync] Failed to prepare "${localProject.localId}" for upload:`, error);
           }
-
-          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
-            projectMetadata,
-            localRevisionState,
-          );
-          revisionUploadIdsByProject.set(localProject.localId, revisionIdsToUpload);
-          revisionAssetIdsByProject.set(localProject.localId, plannedMissingAssetIds);
-          revisionPullsByProject.set(localProject.localId, shouldPullFromCloud);
-
-          if (plan.project.action !== 'upload') {
-            continue;
-          }
-
-          await ensureAssetIdsInCloud(
-            plan.project.missingAssetIds ?? localProject.assetIds,
-            { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
-          );
-          const storageProject = await toStorageSyncPayload(localProject);
-          storageProjects.push(storageProject);
-        } catch (error) {
-          console.error(`[CloudSync] Failed to prepare "${localProject.localId}" for upload:`, error);
         }
-      }
 
-      if (storageProjects.length > 0) {
-        const results = await syncMutation({ projects: storageProjects });
-        console.log('[CloudSync] Sync results:', results);
-      }
+        if (storageProjects.length > 0) {
+          const results = await syncMutation({ projects: storageProjects }) as CloudProjectSyncBatchMutationResult[];
+          console.log('[CloudSync] Sync results:', results);
+          for (const result of results) {
+            syncedCloudRevisionStatesByProject.set(result.localId, result.cloudRevisionState);
+          }
+        }
 
-      for (const localProject of localProjects) {
-        try {
+        for (const localProject of localProjects) {
           if (!revisionUploadIdsByProject.has(localProject.localId)) {
             continue;
           }
-          const revisionIds = revisionUploadIdsByProject.get(localProject.localId);
-          await syncProjectRevisionsToCloud(
-            localProject.localId,
-            revisionIds,
-            revisionAssetIdsByProject.get(localProject.localId),
-          );
-          if (revisionPullsByProject.get(localProject.localId)) {
-            await reconcileProjectRevisionsFromCloud(localProject.localId);
+          if (syncedCloudRevisionStatesByProject.has(localProject.localId)) {
+            const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+              toProjectSyncMetadata(localProject),
+              await getProjectRevisionSyncState(localProject.localId),
+              { cloudRevisionState: syncedCloudRevisionStatesByProject.get(localProject.localId) },
+            );
+            revisionUploadIdsByProject.set(localProject.localId, revisionIdsToUpload);
+            revisionAssetIdsByProject.set(localProject.localId, plannedMissingAssetIds);
+            revisionPullsByProject.set(localProject.localId, shouldPullFromCloud);
           }
-        } catch (error) {
-          console.error(`[CloudSync] Failed to sync revisions for "${localProject.localId}":`, error);
+        }
+
+        for (const localProject of localProjects) {
+          try {
+            if (!revisionUploadIdsByProject.has(localProject.localId)) {
+              continue;
+            }
+            const revisionIds = revisionUploadIdsByProject.get(localProject.localId);
+            await syncProjectRevisionsToCloud(
+              localProject.localId,
+              revisionIds,
+              revisionAssetIdsByProject.get(localProject.localId),
+            );
+            if (revisionPullsByProject.get(localProject.localId)) {
+              await reconcileProjectRevisionsFromCloud(localProject.localId);
+            }
+          } catch (error) {
+            console.error(`[CloudSync] Failed to sync revisions for "${localProject.localId}":`, error);
+          }
         }
       }
+
+      await syncProjectExplorerToCloud();
     } catch (error) {
       console.error('[CloudSync] Failed to sync to cloud:', error);
     } finally {
       isSyncingRef.current = false;
     }
-  }, [enabled, ensureAssetIdsInCloud, planSync, prepareRevisionSyncPlan, reconcileProjectRevisionsFromCloud, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
+  }, [
+    enabled,
+    ensureAssetIdsInCloud,
+    planSync,
+    prepareRevisionSyncPlan,
+    reconcileProjectRevisionsFromCloud,
+    syncMutation,
+    syncProjectExplorerToCloud,
+    syncProjectRevisionsToCloud,
+    toStorageSyncPayload,
+  ]);
 
   // Sync a single project to cloud by local project id
   const syncProjectToCloud = useCallback(
@@ -1163,13 +1339,25 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
               { skipRemoteCheck: projectPlanResult.project.missingAssetIds !== undefined },
             );
             const storagePayload = await toStorageSyncPayload(project);
-            const result = await syncSingleMutation(storagePayload);
+            const result = await syncSingleMutation(storagePayload) as CloudProjectSyncMutationResult;
             console.log('[CloudSync] Single sync result:', result);
 
             if (result.action === 'skipped' && result.reason !== 'already in sync') {
               await reconcileProjectFromCloud(projectId);
               return 'pulled' as const;
             }
+            const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+              projectMetadata,
+              localRevisionState,
+              { cloudRevisionState: result.cloudRevisionState },
+            );
+            if (revisionIdsToUpload.length > 0) {
+              await syncProjectRevisionsToCloud(projectId, revisionIdsToUpload, plannedMissingAssetIds);
+            }
+            if (shouldPullFromCloud) {
+              await reconcileProjectRevisionsFromCloud(projectId);
+            }
+            return 'saved' as const;
           }
 
           const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
@@ -1277,12 +1465,21 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           console.log(`[CloudSync] Pruned ${pruneResult.deleted} local-only projects`);
         }
       }
+
+      await reconcileProjectExplorerFromCloud();
     } catch (error) {
       console.error('[CloudSync] Failed to sync from cloud:', error);
     } finally {
       isSyncingRef.current = false;
     }
-  }, [ensureCloudProjectAssetsLocally, getCloudProjectsFull, getCloudRevisions, hydrateCloudRevisions, syncProjectToCloud]);
+  }, [
+    ensureCloudProjectAssetsLocally,
+    getCloudProjectsFull,
+    getCloudRevisions,
+    hydrateCloudRevisions,
+    reconcileProjectExplorerFromCloud,
+    syncProjectToCloud,
+  ]);
 
   // Run a full two-way reconciliation:
   // 1) push all local projects up, then 2) pull cloud projects down.
@@ -1297,6 +1494,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         if (localProjects.length === 0) return;
 
         const storageProjects: StorageSyncPayload[] = [];
+        const syncedCloudRevisionStatesByProject = new Map<string, CloudRevisionSyncState>();
         const revisionUploadIdsByProject = new Map<string, string[]>();
         const revisionAssetIdsByProject = new Map<string, string[] | undefined>();
         const revisionPullsByProject = new Map<string, boolean>();
@@ -1342,7 +1540,24 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         }
 
         if (storageProjects.length > 0) {
-          await syncMutation({ projects: storageProjects });
+          const results = await syncMutation({ projects: storageProjects }) as CloudProjectSyncBatchMutationResult[];
+          for (const result of results) {
+            syncedCloudRevisionStatesByProject.set(result.localId, result.cloudRevisionState);
+          }
+        }
+
+        for (const localProject of localProjects) {
+          if (!syncedCloudRevisionStatesByProject.has(localProject.localId)) {
+            continue;
+          }
+          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+            toProjectSyncMetadata(localProject),
+            await getProjectRevisionSyncState(localProject.localId),
+            { cloudRevisionState: syncedCloudRevisionStatesByProject.get(localProject.localId) },
+          );
+          revisionUploadIdsByProject.set(localProject.localId, revisionIdsToUpload);
+          revisionAssetIdsByProject.set(localProject.localId, plannedMissingAssetIds);
+          revisionPullsByProject.set(localProject.localId, shouldPullFromCloud);
         }
 
         for (const localProject of localProjects) {
@@ -1381,12 +1596,31 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
           }));
         });
       }
+
+      await syncProjectExplorerToCloud();
+      await reconcileProjectExplorerFromCloud();
     } catch (error) {
       console.error('[CloudSync] Bidirectional sync failed:', error);
     } finally {
       isSyncingRef.current = false;
     }
-  }, [enabled, ensureAssetIdsInCloud, ensureCloudProjectAssetsLocally, getCloudProjectsFull, getCloudRevisions, hydrateCloudRevisions, planSync, prepareRevisionSyncPlan, reconcileProjectRevisionsFromCloud, runWithRetry, syncMutation, syncProjectRevisionsToCloud, toStorageSyncPayload]);
+  }, [
+    enabled,
+    ensureAssetIdsInCloud,
+    ensureCloudProjectAssetsLocally,
+    getCloudProjectsFull,
+    getCloudRevisions,
+    hydrateCloudRevisions,
+    planSync,
+    prepareRevisionSyncPlan,
+    reconcileProjectExplorerFromCloud,
+    reconcileProjectRevisionsFromCloud,
+    runWithRetry,
+    syncMutation,
+    syncProjectExplorerToCloud,
+    syncProjectRevisionsToCloud,
+    toStorageSyncPayload,
+  ]);
 
   // Sync on mount if requested
   useEffect(() => {
@@ -1521,6 +1755,8 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     syncAllToCloud,
     syncAllFromCloud,
     syncAllBidirectional,
+    syncProjectExplorerToCloud,
+    syncProjectExplorerFromCloud: reconcileProjectExplorerFromCloud,
     syncProjectDraftToCloud: syncProjectObjectToCloud,
     syncProjectToCloud,
     syncProjectFromCloud: reconcileProjectFromCloud,

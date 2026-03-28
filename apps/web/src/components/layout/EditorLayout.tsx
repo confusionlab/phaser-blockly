@@ -11,6 +11,7 @@ import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { ProjectHistoryDialog } from '../dialogs/ProjectHistoryDialog';
 import { AiAssistantPanel } from '../assistant/AiAssistantPanel';
+import { ProjectExplorerPage } from '@/components/home/ProjectExplorerPage';
 import type { Project } from '@/types';
 import { EditorTopBar } from '@/components/layout/EditorTopBar';
 import { useProjectStore } from '@/store/projectStore';
@@ -345,7 +346,7 @@ export function EditorLayout() {
     })();
   }, []);
 
-  const markProjectAsCloudSaved = useCallback((projectSnapshot: Project) => {
+  const markProjectAsCloudSaved = useCallback((projectSnapshot: { id: string; updatedAt: Date }) => {
     const savedAt = projectSnapshot.updatedAt.getTime();
     lastCloudSavedVersionRef.current.set(projectSnapshot.id, savedAt);
     if (useProjectStore.getState().project?.id === projectSnapshot.id) {
@@ -1182,12 +1183,11 @@ export function EditorLayout() {
             </div>
           </>
         ) : (
-              <ProjectDialog
-                onProjectOpen={handleProjectOpen}
-                onProjectHydratedFromCloud={markProjectAsCloudSaved}
-                mode="page"
-              />
-            )}
+          <ProjectExplorerPage
+            onProjectOpen={handleProjectOpen}
+            onProjectHydratedFromCloud={markProjectAsCloudSaved}
+          />
+        )}
       </div>
 
       {project && showProjectDialog && (

@@ -47,18 +47,6 @@ const fullProjectValidator = v.object({
   dataUrl: v.union(v.string(), v.null()),
 });
 
-const syncResultValidator = v.object({
-  action: v.union(v.literal("created"), v.literal("updated"), v.literal("skipped")),
-  id: v.id("projects"),
-  reason: v.optional(v.string()),
-});
-
-const syncBatchResultValidator = v.object({
-  localId: v.string(),
-  action: v.union(v.literal("created"), v.literal("updated"), v.literal("skipped")),
-  reason: v.optional(v.string()),
-});
-
 const syncMetadataValidator = v.object({
   localId: v.string(),
   updatedAt: v.number(),
@@ -154,6 +142,20 @@ const revisionSyncStateValidator = v.object({
   revisionsUpdatedAt: v.union(v.number(), v.null()),
 });
 
+const syncResultValidator = v.object({
+  action: v.union(v.literal("created"), v.literal("updated"), v.literal("skipped")),
+  id: v.id("projects"),
+  reason: v.optional(v.string()),
+  cloudRevisionState: revisionSyncStateValidator,
+});
+
+const syncBatchResultValidator = v.object({
+  localId: v.string(),
+  action: v.union(v.literal("created"), v.literal("updated"), v.literal("skipped")),
+  reason: v.optional(v.string()),
+  cloudRevisionState: revisionSyncStateValidator,
+});
+
 const projectSyncPlanValidator = v.object({
   action: v.union(v.literal("upload"), v.literal("skip"), v.literal("pull")),
   reason: v.string(),
@@ -170,6 +172,7 @@ const revisionSyncPlanValidator = v.object({
 const syncPlanResultValidator = v.object({
   project: projectSyncPlanValidator,
   revisions: v.array(revisionSyncPlanValidator),
+  cloudRevisionState: revisionSyncStateValidator,
 });
 
 type StoredProject = {
@@ -362,7 +365,12 @@ function buildRevisionMetadataFingerprint(
   ].join("|");
 }
 
-function revisionSyncStateFromProject(project: StoredProject | null): RevisionSyncState {
+function revisionSyncStateFromProject(
+  project: Pick<
+    StoredProject,
+    "revisionCount" | "latestRevisionId" | "latestRevisionCreatedAt" | "latestRevisionContentHash" | "revisionsUpdatedAt"
+  > | null,
+): RevisionSyncState {
   if (!project) {
     return createEmptyRevisionSyncState();
   }
@@ -770,6 +778,15 @@ async function listProjectAssetsForOwner(ctx: any, ownerUserId: string): Promise
     .collect()) as StoredProjectAsset[];
 }
 
+async function getProjectExplorerAssetIds(ctx: any, ownerUserId: string): Promise<string[]> {
+  const record = await ctx.db
+    .query('projectExplorerStates')
+    .withIndex('by_ownerUserId', (q: any) => q.eq('ownerUserId', ownerUserId))
+    .first();
+
+  return normalizeManagedAssetIds(record?.assetIds);
+}
+
 async function cleanupDuplicateProjects(
   ctx: any,
   projects: StoredProject[],
@@ -866,6 +883,12 @@ async function garbageCollectProjectAssets(
     }
   }
 
+  for (const assetId of await getProjectExplorerAssetIds(ctx, ownerUserId)) {
+    if (candidateIds.has(assetId)) {
+      referencedIds.add(assetId);
+    }
+  }
+
   const now = Date.now();
   for (const row of projectAssets) {
     if (!candidateIds.has(row.assetId)) {
@@ -899,6 +922,14 @@ async function garbageCollectProjectAssets(
     await ctx.db.delete(row._id);
     await cleanupStorage(ctx, row.storageId);
   }
+}
+
+export async function garbageCollectOwnedProjectAssets(
+  ctx: any,
+  ownerUserId: string,
+  touchedAssetIds: Iterable<string> = [],
+): Promise<void> {
+  await garbageCollectProjectAssets(ctx, ownerUserId, touchedAssetIds);
 }
 
 function toSummary(project: StoredProject) {
@@ -1317,6 +1348,7 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
         action: "skipped" as const,
         id: existing._id,
         reason: `schema downgrade blocked (incoming v${incomingSchemaVersion}, cloud v${existingSchemaVersion})`,
+        cloudRevisionState: revisionSyncStateFromProject(existing),
       };
     }
 
@@ -1364,6 +1396,7 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
         action: "skipped" as const,
         id: existing._id,
         reason,
+        cloudRevisionState: revisionSyncStateFromProject(existing),
       };
     }
 
@@ -1388,7 +1421,11 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
       ...normalizeManagedAssetIds(nextDocument.assetIds),
     ]);
 
-    return { action: "updated" as const, id: existing._id };
+    return {
+      action: "updated" as const,
+      id: existing._id,
+      cloudRevisionState: revisionSyncStateFromProject(nextDocument),
+    };
   }
 
   const nextDocument = toProjectDocument(
@@ -1401,7 +1438,11 @@ async function upsertProject(ctx: any, ownerUserId: string, payload: SyncPayload
   const id = await ctx.db.insert("projects", nextDocument);
   await garbageCollectProjectAssets(ctx, ownerUserId, normalizeManagedAssetIds(nextDocument.assetIds));
 
-  return { action: "created" as const, id };
+  return {
+    action: "created" as const,
+    id,
+    cloudRevisionState: createEmptyRevisionSyncState(),
+  };
 }
 
 // List all projects from cloud
@@ -1484,17 +1525,28 @@ export const planSync = query({
     const projects = await listProjectsByLocalId(ctx, ownerUserId, args.project.localId);
     const project = pickCanonicalProject(projects);
     const projectPlan = planProjectSyncAction(project, args.project);
+    let existingRevisions: StoredProjectRevision[] | null = null;
+    let cloudRevisionState = createEmptyRevisionSyncState();
+    if (project) {
+      if (hasStoredRevisionSyncState(project)) {
+        cloudRevisionState = revisionSyncStateFromProject(project);
+      } else {
+        existingRevisions = await listRevisionsByProjectLocalId(ctx, ownerUserId, args.project.localId);
+        cloudRevisionState = summarizeRevisionSyncState(existingRevisions);
+      }
+    }
 
     if (projectPlan.action === "pull") {
       return {
         project: projectPlan,
         revisions: [],
+        cloudRevisionState,
       };
     }
 
     const revisionsById = new Map<string, StoredProjectRevision>();
     if (project && args.revisions.length > 0) {
-      const existingRevisions = await listRevisionsByProjectLocalId(ctx, ownerUserId, args.project.localId);
+      existingRevisions ??= await listRevisionsByProjectLocalId(ctx, ownerUserId, args.project.localId);
       for (const revision of existingRevisions) {
         revisionsById.set(revision.revisionId, revision);
       }
@@ -1509,12 +1561,10 @@ export const planSync = query({
     if (projectPlan.action === "upload") {
       const candidateProjectAssetIds = selectUncoveredAssetIdsForSync(args.project.assetIds, coveredAssetIds);
       const missingAssetIds = await listMissingOwnedAssetIds(ctx, ownerUserId, candidateProjectAssetIds);
-      if (missingAssetIds.length > 0) {
-        plannedProject = {
-          ...plannedProject,
-          missingAssetIds,
-        };
-      }
+      plannedProject = {
+        ...plannedProject,
+        missingAssetIds,
+      };
       for (const assetId of normalizeManagedAssetIds(args.project.assetIds)) {
         coveredAssetIds.add(assetId);
       }
@@ -1544,15 +1594,12 @@ export const planSync = query({
           coveredAssetIds.add(assetId);
         }
 
-        if (missingAssetIds.length === 0) {
-          return plannedRevision;
-        }
-
         return {
           ...plannedRevision,
           missingAssetIds,
         };
       })),
+      cloudRevisionState,
     };
   },
 });
@@ -1592,6 +1639,7 @@ export const syncBatch = mutation({
         localId: project.localId,
         action: result.action,
         reason: result.reason,
+        cloudRevisionState: result.cloudRevisionState,
       });
     }
 

@@ -35,6 +35,25 @@ import {
   optimizeCostumeBitmapAssetSource,
 } from '@/lib/costume/costumeAssetOptimization';
 import {
+  PROJECT_EXPLORER_RECORD_ID,
+  PROJECT_EXPLORER_ROOT_FOLDER_ID,
+  collectProjectExplorerAssetIds,
+  collectProjectExplorerFolderSubtreeIds,
+  createDefaultProjectExplorerState,
+  createProjectExplorerFolder,
+  createProjectExplorerProjectMeta,
+  isProjectExplorerDescendantFolder,
+  mergeProjectExplorerStates,
+  normalizeProjectExplorerState,
+  type ProjectExplorerFolder,
+  type ProjectExplorerProjectMeta,
+  type ProjectExplorerState,
+} from '@/lib/projectExplorer';
+import {
+  computeProjectThumbnailVisualSignature,
+  renderProjectThumbnail,
+} from '@/lib/projectThumbnail';
+import {
   getCostumeDocumentPreviewSignature,
   renderCostumeDocument,
 } from '@/lib/costume/costumeDocumentRender';
@@ -138,6 +157,35 @@ interface ReusableRecord {
   data: string; // JSON stringified ReusableObject data
   createdAt: Date;
   tags: string[];
+}
+
+interface ProjectExplorerStateRecord {
+  id: string;
+  data: string;
+  updatedAt: Date;
+}
+
+export interface ProjectExplorerSyncPayload {
+  data: string;
+  updatedAt: number;
+  contentHash: string;
+  assetIds: string[];
+}
+
+export interface ProjectExplorerFolderSummary extends ProjectExplorerFolder {
+  projectCount: number;
+}
+
+export interface ProjectExplorerProjectSummary {
+  id: string;
+  name: string;
+  createdAt: Date;
+  updatedAt: Date;
+  folderId: string;
+  trashedAt: number | null;
+  thumbnailAssetId: string | null;
+  thumbnailStale: boolean;
+  thumbnailUrl: string | null;
 }
 
 function normalizeSchemaVersion(version: unknown): number {
@@ -436,6 +484,151 @@ export async function storeManagedAsset(
   await storeManagedAssetBlob(assetId, blob, kind);
 }
 
+function serializeProjectExplorerState(state: ProjectExplorerState): string {
+  return JSON.stringify(state);
+}
+
+function parseProjectExplorerStateRecord(record: ProjectExplorerStateRecord | undefined): ProjectExplorerState {
+  if (!record) {
+    return createDefaultProjectExplorerState();
+  }
+
+  try {
+    return normalizeProjectExplorerState(JSON.parse(record.data));
+  } catch {
+    return createDefaultProjectExplorerState(record.updatedAt.getTime());
+  }
+}
+
+function normalizeProjectExplorerStateAgainstProjectRecords(
+  state: ProjectExplorerState,
+  projectRecords: ProjectRecord[],
+): { changed: boolean; state: ProjectExplorerState; touchedThumbnailAssetIds: string[] } {
+  const normalized = normalizeProjectExplorerState(state);
+  const metadataByProjectId = new Map(normalized.projects.map((projectMeta) => [projectMeta.projectId, projectMeta]));
+  const nextProjects: ProjectExplorerProjectMeta[] = [];
+  const touchedThumbnailAssetIds = new Set<string>();
+  let changed = false;
+
+  for (const record of projectRecords) {
+    const existing = metadataByProjectId.get(record.id);
+    if (existing) {
+      nextProjects.push({
+        ...existing,
+        createdAt: existing.createdAt || record.createdAt.getTime(),
+      });
+      metadataByProjectId.delete(record.id);
+      continue;
+    }
+
+    changed = true;
+    nextProjects.push(createProjectExplorerProjectMeta(record.id, {
+      createdAt: record.createdAt.getTime(),
+      updatedAt: record.updatedAt.getTime(),
+    }));
+  }
+
+  for (const orphanedMeta of metadataByProjectId.values()) {
+    changed = true;
+    if (orphanedMeta.thumbnailAssetId) {
+      touchedThumbnailAssetIds.add(orphanedMeta.thumbnailAssetId);
+    }
+  }
+
+  const nextState = normalizeProjectExplorerState({
+    ...normalized,
+    updatedAt: changed ? Date.now() : normalized.updatedAt,
+    projects: nextProjects,
+  });
+
+  if (!changed && nextState.projects.length !== normalized.projects.length) {
+    changed = true;
+  }
+
+  return {
+    changed,
+    state: nextState,
+    touchedThumbnailAssetIds: Array.from(touchedThumbnailAssetIds),
+  };
+}
+
+async function saveProjectExplorerStateInternal(
+  state: ProjectExplorerState,
+): Promise<ProjectExplorerState> {
+  const normalizedState = normalizeProjectExplorerState(state);
+  const nextRecord: ProjectExplorerStateRecord = {
+    id: PROJECT_EXPLORER_RECORD_ID,
+    data: serializeProjectExplorerState(normalizedState),
+    updatedAt: new Date(normalizedState.updatedAt),
+  };
+  await db.projectExplorerState.put(nextRecord);
+  return normalizedState;
+}
+
+async function loadProjectExplorerStateInternal(): Promise<ProjectExplorerState> {
+  const [record, projectRecords] = await Promise.all([
+    db.projectExplorerState.get(PROJECT_EXPLORER_RECORD_ID),
+    db.projects.toArray(),
+  ]);
+  const parsedState = parseProjectExplorerStateRecord(record);
+  const { changed, state, touchedThumbnailAssetIds } = normalizeProjectExplorerStateAgainstProjectRecords(
+    parsedState,
+    projectRecords,
+  );
+
+  if (changed || !record) {
+    await saveProjectExplorerStateInternal(state);
+    if (touchedThumbnailAssetIds.length > 0) {
+      await garbageCollectManagedAssets(touchedThumbnailAssetIds);
+    }
+  }
+
+  return state;
+}
+
+async function updateProjectExplorerState(
+  updater: (state: ProjectExplorerState) => ProjectExplorerState,
+): Promise<ProjectExplorerState> {
+  const currentState = await loadProjectExplorerStateInternal();
+  const nextState = normalizeProjectExplorerState(updater(currentState));
+  const previousAssetIds = collectProjectExplorerAssetIds(currentState);
+  const nextAssetIds = collectProjectExplorerAssetIds(nextState);
+  await saveProjectExplorerStateInternal(nextState);
+  await garbageCollectManagedAssets(new Set([...previousAssetIds, ...nextAssetIds]));
+  return nextState;
+}
+
+async function collectProjectExplorerReferencedAssetIds(): Promise<string[]> {
+  const record = await db.projectExplorerState.get(PROJECT_EXPLORER_RECORD_ID);
+  return collectProjectExplorerAssetIds(parseProjectExplorerStateRecord(record));
+}
+
+async function ensureStoredProjectExplorerProjectMeta(
+  projectId: string,
+  options: {
+    createdAt?: number;
+    updatedAt?: number;
+  } = {},
+): Promise<void> {
+  await updateProjectExplorerState((state) => {
+    if (state.projects.some((projectMeta) => projectMeta.projectId === projectId)) {
+      return state;
+    }
+
+    return {
+      ...state,
+      updatedAt: Date.now(),
+      projects: [
+        ...state.projects,
+        createProjectExplorerProjectMeta(projectId, {
+          createdAt: options.createdAt,
+          updatedAt: options.updatedAt,
+        }),
+      ],
+    };
+  });
+}
+
 function getPersistedAssetIdsFromRecord(record: { assetIds?: string[] }, fallbackData?: string): string[] {
   if (Array.isArray(record.assetIds)) {
     return record.assetIds.filter((assetId): assetId is string => isManagedAssetId(assetId));
@@ -474,6 +667,12 @@ async function collectReferencedManagedAssetIdsForCandidates(
       if (candidateIds.has(assetId)) {
         referencedIds.add(assetId);
       }
+    }
+  }
+
+  for (const assetId of await collectProjectExplorerReferencedAssetIds()) {
+    if (candidateIds.has(assetId)) {
+      referencedIds.add(assetId);
     }
   }
 
@@ -1092,6 +1291,7 @@ class GameMakerDatabase extends Dexie {
   projectRevisions!: EntityTable<ProjectRevisionRecord, 'id'>;
   assets!: EntityTable<AssetRecord, 'id'>;
   reusables!: EntityTable<ReusableRecord, 'id'>;
+  projectExplorerState!: EntityTable<ProjectExplorerStateRecord, 'id'>;
 
   constructor() {
     super('PochaCodingDB');
@@ -1135,6 +1335,15 @@ class GameMakerDatabase extends Dexie {
       assets: 'id, hash, kind, mimeType, size, createdAt, updatedAt',
       reusables: 'id, name, createdAt, *tags',
     });
+
+    this.version(5).stores({
+      projects: 'id, name, createdAt, updatedAt, schemaVersion',
+      projectRevisions:
+        'id, projectId, createdAt, [projectId+createdAt], [projectId+isCheckpoint+createdAt], [projectId+reason+createdAt], [projectId+contentHash]',
+      assets: 'id, hash, kind, mimeType, size, createdAt, updatedAt',
+      reusables: 'id, name, createdAt, *tags',
+      projectExplorerState: 'id, updatedAt',
+    });
   }
 }
 
@@ -1146,6 +1355,10 @@ export async function saveProject(project: Project): Promise<Project> {
   const existing = await db.projects.get(project.id);
   const record = await toProjectRecord(project, new Date(project.updatedAt), existing ?? null);
   await db.projects.put(record);
+  await ensureStoredProjectExplorerProjectMeta(project.id, {
+    createdAt: project.createdAt.getTime(),
+    updatedAt: project.updatedAt.getTime(),
+  });
   const touchedAssetIds = new Set<string>([
     ...getPersistedAssetIdsFromRecord(record, record.data),
     ...getPersistedAssetIdsFromRecord(existing ?? {}, existing?.data),
@@ -1204,6 +1417,8 @@ export async function deleteProject(id: string): Promise<void> {
     return;
   }
 
+  const explorerState = await loadProjectExplorerStateInternal();
+  const projectMeta = explorerState.projects.find((entry) => entry.projectId === id) ?? null;
   const project = await db.projects.get(id);
   await db.projects.delete(id);
   const revisions = await db.projectRevisions.where('projectId').equals(id).toArray();
@@ -1211,13 +1426,549 @@ export async function deleteProject(id: string): Promise<void> {
     await Promise.all(revisions.map((revision) => db.projectRevisions.delete(revision.id)));
   });
 
+  if (projectMeta) {
+    await updateProjectExplorerState((state) => ({
+      ...state,
+      updatedAt: Date.now(),
+      projects: state.projects.filter((entry) => entry.projectId !== id),
+    }));
+  }
+
   const touchedAssetIds = new Set<string>([
     ...getPersistedAssetIdsFromRecord(project ?? {}, project?.data),
     ...revisions.flatMap((revision) =>
       getPersistedAssetIdsFromRecord(revision, revision.snapshotData ?? revision.patch),
     ),
+    ...(projectMeta?.thumbnailAssetId ? [projectMeta.thumbnailAssetId] : []),
   ]);
   await garbageCollectManagedAssets(touchedAssetIds);
+}
+
+export async function loadProjectExplorerState(): Promise<ProjectExplorerState> {
+  return await loadProjectExplorerStateInternal();
+}
+
+export async function listProjectExplorerData(): Promise<{
+  folders: ProjectExplorerFolderSummary[];
+  projects: ProjectExplorerProjectSummary[];
+}> {
+  const [state, projectRecords] = await Promise.all([
+    loadProjectExplorerStateInternal(),
+    db.projects.toArray(),
+  ]);
+
+  const metaByProjectId = new Map(state.projects.map((projectMeta) => [projectMeta.projectId, projectMeta]));
+  const projectCountByFolderId = new Map<string, number>();
+
+  for (const projectMeta of state.projects) {
+    if (projectMeta.trashedAt) {
+      continue;
+    }
+    projectCountByFolderId.set(projectMeta.folderId, (projectCountByFolderId.get(projectMeta.folderId) ?? 0) + 1);
+  }
+
+  const folders = state.folders.map((folder) => ({
+    ...folder,
+    projectCount: projectCountByFolderId.get(folder.id) ?? 0,
+  }));
+
+  const projects = await Promise.all(projectRecords.map(async (record) => {
+    const meta = metaByProjectId.get(record.id)
+      ?? createProjectExplorerProjectMeta(record.id, {
+        createdAt: record.createdAt.getTime(),
+        updatedAt: record.updatedAt.getTime(),
+      });
+    let currentThumbnailVisualSignature: string | null = null;
+    try {
+      const parsedData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(parsedData);
+    } catch {
+      currentThumbnailVisualSignature = null;
+    }
+    const thumbnailExists = meta.thumbnailAssetId ? await hasManagedAsset(meta.thumbnailAssetId) : false;
+
+    return {
+      id: record.id,
+      name: record.name,
+      createdAt: new Date(record.createdAt),
+      updatedAt: new Date(record.updatedAt),
+      folderId: meta.folderId,
+      trashedAt: meta.trashedAt ?? null,
+      thumbnailAssetId: meta.thumbnailAssetId ?? null,
+      thumbnailStale:
+        currentThumbnailVisualSignature !== null
+          && (
+            !thumbnailExists
+            || meta.thumbnailVisualSignature !== currentThumbnailVisualSignature
+          ),
+      thumbnailUrl: meta.thumbnailAssetId ? await resolveManagedAssetUrl(meta.thumbnailAssetId) : null,
+    } satisfies ProjectExplorerProjectSummary;
+  }));
+
+  return {
+    folders,
+    projects,
+  };
+}
+
+export async function createProjectFolder(
+  name: string,
+  parentId: string = PROJECT_EXPLORER_ROOT_FOLDER_ID,
+): Promise<string> {
+  const folderId = crypto.randomUUID();
+  await updateProjectExplorerState((state) => {
+    const validParentId = state.folders.some((folder) => folder.id === parentId && !folder.trashedAt)
+      ? parentId
+      : PROJECT_EXPLORER_ROOT_FOLDER_ID;
+    const now = Date.now();
+    return {
+      ...state,
+      updatedAt: now,
+      folders: [
+        ...state.folders,
+        createProjectExplorerFolder(folderId, name, validParentId, now),
+      ],
+    };
+  });
+  return folderId;
+}
+
+export async function renameProjectFolder(folderId: string, name: string): Promise<boolean> {
+  if (folderId === PROJECT_EXPLORER_ROOT_FOLDER_ID) {
+    return false;
+  }
+
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    return false;
+  }
+
+  let changed = false;
+  await updateProjectExplorerState((state) => {
+    const now = Date.now();
+    const folders = state.folders.map((folder) => {
+      if (folder.id !== folderId || folder.name === trimmedName) {
+        return folder;
+      }
+      changed = true;
+      return {
+        ...folder,
+        name: trimmedName,
+        updatedAt: now,
+      };
+    });
+
+    if (!changed) {
+      return state;
+    }
+
+    return {
+      ...state,
+      updatedAt: now,
+      folders,
+    };
+  });
+
+  return changed;
+}
+
+export async function renameStoredProject(projectId: string, name: string): Promise<boolean> {
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    return false;
+  }
+
+  const existing = await db.projects.get(projectId);
+  if (!existing || existing.name === trimmedName) {
+    return false;
+  }
+
+  await db.projects.update(projectId, {
+    name: trimmedName,
+    updatedAt: new Date(),
+    appVersion: APP_VERSION,
+  });
+  return true;
+}
+
+export async function moveProjectToFolder(projectId: string, folderId: string): Promise<boolean> {
+  let changed = false;
+  await updateProjectExplorerState((state) => {
+    const folderExists = state.folders.some((folder) => folder.id === folderId && !folder.trashedAt);
+    const targetFolderId = folderExists ? folderId : PROJECT_EXPLORER_ROOT_FOLDER_ID;
+    const now = Date.now();
+    const hasProjectMeta = state.projects.some((projectMeta) => projectMeta.projectId === projectId);
+    const updatedProjects = state.projects.map((projectMeta) => {
+      if (projectMeta.projectId !== projectId || projectMeta.folderId === targetFolderId) {
+        return projectMeta;
+      }
+      changed = true;
+      return {
+        ...projectMeta,
+        folderId: targetFolderId,
+        updatedAt: now,
+      };
+    });
+
+    const projects = hasProjectMeta
+      ? updatedProjects
+      : [
+          ...updatedProjects,
+          {
+            ...createProjectExplorerProjectMeta(projectId, { updatedAt: now }),
+            folderId: targetFolderId,
+          },
+        ];
+    if (!hasProjectMeta) {
+      changed = true;
+    }
+
+    if (!changed) {
+      return state;
+    }
+
+    return {
+      ...state,
+      updatedAt: now,
+      projects,
+    };
+  });
+
+  return changed;
+}
+
+export async function moveProjectFolder(
+  folderId: string,
+  targetFolderId: string,
+): Promise<boolean> {
+  if (folderId === PROJECT_EXPLORER_ROOT_FOLDER_ID || folderId === targetFolderId) {
+    return false;
+  }
+
+  let changed = false;
+  await updateProjectExplorerState((state) => {
+    const folder = state.folders.find((entry) => entry.id === folderId);
+    const targetFolder = state.folders.find((entry) => entry.id === targetFolderId && !entry.trashedAt);
+    if (!folder || !targetFolder) {
+      return state;
+    }
+    if (isProjectExplorerDescendantFolder(state.folders, targetFolderId, folderId)) {
+      return state;
+    }
+
+    const now = Date.now();
+    const folders = state.folders.map((entry) => {
+      if (entry.id !== folderId || entry.parentId === targetFolderId) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        parentId: targetFolderId,
+        updatedAt: now,
+      };
+    });
+
+    if (!changed) {
+      return state;
+    }
+
+    return {
+      ...state,
+      updatedAt: now,
+      folders,
+    };
+  });
+
+  return changed;
+}
+
+export async function trashProjectFromExplorer(projectId: string): Promise<boolean> {
+  let changed = false;
+  await updateProjectExplorerState((state) => {
+    const now = Date.now();
+    const projects = state.projects.map((projectMeta) => {
+      if (projectMeta.projectId !== projectId || projectMeta.trashedAt) {
+        return projectMeta;
+      }
+      changed = true;
+      return {
+        ...projectMeta,
+        trashedAt: now,
+        updatedAt: now,
+      };
+    });
+
+    if (!changed) {
+      return state;
+    }
+
+    return {
+      ...state,
+      updatedAt: now,
+      projects,
+    };
+  });
+
+  return changed;
+}
+
+export async function trashProjectFolder(folderId: string): Promise<boolean> {
+  if (folderId === PROJECT_EXPLORER_ROOT_FOLDER_ID) {
+    return false;
+  }
+
+  let changed = false;
+  await updateProjectExplorerState((state) => {
+    const folder = state.folders.find((entry) => entry.id === folderId);
+    if (!folder || folder.trashedAt) {
+      return state;
+    }
+
+    const now = Date.now();
+    const subtreeIds = collectProjectExplorerFolderSubtreeIds(state.folders, folderId);
+    const folders = state.folders.map((entry) => {
+      if (!subtreeIds.has(entry.id)) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        trashedAt: now,
+        updatedAt: now,
+      };
+    });
+    const projects = state.projects.map((projectMeta) => {
+      if (!subtreeIds.has(projectMeta.folderId) || projectMeta.trashedAt) {
+        return projectMeta;
+      }
+      return {
+        ...projectMeta,
+        trashedAt: now,
+        updatedAt: now,
+      };
+    });
+
+    return {
+      ...state,
+      updatedAt: now,
+      folders,
+      projects,
+    };
+  });
+
+  return changed;
+}
+
+export async function restoreProjectFromExplorer(projectId: string): Promise<boolean> {
+  let changed = false;
+  await updateProjectExplorerState((state) => {
+    const now = Date.now();
+    const activeFolderIds = new Set(state.folders.filter((folder) => !folder.trashedAt).map((folder) => folder.id));
+    const projects = state.projects.map((projectMeta) => {
+      if (projectMeta.projectId !== projectId || !projectMeta.trashedAt) {
+        return projectMeta;
+      }
+      changed = true;
+      return {
+        ...projectMeta,
+        folderId: activeFolderIds.has(projectMeta.folderId) ? projectMeta.folderId : PROJECT_EXPLORER_ROOT_FOLDER_ID,
+        trashedAt: undefined,
+        updatedAt: now,
+      };
+    });
+
+    if (!changed) {
+      return state;
+    }
+
+    return {
+      ...state,
+      updatedAt: now,
+      projects,
+    };
+  });
+
+  return changed;
+}
+
+export async function restoreProjectFolder(folderId: string): Promise<boolean> {
+  if (folderId === PROJECT_EXPLORER_ROOT_FOLDER_ID) {
+    return false;
+  }
+
+  let changed = false;
+  await updateProjectExplorerState((state) => {
+    const folder = state.folders.find((entry) => entry.id === folderId);
+    if (!folder || !folder.trashedAt) {
+      return state;
+    }
+
+    const activeFolderIds = new Set(state.folders.filter((entry) => !entry.trashedAt).map((entry) => entry.id));
+    const subtreeIds = collectProjectExplorerFolderSubtreeIds(state.folders, folderId);
+    const now = Date.now();
+    const folders = state.folders.map((entry) => {
+      if (!subtreeIds.has(entry.id)) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...entry,
+        parentId:
+          entry.id === folderId && (!entry.parentId || !activeFolderIds.has(entry.parentId))
+            ? PROJECT_EXPLORER_ROOT_FOLDER_ID
+            : entry.parentId,
+        trashedAt: undefined,
+        updatedAt: now,
+      };
+    });
+    const projects = state.projects.map((projectMeta) => {
+      if (!subtreeIds.has(projectMeta.folderId)) {
+        return projectMeta;
+      }
+      return {
+        ...projectMeta,
+        trashedAt: undefined,
+        updatedAt: now,
+      };
+    });
+
+    return {
+      ...state,
+      updatedAt: now,
+      folders,
+      projects,
+    };
+  });
+
+  return changed;
+}
+
+export async function ensureProjectThumbnail(projectId: string): Promise<string | null> {
+  const [project, state] = await Promise.all([
+    loadProject(projectId),
+    loadProjectExplorerStateInternal(),
+  ]);
+  if (!project) {
+    return null;
+  }
+
+  const projectRecord = await db.projects.get(projectId);
+  if (!projectRecord) {
+    return null;
+  }
+  let thumbnailVisualSignature: string | null = null;
+  try {
+    const parsedData = JSON.parse(projectRecord.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+    thumbnailVisualSignature = computeProjectThumbnailVisualSignature(parsedData);
+  } catch {
+    thumbnailVisualSignature = null;
+  }
+  if (!thumbnailVisualSignature) {
+    return null;
+  }
+
+  const projectMeta = state.projects.find((entry) => entry.projectId === projectId)
+    ?? createProjectExplorerProjectMeta(projectId, {
+      createdAt: project.createdAt.getTime(),
+      updatedAt: project.updatedAt.getTime(),
+    });
+
+  if (
+    projectMeta.thumbnailAssetId &&
+    projectMeta.thumbnailVisualSignature === thumbnailVisualSignature &&
+    await hasManagedAsset(projectMeta.thumbnailAssetId)
+  ) {
+    return projectMeta.thumbnailAssetId;
+  }
+
+  const thumbnailBlob = await renderProjectThumbnail(project);
+  if (!thumbnailBlob) {
+    return null;
+  }
+
+  const thumbnailRecord = await ensureAssetRecordFromBlob(thumbnailBlob, 'image');
+  await updateProjectExplorerState((currentState) => {
+    const now = Date.now();
+    const hasProjectMeta = currentState.projects.some((entry) => entry.projectId === projectId);
+    const projects = hasProjectMeta
+      ? currentState.projects.map((entry) => {
+          if (entry.projectId !== projectId) {
+            return entry;
+          }
+          return {
+            ...entry,
+            thumbnailAssetId: thumbnailRecord.id,
+            thumbnailVisualSignature,
+            thumbnailProjectUpdatedAt: undefined,
+            updatedAt: now,
+          };
+        })
+      : [
+          ...currentState.projects,
+          {
+            ...createProjectExplorerProjectMeta(projectId, {
+              createdAt: project.createdAt.getTime(),
+              updatedAt: now,
+            }),
+            thumbnailAssetId: thumbnailRecord.id,
+            thumbnailVisualSignature,
+          },
+        ];
+
+    return {
+      ...currentState,
+      updatedAt: now,
+      projects,
+    };
+  });
+
+  return thumbnailRecord.id;
+}
+
+export async function getProjectExplorerSyncPayload(): Promise<ProjectExplorerSyncPayload> {
+  const state = await loadProjectExplorerStateInternal();
+  const data = serializeProjectExplorerState(state);
+  return {
+    data,
+    updatedAt: state.updatedAt,
+    contentHash: computeContentHash(data),
+    assetIds: collectProjectExplorerAssetIds(state),
+  };
+}
+
+export async function syncProjectExplorerStateFromCloud(cloudState: {
+  data: string;
+  updatedAt: number;
+}): Promise<{ action: 'created' | 'updated' | 'skipped'; merged: boolean }> {
+  const currentState = await loadProjectExplorerStateInternal();
+  let incomingState: ProjectExplorerState;
+  try {
+    incomingState = normalizeProjectExplorerState(JSON.parse(cloudState.data));
+  } catch {
+    return { action: 'skipped', merged: false };
+  }
+
+  const mergedState = mergeProjectExplorerStates(currentState, {
+    ...incomingState,
+    updatedAt: cloudState.updatedAt,
+  });
+  const previousPayload = await getProjectExplorerSyncPayload();
+  const mergedData = serializeProjectExplorerState(mergedState);
+  const mergedHash = computeContentHash(mergedData);
+
+  if (previousPayload.contentHash === mergedHash && previousPayload.updatedAt === mergedState.updatedAt) {
+    return { action: 'skipped', merged: false };
+  }
+
+  const previousAssetIds = collectProjectExplorerAssetIds(currentState);
+  const nextAssetIds = collectProjectExplorerAssetIds(mergedState);
+  await saveProjectExplorerStateInternal(mergedState);
+  await garbageCollectManagedAssets(new Set([...previousAssetIds, ...nextAssetIds]));
+  return {
+    action: currentState.projects.length === 0 && currentState.folders.length <= 1 ? 'created' : 'updated',
+    merged: true,
+  };
 }
 
 const MAX_CHECKPOINT_NAME_LENGTH = 80;
@@ -2305,6 +3056,7 @@ export async function getProjectRevisionsForSync(
 export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Promise<{ deleted: number }> {
   const cloudIdSet = new Set(cloudLocalIds);
   const localRecords = await db.projects.toArray();
+  const explorerState = await loadProjectExplorerStateInternal();
   const isConflictCopyId = (id: string) => /-conflict-[0-9a-f]{8}$/i.test(id);
   const localOnlyRecords = localRecords.filter((record) => !cloudIdSet.has(record.id) && !isConflictCopyId(record.id));
   const localOnlyIds = localOnlyRecords.map((record) => record.id);
@@ -2326,11 +3078,23 @@ export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Pro
     await Promise.all(revisions.map((revision) => db.projectRevisions.delete(revision.id)));
   });
 
+  const prunedProjectMeta = explorerState.projects.filter((entry) => localOnlyIds.includes(entry.projectId));
+  if (prunedProjectMeta.length > 0) {
+    await updateProjectExplorerState((state) => ({
+      ...state,
+      updatedAt: Date.now(),
+      projects: state.projects.filter((entry) => !localOnlyIds.includes(entry.projectId)),
+    }));
+  }
+
   const touchedAssetIds = new Set<string>([
     ...localOnlyRecords.flatMap((record) => getPersistedAssetIdsFromRecord(record, record.data)),
     ...revisions.flatMap((revision) =>
       getPersistedAssetIdsFromRecord(revision, revision.snapshotData ?? revision.patch),
     ),
+    ...prunedProjectMeta
+      .map((entry) => entry.thumbnailAssetId)
+      .filter((assetId): assetId is string => typeof assetId === 'string' && assetId.trim().length > 0),
   ]);
   await garbageCollectManagedAssets(touchedAssetIds);
 

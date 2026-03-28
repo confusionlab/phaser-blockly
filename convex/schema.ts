@@ -142,6 +142,14 @@ export default defineSchema({
     .index("by_ownerUserId_and_localId", ["ownerUserId", "localId"])
     .index("by_ownerUserId_and_updatedAt", ["ownerUserId", "updatedAt"]),
 
+  projectExplorerStates: defineTable({
+    ownerUserId: v.string(),
+    stateJson: v.string(),
+    updatedAt: v.number(),
+    contentHash: v.string(),
+    assetIds: v.optional(v.array(v.string())),
+  }).index("by_ownerUserId", ["ownerUserId"]),
+
   // Project revision history - cloud-synced checkpoint/revision storage
   projectRevisions: defineTable({
     ownerUserId: v.optional(v.string()),
