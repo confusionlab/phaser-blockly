@@ -33,6 +33,7 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
     selectedComponentId,
     selectObject,
     activeObjectTab,
+    costumeUndoHandler,
     setActiveObjectTab,
   } = useEditorStore();
 
@@ -71,14 +72,27 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [activeObjectTab]);
 
   const handleSectionChange = useCallback((nextTab: ObjectEditorTab) => {
+    if (nextTab === activeObjectTab) {
+      return;
+    }
+
     freezeEditorResizeForLayoutTransition();
     setMountedTabs((current) => (
       current[nextTab]
         ? current
         : { ...current, [nextTab]: true }
     ));
-    setActiveObjectTab(nextTab);
-  }, [setActiveObjectTab]);
+
+    void (async () => {
+      if (activeObjectTab === 'costumes') {
+        await costumeUndoHandler?.flushPendingState?.({
+          includePreview: true,
+          settleHistory: true,
+        });
+      }
+      setActiveObjectTab(nextTab);
+    })();
+  }, [activeObjectTab, costumeUndoHandler, setActiveObjectTab]);
 
   const toggleFullscreen = useCallback(() => {
     freezeEditorResizeForLayoutTransition();

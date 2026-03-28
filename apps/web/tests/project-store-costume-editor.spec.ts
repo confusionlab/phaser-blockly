@@ -13,6 +13,7 @@ type StoreModules = {
   useProjectStore: typeof import('../src/store/projectStore').useProjectStore;
   useEditorStore: typeof import('../src/store/editorStore').useEditorStore;
   canUndoHistory: typeof import('../src/store/universalHistory').canUndoHistory;
+  syncHistorySnapshot: typeof import('../src/store/universalHistory').syncHistorySnapshot;
 };
 
 function installBrowserShims() {
@@ -65,11 +66,12 @@ async function loadStores(): Promise<StoreModules> {
   installBrowserShims();
   const { useProjectStore } = await import('../src/store/projectStore');
   const { useEditorStore } = await import('../src/store/editorStore');
-  const { canUndoHistory } = await import('../src/store/universalHistory');
+  const { canUndoHistory, syncHistorySnapshot } = await import('../src/store/universalHistory');
   return {
     useProjectStore,
     useEditorStore,
     canUndoHistory,
+    syncHistorySnapshot,
   };
 }
 
@@ -642,6 +644,46 @@ test.describe('project store costume editor boundary', () => {
     expect(useEditorStore.getState().selectedObjectId).toBe(objectB.id);
     expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,EDITED_A');
     expect(canUndoHistory()).toBe(false);
+  });
+
+  test('settling history after a no-history costume flush keeps later undo scoped to the next unrelated action', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory, syncHistorySnapshot } = await loadStores();
+    const project = createDefaultProject('Costume settled history baseline test');
+    const scene = project.scenes[0];
+    const object = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
+    scene.objects = [object];
+
+    useProjectStore.getState().openProject(project);
+    useEditorStore.getState().selectScene(scene.id, { recordHistory: false });
+    useEditorStore.getState().selectObject(object.id, { recordHistory: false });
+
+    const didPersistCostume = useProjectStore.getState().updateCostumeFromEditor(
+      {
+        sceneId: scene.id,
+        objectId: object.id,
+        costumeId: 'costume-a',
+      },
+      {
+        ...createPersistedCostumeState('data:image/png;base64,EDITED_A'),
+      },
+      { recordHistory: false },
+    );
+
+    expect(didPersistCostume).toBe(true);
+    syncHistorySnapshot();
+
+    useProjectStore.getState().updateObject(scene.id, object.id, { name: 'renamed-object' });
+    expect(canUndoHistory()).toBe(true);
+
+    let nextObject = useProjectStore.getState().project?.scenes[0]?.objects[0];
+    expect(nextObject?.name).toBe('renamed-object');
+    expect(nextObject?.costumes[0]?.assetId).toBe('data:image/png;base64,EDITED_A');
+
+    useEditorStore.getState().undo();
+
+    nextObject = useProjectStore.getState().project?.scenes[0]?.objects[0];
+    expect(nextObject?.name).toBe('object-a');
+    expect(nextObject?.costumes[0]?.assetId).toBe('data:image/png;base64,EDITED_A');
   });
 
   test('re-selecting the same object does not flush the costume editor into history', async () => {

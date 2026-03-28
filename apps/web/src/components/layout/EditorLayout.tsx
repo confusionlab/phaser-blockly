@@ -671,6 +671,23 @@ export function EditorLayout() {
     }
   }, [leaseProjectId, markProjectAsCloudSaved, navigate, openProject, publishProjectThumbnailToCloud, syncProjectFromCloud, takeOverLease]);
 
+  const resolveProjectSnapshotAfterCostumeFlush = useCallback(async (
+    projectSnapshot: Project | null | undefined,
+    options: { includePreview?: boolean } = {},
+  ): Promise<Project | null> => {
+    await costumeUndoHandler?.flushPendingState?.({
+      includePreview: options.includePreview ?? true,
+      settleHistory: true,
+    });
+
+    const latestProject = useProjectStore.getState().project;
+    if (!projectSnapshot) {
+      return latestProject ?? null;
+    }
+
+    return latestProject?.id === projectSnapshot.id ? latestProject : projectSnapshot;
+  }, [costumeUndoHandler]);
+
   const syncCurrentProjectToCloud = useCallback(async (
     projectSnapshot: Project,
     options: { showBlockingOverlay?: boolean; allowPullIntoEditor?: boolean } = {},
@@ -684,14 +701,21 @@ export function EditorLayout() {
       return false;
     }
 
-    const projectUpdatedAtMs = projectSnapshot.updatedAt.getTime();
+    const resolvedProjectSnapshot = await resolveProjectSnapshotAfterCostumeFlush(projectSnapshot, {
+      includePreview: true,
+    });
+    if (!resolvedProjectSnapshot) {
+      return false;
+    }
+
+    const projectUpdatedAtMs = resolvedProjectSnapshot.updatedAt.getTime();
     inFlightCloudSaveRef.current = {
-      projectId: projectSnapshot.id,
+      projectId: resolvedProjectSnapshot.id,
       updatedAtMs: projectUpdatedAtMs,
     };
     setCloudSaveState({
       status: 'saving',
-      lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
+      lastSavedAt: lastCloudSavedVersionRef.current.get(resolvedProjectSnapshot.id) ?? null,
       errorMessage: null,
     });
     if (isMountedRef.current) {
@@ -702,15 +726,15 @@ export function EditorLayout() {
     }
 
     try {
-      const result = await syncProjectDraftToCloud(projectSnapshot);
-      return await finishCloudSync(projectSnapshot, result, {
+      const result = await syncProjectDraftToCloud(resolvedProjectSnapshot);
+      return await finishCloudSync(resolvedProjectSnapshot, result, {
         allowPullIntoEditor: options.allowPullIntoEditor,
       });
     } finally {
       const inFlight = inFlightCloudSaveRef.current;
       if (
         inFlight
-        && inFlight.projectId === projectSnapshot.id
+        && inFlight.projectId === resolvedProjectSnapshot.id
         && inFlight.updatedAtMs === projectUpdatedAtMs
       ) {
         inFlightCloudSaveRef.current = null;
@@ -723,7 +747,7 @@ export function EditorLayout() {
         }
       }
     }
-  }, [finishCloudSync, isCloudWriteEnabled, syncProjectDraftToCloud]);
+  }, [finishCloudSync, isCloudWriteEnabled, resolveProjectSnapshotAfterCostumeFlush, syncProjectDraftToCloud]);
 
   useEffect(() => {
     if (!project || !isDirty || !isCloudWriteEnabled) {
@@ -772,7 +796,9 @@ export function EditorLayout() {
       return;
     }
 
-    const projectSnapshot = project;
+    const projectSnapshot = await resolveProjectSnapshotAfterCostumeFlush(project, {
+      includePreview: true,
+    });
     const projectIdToClose = projectSnapshot?.id ?? null;
     const shouldBlockForSync = !!projectSnapshot && hasUnsavedCloudChanges;
 
@@ -800,27 +826,35 @@ export function EditorLayout() {
     isSyncingCloud,
     navigate,
     project,
+    resolveProjectSnapshotAfterCostumeFlush,
     syncCurrentProjectToCloud,
     syncProjectToCloud,
   ]);
 
   const handleSaveNow = useCallback(async () => {
-    if (!project || isSyncingCloud) {
+    if (isSyncingCloud) {
+      return;
+    }
+
+    const projectSnapshot = await resolveProjectSnapshotAfterCostumeFlush(project, {
+      includePreview: true,
+    });
+    if (!projectSnapshot) {
       return;
     }
 
     manualSaveMetricsRef.current = {
-      projectId: project.id,
-      updatedAtMs: project.updatedAt.getTime(),
+      projectId: projectSnapshot.id,
+      updatedAtMs: projectSnapshot.updatedAt.getTime(),
       startedAtMs: performance.now(),
       uploadSizeBytes: null,
       phaseDurationsMs: null,
     };
-    const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
+    const synced = await syncCurrentProjectToCloud(projectSnapshot, { allowPullIntoEditor: true });
     if (!synced) {
       alert('Cloud save failed. Please try Save Now again.');
     }
-  }, [isSyncingCloud, project, syncCurrentProjectToCloud]);
+  }, [isSyncingCloud, project, resolveProjectSnapshotAfterCostumeFlush, syncCurrentProjectToCloud]);
 
   const handleToggleDarkMode = useCallback(async () => {
     const nextIsDarkMode = !isDarkMode;

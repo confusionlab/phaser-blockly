@@ -35,6 +35,7 @@ export type UndoRedoHandler = {
   canRedo?: () => boolean;
   beforeHistoryUndoRedo?: () => void;
   beforeSelectionChange?: (context: { source: string; recordHistory: boolean }) => void;
+  flushPendingState?: (options?: { includePreview?: boolean; settleHistory?: boolean }) => Promise<void> | void;
   deleteSelection?: () => boolean;
   duplicateSelection?: () => boolean | Promise<boolean>;
   isTextEditing?: () => boolean;
