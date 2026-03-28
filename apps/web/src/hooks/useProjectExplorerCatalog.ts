@@ -5,6 +5,7 @@ import { api } from '@convex-generated/api';
 import {
   getLocalProjectCatalogSnapshot,
   getManagedAssetLocators,
+  reconcileStoredProjectOriginsWithCloud,
   type LocalProjectCatalogSnapshot,
 } from '@/db/database';
 import {
@@ -33,6 +34,7 @@ export function useProjectExplorerCatalog(): {
   const cloudExplorerCatalog = useQuery(api.projectExplorer.getCatalog, isConvexAuthenticated ? {} : 'skip');
   const [localSnapshot, setLocalSnapshot] = useState<LocalProjectCatalogSnapshot | null>(null);
   const [assetLocators, setAssetLocators] = useState<ManagedAssetLocator[]>([]);
+  const [isReconcilingLocalCache, setIsReconcilingLocalCache] = useState(false);
 
   const refresh = useCallback(async () => {
     const snapshot = await getLocalProjectCatalogSnapshot();
@@ -45,6 +47,30 @@ export function useProjectExplorerCatalog(): {
 
   const hasLoadedCloudCatalog = !isConvexAuthenticated
     || (cloudProjects !== undefined && cloudExplorerCatalog !== undefined);
+
+  useEffect(() => {
+    if (!isConvexAuthenticated || !hasLoadedCloudCatalog || cloudProjects === undefined) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsReconcilingLocalCache(true);
+    void (async () => {
+      const changed = await reconcileStoredProjectOriginsWithCloud(
+        cloudProjects.map((project) => project.localId),
+      );
+      if (changed) {
+        await refresh();
+      }
+      if (!cancelled) {
+        setIsReconcilingLocalCache(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cloudProjects, hasLoadedCloudCatalog, isConvexAuthenticated, refresh]);
 
   const baseCatalog = useMemo(() => {
     const local = localSnapshot ?? {
@@ -97,7 +123,7 @@ export function useProjectExplorerCatalog(): {
 
   return {
     data,
-    isLoading: localSnapshot === null || !hasLoadedCloudCatalog,
+    isLoading: localSnapshot === null || !hasLoadedCloudCatalog || isReconcilingLocalCache,
     refresh,
   };
 }

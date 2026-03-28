@@ -10,6 +10,7 @@ import {
   deleteProject,
   downloadProject,
   importProjectFromFile,
+  recoverLegacyStoredProject,
   saveProject,
 } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
@@ -126,7 +127,14 @@ export function ProjectDialog({
         hydratedFromCloud = cloudPull.changed;
         if (cloudPull.status === 'missing') {
           const cacheInfo = await getStoredProjectCacheInfo(projectId);
-          cloudMissingBackedProject = cacheInfo.cloudBacked;
+          if (cacheInfo.origin === 'legacyUnknown') {
+            const recoveredProjectId = await recoverLegacyStoredProject(projectId);
+            if (recoveredProjectId && recoveredProjectId !== projectId) {
+              projectId = recoveredProjectId;
+            }
+          } else {
+            cloudMissingBackedProject = cacheInfo.origin === 'cloudCache';
+          }
         }
       }
 

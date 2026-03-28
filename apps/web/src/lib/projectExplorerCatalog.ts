@@ -7,6 +7,8 @@ import {
   type ProjectExplorerState,
 } from '@/lib/projectExplorer';
 
+export type StoredProjectOrigin = 'localDraft' | 'cloudCache' | 'legacyUnknown';
+
 export interface ProjectCatalogCloudProjectSummary {
   id: string;
   name: string;
@@ -19,7 +21,7 @@ export interface ProjectCatalogLocalProjectSummary {
   name: string;
   createdAt: number;
   updatedAt: number;
-  cloudBacked: boolean;
+  storageOrigin: StoredProjectOrigin;
   currentThumbnailVisualSignature: string | null;
 }
 
@@ -105,7 +107,12 @@ export function buildProjectExplorerCatalogSnapshot(
   const visibleProjectIds = new Set(args.cloudProjects.map((project) => project.id));
 
   for (const localProject of args.localProjects) {
-    if (!args.hasCloudSnapshot || cloudProjectsById.has(localProject.id) || !localProject.cloudBacked) {
+    if (!args.hasCloudSnapshot) {
+      visibleProjectIds.add(localProject.id);
+      continue;
+    }
+
+    if (cloudProjectsById.has(localProject.id) || localProject.storageOrigin === 'localDraft') {
       visibleProjectIds.add(localProject.id);
     }
   }

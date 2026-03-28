@@ -52,6 +52,7 @@ import {
 import type {
   ManagedAssetLocator,
   ProjectCatalogLocalProjectSummary,
+  StoredProjectOrigin,
 } from '@/lib/projectExplorerCatalog';
 import {
   computeProjectThumbnailVisualSignature,
@@ -81,6 +82,7 @@ interface ProjectRecordV1 {
 interface ProjectRecord extends ProjectRecordV1 {
   schemaVersion: number;
   appVersion?: string;
+  storageOrigin?: StoredProjectOrigin;
   cloudBacked?: boolean;
   contentHash?: string;
   assetIds?: string[];
@@ -196,6 +198,33 @@ export interface ProjectExplorerProjectSummary {
 export interface LocalProjectCatalogSnapshot {
   explorerState: ProjectExplorerState;
   projects: ProjectCatalogLocalProjectSummary[];
+}
+
+function normalizeStoredProjectOrigin(value: unknown): StoredProjectOrigin | null {
+  return value === 'localDraft' || value === 'cloudCache' || value === 'legacyUnknown'
+    ? value
+    : null;
+}
+
+function getStoredProjectOrigin(record: Pick<ProjectRecord, 'storageOrigin' | 'cloudBacked'> | null | undefined): StoredProjectOrigin {
+  const normalized = normalizeStoredProjectOrigin(record?.storageOrigin);
+  if (normalized) {
+    return normalized;
+  }
+
+  if (record?.cloudBacked === true) {
+    return 'cloudCache';
+  }
+
+  if (record?.cloudBacked === false) {
+    return 'localDraft';
+  }
+
+  return 'legacyUnknown';
+}
+
+function isStoredProjectCloudBacked(origin: StoredProjectOrigin): boolean {
+  return origin === 'cloudCache';
 }
 
 function normalizeSchemaVersion(version: unknown): number {
@@ -531,7 +560,7 @@ function normalizeProjectExplorerStateAgainstProjectRecords(
       continue;
     }
 
-    if (record.cloudBacked) {
+    if (getStoredProjectOrigin(record) !== 'localDraft') {
       continue;
     }
 
@@ -1284,12 +1313,19 @@ async function toProjectRecord(
   updatedAt: Date = new Date(),
   existingRecord: ProjectRecord | null = null,
   options: {
+    storageOrigin?: Exclude<StoredProjectOrigin, 'legacyUnknown'>;
     cloudBacked?: boolean;
   } = {},
 ): Promise<ProjectRecord> {
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
   const { projectData, assetRefs } = await normalizeProjectAssetsForStorage(rest);
   const data = JSON.stringify(projectData);
+  const existingOrigin = existingRecord ? getStoredProjectOrigin(existingRecord) : null;
+  const nextOrigin = options.storageOrigin
+    ?? (typeof options.cloudBacked === 'boolean'
+      ? (options.cloudBacked ? 'cloudCache' : 'localDraft')
+      : existingOrigin)
+    ?? 'localDraft';
   return applyProjectRevisionSyncStateToRecord({
     id: project.id,
     name: project.name,
@@ -1298,7 +1334,8 @@ async function toProjectRecord(
     data,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     appVersion: APP_VERSION,
-    cloudBacked: options.cloudBacked ?? existingRecord?.cloudBacked ?? false,
+    storageOrigin: nextOrigin,
+    cloudBacked: isStoredProjectCloudBacked(nextOrigin),
     contentHash: computeContentHash(data),
     assetIds: assetRefs.map((assetRef) => assetRef.assetId),
   }, getProjectRevisionSyncStateFromRecord(existingRecord));
@@ -1440,6 +1477,7 @@ export async function saveProject(project: Project): Promise<Project> {
 export async function saveProjectWithOptions(
   project: Project,
   options: {
+    storageOrigin?: Exclude<StoredProjectOrigin, 'legacyUnknown'>;
     cloudBacked?: boolean;
   } = {},
 ): Promise<Project> {
@@ -1461,11 +1499,23 @@ export async function saveProjectWithOptions(
 
 export async function markStoredProjectAsCloudBacked(projectId: string, cloudBacked: boolean = true): Promise<boolean> {
   const existing = await db.projects.get(projectId);
-  if (!existing || existing.cloudBacked === cloudBacked) {
+  const nextOrigin: StoredProjectOrigin = cloudBacked ? 'cloudCache' : 'localDraft';
+  if (!existing && !cloudBacked) {
     return false;
   }
 
-  await db.projects.update(projectId, { cloudBacked });
+  if (!existing) {
+    return false;
+  }
+
+  if (getStoredProjectOrigin(existing) === nextOrigin && existing.cloudBacked === cloudBacked) {
+    return false;
+  }
+
+  await db.projects.update(projectId, {
+    storageOrigin: nextOrigin,
+    cloudBacked,
+  });
   return true;
 }
 
@@ -1574,7 +1624,7 @@ export async function getLocalProjectCatalogSnapshot(): Promise<LocalProjectCata
       name: record.name,
       createdAt: record.createdAt.getTime(),
       updatedAt: record.updatedAt.getTime(),
-      cloudBacked: record.cloudBacked ?? false,
+      storageOrigin: getStoredProjectOrigin(record),
       currentThumbnailVisualSignature,
     } satisfies ProjectCatalogLocalProjectSummary;
   });
@@ -1597,12 +1647,131 @@ export async function getManagedAssetLocators(assetIds: readonly string[]): Prom
   }));
 }
 
-export async function getStoredProjectCacheInfo(projectId: string): Promise<{ exists: boolean; cloudBacked: boolean }> {
+export async function getStoredProjectCacheInfo(projectId: string): Promise<{
+  exists: boolean;
+  origin: StoredProjectOrigin;
+}> {
   const record = await db.projects.get(projectId);
   return {
     exists: !!record,
-    cloudBacked: record?.cloudBacked ?? false,
+    origin: getStoredProjectOrigin(record),
   };
+}
+
+function createRecoveredLocalProjectId(projectId: string): string {
+  return `${projectId}-local-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+export async function recoverLegacyStoredProject(projectId: string): Promise<string | null> {
+  const existing = await db.projects.get(projectId);
+  if (!existing) {
+    return null;
+  }
+
+  if (getStoredProjectOrigin(existing) !== 'legacyUnknown') {
+    return projectId;
+  }
+
+  let recoveredProjectId = createRecoveredLocalProjectId(projectId);
+  while (await db.projects.get(recoveredProjectId)) {
+    recoveredProjectId = createRecoveredLocalProjectId(projectId);
+  }
+
+  const now = Date.now();
+  let resolvedProjectId: string | null = null;
+  await db.transaction('rw', db.projects, db.projectRevisions, db.projectExplorerState, async () => {
+    const current = await db.projects.get(projectId);
+    if (!current) {
+      return;
+    }
+
+    if (getStoredProjectOrigin(current) !== 'legacyUnknown') {
+      resolvedProjectId = current.id;
+      return;
+    }
+
+    const nextRecord: ProjectRecord = {
+      ...current,
+      id: recoveredProjectId,
+      storageOrigin: 'localDraft',
+      cloudBacked: false,
+      updatedAt: new Date(Math.max(current.updatedAt.getTime(), now)),
+    };
+
+    await db.projects.put(nextRecord);
+    await db.projects.delete(projectId);
+    resolvedProjectId = recoveredProjectId;
+
+    const revisions = await db.projectRevisions.where('projectId').equals(projectId).toArray();
+    for (const revision of revisions) {
+      await db.projectRevisions.put({
+        ...revision,
+        projectId: recoveredProjectId,
+      });
+    }
+
+    const explorerRecord = await db.projectExplorerState.get(PROJECT_EXPLORER_RECORD_ID);
+    const explorerState = parseProjectExplorerStateRecord(explorerRecord);
+    let explorerChanged = false;
+    const nextProjects = explorerState.projects.map((projectMeta) => (
+      projectMeta.projectId === projectId
+        ? {
+            ...projectMeta,
+            projectId: recoveredProjectId,
+            updatedAt: now,
+          }
+        : projectMeta
+    ));
+    explorerChanged = nextProjects.some((projectMeta, index) => projectMeta !== explorerState.projects[index]);
+    const nextExplorerUpdatedAt = explorerChanged
+      ? Math.max(explorerState.updatedAt, now)
+      : explorerState.updatedAt;
+    await db.projectExplorerState.put({
+      id: PROJECT_EXPLORER_RECORD_ID,
+      data: serializeProjectExplorerState({
+        ...explorerState,
+        updatedAt: nextExplorerUpdatedAt,
+        projects: nextProjects,
+      }),
+      updatedAt: new Date(nextExplorerUpdatedAt),
+    });
+  });
+
+  return resolvedProjectId;
+}
+
+export async function reconcileStoredProjectOriginsWithCloud(cloudProjectIds: readonly string[]): Promise<boolean> {
+  const cloudProjectIdSet = new Set(cloudProjectIds);
+  const projectRecords = await db.projects.toArray();
+  let changed = false;
+
+  for (const record of projectRecords) {
+    const origin = getStoredProjectOrigin(record);
+    if (origin === 'legacyUnknown') {
+      if (cloudProjectIdSet.has(record.id)) {
+        changed = (await markStoredProjectAsCloudBacked(record.id, true)) || changed;
+      } else {
+        const recoveredProjectId = await recoverLegacyStoredProject(record.id);
+        changed = (recoveredProjectId !== null && recoveredProjectId !== record.id) || changed;
+      }
+      continue;
+    }
+
+    const normalizedOrigin = normalizeStoredProjectOrigin(record.storageOrigin);
+    const shouldPersistCanonicalOrigin = normalizedOrigin !== origin
+      || record.cloudBacked !== isStoredProjectCloudBacked(origin);
+    if (!shouldPersistCanonicalOrigin) {
+      continue;
+    }
+
+    await db.projects.update(record.id, {
+      storageOrigin: origin,
+      cloudBacked: isStoredProjectCloudBacked(origin),
+    });
+    changed = true;
+  }
+
+  return changed;
 }
 
 export async function listProjectExplorerData(): Promise<{
@@ -2001,18 +2170,27 @@ export async function restoreProjectFolder(folderId: string): Promise<boolean> {
   return changed;
 }
 
-export async function ensureProjectThumbnail(projectId: string): Promise<string | null> {
+export async function ensureProjectThumbnail(projectId: string): Promise<{
+  assetId: string | null;
+  changed: boolean;
+}> {
   const [project, state] = await Promise.all([
     loadProject(projectId),
     loadProjectExplorerStateInternal(),
   ]);
   if (!project) {
-    return null;
+    return {
+      assetId: null,
+      changed: false,
+    };
   }
 
   const projectRecord = await db.projects.get(projectId);
   if (!projectRecord) {
-    return null;
+    return {
+      assetId: null,
+      changed: false,
+    };
   }
   let thumbnailVisualSignature: string | null = null;
   try {
@@ -2022,7 +2200,10 @@ export async function ensureProjectThumbnail(projectId: string): Promise<string 
     thumbnailVisualSignature = null;
   }
   if (!thumbnailVisualSignature) {
-    return null;
+    return {
+      assetId: null,
+      changed: false,
+    };
   }
 
   const projectMeta = state.projects.find((entry) => entry.projectId === projectId)
@@ -2036,12 +2217,18 @@ export async function ensureProjectThumbnail(projectId: string): Promise<string 
     projectMeta.thumbnailVisualSignature === thumbnailVisualSignature &&
     await hasManagedAsset(projectMeta.thumbnailAssetId)
   ) {
-    return projectMeta.thumbnailAssetId;
+    return {
+      assetId: projectMeta.thumbnailAssetId,
+      changed: false,
+    };
   }
 
   const thumbnailBlob = await renderProjectThumbnail(project);
   if (!thumbnailBlob) {
-    return null;
+    return {
+      assetId: null,
+      changed: false,
+    };
   }
 
   const thumbnailRecord = await ensureAssetRecordFromBlob(thumbnailBlob, 'image');
@@ -2080,7 +2267,10 @@ export async function ensureProjectThumbnail(projectId: string): Promise<string 
     };
   });
 
-  return thumbnailRecord.id;
+  return {
+    assetId: thumbnailRecord.id,
+    changed: true,
+  };
 }
 
 export async function getProjectExplorerSyncPayload(): Promise<ProjectExplorerSyncPayload> {
@@ -3329,6 +3519,7 @@ export async function syncProjectFromCloud(cloudProject: {
     updatedAt: new Date(incomingProject.updatedAt),
     schemaVersion: migrated ? CURRENT_SCHEMA_VERSION : cloudSchemaVersion,
     appVersion: cloudProject.appVersion,
+    storageOrigin: 'cloudCache',
     cloudBacked: true,
     contentHash: normalizeContentHash(cloudProject.contentHash) ?? computeContentHash(serializedIncomingData),
     assetIds: Array.from(

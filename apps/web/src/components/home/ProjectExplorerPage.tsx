@@ -29,6 +29,7 @@ import {
   moveProjectToFolder,
   renameProjectFolder,
   renameStoredProject,
+  recoverLegacyStoredProject,
   restoreProjectFolder,
   restoreProjectFromExplorer,
   saveProject,
@@ -181,6 +182,9 @@ export function ProjectExplorerPage({
     isLoading,
     refresh: refreshExplorer,
   } = useProjectExplorerCatalog();
+  const isExplorerMutationLocked = authBootstrapState === 'reconnecting';
+  const isExplorerInteractionBlocked = isLoading;
+  const isExplorerReadOnly = isExplorerMutationLocked || isExplorerInteractionBlocked;
   const [isOpeningProjectId, setIsOpeningProjectId] = useState<string | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>(PROJECT_EXPLORER_ROOT_FOLDER_ID);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -312,6 +316,24 @@ export function ProjectExplorerPage({
     }
   }, [currentFolderSafeId]);
 
+  useEffect(() => {
+    if (!isExplorerReadOnly) {
+      return;
+    }
+
+    setSelectionMode(false);
+    setSelectedKeys([]);
+    setSelectionAnchorKey(null);
+    setEditingKey(null);
+    setEditingValue('');
+    setIsEditingCurrentFolder(false);
+    setCurrentFolderNameDraft('');
+    setDragKeys([]);
+    setDropFolderId(null);
+    setTrashOpen(false);
+    setPendingTrashConfirmation(null);
+  }, [isExplorerReadOnly]);
+
   const staleVisibleProjects = useMemo(
     () => visibleProjects.filter((project) => project.thumbnailStale),
     [visibleProjects],
@@ -367,6 +389,10 @@ export function ProjectExplorerPage({
   }, [queueExplorerCloudSync, refreshExplorer, staleVisibleProjects]);
 
   const requestTrashForSelection = useCallback(async () => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     const folderIds = selectedKeys
       .filter((key): key is `folder:${string}` => key.startsWith('folder:'))
       .map((key) => key.slice('folder:'.length));
@@ -383,7 +409,7 @@ export function ProjectExplorerPage({
       heading: 'Move selected items to trash?',
       projectIds,
     });
-  }, [selectedKeys]);
+  }, [isExplorerReadOnly, selectedKeys]);
 
   useEffect(() => {
     if (!selectionMode) {
@@ -428,6 +454,10 @@ export function ProjectExplorerPage({
   }, [requestTrashForSelection, selectedKeys.length, selectionMode]);
 
   const handleSelectKey = useCallback((key: ExplorerKey, event: Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'shiftKey'>) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     if (!selectionMode) {
       setSelectionMode(true);
     }
@@ -453,20 +483,34 @@ export function ProjectExplorerPage({
       return current.includes(key) && current.length === 1 ? [] : [key];
     });
     setSelectionAnchorKey(key);
-  }, [selectionAnchorKey, selectionMode, visibleItems]);
+  }, [isExplorerReadOnly, selectionAnchorKey, selectionMode, visibleItems]);
 
   const handleOpenProject = useCallback(async (projectId: string) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     setIsOpeningProjectId(projectId);
     setImportError(null);
     try {
+      let resolvedProjectId = projectId;
       const cloudPull = isConvexAuthenticated
         ? await syncProjectFromCloud(projectId)
         : { changed: false, found: false, status: 'unchanged' as const };
       const cacheInfo = await getStoredProjectCacheInfo(projectId);
-      if (cloudPull.status === 'missing' && cacheInfo.cloudBacked) {
-        return;
+      if (cloudPull.status === 'missing') {
+        if (cacheInfo.origin === 'cloudCache') {
+          return;
+        }
+        if (cacheInfo.origin === 'legacyUnknown') {
+          const recoveredProjectId = await recoverLegacyStoredProject(projectId);
+          if (!recoveredProjectId) {
+            return;
+          }
+          resolvedProjectId = recoveredProjectId;
+        }
       }
-      const project = await loadProject(projectId);
+      const project = await loadProject(resolvedProjectId);
       if (!project) {
         return;
       }
@@ -482,9 +526,13 @@ export function ProjectExplorerPage({
     } finally {
       setIsOpeningProjectId(null);
     }
-  }, [isConvexAuthenticated, onProjectHydratedFromCloud, onProjectOpen, openProject, selectScene, syncProjectFromCloud]);
+  }, [isConvexAuthenticated, isExplorerReadOnly, onProjectHydratedFromCloud, onProjectOpen, openProject, selectScene, syncProjectFromCloud]);
 
   const handleCreateProject = useCallback(async () => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     const nextIndex = visibleProjects.length + 1;
     const projectName = `Untitled project ${nextIndex}`;
     newProject(projectName);
@@ -495,6 +543,7 @@ export function ProjectExplorerPage({
 
     const savedProject = await saveProject(createdProject);
     await moveProjectToFolder(savedProject.id, currentFolderSafeId);
+    await ensureProjectThumbnail(savedProject.id);
     if (savedProject.scenes.length > 0) {
       selectScene(savedProject.scenes[0].id, { recordHistory: false });
     }
@@ -502,21 +551,30 @@ export function ProjectExplorerPage({
     queueExplorerCloudSync();
     openProject(savedProject);
     onProjectOpen?.(savedProject);
-  }, [currentFolderSafeId, newProject, onProjectOpen, openProject, queueExplorerCloudSync, queueProjectCloudSync, selectScene, visibleProjects.length]);
+  }, [currentFolderSafeId, isExplorerReadOnly, newProject, onProjectOpen, openProject, queueExplorerCloudSync, queueProjectCloudSync, selectScene, visibleProjects.length]);
 
   const handleCreateFolder = useCallback(async () => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     const folderId = await createProjectFolder(`New folder ${visibleFolders.length + 1}`, currentFolderSafeId);
     await refreshExplorer();
     setEditingKey(`folder:${folderId}`);
     setEditingValue(`New folder ${visibleFolders.length + 1}`);
     queueExplorerCloudSync();
-  }, [currentFolderSafeId, queueExplorerCloudSync, refreshExplorer, visibleFolders.length]);
+  }, [currentFolderSafeId, isExplorerReadOnly, queueExplorerCloudSync, refreshExplorer, visibleFolders.length]);
 
   const handleImportProject = useCallback(async (file: File) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     setImportError(null);
     try {
       const project = await importProjectFromFile(file);
       await moveProjectToFolder(project.id, currentFolderSafeId);
+      await ensureProjectThumbnail(project.id);
       await refreshExplorer();
       queueProjectCloudSync(project.id);
       queueExplorerCloudSync();
@@ -528,10 +586,10 @@ export function ProjectExplorerPage({
     } catch (error) {
       setImportError(error instanceof Error ? error.message : 'Failed to import project');
     }
-  }, [currentFolderSafeId, onProjectOpen, openProject, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer, selectScene]);
+  }, [currentFolderSafeId, isExplorerReadOnly, onProjectOpen, openProject, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer, selectScene]);
 
   const commitRename = useCallback(async () => {
-    if (!editingKey) {
+    if (!editingKey || isExplorerReadOnly) {
       return;
     }
 
@@ -556,9 +614,13 @@ export function ProjectExplorerPage({
     await refreshExplorer();
     setEditingKey(null);
     setEditingValue('');
-  }, [editingKey, editingValue, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer]);
+  }, [editingKey, editingValue, isExplorerReadOnly, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer]);
 
   const commitCurrentFolderRename = useCallback(async () => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     const nextValue = currentFolderNameDraft.trim();
     if (!currentFolder || !nextValue || currentFolder.id === PROJECT_EXPLORER_ROOT_FOLDER_ID) {
       setIsEditingCurrentFolder(false);
@@ -571,7 +633,7 @@ export function ProjectExplorerPage({
     setIsEditingCurrentFolder(false);
     setCurrentFolderNameDraft('');
     queueExplorerCloudSync();
-  }, [currentFolder, currentFolderNameDraft, queueExplorerCloudSync, refreshExplorer]);
+  }, [currentFolder, currentFolderNameDraft, isExplorerReadOnly, queueExplorerCloudSync, refreshExplorer]);
 
   const handleTrashProject = useCallback((projectId: string) => {
     setPendingTrashConfirmation({
@@ -590,7 +652,7 @@ export function ProjectExplorerPage({
   }, []);
 
   const confirmTrash = useCallback(async () => {
-    if (!pendingTrashConfirmation) {
+    if (!pendingTrashConfirmation || isExplorerReadOnly) {
       return;
     }
 
@@ -607,29 +669,46 @@ export function ProjectExplorerPage({
     setSelectionAnchorKey(null);
     await refreshExplorer();
     queueExplorerCloudSync();
-  }, [pendingTrashConfirmation, queueExplorerCloudSync, refreshExplorer]);
+  }, [isExplorerReadOnly, pendingTrashConfirmation, queueExplorerCloudSync, refreshExplorer]);
 
   const handleRestoreProject = useCallback(async (projectId: string) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     await restoreProjectFromExplorer(projectId);
     await refreshExplorer();
     queueExplorerCloudSync();
-  }, [queueExplorerCloudSync, refreshExplorer]);
+  }, [isExplorerReadOnly, queueExplorerCloudSync, refreshExplorer]);
 
   const handleRestoreFolder = useCallback(async (folderId: string) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     await restoreProjectFolder(folderId);
     await refreshExplorer();
     queueExplorerCloudSync();
-  }, [queueExplorerCloudSync, refreshExplorer]);
+  }, [isExplorerReadOnly, queueExplorerCloudSync, refreshExplorer]);
 
   const handleDragStart = useCallback((event: React.DragEvent, key: ExplorerKey) => {
+    if (isExplorerReadOnly) {
+      event.preventDefault();
+      return;
+    }
+
     const nextDragKeys = selectionMode && selectedKeys.includes(key) ? selectedKeys : [key];
     setDragKeys(nextDragKeys);
     setDropFolderId(null);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('application/x-pocha-explorer', JSON.stringify({ keys: nextDragKeys }));
-  }, [selectedKeys, selectionMode]);
+  }, [isExplorerReadOnly, selectedKeys, selectionMode]);
 
   const handleDropToFolder = useCallback(async (folderId: string) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
     const keys = dragKeys;
     setDropFolderId(null);
     setDragKeys([]);
@@ -647,14 +726,20 @@ export function ProjectExplorerPage({
 
     await refreshExplorer();
     queueExplorerCloudSync();
-  }, [dragKeys, queueExplorerCloudSync, refreshExplorer]);
+  }, [dragKeys, isExplorerReadOnly, queueExplorerCloudSync, refreshExplorer]);
 
   const dropTargetProps = useCallback((folderId: string) => ({
     onDragEnter: (event: React.DragEvent) => {
+      if (isExplorerReadOnly) {
+        return;
+      }
       event.preventDefault();
       setDropFolderId(folderId);
     },
     onDragOver: (event: React.DragEvent) => {
+      if (isExplorerReadOnly) {
+        return;
+      }
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
       if (dropFolderId !== folderId) {
@@ -662,15 +747,21 @@ export function ProjectExplorerPage({
       }
     },
     onDragLeave: () => {
+      if (isExplorerReadOnly) {
+        return;
+      }
       if (dropFolderId === folderId) {
         setDropFolderId(null);
       }
     },
     onDrop: async (event: React.DragEvent) => {
+      if (isExplorerReadOnly) {
+        return;
+      }
       event.preventDefault();
       await handleDropToFolder(folderId);
     },
-  }), [dropFolderId, handleDropToFolder]);
+  }), [dropFolderId, handleDropToFolder, isExplorerReadOnly]);
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.12),transparent_32%),radial-gradient(circle_at_top_right,rgba(244,114,182,0.10),transparent_28%),linear-gradient(180deg,#f8fafc_0%,#f3f4f6_100%)]">
@@ -680,6 +771,10 @@ export function ProjectExplorerPage({
         className="hidden"
         type="file"
         onChange={(event) => {
+          if (isExplorerReadOnly) {
+            event.target.value = '';
+            return;
+          }
           const file = event.target.files?.[0];
           if (file) {
             void handleImportProject(file);
@@ -736,8 +831,12 @@ export function ProjectExplorerPage({
                 ) : (
                   <button
                     className="text-left text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl"
+                    disabled={isExplorerReadOnly}
                     type="button"
                     onClick={() => {
+                      if (isExplorerReadOnly) {
+                        return;
+                      }
                       setIsEditingCurrentFolder(true);
                       setCurrentFolderNameDraft(currentFolder.name);
                     }}
@@ -765,7 +864,7 @@ export function ProjectExplorerPage({
           <div className="flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-2 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon-sm" variant="ghost" className="rounded-full">
+                <Button size="icon-sm" variant="ghost" className="rounded-full" disabled={isExplorerReadOnly}>
                   <Plus className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -791,6 +890,7 @@ export function ProjectExplorerPage({
                 size="icon-sm"
                 variant="ghost"
                 className={cn('rounded-full', dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
+                disabled={isExplorerInteractionBlocked}
                 onClick={() => setCurrentFolderId(parentFolder.id)}
                 {...dropTargetProps(parentFolder.id)}
               >
@@ -799,7 +899,13 @@ export function ProjectExplorerPage({
             ) : null}
 
             {selectionMode && selectedKeys.length > 0 ? (
-              <Button size="icon-sm" variant="ghost" className="rounded-full" onClick={() => void requestTrashForSelection()}>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="rounded-full"
+                disabled={isExplorerReadOnly}
+                onClick={() => void requestTrashForSelection()}
+              >
                 <Trash2 className="size-4" />
               </Button>
             ) : null}
@@ -808,7 +914,11 @@ export function ProjectExplorerPage({
               size="icon-sm"
               variant={selectionMode ? 'default' : 'ghost'}
               className="rounded-full"
+              disabled={isExplorerReadOnly}
               onClick={() => {
+                if (isExplorerReadOnly) {
+                  return;
+                }
                 setSelectionMode((current) => {
                   if (current) {
                     setSelectedKeys([]);
@@ -825,6 +935,7 @@ export function ProjectExplorerPage({
               size="icon-sm"
               variant="ghost"
               className="rounded-full"
+              disabled={isExplorerReadOnly}
               onClick={() => setTrashOpen(true)}
             >
               <Trash2 className="size-4" />
@@ -877,7 +988,7 @@ export function ProjectExplorerPage({
                       dropTarget: isDropTarget,
                       selected: isSelected,
                     })}
-                    draggable={editingKey !== item.key}
+                    draggable={!isExplorerReadOnly && editingKey !== item.key}
                     onDragStart={(event) => handleDragStart(event, item.key)}
                     onDragEnd={() => {
                       setDragKeys([]);
@@ -885,6 +996,9 @@ export function ProjectExplorerPage({
                     }}
                     onClick={(event) => {
                       event.stopPropagation();
+                      if (isExplorerInteractionBlocked) {
+                        return;
+                      }
                       if (selectionMode || event.shiftKey || event.metaKey || event.ctrlKey) {
                         handleSelectKey(item.key, event.nativeEvent);
                         return;
@@ -896,6 +1010,10 @@ export function ProjectExplorerPage({
 
                       if (item.kind === 'folder') {
                         setCurrentFolderId(item.id);
+                        return;
+                      }
+
+                      if (isExplorerMutationLocked) {
                         return;
                       }
 
@@ -928,10 +1046,10 @@ export function ProjectExplorerPage({
 
                       <div className="min-w-0 flex-1">
                         {editingKey === item.key ? (
-                          <InlineRenameField
-                            autoFocus
-                            className="max-w-lg"
-                            inputClassName="text-sm font-medium"
+                        <InlineRenameField
+                          autoFocus
+                          className="max-w-lg"
+                          inputClassName="text-sm font-medium"
                             onBlur={() => void commitRename()}
                             onChange={(event) => setEditingValue(event.target.value)}
                             onKeyDown={(event) => {
@@ -966,6 +1084,7 @@ export function ProjectExplorerPage({
                             size="icon-sm"
                             variant="ghost"
                             className="rounded-full"
+                            disabled={isExplorerReadOnly}
                             onClick={(event) => event.stopPropagation()}
                             onPointerDown={(event) => event.stopPropagation()}
                           >
@@ -976,6 +1095,9 @@ export function ProjectExplorerPage({
                           <DropdownMenuItem
                             onClick={(event) => {
                               event.preventDefault();
+                              if (isExplorerReadOnly) {
+                                return;
+                              }
                               setEditingKey(item.key);
                               setEditingValue(item.label);
                             }}
@@ -987,6 +1109,9 @@ export function ProjectExplorerPage({
                             variant="destructive"
                             onClick={(event) => {
                               event.preventDefault();
+                              if (isExplorerReadOnly) {
+                                return;
+                              }
                               if (item.kind === 'folder') {
                                 handleTrashFolder(item.id);
                                 return;
@@ -1099,7 +1224,7 @@ export function ProjectExplorerPage({
       ) : null}
 
       {isLoading ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/45 backdrop-blur-[2px]">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/45 backdrop-blur-[2px]">
           <div className="inline-flex items-center gap-3 rounded-full border border-white/80 bg-white/85 px-4 py-2 text-sm text-slate-600 shadow-sm">
             <Loader2 className="size-4 animate-spin" />
             Loading workspace

@@ -19,8 +19,10 @@ import {
   createProjectConflictCopy,
   createAutoCheckpoint,
   downloadProject,
+  ensureProjectThumbnail,
   getStoredProjectCacheInfo,
   loadProject,
+  recoverLegacyStoredProject,
   saveProjectWithOptions,
 } from '@/db/database';
 import {
@@ -213,7 +215,7 @@ export function EditorLayout() {
   }, []);
 
   // The editor treats cloud save as authoritative and uses IndexedDB as a synced cache.
-  const { syncProjectDraftToCloud, syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
+  const { syncProjectDraftToCloud, syncProjectExplorerToCloud, syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
     enabled: isCloudWriteEnabled,
     syncOnMount: false,
     enableCloudProjectListQuery: false,
@@ -227,6 +229,17 @@ export function EditorLayout() {
     onProjectPayloadUploaded: handleProjectPayloadUploaded,
     onProjectSyncMeasured: handleProjectSyncMeasured,
   });
+
+  const publishProjectThumbnailToCloud = useCallback(async (projectId: string) => {
+    try {
+      const thumbnailResult = await ensureProjectThumbnail(projectId);
+      if (thumbnailResult.changed && isCloudWriteEnabled) {
+        await syncProjectExplorerToCloud();
+      }
+    } catch (error) {
+      console.error('[ProjectThumbnail] Failed to publish thumbnail after sync:', error);
+    }
+  }, [isCloudWriteEnabled, syncProjectExplorerToCloud]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -350,14 +363,24 @@ export function EditorLayout() {
         try {
           const cloudPull = await syncProjectFromCloud(projectId);
           const cacheInfo = await getStoredProjectCacheInfo(projectId);
-          if (cloudPull.status === 'missing' && cacheInfo.cloudBacked) {
-            navigate('/', { replace: true });
-            return;
+          if (cloudPull.status === 'missing') {
+            if (cacheInfo.origin === 'cloudCache') {
+              navigate('/', { replace: true });
+              return;
+            }
+            if (cacheInfo.origin === 'legacyUnknown') {
+              const recoveredProjectId = await recoverLegacyStoredProject(projectId);
+              if (recoveredProjectId && recoveredProjectId !== projectId) {
+                navigate(`/project/${recoveredProjectId}`, { replace: true });
+                return;
+              }
+            }
           }
           const loadedProject = await loadProject(projectId);
           if (loadedProject) {
             if (cloudPull.changed) {
               markProjectAsCloudSaved(loadedProject);
+              void publishProjectThumbnailToCloud(loadedProject.id);
             }
             openProject(loadedProject);
           } else {
@@ -374,7 +397,7 @@ export function EditorLayout() {
     };
 
     void loadFromUrl();
-  }, [markProjectAsCloudSaved, navigate, openProject, project, projectId, syncProjectFromCloud]);
+  }, [markProjectAsCloudSaved, navigate, openProject, project, projectId, publishProjectThumbnailToCloud, syncProjectFromCloud]);
 
   // Keep selection aligned with the active project as projects open, close, or change shape.
   useEffect(() => {
@@ -389,7 +412,7 @@ export function EditorLayout() {
 
   const persistCloudSavedProject = useCallback(async (projectSnapshot: Project) => {
     try {
-      const cachedProject = await saveProjectWithOptions(projectSnapshot, { cloudBacked: true });
+      const cachedProject = await saveProjectWithOptions(projectSnapshot, { storageOrigin: 'cloudCache' });
       const cachedUpdatedAtMs = cachedProject.updatedAt.getTime();
       lastCloudSavedVersionRef.current.set(cachedProject.id, cachedUpdatedAtMs);
       acknowledgeProjectSaved(cachedProject);
@@ -411,6 +434,7 @@ export function EditorLayout() {
     if (result === 'saved') {
       const localCacheRefreshStartedAtMs = performance.now();
       const savedAt = await persistCloudSavedProject(projectSnapshot);
+      await publishProjectThumbnailToCloud(projectSnapshot.id);
       const localCacheRefreshMs = performance.now() - localCacheRefreshStartedAtMs;
       const currentProject = useProjectStore.getState().project;
       const currentUpdatedAtMs = currentProject?.id === projectSnapshot.id
@@ -478,6 +502,7 @@ export function EditorLayout() {
         if (currentProject?.id === refreshedProject.id) {
           openProject(refreshedProject);
         }
+        await publishProjectThumbnailToCloud(refreshedProject.id);
         setCloudSaveState({
           status: 'saved',
           lastSavedAt: refreshedUpdatedAtMs,
@@ -513,7 +538,7 @@ export function EditorLayout() {
     }));
     manualSaveMetricsRef.current = null;
     return false;
-  }, [openProject, persistCloudSavedProject]);
+  }, [openProject, persistCloudSavedProject, publishProjectThumbnailToCloud]);
 
   const handleTakeOverLease = useCallback(async () => {
     const didAcquire = await takeOverLease();
@@ -524,21 +549,31 @@ export function EditorLayout() {
     try {
       const cloudPull = await syncProjectFromCloud(leaseProjectId);
       const cacheInfo = await getStoredProjectCacheInfo(leaseProjectId);
-      if (cloudPull.status === 'missing' && cacheInfo.cloudBacked) {
-        navigate('/', { replace: true });
-        return;
+      if (cloudPull.status === 'missing') {
+        if (cacheInfo.origin === 'cloudCache') {
+          navigate('/', { replace: true });
+          return;
+        }
+        if (cacheInfo.origin === 'legacyUnknown') {
+          const recoveredProjectId = await recoverLegacyStoredProject(leaseProjectId);
+          if (recoveredProjectId && recoveredProjectId !== leaseProjectId) {
+            navigate(`/project/${recoveredProjectId}`, { replace: true });
+            return;
+          }
+        }
       }
       const refreshedProject = await loadProject(leaseProjectId);
       if (refreshedProject) {
         if (cloudPull.changed) {
           markProjectAsCloudSaved(refreshedProject);
+          void publishProjectThumbnailToCloud(refreshedProject.id);
         }
         openProject(refreshedProject);
       }
     } catch (error) {
       console.error('[ProjectLease] Failed to refresh project after takeover:', error);
     }
-  }, [leaseProjectId, markProjectAsCloudSaved, navigate, openProject, syncProjectFromCloud, takeOverLease]);
+  }, [leaseProjectId, markProjectAsCloudSaved, navigate, openProject, publishProjectThumbnailToCloud, syncProjectFromCloud, takeOverLease]);
 
   const syncCurrentProjectToCloud = useCallback(async (
     projectSnapshot: Project,
