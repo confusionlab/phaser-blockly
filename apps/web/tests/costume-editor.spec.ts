@@ -67,6 +67,44 @@ async function expectLayerThumbnail(button: Locator): Promise<void> {
   }, { timeout: 10000 }).toMatch(/^data:image\/png;base64,/);
 }
 
+async function startLayerThumbnailVisibilityObserver(button: Locator, observerKey: string): Promise<void> {
+  await button.evaluate((element, key) => {
+    const thumbnail = element.querySelector('[data-testid="costume-layer-thumbnail"]');
+    if (!(thumbnail instanceof HTMLElement)) {
+      throw new Error('Layer thumbnail container not found.');
+    }
+
+    const store = ((window as any).__costumeLayerThumbnailObservers ??= {});
+    const entry: { observer?: MutationObserver; sawMissing: boolean } = {
+      sawMissing: !thumbnail.querySelector('img'),
+    };
+    const observer = new MutationObserver(() => {
+      entry.sawMissing = entry.sawMissing || !thumbnail.querySelector('img');
+    });
+    observer.observe(thumbnail, {
+      childList: true,
+      subtree: true,
+    });
+    entry.observer = observer;
+    store[key] = entry;
+  }, observerKey);
+}
+
+async function stopLayerThumbnailVisibilityObserver(button: Locator, observerKey: string): Promise<boolean> {
+  return await button.evaluate((element, key) => {
+    const store = (window as any).__costumeLayerThumbnailObservers ?? {};
+    const entry = store[key] as { observer?: MutationObserver; sawMissing?: boolean } | undefined;
+    entry?.observer?.disconnect();
+    delete store[key];
+
+    const thumbnail = element.querySelector('[data-testid="costume-layer-thumbnail"]');
+    const isMissingNow = thumbnail instanceof HTMLElement
+      ? !thumbnail.querySelector('img')
+      : true;
+    return Boolean(entry?.sawMissing) || isMissingNow;
+  }, observerKey);
+}
+
 async function readLayerPanelWidth(page: Page): Promise<number> {
   return await page.getByTestId('layer-panel').evaluate((element) => {
     return Math.round((element as HTMLElement).getBoundingClientRect().width);
@@ -470,6 +508,24 @@ test.describe('Costume editor tools', () => {
     await page.getByRole('button', { name: /^rectangle$/i }).click();
     await drawAcrossCostumeCanvas(page, 0.54, 0.28, 0.80, 0.54);
     await expectLayerThumbnail(vectorLayerButton);
+  });
+
+  test('layer thumbnail stays visible while a bitmap layer thumbnail refreshes', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const bitmapLayerButton = page.getByRole('button', { name: /^layer 1 bitmap$/i });
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.36, 0.34);
+    await expectLayerThumbnail(bitmapLayerButton);
+
+    const observerKey = `bitmap-layer-thumbnail-${Date.now()}`;
+    await startLayerThumbnailVisibilityObserver(bitmapLayerButton, observerKey);
+    await drawAcrossCostumeCanvas(page, 0.38, 0.22, 0.60, 0.40);
+    await expectLayerThumbnail(bitmapLayerButton);
+
+    expect(await stopLayerThumbnailVisibilityObserver(bitmapLayerButton, observerKey)).toBe(false);
   });
 
   test('newly created layer becomes active without an intermediate old-selection frame', async ({ page }) => {

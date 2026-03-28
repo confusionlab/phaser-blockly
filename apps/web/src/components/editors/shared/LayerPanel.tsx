@@ -239,33 +239,33 @@ export const LayerPanel = memo(({
 
   useEffect(() => {
     let cancelled = false;
-    const cachedEntries = layerThumbnailsRef.current;
-    const nextCachedEntries = Object.fromEntries(
-      layerThumbnailRequests.flatMap(({ layer, signature }) => {
-        const cachedEntry = cachedEntries[layer.id];
-        return cachedEntry && cachedEntry.signature === signature
-          ? [[layer.id, cachedEntry]]
-          : [];
+    const currentEntries = layerThumbnailsRef.current;
+    const retainedEntries = Object.fromEntries(
+      layerThumbnailRequests.flatMap(({ layer }) => {
+        const cachedEntry = currentEntries[layer.id];
+        return cachedEntry ? [[layer.id, cachedEntry]] : [];
       }),
     ) as Record<string, LayerThumbnailEntry>;
 
-    if (
-      Object.keys(nextCachedEntries).length === layerThumbnailRequests.length &&
-      Object.keys(cachedEntries).length === layerThumbnailRequests.length
-    ) {
-      return;
-    }
-
-    if (!areLayerThumbnailEntriesEqual(cachedEntries, nextCachedEntries)) {
+    if (!areLayerThumbnailEntriesEqual(currentEntries, retainedEntries)) {
       startTransition(() => {
         setLayerThumbnails((current) => (
-          areLayerThumbnailEntriesEqual(current, nextCachedEntries) ? current : nextCachedEntries
+          areLayerThumbnailEntriesEqual(current, retainedEntries) ? current : retainedEntries
         ));
       });
     }
 
+    const needsRender = layerThumbnailRequests.some(({ layer, signature }) => {
+      const cachedEntry = retainedEntries[layer.id];
+      return !cachedEntry || cachedEntry.signature !== signature;
+    });
+
+    if (!needsRender) {
+      return;
+    }
+
     void Promise.all(layerThumbnailRequests.map(async ({ layer, signature }) => {
-      const cachedEntry = cachedEntries[layer.id];
+      const cachedEntry = retainedEntries[layer.id];
       if (cachedEntry && cachedEntry.signature === signature) {
         return [layer.id, cachedEntry] as const;
       }
