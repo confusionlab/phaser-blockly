@@ -350,6 +350,14 @@ export type CanvasHistorySnapshot = {
   vectorJson: string | null;
 };
 
+export interface SaveHistoryOptions {
+  snapshot?: CanvasHistorySnapshot;
+  snapshotDurationMs?: number;
+  source?: string;
+  state?: ActiveLayerCanvasState;
+  traceStartedAtMs?: number;
+}
+
 export interface CanvasSelectionBoundsSnapshot {
   selectionObject: any;
   selectedObjects: any[];

@@ -191,9 +191,9 @@ test.describe('costume editor performance benchmark', () => {
     console.log('[CostumePerf] brush', benchmark.summary);
 
     expect(benchmark.summary.count).toBe(10);
-    expect(benchmark.summary.p95StateReadyMs).toBeLessThan(80);
-    expect(benchmark.summary.p95PreviewReadyMs).toBeLessThan(80);
-    expect(benchmark.summary.p95HistorySnapshotMs).toBeLessThan(60);
+    expect(benchmark.summary.p95StateReadyMs).toBeLessThan(25);
+    expect(benchmark.summary.p95PreviewReadyMs).toBeLessThan(25);
+    expect(benchmark.summary.p95HistorySnapshotMs).toBeLessThan(20);
     expect(benchmark.summary.p95StateStoreSyncMs).toBeLessThan(10);
     expect(benchmark.summary.p95PreviewRenderMs).toBeLessThan(10);
   });
@@ -208,9 +208,9 @@ test.describe('costume editor performance benchmark', () => {
     console.log('[CostumePerf] eraser', benchmark.summary);
 
     expect(benchmark.summary.count).toBe(10);
-    expect(benchmark.summary.p95StateReadyMs).toBeLessThan(90);
-    expect(benchmark.summary.p95PreviewReadyMs).toBeLessThan(90);
-    expect(benchmark.summary.p95HistorySnapshotMs).toBeLessThan(70);
+    expect(benchmark.summary.p95StateReadyMs).toBeLessThan(25);
+    expect(benchmark.summary.p95PreviewReadyMs).toBeLessThan(25);
+    expect(benchmark.summary.p95HistorySnapshotMs).toBeLessThan(20);
     expect(benchmark.summary.p95StateStoreSyncMs).toBeLessThan(10);
     expect(benchmark.summary.p95PreviewRenderMs).toBeLessThan(10);
   });

@@ -1,10 +1,16 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
+import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import { renderBitmapAssetToSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
+import {
+  optimizeCostumeRasterCanvas,
+  optimizeCostumeRasterCanvasIncrementally,
+} from '@/lib/costume/costumeAssetOptimization';
 import { extractVisibleCanvasRegion } from './costumeCanvasShared';
 import { normalizeVectorObjectRendering } from './costumeCanvasVectorRuntime';
 import type { BitmapStampBrushCommitPayload } from './costumeCanvasBitmapRuntime';
-import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
+import type { CostumeAssetFrame, CostumeBounds, CostumeEditorMode } from '@/types';
+import type { CanvasHistorySnapshot, SaveHistoryOptions } from './costumeCanvasShared';
 
 interface UseCostumeCanvasBitmapLayerControllerOptions {
   bitmapFloatingObjectRef: MutableRefObject<any | null>;
@@ -16,8 +22,9 @@ interface UseCostumeCanvasBitmapLayerControllerOptions {
   drawBitmapSelectionOverlay: () => void;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
+  getLastCommittedSnapshot: () => CanvasHistorySnapshot | null;
   isLoadRequestActive: (requestId?: number) => boolean;
-  saveHistory: () => void;
+  saveHistory: (options?: SaveHistoryOptions) => void;
   setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
   suppressHistoryRef: MutableRefObject<boolean>;
   syncSelectionState: () => void;
@@ -34,6 +41,7 @@ export function useCostumeCanvasBitmapLayerController({
   drawBitmapSelectionOverlay,
   editorModeRef,
   fabricCanvasRef,
+  getLastCommittedSnapshot,
   isLoadRequestActive,
   saveHistory,
   setHasBitmapFloatingSelection,
@@ -64,6 +72,67 @@ export function useCostumeCanvasBitmapLayerController({
     cloneCtx.drawImage(source, 0, 0);
     return clone;
   }, []);
+
+  const normalizeBitmapCommitBounds = useCallback((
+    rect: { left?: number; top?: number; width?: number; height?: number } | null | undefined,
+  ): CostumeBounds | null => {
+    if (!rect) {
+      return null;
+    }
+
+    const left = Number(rect.left);
+    const top = Number(rect.top);
+    const width = Number(rect.width);
+    const height = Number(rect.height);
+    if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.floor(left));
+    const y = Math.max(0, Math.floor(top));
+    const right = Math.ceil(left + width);
+    const bottom = Math.ceil(top + height);
+    if (right <= x || bottom <= y) {
+      return null;
+    }
+
+    return {
+      x,
+      y,
+      width: right - x,
+      height: bottom - y,
+    };
+  }, []);
+
+  const createBitmapHistoryStateFromRaster = useCallback((
+    raster: HTMLCanvasElement,
+    options: {
+      compositeOperation?: GlobalCompositeOperation;
+      dirtyBounds?: CostumeBounds | null;
+    } = {},
+  ): { durationMs: number; state: ActiveLayerCanvasState } => {
+    const startMs = performance.now();
+    const previousSnapshot = getLastCommittedSnapshot();
+    const optimizedBitmap = options.dirtyBounds && options.compositeOperation
+      ? optimizeCostumeRasterCanvasIncrementally(raster, {
+          mimeType: 'image/png',
+          compositeOperation: options.compositeOperation,
+          dirtyBounds: options.dirtyBounds,
+          previousAssetFrame: previousSnapshot?.bitmapAssetFrame ?? null,
+          previousBounds: previousSnapshot?.bitmapBounds ?? null,
+        }) ?? optimizeCostumeRasterCanvas(raster, { mimeType: 'image/png' })
+      : optimizeCostumeRasterCanvas(raster, { mimeType: 'image/png' });
+
+    return {
+      durationMs: performance.now() - startMs,
+      state: {
+        editorMode: 'bitmap',
+        dataUrl: optimizedBitmap.dataUrl,
+        bitmapAssetFrame: optimizedBitmap.assetFrame ?? null,
+        bitmapBounds: optimizedBitmap.bounds ?? null,
+      },
+    };
+  }, [getLastCommittedSnapshot]);
 
   const waitForFabricRenderFlush = useCallback((fabricCanvas: FabricCanvas): Promise<void> => {
     if (typeof window === 'undefined') {
@@ -255,7 +324,14 @@ export function useCostumeCanvasBitmapLayerController({
 
   const queueBitmapRasterCommit = useCallback((
     mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,
-    options: { commitObject?: any } = {},
+    options: {
+      commitObject?: any;
+      historyOptimization?: {
+        compositeOperation?: GlobalCompositeOperation;
+        dirtyBounds?: CostumeBounds | null;
+        source?: string;
+      };
+    } = {},
   ) => {
     const nextCommit = bitmapRasterCommitQueueRef.current
       .catch(() => undefined)
@@ -280,13 +356,24 @@ export function useCostumeCanvasBitmapLayerController({
           await mutateRaster(raster, rasterCtx);
         }
 
+        const traceStartedAtMs = performance.now();
+        const bitmapHistoryState = createBitmapHistoryStateFromRaster(raster, {
+          compositeOperation: options.historyOptimization?.compositeOperation,
+          dirtyBounds: options.historyOptimization?.dirtyBounds ?? null,
+        });
+
         const applied = applyBitmapLayerSource(raster, false, {
           reuseBitmapImage: true,
         });
         if (!applied) {
           return;
         }
-        saveHistory();
+        saveHistory({
+          source: options.historyOptimization?.source ?? 'bitmapRasterCommit',
+          state: bitmapHistoryState.state,
+          snapshotDurationMs: bitmapHistoryState.durationMs,
+          traceStartedAtMs,
+        });
         await waitForFabricRenderFlush(fabricCanvas);
       })
       .catch((error) => {
@@ -307,6 +394,14 @@ export function useCostumeCanvasBitmapLayerController({
   ]);
 
   const flattenBitmapLayer = useCallback(async (commitObject?: any) => {
+    const dirtyBounds = normalizeBitmapCommitBounds(
+      commitObject && typeof commitObject.getBoundingRect === 'function'
+        ? commitObject.getBoundingRect()
+        : null,
+    );
+    const compositeOperation = commitObject?.globalCompositeOperation === 'destination-out'
+      ? 'destination-out'
+      : 'source-over';
     await queueBitmapRasterCommit(async (_raster, rasterCtx) => {
       if (!commitObject || typeof commitObject.render !== 'function') {
         return;
@@ -321,8 +416,13 @@ export function useCostumeCanvasBitmapLayerController({
       }
     }, {
       commitObject,
+      historyOptimization: {
+        compositeOperation,
+        dirtyBounds,
+        source: 'bitmapObjectCommit',
+      },
     });
-  }, [queueBitmapRasterCommit]);
+  }, [normalizeBitmapCommitBounds, queueBitmapRasterCommit]);
 
   const commitBitmapStampBrushStroke = useCallback((payload: BitmapStampBrushCommitPayload) => {
     return queueBitmapRasterCommit(async (_raster, rasterCtx) => {
@@ -345,6 +445,12 @@ export function useCostumeCanvasBitmapLayerController({
         dirtyBounds.height,
       );
       rasterCtx.restore();
+    }, {
+      historyOptimization: {
+        compositeOperation: payload.compositeOperation,
+        dirtyBounds: payload.dirtyBounds,
+        source: 'bitmapStampCommit',
+      },
     });
   }, [queueBitmapRasterCommit]);
 

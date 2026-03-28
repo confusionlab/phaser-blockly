@@ -67,7 +67,7 @@ export function beginCostumeCommitPerfTrace(input: {
   sessionKey: string | null;
   mode: CostumeEditorMode;
   source: string;
-}): string | null {
+}, startedAtMs: number = performance.now()): string | null {
   const store = getPerfStore();
   if (!store) {
     return null;
@@ -79,7 +79,7 @@ export function beginCostumeCommitPerfTrace(input: {
     sessionKey: input.sessionKey,
     mode: input.mode,
     source: input.source,
-    startedAtMs: performance.now(),
+    startedAtMs,
     stateReadyAtMs: null,
     previewReadyAtMs: null,
     completedAtMs: null,

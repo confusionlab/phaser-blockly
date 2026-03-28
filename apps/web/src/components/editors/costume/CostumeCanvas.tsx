@@ -506,6 +506,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     drawBitmapSelectionOverlay,
     editorModeRef,
     fabricCanvasRef,
+    getLastCommittedSnapshot: () => lastCommittedSnapshotRef.current,
     isLoadRequestActive,
     saveHistory,
     setHasBitmapFloatingSelection,

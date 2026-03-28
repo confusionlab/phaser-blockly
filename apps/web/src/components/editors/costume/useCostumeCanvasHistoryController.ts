@@ -13,6 +13,7 @@ import {
   cloneHistorySnapshot,
   createActiveLayerCanvasStateFromSnapshot,
   createHistorySnapshotFromActiveLayerCanvasState,
+  type SaveHistoryOptions,
   type CanvasHistorySnapshot,
 } from './costumeCanvasShared';
 import { VECTOR_JSON_EXTRA_PROPS } from './costumeCanvasVectorRuntime';
@@ -114,17 +115,38 @@ export function useCostumeCanvasHistoryController({
     markSnapshotPersisted(state ? createHistorySnapshotFromActiveLayerCanvasState(state) : null);
   }, [loadedSessionKeyRef, markSnapshotPersisted]);
 
-  const saveHistory = useCallback(() => {
+  const saveHistory = useCallback((options: SaveHistoryOptions = {}) => {
     if (suppressHistoryRef.current) return;
     const traceId = beginCostumeCommitPerfTrace({
       sessionKey: loadedSessionKeyRef.current,
       mode: editorModeRef.current,
-      source: 'saveHistory',
-    });
-    const snapshotStartMs = traceId ? performance.now() : 0;
-    const snapshot = createSnapshot();
-    if (traceId) {
-      recordCostumeCommitPerfPhase(traceId, 'historySnapshotMs', performance.now() - snapshotStartMs);
+      source: options.source ?? 'saveHistory',
+    }, options.traceStartedAtMs);
+    let snapshot: CanvasHistorySnapshot;
+    let historyState = options.state;
+    if (options.snapshot) {
+      snapshot = cloneHistorySnapshot(options.snapshot);
+    } else if (historyState) {
+      const snapshotStartMs = traceId && typeof options.snapshotDurationMs !== 'number'
+        ? performance.now()
+        : 0;
+      snapshot = createHistorySnapshotFromActiveLayerCanvasState(historyState);
+      if (traceId) {
+        recordCostumeCommitPerfPhase(
+          traceId,
+          'historySnapshotMs',
+          typeof options.snapshotDurationMs === 'number'
+            ? options.snapshotDurationMs
+            : performance.now() - snapshotStartMs,
+        );
+      }
+    } else {
+      const snapshotStartMs = traceId ? performance.now() : 0;
+      snapshot = createSnapshot();
+      if (traceId) {
+        recordCostumeCommitPerfPhase(traceId, 'historySnapshotMs', performance.now() - snapshotStartMs);
+      }
+      historyState = createActiveLayerCanvasStateFromSnapshot(snapshot);
     }
     if (areHistorySnapshotsEqual(snapshot, lastCommittedSnapshotRef.current)) {
       return;
@@ -135,7 +157,7 @@ export function useCostumeCanvasHistoryController({
     const dispatchStartMs = traceId ? performance.now() : 0;
     setActiveCostumeCommitPerfTrace(traceId);
     try {
-      onHistoryChangeRef.current?.(createActiveLayerCanvasStateFromSnapshot(snapshot));
+      onHistoryChangeRef.current?.(historyState ?? createActiveLayerCanvasStateFromSnapshot(snapshot));
     } finally {
       if (traceId) {
         recordCostumeCommitPerfPhase(traceId, 'historyDispatchMs', performance.now() - dispatchStartMs);
