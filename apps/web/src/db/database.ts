@@ -64,6 +64,14 @@ import {
   renderCostumeDocumentPreview,
 } from '@/lib/costume/costumeDocumentRender';
 import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
+import {
+  canonicalizePersistedProjectData,
+  inflatePersistedProjectData,
+  parsePersistedProjectData,
+  stringifyPersistedProjectData,
+  type PersistedProjectData,
+  type RuntimeProjectData,
+} from '@/lib/persistence/projectDataCodec';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
 export const CURRENT_SCHEMA_VERSION = 10;
@@ -941,7 +949,7 @@ async function normalizeCostumeAssetsForStorage(
 async function hydrateCostumeAssetsFromStorage(
   costume: { assetId?: unknown; assetFrame?: unknown; bounds?: unknown; document?: unknown },
 ): Promise<void> {
-  const fallbackAssetId = typeof costume.assetId === 'string' && costume.assetId.trim().length > 0
+  const legacyFallbackAssetId = typeof costume.assetId === 'string' && costume.assetId.trim().length > 0
     ? costume.assetId
     : null;
   const document = ensureCostumeDocument(costume);
@@ -958,6 +966,9 @@ async function hydrateCostumeAssetsFromStorage(
     layer.bitmap.persistedAssetId = persistedAssetId;
     layer.bitmap.assetId = objectUrl;
   }
+
+  const fallbackBitmapLayer = document.layers.find(isBitmapCostumeLayer);
+  const fallbackAssetId = legacyFallbackAssetId ?? fallbackBitmapLayer?.bitmap.assetId ?? null;
 
   const cachedPreview = getCachedCostumeDocumentPreview(document);
   if (cachedPreview) {
@@ -1020,9 +1031,9 @@ function collectCostumePersistedAssetRefs(
 }
 
 async function normalizeProjectAssetsForStorage(
-  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
+  projectData: RuntimeProjectData,
 ): Promise<{
-  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  projectData: PersistedProjectData;
   assetRefs: PersistedProjectAssetRef[];
 }> {
   const nextProject = cloneValue(projectData);
@@ -1098,15 +1109,15 @@ async function normalizeProjectAssetsForStorage(
   }
 
   return {
-    projectData: nextProject,
+    projectData: canonicalizePersistedProjectData(nextProject),
     assetRefs: Array.from(refsById.values()),
   };
 }
 
 async function hydrateProjectAssetsFromStorage(
-  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
-): Promise<Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>> {
-  const nextProject = cloneValue(projectData);
+  projectData: PersistedProjectData,
+): Promise<RuntimeProjectData> {
+  const nextProject = inflatePersistedProjectData(projectData);
 
   const hydrateSoundAsset = async (sound: { assetId: string }) => {
     if (!isManagedAssetId(sound.assetId)) {
@@ -1197,7 +1208,7 @@ async function hydrateProjectAssetsFromStorage(
 }
 
 function collectPersistedAssetRefsFromProjectData(
-  projectData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>,
+  projectData: PersistedProjectData,
 ): PersistedProjectAssetRef[] {
   const refsById = new Map<string, PersistedProjectAssetRef>();
 
@@ -1242,14 +1253,14 @@ function collectPersistedAssetRefsFromProjectData(
 }
 
 export function collectPersistedAssetRefsFromSerializedProjectData(serializedData: string): PersistedProjectAssetRef[] {
-  const parsed = JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  const parsed = parsePersistedProjectData(serializedData);
   return collectPersistedAssetRefsFromProjectData(parsed);
 }
 
 async function serializeProjectData(project: Project): Promise<string> {
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
   const { projectData } = await normalizeProjectAssetsForStorage(rest);
-  return JSON.stringify(projectData);
+  return stringifyPersistedProjectData(projectData);
 }
 
 async function deserializeProjectFromRecord(record: ProjectRecord): Promise<{
@@ -1257,7 +1268,7 @@ async function deserializeProjectFromRecord(record: ProjectRecord): Promise<{
   sourceSchemaVersion: number;
   migrated: boolean;
 }> {
-  const parsedData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  const parsedData = parsePersistedProjectData(record.data);
   const sourceSchemaVersion = normalizeSchemaVersion(record.schemaVersion);
 
   if (sourceSchemaVersion > CURRENT_SCHEMA_VERSION) {
@@ -1352,7 +1363,7 @@ async function toProjectRecord(
 ): Promise<ProjectRecord> {
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
   const { projectData, assetRefs } = await normalizeProjectAssetsForStorage(rest);
-  const data = JSON.stringify(projectData);
+  const data = stringifyPersistedProjectData(projectData);
   const existingOrigin = existingRecord ? getStoredProjectOrigin(existingRecord) : null;
   const nextOrigin = options.storageOrigin
     ?? (typeof options.cloudBacked === 'boolean'
@@ -1652,8 +1663,11 @@ export async function getLocalProjectCatalogSnapshot(): Promise<LocalProjectCata
   const projects = projectRecords.map((record) => {
     let currentThumbnailVisualSignature: string | null = null;
     try {
-      const parsedData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
-      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(parsedData);
+      const parsedData = parsePersistedProjectData(record.data);
+      const runtimeProjectData = inflatePersistedProjectData(parsedData);
+      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(
+        runtimeProjectData,
+      );
     } catch {
       currentThumbnailVisualSignature = null;
     }
@@ -1845,8 +1859,11 @@ export async function listProjectExplorerData(): Promise<{
       });
     let currentThumbnailVisualSignature: string | null = null;
     try {
-      const parsedData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
-      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(parsedData);
+      const parsedData = parsePersistedProjectData(record.data);
+      const runtimeProjectData = inflatePersistedProjectData(parsedData);
+      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(
+        runtimeProjectData,
+      );
     } catch {
       currentThumbnailVisualSignature = null;
     }
@@ -2233,8 +2250,11 @@ export async function ensureProjectThumbnail(projectId: string): Promise<{
   }
   let thumbnailVisualSignature: string | null = null;
   try {
-    const parsedData = JSON.parse(projectRecord.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
-    thumbnailVisualSignature = computeProjectThumbnailVisualSignature(parsedData);
+    const parsedData = parsePersistedProjectData(projectRecord.data);
+    const runtimeProjectData = inflatePersistedProjectData(parsedData);
+    thumbnailVisualSignature = computeProjectThumbnailVisualSignature(
+      runtimeProjectData,
+    );
   } catch {
     thumbnailVisualSignature = null;
   }
@@ -2516,8 +2536,8 @@ async function buildRevisionData(project: Project): Promise<{ serializedData: st
   };
 }
 
-function parseRevisionProjectData(serializedData: string): Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'> {
-  return JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+function parseRevisionProjectData(serializedData: string): PersistedProjectData {
+  return parsePersistedProjectData(serializedData);
 }
 
 function isPlainJsonObject(value: JsonValue | undefined): value is { [key: string]: JsonValue } {
@@ -2802,13 +2822,13 @@ function migrateSerializedProjectDataToCurrentSchema(
   schemaVersion: number;
   migrated: boolean;
 } {
-  const parsedData = JSON.parse(serializedData) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  const parsedData = parsePersistedProjectData(serializedData);
   let project: Project = {
     id: meta.id,
     name: meta.name,
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
-    ...parsedData,
+    ...inflatePersistedProjectData(parsedData),
   };
 
   let migrated = false;
@@ -2824,7 +2844,7 @@ function migrateSerializedProjectDataToCurrentSchema(
 
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...projectData } = project;
   return {
-    serializedData: JSON.stringify(projectData),
+    serializedData: stringifyPersistedProjectData(projectData),
     schemaVersion: migrated ? CURRENT_SCHEMA_VERSION : sourceSchemaVersion,
     migrated,
   };
@@ -3523,9 +3543,9 @@ export async function syncProjectFromCloud(cloudProject: {
     };
   }
 
-  let cloudData: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  let cloudData: PersistedProjectData;
   try {
-    cloudData = JSON.parse(cloudProject.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+    cloudData = parsePersistedProjectData(cloudProject.data);
   } catch {
     return {
       action: 'skipped',
@@ -3538,7 +3558,7 @@ export async function syncProjectFromCloud(cloudProject: {
     name: cloudProject.name,
     createdAt: new Date(cloudProject.createdAt),
     updatedAt: new Date(cloudProject.updatedAt),
-    ...cloudData,
+    ...inflatePersistedProjectData(cloudData),
   };
 
   let migrated = false;
@@ -3559,7 +3579,7 @@ export async function syncProjectFromCloud(cloudProject: {
     updatedAt: _incomingUpdatedAt,
     ...incomingDataForStorage
   } = incomingProject;
-  const serializedIncomingData = JSON.stringify(incomingDataForStorage);
+  const serializedIncomingData = stringifyPersistedProjectData(incomingDataForStorage);
   const incomingRecord: ProjectRecord = {
     id: incomingProject.id,
     name: incomingProject.name,
@@ -3821,7 +3841,7 @@ interface ExportedProjectBundleManifest {
     name: string;
     createdAt: string;
     updatedAt: string;
-    data: Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+    data: PersistedProjectData;
   };
   assets: Array<{
     assetId: string;
@@ -4169,7 +4189,7 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 export async function exportProject(project: Project): Promise<Blob> {
   const record = await toProjectRecord(project, new Date(project.updatedAt));
-  const projectData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+  const projectData = parsePersistedProjectData(record.data);
   const assetRefs = collectPersistedAssetRefsFromProjectData(projectData);
   const archiveEntries: Record<string, Uint8Array> = {};
   const manifestAssets: ExportedProjectBundleManifest['assets'] = [];
