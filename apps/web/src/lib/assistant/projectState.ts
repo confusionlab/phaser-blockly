@@ -29,6 +29,10 @@ import {
   normalizeVariableDefinition,
   remapVariableIdsInBlocklyXml,
 } from '@/lib/variableUtils';
+import {
+  ensureBackgroundDocument,
+  hasBackgroundDocumentContent,
+} from '@/lib/background/backgroundDocument';
 import { normalizeProjectLayering, normalizeSceneLayering } from '@/utils/layerTree';
 
 const ASSISTANT_SNAPSHOT_FORMAT_VERSION = 2;
@@ -196,7 +200,10 @@ function toAssistantBackground(background: Scene['background']): AssistantBackgr
 
   return {
     type: background.type,
-    hasAsset: Boolean(background.value || Object.keys(background.chunks || {}).length > 0),
+    hasAsset: background.type === 'image'
+      ? Boolean(background.value)
+      : Object.keys(background.chunks || {}).length > 0
+        || hasBackgroundDocumentContent(ensureBackgroundDocument(background)),
     scrollFactor: background.scrollFactor ? { ...background.scrollFactor } : undefined,
   };
 }

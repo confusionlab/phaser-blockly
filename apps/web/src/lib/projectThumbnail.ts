@@ -1,5 +1,10 @@
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
+import {
+  getBackgroundDocumentFlattenSignature,
+  resolveBackgroundRuntimeChunkData,
+} from '@/lib/background/backgroundDocumentRender';
+import { ensureBackgroundDocument } from '@/lib/background/backgroundDocument';
 import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
 import { getCostumeDocumentPreviewSignature } from '@/lib/costume/costumeDocumentRender';
 import type { Costume, Project, Scene } from '@/types';
@@ -85,9 +90,11 @@ function toBackgroundFingerprint(scene: Scene) {
     return {
       type: background.type,
       chunkSize: normalizeSignatureNumber(background.chunkSize ?? 0),
-      chunks: Object.entries(background.chunks ?? {})
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([chunkKey, assetId]) => [chunkKey, assetId]),
+      documentSignature: background.document
+        ? getBackgroundDocumentFlattenSignature(ensureBackgroundDocument(background))
+        : Object.entries(background.chunks ?? {})
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([chunkKey, assetId]) => [chunkKey, assetId]),
     };
   }
 
@@ -279,7 +286,7 @@ async function drawSceneBackground(
     return;
   }
 
-  if (scene.background.type !== 'tiled' || !scene.background.chunks) {
+  if (scene.background.type !== 'tiled') {
     return;
   }
 
@@ -291,7 +298,8 @@ async function drawSceneBackground(
   const worldTop = canvasHeight / 2;
   const worldWidth = Math.max(1, worldRight - worldLeft);
   const worldHeight = Math.max(1, worldTop - worldBottom);
-  const chunkEntries = Object.entries(scene.background.chunks);
+  const runtimeChunks = await resolveBackgroundRuntimeChunkData(scene.background);
+  const chunkEntries = Object.entries(runtimeChunks);
 
   await Promise.all(
     chunkEntries.map(async ([chunkKey, source]) => {

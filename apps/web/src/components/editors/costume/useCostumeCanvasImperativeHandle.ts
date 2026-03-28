@@ -1,4 +1,5 @@
 import { useImperativeHandle, type ForwardedRef, type MutableRefObject } from 'react';
+import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { areHistorySnapshotsEqual } from './costumeCanvasShared';
@@ -23,6 +24,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   ) => Promise<boolean>;
   loadDocument: (sessionKey: string, document: any) => Promise<void>;
   loadedSessionKeyRef: MutableRefObject<string | null>;
+  markActiveLayerCanvasStatePersisted: (state: ActiveLayerCanvasState | null | undefined, sessionKey?: string | null) => void;
   markCurrentSnapshotPersisted: (sessionKey?: string | null) => void;
   moveSelectionOrder: (action: any) => boolean;
   persistedSnapshotRef: MutableRefObject<any>;
@@ -48,6 +50,7 @@ export function useCostumeCanvasImperativeHandle({
   loadBitmapLayer,
   loadDocument,
   loadedSessionKeyRef,
+  markActiveLayerCanvasStatePersisted,
   markCurrentSnapshotPersisted,
   moveSelectionOrder,
   persistedSnapshotRef,
@@ -93,7 +96,11 @@ export function useCostumeCanvasImperativeHandle({
       return !areHistorySnapshotsEqual(createSnapshot(), persistedSnapshotRef.current);
     },
 
-    markPersisted: (sessionKey?: string | null) => {
+    markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => {
+      if (state) {
+        markActiveLayerCanvasStatePersisted(state, sessionKey);
+        return;
+      }
       markCurrentSnapshotPersisted(sessionKey);
     },
 
@@ -153,6 +160,7 @@ export function useCostumeCanvasImperativeHandle({
     loadBitmapLayer,
     loadDocument,
     loadedSessionKeyRef,
+    markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     moveSelectionOrder,
     persistedSnapshotRef,

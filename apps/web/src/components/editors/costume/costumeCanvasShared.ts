@@ -1,6 +1,7 @@
 import { Point } from 'fabric';
-import type { CostumeEditorMode } from '@/types';
+import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { readCanvasImageData } from '@/utils/canvas2d';
+import { areCostumeAssetFramesEqual, cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
 import type { VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 
@@ -344,6 +345,7 @@ export function cloneScenePoint(point: Point | null): Point | null {
 export type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
   bitmapDataUrl: string;
+  bitmapAssetFrame: CostumeAssetFrame | null;
   vectorJson: string | null;
 };
 
@@ -519,6 +521,7 @@ export function areHistorySnapshotsEqual(
   return (
     a.mode === b.mode &&
     a.bitmapDataUrl === b.bitmapDataUrl &&
+    areCostumeAssetFramesEqual(a.bitmapAssetFrame, b.bitmapAssetFrame) &&
     a.vectorJson === b.vectorJson
   );
 }
@@ -527,7 +530,21 @@ export function cloneHistorySnapshot(snapshot: CanvasHistorySnapshot): CanvasHis
   return {
     mode: snapshot.mode,
     bitmapDataUrl: snapshot.bitmapDataUrl,
+    bitmapAssetFrame: cloneCostumeAssetFrame(snapshot.bitmapAssetFrame) ?? null,
     vectorJson: snapshot.vectorJson,
+  };
+}
+
+export function createHistorySnapshotFromActiveLayerCanvasState(
+  state: ActiveLayerCanvasState,
+): CanvasHistorySnapshot {
+  return {
+    mode: state.editorMode,
+    bitmapDataUrl: state.dataUrl,
+    bitmapAssetFrame: cloneCostumeAssetFrame(state.bitmapAssetFrame) ?? null,
+    vectorJson: state.editorMode === 'vector' && state.vectorDocument
+      ? state.vectorDocument.fabricJson
+      : null,
   };
 }
 
@@ -535,6 +552,7 @@ export function createActiveLayerCanvasStateFromSnapshot(snapshot: CanvasHistory
   return {
     editorMode: snapshot.mode,
     dataUrl: snapshot.bitmapDataUrl,
+    bitmapAssetFrame: cloneCostumeAssetFrame(snapshot.bitmapAssetFrame) ?? null,
     vectorDocument: snapshot.mode === 'vector' && snapshot.vectorJson
       ? {
           engine: 'fabric',

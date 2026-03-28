@@ -10,7 +10,11 @@ test.describe('background document runtime flattening', () => {
     const result = await page.evaluate(async () => {
       const [
         { createBitmapBackgroundLayer },
-        { buildBackgroundConfigFromDocument, flattenBackgroundDocumentToChunkData },
+        {
+          buildBackgroundConfigFromDocument,
+          flattenBackgroundDocumentToChunkData,
+          resolveBackgroundRuntimeChunkData,
+        },
       ] = await Promise.all([
         import('/src/lib/background/backgroundDocument.ts'),
         import('/src/lib/background/backgroundDocumentRender.ts'),
@@ -44,18 +48,21 @@ test.describe('background document runtime flattening', () => {
       const background = await buildBackgroundConfigFromDocument(backgroundDocument, {
         baseColor: '#000000',
       });
+      const runtimeChunks = await resolveBackgroundRuntimeChunkData(background);
 
       return {
         backgroundType: background.type,
         source,
         flattenedSource: flattened['0,0'] ?? null,
-        runtimeSource: background.chunks?.['0,0'] ?? null,
+        hasStoredRuntimeChunks: Object.prototype.hasOwnProperty.call(background, 'chunks'),
+        runtimeSource: runtimeChunks['0,0'] ?? null,
       };
     });
 
     expect(result.backgroundType).toBe('tiled');
     expect(result.flattenedSource).toBe(result.source);
     expect(result.runtimeSource).toBe(result.flattenedSource);
+    expect(result.hasStoredRuntimeChunks).toBe(false);
   });
 
   test('merges layered chunk output into one flattened runtime chunk set', async ({ page }) => {

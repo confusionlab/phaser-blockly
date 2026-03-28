@@ -36,6 +36,8 @@ const MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS = 32;
 const backgroundVectorLayerChunkCache = new Map<string, Promise<ChunkDataMap>>();
 const backgroundLayerThumbnailCache = new Map<string, Promise<string | null>>();
 const backgroundDocumentFlattenCache = new Map<string, Promise<ChunkDataMap>>();
+const backgroundRuntimeChunkCache = new Map<string, Promise<ChunkDataMap>>();
+const backgroundResolvedRuntimeChunks = new Map<string, ChunkDataMap>();
 
 function hashString(value: string): string {
   let hash = 2166136261;
@@ -52,6 +54,28 @@ function rememberCachedValue<T>(
   value: Promise<T>,
   maxEntries: number,
 ): Promise<T> {
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, value);
+
+  while (cache.size > maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey !== 'string') {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
+
+  return value;
+}
+
+function rememberResolvedChunkData(
+  cache: Map<string, ChunkDataMap>,
+  key: string,
+  value: ChunkDataMap,
+  maxEntries: number,
+): ChunkDataMap {
   if (cache.has(key)) {
     cache.delete(key);
   }
@@ -113,6 +137,103 @@ export function getBackgroundDocumentFlattenSignature(document: BackgroundDocume
   }).join('|');
 
   return `flatten:${document.chunkSize}:${hashString(layerSignature)}`;
+}
+
+function getBackgroundRuntimeChunkCacheKey(background: BackgroundConfig | null | undefined): string | null {
+  if (!background || background.type !== 'tiled' || !background.document) {
+    return null;
+  }
+
+  return getBackgroundDocumentFlattenSignature(background.document);
+}
+
+export function getCachedBackgroundRuntimeChunkData(
+  background: BackgroundConfig | null | undefined,
+): ChunkDataMap | null {
+  if (!background || background.type !== 'tiled') {
+    return null;
+  }
+
+  if (background.chunks) {
+    return normalizeChunkDataMap(background.chunks);
+  }
+
+  const cacheKey = getBackgroundRuntimeChunkCacheKey(background);
+  if (!cacheKey) {
+    return null;
+  }
+
+  const cached = backgroundResolvedRuntimeChunks.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+
+  rememberResolvedChunkData(
+    backgroundResolvedRuntimeChunks,
+    cacheKey,
+    cached,
+    MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS,
+  );
+  return { ...cached };
+}
+
+export async function resolveBackgroundRuntimeChunkData(
+  background: BackgroundConfig | null | undefined,
+): Promise<ChunkDataMap> {
+  if (!background || background.type !== 'tiled') {
+    return {};
+  }
+
+  if (background.chunks) {
+    return normalizeChunkDataMap(background.chunks);
+  }
+
+  const cacheKey = getBackgroundRuntimeChunkCacheKey(background);
+  if (!cacheKey || !background.document) {
+    return {};
+  }
+
+  const cached = backgroundResolvedRuntimeChunks.get(cacheKey);
+  if (cached) {
+    rememberResolvedChunkData(
+      backgroundResolvedRuntimeChunks,
+      cacheKey,
+      cached,
+      MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS,
+    );
+    return { ...cached };
+  }
+
+  const existing = backgroundRuntimeChunkCache.get(cacheKey);
+  if (existing) {
+    return { ...(await existing) };
+  }
+
+  const pending = flattenBackgroundDocumentToChunkData(background.document)
+    .then((chunks) => {
+      const normalized = normalizeChunkDataMap(chunks);
+      rememberResolvedChunkData(
+        backgroundResolvedRuntimeChunks,
+        cacheKey,
+        normalized,
+        MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS,
+      );
+      return normalized;
+    })
+    .catch((error) => {
+      backgroundRuntimeChunkCache.delete(cacheKey);
+      backgroundResolvedRuntimeChunks.delete(cacheKey);
+      throw error;
+    });
+
+  rememberCachedValue(
+    backgroundRuntimeChunkCache,
+    cacheKey,
+    pending,
+    MAX_CACHED_BACKGROUND_DOCUMENT_FLATTENS,
+  );
+
+  return { ...(await pending) };
 }
 
 function clampNumber(value: number, min: number, max: number) {
@@ -470,14 +591,12 @@ export async function buildBackgroundConfigFromDocument(
     scrollFactor?: { x: number; y: number };
   },
 ): Promise<BackgroundConfig> {
-  const chunks = await flattenBackgroundDocumentToChunkData(document);
   return {
-    type: Object.keys(chunks).length === 0 ? 'color' : 'tiled',
+    type: 'tiled',
     value: options.baseColor,
     scrollFactor: options.scrollFactor,
     version: 1,
     chunkSize: document.chunkSize,
-    chunks,
     softChunkLimit: document.softChunkLimit,
     hardChunkLimit: document.hardChunkLimit,
     document,

@@ -1,9 +1,16 @@
 import {
+  cloneBackgroundDocument,
+  ensureBackgroundDocument,
+} from '@/lib/background/backgroundDocument';
+import { normalizeChunkDataMap } from '@/lib/background/chunkStore';
+import {
   cloneCostumeDocument,
   ensureCostumeDocument,
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
 import type {
+  BackgroundConfig,
+  BackgroundDocument,
   ComponentDefinition,
   Costume,
   CostumeBitmapContentRef,
@@ -35,11 +42,16 @@ export type PersistedCostume = Omit<Costume, 'assetId' | 'bounds' | 'assetFrame'
   document: PersistedCostumeDocument;
 };
 
+export type PersistedBackgroundConfig = Omit<BackgroundConfig, 'chunks'> & {
+  document?: BackgroundDocument;
+};
+
 export type PersistedGameObject = Omit<GameObject, 'costumes'> & {
   costumes: PersistedCostume[];
 };
 
-export type PersistedScene = Omit<Scene, 'objects'> & {
+export type PersistedScene = Omit<Scene, 'objects' | 'background'> & {
+  background: PersistedBackgroundConfig | null;
   objects: PersistedGameObject[];
 };
 
@@ -59,6 +71,23 @@ type LegacyCostumePersistenceShape = PersistedCostume & {
   persistedAssetId?: unknown;
   renderSignature?: unknown;
 };
+
+type LegacyBackgroundPersistenceShape = PersistedBackgroundConfig & {
+  chunks?: unknown;
+};
+
+function toLegacyBackgroundConfig(
+  background: LegacyBackgroundPersistenceShape,
+): BackgroundConfig {
+  return {
+    ...background,
+    chunks: normalizeChunkDataMap(
+      background.chunks && typeof background.chunks === 'object'
+        ? background.chunks as Record<string, string>
+        : undefined,
+    ),
+  };
+}
 
 function cloneValue<T>(value: T): T {
   if (typeof structuredClone === 'function') {
@@ -95,6 +124,31 @@ function canonicalizePersistedCostume(costume: PersistedCostume | Costume): Pers
   } as PersistedCostume;
 }
 
+function canonicalizePersistedBackground(
+  background: PersistedBackgroundConfig | BackgroundConfig | null | undefined,
+): PersistedBackgroundConfig | null {
+  if (!background) {
+    return null;
+  }
+
+  const nextBackground = cloneValue(background) as LegacyBackgroundPersistenceShape;
+  const {
+    chunks: _chunks,
+    ...rest
+  } = nextBackground;
+
+  if (nextBackground.document || nextBackground.type === 'tiled') {
+    return {
+      ...rest,
+      document: cloneBackgroundDocument(ensureBackgroundDocument(toLegacyBackgroundConfig(nextBackground))),
+    };
+  }
+
+  return {
+    ...rest,
+  };
+}
+
 function canonicalizePersistedGameObject(gameObject: PersistedGameObject | GameObject): PersistedGameObject {
   const nextObject = cloneValue(gameObject);
   return {
@@ -109,6 +163,7 @@ function canonicalizePersistedScene(scene: PersistedScene | Scene): PersistedSce
   const nextScene = cloneValue(scene);
   return {
     ...nextScene,
+    background: canonicalizePersistedBackground(nextScene.background),
     objects: Array.isArray(nextScene.objects)
       ? nextScene.objects.map((object) => canonicalizePersistedGameObject(object))
       : [],
@@ -150,6 +205,14 @@ function inflatePersistedScene(scene: PersistedScene): Scene {
   const nextScene = cloneValue(scene);
   return {
     ...nextScene,
+    background: nextScene.background
+      ? {
+          ...nextScene.background,
+          document: nextScene.background.document
+            ? cloneBackgroundDocument(ensureBackgroundDocument(nextScene.background))
+            : nextScene.background.document,
+        }
+      : null,
     objects: Array.isArray(nextScene.objects)
       ? nextScene.objects.map((object) => inflatePersistedGameObject(object))
       : [],

@@ -4,11 +4,17 @@ import {
   getChunkRangeForWorldBounds,
   getChunkWorldBounds,
 } from './chunkMath';
+import { normalizeChunkDataMap } from './chunkStore';
 import {
   decodeBackgroundChunkImage,
   getCachedBackgroundChunkImage,
 } from './chunkImageCache';
 import { getCachedBackgroundChunkIndex } from './chunkIndex';
+import {
+  getBackgroundDocumentFlattenSignature,
+  getCachedBackgroundRuntimeChunkData,
+  resolveBackgroundRuntimeChunkData,
+} from './backgroundDocumentRender';
 
 export interface UserSpaceViewport {
   left: number;
@@ -53,8 +59,8 @@ export function getSceneBackgroundBaseColor(background: BackgroundConfig | null 
 
 export function isTiledBackground(
   background: BackgroundConfig | null | undefined,
-): background is BackgroundConfig & { type: 'tiled'; chunks: Record<string, string> } {
-  return !!background && background.type === 'tiled' && !!background.chunks && typeof background.chunks === 'object';
+): background is BackgroundConfig & { type: 'tiled' } {
+  return !!background && background.type === 'tiled';
 }
 
 export function getTiledBackgroundChunkSize(background: BackgroundConfig | null | undefined): number {
@@ -89,6 +95,12 @@ export function getVisibleTiledBackgroundScreenChunks(
     return [];
   }
 
+  const chunkData = getCachedBackgroundRuntimeChunkData(background)
+    ?? (background.chunks ? normalizeChunkDataMap(background.chunks) : null);
+  if (!chunkData) {
+    return [];
+  }
+
   const targetWidth = Math.max(1, Math.floor(pixelWidth));
   const targetHeight = Math.max(1, Math.floor(pixelHeight));
   const viewportWidth = Math.max(1e-6, viewport.right - viewport.left);
@@ -103,7 +115,7 @@ export function getVisibleTiledBackgroundScreenChunks(
     margin,
   );
 
-  const chunkIndex = getCachedBackgroundChunkIndex(background.chunks);
+  const chunkIndex = getCachedBackgroundChunkIndex(chunkData);
   const chunks: TiledBackgroundScreenChunk[] = [];
   for (const entry of chunkIndex.query(visibleRange)) {
     if (!entry.value) continue;
@@ -134,6 +146,7 @@ export function getVisibleTiledBackgroundScreenChunks(
 export class TiledBackgroundCanvasCompositor {
   private readonly onChange?: () => void;
   private readonly listeningKeys = new Set<string>();
+  private readonly pendingBackgroundKeys = new Set<string>();
   private disposed = false;
 
   constructor(options?: { onChange?: () => void }) {
@@ -143,6 +156,7 @@ export class TiledBackgroundCanvasCompositor {
   dispose(): void {
     this.disposed = true;
     this.listeningKeys.clear();
+    this.pendingBackgroundKeys.clear();
   }
 
   render(request: TiledBackgroundCanvasRenderRequest): { pending: boolean; drawnChunks: number } {
@@ -165,9 +179,15 @@ export class TiledBackgroundCanvasCompositor {
     ctx.fillStyle = getSceneBackgroundBaseColor(background);
     ctx.fillRect(0, 0, pixelWidth, pixelHeight);
 
-    const chunks = getVisibleTiledBackgroundScreenChunks(background, viewport, pixelWidth, pixelHeight, 1);
     let pending = false;
     let drawnChunks = 0;
+
+    if (background && background.type === 'tiled' && !getCachedBackgroundRuntimeChunkData(background)) {
+      pending = true;
+      this.ensureBackgroundChunkData(background);
+    }
+
+    const chunks = getVisibleTiledBackgroundScreenChunks(background, viewport, pixelWidth, pixelHeight, 1);
 
     for (const chunk of chunks) {
       const image = getCachedBackgroundChunkImage(chunk.dataUrl);
@@ -194,6 +214,27 @@ export class TiledBackgroundCanvasCompositor {
       .catch(() => undefined)
       .finally(() => {
         this.listeningKeys.delete(dataUrl);
+        if (!this.disposed) {
+          this.onChange?.();
+        }
+      });
+  }
+
+  private ensureBackgroundChunkData(background: BackgroundConfig): void {
+    if (background.type !== 'tiled' || !background.document) {
+      return;
+    }
+
+    const pendingKey = getBackgroundDocumentFlattenSignature(background.document);
+    if (this.pendingBackgroundKeys.has(pendingKey)) {
+      return;
+    }
+
+    this.pendingBackgroundKeys.add(pendingKey);
+    void resolveBackgroundRuntimeChunkData(background)
+      .catch(() => undefined)
+      .finally(() => {
+        this.pendingBackgroundKeys.delete(pendingKey);
         if (!this.disposed) {
           this.onChange?.();
         }

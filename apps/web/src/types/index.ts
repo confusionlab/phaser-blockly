@@ -81,7 +81,7 @@ export interface BackgroundConfig {
   scrollFactor?: { x: number; y: number };
   version?: 1;
   chunkSize?: number;
-  chunks?: Record<string, string>;
+  chunks?: Record<string, string>; // Derived runtime chunk cache; not persisted.
   softChunkLimit?: number;
   hardChunkLimit?: number;
   document?: BackgroundDocument;

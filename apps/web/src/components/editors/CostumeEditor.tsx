@@ -903,7 +903,7 @@ export function CostumeEditor() {
     };
   }, [clearLoadingOverlayDelay, persistCanvasStateToSession]);
 
-  const handleHistoryChange = useCallback((_liveCanvasState: ActiveLayerCanvasState) => {
+  const handleHistoryChange = useCallback((liveCanvasState: ActiveLayerCanvasState) => {
     if (isLoadingRef.current) {
       return;
     }
@@ -913,9 +913,10 @@ export function CostumeEditor() {
       return;
     }
 
-    const persistedState = getCanvasPersistedStateForSession(loadedSession, {
-      skipLoadingGuard: true,
-    });
+    const persistedState = resolvePersistedStateWithCanvasState(
+      liveCanvasState,
+      getWorkingPersistedState(),
+    );
     if (!persistedState) {
       return;
     }
@@ -925,10 +926,16 @@ export function CostumeEditor() {
       recordHistory: true,
     });
     if (didPersist) {
-      canvasRef.current?.markPersisted(loadedSession.key);
+      canvasRef.current?.markPersisted(loadedSession.key, liveCanvasState);
       scheduleFlattenedPreviewRefreshRef.current(loadedSession, persistedState.document);
     }
-  }, [applyDocumentHistoryState, getCanvasPersistedStateForSession, isCanvasReadyForSession, pushDocumentHistory]);
+  }, [
+    applyDocumentHistoryState,
+    getWorkingPersistedState,
+    isCanvasReadyForSession,
+    pushDocumentHistory,
+    resolvePersistedStateWithCanvasState,
+  ]);
 
   const handleSelectCostume = useCallback((index: number) => {
     if (!selectedSceneId || !selectedObjectId) return;

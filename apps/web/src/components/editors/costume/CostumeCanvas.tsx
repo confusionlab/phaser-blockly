@@ -78,7 +78,7 @@ export interface CostumeCanvasHandle {
   loadDocument: (sessionKey: string, document: CostumeDocument) => Promise<void>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   hasUnsavedChanges: (sessionKey?: string | null) => boolean;
-  markPersisted: (sessionKey?: string | null) => void;
+  markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => void;
   setEditorMode: (mode: CostumeEditorMode) => Promise<void>;
   getEditorMode: () => CostumeEditorMode;
   getLoadedSessionKey: () => string | null;
@@ -301,6 +301,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const {
     createSnapshot,
     lastCommittedSnapshotRef,
+    markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     persistedSnapshotRef,
     saveHistory,
@@ -927,6 +928,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     loadBitmapLayer,
     loadDocument,
     loadedSessionKeyRef,
+    markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
     moveSelectionOrder,
     persistedSnapshotRef,

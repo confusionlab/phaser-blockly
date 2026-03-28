@@ -2717,7 +2717,12 @@ export function BackgroundCanvasEditor() {
       baseColor: backgroundColor,
       scrollFactor: scene.background?.scrollFactor,
     });
-    const payloadSize = estimateSerializedChunkBytes(nextBackground.chunks ?? {});
+    const payloadSize = persistedDocument.layers.reduce((sum, layer) => {
+      if (!isBitmapBackgroundLayer(layer)) {
+        return sum;
+      }
+      return sum + estimateSerializedChunkBytes(layer.bitmap.chunks);
+    }, 0);
     if (payloadSize > LARGE_PAYLOAD_WARNING_BYTES) {
       const proceed = window.confirm('Background payload is large and may affect project size. Save anyway?');
       if (!proceed) {

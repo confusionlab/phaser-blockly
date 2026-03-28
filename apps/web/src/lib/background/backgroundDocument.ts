@@ -152,6 +152,35 @@ export function cloneBackgroundDocument(document: BackgroundDocument): Backgroun
   };
 }
 
+function parseBackgroundVectorObjectCount(fabricJson: string): number {
+  try {
+    const parsed = JSON.parse(fabricJson) as { objects?: unknown[] };
+    return Array.isArray(parsed.objects) ? parsed.objects.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function hasBackgroundLayerContent(layer: BackgroundLayer | null | undefined): boolean {
+  if (!layer) {
+    return false;
+  }
+
+  if (isBitmapBackgroundLayer(layer)) {
+    return Object.keys(layer.bitmap.chunks).length > 0;
+  }
+
+  if (isVectorBackgroundLayer(layer)) {
+    return parseBackgroundVectorObjectCount(layer.vector.fabricJson) > 0;
+  }
+
+  return false;
+}
+
+export function hasBackgroundDocumentContent(document: BackgroundDocument | null | undefined): boolean {
+  return !!document && document.layers.some((layer) => hasBackgroundLayerContent(layer));
+}
+
 export function createBitmapBackgroundLayer(options: {
   id?: string;
   name?: string;

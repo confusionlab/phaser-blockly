@@ -1122,19 +1122,11 @@ async function normalizeProjectAssetsForStorage(
       background.value = record.id;
     }
 
-    if (background.type === 'tiled' && background.chunks) {
-      const nextChunks: Record<string, string> = {};
-      for (const [chunkKey, source] of Object.entries(background.chunks)) {
-        if (!isLikelyAssetSource(source)) continue;
-        const record = await ensureAssetRecordFromSource(source, 'background');
-        addPersistedAssetRef(refsById, record.id, 'background');
-        nextChunks[chunkKey] = record.id;
-      }
-      background.chunks = nextChunks;
-    }
-
-    const document = background.document ? cloneBackgroundDocument(ensureBackgroundDocument(background)) : null;
+    const document = background.document || background.type === 'tiled'
+      ? cloneBackgroundDocument(ensureBackgroundDocument(background))
+      : null;
     if (!document) {
+      delete (background as { chunks?: Record<string, string> }).chunks;
       return;
     }
 
@@ -1153,6 +1145,7 @@ async function normalizeProjectAssetsForStorage(
     }
 
     background.document = document;
+    delete (background as { chunks?: Record<string, string> }).chunks;
   };
 
   for (const scene of nextProject.scenes || []) {
@@ -1208,24 +1201,11 @@ async function hydrateProjectAssetsFromStorage(
       }
     }
 
-    if (background.type === 'tiled' && background.chunks) {
-      const nextChunks: Record<string, string> = {};
-      for (const [chunkKey, value] of Object.entries(background.chunks)) {
-        if (!isManagedAssetId(value)) {
-          nextChunks[chunkKey] = value;
-          continue;
-        }
-        const objectUrl = await resolveManagedAssetUrl(value);
-        if (objectUrl) {
-          rememberResolvedManagedAsset(value, objectUrl);
-          nextChunks[chunkKey] = objectUrl;
-        }
-      }
-      background.chunks = nextChunks;
-    }
-
-    const document = background.document ? cloneBackgroundDocument(ensureBackgroundDocument(background)) : null;
+    const document = background.document || background.type === 'tiled'
+      ? cloneBackgroundDocument(ensureBackgroundDocument(background))
+      : null;
     if (!document) {
+      delete (background as { chunks?: Record<string, string> }).chunks;
       return;
     }
 
@@ -1249,6 +1229,7 @@ async function hydrateProjectAssetsFromStorage(
     }
 
     background.document = document;
+    delete (background as { chunks?: Record<string, string> }).chunks;
   };
 
   for (const scene of nextProject.scenes || []) {
@@ -1284,9 +1265,6 @@ function collectPersistedAssetRefsFromProjectData(
     if (!background) return;
     if (background.type === 'image') {
       addPersistedAssetRef(refsById, background.value, 'background');
-    }
-    if (background.type === 'tiled' && background.chunks) {
-      Object.values(background.chunks).forEach((assetId) => addPersistedAssetRef(refsById, assetId, 'background'));
     }
     if (!background.document) return;
     const document = ensureBackgroundDocument(background);

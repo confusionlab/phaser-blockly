@@ -272,7 +272,7 @@ function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundL
     layer.needsRedraw = true;
   }
 
-  if (!isTiledBackground(background) || Object.keys(background.chunks).length === 0) {
+  if (!isTiledBackground(background)) {
     layer.image.setVisible(false);
     layer.lastRenderSnapshot = null;
     return;

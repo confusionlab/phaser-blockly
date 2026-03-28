@@ -10,9 +10,10 @@ async function readBackgroundChunkCount(page: Page): Promise<number> {
 async function readPersistedDarkPixelCount(page: Page): Promise<number> {
   return await page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const { resolveBackgroundRuntimeChunkData } = await import('/src/lib/background/backgroundDocumentRender.ts');
     const project = useProjectStore.getState().project;
     const background = project?.scenes[0]?.background;
-    if (!background || background.type !== 'tiled' || !background.chunks) {
+    if (!background || background.type !== 'tiled') {
       return 0;
     }
 
@@ -24,7 +25,8 @@ async function readPersistedDarkPixelCount(page: Page): Promise<number> {
     });
 
     let darkPixels = 0;
-    for (const dataUrl of Object.values(background.chunks)) {
+    const runtimeChunks = await resolveBackgroundRuntimeChunkData(background);
+    for (const dataUrl of Object.values(runtimeChunks)) {
       if (!dataUrl) {
         continue;
       }
@@ -62,17 +64,32 @@ async function readPersistedDarkPixelCount(page: Page): Promise<number> {
 
 async function readBackgroundDocumentSummary(page: Page): Promise<{
   activeLayerId: string | null;
-  chunkCount: number;
+  bitmapLayerChunkCount: number;
+  runtimeChunkCount: number;
+  hasTopLevelChunks: boolean;
   layerKinds: string[];
   layerNames: string[];
 }> {
   return await page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const { resolveBackgroundRuntimeChunkData } = await import('/src/lib/background/backgroundDocumentRender.ts');
     const project = useProjectStore.getState().project;
     const background = project?.scenes[0]?.background;
+    const runtimeChunks = background ? await resolveBackgroundRuntimeChunkData(background) : {};
+    const bitmapLayerChunkCount = (background?.document?.layers ?? []).reduce((sum, layer: {
+      kind: string;
+      bitmap?: { chunks?: Record<string, string> };
+    }) => {
+      if (layer.kind !== 'bitmap') {
+        return sum;
+      }
+      return sum + Object.keys(layer.bitmap?.chunks ?? {}).length;
+    }, 0);
     return {
       activeLayerId: background?.document?.activeLayerId ?? null,
-      chunkCount: Object.keys(background?.chunks ?? {}).length,
+      bitmapLayerChunkCount,
+      runtimeChunkCount: Object.keys(runtimeChunks).length,
+      hasTopLevelChunks: Object.prototype.hasOwnProperty.call(background ?? {}, 'chunks'),
       layerKinds: (background?.document?.layers ?? []).map((layer: { kind: string }) => layer.kind),
       layerNames: (background?.document?.layers ?? []).map((layer: { name: string }) => layer.name),
     };
@@ -257,7 +274,9 @@ test.describe('Background editor', () => {
     expect(summary.layerKinds).toEqual(['bitmap', 'vector']);
     expect(summary.layerNames).toEqual(['Layer 1', 'Layer 2']);
     expect(summary.activeLayerId).not.toBeNull();
-    expect(summary.chunkCount).toBeGreaterThan(0);
+    expect(summary.bitmapLayerChunkCount).toBeGreaterThan(0);
+    expect(summary.runtimeChunkCount).toBeGreaterThan(0);
+    expect(summary.hasTopLevelChunks).toBe(false);
 
     const reopened = await openBackgroundEditor(page);
     await expect(page.locator('[data-testid="layer-row"][data-layer-kind="bitmap"]')).toHaveCount(1);

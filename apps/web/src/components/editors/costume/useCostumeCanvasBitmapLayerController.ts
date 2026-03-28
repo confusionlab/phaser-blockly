@@ -42,16 +42,37 @@ export function useCostumeCanvasBitmapLayerController({
   syncSelectionState,
   waitForFabricCanvas,
 }: UseCostumeCanvasBitmapLayerControllerOptions) {
+  const getReusableBitmapImage = useCallback((): FabricImage | null => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas || editorModeRef.current !== 'bitmap') {
+      return null;
+    }
+
+    const bitmapImage = fabricCanvas.getObjects().find((object) => {
+      return object instanceof FabricImage && !(object as any).__bitmapFloatingSelection;
+    });
+    return bitmapImage instanceof FabricImage ? bitmapImage : null;
+  }, [editorModeRef, fabricCanvasRef]);
+
+  const cloneBitmapCanvas = useCallback((source: HTMLCanvasElement): HTMLCanvasElement | null => {
+    const clone = document.createElement('canvas');
+    clone.width = source.width;
+    clone.height = source.height;
+    const cloneCtx = clone.getContext('2d', { willReadFrequently: true });
+    if (!cloneCtx) {
+      return null;
+    }
+    cloneCtx.drawImage(source, 0, 0);
+    return clone;
+  }, []);
+
   const applyBitmapLayerSource = useCallback((
     source: HTMLImageElement | HTMLCanvasElement | null,
     selectable: boolean,
+    options: { reuseBitmapImage?: boolean } = {},
   ): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return false;
-
-    const image = source
-      ? new FabricImage(source as any)
-      : null;
 
     suppressHistoryRef.current = true;
     try {
@@ -62,10 +83,25 @@ export function useCostumeCanvasBitmapLayerController({
       bitmapSelectionDragModeRef.current = 'none';
       drawBitmapSelectionOverlay();
 
-      fabricCanvas.clear();
+      const reusableBitmapImage = source && options.reuseBitmapImage
+        ? getReusableBitmapImage()
+        : null;
+      if (fabricCanvas.getActiveObject()) {
+        fabricCanvas.discardActiveObject();
+      }
 
-      if (image) {
-        image.set({
+      if (source && reusableBitmapImage) {
+        for (const object of [...fabricCanvas.getObjects()]) {
+          if (object !== reusableBitmapImage) {
+            fabricCanvas.remove(object);
+          }
+        }
+
+        reusableBitmapImage.setElement(source as any, {
+          width: source.width,
+          height: source.height,
+        });
+        reusableBitmapImage.set({
           left: 0,
           top: 0,
           originX: 'left',
@@ -80,7 +116,32 @@ export function useCostumeCanvasBitmapLayerController({
           lockScalingX: !selectable,
           lockScalingY: !selectable,
         } as any);
-        fabricCanvas.add(image);
+        reusableBitmapImage.setCoords?.();
+      } else {
+        const image = source
+          ? new FabricImage(source as any)
+          : null;
+
+        fabricCanvas.clear();
+
+        if (image) {
+          image.set({
+            left: 0,
+            top: 0,
+            originX: 'left',
+            originY: 'top',
+            selectable,
+            evented: selectable,
+            hasControls: selectable,
+            hasBorders: selectable,
+            lockMovementX: !selectable,
+            lockMovementY: !selectable,
+            lockRotation: !selectable,
+            lockScalingX: !selectable,
+            lockScalingY: !selectable,
+          } as any);
+          fabricCanvas.add(image);
+        }
       }
 
       fabricCanvas.requestRenderAll();
@@ -99,6 +160,7 @@ export function useCostumeCanvasBitmapLayerController({
     setHasBitmapFloatingSelection,
     suppressHistoryRef,
     syncSelectionState,
+    getReusableBitmapImage,
   ]);
 
   const loadBitmapLayer = useCallback(async (
@@ -165,7 +227,12 @@ export function useCostumeCanvasBitmapLayerController({
           return;
         }
 
-        const raster = fabricCanvas.toCanvasElement(1);
+        const reusableBitmapImage = getReusableBitmapImage();
+        const reusableBitmapCanvas = reusableBitmapImage?.getElement();
+        const raster = reusableBitmapCanvas instanceof HTMLCanvasElement
+          && fabricCanvas.getObjects().length === 1
+          ? cloneBitmapCanvas(reusableBitmapCanvas) ?? fabricCanvas.toCanvasElement(1)
+          : fabricCanvas.toCanvasElement(1);
         const rasterCtx = raster.getContext('2d', { willReadFrequently: true });
         if (!rasterCtx) {
           return;
@@ -175,7 +242,9 @@ export function useCostumeCanvasBitmapLayerController({
           await mutateRaster(raster, rasterCtx);
         }
 
-        const applied = applyBitmapLayerSource(raster, false);
+        const applied = applyBitmapLayerSource(raster, false, {
+          reuseBitmapImage: true,
+        });
         if (!applied) {
           return;
         }
@@ -187,7 +256,15 @@ export function useCostumeCanvasBitmapLayerController({
 
     bitmapRasterCommitQueueRef.current = nextCommit;
     return nextCommit;
-  }, [applyBitmapLayerSource, bitmapRasterCommitQueueRef, editorModeRef, fabricCanvasRef, saveHistory]);
+  }, [
+    applyBitmapLayerSource,
+    bitmapRasterCommitQueueRef,
+    cloneBitmapCanvas,
+    editorModeRef,
+    fabricCanvasRef,
+    getReusableBitmapImage,
+    saveHistory,
+  ]);
 
   const flattenBitmapLayer = useCallback(async () => {
     await queueBitmapRasterCommit();
