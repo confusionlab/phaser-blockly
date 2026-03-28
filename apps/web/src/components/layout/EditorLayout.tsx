@@ -11,6 +11,7 @@ import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { ProjectHistoryDialog } from '../dialogs/ProjectHistoryDialog';
 import { AiAssistantPanel } from '../assistant/AiAssistantPanel';
+import type { Project } from '@/types';
 import { EditorTopBar } from '@/components/layout/EditorTopBar';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -20,8 +21,9 @@ import {
   downloadProject,
   loadProject,
   migrateAllLocalProjects,
+  saveProject,
 } from '@/db/database';
-import { useCloudSync } from '@/hooks/useCloudSync';
+import { useCloudSync, type CloudProjectSyncStatus } from '@/hooks/useCloudSync';
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
 import { assistantFeatureFlags } from '@/lib/assistant/config';
@@ -32,7 +34,14 @@ import { deleteSceneObjectsWithHistory, duplicateSceneObjectsWithHistory } from 
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | null;
+type CloudSaveState = {
+  status: 'saved' | 'unsaved' | 'saving' | 'error';
+  lastSavedAt: number | null;
+  errorMessage: string | null;
+};
+
 const ASSISTANT_UI_ENABLED = assistantFeatureFlags.isEnabled;
+const UNSAVED_CLOUD_CHANGES_MESSAGE = 'Changes are not yet saved to cloud.';
 
 function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
@@ -45,7 +54,7 @@ export function EditorLayout() {
     project,
     isDirty,
     openProject,
-    saveCurrentProject,
+    acknowledgeProjectSaved,
     closeProject,
     duplicateObject,
     removeObject,
@@ -88,10 +97,17 @@ export function EditorLayout() {
   const [isMigratingProjects, setIsMigratingProjects] = useState(true);
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [cloudSaveState, setCloudSaveState] = useState<CloudSaveState>({
+    status: 'saved',
+    lastSavedAt: null,
+    errorMessage: null,
+  });
   const hoveredPanelRef = useRef<HoveredPanel>(null);
   const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
   const isBlockingCloudSyncRef = useRef(false);
   const isMountedRef = useRef(true);
+  const lastCloudSavedVersionRef = useRef(new Map<string, number>());
+  const inFlightCloudSaveRef = useRef<{ projectId: string; updatedAtMs: number } | null>(null);
   const activeProjectId = project?.id ?? null;
   const leaseProjectId = projectId ?? activeProjectId;
   const {
@@ -104,8 +120,8 @@ export function EditorLayout() {
   const isProjectLeaseBlocking = !!leaseProjectId && leaseStatus !== 'active' && leaseStatus !== 'idle';
   const isCloudWriteEnabled = !leaseProjectId || isWriteAllowed;
 
-  // Cloud sync is exit-oriented to reduce bandwidth (unmount / unload).
-  const { syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
+  // The editor treats cloud save as authoritative and uses IndexedDB as a synced cache.
+  const { syncProjectDraftToCloud, syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
     enabled: isCloudWriteEnabled,
     syncOnMount: false,
     enableCloudProjectListQuery: false,
@@ -113,7 +129,9 @@ export function EditorLayout() {
     currentProject: project,
     isDirty,
     syncOnUnmount: false,
-    checkpointIntervalMs: 5 * 60 * 1000,
+    checkpointIntervalMs: 0,
+    backgroundSyncDebounceMs: 0,
+    autoSyncCurrentProject: false,
   });
 
   useEffect(() => {
@@ -123,20 +141,47 @@ export function EditorLayout() {
     };
   }, []);
 
-
-  useEffect(() => {
-    if (!project || !isDirty || !isCloudWriteEnabled) return;
-
-    const timeout = window.setTimeout(() => {
-      void saveCurrentProject();
-    }, 800);
-
-    return () => window.clearTimeout(timeout);
-  }, [project, isCloudWriteEnabled, isDirty, saveCurrentProject]);
-
   useEffect(() => {
     isBlockingCloudSyncRef.current = isBlockingCloudSync;
   }, [isBlockingCloudSync]);
+
+  useEffect(() => {
+    if (!project) {
+      setCloudSaveState({
+        status: 'saved',
+        lastSavedAt: null,
+        errorMessage: null,
+      });
+      return;
+    }
+
+    const updatedAtMs = project.updatedAt.getTime();
+    const inFlight = inFlightCloudSaveRef.current;
+    if (
+      inFlight
+      && inFlight.projectId === project.id
+      && inFlight.updatedAtMs === updatedAtMs
+      && cloudSaveState.status === 'saving'
+    ) {
+      return;
+    }
+
+    if (!isDirty) {
+      lastCloudSavedVersionRef.current.set(project.id, updatedAtMs);
+      setCloudSaveState({
+        status: 'saved',
+        lastSavedAt: updatedAtMs,
+        errorMessage: null,
+      });
+      return;
+    }
+
+    setCloudSaveState({
+      status: 'unsaved',
+      lastSavedAt: lastCloudSavedVersionRef.current.get(project.id) ?? null,
+      errorMessage: null,
+    });
+  }, [cloudSaveState.status, isDirty, project]);
 
   useEffect(() => {
     if (!activeProjectId || !isCloudWriteEnabled) return;
@@ -150,31 +195,21 @@ export function EditorLayout() {
     return () => window.clearInterval(intervalId);
   }, [activeProjectId, isCloudWriteEnabled]);
 
+  const hasUnsavedCloudChanges = !!project && (isDirty || isSyncingCloud || cloudSaveState.status === 'error');
+
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!project || !isCloudWriteEnabled || isBlockingCloudSyncRef.current || !isDirty) {
+      if (!project || !isCloudWriteEnabled || isBlockingCloudSyncRef.current || !hasUnsavedCloudChanges) {
         return;
       }
 
       event.preventDefault();
-      event.returnValue = 'Please wait, Uploading/Syncing to Cloud.';
-
-      setIsBlockingCloudSync(true);
-      void (async () => {
-        try {
-          await saveCurrentProject();
-          await syncProjectToCloud(project.id);
-        } catch (error) {
-          console.error('[CloudSync] Failed to sync before unload:', error);
-        } finally {
-          setIsBlockingCloudSync(false);
-        }
-      })();
+      event.returnValue = UNSAVED_CLOUD_CHANGES_MESSAGE;
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [isCloudWriteEnabled, isDirty, project, saveCurrentProject, syncProjectToCloud]);
+  }, [hasUnsavedCloudChanges, isCloudWriteEnabled, project]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {
@@ -224,6 +259,7 @@ export function EditorLayout() {
       if (projectId && (!project || project.id !== projectId)) {
         setIsLoading(true);
         try {
+          await syncProjectFromCloud(projectId);
           const loadedProject = await loadProject(projectId);
           if (loadedProject) {
             openProject(loadedProject);
@@ -248,7 +284,7 @@ export function EditorLayout() {
 
     loadFromUrl();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMigratingProjects, projectId]);
+  }, [isMigratingProjects, projectId, syncProjectFromCloud]);
 
   // Keep selection aligned with the active project as projects open, close, or change shape.
   useEffect(() => {
@@ -260,6 +296,81 @@ export function EditorLayout() {
     navigate(`/project/${openedProject.id}`);
     setShowProjectDialog(false);
   }, [navigate, setShowProjectDialog]);
+
+  const persistCloudSavedProject = useCallback(async (projectSnapshot: Project) => {
+    try {
+      const cachedProject = await saveProject(projectSnapshot);
+      const cachedUpdatedAtMs = cachedProject.updatedAt.getTime();
+      lastCloudSavedVersionRef.current.set(cachedProject.id, cachedUpdatedAtMs);
+      acknowledgeProjectSaved(cachedProject);
+      return cachedUpdatedAtMs;
+    } catch (error) {
+      console.error('[CloudSync] Failed to refresh the local project cache after cloud save:', error);
+      const fallbackUpdatedAtMs = projectSnapshot.updatedAt.getTime();
+      lastCloudSavedVersionRef.current.set(projectSnapshot.id, fallbackUpdatedAtMs);
+      acknowledgeProjectSaved(projectSnapshot);
+      return fallbackUpdatedAtMs;
+    }
+  }, [acknowledgeProjectSaved]);
+
+  const finishCloudSync = useCallback(async (
+    projectSnapshot: Project,
+    result: CloudProjectSyncStatus,
+  ): Promise<boolean> => {
+    if (result === 'saved') {
+      const savedAt = await persistCloudSavedProject(projectSnapshot);
+      const currentProject = useProjectStore.getState().project;
+      const currentUpdatedAtMs = currentProject?.id === projectSnapshot.id
+        ? currentProject.updatedAt.getTime()
+        : null;
+
+      setCloudSaveState({
+        status: currentUpdatedAtMs !== null && currentUpdatedAtMs > savedAt ? 'unsaved' : 'saved',
+        lastSavedAt: savedAt,
+        errorMessage: null,
+      });
+      return true;
+    }
+
+    if (result === 'pulled') {
+      const refreshedProject = await loadProject(projectSnapshot.id);
+      if (refreshedProject) {
+        const refreshedUpdatedAtMs = refreshedProject.updatedAt.getTime();
+        lastCloudSavedVersionRef.current.set(refreshedProject.id, refreshedUpdatedAtMs);
+        if (useProjectStore.getState().project?.id === refreshedProject.id) {
+          openProject(refreshedProject);
+        }
+        setCloudSaveState({
+          status: 'saved',
+          lastSavedAt: refreshedUpdatedAtMs,
+          errorMessage: null,
+        });
+      } else {
+        setCloudSaveState({
+          status: 'saved',
+          lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
+          errorMessage: null,
+        });
+      }
+      return true;
+    }
+
+    if (result === 'skipped') {
+      setCloudSaveState((current) => ({
+        status: 'error',
+        lastSavedAt: current.lastSavedAt,
+        errorMessage: 'Cloud save is unavailable right now.',
+      }));
+      return false;
+    }
+
+    setCloudSaveState((current) => ({
+      status: 'error',
+      lastSavedAt: current.lastSavedAt,
+      errorMessage: 'Could not save to cloud.',
+    }));
+    return false;
+  }, [openProject, persistCloudSavedProject]);
 
   const handleTakeOverLease = useCallback(async () => {
     const didAcquire = await takeOverLease();
@@ -278,44 +389,100 @@ export function EditorLayout() {
     }
   }, [leaseProjectId, openProject, syncProjectFromCloud, takeOverLease]);
 
-  const syncCurrentProjectToCloud = useCallback(async (): Promise<boolean> => {
-    if (!project) {
-      return true;
+  const syncCurrentProjectToCloud = useCallback(async (
+    projectSnapshot: Project,
+    options: { showBlockingOverlay?: boolean } = {},
+  ): Promise<boolean> => {
+    if (!isCloudWriteEnabled) {
+      setCloudSaveState((current) => ({
+        status: 'error',
+        lastSavedAt: current.lastSavedAt,
+        errorMessage: 'Cloud save is unavailable right now.',
+      }));
+      return false;
     }
 
-    setIsSyncingCloud(true);
+    const projectUpdatedAtMs = projectSnapshot.updatedAt.getTime();
+    inFlightCloudSaveRef.current = {
+      projectId: projectSnapshot.id,
+      updatedAtMs: projectUpdatedAtMs,
+    };
+    setCloudSaveState({
+      status: 'saving',
+      lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
+      errorMessage: null,
+    });
+    if (isMountedRef.current) {
+      setIsSyncingCloud(true);
+      if (options.showBlockingOverlay) {
+        setIsBlockingCloudSync(true);
+      }
+    }
+
     try {
-      await saveCurrentProject();
-
-      if (!isCloudWriteEnabled) {
-        return true;
-      }
-
-      const synced = await syncProjectToCloud(project.id);
-      if (!synced) {
-        alert('Cloud sync failed. Please try Upload/Update to Cloud again.');
-        return false;
-      }
-
-      return true;
+      const result = await syncProjectDraftToCloud(projectSnapshot);
+      return await finishCloudSync(projectSnapshot, result);
     } finally {
+      const inFlight = inFlightCloudSaveRef.current;
+      if (
+        inFlight
+        && inFlight.projectId === projectSnapshot.id
+        && inFlight.updatedAtMs === projectUpdatedAtMs
+      ) {
+        inFlightCloudSaveRef.current = null;
+      }
+
       if (isMountedRef.current) {
         setIsSyncingCloud(false);
+        if (options.showBlockingOverlay) {
+          setIsBlockingCloudSync(false);
+        }
       }
     }
-  }, [isCloudWriteEnabled, project, saveCurrentProject, syncProjectToCloud]);
+  }, [finishCloudSync, isCloudWriteEnabled, syncProjectDraftToCloud]);
+
+  useEffect(() => {
+    if (!project || !isDirty || !isCloudWriteEnabled) {
+      return;
+    }
+
+    const projectSnapshot = project;
+    const timeoutId = window.setTimeout(() => {
+      void syncCurrentProjectToCloud(projectSnapshot);
+    }, 15_000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isCloudWriteEnabled, isDirty, project, syncCurrentProjectToCloud]);
+
+  useEffect(() => {
+    if (!project || !isDirty || !isCloudWriteEnabled) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const latestProject = useProjectStore.getState().project;
+      if (!latestProject) {
+        return;
+      }
+      void syncCurrentProjectToCloud(latestProject);
+    }, 5 * 60 * 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isCloudWriteEnabled, isDirty, project, syncCurrentProjectToCloud]);
 
   const handleGoToDashboard = useCallback(async () => {
     if (isSyncingCloud) {
       return;
     }
 
-    const projectIdToClose = project?.id ?? null;
-    const shouldBlockForSync = !!project && isDirty;
+    const projectSnapshot = project;
+    const projectIdToClose = projectSnapshot?.id ?? null;
+    const shouldBlockForSync = !!projectSnapshot && hasUnsavedCloudChanges;
 
-    if (project && shouldBlockForSync) {
-      const synced = await syncCurrentProjectToCloud();
+    if (projectSnapshot && shouldBlockForSync) {
+      const synced = await syncCurrentProjectToCloud(projectSnapshot, { showBlockingOverlay: true });
       if (!synced) {
+        alert('Cloud save failed. Please try Save Now again before leaving.');
         return;
       }
     }
@@ -326,7 +493,27 @@ export function EditorLayout() {
     if (projectIdToClose && !shouldBlockForSync && isCloudWriteEnabled) {
       void syncProjectToCloud(projectIdToClose);
     }
-  }, [closeProject, isCloudWriteEnabled, isDirty, isSyncingCloud, navigate, project, syncCurrentProjectToCloud, syncProjectToCloud]);
+  }, [
+    closeProject,
+    hasUnsavedCloudChanges,
+    isCloudWriteEnabled,
+    isSyncingCloud,
+    navigate,
+    project,
+    syncCurrentProjectToCloud,
+    syncProjectToCloud,
+  ]);
+
+  const handleSaveNow = useCallback(async () => {
+    if (!project || isSyncingCloud) {
+      return;
+    }
+
+    const synced = await syncCurrentProjectToCloud(project);
+    if (!synced) {
+      alert('Cloud save failed. Please try Save Now again.');
+    }
+  }, [isSyncingCloud, project, syncCurrentProjectToCloud]);
 
   const handleToggleDarkMode = useCallback(async () => {
     const nextIsDarkMode = !isDarkMode;
@@ -337,6 +524,16 @@ export function EditorLayout() {
       console.error('[UserSettings] Failed to persist dark mode setting:', error);
     }
   }, [isDarkMode, updateMySettings]);
+
+  const cloudSaveStatusLabel = !project
+    ? null
+    : cloudSaveState.status === 'saving'
+      ? 'Saving to cloud...'
+      : cloudSaveState.status === 'error'
+        ? (cloudSaveState.errorMessage ?? 'Could not save to cloud.')
+        : cloudSaveState.status === 'unsaved'
+          ? 'Changes not yet saved to cloud'
+          : 'All changes saved to cloud';
 
   useEffect(() => {
     if (!isProjectLeaseBlocking || !isPlaying) {
@@ -734,6 +931,10 @@ export function EditorLayout() {
           isDarkMode={isDarkMode}
           projectName={project.name}
           projectNameDisabled={isSyncingCloud}
+          cloudSaveStatusLabel={cloudSaveStatusLabel}
+          cloudSaveStatusTone={cloudSaveState.status === 'error' ? 'error' : 'default'}
+          saveNowDisabled={!isCloudWriteEnabled || isSyncingCloud}
+          saveNowBusy={cloudSaveState.status === 'saving'}
           onExportProject={() => {
             if (!project || isSyncingCloud) {
               return;
@@ -745,6 +946,9 @@ export function EditorLayout() {
           }}
           onOpenHistory={() => setHistoryOpen(true)}
           onProjectNameCommit={(name) => updateProjectName(name)}
+          onSaveNow={() => {
+            void handleSaveNow();
+          }}
           onToggleTheme={() => {
             void handleToggleDarkMode();
           }}
@@ -824,14 +1028,6 @@ export function EditorLayout() {
 
       {isBlockingCloudSync && (
         <div className="fixed inset-0 z-[100002] bg-black/45 flex items-center justify-center">
-          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
-            Please wait, Uploading/Syncing to Cloud.
-          </div>
-        </div>
-      )}
-
-      {isSyncingCloud && !isBlockingCloudSync && (
-        <div className="fixed inset-0 z-[100003] bg-black/45 flex items-center justify-center">
           <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
             Please wait, Uploading/Syncing to Cloud.
           </div>

@@ -46,6 +46,8 @@ interface CloudSyncOptions {
   enableCloudProjectListQuery?: boolean;
   // Debounce background sync after the latest project edit timestamp changes.
   backgroundSyncDebounceMs?: number;
+  // Whether the hook should automatically sync the current project on debounce/lifecycle events.
+  autoSyncCurrentProject?: boolean;
 }
 
 interface CloudProjectRecord {
@@ -135,6 +137,8 @@ interface CloudProjectSyncPlan {
     missingAssetIds?: string[];
   }>;
 }
+
+export type CloudProjectSyncStatus = 'saved' | 'pulled' | 'skipped' | 'error';
 
 function formatUploadSizeMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(3)} MB`;
@@ -329,6 +333,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     checkpointIntervalMs = 45_000,
     enableCloudProjectListQuery = false,
     backgroundSyncDebounceMs = 15_000,
+    autoSyncCurrentProject = true,
   } = options;
 
   const convex = useConvex();
@@ -348,7 +353,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   const isSyncingRef = useRef(false);
   const currentProjectIdRef = useRef(currentProjectId);
   const currentProjectRef = useRef<Project | null>(currentProject);
-  const inFlightProjectSyncRef = useRef(new Map<string, { signature: string; promise: Promise<boolean> }>());
+  const inFlightProjectSyncRef = useRef(new Map<string, { signature: string; promise: Promise<CloudProjectSyncStatus> }>());
   const payloadCacheRef = useRef(new Map<string, { updatedAt: number; payload: ProjectSyncPayload }>());
 
   currentProjectIdRef.current = currentProjectId;
@@ -376,7 +381,11 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   }, [convex]);
 
   const runProjectSyncSerially = useCallback(
-    async (projectId: string, signature: string, executor: () => Promise<boolean>): Promise<boolean> => {
+    async (
+      projectId: string,
+      signature: string,
+      executor: () => Promise<CloudProjectSyncStatus>,
+    ): Promise<CloudProjectSyncStatus> => {
       const existing = inFlightProjectSyncRef.current.get(projectId);
       if (existing) {
         if (existing.signature === signature) {
@@ -821,57 +830,6 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     return await syncProjectRevisionsFromCloud(localId, hydratedRevisions);
   }, [ensureAssetIdsAvailableLocally, getCloudRevisions, hydrateCloudRevisions]);
 
-  const syncProjectObjectToCloud = useCallback(
-    async (project: Project) => {
-      if (!enabled) {
-        return;
-      }
-      try {
-        const [payload, localRevisionState] = await Promise.all([
-          getCachedProjectSyncPayload(project),
-          getProjectRevisionSyncState(project.id),
-        ]);
-        const projectMetadata = toProjectSyncMetadata(payload);
-        const signature = `${buildProjectSyncSignature(projectMetadata)}|${buildRevisionSyncSignature(localRevisionState)}`;
-
-        await runProjectSyncSerially(project.id, signature, async () => {
-          const outcome = await syncPayloadToCloud(payload);
-          if (outcome === 'pull') {
-            console.warn(`[CloudSync] Skipped pushing in-memory project "${project.id}" because cloud has a newer copy.`);
-            return false;
-          }
-          if (outcome === 'error') {
-            return false;
-          }
-
-          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
-            projectMetadata,
-            localRevisionState,
-          );
-          if (revisionIdsToUpload.length > 0) {
-            await syncProjectRevisionsToCloud(project.id, revisionIdsToUpload, plannedMissingAssetIds);
-          }
-          if (shouldPullFromCloud) {
-            await reconcileProjectRevisionsFromCloud(project.id);
-          }
-
-          return true;
-        });
-      } catch (error) {
-        console.error('[CloudSync] Failed to sync in-memory project:', error);
-      }
-    },
-    [
-      enabled,
-      getCachedProjectSyncPayload,
-      prepareRevisionSyncPlan,
-      reconcileProjectRevisionsFromCloud,
-      runProjectSyncSerially,
-      syncPayloadToCloud,
-      syncProjectRevisionsToCloud,
-    ],
-  );
-
   const runWithRetry = useCallback(async (fn: () => Promise<void>, attempts = 2) => {
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -948,6 +906,60 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       return false;
     }
   }, [cloudProjects, convex, ensureCloudProjectAssetsLocally, getCloudRevisions, hydrateCloudRevisions]);
+
+  const syncProjectObjectToCloud = useCallback(
+    async (project: Project) => {
+      if (!enabled) {
+        return 'skipped' as const;
+      }
+      try {
+        const [payload, localRevisionState] = await Promise.all([
+          getCachedProjectSyncPayload(project),
+          getProjectRevisionSyncState(project.id),
+        ]);
+        const projectMetadata = toProjectSyncMetadata(payload);
+        const signature = `${buildProjectSyncSignature(projectMetadata)}|${buildRevisionSyncSignature(localRevisionState)}`;
+
+        return await runProjectSyncSerially(project.id, signature, async () => {
+          const outcome = await syncPayloadToCloud(payload);
+          if (outcome === 'pull') {
+            await reconcileProjectFromCloud(project.id);
+            console.warn(`[CloudSync] Skipped pushing in-memory project "${project.id}" because cloud has a newer copy.`);
+            return 'pulled' as const;
+          }
+          if (outcome === 'error') {
+            return 'error' as const;
+          }
+
+          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
+            projectMetadata,
+            localRevisionState,
+          );
+          if (revisionIdsToUpload.length > 0) {
+            await syncProjectRevisionsToCloud(project.id, revisionIdsToUpload, plannedMissingAssetIds);
+          }
+          if (shouldPullFromCloud) {
+            await reconcileProjectRevisionsFromCloud(project.id);
+          }
+
+          return 'saved' as const;
+        });
+      } catch (error) {
+        console.error('[CloudSync] Failed to sync in-memory project:', error);
+        return 'error' as const;
+      }
+    },
+    [
+      enabled,
+      getCachedProjectSyncPayload,
+      prepareRevisionSyncPlan,
+      reconcileProjectFromCloud,
+      reconcileProjectRevisionsFromCloud,
+      runProjectSyncSerially,
+      syncPayloadToCloud,
+      syncProjectRevisionsToCloud,
+    ],
+  );
 
   // Sync all local projects to cloud
   const syncAllToCloud = useCallback(async () => {
@@ -1037,25 +1049,25 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   // Sync a single project to cloud by local project id
   const syncProjectToCloud = useCallback(
     async (projectId: string) => {
-      if (!enabled) return false;
+      if (!enabled) return 'skipped' as const;
       try {
         const [projectMetadata, localRevisionState] = await Promise.all([
           getProjectSyncMetadata(projectId),
           getProjectRevisionSyncState(projectId),
         ]);
-        if (!projectMetadata) return false;
+        if (!projectMetadata) return 'skipped' as const;
         const signature = `${buildProjectSyncSignature(projectMetadata)}|${buildRevisionSyncSignature(localRevisionState)}`;
 
         return await runProjectSyncSerially(projectId, signature, async () => {
           const projectPlanResult = await planSync(projectMetadata, []);
           if (projectPlanResult.project.action === 'pull') {
             await reconcileProjectFromCloud(projectId);
-            return false;
+            return 'pulled' as const;
           }
 
           if (projectPlanResult.project.action === 'upload') {
             const project = await getProjectForSync(projectId);
-            if (!project) return false;
+            if (!project) return 'skipped' as const;
 
             console.log(`[CloudSync] Syncing project "${project.name}" to cloud...`);
             await ensureAssetIdsInCloud(
@@ -1068,7 +1080,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
             if (result.action === 'skipped' && result.reason !== 'already in sync') {
               await reconcileProjectFromCloud(projectId);
-              return false;
+              return 'pulled' as const;
             }
           }
 
@@ -1083,11 +1095,11 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             await reconcileProjectRevisionsFromCloud(projectId);
           }
 
-          return true;
+          return 'saved' as const;
         });
       } catch (error) {
         console.error('[CloudSync] Failed to sync project:', error);
-        return false;
+        return 'error' as const;
       }
     },
     [
@@ -1297,7 +1309,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   // Debounced background sync from the latest in-memory edit timestamp.
   useEffect(() => {
-    if (!enabled || !isDirty || backgroundSyncDebounceMs <= 0) {
+    if (!autoSyncCurrentProject || !enabled || !isDirty || backgroundSyncDebounceMs <= 0) {
       return;
     }
 
@@ -1322,6 +1334,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
     return () => window.clearTimeout(timeoutId);
   }, [
+    autoSyncCurrentProject,
     backgroundSyncDebounceMs,
     currentProject?.id,
     currentProject?.updatedAt,
@@ -1334,7 +1347,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
 
   // Sync current project on unmount (in-app navigation)
   useEffect(() => {
-    if (!enabled || !syncOnUnmount) {
+    if (!autoSyncCurrentProject || !enabled || !syncOnUnmount) {
       return;
     }
 
@@ -1350,11 +1363,11 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         void syncProjectToCloud(projectId);
       }
     };
-  }, [enabled, syncOnUnmount, syncProjectObjectToCloud, syncProjectToCloud]);
+  }, [autoSyncCurrentProject, enabled, syncOnUnmount, syncProjectObjectToCloud, syncProjectToCloud]);
 
   // Periodic authenticated checkpoints while local state is dirty.
   useEffect(() => {
-    if (!enabled || !isDirty || checkpointIntervalMs <= 0) {
+    if (!autoSyncCurrentProject || !enabled || !isDirty || checkpointIntervalMs <= 0) {
       return;
     }
 
@@ -1372,11 +1385,11 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     }, checkpointIntervalMs);
 
     return () => window.clearInterval(intervalId);
-  }, [checkpointIntervalMs, enabled, isDirty, syncProjectObjectToCloud, syncProjectToCloud]);
+  }, [autoSyncCurrentProject, checkpointIntervalMs, enabled, isDirty, syncProjectObjectToCloud, syncProjectToCloud]);
 
   // Fire-and-forget flush for page lifecycle changes without anonymous beacon route.
   useEffect(() => {
-    if (!enabled || !isDirty) {
+    if (!autoSyncCurrentProject || !enabled || !isDirty) {
       return;
     }
 
@@ -1405,7 +1418,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       window.removeEventListener('pagehide', flushCurrentProject);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [enabled, isDirty, syncProjectObjectToCloud, syncProjectToCloud]);
+  }, [autoSyncCurrentProject, enabled, isDirty, syncProjectObjectToCloud, syncProjectToCloud]);
 
   const isProjectInCloud = useCallback(
     (projectId: string) => {
@@ -1420,6 +1433,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     syncAllToCloud,
     syncAllFromCloud,
     syncAllBidirectional,
+    syncProjectDraftToCloud: syncProjectObjectToCloud,
     syncProjectToCloud,
     syncProjectFromCloud: reconcileProjectFromCloud,
     deleteProjectFromCloud,

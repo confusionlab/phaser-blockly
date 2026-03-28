@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { ProductMenu } from '@/components/layout/ProductMenu';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
@@ -9,10 +11,15 @@ interface EditorTopBarProps {
   isDarkMode: boolean;
   projectName: string | null;
   projectNameDisabled?: boolean;
+  cloudSaveStatusLabel?: string | null;
+  cloudSaveStatusTone?: 'default' | 'error';
+  saveNowDisabled?: boolean;
+  saveNowBusy?: boolean;
   onExportProject: () => void;
   onGoToDashboard: () => void;
   onOpenHistory: () => void;
   onProjectNameCommit: (name: string) => void;
+  onSaveNow: () => void;
   onToggleTheme: () => void;
 }
 
@@ -21,10 +28,15 @@ export function EditorTopBar({
   isDarkMode,
   projectName,
   projectNameDisabled = false,
+  cloudSaveStatusLabel = null,
+  cloudSaveStatusTone = 'default',
+  saveNowDisabled = false,
+  saveNowBusy = false,
   onExportProject,
   onGoToDashboard,
   onOpenHistory,
   onProjectNameCommit,
+  onSaveNow,
   onToggleTheme,
 }: EditorTopBarProps) {
   const inputId = useId();
@@ -249,7 +261,31 @@ export function EditorTopBar({
           ) : null}
         </div>
 
-        <div aria-hidden="true" />
+        <div className="flex min-w-0 items-center justify-end gap-3">
+          {hasProject && cloudSaveStatusLabel ? (
+            <div
+              className={cn(
+                'hidden max-w-[260px] truncate text-xs sm:block',
+                cloudSaveStatusTone === 'error' ? 'text-destructive' : 'text-muted-foreground',
+              )}
+            >
+              {cloudSaveStatusLabel}
+            </div>
+          ) : null}
+
+          {hasProject ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={saveNowDisabled}
+              onClick={onSaveNow}
+            >
+              {saveNowBusy ? <Loader2 className="animate-spin" /> : null}
+              Save Now
+            </Button>
+          ) : null}
+        </div>
       </div>
     </div>
   );

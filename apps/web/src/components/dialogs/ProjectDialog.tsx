@@ -8,10 +8,8 @@ import {
   loadProject,
   deleteProject,
   downloadProject,
-  getProjectSyncMetadata,
   importProjectFromFile,
   saveProject,
-  type ProjectSyncMetadata,
 } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import {
@@ -40,69 +38,6 @@ interface ProjectListItem {
   updatedAt: Date;
 }
 
-type CloudProjectSummary = {
-  localId: string;
-  updatedAt: number;
-  schemaVersion: number;
-  contentHash?: string;
-};
-
-function normalizeSchemaVersion(version: number | string | undefined): number {
-  if (typeof version === 'number' && Number.isFinite(version) && version >= 1) {
-    return Math.floor(version);
-  }
-  if (typeof version === 'string') {
-    const parsed = Number.parseFloat(version);
-    if (Number.isFinite(parsed) && parsed >= 1) {
-      return Math.floor(parsed);
-    }
-  }
-  return 1;
-}
-
-function normalizeContentHash(hash: string | undefined): string {
-  return typeof hash === 'string' ? hash.trim().toLowerCase() : '';
-}
-
-function shouldPullProjectBeforeOpen(
-  cloudProject: CloudProjectSummary | null,
-  localProject: ProjectSyncMetadata | null,
-): boolean {
-  if (!cloudProject) {
-    return false;
-  }
-
-  if (!localProject) {
-    return true;
-  }
-
-  const cloudSchemaVersion = normalizeSchemaVersion(cloudProject.schemaVersion);
-  const localSchemaVersion = normalizeSchemaVersion(localProject.schemaVersion);
-  if (localSchemaVersion < cloudSchemaVersion) {
-    return true;
-  }
-
-  const cloudHash = normalizeContentHash(cloudProject.contentHash);
-  const localHash = normalizeContentHash(localProject.contentHash);
-  if (localSchemaVersion === cloudSchemaVersion && cloudHash && localHash && cloudHash === localHash) {
-    return false;
-  }
-
-  if (cloudProject.updatedAt > localProject.updatedAt) {
-    return true;
-  }
-
-  if (cloudProject.updatedAt < localProject.updatedAt) {
-    return false;
-  }
-
-  if (localSchemaVersion !== cloudSchemaVersion) {
-    return cloudSchemaVersion > localSchemaVersion;
-  }
-
-  return !!(cloudHash && localHash && cloudHash > localHash);
-}
-
 export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: ProjectDialogProps) {
   const { project: currentProject, newProject, openProject } = useProjectStore();
   const { selectScene } = useEditorStore();
@@ -122,7 +57,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   });
   const cloudProjectSummaries = useQuery(
     api.projects.list,
-    mode === 'page' && isConvexAuthenticated ? {} : 'skip',
+    isConvexAuthenticated ? {} : 'skip',
   );
 
   const loadProjectsList = useCallback(async () => {
@@ -177,14 +112,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const handleOpenProject = async (projectId: string) => {
     setLoading(true);
     try {
-      const cloudProject = mode === 'page'
-        ? (cloudProjectSummaries?.find((project) => project.localId === projectId) ?? null)
-        : null;
-      const localProjectMetadata = mode === 'page'
-        ? await getProjectSyncMetadata(projectId)
-        : null;
-
-      if (mode === 'page' && shouldPullProjectBeforeOpen(cloudProject, localProjectMetadata)) {
+      if (mode === 'page') {
         await syncProjectFromCloud(projectId);
       }
 
@@ -209,25 +137,30 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
 
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm('Are you sure you want to delete this project?')) {
-      const deletedInCloud = await deleteProjectFromCloud(projectId);
-      if (mode === 'page') {
-        if (deletedInCloud) {
-          await deleteProject(projectId);
-        }
-        return;
-      }
-
-      if (!deletedInCloud) {
-        await syncAllFromCloud({ pruneLocal: false });
-        await loadProjectsList();
-        return;
-      }
-
-      await deleteProject(projectId);
-      await syncAllFromCloud({ pruneLocal: false });
-      await loadProjectsList();
+    if (!confirm('Are you sure you want to delete this project?')) {
+      return;
     }
+
+    const cloudProjectExists = !!cloudProjectSummaries?.some((project) => project.localId === projectId);
+    if (isConvexAuthenticated && cloudProjectSummaries === undefined) {
+      alert('Cloud project list is still loading. Please try deleting again in a moment.');
+      return;
+    }
+
+    if (cloudProjectExists) {
+      const deletedInCloud = await deleteProjectFromCloud(projectId);
+      if (!deletedInCloud) {
+        alert('Could not delete the cloud project. Please try again.');
+        return;
+      }
+    }
+
+    await deleteProject(projectId);
+
+    if (isConvexAuthenticated) {
+      await syncAllFromCloud({ pruneLocal: false });
+    }
+    await loadProjectsList();
   };
 
   const handleExportProject = async (projectId: string, e: React.MouseEvent) => {
@@ -317,7 +250,7 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
                 variant="ghost"
                 size="icon-sm"
                 onClick={(e) => handleExportProject(proj.id, e)}
-                title="Export project"
+                title="Download to computer"
               >
                 <Download className="size-4" />
               </Button>

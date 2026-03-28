@@ -68,6 +68,7 @@ interface ProjectStore {
   newProject: (name: string) => void;
   openProject: (project: Project) => void;
   saveCurrentProject: () => Promise<void>;
+  acknowledgeProjectSaved: (project: Project) => boolean;
   closeProject: () => void;
   updateProjectName: (name: string) => void;
   updateProjectSettings: (settings: Partial<Project['settings']>) => void;
@@ -622,6 +623,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     const savedProject = await saveProject(project);
     set({ project: normalizeProject(savedProject), isDirty: false });
+  },
+
+  acknowledgeProjectSaved: (project: Project) => {
+    const currentProject = get().project;
+    if (!currentProject) {
+      return false;
+    }
+
+    if (
+      currentProject.id !== project.id
+      || currentProject.updatedAt.getTime() !== project.updatedAt.getTime()
+    ) {
+      return false;
+    }
+
+    const normalizedProject = normalizeProject(project);
+    seedUpdatedAt(normalizedProject);
+    set({ project: normalizedProject, isDirty: false });
+    return true;
   },
 
   closeProject: () => {

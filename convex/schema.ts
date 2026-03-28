@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
 
 // Project data schema version. Keep aligned with src/db/database.ts.
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 // Physics config validator
 const physicsValidator = v.object({

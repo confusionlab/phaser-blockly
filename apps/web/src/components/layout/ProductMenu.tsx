@@ -222,8 +222,8 @@ export function ProductMenu({
           {
             kind: 'action',
             id: 'export-project',
-            label: 'Export Project',
-            keywords: ['download', 'backup', 'zip'],
+            label: 'Download to Computer',
+            keywords: ['download', 'backup', 'export', 'computer'],
             onSelect: onExportProject,
           },
           {
