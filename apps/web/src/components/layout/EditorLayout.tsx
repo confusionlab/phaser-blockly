@@ -17,6 +17,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {
   CURRENT_SCHEMA_VERSION,
+  createProjectConflictCopy,
   createAutoCheckpoint,
   downloadProject,
   loadProject,
@@ -42,6 +43,7 @@ type CloudSaveState = {
 
 const ASSISTANT_UI_ENABLED = assistantFeatureFlags.isEnabled;
 const UNSAVED_CLOUD_CHANGES_MESSAGE = 'Changes are not yet saved to cloud.';
+const CLOUD_PULL_CONFLICT_MESSAGE = 'Newer cloud changes are available. Click Save Now to load them.';
 
 function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
@@ -119,6 +121,8 @@ export function EditorLayout() {
   } = useProjectLease(leaseProjectId);
   const isProjectLeaseBlocking = !!leaseProjectId && leaseStatus !== 'active' && leaseStatus !== 'idle';
   const isCloudWriteEnabled = !leaseProjectId || isWriteAllowed;
+  const currentCloudSavedVersionMs = project ? (lastCloudSavedVersionRef.current.get(project.id) ?? null) : null;
+  const isCurrentVersionCloudSaved = !!project && currentCloudSavedVersionMs === project.updatedAt.getTime();
 
   // The editor treats cloud save as authoritative and uses IndexedDB as a synced cache.
   const { syncProjectDraftToCloud, syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
@@ -166,8 +170,7 @@ export function EditorLayout() {
       return;
     }
 
-    if (!isDirty) {
-      lastCloudSavedVersionRef.current.set(project.id, updatedAtMs);
+    if (isCurrentVersionCloudSaved) {
       setCloudSaveState({
         status: 'saved',
         lastSavedAt: updatedAtMs,
@@ -181,7 +184,7 @@ export function EditorLayout() {
       lastSavedAt: lastCloudSavedVersionRef.current.get(project.id) ?? null,
       errorMessage: null,
     });
-  }, [cloudSaveState.status, isDirty, project]);
+  }, [cloudSaveState.status, isCurrentVersionCloudSaved, project]);
 
   useEffect(() => {
     if (!activeProjectId || !isCloudWriteEnabled) return;
@@ -195,11 +198,11 @@ export function EditorLayout() {
     return () => window.clearInterval(intervalId);
   }, [activeProjectId, isCloudWriteEnabled]);
 
-  const hasUnsavedCloudChanges = !!project && (isDirty || isSyncingCloud || cloudSaveState.status === 'error');
+  const hasUnsavedCloudChanges = !!project && (!isCurrentVersionCloudSaved || isSyncingCloud || cloudSaveState.status === 'error');
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!project || !isCloudWriteEnabled || isBlockingCloudSyncRef.current || !hasUnsavedCloudChanges) {
+      if (!project || isBlockingCloudSyncRef.current || !hasUnsavedCloudChanges) {
         return;
       }
 
@@ -209,7 +212,7 @@ export function EditorLayout() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [hasUnsavedCloudChanges, isCloudWriteEnabled, project]);
+  }, [hasUnsavedCloudChanges, project]);
 
   // Keep ref in sync for use in event handler
   useEffect(() => {
@@ -316,6 +319,7 @@ export function EditorLayout() {
   const finishCloudSync = useCallback(async (
     projectSnapshot: Project,
     result: CloudProjectSyncStatus,
+    options: { allowPullIntoEditor?: boolean } = {},
   ): Promise<boolean> => {
     if (result === 'saved') {
       const savedAt = await persistCloudSavedProject(projectSnapshot);
@@ -337,7 +341,26 @@ export function EditorLayout() {
       if (refreshedProject) {
         const refreshedUpdatedAtMs = refreshedProject.updatedAt.getTime();
         lastCloudSavedVersionRef.current.set(refreshedProject.id, refreshedUpdatedAtMs);
-        if (useProjectStore.getState().project?.id === refreshedProject.id) {
+
+        const currentProject = useProjectStore.getState().project;
+        if (!options.allowPullIntoEditor) {
+          setCloudSaveState({
+            status: 'error',
+            lastSavedAt: refreshedUpdatedAtMs,
+            errorMessage: CLOUD_PULL_CONFLICT_MESSAGE,
+          });
+          return false;
+        }
+
+        if (
+          currentProject
+          && currentProject.id === refreshedProject.id
+          && currentProject.updatedAt.getTime() !== refreshedUpdatedAtMs
+        ) {
+          await createProjectConflictCopy(currentProject);
+        }
+
+        if (currentProject?.id === refreshedProject.id) {
           openProject(refreshedProject);
         }
         setCloudSaveState({
@@ -346,11 +369,12 @@ export function EditorLayout() {
           errorMessage: null,
         });
       } else {
-        setCloudSaveState({
-          status: 'saved',
-          lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
-          errorMessage: null,
-        });
+        setCloudSaveState((current) => ({
+          status: 'error',
+          lastSavedAt: current.lastSavedAt,
+          errorMessage: 'Could not load the latest cloud version.',
+        }));
+        return false;
       }
       return true;
     }
@@ -391,7 +415,7 @@ export function EditorLayout() {
 
   const syncCurrentProjectToCloud = useCallback(async (
     projectSnapshot: Project,
-    options: { showBlockingOverlay?: boolean } = {},
+    options: { showBlockingOverlay?: boolean; allowPullIntoEditor?: boolean } = {},
   ): Promise<boolean> => {
     if (!isCloudWriteEnabled) {
       setCloudSaveState((current) => ({
@@ -421,7 +445,9 @@ export function EditorLayout() {
 
     try {
       const result = await syncProjectDraftToCloud(projectSnapshot);
-      return await finishCloudSync(projectSnapshot, result);
+      return await finishCloudSync(projectSnapshot, result, {
+        allowPullIntoEditor: options.allowPullIntoEditor,
+      });
     } finally {
       const inFlight = inFlightCloudSaveRef.current;
       if (
@@ -455,6 +481,19 @@ export function EditorLayout() {
   }, [isCloudWriteEnabled, isDirty, project, syncCurrentProjectToCloud]);
 
   useEffect(() => {
+    if (!project || isDirty || isCurrentVersionCloudSaved || !isCloudWriteEnabled) {
+      return;
+    }
+
+    const projectSnapshot = project;
+    const timeoutId = window.setTimeout(() => {
+      void syncCurrentProjectToCloud(projectSnapshot);
+    }, 1_000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isCloudWriteEnabled, isCurrentVersionCloudSaved, isDirty, project, syncCurrentProjectToCloud]);
+
+  useEffect(() => {
     if (!project || !isDirty || !isCloudWriteEnabled) {
       return;
     }
@@ -480,7 +519,10 @@ export function EditorLayout() {
     const shouldBlockForSync = !!projectSnapshot && hasUnsavedCloudChanges;
 
     if (projectSnapshot && shouldBlockForSync) {
-      const synced = await syncCurrentProjectToCloud(projectSnapshot, { showBlockingOverlay: true });
+      const synced = await syncCurrentProjectToCloud(projectSnapshot, {
+        showBlockingOverlay: true,
+        allowPullIntoEditor: true,
+      });
       if (!synced) {
         alert('Cloud save failed. Please try Save Now again before leaving.');
         return;
@@ -509,7 +551,7 @@ export function EditorLayout() {
       return;
     }
 
-    const synced = await syncCurrentProjectToCloud(project);
+    const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
     if (!synced) {
       alert('Cloud save failed. Please try Save Now again.');
     }

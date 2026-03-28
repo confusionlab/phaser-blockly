@@ -1155,6 +1155,23 @@ export async function saveProject(project: Project): Promise<Project> {
   return hydratedProject;
 }
 
+export async function createProjectConflictCopy(project: Project): Promise<Project> {
+  const conflictSuffix = project.updatedAt.getTime().toString(16).padStart(8, '0').slice(-8);
+  const conflictId = `${project.id}-conflict-${conflictSuffix}`;
+  const existingConflict = await loadProject(conflictId);
+  if (existingConflict) {
+    return existingConflict;
+  }
+
+  const timestampLabel = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const conflictProject = structuredClone(project);
+  conflictProject.id = conflictId;
+  conflictProject.name = `${project.name} (Conflict ${timestampLabel})`;
+  conflictProject.updatedAt = new Date();
+
+  return await saveProject(conflictProject);
+}
+
 export async function loadProject(id: string): Promise<Project | null> {
   const record = await db.projects.get(id);
   if (!record) return null;

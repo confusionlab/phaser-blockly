@@ -136,4 +136,25 @@ test.describe('project revision deltas', () => {
     expect(afterRename.revisionCount).toBe(beforeRename.revisionCount);
     expect(afterRename.revisionsUpdatedAt).toBeGreaterThan(beforeRename.revisionsUpdatedAt ?? 0);
   });
+
+  test('creates a stable conflict copy for the same project version', async () => {
+    const {
+      createProjectConflictCopy,
+      listProjects,
+      saveProject,
+    } = await loadDatabaseModules();
+
+    let project = createDefaultProject('Conflict Copy Fixture');
+    project = await saveProject(project);
+
+    const firstConflict = await createProjectConflictCopy(project);
+    const secondConflict = await createProjectConflictCopy(project);
+    const projects = await listProjects();
+
+    expect(firstConflict.id).toBe(secondConflict.id);
+    expect(firstConflict.id).toMatch(/-conflict-[0-9a-f]{8}$/);
+    expect(firstConflict.id).not.toBe(project.id);
+    expect(firstConflict.name).toContain('Conflict');
+    expect(projects.filter((entry) => entry.id === firstConflict.id)).toHaveLength(1);
+  });
 });
