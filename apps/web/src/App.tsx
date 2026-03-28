@@ -64,12 +64,18 @@ function SignedOutScreen() {
   );
 }
 
-function AuthenticatedShell() {
+function AppShell({
+  authBootstrapState = 'steady',
+  isAuthenticated = true,
+}: {
+  authBootstrapState?: 'steady' | 'reconnecting';
+  isAuthenticated?: boolean;
+}) {
   const { user } = useUser();
   const previousUserIdRef = useRef<string | null>(null);
   const location = useLocation();
   const setDarkMode = useEditorStore((state) => state.setDarkMode);
-  const userSettings = useQuery(api.userSettings.getMySettings, user ? {} : 'skip');
+  const userSettings = useQuery(api.userSettings.getMySettings, isAuthenticated && user ? {} : 'skip');
 
   useEffect(() => {
     const nextUserId = user?.id ?? null;
@@ -91,13 +97,13 @@ function AuthenticatedShell() {
 
   return (
     <div className="app-shell h-full">
-      {user && isHomeRoute ? (
+      {isAuthenticated && user && isHomeRoute ? (
         <div className="fixed right-4 top-3 z-[100300]">
           <UserButton />
         </div>
       ) : null}
       <Routes>
-        <Route path="/" element={<ProjectExplorerLayout />} />
+        <Route path="/" element={<ProjectExplorerLayout authBootstrapState={authBootstrapState} />} />
         <Route path="/project/:projectId" element={<EditorLayout />} />
       </Routes>
       {(location.pathname === '/' || location.pathname.startsWith('/project/')) ? <DebugPanel /> : null}
@@ -109,15 +115,6 @@ function PreparingAuthenticationScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
       Preparing authentication...
-    </div>
-  );
-}
-
-function WarmProjectExplorerShell() {
-  return (
-    <div className="app-shell h-full">
-      <ProjectExplorerLayout authBootstrapState="reconnecting" />
-      <DebugPanel />
     </div>
   );
 }
@@ -158,7 +155,7 @@ function AuthGate() {
     isLoading,
     pathname: location.pathname,
   })) {
-    return <WarmProjectExplorerShell />;
+    return <AppShell authBootstrapState="reconnecting" isAuthenticated={false} />;
   }
 
   if (isLoading) {
@@ -169,12 +166,12 @@ function AuthGate() {
     return <SignedOutScreen />;
   }
 
-  return <AuthenticatedShell />;
+  return <AppShell isAuthenticated />;
 }
 
 function App() {
   if (E2E_AUTH_BYPASS) {
-    return <AuthenticatedShell />;
+    return <AppShell isAuthenticated />;
   }
 
   return <AuthGate />;
