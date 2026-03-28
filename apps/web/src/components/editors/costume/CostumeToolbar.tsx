@@ -204,6 +204,7 @@ const floatingToolButtonBaseClass =
 const floatingToolButtonActiveClass =
   '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
 const toolbarPopupSideOffset = 10;
+const noop = () => {};
 
 const FloatingToolButton = memo(({
   tool,
@@ -250,6 +251,7 @@ interface ToolbarColorControlProps {
   openMenu: ToolbarMenuId | null;
   onMenuOpenChange: (menu: ToolbarMenuId, open: boolean) => void;
   onColorChange: (color: string) => void;
+  onColorCommit?: () => void;
   labelDisplay?: 'none' | 'left';
 }
 
@@ -260,10 +262,21 @@ const ToolbarColorControl = memo(({
   openMenu,
   onMenuOpenChange,
   onColorChange,
+  onColorCommit,
   labelDisplay = 'left',
 }: ToolbarColorControlProps) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const isOpen = openMenu === menuId;
+  const hasPendingCommitRef = useRef(false);
+
+  const commitPendingColorChange = useCallback(() => {
+    if (!hasPendingCommitRef.current) {
+      return;
+    }
+
+    hasPendingCommitRef.current = false;
+    onColorCommit?.();
+  }, [onColorCommit]);
 
   const handleColorChange = useCallback((nextValue: Parameters<typeof Color.rgb>[0]) => {
     const resolved = resolveColorPickerValue(nextValue);
@@ -271,8 +284,26 @@ const ToolbarColorControl = memo(({
       return;
     }
 
+    hasPendingCommitRef.current = true;
     onColorChange(resolved);
   }, [onColorChange]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handlePointerEnd = () => {
+      commitPendingColorChange();
+    };
+
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
+    };
+  }, [commitPendingColorChange, isOpen]);
 
   return (
     <>
@@ -284,7 +315,12 @@ const ToolbarColorControl = memo(({
           ref={buttonRef}
           type="button"
           className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent/60"
-          onClick={() => onMenuOpenChange(menuId, !isOpen)}
+          onClick={() => {
+            if (isOpen) {
+              commitPendingColorChange();
+            }
+            onMenuOpenChange(menuId, !isOpen);
+          }}
           title={label}
           aria-label={label}
           aria-expanded={isOpen}
@@ -301,7 +337,10 @@ const ToolbarColorControl = memo(({
       <AnchoredPopupSurface
         open={isOpen}
         anchorRef={buttonRef}
-        onClose={() => onMenuOpenChange(menuId, false)}
+        onClose={() => {
+          commitPendingColorChange();
+          onMenuOpenChange(menuId, false);
+        }}
         side="top"
         align="center"
         sideOffset={toolbarPopupSideOffset}
@@ -332,6 +371,7 @@ interface ToolbarPreviewSliderProps {
   max: number;
   step?: number;
   onValueChange: (value: number) => void;
+  onValueCommit?: (value: number) => void;
   preview: React.ReactNode;
   labelDisplay?: 'left' | 'none';
   className?: string;
@@ -347,6 +387,7 @@ const ToolbarPreviewSlider = memo(({
   max,
   step = 1,
   onValueChange,
+  onValueCommit,
   preview,
   labelDisplay = 'left',
   className,
@@ -384,7 +425,10 @@ const ToolbarPreviewSlider = memo(({
           className={cn('relative flex h-4 w-full touch-none items-center', sliderClassName)}
           value={[value]}
           onValueChange={([nextValue]) => onValueChange(nextValue)}
-          onValueCommit={() => setIsPreviewVisible(false)}
+          onValueCommit={([nextValue]) => {
+            setIsPreviewVisible(false);
+            onValueCommit?.(nextValue);
+          }}
           onPointerDownCapture={() => setIsPreviewVisible(true)}
           onFocusCapture={() => setIsPreviewVisible(true)}
           onBlurCapture={() => setIsPreviewVisible(false)}
@@ -562,6 +606,7 @@ interface CostumeToolbarProps {
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
+  onActiveStyleCommit?: () => void;
   onBitmapBrushKindChange: (kind: BitmapBrushKind) => void;
   onBrushSizeChange: (size: number) => void;
   onBitmapFillStyleChange: (updates: Partial<BitmapFillStyle>) => void;
@@ -688,6 +733,7 @@ export const CostumeToolbar = memo(({
   onAlign,
   alignDisabled,
   onColorChange,
+  onActiveStyleCommit = noop,
   onBitmapBrushKindChange,
   onBrushSizeChange,
   onBitmapFillStyleChange,
@@ -936,6 +982,7 @@ export const CostumeToolbar = memo(({
                       openMenu={openMenu}
                       onMenuOpenChange={handleMenuOpenChange}
                       onColorChange={onColorChange}
+                      onColorCommit={onActiveStyleCommit}
                       labelDisplay="none"
                     />
                   )}
@@ -1057,6 +1104,7 @@ export const CostumeToolbar = memo(({
                           openMenu={openMenu}
                           onMenuOpenChange={handleMenuOpenChange}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          onColorCommit={onActiveStyleCommit}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1076,7 +1124,10 @@ export const CostumeToolbar = memo(({
                           <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
                             <DropdownMenuRadioGroup
                               value={vectorStyle.strokeBrushId}
-                              onValueChange={(strokeBrushId) => onVectorStyleChange({ strokeBrushId: strokeBrushId as VectorStrokeBrushId })}
+                              onValueChange={(strokeBrushId) => {
+                                onVectorStyleChange({ strokeBrushId: strokeBrushId as VectorStrokeBrushId });
+                                onActiveStyleCommit();
+                              }}
                             >
                               {VECTOR_STROKE_BRUSH_OPTIONS.map((option) => (
                                 <DropdownMenuRadioItem key={option.value} value={option.value}>
@@ -1089,6 +1140,7 @@ export const CostumeToolbar = memo(({
                         <ToolbarPreviewSlider
                           value={vectorStyle.strokeWidth}
                           onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
+                          onValueCommit={onActiveStyleCommit}
                           min={0}
                           max={50}
                           labelDisplay="none"
@@ -1114,6 +1166,7 @@ export const CostumeToolbar = memo(({
                             openMenu={openMenu}
                             onMenuOpenChange={handleMenuOpenChange}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            onColorCommit={onActiveStyleCommit}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1133,7 +1186,10 @@ export const CostumeToolbar = memo(({
                             <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
                               <DropdownMenuRadioGroup
                                 value={vectorStyle.fillTextureId}
-                                onValueChange={(fillTextureId) => onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId })}
+                                onValueChange={(fillTextureId) => {
+                                  onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId });
+                                  onActiveStyleCommit();
+                                }}
                               >
                                 {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
                                   <DropdownMenuRadioItem key={option.value} value={option.value}>
@@ -1183,7 +1239,10 @@ export const CostumeToolbar = memo(({
                         <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
                           <DropdownMenuRadioGroup
                             value={textStyle.fontFamily}
-                            onValueChange={(fontFamily) => onTextStyleChange({ fontFamily })}
+                            onValueChange={(fontFamily) => {
+                              onTextStyleChange({ fontFamily });
+                              onActiveStyleCommit();
+                            }}
                           >
                             {fontFamilyOptions.map((family) => (
                               <DropdownMenuRadioItem key={family} value={family}>
@@ -1198,6 +1257,7 @@ export const CostumeToolbar = memo(({
                         label="Size"
                         value={textStyle.fontSize}
                         onValueChange={(fontSize) => onTextStyleChange({ fontSize })}
+                        onValueCommit={onActiveStyleCommit}
                         min={8}
                         max={120}
                         sliderClassName="w-16"
@@ -1236,21 +1296,30 @@ export const CostumeToolbar = memo(({
                         <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[156px]">
                           <DropdownMenuCheckboxItem
                             checked={textStyle.fontWeight === 'bold'}
-                            onCheckedChange={(checked) => onTextStyleChange({ fontWeight: checked ? 'bold' : 'normal' })}
+                            onCheckedChange={(checked) => {
+                              onTextStyleChange({ fontWeight: checked ? 'bold' : 'normal' });
+                              onActiveStyleCommit();
+                            }}
                             onSelect={(event) => event.preventDefault()}
                           >
                             B
                           </DropdownMenuCheckboxItem>
                           <DropdownMenuCheckboxItem
                             checked={textStyle.fontStyle === 'italic'}
-                            onCheckedChange={(checked) => onTextStyleChange({ fontStyle: checked ? 'italic' : 'normal' })}
+                            onCheckedChange={(checked) => {
+                              onTextStyleChange({ fontStyle: checked ? 'italic' : 'normal' });
+                              onActiveStyleCommit();
+                            }}
                             onSelect={(event) => event.preventDefault()}
                           >
                             I
                           </DropdownMenuCheckboxItem>
                           <DropdownMenuCheckboxItem
                             checked={textStyle.underline}
-                            onCheckedChange={(checked) => onTextStyleChange({ underline: checked === true })}
+                            onCheckedChange={(checked) => {
+                              onTextStyleChange({ underline: checked === true });
+                              onActiveStyleCommit();
+                            }}
                             onSelect={(event) => event.preventDefault()}
                           >
                             U
@@ -1276,7 +1345,10 @@ export const CostumeToolbar = memo(({
                         <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
                           <DropdownMenuRadioGroup
                             value={textStyle.textAlign}
-                            onValueChange={(textAlign) => onTextStyleChange({ textAlign: textAlign as TextToolStyle['textAlign'] })}
+                            onValueChange={(textAlign) => {
+                              onTextStyleChange({ textAlign: textAlign as TextToolStyle['textAlign'] });
+                              onActiveStyleCommit();
+                            }}
                           >
                             {textAlignOptions.map(({ value, label, Icon }) => (
                               <DropdownMenuRadioItem key={value} value={value}>
@@ -1304,6 +1376,7 @@ export const CostumeToolbar = memo(({
                           openMenu={openMenu}
                           onMenuOpenChange={handleMenuOpenChange}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          onColorCommit={onActiveStyleCommit}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1323,7 +1396,10 @@ export const CostumeToolbar = memo(({
                           <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
                             <DropdownMenuRadioGroup
                               value={vectorStyle.strokeBrushId}
-                              onValueChange={(strokeBrushId) => onVectorStyleChange({ strokeBrushId: strokeBrushId as VectorStrokeBrushId })}
+                              onValueChange={(strokeBrushId) => {
+                                onVectorStyleChange({ strokeBrushId: strokeBrushId as VectorStrokeBrushId });
+                                onActiveStyleCommit();
+                              }}
                             >
                               {VECTOR_STROKE_BRUSH_OPTIONS.map((option) => (
                                 <DropdownMenuRadioItem key={option.value} value={option.value}>
@@ -1336,6 +1412,7 @@ export const CostumeToolbar = memo(({
                         <ToolbarPreviewSlider
                           value={vectorStyle.strokeWidth}
                           onValueChange={(strokeWidth) => onVectorStyleChange({ strokeWidth })}
+                          onValueCommit={onActiveStyleCommit}
                           min={0}
                           max={50}
                           labelDisplay="none"
@@ -1361,6 +1438,7 @@ export const CostumeToolbar = memo(({
                             openMenu={openMenu}
                             onMenuOpenChange={handleMenuOpenChange}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            onColorCommit={onActiveStyleCommit}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1380,7 +1458,10 @@ export const CostumeToolbar = memo(({
                             <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[148px]">
                               <DropdownMenuRadioGroup
                                 value={vectorStyle.fillTextureId}
-                                onValueChange={(fillTextureId) => onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId })}
+                                onValueChange={(fillTextureId) => {
+                                  onVectorStyleChange({ fillTextureId: fillTextureId as VectorFillTextureId });
+                                  onActiveStyleCommit();
+                                }}
                               >
                                 {VECTOR_FILL_TEXTURE_OPTIONS.map((option) => (
                                   <DropdownMenuRadioItem key={option.value} value={option.value}>

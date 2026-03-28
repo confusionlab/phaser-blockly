@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { ActiveSelection, Point, util, type Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
 import { getCanvas2dContext } from '@/utils/canvas2d';
@@ -144,6 +144,17 @@ export function useCostumeCanvasCommandController({
   vectorStyle,
   waitForFabricCanvas,
 }: UseCostumeCanvasCommandControllerOptions) {
+  const hasPendingActiveStyleChangeRef = useRef(false);
+
+  const commitActiveStyleChanges = useCallback(() => {
+    if (!hasPendingActiveStyleChangeRef.current) {
+      return;
+    }
+
+    hasPendingActiveStyleChangeRef.current = false;
+    saveHistory();
+  }, [saveHistory]);
+
   const getComposedCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     const hostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId;
@@ -828,14 +839,15 @@ export function useCostumeCanvasCommandController({
 
     if (!changed) return;
 
+    hasPendingActiveStyleChangeRef.current = true;
     activeObject.setCoords?.();
     fabricCanvas.requestRenderAll();
-    saveHistory();
-  }, [brushColorRef, editorModeRef, fabricCanvasRef, saveHistory, textStyle, vectorStyle]);
+  }, [brushColorRef, editorModeRef, fabricCanvasRef, textStyle, vectorStyle]);
 
   return {
     alignSelection,
     applyFill,
+    commitActiveStyleChanges,
     deleteSelection,
     duplicateSelection,
     exportCostumeState,

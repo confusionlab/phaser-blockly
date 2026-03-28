@@ -99,6 +99,7 @@ export interface CostumeCanvasHandle {
 }
 
 interface CostumeCanvasProps {
+  activeStyleCommitRequest: number;
   costumeDocument: CostumeDocument | null;
   initialEditorMode: CostumeEditorMode;
   isVisible: boolean;
@@ -131,6 +132,7 @@ interface CostumeCanvasProps {
 }
 
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
+  activeStyleCommitRequest,
   costumeDocument,
   initialEditorMode,
   isVisible,
@@ -564,6 +566,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const {
     alignSelection,
     applyFill,
+    commitActiveStyleChanges,
     deleteSelection,
     duplicateSelection,
     exportCostumeState,
@@ -861,9 +864,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorPointEditingTargetRef,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     syncActiveVectorStyle();
   }, [brushColor, textStyle, vectorStyle, syncActiveVectorStyle]);
+
+  useEffect(() => {
+    if (activeStyleCommitRequest <= 0) {
+      return;
+    }
+
+    commitActiveStyleChanges();
+  }, [activeStyleCommitRequest, commitActiveStyleChanges]);
 
   useCostumeCanvasBitmapSelectionController({
     activeTool,

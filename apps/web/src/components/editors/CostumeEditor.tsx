@@ -314,6 +314,7 @@ export function CostumeEditor() {
   const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
   const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
+  const [activeStyleCommitRequest, setActiveStyleCommitRequest] = useState(0);
 
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -1713,6 +1714,10 @@ export function CostumeEditor() {
     updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: newCollider });
   }, [isCanvasReadyForSession, updateObject]);
 
+  const requestActiveStyleCommit = useCallback(() => {
+    setActiveStyleCommitRequest((prev) => prev + 1);
+  }, []);
+
   const handleUndo = useCallback(() => {
     void navigateDocumentHistory('undo');
   }, [navigateDocumentHistory]);
@@ -1767,6 +1772,7 @@ export function CostumeEditor() {
             onAlign={handleAlign}
             alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
             onColorChange={setBrushColor}
+            onActiveStyleCommit={requestActiveStyleCommit}
             onBitmapBrushKindChange={setBitmapBrushKind}
             onBrushSizeChange={setBrushSize}
             onBitmapFillStyleChange={handleBitmapFillStyleChange}
@@ -1779,6 +1785,7 @@ export function CostumeEditor() {
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <CostumeCanvas
             ref={canvasRef}
+            activeStyleCommitRequest={activeStyleCommitRequest}
             costumeDocument={editorCostume?.document ?? null}
             initialEditorMode={initialEditorMode}
             isVisible={activeObjectTab === 'costumes'}
