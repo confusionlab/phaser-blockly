@@ -66,6 +66,44 @@ export function useCostumeCanvasBitmapLayerController({
     return clone;
   }, []);
 
+  const waitForFabricRenderFlush = useCallback((fabricCanvas: FabricCanvas): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let fallbackFrameId = 0;
+      let fallbackFrameId2 = 0;
+
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        fabricCanvas.off('after:render', handleAfterRender);
+        if (fallbackFrameId) {
+          window.cancelAnimationFrame(fallbackFrameId);
+        }
+        if (fallbackFrameId2) {
+          window.cancelAnimationFrame(fallbackFrameId2);
+        }
+        resolve();
+      };
+
+      const handleAfterRender = () => {
+        finish();
+      };
+
+      fabricCanvas.on('after:render', handleAfterRender);
+      fallbackFrameId = window.requestAnimationFrame(() => {
+        fallbackFrameId2 = window.requestAnimationFrame(() => {
+          finish();
+        });
+      });
+    });
+  }, []);
+
   const applyBitmapLayerSource = useCallback((
     source: HTMLImageElement | HTMLCanvasElement | null,
     selectable: boolean,
@@ -250,6 +288,7 @@ export function useCostumeCanvasBitmapLayerController({
           return;
         }
         saveHistory();
+        await waitForFabricRenderFlush(fabricCanvas);
       })
       .catch((error) => {
         console.error('Failed to commit bitmap raster mutation:', error);
@@ -265,6 +304,7 @@ export function useCostumeCanvasBitmapLayerController({
     fabricCanvasRef,
     getReusableBitmapImage,
     saveHistory,
+    waitForFabricRenderFlush,
   ]);
 
   const flattenBitmapLayer = useCallback(async (commitObject?: any) => {

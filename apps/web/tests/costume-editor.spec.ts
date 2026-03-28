@@ -266,6 +266,54 @@ async function readHostedLayerInkSamples(page: Page): Promise<number> {
   });
 }
 
+async function observeVisibleHostedLayerInkTimeline(page: Page, frameCount = 36): Promise<number[]> {
+  return await page.evaluate((frames) => {
+    return new Promise<number[]>((resolve) => {
+      const lowerCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
+      const upperCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .upper-canvas');
+      if (!(lowerCanvas instanceof HTMLCanvasElement)) {
+        resolve([]);
+        return;
+      }
+
+      const sampleCanvas = (canvas: HTMLCanvasElement | null): number => {
+        if (!canvas) {
+          return 0;
+        }
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          return 0;
+        }
+
+        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        let opaqueSamples = 0;
+        for (let index = 3; index < data.length; index += 4 * 193) {
+          if ((data[index] ?? 0) > 0) {
+            opaqueSamples += 1;
+          }
+        }
+        return opaqueSamples;
+      };
+
+      const timeline: number[] = [];
+      const captureFrame = () => {
+        const lowerHidden = lowerCanvas.style.opacity === '0';
+        const visibleCanvas = lowerHidden && upperCanvas instanceof HTMLCanvasElement
+          ? upperCanvas
+          : lowerCanvas;
+        timeline.push(sampleCanvas(visibleCanvas));
+        if (timeline.length >= frames) {
+          resolve(timeline);
+          return;
+        }
+        window.requestAnimationFrame(captureFrame);
+      };
+
+      window.requestAnimationFrame(captureFrame);
+    });
+  }, frameCount);
+}
+
 async function readCurrentCostumeDocumentSignature(page: Page): Promise<string | null> {
   return page.evaluate(async () => {
     const { useProjectStore } = await import('/src/store/projectStore.ts');
@@ -363,6 +411,35 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(beforeEraseSamples);
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('eraser commit does not flash back to the stale hosted layer image', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.16, 0.16, 0.60, 0.60);
+    const beforeEraseSamples = await readHostedLayerInkSamples(page);
+    expect(beforeEraseSamples).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    const timelinePromise = observeVisibleHostedLayerInkTimeline(page);
+    await drawAcrossCostumeCanvas(page, 0.20, 0.30, 0.56, 0.30);
+    const timeline = await timelinePromise;
+
+    const finalHostedSamples = await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeLessThan(beforeEraseSamples).then(async () => {
+      return await readHostedLayerInkSamples(page);
+    });
+
+    expect(timeline.length).toBeGreaterThan(0);
+    const settleThreshold = finalHostedSamples + 2;
+    const reboundThreshold = finalHostedSamples + Math.max(6, Math.floor((beforeEraseSamples - finalHostedSamples) * 0.45));
+    const firstSettledIndex = timeline.findIndex((value) => value <= settleThreshold);
+    const reboundDetected = firstSettledIndex >= 0
+      && timeline.slice(firstSettledIndex + 1).some((value) => value >= reboundThreshold);
+
+    expect(reboundDetected).toBe(false);
   });
 
   test('rapid bitmap stroke undo and redo keep editor and persisted costume state aligned', async ({ page }) => {

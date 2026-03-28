@@ -50,30 +50,6 @@ function drawPreviewSourceToContext(
   ctx.restore();
 }
 
-function renderFabricObjectOntoCanvas(
-  sourceCanvas: HTMLCanvasElement,
-  object: { objectCaching?: boolean; render?: (ctx: CanvasRenderingContext2D) => void } | null | undefined,
-): boolean {
-  if (!object || typeof object.render !== 'function') {
-    return false;
-  }
-
-  const ctx = sourceCanvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) {
-    return false;
-  }
-
-  const previousObjectCaching = object.objectCaching;
-  object.objectCaching = false;
-  try {
-    object.render(ctx);
-  } finally {
-    object.objectCaching = previousObjectCaching;
-  }
-
-  return true;
-}
-
 function getEraserPreviewSourceCanvas(fabricCanvas: FabricCanvas): HTMLCanvasElement | null {
   const liveLowerCanvas = (fabricCanvas as unknown as { lowerCanvasEl?: HTMLCanvasElement }).lowerCanvasEl;
   if (liveLowerCanvas) {
@@ -109,7 +85,6 @@ export class CompositePencilBrush extends PencilBrush {
   private deferredPreviewCanvas: HTMLCanvasElement | null = null;
   private deferredPreviewToken = 0;
   private activeStrokePreviewToken: number | null = null;
-  private lastCreatedPath: { render?: (ctx: CanvasRenderingContext2D) => void } | null = null;
   private previewSourceWasHidden = false;
   private previousLowerCanvasOpacity = '';
 
@@ -172,7 +147,6 @@ export class CompositePencilBrush extends PencilBrush {
     if (this.compositeOperation === 'destination-out') {
       this.deferredPreviewToken += 1;
       this.activeStrokePreviewToken = this.deferredPreviewToken;
-      this.lastCreatedPath = null;
     }
 
     return super.onMouseDown(pointer, { e });
@@ -197,16 +171,12 @@ export class CompositePencilBrush extends PencilBrush {
       }
     }
 
-    const previewSource = cloneCanvasElement(this.getPreviewSourceCanvas());
+    const previewSource = cloneCanvasElement(this.canvas.contextTop.canvas as HTMLCanvasElement | null);
     const previewToken = this.activeStrokePreviewToken;
-    this.lastCreatedPath = null;
     const result = super.onMouseUp(eventData);
     this.activeStrokePreviewToken = null;
 
-    if (
-      previewSource &&
-      renderFabricObjectOntoCanvas(previewSource, this.lastCreatedPath)
-    ) {
+    if (previewSource) {
       this.deferredPreviewCanvas = previewSource;
       this.syncDeferredPreviewToTop();
       this.setPreviewSourceHidden(true);
@@ -222,7 +192,6 @@ export class CompositePencilBrush extends PencilBrush {
     path.set('globalCompositeOperation', this.compositeOperation);
     if (this.compositeOperation === 'destination-out') {
       (path as any).__bitmapDeferredPreviewToken = this.activeStrokePreviewToken;
-      this.lastCreatedPath = path;
     }
     return path;
   }
@@ -343,25 +312,15 @@ export class BitmapStampBrush extends BaseBrush {
     const strokeCanvas = this.strokeCanvas;
     const alphaThreshold = this.stampDefinition.alphaThreshold;
     const previewSource = this.compositeOperation === 'destination-out'
-      ? cloneCanvasElement(this.getPreviewSourceCanvas())
+      ? cloneCanvasElement(this.canvas.contextTop.canvas as HTMLCanvasElement | null)
       : null;
     const previewToken = this.activeStrokePreviewToken;
     this.resetStrokeState();
 
-    if (this.compositeOperation === 'destination-out' && previewSource && strokeCanvas) {
-      const previewCtx = previewSource.getContext('2d', { willReadFrequently: true });
-      if (previewCtx) {
-        previewCtx.save();
-        previewCtx.globalCompositeOperation = this.compositeOperation;
-        previewCtx.drawImage(strokeCanvas, 0, 0);
-        previewCtx.restore();
-        this.deferredPreviewCanvas = previewSource;
-        this.syncDeferredPreviewToTop();
-        this.setPreviewSourceHidden(true);
-      } else {
-        this.canvas.clearContext(this.canvas.contextTop);
-        this.setPreviewSourceHidden(false);
-      }
+    if (this.compositeOperation === 'destination-out' && previewSource) {
+      this.deferredPreviewCanvas = previewSource;
+      this.syncDeferredPreviewToTop();
+      this.setPreviewSourceHidden(true);
     } else {
       this.canvas.clearContext(this.canvas.contextTop);
       this.setPreviewSourceHidden(false);
