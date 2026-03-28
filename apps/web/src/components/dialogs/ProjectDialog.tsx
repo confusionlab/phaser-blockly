@@ -5,6 +5,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {
   listProjects,
+  getStoredProjectCacheInfo,
   loadProject,
   deleteProject,
   downloadProject,
@@ -119,13 +120,24 @@ export function ProjectDialog({
     setLoading(true);
     try {
       let hydratedFromCloud = false;
+      let cloudMissingBackedProject = false;
       if (mode === 'page') {
-        hydratedFromCloud = await syncProjectFromCloud(projectId);
+        const cloudPull = await syncProjectFromCloud(projectId);
+        hydratedFromCloud = cloudPull.changed;
+        if (cloudPull.status === 'missing') {
+          const cacheInfo = await getStoredProjectCacheInfo(projectId);
+          cloudMissingBackedProject = cacheInfo.cloudBacked;
+        }
+      }
+
+      if (cloudMissingBackedProject) {
+        return;
       }
 
       let project = await loadProject(projectId);
-      if (!project && mode === 'page') {
-        hydratedFromCloud = (await syncProjectFromCloud(projectId)) || hydratedFromCloud;
+      if (!project && mode === 'page' && !cloudMissingBackedProject) {
+        const cloudPull = await syncProjectFromCloud(projectId);
+        hydratedFromCloud = cloudPull.changed || hydratedFromCloud;
         project = await loadProject(projectId);
       }
 

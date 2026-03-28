@@ -49,6 +49,10 @@ import {
   type ProjectExplorerProjectMeta,
   type ProjectExplorerState,
 } from '@/lib/projectExplorer';
+import type {
+  ManagedAssetLocator,
+  ProjectCatalogLocalProjectSummary,
+} from '@/lib/projectExplorerCatalog';
 import {
   computeProjectThumbnailVisualSignature,
   renderProjectThumbnail,
@@ -77,6 +81,7 @@ interface ProjectRecordV1 {
 interface ProjectRecord extends ProjectRecordV1 {
   schemaVersion: number;
   appVersion?: string;
+  cloudBacked?: boolean;
   contentHash?: string;
   assetIds?: string[];
   revisionCount?: number;
@@ -186,6 +191,11 @@ export interface ProjectExplorerProjectSummary {
   thumbnailAssetId: string | null;
   thumbnailStale: boolean;
   thumbnailUrl: string | null;
+}
+
+export interface LocalProjectCatalogSnapshot {
+  explorerState: ProjectExplorerState;
+  projects: ProjectCatalogLocalProjectSummary[];
 }
 
 function normalizeSchemaVersion(version: unknown): number {
@@ -1269,6 +1279,9 @@ async function toProjectRecord(
   project: Project,
   updatedAt: Date = new Date(),
   existingRecord: ProjectRecord | null = null,
+  options: {
+    cloudBacked?: boolean;
+  } = {},
 ): Promise<ProjectRecord> {
   const { id: _id, name: _name, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = project;
   const { projectData, assetRefs } = await normalizeProjectAssetsForStorage(rest);
@@ -1281,6 +1294,7 @@ async function toProjectRecord(
     data,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     appVersion: APP_VERSION,
+    cloudBacked: options.cloudBacked ?? existingRecord?.cloudBacked ?? false,
     contentHash: computeContentHash(data),
     assetIds: assetRefs.map((assetRef) => assetRef.assetId),
   }, getProjectRevisionSyncStateFromRecord(existingRecord));
@@ -1416,8 +1430,17 @@ export const db = new Proxy(dbProxyTarget, {
 // Project Repository
 
 export async function saveProject(project: Project): Promise<Project> {
+  return await saveProjectWithOptions(project);
+}
+
+export async function saveProjectWithOptions(
+  project: Project,
+  options: {
+    cloudBacked?: boolean;
+  } = {},
+): Promise<Project> {
   const existing = await db.projects.get(project.id);
-  const record = await toProjectRecord(project, new Date(project.updatedAt), existing ?? null);
+  const record = await toProjectRecord(project, new Date(project.updatedAt), existing ?? null, options);
   await db.projects.put(record);
   await ensureStoredProjectExplorerProjectMeta(project.id, {
     createdAt: project.createdAt.getTime(),
@@ -1430,6 +1453,16 @@ export async function saveProject(project: Project): Promise<Project> {
   await garbageCollectManagedAssets(touchedAssetIds);
   const { project: hydratedProject } = await deserializeProjectFromRecord(record);
   return hydratedProject;
+}
+
+export async function markStoredProjectAsCloudBacked(projectId: string, cloudBacked: boolean = true): Promise<boolean> {
+  const existing = await db.projects.get(projectId);
+  if (!existing || existing.cloudBacked === cloudBacked) {
+    return false;
+  }
+
+  await db.projects.update(projectId, { cloudBacked });
+  return true;
 }
 
 export async function createProjectConflictCopy(project: Project): Promise<Project> {
@@ -1510,6 +1543,62 @@ export async function deleteProject(id: string): Promise<void> {
 
 export async function loadProjectExplorerState(): Promise<ProjectExplorerState> {
   return await loadProjectExplorerStateInternal();
+}
+
+export async function loadStoredProjectExplorerStateSnapshot(): Promise<ProjectExplorerState> {
+  const record = await db.projectExplorerState.get(PROJECT_EXPLORER_RECORD_ID);
+  return parseProjectExplorerStateRecord(record);
+}
+
+export async function getLocalProjectCatalogSnapshot(): Promise<LocalProjectCatalogSnapshot> {
+  const [explorerState, projectRecords] = await Promise.all([
+    loadStoredProjectExplorerStateSnapshot(),
+    db.projects.toArray(),
+  ]);
+
+  const projects = projectRecords.map((record) => {
+    let currentThumbnailVisualSignature: string | null = null;
+    try {
+      const parsedData = JSON.parse(record.data) as Omit<Project, 'id' | 'name' | 'createdAt' | 'updatedAt'>;
+      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(parsedData);
+    } catch {
+      currentThumbnailVisualSignature = null;
+    }
+
+    return {
+      id: record.id,
+      name: record.name,
+      createdAt: record.createdAt.getTime(),
+      updatedAt: record.updatedAt.getTime(),
+      cloudBacked: record.cloudBacked ?? false,
+      currentThumbnailVisualSignature,
+    } satisfies ProjectCatalogLocalProjectSummary;
+  });
+
+  return {
+    explorerState,
+    projects,
+  };
+}
+
+export async function getManagedAssetLocators(assetIds: readonly string[]): Promise<ManagedAssetLocator[]> {
+  const uniqueAssetIds = Array.from(new Set(assetIds.filter((assetId) => assetId.trim().length > 0)));
+  return await Promise.all(uniqueAssetIds.map(async (assetId) => {
+    const exists = await hasManagedAsset(assetId);
+    return {
+      assetId,
+      exists,
+      url: exists ? await resolveManagedAssetUrl(assetId) : null,
+    };
+  }));
+}
+
+export async function getStoredProjectCacheInfo(projectId: string): Promise<{ exists: boolean; cloudBacked: boolean }> {
+  const record = await db.projects.get(projectId);
+  return {
+    exists: !!record,
+    cloudBacked: record?.cloudBacked ?? false,
+  };
 }
 
 export async function listProjectExplorerData(): Promise<{
@@ -3236,6 +3325,7 @@ export async function syncProjectFromCloud(cloudProject: {
     updatedAt: new Date(incomingProject.updatedAt),
     schemaVersion: migrated ? CURRENT_SCHEMA_VERSION : cloudSchemaVersion,
     appVersion: cloudProject.appVersion,
+    cloudBacked: true,
     contentHash: normalizeContentHash(cloudProject.contentHash) ?? computeContentHash(serializedIncomingData),
     assetIds: Array.from(
       new Set(

@@ -19,8 +19,9 @@ import {
   createProjectConflictCopy,
   createAutoCheckpoint,
   downloadProject,
+  getStoredProjectCacheInfo,
   loadProject,
-  saveProject,
+  saveProjectWithOptions,
 } from '@/db/database';
 import {
   useCloudSync,
@@ -347,10 +348,15 @@ export function EditorLayout() {
       if (!project || project.id !== projectId) {
         setIsLoading(true);
         try {
-          const hydratedFromCloud = await syncProjectFromCloud(projectId);
+          const cloudPull = await syncProjectFromCloud(projectId);
+          const cacheInfo = await getStoredProjectCacheInfo(projectId);
+          if (cloudPull.status === 'missing' && cacheInfo.cloudBacked) {
+            navigate('/', { replace: true });
+            return;
+          }
           const loadedProject = await loadProject(projectId);
           if (loadedProject) {
-            if (hydratedFromCloud) {
+            if (cloudPull.changed) {
               markProjectAsCloudSaved(loadedProject);
             }
             openProject(loadedProject);
@@ -383,7 +389,7 @@ export function EditorLayout() {
 
   const persistCloudSavedProject = useCallback(async (projectSnapshot: Project) => {
     try {
-      const cachedProject = await saveProject(projectSnapshot);
+      const cachedProject = await saveProjectWithOptions(projectSnapshot, { cloudBacked: true });
       const cachedUpdatedAtMs = cachedProject.updatedAt.getTime();
       lastCloudSavedVersionRef.current.set(cachedProject.id, cachedUpdatedAtMs);
       acknowledgeProjectSaved(cachedProject);
@@ -516,10 +522,15 @@ export function EditorLayout() {
     }
 
     try {
-      const hydratedFromCloud = await syncProjectFromCloud(leaseProjectId);
+      const cloudPull = await syncProjectFromCloud(leaseProjectId);
+      const cacheInfo = await getStoredProjectCacheInfo(leaseProjectId);
+      if (cloudPull.status === 'missing' && cacheInfo.cloudBacked) {
+        navigate('/', { replace: true });
+        return;
+      }
       const refreshedProject = await loadProject(leaseProjectId);
       if (refreshedProject) {
-        if (hydratedFromCloud) {
+        if (cloudPull.changed) {
           markProjectAsCloudSaved(refreshedProject);
         }
         openProject(refreshedProject);
@@ -527,7 +538,7 @@ export function EditorLayout() {
     } catch (error) {
       console.error('[ProjectLease] Failed to refresh project after takeover:', error);
     }
-  }, [leaseProjectId, markProjectAsCloudSaved, openProject, syncProjectFromCloud, takeOverLease]);
+  }, [leaseProjectId, markProjectAsCloudSaved, navigate, openProject, syncProjectFromCloud, takeOverLease]);
 
   const syncCurrentProjectToCloud = useCallback(async (
     projectSnapshot: Project,

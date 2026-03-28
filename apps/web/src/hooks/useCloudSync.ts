@@ -15,10 +15,11 @@ import {
   getProjectRevisionsForSync,
   getProjectSyncMetadata,
   hasManagedAsset,
+  markStoredProjectAsCloudBacked,
   pruneLocalProjectsNotInCloud,
   storeManagedAsset,
   syncProjectExplorerStateFromCloud,
-  syncProjectFromCloud,
+  syncProjectFromCloud as syncProjectRecordFromCloud,
   syncProjectRevisionsFromCloud,
   type ManagedAssetKind,
   type ProjectExplorerSyncPayload,
@@ -168,6 +169,11 @@ interface CloudProjectSyncBatchMutationResult {
 }
 
 export type CloudProjectSyncStatus = 'saved' | 'pulled' | 'skipped' | 'error';
+export type CloudProjectPullResult = {
+  changed: boolean;
+  found: boolean;
+  status: 'updated' | 'unchanged' | 'missing' | 'error';
+};
 export type CloudProjectUploadEvent = {
   projectId: string;
   updatedAt: number;
@@ -1066,7 +1072,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     [ensureAssetIdsAvailableLocally, ensureSerializedAssetsAvailableLocally],
   );
 
-  const reconcileProjectFromCloud = useCallback(async (localId: string): Promise<boolean> => {
+  const reconcileProjectFromCloud = useCallback(async (localId: string): Promise<CloudProjectPullResult> => {
     let candidate = cloudProjects
       ? dedupeCloudProjectsByLocalId(cloudProjects as CloudProjectRecord[]).find(
           (project) => project.localId === localId,
@@ -1081,12 +1087,20 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         }
       } catch (error) {
         console.error(`[CloudSync] Failed to fetch cloud project "${localId}":`, error);
-        return false;
+        return {
+          changed: false,
+          found: false,
+          status: 'error',
+        };
       }
     }
 
     if (!candidate) {
-      return false;
+      return {
+        changed: false,
+        found: false,
+        status: 'missing',
+      };
     }
 
     try {
@@ -1095,23 +1109,39 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         const revisionRecords = await getCloudRevisions(localId);
         const hydratedRevisions = await hydrateCloudRevisions(revisionRecords);
         await ensureCloudProjectAssetsLocally(data, hydratedRevisions);
-        await syncProjectFromCloud({
+        const projectSyncResult = await syncProjectRecordFromCloud({
           ...candidate,
           data,
         });
-        await syncProjectRevisionsFromCloud(localId, hydratedRevisions);
+        const revisionSyncResult = await syncProjectRevisionsFromCloud(localId, hydratedRevisions);
+        return {
+          changed: projectSyncResult.action !== 'skipped' || revisionSyncResult.created > 0 || revisionSyncResult.updated > 0,
+          found: true,
+          status:
+            projectSyncResult.action !== 'skipped' || revisionSyncResult.created > 0 || revisionSyncResult.updated > 0
+              ? 'updated'
+              : 'unchanged',
+        };
       } catch (error) {
         console.error(`[CloudSync] Failed to sync revisions from cloud for "${localId}":`, error);
         await ensureCloudProjectAssetsLocally(data);
-        await syncProjectFromCloud({
+        const projectSyncResult = await syncProjectRecordFromCloud({
           ...candidate,
           data,
         });
+        return {
+          changed: projectSyncResult.action !== 'skipped',
+          found: true,
+          status: projectSyncResult.action !== 'skipped' ? 'updated' : 'unchanged',
+        };
       }
-      return true;
     } catch (error) {
       console.error(`[CloudSync] Failed to reconcile local project "${localId}" from cloud:`, error);
-      return false;
+      return {
+        changed: false,
+        found: true,
+        status: 'error',
+      };
     }
   }, [cloudProjects, convex, ensureCloudProjectAssetsLocally, getCloudRevisions, hydrateCloudRevisions]);
 
@@ -1357,6 +1387,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             if (shouldPullFromCloud) {
               await reconcileProjectRevisionsFromCloud(projectId);
             }
+            await markStoredProjectAsCloudBacked(projectId);
             return 'saved' as const;
           }
 
@@ -1371,6 +1402,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             await reconcileProjectRevisionsFromCloud(projectId);
           }
 
+          await markStoredProjectAsCloudBacked(projectId);
           return 'saved' as const;
         });
       } catch (error) {
@@ -1424,7 +1456,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
               const revisionRecords = await getCloudRevisions(cloudProject.localId);
               const hydratedRevisions = await hydrateCloudRevisions(revisionRecords);
               await ensureCloudProjectAssetsLocally(data, hydratedRevisions);
-              const result = await syncProjectFromCloud({
+              const result = await syncProjectRecordFromCloud({
                 ...cloudProject,
                 data,
               });
@@ -1436,7 +1468,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             } catch (revisionError) {
               console.error(`[CloudSync] Failed to sync revisions for "${cloudProject.localId}":`, revisionError);
               await ensureCloudProjectAssetsLocally(data);
-              const result = await syncProjectFromCloud({
+              const result = await syncProjectRecordFromCloud({
                 ...cloudProject,
                 data,
               });
@@ -1585,7 +1617,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
               const revisionRecords = await getCloudRevisions(cloudProject.localId);
               const hydratedRevisions = await hydrateCloudRevisions(revisionRecords);
               await ensureCloudProjectAssetsLocally(data, hydratedRevisions);
-              await syncProjectFromCloud({
+              await syncProjectRecordFromCloud({
                 ...cloudProject,
                 data,
               });
@@ -1758,6 +1790,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     syncProjectExplorerToCloud,
     syncProjectExplorerFromCloud: reconcileProjectExplorerFromCloud,
     syncProjectDraftToCloud: syncProjectObjectToCloud,
+    ensureManagedAssetsAvailableLocally: ensureAssetIdsAvailableLocally,
     syncProjectToCloud,
     syncProjectFromCloud: reconcileProjectFromCloud,
     deleteProjectFromCloud,

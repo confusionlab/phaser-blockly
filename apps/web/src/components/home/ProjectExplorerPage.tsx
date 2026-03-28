@@ -22,8 +22,8 @@ import { useEditorStore } from '@/store/editorStore';
 import {
   createProjectFolder,
   ensureProjectThumbnail,
+  getStoredProjectCacheInfo,
   importProjectFromFile,
-  listProjectExplorerData,
   loadProject,
   moveProjectFolder,
   moveProjectToFolder,
@@ -34,10 +34,10 @@ import {
   saveProject,
   trashProjectFolder,
   trashProjectFromExplorer,
-  type ProjectExplorerFolderSummary,
-  type ProjectExplorerProjectSummary,
 } from '@/db/database';
+import { useProjectExplorerCatalog } from '@/hooks/useProjectExplorerCatalog';
 import { useCloudSync } from '@/hooks/useCloudSync';
+import type { ProjectExplorerCatalogFolderSummary } from '@/lib/projectExplorerCatalog';
 import { PROJECT_EXPLORER_ROOT_FOLDER_ID } from '@/lib/projectExplorer';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -66,6 +66,7 @@ type VisibleItem =
       kind: 'project';
       label: string;
       updatedAt: number;
+      thumbnailAssetMissing: boolean;
       thumbnailUrl: string | null;
       staleThumbnail: boolean;
     };
@@ -151,7 +152,7 @@ export function ProjectExplorerPage({
   const { newProject, openProject } = useProjectStore();
   const { selectScene } = useEditorStore();
   const {
-    syncAllFromCloud,
+    ensureManagedAssetsAvailableLocally,
     syncProjectExplorerToCloud,
     syncProjectFromCloud,
     syncProjectToCloud,
@@ -173,10 +174,11 @@ export function ProjectExplorerPage({
     }
     void syncProjectToCloud(projectId);
   }, [isConvexAuthenticated, syncProjectToCloud]);
-
-  const [folders, setFolders] = useState<ProjectExplorerFolderSummary[]>([]);
-  const [projects, setProjects] = useState<ProjectExplorerProjectSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const {
+    data: explorerCatalog,
+    isLoading,
+    refresh: refreshExplorer,
+  } = useProjectExplorerCatalog();
   const [isOpeningProjectId, setIsOpeningProjectId] = useState<string | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>(PROJECT_EXPLORER_ROOT_FOLDER_ID);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -193,37 +195,7 @@ export function ProjectExplorerPage({
   const [importError, setImportError] = useState<string | null>(null);
   const explorerListRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const refreshExplorer = useCallback(async () => {
-    const snapshot = await listProjectExplorerData();
-    setFolders(snapshot.folders);
-    setProjects(snapshot.projects);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      setIsLoading(true);
-      try {
-        await refreshExplorer();
-        if (isConvexAuthenticated) {
-          await syncAllFromCloud();
-          if (!cancelled) {
-            await refreshExplorer();
-          }
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConvexAuthenticated, refreshExplorer, syncAllFromCloud]);
+  const { folders, projects } = explorerCatalog;
 
   const activeFolders = useMemo(
     () => folders.filter((folder) => !folder.trashedAt),
@@ -262,9 +234,9 @@ export function ProjectExplorerPage({
       return [];
     }
 
-    const path: ProjectExplorerFolderSummary[] = [];
+    const path: ProjectExplorerCatalogFolderSummary[] = [];
     const visited = new Set<string>();
-    let cursor: ProjectExplorerFolderSummary | null = currentFolder;
+    let cursor: ProjectExplorerCatalogFolderSummary | null = currentFolder;
     while (cursor && !visited.has(cursor.id)) {
       path.unshift(cursor);
       visited.add(cursor.id);
@@ -304,6 +276,7 @@ export function ProjectExplorerPage({
         kind: 'project' as const,
         label: project.name,
         updatedAt: project.updatedAt.getTime(),
+        thumbnailAssetMissing: project.thumbnailAssetMissing,
         thumbnailUrl: project.thumbnailUrl,
         staleThumbnail: project.thumbnailStale,
       })),
@@ -341,6 +314,31 @@ export function ProjectExplorerPage({
     () => visibleProjects.filter((project) => project.thumbnailStale),
     [visibleProjects],
   );
+
+  const missingVisibleThumbnailAssetIds = useMemo(
+    () => visibleProjects
+      .filter((project) => project.thumbnailAssetMissing && !project.thumbnailStale && project.thumbnailAssetId)
+      .map((project) => project.thumbnailAssetId as string),
+    [visibleProjects],
+  );
+
+  useEffect(() => {
+    if (!isConvexAuthenticated || missingVisibleThumbnailAssetIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      await ensureManagedAssetsAvailableLocally(missingVisibleThumbnailAssetIds.slice(0, 8));
+      if (!cancelled) {
+        await refreshExplorer();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureManagedAssetsAvailableLocally, isConvexAuthenticated, missingVisibleThumbnailAssetIds, refreshExplorer]);
 
   useEffect(() => {
     if (staleVisibleProjects.length === 0) {
@@ -459,7 +457,13 @@ export function ProjectExplorerPage({
     setIsOpeningProjectId(projectId);
     setImportError(null);
     try {
-      const hydratedFromCloud = isConvexAuthenticated ? await syncProjectFromCloud(projectId) : false;
+      const cloudPull = isConvexAuthenticated
+        ? await syncProjectFromCloud(projectId)
+        : { changed: false, found: false, status: 'unchanged' as const };
+      const cacheInfo = await getStoredProjectCacheInfo(projectId);
+      if (cloudPull.status === 'missing' && cacheInfo.cloudBacked) {
+        return;
+      }
       const project = await loadProject(projectId);
       if (!project) {
         return;
@@ -469,7 +473,7 @@ export function ProjectExplorerPage({
       if (project.scenes.length > 0) {
         selectScene(project.scenes[0].id, { recordHistory: false });
       }
-      if (hydratedFromCloud) {
+      if (cloudPull.changed) {
         onProjectHydratedFromCloud?.(project);
       }
       onProjectOpen?.(project);
@@ -906,7 +910,7 @@ export function ProjectExplorerPage({
                               className="h-full w-full object-cover"
                               src={item.thumbnailUrl}
                             />
-                          ) : item.staleThumbnail ? (
+                          ) : item.staleThumbnail || item.thumbnailAssetMissing ? (
                             <Loader2 className="size-5 animate-spin text-slate-400" />
                           ) : (
                             <ImageOff className="size-5 text-slate-400" />
