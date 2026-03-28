@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
 
-import { doesLocalProjectMatchCloudHead } from '../src/lib/cloudProjectState';
+import {
+  doesLocalProjectMatchCloudHead,
+  shouldTreatOpenedProjectAsCloudSaved,
+} from '../src/lib/cloudProjectState';
 
 test.describe('cloud project state', () => {
   test('treats matching schema and content as already current', () => {
@@ -35,6 +38,26 @@ test.describe('cloud project state', () => {
         cloudSchemaVersion: 9,
         cloudContentHash: 'aaaaaaaaaaaaaaaa',
         migrated: true,
+      }),
+    ).toBe(false);
+  });
+
+  test('keeps an opened cloud cache marked as saved when cloud verification errors', () => {
+    expect(
+      shouldTreatOpenedProjectAsCloudSaved({
+        openedFromCloudCache: true,
+        matchesCloudHead: false,
+        pullStatus: 'error',
+      }),
+    ).toBe(true);
+  });
+
+  test('does not treat a newer local draft as already saved just because it came from cache', () => {
+    expect(
+      shouldTreatOpenedProjectAsCloudSaved({
+        openedFromCloudCache: true,
+        matchesCloudHead: false,
+        pullStatus: 'unchanged',
       }),
     ).toBe(false);
   });

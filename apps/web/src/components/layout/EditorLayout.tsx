@@ -22,8 +22,8 @@ import {
   ensureProjectThumbnail,
   getStoredProjectCacheInfo,
   loadProject,
+  persistProjectSnapshotWithOptions,
   recoverLegacyStoredProject,
-  saveProjectWithOptions,
 } from '@/db/database';
 import {
   useCloudSync,
@@ -36,6 +36,7 @@ import {
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
 import { assistantFeatureFlags } from '@/lib/assistant/config';
+import { shouldTreatOpenedProjectAsCloudSaved } from '@/lib/cloudProjectState';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { isBlocklyShortcutTarget, isTextEntryTarget } from '@/utils/keyboard';
@@ -79,6 +80,7 @@ const CLOUD_SYNC_PHASE_ORDER: CloudProjectSyncTimingPhase[] = [
   'uploadRevisions',
   'pullRevisions',
   'refreshLocalCache',
+  'refreshThumbnail',
 ];
 
 const CLOUD_SYNC_PHASE_LABELS: Record<CloudProjectSyncTimingPhase, string> = {
@@ -92,6 +94,7 @@ const CLOUD_SYNC_PHASE_LABELS: Record<CloudProjectSyncTimingPhase, string> = {
   uploadRevisions: 'upload revisions',
   pullRevisions: 'pull revisions',
   refreshLocalCache: 'refresh local cache',
+  refreshThumbnail: 'refresh thumbnail',
 };
 
 function formatSyncPhaseBreakdown(phaseDurationsMs: CloudProjectSyncPhaseDurations): string {
@@ -267,9 +270,12 @@ export function EditorLayout() {
     onProjectSyncMeasured: handleProjectSyncMeasured,
   });
 
-  const publishProjectThumbnailToCloud = useCallback(async (projectId: string) => {
+  const publishProjectThumbnailToCloud = useCallback(async (projectId: string, projectSnapshot?: Project) => {
     try {
-      const thumbnailResult = await ensureProjectThumbnail(projectId);
+      const thumbnailResult = await ensureProjectThumbnail(
+        projectId,
+        projectSnapshot ? { project: projectSnapshot } : undefined,
+      );
       if (thumbnailResult.changed && isCloudWriteEnabled) {
         await syncProjectExplorerToCloud();
       }
@@ -435,11 +441,15 @@ export function EditorLayout() {
               progress: 92,
               detail: 'Preparing editor…',
             });
-            if (cloudPull.matchesCloudHead) {
+            if (shouldTreatOpenedProjectAsCloudSaved({
+              openedFromCloudCache: cacheInfo.origin === 'cloudCache',
+              matchesCloudHead: cloudPull.matchesCloudHead,
+              pullStatus: cloudPull.status,
+            })) {
               markProjectAsCloudSaved(loadedProject);
             }
             if (cloudPull.changed) {
-              void publishProjectThumbnailToCloud(loadedProject.id);
+              void publishProjectThumbnailToCloud(loadedProject.id, loadedProject);
             }
             openProject(loadedProject);
           } else {
@@ -486,10 +496,13 @@ export function EditorLayout() {
 
   const persistCloudSavedProject = useCallback(async (projectSnapshot: Project) => {
     try {
-      const cachedProject = await saveProjectWithOptions(projectSnapshot, { storageOrigin: 'cloudCache' });
+      const cachedProject = await persistProjectSnapshotWithOptions(projectSnapshot, {
+        storageOrigin: 'cloudCache',
+        assetGcMode: 'deferred',
+      });
       const cachedUpdatedAtMs = cachedProject.updatedAt.getTime();
-      lastCloudSavedVersionRef.current.set(cachedProject.id, cachedUpdatedAtMs);
-      acknowledgeProjectSaved(cachedProject);
+      lastCloudSavedVersionRef.current.set(projectSnapshot.id, cachedUpdatedAtMs);
+      acknowledgeProjectSaved(projectSnapshot);
       return cachedUpdatedAtMs;
     } catch (error) {
       console.error('[CloudSync] Failed to refresh the local project cache after cloud save:', error);
@@ -508,8 +521,10 @@ export function EditorLayout() {
     if (result === 'saved') {
       const localCacheRefreshStartedAtMs = performance.now();
       const savedAt = await persistCloudSavedProject(projectSnapshot);
-      await publishProjectThumbnailToCloud(projectSnapshot.id);
       const localCacheRefreshMs = performance.now() - localCacheRefreshStartedAtMs;
+      const thumbnailRefreshStartedAtMs = performance.now();
+      await publishProjectThumbnailToCloud(projectSnapshot.id, projectSnapshot);
+      const thumbnailRefreshMs = performance.now() - thumbnailRefreshStartedAtMs;
       const currentProject = useProjectStore.getState().project;
       const currentUpdatedAtMs = currentProject?.id === projectSnapshot.id
         ? currentProject.updatedAt.getTime()
@@ -535,6 +550,7 @@ export function EditorLayout() {
           const phaseBreakdown = formatSyncPhaseBreakdown({
             ...(pendingSave.phaseDurationsMs ?? {}),
             refreshLocalCache: localCacheRefreshMs,
+            refreshThumbnail: thumbnailRefreshMs,
           });
           console.log(
             `[CloudSync] Saved project "${projectSnapshot.id}" (${sizeText}, ${formatSaveDuration(elapsedMs)} from Save click to Saved).`,
@@ -576,7 +592,7 @@ export function EditorLayout() {
         if (currentProject?.id === refreshedProject.id) {
           openProject(refreshedProject);
         }
-        await publishProjectThumbnailToCloud(refreshedProject.id);
+        await publishProjectThumbnailToCloud(refreshedProject.id, refreshedProject);
         setCloudSaveState({
           status: 'saved',
           lastSavedAt: refreshedUpdatedAtMs,
@@ -638,11 +654,15 @@ export function EditorLayout() {
       }
       const refreshedProject = await loadProject(leaseProjectId);
       if (refreshedProject) {
-        if (cloudPull.matchesCloudHead) {
+        if (shouldTreatOpenedProjectAsCloudSaved({
+          openedFromCloudCache: cacheInfo.origin === 'cloudCache',
+          matchesCloudHead: cloudPull.matchesCloudHead,
+          pullStatus: cloudPull.status,
+        })) {
           markProjectAsCloudSaved(refreshedProject);
         }
         if (cloudPull.changed) {
-          void publishProjectThumbnailToCloud(refreshedProject.id);
+          void publishProjectThumbnailToCloud(refreshedProject.id, refreshedProject);
         }
         openProject(refreshedProject);
       }

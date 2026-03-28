@@ -25,7 +25,7 @@ body {
 
 /* Shared editor chrome row height across the editor shell and side panels. */
 :root {
-  --editor-panel-header-height: 40px;
+  --editor-panel-header-height: 48px;
 }
 
 .app-shell {

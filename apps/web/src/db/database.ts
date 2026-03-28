@@ -95,6 +95,7 @@ interface ProjectRecord extends ProjectRecordV1 {
   storageOrigin?: StoredProjectOrigin;
   cloudBacked?: boolean;
   contentHash?: string;
+  thumbnailVisualSignature?: string | null;
   assetIds?: string[];
   revisionCount?: number;
   latestRevisionId?: string | null;
@@ -702,6 +703,24 @@ function getPersistedAssetIdsFromRecord(record: { assetIds?: string[] }, fallbac
   return [];
 }
 
+function computeThumbnailVisualSignatureFromProjectData(projectData: PersistedProjectData): string | null {
+  return computeProjectThumbnailVisualSignature(inflatePersistedProjectData(projectData));
+}
+
+function getProjectRecordThumbnailVisualSignature(
+  record: Pick<ProjectRecord, 'data' | 'thumbnailVisualSignature'>,
+): string | null {
+  if (record.thumbnailVisualSignature === null || typeof record.thumbnailVisualSignature === 'string') {
+    return record.thumbnailVisualSignature;
+  }
+
+  try {
+    return computeThumbnailVisualSignatureFromProjectData(parsePersistedProjectData(record.data));
+  } catch {
+    return null;
+  }
+}
+
 async function collectReferencedManagedAssetIdsForCandidates(
   candidateIds: Set<string>,
 ): Promise<Set<string>> {
@@ -804,6 +823,54 @@ async function garbageCollectManagedAssets(
   });
 
   return { deleted, markedOrphaned, restored };
+}
+
+let pendingDeferredManagedAssetGcIds = new Set<string>();
+let deferredManagedAssetGcTimer: ReturnType<typeof setTimeout> | null = null;
+let deferredManagedAssetGcInFlight: Promise<void> | null = null;
+
+function queueDeferredManagedAssetGcFlush(): void {
+  if (deferredManagedAssetGcTimer !== null) {
+    return;
+  }
+
+  deferredManagedAssetGcTimer = setTimeout(() => {
+    deferredManagedAssetGcTimer = null;
+    void flushDeferredManagedAssetGc();
+  }, 0);
+}
+
+function scheduleDeferredManagedAssetGc(touchedAssetIds: Iterable<string>): void {
+  for (const assetId of touchedAssetIds) {
+    if (isManagedAssetId(assetId)) {
+      pendingDeferredManagedAssetGcIds.add(assetId);
+    }
+  }
+
+  queueDeferredManagedAssetGcFlush();
+}
+
+async function flushDeferredManagedAssetGc(): Promise<void> {
+  if (deferredManagedAssetGcInFlight || pendingDeferredManagedAssetGcIds.size === 0) {
+    return;
+  }
+
+  const batch = pendingDeferredManagedAssetGcIds;
+  pendingDeferredManagedAssetGcIds = new Set<string>();
+  deferredManagedAssetGcInFlight = (async () => {
+    try {
+      await garbageCollectManagedAssets(batch);
+    } catch (error) {
+      console.error('[Assets] Deferred managed asset GC failed:', error);
+    } finally {
+      deferredManagedAssetGcInFlight = null;
+      if (pendingDeferredManagedAssetGcIds.size > 0) {
+        queueDeferredManagedAssetGcFlush();
+      }
+    }
+  })();
+
+  await deferredManagedAssetGcInFlight;
 }
 
 function rememberResolvedManagedAsset(assetId: string, source: string): void {
@@ -1382,6 +1449,7 @@ async function toProjectRecord(
     storageOrigin: nextOrigin,
     cloudBacked: isStoredProjectCloudBacked(nextOrigin),
     contentHash: computeContentHash(data),
+    thumbnailVisualSignature: computeProjectThumbnailVisualSignature(rest),
     assetIds: assetRefs.map((assetRef) => assetRef.assetId),
   }, getProjectRevisionSyncStateFromRecord(existingRecord));
 }
@@ -1519,15 +1587,18 @@ export async function saveProject(project: Project): Promise<Project> {
   return await saveProjectWithOptions(project);
 }
 
-export async function saveProjectWithOptions(
+export type PersistProjectOptions = {
+  storageOrigin?: Exclude<StoredProjectOrigin, 'legacyUnknown'>;
+  cloudBacked?: boolean;
+  assetGcMode?: 'sync' | 'deferred';
+};
+
+async function persistProjectRecord(
   project: Project,
-  options: {
-    storageOrigin?: Exclude<StoredProjectOrigin, 'legacyUnknown'>;
-    cloudBacked?: boolean;
-  } = {},
-): Promise<Project> {
-  const existing = await db.projects.get(project.id);
-  const record = await toProjectRecord(project, new Date(project.updatedAt), existing ?? null, options);
+  options: PersistProjectOptions = {},
+): Promise<ProjectRecord> {
+  const existingRecord = await db.projects.get(project.id);
+  const record = await toProjectRecord(project, new Date(project.updatedAt), existingRecord ?? null, options);
   await db.projects.put(record);
   await ensureStoredProjectExplorerProjectMeta(project.id, {
     createdAt: project.createdAt.getTime(),
@@ -1535,9 +1606,32 @@ export async function saveProjectWithOptions(
   });
   const touchedAssetIds = new Set<string>([
     ...getPersistedAssetIdsFromRecord(record, record.data),
-    ...getPersistedAssetIdsFromRecord(existing ?? {}, existing?.data),
+    ...getPersistedAssetIdsFromRecord(existingRecord ?? {}, existingRecord?.data),
   ]);
-  await garbageCollectManagedAssets(touchedAssetIds);
+  if (options.assetGcMode === 'deferred') {
+    scheduleDeferredManagedAssetGc(touchedAssetIds);
+  } else {
+    await garbageCollectManagedAssets(touchedAssetIds);
+  }
+  return record;
+}
+
+export async function persistProjectSnapshotWithOptions(
+  project: Project,
+  options: PersistProjectOptions = {},
+): Promise<{ projectId: string; updatedAt: Date }> {
+  const record = await persistProjectRecord(project, options);
+  return {
+    projectId: record.id,
+    updatedAt: new Date(record.updatedAt),
+  };
+}
+
+export async function saveProjectWithOptions(
+  project: Project,
+  options: PersistProjectOptions = {},
+): Promise<Project> {
+  const record = await persistProjectRecord(project, options);
   const { project: hydratedProject } = await deserializeProjectFromRecord(record);
   return hydratedProject;
 }
@@ -1662,24 +1756,13 @@ export async function getLocalProjectCatalogSnapshot(): Promise<LocalProjectCata
   ]);
 
   const projects = projectRecords.map((record) => {
-    let currentThumbnailVisualSignature: string | null = null;
-    try {
-      const parsedData = parsePersistedProjectData(record.data);
-      const runtimeProjectData = inflatePersistedProjectData(parsedData);
-      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(
-        runtimeProjectData,
-      );
-    } catch {
-      currentThumbnailVisualSignature = null;
-    }
-
     return {
       id: record.id,
       name: record.name,
       createdAt: record.createdAt.getTime(),
       updatedAt: record.updatedAt.getTime(),
       storageOrigin: getStoredProjectOrigin(record),
-      currentThumbnailVisualSignature,
+      currentThumbnailVisualSignature: getProjectRecordThumbnailVisualSignature(record),
     } satisfies ProjectCatalogLocalProjectSummary;
   });
 
@@ -1858,16 +1941,7 @@ export async function listProjectExplorerData(): Promise<{
         createdAt: record.createdAt.getTime(),
         updatedAt: record.updatedAt.getTime(),
       });
-    let currentThumbnailVisualSignature: string | null = null;
-    try {
-      const parsedData = parsePersistedProjectData(record.data);
-      const runtimeProjectData = inflatePersistedProjectData(parsedData);
-      currentThumbnailVisualSignature = computeProjectThumbnailVisualSignature(
-        runtimeProjectData,
-      );
-    } catch {
-      currentThumbnailVisualSignature = null;
-    }
+    const currentThumbnailVisualSignature = getProjectRecordThumbnailVisualSignature(record);
     const thumbnailExists = meta.thumbnailAssetId ? await hasManagedAsset(meta.thumbnailAssetId) : false;
 
     return {
@@ -2227,38 +2301,31 @@ export async function restoreProjectFolder(folderId: string): Promise<boolean> {
   return changed;
 }
 
-export async function ensureProjectThumbnail(projectId: string): Promise<{
+export async function ensureProjectThumbnail(
+  projectId: string,
+  options: {
+    project?: Project;
+  } = {},
+): Promise<{
   assetId: string | null;
   changed: boolean;
 }> {
-  const [project, state] = await Promise.all([
-    loadProject(projectId),
+  const providedProject = options.project?.id === projectId ? options.project : null;
+  const [state, projectRecord] = await Promise.all([
     loadProjectExplorerStateInternal(),
+    providedProject ? Promise.resolve<ProjectRecord | null>(null) : db.projects.get(projectId),
   ]);
-  if (!project) {
+  if (!providedProject && !projectRecord) {
     return {
       assetId: null,
       changed: false,
     };
   }
 
-  const projectRecord = await db.projects.get(projectId);
-  if (!projectRecord) {
-    return {
-      assetId: null,
-      changed: false,
-    };
-  }
-  let thumbnailVisualSignature: string | null = null;
-  try {
-    const parsedData = parsePersistedProjectData(projectRecord.data);
-    const runtimeProjectData = inflatePersistedProjectData(parsedData);
-    thumbnailVisualSignature = computeProjectThumbnailVisualSignature(
-      runtimeProjectData,
-    );
-  } catch {
-    thumbnailVisualSignature = null;
-  }
+  const projectSummarySource = providedProject ?? projectRecord!;
+  const thumbnailVisualSignature = providedProject
+    ? computeProjectThumbnailVisualSignature(providedProject)
+    : getProjectRecordThumbnailVisualSignature(projectRecord!);
   if (!thumbnailVisualSignature) {
     return {
       assetId: null,
@@ -2268,8 +2335,8 @@ export async function ensureProjectThumbnail(projectId: string): Promise<{
 
   const projectMeta = state.projects.find((entry) => entry.projectId === projectId)
     ?? createProjectExplorerProjectMeta(projectId, {
-      createdAt: project.createdAt.getTime(),
-      updatedAt: project.updatedAt.getTime(),
+      createdAt: projectSummarySource.createdAt.getTime(),
+      updatedAt: projectSummarySource.updatedAt.getTime(),
     });
 
   if (
@@ -2283,7 +2350,15 @@ export async function ensureProjectThumbnail(projectId: string): Promise<{
     };
   }
 
-  const thumbnailBlob = await renderProjectThumbnail(project);
+  const projectForThumbnail = providedProject ?? await loadProject(projectId);
+  if (!projectForThumbnail) {
+    return {
+      assetId: null,
+      changed: false,
+    };
+  }
+
+  const thumbnailBlob = await renderProjectThumbnail(projectForThumbnail);
   if (!thumbnailBlob) {
     return {
       assetId: null,
@@ -2312,7 +2387,7 @@ export async function ensureProjectThumbnail(projectId: string): Promise<{
           ...currentState.projects,
           {
             ...createProjectExplorerProjectMeta(projectId, {
-              createdAt: project.createdAt.getTime(),
+              createdAt: projectSummarySource.createdAt.getTime(),
               updatedAt: now,
             }),
             thumbnailAssetId: thumbnailRecord.id,
@@ -3594,6 +3669,9 @@ export async function syncProjectFromCloud(cloudProject: {
     storageOrigin: 'cloudCache',
     cloudBacked: true,
     contentHash: normalizeContentHash(cloudProject.contentHash) ?? computeContentHash(serializedIncomingData),
+    thumbnailVisualSignature: computeThumbnailVisualSignatureFromProjectData(
+      canonicalizePersistedProjectData(incomingDataForStorage),
+    ),
     assetIds: Array.from(
       new Set(
         (cloudProject.assetIds ?? collectPersistedAssetRefsFromSerializedProjectData(serializedIncomingData)

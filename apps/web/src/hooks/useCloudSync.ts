@@ -190,7 +190,8 @@ export type CloudProjectSyncTimingPhase =
   | 'planRevisions'
   | 'uploadRevisions'
   | 'pullRevisions'
-  | 'refreshLocalCache';
+  | 'refreshLocalCache'
+  | 'refreshThumbnail';
 export type CloudProjectSyncPhaseDurations = Partial<Record<CloudProjectSyncTimingPhase, number>>;
 export type CloudProjectSyncTimingEvent = {
   projectId: string;
