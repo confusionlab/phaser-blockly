@@ -68,6 +68,7 @@ export interface CostumeCanvasExportState {
   activeLayerDataUrl: string;
   editorMode: CostumeEditorMode;
   bitmapAssetFrame?: CostumeAssetFrame | null;
+  bitmapBounds?: CostumeBounds | null;
   vectorDocument?: CostumeVectorDocument;
 }
 

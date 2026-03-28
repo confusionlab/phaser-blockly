@@ -4,6 +4,11 @@ import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import type { CostumeEditorMode } from '@/types';
 import { optimizeCostumeRasterCanvas } from '@/lib/costume/costumeAssetOptimization';
 import {
+  beginCostumeCommitPerfTrace,
+  recordCostumeCommitPerfPhase,
+  setActiveCostumeCommitPerfTrace,
+} from '@/lib/perf/costumeCommitPerformance';
+import {
   areHistorySnapshotsEqual,
   cloneHistorySnapshot,
   createActiveLayerCanvasStateFromSnapshot,
@@ -53,6 +58,7 @@ export function useCostumeCanvasHistoryController({
         mode: editorModeRef.current,
         bitmapDataUrl: '',
         bitmapAssetFrame: null,
+        bitmapBounds: null,
         vectorJson: null,
       };
     }
@@ -65,6 +71,7 @@ export function useCostumeCanvasHistoryController({
         mode,
         bitmapDataUrl: optimizedBitmap.dataUrl,
         bitmapAssetFrame: optimizedBitmap.assetFrame ?? null,
+        bitmapBounds: optimizedBitmap.bounds ?? null,
         vectorJson: null,
       };
     }
@@ -74,6 +81,7 @@ export function useCostumeCanvasHistoryController({
       mode,
       bitmapDataUrl: activeLayerCanvas.toDataURL('image/png'),
       bitmapAssetFrame: null,
+      bitmapBounds: null,
       vectorJson: JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS)),
     };
   }, [editorModeRef, fabricCanvasRef, getBitmapSnapshotCanvas]);
@@ -108,15 +116,40 @@ export function useCostumeCanvasHistoryController({
 
   const saveHistory = useCallback(() => {
     if (suppressHistoryRef.current) return;
+    const traceId = beginCostumeCommitPerfTrace({
+      sessionKey: loadedSessionKeyRef.current,
+      mode: editorModeRef.current,
+      source: 'saveHistory',
+    });
+    const snapshotStartMs = traceId ? performance.now() : 0;
     const snapshot = createSnapshot();
+    if (traceId) {
+      recordCostumeCommitPerfPhase(traceId, 'historySnapshotMs', performance.now() - snapshotStartMs);
+    }
     if (areHistorySnapshotsEqual(snapshot, lastCommittedSnapshotRef.current)) {
       return;
     }
 
     lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
     updateDirtyStateFromSnapshot(snapshot);
-    onHistoryChangeRef.current?.(createActiveLayerCanvasStateFromSnapshot(snapshot));
-  }, [createSnapshot, onHistoryChangeRef, suppressHistoryRef, updateDirtyStateFromSnapshot]);
+    const dispatchStartMs = traceId ? performance.now() : 0;
+    setActiveCostumeCommitPerfTrace(traceId);
+    try {
+      onHistoryChangeRef.current?.(createActiveLayerCanvasStateFromSnapshot(snapshot));
+    } finally {
+      if (traceId) {
+        recordCostumeCommitPerfPhase(traceId, 'historyDispatchMs', performance.now() - dispatchStartMs);
+      }
+      setActiveCostumeCommitPerfTrace(null);
+    }
+  }, [
+    createSnapshot,
+    editorModeRef,
+    loadedSessionKeyRef,
+    onHistoryChangeRef,
+    suppressHistoryRef,
+    updateDirtyStateFromSnapshot,
+  ]);
 
   return {
     createSnapshot,

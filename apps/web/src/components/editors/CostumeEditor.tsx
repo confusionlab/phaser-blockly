@@ -2,6 +2,12 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import { syncHistorySnapshot } from '@/store/universalHistory';
+import {
+  consumeActiveCostumeCommitPerfTrace,
+  markCostumeCommitPerfPreviewReady,
+  markCostumeCommitPerfStateReady,
+  recordCostumeCommitPerfPhase,
+} from '@/lib/perf/costumeCommitPerformance';
 import { CostumeList } from './costume/CostumeList';
 import { CostumeLayerPanel } from './costume/CostumeLayerPanel';
 import {
@@ -29,11 +35,12 @@ import {
   areCostumeBoundsEqual,
   areCostumeDocumentsEqual,
   createCostumeEditorSession,
-  resolveCostumeEditorPersistedState,
+  resolveCostumeEditorPersistedStateWithSyncMode,
   type CostumeEditorObjectTarget,
   type CostumeEditorOperation,
   type CostumeEditorPersistedSession,
   type CostumeEditorPersistedState,
+  type CostumeEditorPreviewSyncMode,
   type CostumeEditorSession,
   type CostumeEditorTarget,
   resolveCostumeEditorTarget,
@@ -84,6 +91,7 @@ interface CostumeRuntimeStateEntry {
   session: CostumeEditorSession;
   state: CostumeEditorPersistedState;
   syncMode: RuntimeSyncMode;
+  traceId: string | null;
 }
 
 function mergeRuntimeSyncMode(
@@ -378,6 +386,7 @@ export function CostumeEditor() {
       session: { ...entry.session },
       state: nextState,
       syncMode: entry.syncMode,
+      traceId: entry.traceId,
     };
   }, []);
 
@@ -399,13 +408,16 @@ export function CostumeEditor() {
   const resolvePersistedStateWithCanvasState = useCallback((
     liveCanvasState: ActiveLayerCanvasState | null | undefined,
     baseState?: CostumeEditorPersistedState | null,
-  ): CostumeEditorPersistedState | null => {
+  ): { state: CostumeEditorPersistedState; syncMode: CostumeEditorPreviewSyncMode } | null => {
     if (!liveCanvasState) {
-      return clonePersistedState(baseState)
+      const fallbackState = clonePersistedState(baseState)
         ?? createPersistedStateFromCostume(currentCostumeRef.current ?? null);
+      return fallbackState
+        ? { state: fallbackState, syncMode: 'render' }
+        : null;
     }
 
-    return resolveCostumeEditorPersistedState({
+    return resolveCostumeEditorPersistedStateWithSyncMode({
       workingState: baseState ?? workingPersistedStateRef.current,
       costume: currentCostumeRef.current ?? null,
       liveCanvasState,
@@ -436,8 +448,9 @@ export function CostumeEditor() {
       editorMode: state.editorMode,
       dataUrl: state.activeLayerDataUrl,
       bitmapAssetFrame: state.bitmapAssetFrame,
+      bitmapBounds: state.bitmapBounds,
       vectorDocument: state.vectorDocument,
-    }, getWorkingPersistedState());
+    }, getWorkingPersistedState())?.state ?? null;
   }, [getWorkingPersistedState, resolvePersistedStateWithCanvasState]);
 
   const createPersistedStateFromDocument = useCallback((
@@ -525,6 +538,7 @@ export function CostumeEditor() {
       session: { ...session },
       state: nextState,
       syncMode: 'stateOnly',
+      traceId: null,
     };
     latestRuntimeStateRef.current = cloneRuntimeStateEntry(entry);
     latestRenderedRuntimeStateRef.current = cloneRuntimeStateEntry(entry);
@@ -581,6 +595,7 @@ export function CostumeEditor() {
     options: {
       historyAction?: 'push' | 'replace' | 'none';
       syncMode?: RuntimeSyncMode;
+      traceId?: string | null;
     } = {},
   ): CostumeRuntimeStateEntry | null => {
     if (!session || !state) {
@@ -607,6 +622,7 @@ export function CostumeEditor() {
       session: { ...session },
       state: nextState,
       syncMode: options.syncMode ?? 'render',
+      traceId: options.traceId ?? null,
     };
     latestRuntimeStateRef.current = cloneRuntimeStateEntry(entry);
     return entry;
@@ -645,6 +661,7 @@ export function CostumeEditor() {
         session: { ...entry.session },
         state: clonePersistedState(nextState)!,
         syncMode: 'render',
+        traceId: entry.traceId,
       };
     }
 
@@ -727,7 +744,11 @@ export function CostumeEditor() {
       ) {
         stateToPersist = clonePersistedState(renderedEntry.state) ?? stateToPersist;
       } else {
+        const previewRenderStartMs = entry.traceId ? performance.now() : 0;
         const rendered = await renderCostumeDocument(entry.state.document);
+        if (entry.traceId) {
+          recordCostumeCommitPerfPhase(entry.traceId, 'previewRenderMs', performance.now() - previewRenderStartMs);
+        }
         const latestEntry = latestRuntimeStateRef.current;
         if (
           latestEntry
@@ -746,10 +767,16 @@ export function CostumeEditor() {
       }
     }
 
-    return persistRuntimeStateToStore(entry, stateToPersist, {
+    const previewSyncStartMs = entry.traceId ? performance.now() : 0;
+    const didPersist = persistRuntimeStateToStore(entry, stateToPersist, {
       recordHistory: options.recordHistory,
       renderedPreview: needsPreview,
     });
+    if (didPersist && needsPreview && entry.traceId) {
+      recordCostumeCommitPerfPhase(entry.traceId, 'previewStoreSyncMs', performance.now() - previewSyncStartMs);
+      markCostumeCommitPerfPreviewReady(entry.traceId);
+    }
+    return didPersist;
   }, [clearScheduledRuntimeSync, cloneRuntimeStateEntry, persistRuntimeStateToStore]);
 
   const scheduleRuntimeStateSync = useCallback((entry: CostumeRuntimeStateEntry | null) => {
@@ -765,10 +792,18 @@ export function CostumeEditor() {
     }
 
     if (latestFlushedRuntimeRevisionRef.current < entry.revision) {
-      persistRuntimeStateToStore(entry, entry.state, {
+      const stateSyncStartMs = entry.traceId ? performance.now() : 0;
+      const didPersistState = persistRuntimeStateToStore(entry, entry.state, {
         recordHistory: false,
         renderedPreview: false,
       });
+      if (didPersistState && entry.traceId) {
+        recordCostumeCommitPerfPhase(entry.traceId, 'stateStoreSyncMs', performance.now() - stateSyncStartMs);
+        markCostumeCommitPerfStateReady(entry.traceId);
+        if (entry.syncMode !== 'render') {
+          markCostumeCommitPerfPreviewReady(entry.traceId);
+        }
+      }
     }
 
     if (entry.syncMode !== 'render') {
@@ -1237,21 +1272,27 @@ export function CostumeEditor() {
       return;
     }
 
-    const persistedState = resolvePersistedStateWithCanvasState(
+    const traceId = consumeActiveCostumeCommitPerfTrace();
+    const handleHistoryChangeStartMs = traceId ? performance.now() : 0;
+    const resolvedPersistedState = resolvePersistedStateWithCanvasState(
       liveCanvasState,
       getWorkingPersistedState(),
     );
-    if (!persistedState) {
+    if (!resolvedPersistedState) {
       return;
     }
 
-    const entry = commitRuntimeState(loadedSession, persistedState, {
+    const entry = commitRuntimeState(loadedSession, resolvedPersistedState.state, {
       historyAction: 'push',
-      syncMode: 'render',
+      syncMode: resolvedPersistedState.syncMode,
+      traceId,
     });
     if (entry) {
       canvasRef.current?.markPersisted(loadedSession.key, liveCanvasState);
       scheduleRuntimeStateSync(entry);
+    }
+    if (traceId) {
+      recordCostumeCommitPerfPhase(traceId, 'handleHistoryChangeMs', performance.now() - handleHistoryChangeStartMs);
     }
   }, [
     commitRuntimeState,

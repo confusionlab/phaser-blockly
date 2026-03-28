@@ -1,5 +1,5 @@
 import { Point } from 'fabric';
-import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
+import type { CostumeAssetFrame, CostumeBounds, CostumeEditorMode } from '@/types';
 import { readCanvasImageData } from '@/utils/canvas2d';
 import { areCostumeAssetFramesEqual, cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
 import type { VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
@@ -346,6 +346,7 @@ export type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
   bitmapDataUrl: string;
   bitmapAssetFrame: CostumeAssetFrame | null;
+  bitmapBounds: CostumeBounds | null;
   vectorJson: string | null;
 };
 
@@ -522,6 +523,10 @@ export function areHistorySnapshotsEqual(
     a.mode === b.mode &&
     a.bitmapDataUrl === b.bitmapDataUrl &&
     areCostumeAssetFramesEqual(a.bitmapAssetFrame, b.bitmapAssetFrame) &&
+    a.bitmapBounds?.x === b.bitmapBounds?.x &&
+    a.bitmapBounds?.y === b.bitmapBounds?.y &&
+    a.bitmapBounds?.width === b.bitmapBounds?.width &&
+    a.bitmapBounds?.height === b.bitmapBounds?.height &&
     a.vectorJson === b.vectorJson
   );
 }
@@ -531,6 +536,7 @@ export function cloneHistorySnapshot(snapshot: CanvasHistorySnapshot): CanvasHis
     mode: snapshot.mode,
     bitmapDataUrl: snapshot.bitmapDataUrl,
     bitmapAssetFrame: cloneCostumeAssetFrame(snapshot.bitmapAssetFrame) ?? null,
+    bitmapBounds: snapshot.bitmapBounds ? { ...snapshot.bitmapBounds } : null,
     vectorJson: snapshot.vectorJson,
   };
 }
@@ -542,6 +548,7 @@ export function createHistorySnapshotFromActiveLayerCanvasState(
     mode: state.editorMode,
     bitmapDataUrl: state.dataUrl,
     bitmapAssetFrame: cloneCostumeAssetFrame(state.bitmapAssetFrame) ?? null,
+    bitmapBounds: state.bitmapBounds ? { ...state.bitmapBounds } : null,
     vectorJson: state.editorMode === 'vector' && state.vectorDocument
       ? state.vectorDocument.fabricJson
       : null,
@@ -553,6 +560,7 @@ export function createActiveLayerCanvasStateFromSnapshot(snapshot: CanvasHistory
     editorMode: snapshot.mode,
     dataUrl: snapshot.bitmapDataUrl,
     bitmapAssetFrame: cloneCostumeAssetFrame(snapshot.bitmapAssetFrame) ?? null,
+    bitmapBounds: snapshot.bitmapBounds ? { ...snapshot.bitmapBounds } : null,
     vectorDocument: snapshot.mode === 'vector' && snapshot.vectorJson
       ? {
           engine: 'fabric',

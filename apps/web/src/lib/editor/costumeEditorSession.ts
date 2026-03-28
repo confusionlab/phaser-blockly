@@ -12,6 +12,7 @@ import {
   applyCanvasStateToCostumeDocument,
   cloneCostumeDocument,
   ensureCostumeDocument,
+  getDirectBitmapCostumePreviewLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 import {
@@ -50,6 +51,13 @@ export interface ResolveCostumeEditorPersistedStateOptions {
   workingState?: CostumeEditorPersistedState | null;
   costume?: Costume | null;
   liveCanvasState?: ActiveLayerCanvasState | null;
+}
+
+export type CostumeEditorPreviewSyncMode = 'stateOnly' | 'render';
+
+export interface ResolvedCostumeEditorPersistedStateResult {
+  state: CostumeEditorPersistedState;
+  syncMode: CostumeEditorPreviewSyncMode;
 }
 
 export type CostumeEditorOperation =
@@ -166,6 +174,53 @@ function createPersistedStateFromCostume(costume: Costume | null | undefined): C
     bounds: costume.bounds ? { ...costume.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+  };
+}
+
+export function resolveCostumeEditorPersistedStateWithSyncMode(
+  options: ResolveCostumeEditorPersistedStateOptions,
+): ResolvedCostumeEditorPersistedStateResult | null {
+  const baseState = clonePersistedState(options.workingState)
+    ?? createPersistedStateFromCostume(options.costume);
+  if (!baseState) {
+    return null;
+  }
+
+  if (!options.liveCanvasState) {
+    return {
+      state: baseState,
+      syncMode: 'render',
+    };
+  }
+
+  const nextDocument = applyCanvasStateToCostumeDocument(baseState.document, options.liveCanvasState);
+  const directPreviewLayer = getDirectBitmapCostumePreviewLayer(nextDocument);
+  const canUseDirectBitmapPreview = (
+    options.liveCanvasState.editorMode === 'bitmap' &&
+    !!directPreviewLayer &&
+    directPreviewLayer.id === nextDocument.activeLayerId &&
+    directPreviewLayer.bitmap.assetId === options.liveCanvasState.dataUrl
+  );
+
+  if (canUseDirectBitmapPreview) {
+    return {
+      state: {
+        ...baseState,
+        assetId: options.liveCanvasState.dataUrl,
+        bounds: options.liveCanvasState.bitmapBounds ? { ...options.liveCanvasState.bitmapBounds } : undefined,
+        assetFrame: cloneCostumeAssetFrame(options.liveCanvasState.bitmapAssetFrame) ?? undefined,
+        document: nextDocument,
+      },
+      syncMode: 'stateOnly',
+    };
+  }
+
+  return {
+    state: {
+      ...baseState,
+      document: nextDocument,
+    },
+    syncMode: 'render',
   };
 }
 

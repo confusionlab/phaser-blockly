@@ -1,6 +1,7 @@
 import type {
   Costume,
   CostumeAssetFrame,
+  CostumeBounds,
   CostumeBitmapContentRef,
   CostumeBitmapLayer,
   CostumeDocument,
@@ -354,7 +355,32 @@ export interface ActiveLayerCanvasState {
   editorMode: CostumeLayerKind;
   dataUrl: string;
   bitmapAssetFrame?: CostumeAssetFrame | null;
+  bitmapBounds?: CostumeBounds | null;
   vectorDocument?: CostumeVectorDocument;
+}
+
+export function getDirectBitmapCostumePreviewLayer(
+  document: CostumeDocument,
+): CostumeBitmapLayer | null {
+  const visibleLayers = document.layers.filter((layer) => layer.visible && layer.opacity > 0);
+  if (visibleLayers.length !== 1) {
+    return null;
+  }
+
+  const [visibleLayer] = visibleLayers;
+  if (!isBitmapCostumeLayer(visibleLayer)) {
+    return null;
+  }
+  if (
+    visibleLayer.opacity !== 1 ||
+    visibleLayer.blendMode !== DEFAULT_BLEND_MODE ||
+    visibleLayer.mask !== null ||
+    visibleLayer.effects.length > 0
+  ) {
+    return null;
+  }
+
+  return visibleLayer;
 }
 
 export function applyCanvasStateToCostumeDocument(

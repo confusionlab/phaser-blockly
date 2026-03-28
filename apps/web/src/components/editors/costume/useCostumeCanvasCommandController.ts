@@ -18,6 +18,7 @@ import type {
 } from './CostumeToolbar';
 import type {
   CostumeAssetFrame,
+  CostumeBounds,
   CostumeDocument,
   CostumeEditorMode,
   CostumeVectorDocument,
@@ -407,6 +408,7 @@ export function useCostumeCanvasCommandController({
     activeLayerDataUrl: string;
     editorMode: CostumeEditorMode;
     bitmapAssetFrame?: CostumeAssetFrame | null;
+    bitmapBounds?: CostumeBounds | null;
     vectorDocument?: CostumeVectorDocument;
   } | null => {
     if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
@@ -441,6 +443,7 @@ export function useCostumeCanvasCommandController({
       activeLayerDataUrl,
       editorMode: editorModeRef.current,
       bitmapAssetFrame: optimizedBitmap.assetFrame ?? null,
+      bitmapBounds: optimizedBitmap.bounds ?? null,
     };
   }, [editorModeRef, fabricCanvasRef, loadedSessionKeyRef]);
 
