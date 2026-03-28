@@ -234,12 +234,10 @@ export type CostumeEditorMode = CostumeLayerKind;
 export interface Costume {
   id: string;
   name: string;
-  assetId: string; // Reference to Asset
-  persistedAssetId?: string; // Canonical saved flattened asset reference
-  renderSignature?: string; // Canonical visual signature for the saved flattened asset
-  bounds?: CostumeBounds; // Bounding box of visible (non-transparent) pixels
-  assetFrame?: CostumeAssetFrame; // Placement metadata for cropped runtime assets
-  document: CostumeDocument;
+  assetId: string; // Derived flattened runtime preview source
+  bounds?: CostumeBounds; // Derived visible pixel bounds from the layered document
+  assetFrame?: CostumeAssetFrame; // Derived placement metadata for the flattened runtime preview
+  document: CostumeDocument; // Canonical source of truth for persisted artwork
 }
 
 export interface Sound {

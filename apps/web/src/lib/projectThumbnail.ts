@@ -1,6 +1,7 @@
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
 import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
+import { getCostumeDocumentPreviewSignature } from '@/lib/costume/costumeDocumentRender';
 import type { Costume, Project, Scene } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
@@ -58,42 +59,12 @@ function normalizeSignatureNumber(value: unknown): number {
   return Number.parseFloat(value.toFixed(4));
 }
 
-function toBoundsFingerprint(bounds: Costume['bounds'] | undefined) {
-  if (!bounds) {
-    return null;
-  }
-  return {
-    x: normalizeSignatureNumber(bounds.x),
-    y: normalizeSignatureNumber(bounds.y),
-    width: normalizeSignatureNumber(bounds.width),
-    height: normalizeSignatureNumber(bounds.height),
-  };
-}
-
-function toAssetFrameFingerprint(assetFrame: Costume['assetFrame'] | undefined) {
-  if (!assetFrame) {
-    return null;
-  }
-  return {
-    x: normalizeSignatureNumber(assetFrame.x),
-    y: normalizeSignatureNumber(assetFrame.y),
-    width: normalizeSignatureNumber(assetFrame.width),
-    height: normalizeSignatureNumber(assetFrame.height),
-    sourceWidth: normalizeSignatureNumber(assetFrame.sourceWidth),
-    sourceHeight: normalizeSignatureNumber(assetFrame.sourceHeight),
-  };
-}
-
 function toCostumeFingerprint(costume: Costume | null) {
   if (!costume) {
     return null;
   }
   return {
-    assetId: costume.assetId,
-    persistedAssetId: costume.persistedAssetId ?? null,
-    renderSignature: costume.renderSignature ?? null,
-    bounds: toBoundsFingerprint(costume.bounds),
-    assetFrame: toAssetFrameFingerprint(costume.assetFrame),
+    documentSignature: getCostumeDocumentPreviewSignature(costume.document),
   };
 }
 

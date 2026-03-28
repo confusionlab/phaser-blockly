@@ -60,8 +60,8 @@ import {
   renderProjectThumbnail,
 } from '@/lib/projectThumbnail';
 import {
-  getCostumeDocumentPreviewSignature,
-  renderCostumeDocument,
+  getCachedCostumeDocumentPreview,
+  renderCostumeDocumentPreview,
 } from '@/lib/costume/costumeDocumentRender';
 import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
 
@@ -843,7 +843,11 @@ async function sourceMatchesManagedAssetId(source: string, assetId: string | und
 function applyPersistedBitmapAssetRefs(
   document: ReturnType<typeof cloneCostumeDocument>,
   refs: Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>,
+  options: {
+    includePersistedAssetId?: boolean;
+  } = {},
 ): ReturnType<typeof cloneCostumeDocument> {
+  const includePersistedAssetId = options.includePersistedAssetId !== false;
   for (const layer of document.layers) {
     if (!isBitmapCostumeLayer(layer)) {
       continue;
@@ -854,7 +858,11 @@ function applyPersistedBitmapAssetRefs(
     }
     layer.bitmap.assetId = persistedRef.assetId;
     layer.bitmap.assetFrame = cloneCostumeAssetFrame(persistedRef.assetFrame);
-    layer.bitmap.persistedAssetId = persistedRef.assetId;
+    if (includePersistedAssetId) {
+      layer.bitmap.persistedAssetId = persistedRef.assetId;
+    } else {
+      delete (layer.bitmap as { persistedAssetId?: string }).persistedAssetId;
+    }
   }
 
   return document;
@@ -872,10 +880,10 @@ function addPersistedAssetRef(
 }
 
 async function normalizeCostumeAssetsForStorage(
-  costume: { assetId: string; assetFrame?: unknown; document?: unknown; persistedAssetId?: unknown; renderSignature?: unknown },
+  costume: { assetId?: unknown; assetFrame?: unknown; bounds?: unknown; document?: unknown; persistedAssetId?: unknown; renderSignature?: unknown },
   refsById: Map<string, PersistedProjectAssetRef>,
 ): Promise<void> {
-  const document = ensureCostumeDocument(costume);
+  const document = cloneCostumeDocument(ensureCostumeDocument(costume));
   const persistedBitmapLayerRefs = new Map<string, { assetId: string; assetFrame?: CostumeAssetFrame }>();
 
   for (const layer of document.layers) {
@@ -914,77 +922,95 @@ async function normalizeCostumeAssetsForStorage(
     }
     const record = await ensureAssetRecordFromSource(optimizedLayerAsset.dataUrl, 'image');
     addPersistedAssetRef(refsById, record.id, 'image');
-    layer.bitmap.assetId = optimizedLayerAsset.dataUrl;
-    layer.bitmap.assetFrame = cloneCostumeAssetFrame(optimizedLayerAsset.assetFrame);
-    layer.bitmap.persistedAssetId = record.id;
     persistedBitmapLayerRefs.set(layer.id, {
       assetId: record.id,
       assetFrame: cloneCostumeAssetFrame(optimizedLayerAsset.assetFrame),
     });
   }
 
-  const canonicalDocument = applyPersistedBitmapAssetRefs(
-    cloneCostumeDocument(document),
-    persistedBitmapLayerRefs,
-  );
-  const renderSignature = getCostumeDocumentPreviewSignature(canonicalDocument);
-  const existingFlattenedAssetId = getManagedAssetIdForSource(costume.assetId)
-    ?? (typeof costume.persistedAssetId === 'string' && isManagedAssetId(costume.persistedAssetId)
-      ? costume.persistedAssetId
-      : null);
-
-  if (
-    existingFlattenedAssetId &&
-    typeof costume.renderSignature === 'string' &&
-    costume.renderSignature === renderSignature
-  ) {
-    addPersistedAssetRef(refsById, existingFlattenedAssetId, 'image');
-    costume.assetId = existingFlattenedAssetId;
-    costume.persistedAssetId = existingFlattenedAssetId;
-    costume.renderSignature = renderSignature;
-  } else {
-    const renderedCostume = await renderCostumeDocument(document);
-    const runtimeAssetRecord = await ensureAssetRecordFromSource(renderedCostume.dataUrl, 'image');
-    addPersistedAssetRef(refsById, runtimeAssetRecord.id, 'image');
-    costume.assetId = runtimeAssetRecord.id;
-    costume.persistedAssetId = runtimeAssetRecord.id;
-    costume.renderSignature = renderSignature;
-    (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(renderedCostume.assetFrame);
-  }
-
-  applyPersistedBitmapAssetRefs(document, persistedBitmapLayerRefs);
-  (costume as { document: unknown }).document = cloneCostumeDocument(document);
+  (costume as { document: unknown }).document = applyPersistedBitmapAssetRefs(document, persistedBitmapLayerRefs, {
+    includePersistedAssetId: false,
+  });
+  delete (costume as { assetId?: unknown }).assetId;
+  delete (costume as { assetFrame?: unknown }).assetFrame;
+  delete (costume as { bounds?: unknown }).bounds;
+  delete (costume as { persistedAssetId?: unknown }).persistedAssetId;
+  delete (costume as { renderSignature?: unknown }).renderSignature;
 }
 
-async function hydrateCostumeAssetsFromStorage(costume: { assetId: string; document?: unknown }): Promise<void> {
-  if (isManagedAssetId(costume.assetId)) {
-    const objectUrl = await resolveManagedAssetUrl(costume.assetId);
-    if (objectUrl) {
-      rememberResolvedManagedAsset(costume.assetId, objectUrl);
-      costume.assetId = objectUrl;
-    }
-  }
-
+async function hydrateCostumeAssetsFromStorage(
+  costume: { assetId?: unknown; assetFrame?: unknown; bounds?: unknown; document?: unknown },
+): Promise<void> {
+  const fallbackAssetId = typeof costume.assetId === 'string' && costume.assetId.trim().length > 0
+    ? costume.assetId
+    : null;
   const document = ensureCostumeDocument(costume);
   for (const layer of document.layers) {
     if (!isBitmapCostumeLayer(layer) || !isManagedAssetId(layer.bitmap.assetId)) {
       continue;
     }
+    const persistedAssetId = layer.bitmap.assetId;
     const objectUrl = await resolveManagedAssetUrl(layer.bitmap.assetId);
     if (!objectUrl) {
       continue;
     }
-    rememberResolvedManagedAsset(layer.bitmap.assetId, objectUrl);
+    rememberResolvedManagedAsset(persistedAssetId, objectUrl);
+    layer.bitmap.persistedAssetId = persistedAssetId;
     layer.bitmap.assetId = objectUrl;
   }
+
+  const cachedPreview = getCachedCostumeDocumentPreview(document);
+  if (cachedPreview) {
+    (costume as { assetId: string }).assetId = cachedPreview.dataUrl;
+    if (cachedPreview.assetFrame) {
+      (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(cachedPreview.assetFrame);
+    } else {
+      delete (costume as { assetFrame?: unknown }).assetFrame;
+    }
+    if (cachedPreview.bounds) {
+      (costume as { bounds?: unknown }).bounds = { ...cachedPreview.bounds };
+    } else {
+      delete (costume as { bounds?: unknown }).bounds;
+    }
+  } else {
+    try {
+      const renderedPreview = await renderCostumeDocumentPreview(document);
+      (costume as { assetId: string }).assetId = renderedPreview.dataUrl;
+      if (renderedPreview.assetFrame) {
+        (costume as { assetFrame?: unknown }).assetFrame = cloneCostumeAssetFrame(renderedPreview.assetFrame);
+      } else {
+        delete (costume as { assetFrame?: unknown }).assetFrame;
+      }
+      if (renderedPreview.bounds) {
+        (costume as { bounds?: unknown }).bounds = { ...renderedPreview.bounds };
+      } else {
+        delete (costume as { bounds?: unknown }).bounds;
+      }
+    } catch (error) {
+      console.warn('Failed to derive costume preview from layered document.', error);
+      if (fallbackAssetId) {
+        if (isManagedAssetId(fallbackAssetId)) {
+          const objectUrl = await resolveManagedAssetUrl(fallbackAssetId);
+          if (objectUrl) {
+            rememberResolvedManagedAsset(fallbackAssetId, objectUrl);
+            (costume as { assetId: string }).assetId = objectUrl;
+          }
+        } else {
+          (costume as { assetId: string }).assetId = fallbackAssetId;
+        }
+      } else {
+        (costume as { assetId: string }).assetId = '';
+      }
+    }
+  }
+
   (costume as { document: unknown }).document = cloneCostumeDocument(document);
 }
 
 function collectCostumePersistedAssetRefs(
-  costume: { assetId: string; document?: unknown },
+  costume: { document?: unknown },
   refsById: Map<string, PersistedProjectAssetRef>,
 ): void {
-  addPersistedAssetRef(refsById, costume.assetId, 'image');
   const document = ensureCostumeDocument(costume);
   for (const layer of document.layers) {
     if (isBitmapCostumeLayer(layer) && layer.bitmap.assetId) {

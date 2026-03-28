@@ -508,8 +508,6 @@ export function ensureCostumeDocument(costume: LegacyCostumeShape): CostumeDocum
 export function cloneCostume(costume: Costume): Costume {
   return {
     ...costume,
-    persistedAssetId: costume.persistedAssetId,
-    renderSignature: costume.renderSignature,
     bounds: costume.bounds ? { ...costume.bounds } : undefined,
     assetFrame: cloneCostumeAssetFrame(costume.assetFrame),
     document: cloneCostumeDocument(costume.document),

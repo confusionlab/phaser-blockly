@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 const APP_URL = process.env.POCHA_E2E_BASE_URL ?? '/';
 
 test.describe('costume asset persistence', () => {
-  test('saving one bitmap costume layout edit does not churn unrelated asset ids', async ({ page }) => {
+  test('saving one bitmap costume layout edit does not persist derived flattened preview assets', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
 
@@ -109,17 +109,23 @@ test.describe('costume asset persistence', () => {
 
       const savedEditedProject = await saveProject(editedProject);
       const editedPayload = await createProjectSyncPayload(savedEditedProject);
+      const editedRecord = await db.projects.get(savedEditedProject.id);
 
       const editedSavedCostume = savedEditedProject.scenes[0]!.objects[0]!.costumes[0]!;
       const editedSavedLayer = editedSavedCostume.document.layers[0];
-      if (!editedSavedLayer || editedSavedLayer.kind !== 'bitmap' || !editedSavedLayer.bitmap.persistedAssetId || !editedSavedCostume.persistedAssetId) {
-        throw new Error('Expected persisted costume asset metadata.');
+      if (!editedSavedLayer || editedSavedLayer.kind !== 'bitmap' || !editedSavedLayer.bitmap.persistedAssetId) {
+        throw new Error('Expected persisted bitmap layer asset metadata.');
       }
 
-      const [persistedLayerRecord, persistedCostumeRecord] = await Promise.all([
-        db.assets.get(editedSavedLayer.bitmap.persistedAssetId),
-        db.assets.get(editedSavedCostume.persistedAssetId),
-      ]);
+      if (!editedRecord) {
+        throw new Error('Expected edited project record.');
+      }
+
+      const storedEditedData = JSON.parse(editedRecord.data);
+      const storedEditedCostume = storedEditedData.scenes[0].objects[0].costumes[0];
+      const storedEditedLayer = storedEditedCostume.document.layers[0];
+
+      const persistedLayerRecord = await db.assets.get(editedSavedLayer.bitmap.persistedAssetId);
 
       const resavedProject = await saveProject(savedEditedProject);
       const resavedPayload = await createProjectSyncPayload(resavedProject);
@@ -139,22 +145,36 @@ test.describe('costume asset persistence', () => {
         resavedAssetIds: resavedPayload.assetIds,
         afterEdit: diffAssetIds(initialPayload.assetIds, editedPayload.assetIds),
         afterResave: diffAssetIds(editedPayload.assetIds, resavedPayload.assetIds),
+        editedRuntimeAssetId: editedSavedCostume.assetId,
         persistedLayerMimeType: persistedLayerRecord?.mimeType ?? null,
-        persistedCostumeMimeType: persistedCostumeRecord?.mimeType ?? null,
+        storedCostumeHasAssetId: Object.prototype.hasOwnProperty.call(storedEditedCostume, 'assetId'),
+        storedCostumeHasBounds: Object.prototype.hasOwnProperty.call(storedEditedCostume, 'bounds'),
+        storedCostumeHasAssetFrame: Object.prototype.hasOwnProperty.call(storedEditedCostume, 'assetFrame'),
+        storedCostumeHasPersistedAssetId: Object.prototype.hasOwnProperty.call(storedEditedCostume, 'persistedAssetId'),
+        storedCostumeHasRenderSignature: Object.prototype.hasOwnProperty.call(storedEditedCostume, 'renderSignature'),
+        storedLayerAssetId: storedEditedLayer.bitmap.assetId,
+        storedLayerHasPersistedAssetId: Object.prototype.hasOwnProperty.call(storedEditedLayer.bitmap, 'persistedAssetId'),
+        runtimeLayerPersistedAssetId: editedSavedLayer.bitmap.persistedAssetId,
       };
     });
 
-    expect(result.afterEdit.added).toHaveLength(1);
-    expect(result.afterEdit.removed.length).toBeLessThanOrEqual(1);
-    expect(result.afterEdit.added.length + result.afterEdit.removed.length).toBeLessThanOrEqual(2);
+    expect(result.afterEdit.added).toEqual([]);
+    expect(result.afterEdit.removed).toEqual([]);
     expect(result.afterResave.added).toEqual([]);
     expect(result.afterResave.removed).toEqual([]);
     expect(result.resavedAssetIds).toEqual(result.editedAssetIds);
+    expect(result.editedRuntimeAssetId).toMatch(/^data:image\//);
     expect(result.persistedLayerMimeType).toBe('image/webp');
-    expect(result.persistedCostumeMimeType).toBe('image/webp');
+    expect(result.storedCostumeHasAssetId).toBe(false);
+    expect(result.storedCostumeHasBounds).toBe(false);
+    expect(result.storedCostumeHasAssetFrame).toBe(false);
+    expect(result.storedCostumeHasPersistedAssetId).toBe(false);
+    expect(result.storedCostumeHasRenderSignature).toBe(false);
+    expect(result.storedLayerAssetId).toBe(result.runtimeLayerPersistedAssetId);
+    expect(result.storedLayerHasPersistedAssetId).toBe(false);
   });
 
-  test('reuses the saved flattened asset when the runtime preview changes but the document signature does not', async ({ page }) => {
+  test('ignores transient flattened runtime preview changes when serializing layered costumes', async ({ page }) => {
     await page.goto(APP_URL);
     await page.waitForLoadState('networkidle');
 
@@ -207,6 +227,7 @@ test.describe('costume asset persistence', () => {
       const savedProject = await saveProject(project);
       const savedCostume = savedProject.scenes[0]!.objects[0]!.costumes[0]!;
       const initialPayload = await createProjectSyncPayload(savedProject);
+      const initialRecord = await db.projects.get(savedProject.id);
 
       const transientProject = structuredClone(savedProject);
       transientProject.updatedAt = new Date(savedProject.updatedAt.getTime() + 1_000);
@@ -216,19 +237,30 @@ test.describe('costume asset persistence', () => {
       const resavedProject = await saveProject(transientProject);
       const resavedCostume = resavedProject.scenes[0]!.objects[0]!.costumes[0]!;
       const resavedPayload = await createProjectSyncPayload(resavedProject);
+      const resavedRecord = await db.projects.get(resavedProject.id);
+
+      if (!initialRecord || !resavedRecord) {
+        throw new Error('Expected stored project records.');
+      }
+
+      const storedResavedData = JSON.parse(resavedRecord.data);
+      const storedResavedCostume = storedResavedData.scenes[0].objects[0].costumes[0];
 
       return {
         initialAssetIds: initialPayload.assetIds,
         resavedAssetIds: resavedPayload.assetIds,
-        initialPersistedAssetId: savedCostume.persistedAssetId ?? null,
-        resavedPersistedAssetId: resavedCostume.persistedAssetId ?? null,
-        initialRenderSignature: savedCostume.renderSignature ?? null,
-        resavedRenderSignature: resavedCostume.renderSignature ?? null,
+        initialSerializedData: initialPayload.data,
+        resavedSerializedData: resavedPayload.data,
+        savedRuntimeAssetId: savedCostume.assetId,
+        resavedRuntimeAssetId: resavedCostume.assetId,
+        storedCostumeHasAssetId: Object.prototype.hasOwnProperty.call(storedResavedCostume, 'assetId'),
       };
     });
 
     expect(result.resavedAssetIds).toEqual(result.initialAssetIds);
-    expect(result.resavedPersistedAssetId).toBe(result.initialPersistedAssetId);
-    expect(result.resavedRenderSignature).toBe(result.initialRenderSignature);
+    expect(result.resavedSerializedData).toBe(result.initialSerializedData);
+    expect(result.savedRuntimeAssetId).toMatch(/^data:image\//);
+    expect(result.resavedRuntimeAssetId).toMatch(/^data:image\//);
+    expect(result.storedCostumeHasAssetId).toBe(false);
   });
 });
