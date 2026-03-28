@@ -26,7 +26,8 @@ type CloudProjectExplorerCatalogRecord = {
 
 export function useProjectExplorerCatalog(): {
   data: ProjectExplorerCatalogSnapshot;
-  isLoading: boolean;
+  isInitialLoading: boolean;
+  isRefreshing: boolean;
   refresh: () => Promise<void>;
 } {
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -121,9 +122,13 @@ export function useProjectExplorerCatalog(): {
     [assetLocators, baseCatalog],
   );
 
+  const isInitialLoading = localSnapshot === null;
+  const isRefreshing = localSnapshot !== null && (!hasLoadedCloudCatalog || isReconcilingLocalCache);
+
   return {
     data,
-    isLoading: localSnapshot === null || !hasLoadedCloudCatalog || isReconcilingLocalCache,
+    isInitialLoading,
+    isRefreshing,
     refresh,
   };
 }

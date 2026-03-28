@@ -179,11 +179,12 @@ export function ProjectExplorerPage({
   }, [isConvexAuthenticated, syncProjectToCloud]);
   const {
     data: explorerCatalog,
-    isLoading,
+    isInitialLoading,
+    isRefreshing,
     refresh: refreshExplorer,
   } = useProjectExplorerCatalog();
-  const isExplorerMutationLocked = authBootstrapState === 'reconnecting';
-  const isExplorerInteractionBlocked = isLoading;
+  const isExplorerMutationLocked = authBootstrapState === 'reconnecting' || isRefreshing;
+  const isExplorerInteractionBlocked = isInitialLoading;
   const isExplorerReadOnly = isExplorerMutationLocked || isExplorerInteractionBlocked;
   const [isOpeningProjectId, setIsOpeningProjectId] = useState<string | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>(PROJECT_EXPLORER_ROOT_FOLDER_ID);
@@ -786,25 +787,27 @@ export function ProjectExplorerPage({
       <main className="mx-auto flex h-full w-full max-w-[1440px] min-h-0 flex-col px-6 py-8 lg:px-10">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
           <div className="max-w-4xl">
-            <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
-              {breadcrumbFolders.map((folder, index) => (
-                <div className="flex items-center gap-2" key={folder.id}>
-                  <button
-                    type="button"
-                    className={cn(
-                      'rounded-full px-2 py-1 transition-colors',
-                      folder.id === currentFolderSafeId ? 'bg-slate-900 text-white' : 'hover:bg-white/60 hover:text-slate-900',
-                      dropFolderId === folder.id && 'bg-primary/15 text-primary',
-                    )}
-                    onClick={() => setCurrentFolderId(folder.id)}
-                    {...dropTargetProps(folder.id)}
-                  >
-                    {folder.id === PROJECT_EXPLORER_ROOT_FOLDER_ID ? 'Home' : folder.name}
-                  </button>
-                  {index < breadcrumbFolders.length - 1 ? <ChevronRight className="size-3" /> : null}
-                </div>
-              ))}
-            </nav>
+            {currentFolder && currentFolder.id !== PROJECT_EXPLORER_ROOT_FOLDER_ID ? (
+              <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+                {breadcrumbFolders.map((folder, index) => (
+                  <div className="flex items-center gap-2" key={folder.id}>
+                    <button
+                      type="button"
+                      className={cn(
+                        'rounded-full px-2 py-1 transition-colors',
+                        folder.id === currentFolderSafeId ? 'bg-slate-900 text-white' : 'hover:bg-white/60 hover:text-slate-900',
+                        dropFolderId === folder.id && 'bg-primary/15 text-primary',
+                      )}
+                      onClick={() => setCurrentFolderId(folder.id)}
+                      {...dropTargetProps(folder.id)}
+                    >
+                      {folder.id === PROJECT_EXPLORER_ROOT_FOLDER_ID ? 'Home' : folder.name}
+                    </button>
+                    {index < breadcrumbFolders.length - 1 ? <ChevronRight className="size-3" /> : null}
+                  </div>
+                ))}
+              </nav>
+            ) : null}
 
             {currentFolder && currentFolder.id !== PROJECT_EXPLORER_ROOT_FOLDER_ID ? (
               <div className="mt-4">
@@ -850,13 +853,15 @@ export function ProjectExplorerPage({
                 Home
               </h1>
             )}
-            <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-600">
-              Organize projects into folders, drag them around, and keep a visual snapshot of each game’s first stage right on the root page.
-            </p>
             {authBootstrapState === 'reconnecting' ? (
               <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
                 <Loader2 className="size-3.5 animate-spin text-sky-600" />
                 Reconnecting to cloud...
+              </div>
+            ) : isRefreshing ? (
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
+                <Loader2 className="size-3.5 animate-spin text-slate-500" />
+                Refreshing workspace...
               </div>
             ) : null}
           </div>
@@ -1223,7 +1228,7 @@ export function ProjectExplorerPage({
         </div>
       ) : null}
 
-      {isLoading ? (
+      {isInitialLoading ? (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/45 backdrop-blur-[2px]">
           <div className="inline-flex items-center gap-3 rounded-full border border-white/80 bg-white/85 px-4 py-2 text-sm text-slate-600 shadow-sm">
             <Loader2 className="size-4 animate-spin" />
