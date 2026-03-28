@@ -585,15 +585,13 @@ export function EditorLayout() {
     }
   }, [isDarkMode, updateMySettings]);
 
-  const cloudSaveStatusLabel = !project
-    ? null
+  const saveControlState = !project
+    ? 'saved'
     : cloudSaveState.status === 'saving'
-      ? 'Saving to cloud...'
-      : cloudSaveState.status === 'error'
-        ? (cloudSaveState.errorMessage ?? 'Could not save to cloud.')
-        : cloudSaveState.status === 'unsaved'
-          ? 'Changes not yet saved to cloud'
-          : 'All changes saved to cloud';
+      ? 'saving'
+      : isCurrentVersionCloudSaved
+        ? 'saved'
+        : 'save';
 
   useEffect(() => {
     if (!isProjectLeaseBlocking || !isPlaying) {
@@ -991,10 +989,8 @@ export function EditorLayout() {
           isDarkMode={isDarkMode}
           projectName={project.name}
           projectNameDisabled={isSyncingCloud}
-          cloudSaveStatusLabel={cloudSaveStatusLabel}
-          cloudSaveStatusTone={cloudSaveState.status === 'error' ? 'error' : 'default'}
-          saveNowDisabled={!isCloudWriteEnabled || isSyncingCloud}
-          saveNowBusy={cloudSaveState.status === 'saving'}
+          saveControlState={saveControlState}
+          saveNowDisabled={!isCloudWriteEnabled || saveControlState === 'saved'}
           onExportProject={() => {
             if (!project || isSyncingCloud) {
               return;

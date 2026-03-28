@@ -11,10 +11,8 @@ interface EditorTopBarProps {
   isDarkMode: boolean;
   projectName: string | null;
   projectNameDisabled?: boolean;
-  cloudSaveStatusLabel?: string | null;
-  cloudSaveStatusTone?: 'default' | 'error';
+  saveControlState?: 'save' | 'saving' | 'saved';
   saveNowDisabled?: boolean;
-  saveNowBusy?: boolean;
   onExportProject: () => void;
   onGoToDashboard: () => void;
   onOpenHistory: () => void;
@@ -28,10 +26,8 @@ export function EditorTopBar({
   isDarkMode,
   projectName,
   projectNameDisabled = false,
-  cloudSaveStatusLabel = null,
-  cloudSaveStatusTone = 'default',
+  saveControlState = 'saved',
   saveNowDisabled = false,
-  saveNowBusy = false,
   onExportProject,
   onGoToDashboard,
   onOpenHistory,
@@ -261,28 +257,34 @@ export function EditorTopBar({
           ) : null}
         </div>
 
-        <div className="flex min-w-0 items-center justify-end gap-3">
-          {hasProject && cloudSaveStatusLabel ? (
-            <div
-              className={cn(
-                'hidden max-w-[260px] truncate text-xs sm:block',
-                cloudSaveStatusTone === 'error' ? 'text-destructive' : 'text-muted-foreground',
-              )}
-            >
-              {cloudSaveStatusLabel}
-            </div>
-          ) : null}
-
+        <div className="flex min-w-0 items-center justify-end">
           {hasProject ? (
             <Button
               type="button"
               size="sm"
-              variant="outline"
+              variant="secondary"
+              className={cn(
+                'w-[72px] justify-center !transition-none',
+                saveControlState === 'saved' ? 'text-muted-foreground' : 'text-foreground',
+                saveControlState === 'saved' ? 'disabled:opacity-100' : null,
+              )}
               disabled={saveNowDisabled}
               onClick={onSaveNow}
+              aria-label={
+                saveControlState === 'saving'
+                  ? 'Saving'
+                  : saveControlState === 'saved'
+                    ? 'Saved'
+                    : 'Save'
+              }
             >
-              {saveNowBusy ? <Loader2 className="animate-spin" /> : null}
-              Save Now
+              {saveControlState === 'saving' ? (
+                <Loader2 className="animate-spin" />
+              ) : saveControlState === 'saved' ? (
+                'Saved'
+              ) : (
+                'Save'
+              )}
             </Button>
           ) : null}
         </div>
