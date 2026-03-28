@@ -24,7 +24,7 @@ import {
   migrateAllLocalProjects,
   saveProject,
 } from '@/db/database';
-import { useCloudSync, type CloudProjectSyncStatus } from '@/hooks/useCloudSync';
+import { useCloudSync, type CloudProjectSyncStatus, type CloudProjectUploadEvent } from '@/hooks/useCloudSync';
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
 import { assistantFeatureFlags } from '@/lib/assistant/config';
@@ -44,6 +44,16 @@ type CloudSaveState = {
 const ASSISTANT_UI_ENABLED = assistantFeatureFlags.isEnabled;
 const UNSAVED_CLOUD_CHANGES_MESSAGE = 'Changes are not yet saved to cloud.';
 const CLOUD_PULL_CONFLICT_MESSAGE = 'Newer cloud changes are available. Click Save Now to load them.';
+
+function formatUploadSizeMb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(3)} MB`;
+}
+
+function formatSaveDuration(durationMs: number): string {
+  return durationMs >= 1_000
+    ? `${(durationMs / 1_000).toFixed(2)}s`
+    : `${Math.round(durationMs)}ms`;
+}
 
 function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
@@ -110,6 +120,12 @@ export function EditorLayout() {
   const isMountedRef = useRef(true);
   const lastCloudSavedVersionRef = useRef(new Map<string, number>());
   const inFlightCloudSaveRef = useRef<{ projectId: string; updatedAtMs: number } | null>(null);
+  const manualSaveMetricsRef = useRef<{
+    projectId: string;
+    updatedAtMs: number;
+    startedAtMs: number;
+    uploadSizeBytes: number | null;
+  } | null>(null);
   const activeProjectId = project?.id ?? null;
   const leaseProjectId = projectId ?? activeProjectId;
   const {
@@ -123,6 +139,19 @@ export function EditorLayout() {
   const isCloudWriteEnabled = !leaseProjectId || isWriteAllowed;
   const currentCloudSavedVersionMs = project ? (lastCloudSavedVersionRef.current.get(project.id) ?? null) : null;
   const isCurrentVersionCloudSaved = !!project && currentCloudSavedVersionMs === project.updatedAt.getTime();
+  const handleProjectPayloadUploaded = useCallback((event: CloudProjectUploadEvent) => {
+    const pendingSave = manualSaveMetricsRef.current;
+    if (!pendingSave) {
+      return;
+    }
+    if (
+      pendingSave.projectId !== event.projectId
+      || pendingSave.updatedAtMs !== event.updatedAt
+    ) {
+      return;
+    }
+    pendingSave.uploadSizeBytes = event.sizeBytes;
+  }, []);
 
   // The editor treats cloud save as authoritative and uses IndexedDB as a synced cache.
   const { syncProjectDraftToCloud, syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
@@ -136,6 +165,7 @@ export function EditorLayout() {
     checkpointIntervalMs: 0,
     backgroundSyncDebounceMs: 0,
     autoSyncCurrentProject: false,
+    onProjectPayloadUploaded: handleProjectPayloadUploaded,
   });
 
   useEffect(() => {
@@ -342,12 +372,30 @@ export function EditorLayout() {
       const currentUpdatedAtMs = currentProject?.id === projectSnapshot.id
         ? currentProject.updatedAt.getTime()
         : null;
+      const finalStatus = currentUpdatedAtMs !== null && currentUpdatedAtMs > savedAt ? 'unsaved' : 'saved';
 
       setCloudSaveState({
-        status: currentUpdatedAtMs !== null && currentUpdatedAtMs > savedAt ? 'unsaved' : 'saved',
+        status: finalStatus,
         lastSavedAt: savedAt,
         errorMessage: null,
       });
+      const pendingSave = manualSaveMetricsRef.current;
+      if (
+        pendingSave
+        && pendingSave.projectId === projectSnapshot.id
+        && pendingSave.updatedAtMs === projectSnapshot.updatedAt.getTime()
+      ) {
+        if (finalStatus === 'saved') {
+          const elapsedMs = performance.now() - pendingSave.startedAtMs;
+          const sizeText = pendingSave.uploadSizeBytes !== null
+            ? formatUploadSizeMb(pendingSave.uploadSizeBytes)
+            : 'unknown size';
+          console.log(
+            `[CloudSync] Saved project "${projectSnapshot.id}" (${sizeText}, ${formatSaveDuration(elapsedMs)} from Save click to Saved).`,
+          );
+        }
+        manualSaveMetricsRef.current = null;
+      }
       return true;
     }
 
@@ -364,6 +412,7 @@ export function EditorLayout() {
             lastSavedAt: refreshedUpdatedAtMs,
             errorMessage: CLOUD_PULL_CONFLICT_MESSAGE,
           });
+          manualSaveMetricsRef.current = null;
           return false;
         }
 
@@ -383,12 +432,14 @@ export function EditorLayout() {
           lastSavedAt: refreshedUpdatedAtMs,
           errorMessage: null,
         });
+        manualSaveMetricsRef.current = null;
       } else {
         setCloudSaveState((current) => ({
           status: 'error',
           lastSavedAt: current.lastSavedAt,
           errorMessage: 'Could not load the latest cloud version.',
         }));
+        manualSaveMetricsRef.current = null;
         return false;
       }
       return true;
@@ -400,6 +451,7 @@ export function EditorLayout() {
         lastSavedAt: current.lastSavedAt,
         errorMessage: 'Cloud save is unavailable right now.',
       }));
+      manualSaveMetricsRef.current = null;
       return false;
     }
 
@@ -408,6 +460,7 @@ export function EditorLayout() {
       lastSavedAt: current.lastSavedAt,
       errorMessage: 'Could not save to cloud.',
     }));
+    manualSaveMetricsRef.current = null;
     return false;
   }, [openProject, persistCloudSavedProject]);
 
@@ -569,6 +622,12 @@ export function EditorLayout() {
       return;
     }
 
+    manualSaveMetricsRef.current = {
+      projectId: project.id,
+      updatedAtMs: project.updatedAt.getTime(),
+      startedAtMs: performance.now(),
+      uploadSizeBytes: null,
+    };
     const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
     if (!synced) {
       alert('Cloud save failed. Please try Save Now again.');

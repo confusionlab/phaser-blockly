@@ -48,6 +48,8 @@ interface CloudSyncOptions {
   backgroundSyncDebounceMs?: number;
   // Whether the hook should automatically sync the current project on debounce/lifecycle events.
   autoSyncCurrentProject?: boolean;
+  // Optional upload telemetry hook for caller-side save metrics.
+  onProjectPayloadUploaded?: (event: CloudProjectUploadEvent) => void;
 }
 
 interface CloudProjectRecord {
@@ -139,6 +141,11 @@ interface CloudProjectSyncPlan {
 }
 
 export type CloudProjectSyncStatus = 'saved' | 'pulled' | 'skipped' | 'error';
+export type CloudProjectUploadEvent = {
+  projectId: string;
+  updatedAt: number;
+  sizeBytes: number;
+};
 
 function formatUploadSizeMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(3)} MB`;
@@ -334,6 +341,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     enableCloudProjectListQuery = false,
     backgroundSyncDebounceMs = 15_000,
     autoSyncCurrentProject = true,
+    onProjectPayloadUploaded,
   } = options;
 
   const convex = useConvex();
@@ -445,13 +453,18 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       console.log(
         `[CloudSync] Uploaded project "${metadata.localId}" payload (${formatUploadSizeMb(blob.size)}).`,
       );
+      onProjectPayloadUploaded?.({
+        projectId: metadata.localId,
+        updatedAt: metadata.updatedAt,
+        sizeBytes: blob.size,
+      });
       return {
         ...metadata,
         storageId: uploadResult.storageId as Id<'_storage'>,
         dataSizeBytes: blob.size,
       };
     },
-    [generateUploadUrlMutation],
+    [generateUploadUrlMutation, onProjectPayloadUploaded],
   );
 
   const toStorageRevisionPayload = useCallback(
