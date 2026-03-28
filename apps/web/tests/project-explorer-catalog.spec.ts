@@ -70,4 +70,46 @@ test.describe('project explorer catalog', () => {
 
     expect(snapshot.projects.map((project) => project.id)).toEqual(['local-draft']);
   });
+
+  test('orders projects by last edited time with the newest first', () => {
+    const now = 1_700_000_000_000;
+    const snapshot = buildProjectExplorerCatalogSnapshot({
+      cloudExplorerState: null,
+      cloudProjects: [],
+      hasCloudSnapshot: false,
+      localExplorerState: createDefaultProjectExplorerState(now),
+      localProjects: [
+        {
+          id: 'older-project',
+          name: 'Older Project',
+          createdAt: now,
+          updatedAt: now + 1_000,
+          storageOrigin: 'localDraft',
+          currentThumbnailVisualSignature: null,
+        },
+        {
+          id: 'newer-project',
+          name: 'Newer Project',
+          createdAt: now,
+          updatedAt: now + 3_000,
+          storageOrigin: 'localDraft',
+          currentThumbnailVisualSignature: null,
+        },
+        {
+          id: 'middle-project',
+          name: 'Middle Project',
+          createdAt: now,
+          updatedAt: now + 2_000,
+          storageOrigin: 'localDraft',
+          currentThumbnailVisualSignature: null,
+        },
+      ],
+    });
+
+    expect(snapshot.projects.map((project) => project.id)).toEqual([
+      'newer-project',
+      'middle-project',
+      'older-project',
+    ]);
+  });
 });

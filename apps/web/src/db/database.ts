@@ -72,6 +72,7 @@ import {
   type PersistedProjectData,
   type RuntimeProjectData,
 } from '@/lib/persistence/projectDataCodec';
+import { doesLocalProjectMatchCloudHead } from '@/lib/cloudProjectState';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
 export const CURRENT_SCHEMA_VERSION = 10;
@@ -3533,13 +3534,14 @@ export async function syncProjectFromCloud(cloudProject: {
   latestRevisionCreatedAt?: number | null;
   latestRevisionContentHash?: string | null;
   revisionsUpdatedAt?: number | null;
-}): Promise<{ action: 'created' | 'updated' | 'skipped'; reason?: string; migrated?: boolean }> {
+}): Promise<{ action: 'created' | 'updated' | 'skipped'; reason?: string; migrated?: boolean; matchesCloudHead: boolean }> {
   const cloudSchemaVersion = normalizeSchemaVersion(cloudProject.schemaVersion);
 
   if (cloudSchemaVersion > CURRENT_SCHEMA_VERSION) {
     return {
       action: 'skipped',
       reason: `cloud schema v${cloudSchemaVersion} is newer than supported v${CURRENT_SCHEMA_VERSION}`,
+      matchesCloudHead: false,
     };
   }
 
@@ -3550,6 +3552,7 @@ export async function syncProjectFromCloud(cloudProject: {
     return {
       action: 'skipped',
       reason: 'cloud project data is invalid JSON',
+      matchesCloudHead: false,
     };
   }
 
@@ -3612,7 +3615,19 @@ export async function syncProjectFromCloud(cloudProject: {
   if (!existing) {
     await db.projects.put(incomingRecord);
     await garbageCollectManagedAssets(incomingRecord.assetIds ?? []);
-    return { action: 'created', migrated };
+    const incomingHash =
+      normalizeContentHash(incomingRecord.contentHash) ?? computeContentHash(incomingRecord.data);
+    return {
+      action: 'created',
+      migrated,
+      matchesCloudHead: doesLocalProjectMatchCloudHead({
+        localSchemaVersion: incomingRecord.schemaVersion,
+        localContentHash: incomingHash,
+        cloudSchemaVersion: incomingRecord.schemaVersion,
+        cloudContentHash: incomingHash,
+        migrated,
+      }),
+    };
   }
 
   const existingSchemaVersion = normalizeSchemaVersion(existing.schemaVersion);
@@ -3620,8 +3635,21 @@ export async function syncProjectFromCloud(cloudProject: {
     return {
       action: 'skipped',
       reason: `schema downgrade blocked (incoming v${incomingRecord.schemaVersion}, local v${existingSchemaVersion})`,
+      matchesCloudHead: false,
     };
   }
+
+  const incomingHash =
+    normalizeContentHash(incomingRecord.contentHash) ?? computeContentHash(incomingRecord.data);
+  const existingHash =
+    normalizeContentHash(existing.contentHash) ?? computeContentHash(existing.data);
+  const matchesCloudHeadWithoutUpdate = doesLocalProjectMatchCloudHead({
+    localSchemaVersion: existingSchemaVersion,
+    localContentHash: existingHash,
+    cloudSchemaVersion: incomingRecord.schemaVersion,
+    cloudContentHash: incomingHash,
+    migrated: false,
+  });
 
   const incomingUpdatedAtMs = incomingRecord.updatedAt.getTime();
   const existingUpdatedAtMs = existing.updatedAt.getTime();
@@ -3638,11 +3666,6 @@ export async function syncProjectFromCloud(cloudProject: {
     shouldUpdate = false;
     reason = 'local project is newer';
   } else {
-    const incomingHash =
-      normalizeContentHash(incomingRecord.contentHash) ?? computeContentHash(incomingRecord.data);
-    const existingHash =
-      normalizeContentHash(existing.contentHash) ?? computeContentHash(existing.data);
-
     if (incomingHash === existingHash) {
       shouldUpdate = false;
       reason = 'same timestamp and identical content';
@@ -3660,7 +3683,11 @@ export async function syncProjectFromCloud(cloudProject: {
   }
 
   if (!shouldUpdate) {
-    return { action: 'skipped', reason };
+    return {
+      action: 'skipped',
+      reason,
+      matchesCloudHead: matchesCloudHeadWithoutUpdate,
+    };
   }
 
   const finalIncomingRecord =
@@ -3672,7 +3699,18 @@ export async function syncProjectFromCloud(cloudProject: {
     ...getPersistedAssetIdsFromRecord(existing, existing.data),
     ...getPersistedAssetIdsFromRecord(finalIncomingRecord, finalIncomingRecord.data),
   ]));
-  return { action: 'updated', migrated, reason };
+  return {
+    action: 'updated',
+    migrated,
+    reason,
+    matchesCloudHead: doesLocalProjectMatchCloudHead({
+      localSchemaVersion: incomingRecord.schemaVersion,
+      localContentHash: incomingHash,
+      cloudSchemaVersion: incomingRecord.schemaVersion,
+      cloudContentHash: incomingHash,
+      migrated,
+    }),
+  };
 }
 
 export async function syncProjectRevisionsFromCloud(

@@ -49,6 +49,11 @@ type CloudSaveState = {
   errorMessage: string | null;
 };
 
+type ProjectLoadState = {
+  progress: number;
+  detail: string;
+};
+
 const ASSISTANT_UI_ENABLED = assistantFeatureFlags.isEnabled;
 const UNSAVED_CLOUD_CHANGES_MESSAGE = 'Changes are not yet saved to cloud.';
 const CLOUD_PULL_CONFLICT_MESSAGE = 'Newer cloud changes are available. Click Save Now to load them.';
@@ -106,6 +111,30 @@ function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
 }
 
+function ProjectRouteLoadingScreen({ detail, progress }: ProjectLoadState) {
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="flex min-h-screen items-center justify-center px-6">
+        <div className="w-full max-w-sm">
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <p className="text-xs font-medium uppercase tracking-[0.28em] text-muted-foreground/70">Loading</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">Loading</h1>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-border/70">
+              <div
+                className="h-full rounded-full bg-foreground transition-[width] duration-300 ease-out"
+                style={{ width: `${Math.max(6, Math.min(100, progress))}%` }}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">{detail}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function EditorLayout() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -153,6 +182,10 @@ export function EditorLayout() {
   const [isStageCanvasFullscreen, setIsStageCanvasFullscreen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [projectLoadState, setProjectLoadState] = useState<ProjectLoadState>({
+    progress: 8,
+    detail: 'Opening project page…',
+  });
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [cloudSaveState, setCloudSaveState] = useState<CloudSaveState>({
@@ -182,7 +215,11 @@ export function EditorLayout() {
     takeOverLease,
     retryLease,
   } = useProjectLease(leaseProjectId);
-  const isProjectLeaseBlocking = !!leaseProjectId && leaseStatus !== 'active' && leaseStatus !== 'idle';
+  const isLeaseCheckInProgress = !!leaseProjectId && leaseStatus === 'acquiring';
+  const isProjectLeaseBlocking = !!leaseProjectId
+    && leaseStatus !== 'active'
+    && leaseStatus !== 'idle'
+    && leaseStatus !== 'acquiring';
   const isCloudWriteEnabled = !leaseProjectId || isWriteAllowed;
   const currentCloudSavedVersionMs = project ? (lastCloudSavedVersionRef.current.get(project.id) ?? null) : null;
   const isCurrentVersionCloudSaved = !!project && currentCloudSavedVersionMs === project.updatedAt.getTime();
@@ -361,7 +398,15 @@ export function EditorLayout() {
       if (!project || project.id !== projectId) {
         setIsLoading(true);
         try {
+          setProjectLoadState({
+            progress: 18,
+            detail: 'Checking cloud status…',
+          });
           const cloudPull = await syncProjectFromCloud(projectId);
+          setProjectLoadState({
+            progress: 42,
+            detail: 'Checking local cache…',
+          });
           const cacheInfo = await getStoredProjectCacheInfo(projectId);
           if (cloudPull.status === 'missing') {
             if (cacheInfo.origin === 'cloudCache') {
@@ -369,6 +414,10 @@ export function EditorLayout() {
               return;
             }
             if (cacheInfo.origin === 'legacyUnknown') {
+              setProjectLoadState({
+                progress: 58,
+                detail: 'Recovering local project…',
+              });
               const recoveredProjectId = await recoverLegacyStoredProject(projectId);
               if (recoveredProjectId && recoveredProjectId !== projectId) {
                 navigate(`/project/${recoveredProjectId}`, { replace: true });
@@ -376,10 +425,20 @@ export function EditorLayout() {
               }
             }
           }
+          setProjectLoadState({
+            progress: 76,
+            detail: 'Loading project data…',
+          });
           const loadedProject = await loadProject(projectId);
           if (loadedProject) {
-            if (cloudPull.changed) {
+            setProjectLoadState({
+              progress: 92,
+              detail: 'Preparing editor…',
+            });
+            if (cloudPull.matchesCloudHead) {
               markProjectAsCloudSaved(loadedProject);
+            }
+            if (cloudPull.changed) {
               void publishProjectThumbnailToCloud(loadedProject.id);
             }
             openProject(loadedProject);
@@ -399,6 +458,18 @@ export function EditorLayout() {
     void loadFromUrl();
   }, [markProjectAsCloudSaved, navigate, openProject, project, projectId, publishProjectThumbnailToCloud, syncProjectFromCloud]);
 
+  useEffect(() => {
+    if (!projectId) {
+      return;
+    }
+    if (!project || project.id !== projectId) {
+      setProjectLoadState({
+        progress: 8,
+        detail: 'Opening project page…',
+      });
+    }
+  }, [project, projectId]);
+
   // Keep selection aligned with the active project as projects open, close, or change shape.
   useEffect(() => {
     reconcileSelectionToProject(project, { recordHistory: false });
@@ -406,9 +477,12 @@ export function EditorLayout() {
 
   // Navigate to project URL when project is opened
   const handleProjectOpen = useCallback((openedProject: { id: string }) => {
+    if (project?.id !== openedProject.id) {
+      closeProject();
+    }
     navigate(`/project/${openedProject.id}`);
     setShowProjectDialog(false);
-  }, [navigate, setShowProjectDialog]);
+  }, [closeProject, navigate, project?.id, setShowProjectDialog]);
 
   const persistCloudSavedProject = useCallback(async (projectSnapshot: Project) => {
     try {
@@ -564,8 +638,10 @@ export function EditorLayout() {
       }
       const refreshedProject = await loadProject(leaseProjectId);
       if (refreshedProject) {
-        if (cloudPull.changed) {
+        if (cloudPull.matchesCloudHead) {
           markProjectAsCloudSaved(refreshedProject);
+        }
+        if (cloudPull.changed) {
           void publishProjectThumbnailToCloud(refreshedProject.id);
         }
         openProject(refreshedProject);
@@ -1055,22 +1131,18 @@ export function EditorLayout() {
     <div className="fixed inset-0 z-[100240] bg-background/72 backdrop-blur-[1px] flex items-center justify-center p-4">
       <div className="w-full max-w-md rounded-xl border bg-background px-6 py-5 shadow-2xl">
         <h2 className="text-lg font-semibold">
-          {leaseStatus === 'acquiring'
-            ? 'Checking active editor...'
-            : leaseStatus === 'lost'
-              ? 'Editing moved to another editor'
-              : leaseStatus === 'error'
-                ? 'Could not verify editor ownership'
-                : 'Another editor is active'}
+          {leaseStatus === 'lost'
+            ? 'Editing moved to another editor'
+            : leaseStatus === 'error'
+              ? 'Could not verify editor ownership'
+              : 'Another editor is active'}
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          {leaseStatus === 'acquiring'
-            ? 'Please wait while we confirm whether this project is already being edited elsewhere.'
-            : leaseStatus === 'error'
-              ? 'We could not confirm the current editor lease for this project.'
-              : activeEditorSessionId
-                ? `Project ${leaseProjectId} is currently owned by another editor session.`
-                : 'This project is currently blocked from editing in this window.'}
+          {leaseStatus === 'error'
+            ? 'We could not confirm the current editor lease for this project.'
+            : activeEditorSessionId
+              ? `Project ${leaseProjectId} is currently owned by another editor session.`
+              : 'This project is currently blocked from editing in this window.'}
         </p>
         <div className="mt-5 flex items-center justify-end gap-2">
           <Button
@@ -1086,7 +1158,7 @@ export function EditorLayout() {
             <Button onClick={() => void retryLease()}>
               Retry
             </Button>
-          ) : leaseStatus === 'acquiring' ? null : (
+          ) : (
             <Button onClick={() => void handleTakeOverLease()}>
               Edit Here
             </Button>
@@ -1103,14 +1175,18 @@ export function EditorLayout() {
     </>
   );
 
-  if (isLoading) {
+  const isRouteProjectReady = !!projectId && !!project && project.id === projectId;
+  const projectRouteLoadingState = isLeaseCheckInProgress
+    ? {
+        progress: Math.max(projectLoadState.progress, 12),
+        detail: 'Checking active editor…',
+      }
+    : projectLoadState;
+  const shouldShowProjectLoadingScreen = !isRouteProjectReady || isLoading || isLeaseCheckInProgress;
+
+  if (shouldShowProjectLoadingScreen) {
     return withProjectLeaseOverlay(
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading project...</p>
-        </div>
-      </div>,
+      <ProjectRouteLoadingScreen {...projectRouteLoadingState} />,
     );
   }
 
@@ -1130,17 +1206,6 @@ export function EditorLayout() {
 
   if (worldBoundaryEditorOpen) {
     return withProjectLeaseOverlay(<WorldBoundaryEditor />);
-  }
-
-  if (!project) {
-    return withProjectLeaseOverlay(
-      <div className="flex items-center justify-center h-screen bg-background">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading project...</p>
-        </div>
-      </div>,
-    );
   }
 
   return withProjectLeaseOverlay(
@@ -1221,7 +1286,7 @@ export function EditorLayout() {
         open={historyOpen}
         onOpenChange={setHistoryOpen}
         onRestoredProject={(restoredProject) => {
-          openProject(restoredProject);
+          closeProject();
           navigate(`/project/${restoredProject.id}`);
         }}
       />

@@ -172,6 +172,7 @@ export type CloudProjectSyncStatus = 'saved' | 'pulled' | 'skipped' | 'error';
 export type CloudProjectPullResult = {
   changed: boolean;
   found: boolean;
+  matchesCloudHead: boolean;
   status: 'updated' | 'unchanged' | 'missing' | 'error';
 };
 export type CloudProjectUploadEvent = {
@@ -1090,6 +1091,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return {
           changed: false,
           found: false,
+          matchesCloudHead: false,
           status: 'error',
         };
       }
@@ -1099,6 +1101,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       return {
         changed: false,
         found: false,
+        matchesCloudHead: false,
         status: 'missing',
       };
     }
@@ -1117,6 +1120,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return {
           changed: projectSyncResult.action !== 'skipped' || revisionSyncResult.created > 0 || revisionSyncResult.updated > 0,
           found: true,
+          matchesCloudHead: projectSyncResult.matchesCloudHead,
           status:
             projectSyncResult.action !== 'skipped' || revisionSyncResult.created > 0 || revisionSyncResult.updated > 0
               ? 'updated'
@@ -1132,6 +1136,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
         return {
           changed: projectSyncResult.action !== 'skipped',
           found: true,
+          matchesCloudHead: projectSyncResult.matchesCloudHead,
           status: projectSyncResult.action !== 'skipped' ? 'updated' : 'unchanged',
         };
       }
@@ -1140,6 +1145,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       return {
         changed: false,
         found: true,
+        matchesCloudHead: false,
         status: 'error',
       };
     }

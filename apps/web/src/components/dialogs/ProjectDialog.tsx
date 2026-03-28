@@ -2,18 +2,16 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
-import { useEditorStore } from '@/store/editorStore';
 import {
   listProjects,
-  getStoredProjectCacheInfo,
   loadProject,
   deleteProject,
   downloadProject,
   importProjectFromFile,
-  recoverLegacyStoredProject,
   saveProject,
 } from '@/db/database';
 import { useCloudSync } from '@/hooks/useCloudSync';
+import { compareProjectsByLastEdited } from '@/lib/projectExplorerCatalog';
 import {
   Dialog,
   DialogContent,
@@ -26,12 +24,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Download, Trash2, Upload, Plus, FolderOpen } from 'lucide-react';
-import type { Project } from '@/types';
+import { createDefaultProject } from '@/types';
 
 interface ProjectDialogProps {
   onClose?: () => void;
-  onProjectOpen?: (project: Project) => void;
-  onProjectHydratedFromCloud?: (project: Project) => void;
+  onProjectOpen?: (project: { id: string }) => void;
   mode?: 'dialog' | 'page';
 }
 
@@ -44,11 +41,9 @@ interface ProjectListItem {
 export function ProjectDialog({
   onClose,
   onProjectOpen,
-  onProjectHydratedFromCloud,
   mode = 'dialog',
 }: ProjectDialogProps) {
-  const { project: currentProject, newProject, openProject } = useProjectStore();
-  const { selectScene } = useEditorStore();
+  const { project: currentProject } = useProjectStore();
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [newProjectName, setNewProjectName] = useState('');
   const [tab, setTab] = useState<string>(currentProject ? 'open' : 'new');
@@ -59,7 +54,7 @@ export function ProjectDialog({
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
 
   // Cloud sync hook
-  const { syncAllFromCloud, syncProjectFromCloud, deleteProjectFromCloud } = useCloudSync({
+  const { syncAllFromCloud, deleteProjectFromCloud } = useCloudSync({
     syncOnMount: false,
     enableCloudProjectListQuery: false,
   });
@@ -70,7 +65,7 @@ export function ProjectDialog({
 
   const loadProjectsList = useCallback(async () => {
     const list = await listProjects();
-    setProjects(list);
+    setProjects(list.slice().sort(compareProjectsByLastEdited));
   }, []);
 
   // On the homepage, load cloud metadata only (fast list). Full project data is hydrated on open.
@@ -80,11 +75,13 @@ export function ProjectDialog({
     }
 
     setProjects(
-      cloudProjectSummaries.map((project) => ({
-        id: project.localId,
-        name: project.name,
-        updatedAt: new Date(project.updatedAt),
-      })),
+      cloudProjectSummaries
+        .map((project) => ({
+          id: project.localId,
+          name: project.name,
+          updatedAt: new Date(project.updatedAt),
+        }))
+        .sort(compareProjectsByLastEdited),
     );
   }, [cloudProjectSummaries, mode]);
 
@@ -99,16 +96,11 @@ export function ProjectDialog({
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
-    newProject(newProjectName.trim());
-    const createdProject = useProjectStore.getState().project;
+    const createdProject = createDefaultProject(newProjectName.trim());
     if (createdProject) {
-      await saveProject(createdProject);
-
-      if (createdProject.scenes.length > 0) {
-        selectScene(createdProject.scenes[0].id, { recordHistory: false });
-      }
+      const savedProject = await saveProject(createdProject);
       if (onProjectOpen) {
-        onProjectOpen(createdProject);
+        onProjectOpen({ id: savedProject.id });
       } else {
         onClose?.();
       }
@@ -118,51 +110,12 @@ export function ProjectDialog({
   };
 
   const handleOpenProject = async (projectId: string) => {
-    setLoading(true);
-    try {
-      let hydratedFromCloud = false;
-      let cloudMissingBackedProject = false;
-      if (mode === 'page') {
-        const cloudPull = await syncProjectFromCloud(projectId);
-        hydratedFromCloud = cloudPull.changed;
-        if (cloudPull.status === 'missing') {
-          const cacheInfo = await getStoredProjectCacheInfo(projectId);
-          if (cacheInfo.origin === 'legacyUnknown') {
-            const recoveredProjectId = await recoverLegacyStoredProject(projectId);
-            if (recoveredProjectId && recoveredProjectId !== projectId) {
-              projectId = recoveredProjectId;
-            }
-          } else {
-            cloudMissingBackedProject = cacheInfo.origin === 'cloudCache';
-          }
-        }
-      }
-
-      if (cloudMissingBackedProject) {
-        return;
-      }
-
-      let project = await loadProject(projectId);
-      if (!project && mode === 'page' && !cloudMissingBackedProject) {
-        const cloudPull = await syncProjectFromCloud(projectId);
-        hydratedFromCloud = cloudPull.changed || hydratedFromCloud;
-        project = await loadProject(projectId);
-      }
-
-      if (project) {
-        if (hydratedFromCloud) {
-          onProjectHydratedFromCloud?.(project);
-        }
-        openProject(project);
-        if (onProjectOpen) {
-          onProjectOpen(project);
-        } else {
-          onClose?.();
-        }
-      }
-    } finally {
-      setLoading(false);
+    if (onProjectOpen) {
+      onProjectOpen({ id: projectId });
+      return;
     }
+
+    onClose?.();
   };
 
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
@@ -206,10 +159,8 @@ export function ProjectDialog({
     setImportError(null);
     try {
       const project = await importProjectFromFile(file);
-      openProject(project);
-      loadProjectsList();
       if (onProjectOpen) {
-        onProjectOpen(project);
+        onProjectOpen({ id: project.id });
       } else {
         onClose?.();
       }

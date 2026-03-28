@@ -17,19 +17,14 @@ import {
   Upload,
 } from 'lucide-react';
 
-import { useProjectStore } from '@/store/projectStore';
-import { useEditorStore } from '@/store/editorStore';
 import {
   createProjectFolder,
   ensureProjectThumbnail,
-  getStoredProjectCacheInfo,
   importProjectFromFile,
-  loadProject,
   moveProjectFolder,
   moveProjectToFolder,
   renameProjectFolder,
   renameStoredProject,
-  recoverLegacyStoredProject,
   restoreProjectFolder,
   restoreProjectFromExplorer,
   saveProject,
@@ -38,7 +33,7 @@ import {
 } from '@/db/database';
 import { useProjectExplorerCatalog } from '@/hooks/useProjectExplorerCatalog';
 import { useCloudSync } from '@/hooks/useCloudSync';
-import type { ProjectExplorerCatalogFolderSummary } from '@/lib/projectExplorerCatalog';
+import { compareProjectsByLastEdited, type ProjectExplorerCatalogFolderSummary } from '@/lib/projectExplorerCatalog';
 import { PROJECT_EXPLORER_ROOT_FOLDER_ID } from '@/lib/projectExplorer';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -50,6 +45,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { createDefaultProject } from '@/types';
 
 type ExplorerKey = `folder:${string}` | `project:${string}`;
 
@@ -82,7 +78,6 @@ type PendingTrashConfirmation =
 
 type ProjectExplorerPageProps = {
   authBootstrapState?: 'steady' | 'reconnecting';
-  onProjectHydratedFromCloud?: (project: { id: string; updatedAt: Date }) => void;
   onProjectOpen?: (project: { id: string }) => void;
 };
 
@@ -168,16 +163,12 @@ function ExplorerLoadingRows() {
 
 export function ProjectExplorerPage({
   authBootstrapState = 'steady',
-  onProjectHydratedFromCloud,
   onProjectOpen,
 }: ProjectExplorerPageProps) {
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
-  const { newProject, openProject } = useProjectStore();
-  const { selectScene } = useEditorStore();
   const {
     ensureManagedAssetsAvailableLocally,
     syncProjectExplorerToCloud,
-    syncProjectFromCloud,
     syncProjectToCloud,
   } = useCloudSync({
     syncOnMount: false,
@@ -284,7 +275,7 @@ export function ProjectExplorerPage({
     () =>
       activeProjects
         .filter((project) => project.folderId === currentFolderSafeId)
-        .sort((left, right) => getSortLabel(left.name).localeCompare(getSortLabel(right.name))),
+        .sort(compareProjectsByLastEdited),
     [activeProjects, currentFolderSafeId],
   );
 
@@ -514,40 +505,11 @@ export function ProjectExplorerPage({
     setIsOpeningProjectId(projectId);
     setImportError(null);
     try {
-      let resolvedProjectId = projectId;
-      const cloudPull = isConvexAuthenticated
-        ? await syncProjectFromCloud(projectId)
-        : { changed: false, found: false, status: 'unchanged' as const };
-      const cacheInfo = await getStoredProjectCacheInfo(projectId);
-      if (cloudPull.status === 'missing') {
-        if (cacheInfo.origin === 'cloudCache') {
-          return;
-        }
-        if (cacheInfo.origin === 'legacyUnknown') {
-          const recoveredProjectId = await recoverLegacyStoredProject(projectId);
-          if (!recoveredProjectId) {
-            return;
-          }
-          resolvedProjectId = recoveredProjectId;
-        }
-      }
-      const project = await loadProject(resolvedProjectId);
-      if (!project) {
-        return;
-      }
-
-      openProject(project);
-      if (project.scenes.length > 0) {
-        selectScene(project.scenes[0].id, { recordHistory: false });
-      }
-      if (cloudPull.changed) {
-        onProjectHydratedFromCloud?.(project);
-      }
-      onProjectOpen?.(project);
+      onProjectOpen?.({ id: projectId });
     } finally {
       setIsOpeningProjectId(null);
     }
-  }, [isConvexAuthenticated, isExplorerReadOnly, onProjectHydratedFromCloud, onProjectOpen, openProject, selectScene, syncProjectFromCloud]);
+  }, [isExplorerReadOnly, onProjectOpen]);
 
   const handleCreateProject = useCallback(async () => {
     if (isExplorerReadOnly) {
@@ -556,23 +518,16 @@ export function ProjectExplorerPage({
 
     const nextIndex = visibleProjects.length + 1;
     const projectName = `Untitled project ${nextIndex}`;
-    newProject(projectName);
-    const createdProject = useProjectStore.getState().project;
-    if (!createdProject) {
-      return;
-    }
-
+    const createdProject = createDefaultProject(projectName);
     const savedProject = await saveProject(createdProject);
     await moveProjectToFolder(savedProject.id, currentFolderSafeId);
-    await ensureProjectThumbnail(savedProject.id);
-    if (savedProject.scenes.length > 0) {
-      selectScene(savedProject.scenes[0].id, { recordHistory: false });
-    }
     queueProjectCloudSync(savedProject.id);
-    queueExplorerCloudSync();
-    openProject(savedProject);
-    onProjectOpen?.(savedProject);
-  }, [currentFolderSafeId, isExplorerReadOnly, newProject, onProjectOpen, openProject, queueExplorerCloudSync, queueProjectCloudSync, selectScene, visibleProjects.length]);
+    void (async () => {
+      await ensureProjectThumbnail(savedProject.id);
+      queueExplorerCloudSync();
+    })();
+    onProjectOpen?.({ id: savedProject.id });
+  }, [currentFolderSafeId, isExplorerReadOnly, onProjectOpen, queueExplorerCloudSync, queueProjectCloudSync, visibleProjects.length]);
 
   const handleCreateFolder = useCallback(async () => {
     if (isExplorerReadOnly) {
@@ -595,19 +550,17 @@ export function ProjectExplorerPage({
     try {
       const project = await importProjectFromFile(file);
       await moveProjectToFolder(project.id, currentFolderSafeId);
-      await ensureProjectThumbnail(project.id);
-      await refreshExplorer();
       queueProjectCloudSync(project.id);
-      queueExplorerCloudSync();
-      openProject(project);
-      if (project.scenes.length > 0) {
-        selectScene(project.scenes[0].id, { recordHistory: false });
-      }
-      onProjectOpen?.(project);
+      void (async () => {
+        await ensureProjectThumbnail(project.id);
+        await refreshExplorer();
+        queueExplorerCloudSync();
+      })();
+      onProjectOpen?.({ id: project.id });
     } catch (error) {
       setImportError(error instanceof Error ? error.message : 'Failed to import project');
     }
-  }, [currentFolderSafeId, isExplorerReadOnly, onProjectOpen, openProject, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer, selectScene]);
+  }, [currentFolderSafeId, isExplorerReadOnly, onProjectOpen, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer]);
 
   const commitRename = useCallback(async () => {
     if (!editingKey || isExplorerReadOnly) {

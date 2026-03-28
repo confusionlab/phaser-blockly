@@ -83,6 +83,33 @@ interface BaseProjectExplorerCatalogSnapshot {
   thumbnailAssetIds: string[];
 }
 
+type LastEditedProjectLike = {
+  id: string;
+  name: string;
+  updatedAt: Date | number;
+};
+
+function getUpdatedAtTime(updatedAt: Date | number): number {
+  return updatedAt instanceof Date ? updatedAt.getTime() : updatedAt;
+}
+
+export function compareProjectsByLastEdited<T extends LastEditedProjectLike>(left: T, right: T): number {
+  const updatedAtDiff = getUpdatedAtTime(right.updatedAt) - getUpdatedAtTime(left.updatedAt);
+  if (updatedAtDiff !== 0) {
+    return updatedAtDiff;
+  }
+
+  const nameDiff = left.name.trim().localeCompare(right.name.trim(), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+  if (nameDiff !== 0) {
+    return nameDiff;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
 function chooseDisplayProject(
   cloudProject: ProjectCatalogCloudProjectSummary | null,
   localProject: ProjectCatalogLocalProjectSummary | null,
@@ -157,7 +184,8 @@ export function buildProjectExplorerCatalogSnapshot(
         thumbnailStale,
       } satisfies BaseCatalogProjectSummary;
     })
-    .filter((project): project is BaseCatalogProjectSummary => project !== null);
+    .filter((project): project is BaseCatalogProjectSummary => project !== null)
+    .sort(compareProjectsByLastEdited);
 
   const folders = mergedExplorerState.folders.map((folder) => ({
     ...folder,
