@@ -26,8 +26,7 @@ import {
   isBitmapCostumeLayer,
 } from '@/lib/costume/costumeDocument';
 import {
-  cloneBackgroundDocument,
-  ensureBackgroundDocument,
+  getTiledBackgroundDocument,
   isBitmapBackgroundLayer,
 } from '@/lib/background/backgroundDocument';
 import { cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
@@ -287,10 +286,20 @@ function normalizeBackgroundDocumentsInProject(project: Project): Project {
     scenes: (project.scenes || []).map((scene) => ({
       ...scene,
       background: scene.background
-        ? {
-            ...scene.background,
-            document: cloneBackgroundDocument(ensureBackgroundDocument(scene.background)),
-          }
+        ? (() => {
+            const document = getTiledBackgroundDocument(scene.background);
+            const {
+              document: _document,
+              chunks: _chunks,
+              ...rest
+            } = scene.background;
+            return document
+              ? {
+                  ...rest,
+                  document,
+                }
+              : rest;
+          })()
         : null,
     })),
   };
@@ -1122,10 +1131,9 @@ async function normalizeProjectAssetsForStorage(
       background.value = record.id;
     }
 
-    const document = background.document || background.type === 'tiled'
-      ? cloneBackgroundDocument(ensureBackgroundDocument(background))
-      : null;
+    const document = getTiledBackgroundDocument(background);
     if (!document) {
+      delete (background as { document?: unknown }).document;
       delete (background as { chunks?: Record<string, string> }).chunks;
       return;
     }
@@ -1201,10 +1209,9 @@ async function hydrateProjectAssetsFromStorage(
       }
     }
 
-    const document = background.document || background.type === 'tiled'
-      ? cloneBackgroundDocument(ensureBackgroundDocument(background))
-      : null;
+    const document = getTiledBackgroundDocument(background);
     if (!document) {
+      delete (background as { document?: unknown }).document;
       delete (background as { chunks?: Record<string, string> }).chunks;
       return;
     }
@@ -1266,8 +1273,8 @@ function collectPersistedAssetRefsFromProjectData(
     if (background.type === 'image') {
       addPersistedAssetRef(refsById, background.value, 'background');
     }
-    if (!background.document) return;
-    const document = ensureBackgroundDocument(background);
+    const document = getTiledBackgroundDocument(background);
+    if (!document) return;
     for (const layer of document.layers) {
       if (!isBitmapBackgroundLayer(layer)) continue;
       Object.values(layer.bitmap.chunks).forEach((assetId) => addPersistedAssetRef(refsById, assetId, 'background'));

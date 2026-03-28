@@ -102,4 +102,66 @@ test.describe('background persistence', () => {
     expect(result.resavedAssetIds).toEqual(result.initialAssetIds);
     expect(result.resavedSerializedData).toBe(result.initialSerializedData);
   });
+
+  test('saving and reopening a color background does not materialize an empty background document', async ({ page }) => {
+    await page.goto(APP_URL);
+    await page.waitForLoadState('networkidle');
+
+    const result = await page.evaluate(async () => {
+      const [
+        { createDefaultProject },
+        { db, loadProject, saveProject },
+      ] = await Promise.all([
+        import('/src/types/index.ts'),
+        import('/src/db/database.ts'),
+      ]);
+
+      await db.projectRevisions.clear();
+      await db.projects.clear();
+      await db.assets.clear();
+      await db.reusables.clear();
+
+      const project = createDefaultProject('Color Background Fixture');
+      project.scenes[0]!.background = { type: 'color', value: '#112233' };
+
+      const savedProject = await saveProject(project);
+      const savedRecord = await db.projects.get(savedProject.id);
+      if (!savedRecord) {
+        throw new Error('Expected saved project record.');
+      }
+      const storedBackground = JSON.parse(savedRecord.data).scenes[0].background;
+
+      const loadedProject = await loadProject(savedProject.id);
+      if (!loadedProject?.scenes[0]?.background) {
+        throw new Error('Expected loaded color background.');
+      }
+
+      const reloadedBackground = loadedProject.scenes[0].background;
+      const resavedProject = await saveProject({
+        ...loadedProject,
+        updatedAt: new Date(loadedProject.updatedAt.getTime() + 1_000),
+      });
+      const resavedRecord = await db.projects.get(resavedProject.id);
+      if (!resavedRecord) {
+        throw new Error('Expected resaved project record.');
+      }
+      const resavedStoredBackground = JSON.parse(resavedRecord.data).scenes[0].background;
+
+      return {
+        storedHasDocument: Object.prototype.hasOwnProperty.call(storedBackground, 'document'),
+        storedHasChunks: Object.prototype.hasOwnProperty.call(storedBackground, 'chunks'),
+        loadedHasDocument: Object.prototype.hasOwnProperty.call(reloadedBackground, 'document'),
+        loadedHasChunks: Object.prototype.hasOwnProperty.call(reloadedBackground, 'chunks'),
+        resavedHasDocument: Object.prototype.hasOwnProperty.call(resavedStoredBackground, 'document'),
+        resavedHasChunks: Object.prototype.hasOwnProperty.call(resavedStoredBackground, 'chunks'),
+      };
+    });
+
+    expect(result.storedHasDocument).toBe(false);
+    expect(result.storedHasChunks).toBe(false);
+    expect(result.loadedHasDocument).toBe(false);
+    expect(result.loadedHasChunks).toBe(false);
+    expect(result.resavedHasDocument).toBe(false);
+    expect(result.resavedHasChunks).toBe(false);
+  });
 });

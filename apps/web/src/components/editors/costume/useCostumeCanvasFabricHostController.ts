@@ -104,7 +104,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   configureCanvasForTool: () => void;
   drawBitmapSelectionOverlay: () => void;
   enforcePathAnchorHandleType: (path: any, anchorIndex: number, changed: any, dragState?: any) => void;
-  flattenBitmapLayer: () => Promise<void>;
+  flattenBitmapLayer: (commitObject?: any) => Promise<void>;
   getPathAnchorDragState: (path: any, anchorIndex: number) => any;
   getSelectedPathAnchorIndices: (path: any) => number[];
   getSelectedPathAnchorTransformSnapshot: (target: any) => any;
@@ -689,10 +689,12 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       }
 
       if (!shapeDraftRef.current) return;
+      const completedShapeDraft = shapeDraftRef.current;
       shapeDraftRef.current = null;
       if (editorModeRef.current === 'bitmap') {
+        const bitmapShapeObject = completedShapeDraft.object;
         void (async () => {
-          await callbacks.flattenBitmapLayer();
+          await callbacks.flattenBitmapLayer(bitmapShapeObject);
           callbacks.configureCanvasForTool();
         })();
       } else {
@@ -717,7 +719,11 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       }
 
       void (async () => {
-        await callbacks.flattenBitmapLayer();
+        await callbacks.flattenBitmapLayer(event?.path);
+        const activeBrush = (fabricCanvas as any).freeDrawingBrush;
+        if (typeof activeBrush?.completeDeferredPreview === 'function') {
+          activeBrush.completeDeferredPreview((event?.path as any)?.__bitmapDeferredPreviewToken);
+        }
       })();
     };
 

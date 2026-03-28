@@ -35,7 +35,7 @@ interface UseCostumeCanvasToolControllerOptions {
   bitmapFloatingObjectRef: MutableRefObject<any | null>;
   brushColorRef: MutableRefObject<string>;
   brushSizeRef: MutableRefObject<number>;
-  commitBitmapStampBrushStroke: (payload: BitmapStampBrushCommitPayload) => void;
+  commitBitmapStampBrushStroke: (payload: BitmapStampBrushCommitPayload) => Promise<void>;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   ensurePathLikeObjectForVectorTool: (target: any) => any | null;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;

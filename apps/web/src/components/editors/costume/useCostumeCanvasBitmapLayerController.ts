@@ -218,6 +218,7 @@ export function useCostumeCanvasBitmapLayerController({
 
   const queueBitmapRasterCommit = useCallback((
     mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,
+    options: { commitObject?: any } = {},
   ) => {
     const nextCommit = bitmapRasterCommitQueueRef.current
       .catch(() => undefined)
@@ -230,7 +231,7 @@ export function useCostumeCanvasBitmapLayerController({
         const reusableBitmapImage = getReusableBitmapImage();
         const reusableBitmapCanvas = reusableBitmapImage?.getElement();
         const raster = reusableBitmapCanvas instanceof HTMLCanvasElement
-          && fabricCanvas.getObjects().length === 1
+          && (options.commitObject || fabricCanvas.getObjects().length === 1)
           ? cloneBitmapCanvas(reusableBitmapCanvas) ?? fabricCanvas.toCanvasElement(1)
           : fabricCanvas.toCanvasElement(1);
         const rasterCtx = raster.getContext('2d', { willReadFrequently: true });
@@ -266,12 +267,26 @@ export function useCostumeCanvasBitmapLayerController({
     saveHistory,
   ]);
 
-  const flattenBitmapLayer = useCallback(async () => {
-    await queueBitmapRasterCommit();
+  const flattenBitmapLayer = useCallback(async (commitObject?: any) => {
+    await queueBitmapRasterCommit(async (_raster, rasterCtx) => {
+      if (!commitObject || typeof commitObject.render !== 'function') {
+        return;
+      }
+
+      const previousObjectCaching = commitObject.objectCaching;
+      commitObject.objectCaching = false;
+      try {
+        commitObject.render(rasterCtx);
+      } finally {
+        commitObject.objectCaching = previousObjectCaching;
+      }
+    }, {
+      commitObject,
+    });
   }, [queueBitmapRasterCommit]);
 
   const commitBitmapStampBrushStroke = useCallback((payload: BitmapStampBrushCommitPayload) => {
-    void queueBitmapRasterCommit(async (_raster, rasterCtx) => {
+    return queueBitmapRasterCommit(async (_raster, rasterCtx) => {
       const visibleBounds = calculateBoundsFromCanvas(payload.strokeCanvas, payload.alphaThreshold);
       if (!visibleBounds) {
         return;

@@ -181,6 +181,14 @@ export function hasBackgroundDocumentContent(document: BackgroundDocument | null
   return !!document && document.layers.some((layer) => hasBackgroundLayerContent(layer));
 }
 
+export function getTiledBackgroundDocument(background: BackgroundConfig | null | undefined): BackgroundDocument | null {
+  if (!background || background.type !== 'tiled') {
+    return null;
+  }
+
+  return cloneBackgroundDocument(ensureBackgroundDocument(background));
+}
+
 export function createBitmapBackgroundLayer(options: {
   id?: string;
   name?: string;

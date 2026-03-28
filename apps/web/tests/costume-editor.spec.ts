@@ -271,6 +271,50 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
+  test('bitmap shapes commit on the active layer and survive a tab round-trip', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const beforeSamples = await readCheckerboardInkSamples(page);
+
+    await drawAcrossCostumeCanvas(page, 0.22, 0.22, 0.44, 0.42);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+
+    await roundTripThroughCodeTab(page);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('rapid bitmap eraser strokes preserve committed layer state across a tab round-trip', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.16, 0.16, 0.60, 0.60);
+    const beforeEraseSamples = await readCheckerboardInkSamples(page);
+    expect(beforeEraseSamples).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.20, 0.20, 0.56, 0.20);
+    await drawAcrossCostumeCanvas(page, 0.20, 0.30, 0.56, 0.30);
+    await drawAcrossCostumeCanvas(page, 0.20, 0.40, 0.56, 0.40);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(beforeEraseSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+
+    await roundTripThroughCodeTab(page);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(beforeEraseSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
   test('active hosted layer stays visible after switching away from and back to the costume tab', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');

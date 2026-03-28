@@ -1,6 +1,7 @@
 import {
   cloneBackgroundDocument,
   ensureBackgroundDocument,
+  getTiledBackgroundDocument,
 } from '@/lib/background/backgroundDocument';
 import { normalizeChunkDataMap } from '@/lib/background/chunkStore';
 import {
@@ -76,9 +77,7 @@ type LegacyBackgroundPersistenceShape = PersistedBackgroundConfig & {
   chunks?: unknown;
 };
 
-function toLegacyBackgroundConfig(
-  background: LegacyBackgroundPersistenceShape,
-): BackgroundConfig {
+function toTypedBackgroundConfig(background: LegacyBackgroundPersistenceShape): BackgroundConfig {
   return {
     ...background,
     chunks: normalizeChunkDataMap(
@@ -133,14 +132,16 @@ function canonicalizePersistedBackground(
 
   const nextBackground = cloneValue(background) as LegacyBackgroundPersistenceShape;
   const {
+    document: _document,
     chunks: _chunks,
     ...rest
   } = nextBackground;
 
-  if (nextBackground.document || nextBackground.type === 'tiled') {
+  const document = getTiledBackgroundDocument(toTypedBackgroundConfig(nextBackground));
+  if (document) {
     return {
       ...rest,
-      document: cloneBackgroundDocument(ensureBackgroundDocument(toLegacyBackgroundConfig(nextBackground))),
+      document,
     };
   }
 
