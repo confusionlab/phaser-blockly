@@ -1,5 +1,5 @@
-import 'fake-indexeddb/auto';
 import { expect, test } from '@playwright/test';
+import { IDBKeyRange, indexedDB } from 'fake-indexeddb';
 import { createDefaultProject, type Project } from '../src/types';
 
 test.describe.configure({ mode: 'serial' });
@@ -20,12 +20,11 @@ async function loadDatabaseModules(): Promise<DatabaseModule> {
     IDBKeyRange?: typeof IDBKeyRange;
     indexedDB?: IDBFactory;
   };
-  if (globals.indexedDB) {
-    Dexie.dependencies.indexedDB = globals.indexedDB;
-  }
-  if (globals.IDBKeyRange) {
-    Dexie.dependencies.IDBKeyRange = globals.IDBKeyRange;
-  }
+
+  globals.indexedDB = indexedDB;
+  globals.IDBKeyRange = IDBKeyRange;
+  Dexie.dependencies.indexedDB = indexedDB;
+  Dexie.dependencies.IDBKeyRange = IDBKeyRange;
   return await import('../src/db/database');
 }
 

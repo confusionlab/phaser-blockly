@@ -1383,7 +1383,7 @@ function getActiveDatabase(): GameMakerDatabase {
     activeIdbKeyRangeDependency = currentIdbKeyRangeDependency;
   }
 
-  return activeDatabaseInstance;
+  return activeDatabaseInstance!;
 }
 
 const dbProxyTarget = Object.create(GameMakerDatabase.prototype) as GameMakerDatabase;

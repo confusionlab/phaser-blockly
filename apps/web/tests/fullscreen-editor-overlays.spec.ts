@@ -8,7 +8,8 @@ async function bootstrapEditorProject(
   await page.waitForLoadState('networkidle');
 
   await page.evaluate(async ({ projectName, addObject, blocklyXml }) => {
-    const [{ useProjectStore }, { useEditorStore }] = await Promise.all([
+    const [{ saveProject }, { useProjectStore }, { useEditorStore }] = await Promise.all([
+      import('/src/db/database.ts'),
       import('/src/store/projectStore.ts'),
       import('/src/store/editorStore.ts'),
     ]);
@@ -30,6 +31,12 @@ async function bootstrapEditorProject(
       }
       useEditorStore.getState().selectObject(createdObject.id, { recordHistory: false });
     }
+
+    const latestProject = useProjectStore.getState().project;
+    if (!latestProject) {
+      throw new Error('Failed to read the latest project before persistence.');
+    }
+    await saveProject(latestProject);
 
     window.history.pushState({}, '', `/project/${project.id}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
