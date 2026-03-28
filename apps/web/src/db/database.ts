@@ -531,6 +531,10 @@ function normalizeProjectExplorerStateAgainstProjectRecords(
       continue;
     }
 
+    if (record.cloudBacked) {
+      continue;
+    }
+
     changed = true;
     nextProjects.push(createProjectExplorerProjectMeta(record.id, {
       createdAt: record.createdAt.getTime(),

@@ -101,6 +101,7 @@ export function buildProjectExplorerCatalogSnapshot(
 
   const cloudProjectsById = new Map(args.cloudProjects.map((project) => [project.id, project]));
   const localProjectsById = new Map(args.localProjects.map((project) => [project.id, project]));
+  const projectMetaByProjectId = new Map(mergedExplorerState.projects.map((projectMeta) => [projectMeta.projectId, projectMeta]));
   const visibleProjectIds = new Set(args.cloudProjects.map((project) => project.id));
 
   for (const localProject of args.localProjects) {
@@ -120,7 +121,7 @@ export function buildProjectExplorerCatalogSnapshot(
         return null;
       }
 
-      const projectMeta = mergedExplorerState.projects.find((entry) => entry.projectId === projectId)
+      const projectMeta = projectMetaByProjectId.get(projectId)
         ?? createProjectExplorerProjectMeta(projectId, {
           createdAt: displayProject.createdAt,
           updatedAt: displayProject.updatedAt,
