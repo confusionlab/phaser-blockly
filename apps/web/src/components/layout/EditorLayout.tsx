@@ -253,6 +253,18 @@ export function EditorLayout() {
     })();
   }, []);
 
+  const markProjectAsCloudSaved = useCallback((projectSnapshot: Project) => {
+    const savedAt = projectSnapshot.updatedAt.getTime();
+    lastCloudSavedVersionRef.current.set(projectSnapshot.id, savedAt);
+    if (useProjectStore.getState().project?.id === projectSnapshot.id) {
+      setCloudSaveState({
+        status: 'saved',
+        lastSavedAt: savedAt,
+        errorMessage: null,
+      });
+    }
+  }, []);
+
   // Load project from URL
   useEffect(() => {
     const loadFromUrl = async () => {
@@ -262,9 +274,12 @@ export function EditorLayout() {
       if (projectId && (!project || project.id !== projectId)) {
         setIsLoading(true);
         try {
-          await syncProjectFromCloud(projectId);
+          const hydratedFromCloud = await syncProjectFromCloud(projectId);
           const loadedProject = await loadProject(projectId);
           if (loadedProject) {
+            if (hydratedFromCloud) {
+              markProjectAsCloudSaved(loadedProject);
+            }
             openProject(loadedProject);
           } else {
             // Project not found, redirect to home
@@ -287,7 +302,7 @@ export function EditorLayout() {
 
     loadFromUrl();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMigratingProjects, projectId, syncProjectFromCloud]);
+  }, [isMigratingProjects, markProjectAsCloudSaved, projectId, syncProjectFromCloud]);
 
   // Keep selection aligned with the active project as projects open, close, or change shape.
   useEffect(() => {
@@ -403,15 +418,18 @@ export function EditorLayout() {
     }
 
     try {
-      await syncProjectFromCloud(leaseProjectId);
+      const hydratedFromCloud = await syncProjectFromCloud(leaseProjectId);
       const refreshedProject = await loadProject(leaseProjectId);
       if (refreshedProject) {
+        if (hydratedFromCloud) {
+          markProjectAsCloudSaved(refreshedProject);
+        }
         openProject(refreshedProject);
       }
     } catch (error) {
       console.error('[ProjectLease] Failed to refresh project after takeover:', error);
     }
-  }, [leaseProjectId, openProject, syncProjectFromCloud, takeOverLease]);
+  }, [leaseProjectId, markProjectAsCloudSaved, openProject, syncProjectFromCloud, takeOverLease]);
 
   const syncCurrentProjectToCloud = useCallback(async (
     projectSnapshot: Project,
@@ -1037,7 +1055,11 @@ export function EditorLayout() {
             </div>
           </>
         ) : (
-              <ProjectDialog onProjectOpen={handleProjectOpen} mode="page" />
+              <ProjectDialog
+                onProjectOpen={handleProjectOpen}
+                onProjectHydratedFromCloud={markProjectAsCloudSaved}
+                mode="page"
+              />
             )}
       </div>
 

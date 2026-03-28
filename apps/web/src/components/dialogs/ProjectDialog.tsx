@@ -29,6 +29,7 @@ import type { Project } from '@/types';
 interface ProjectDialogProps {
   onClose?: () => void;
   onProjectOpen?: (project: Project) => void;
+  onProjectHydratedFromCloud?: (project: Project) => void;
   mode?: 'dialog' | 'page';
 }
 
@@ -38,7 +39,12 @@ interface ProjectListItem {
   updatedAt: Date;
 }
 
-export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: ProjectDialogProps) {
+export function ProjectDialog({
+  onClose,
+  onProjectOpen,
+  onProjectHydratedFromCloud,
+  mode = 'dialog',
+}: ProjectDialogProps) {
   const { project: currentProject, newProject, openProject } = useProjectStore();
   const { selectScene } = useEditorStore();
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
@@ -112,17 +118,21 @@ export function ProjectDialog({ onClose, onProjectOpen, mode = 'dialog' }: Proje
   const handleOpenProject = async (projectId: string) => {
     setLoading(true);
     try {
+      let hydratedFromCloud = false;
       if (mode === 'page') {
-        await syncProjectFromCloud(projectId);
+        hydratedFromCloud = await syncProjectFromCloud(projectId);
       }
 
       let project = await loadProject(projectId);
       if (!project && mode === 'page') {
-        await syncProjectFromCloud(projectId);
+        hydratedFromCloud = (await syncProjectFromCloud(projectId)) || hydratedFromCloud;
         project = await loadProject(projectId);
       }
 
       if (project) {
+        if (hydratedFromCloud) {
+          onProjectHydratedFromCloud?.(project);
+        }
         openProject(project);
         if (onProjectOpen) {
           onProjectOpen(project);
