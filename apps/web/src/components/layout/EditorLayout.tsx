@@ -24,7 +24,14 @@ import {
   migrateAllLocalProjects,
   saveProject,
 } from '@/db/database';
-import { useCloudSync, type CloudProjectSyncStatus, type CloudProjectUploadEvent } from '@/hooks/useCloudSync';
+import {
+  useCloudSync,
+  type CloudProjectSyncPhaseDurations,
+  type CloudProjectSyncStatus,
+  type CloudProjectSyncTimingEvent,
+  type CloudProjectSyncTimingPhase,
+  type CloudProjectUploadEvent,
+} from '@/hooks/useCloudSync';
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
 import { assistantFeatureFlags } from '@/lib/assistant/config';
@@ -53,6 +60,45 @@ function formatSaveDuration(durationMs: number): string {
   return durationMs >= 1_000
     ? `${(durationMs / 1_000).toFixed(2)}s`
     : `${Math.round(durationMs)}ms`;
+}
+
+const CLOUD_SYNC_PHASE_ORDER: CloudProjectSyncTimingPhase[] = [
+  'preparePayload',
+  'loadLocalRevisionState',
+  'planProject',
+  'ensureProjectAssets',
+  'uploadProjectPayload',
+  'commitProjectMetadata',
+  'planRevisions',
+  'uploadRevisions',
+  'pullRevisions',
+  'refreshLocalCache',
+];
+
+const CLOUD_SYNC_PHASE_LABELS: Record<CloudProjectSyncTimingPhase, string> = {
+  preparePayload: 'prepare payload',
+  loadLocalRevisionState: 'load local revisions',
+  planProject: 'plan project sync',
+  ensureProjectAssets: 'ensure assets',
+  uploadProjectPayload: 'upload project payload',
+  commitProjectMetadata: 'commit project sync',
+  planRevisions: 'plan revisions',
+  uploadRevisions: 'upload revisions',
+  pullRevisions: 'pull revisions',
+  refreshLocalCache: 'refresh local cache',
+};
+
+function formatSyncPhaseBreakdown(phaseDurationsMs: CloudProjectSyncPhaseDurations): string {
+  return CLOUD_SYNC_PHASE_ORDER
+    .map((phase) => {
+      const durationMs = phaseDurationsMs[phase];
+      if (durationMs === undefined) {
+        return null;
+      }
+      return `${CLOUD_SYNC_PHASE_LABELS[phase]} ${formatSaveDuration(durationMs)}`;
+    })
+    .filter((segment): segment is string => segment !== null)
+    .join(', ');
 }
 
 function dispatchEditorResizeFreeze(active: boolean): void {
@@ -125,6 +171,7 @@ export function EditorLayout() {
     updatedAtMs: number;
     startedAtMs: number;
     uploadSizeBytes: number | null;
+    phaseDurationsMs: CloudProjectSyncPhaseDurations | null;
   } | null>(null);
   const activeProjectId = project?.id ?? null;
   const leaseProjectId = projectId ?? activeProjectId;
@@ -153,6 +200,20 @@ export function EditorLayout() {
     pendingSave.uploadSizeBytes = event.sizeBytes;
   }, []);
 
+  const handleProjectSyncMeasured = useCallback((event: CloudProjectSyncTimingEvent) => {
+    const pendingSave = manualSaveMetricsRef.current;
+    if (!pendingSave) {
+      return;
+    }
+    if (
+      pendingSave.projectId !== event.projectId
+      || pendingSave.updatedAtMs !== event.updatedAt
+    ) {
+      return;
+    }
+    pendingSave.phaseDurationsMs = event.phaseDurationsMs;
+  }, []);
+
   // The editor treats cloud save as authoritative and uses IndexedDB as a synced cache.
   const { syncProjectDraftToCloud, syncProjectToCloud, syncProjectFromCloud } = useCloudSync({
     enabled: isCloudWriteEnabled,
@@ -166,6 +227,7 @@ export function EditorLayout() {
     backgroundSyncDebounceMs: 0,
     autoSyncCurrentProject: false,
     onProjectPayloadUploaded: handleProjectPayloadUploaded,
+    onProjectSyncMeasured: handleProjectSyncMeasured,
   });
 
   useEffect(() => {
@@ -367,7 +429,9 @@ export function EditorLayout() {
     options: { allowPullIntoEditor?: boolean } = {},
   ): Promise<boolean> => {
     if (result === 'saved') {
+      const localCacheRefreshStartedAtMs = performance.now();
       const savedAt = await persistCloudSavedProject(projectSnapshot);
+      const localCacheRefreshMs = performance.now() - localCacheRefreshStartedAtMs;
       const currentProject = useProjectStore.getState().project;
       const currentUpdatedAtMs = currentProject?.id === projectSnapshot.id
         ? currentProject.updatedAt.getTime()
@@ -390,9 +454,16 @@ export function EditorLayout() {
           const sizeText = pendingSave.uploadSizeBytes !== null
             ? formatUploadSizeMb(pendingSave.uploadSizeBytes)
             : 'unknown size';
+          const phaseBreakdown = formatSyncPhaseBreakdown({
+            ...(pendingSave.phaseDurationsMs ?? {}),
+            refreshLocalCache: localCacheRefreshMs,
+          });
           console.log(
             `[CloudSync] Saved project "${projectSnapshot.id}" (${sizeText}, ${formatSaveDuration(elapsedMs)} from Save click to Saved).`,
           );
+          if (phaseBreakdown.length > 0) {
+            console.log(`[CloudSync] Save breakdown "${projectSnapshot.id}" (${phaseBreakdown}).`);
+          }
         }
         manualSaveMetricsRef.current = null;
       }
@@ -627,6 +698,7 @@ export function EditorLayout() {
       updatedAtMs: project.updatedAt.getTime(),
       startedAtMs: performance.now(),
       uploadSizeBytes: null,
+      phaseDurationsMs: null,
     };
     const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
     if (!synced) {

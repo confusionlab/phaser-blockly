@@ -50,6 +50,8 @@ interface CloudSyncOptions {
   autoSyncCurrentProject?: boolean;
   // Optional upload telemetry hook for caller-side save metrics.
   onProjectPayloadUploaded?: (event: CloudProjectUploadEvent) => void;
+  // Optional phase timing hook for caller-side save diagnostics.
+  onProjectSyncMeasured?: (event: CloudProjectSyncTimingEvent) => void;
 }
 
 interface CloudProjectRecord {
@@ -146,9 +148,44 @@ export type CloudProjectUploadEvent = {
   updatedAt: number;
   sizeBytes: number;
 };
+export type CloudProjectSyncTimingPhase =
+  | 'preparePayload'
+  | 'loadLocalRevisionState'
+  | 'planProject'
+  | 'ensureProjectAssets'
+  | 'uploadProjectPayload'
+  | 'commitProjectMetadata'
+  | 'planRevisions'
+  | 'uploadRevisions'
+  | 'pullRevisions'
+  | 'refreshLocalCache';
+export type CloudProjectSyncPhaseDurations = Partial<Record<CloudProjectSyncTimingPhase, number>>;
+export type CloudProjectSyncTimingEvent = {
+  projectId: string;
+  updatedAt: number;
+  status: CloudProjectSyncStatus;
+  phaseDurationsMs: CloudProjectSyncPhaseDurations;
+};
 
 function formatUploadSizeMb(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(3)} MB`;
+}
+
+async function measureCloudSyncPhase<T>(
+  phaseDurationsMs: CloudProjectSyncPhaseDurations | undefined,
+  phase: CloudProjectSyncTimingPhase,
+  task: () => Promise<T>,
+): Promise<T> {
+  if (!phaseDurationsMs) {
+    return await task();
+  }
+
+  const startedAtMs = performance.now();
+  try {
+    return await task();
+  } finally {
+    phaseDurationsMs[phase] = (phaseDurationsMs[phase] ?? 0) + (performance.now() - startedAtMs);
+  }
 }
 
 async function loadProjectDataFromCloud(cloudProject: CloudProjectRecord): Promise<string> {
@@ -342,6 +379,7 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
     backgroundSyncDebounceMs = 15_000,
     autoSyncCurrentProject = true,
     onProjectPayloadUploaded,
+    onProjectSyncMeasured,
   } = options;
 
   const convex = useConvex();
@@ -736,22 +774,33 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
   );
 
   const syncPayloadToCloud = useCallback(
-    async (payload: ProjectSyncPayload) => {
+    async (
+      payload: ProjectSyncPayload,
+      phaseDurationsMs?: CloudProjectSyncPhaseDurations,
+    ) => {
       if (!enabled) {
         return 'skipped' as const;
       }
       try {
-        const plan = await planSync(toProjectSyncMetadata(payload));
+        const plan = await measureCloudSyncPhase(phaseDurationsMs, 'planProject', async () => {
+          return await planSync(toProjectSyncMetadata(payload));
+        });
         if (plan.project.action !== 'upload') {
           return plan.project.action === 'pull' ? 'pull' as const : 'skipped' as const;
         }
 
-        await ensureAssetIdsInCloud(
-          plan.project.missingAssetIds ?? payload.assetIds,
-          { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
-        );
-        const storagePayload = await toStorageSyncPayload(payload);
-        const result = await syncSingleMutation(storagePayload);
+        await measureCloudSyncPhase(phaseDurationsMs, 'ensureProjectAssets', async () => {
+          await ensureAssetIdsInCloud(
+            plan.project.missingAssetIds ?? payload.assetIds,
+            { skipRemoteCheck: plan.project.missingAssetIds !== undefined },
+          );
+        });
+        const storagePayload = await measureCloudSyncPhase(phaseDurationsMs, 'uploadProjectPayload', async () => {
+          return await toStorageSyncPayload(payload);
+        });
+        const result = await measureCloudSyncPhase(phaseDurationsMs, 'commitProjectMetadata', async () => {
+          return await syncSingleMutation(storagePayload);
+        });
         if (result.action === 'skipped' && result.reason !== 'already in sync') {
           return 'pull' as const;
         }
@@ -925,16 +974,22 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
       if (!enabled) {
         return 'skipped' as const;
       }
+      const phaseDurationsMs: CloudProjectSyncPhaseDurations = {};
+      let finalStatus: CloudProjectSyncStatus = 'error';
       try {
         const [payload, localRevisionState] = await Promise.all([
-          getCachedProjectSyncPayload(project),
-          getProjectRevisionSyncState(project.id),
+          measureCloudSyncPhase(phaseDurationsMs, 'preparePayload', async () => {
+            return await getCachedProjectSyncPayload(project);
+          }),
+          measureCloudSyncPhase(phaseDurationsMs, 'loadLocalRevisionState', async () => {
+            return await getProjectRevisionSyncState(project.id);
+          }),
         ]);
         const projectMetadata = toProjectSyncMetadata(payload);
         const signature = `${buildProjectSyncSignature(projectMetadata)}|${buildRevisionSyncSignature(localRevisionState)}`;
 
-        return await runProjectSyncSerially(project.id, signature, async () => {
-          const outcome = await syncPayloadToCloud(payload);
+        finalStatus = await runProjectSyncSerially(project.id, signature, async () => {
+          const outcome = await syncPayloadToCloud(payload, phaseDurationsMs);
           if (outcome === 'pull') {
             await reconcileProjectFromCloud(project.id);
             console.warn(`[CloudSync] Skipped pushing in-memory project "${project.id}" because cloud has a newer copy.`);
@@ -944,27 +999,47 @@ export function useCloudSync(options: CloudSyncOptions = {}) {
             return 'error' as const;
           }
 
-          const { revisionIdsToUpload, plannedMissingAssetIds, shouldPullFromCloud } = await prepareRevisionSyncPlan(
-            projectMetadata,
-            localRevisionState,
-          );
+          const {
+            revisionIdsToUpload,
+            plannedMissingAssetIds,
+            shouldPullFromCloud,
+          } = await measureCloudSyncPhase(phaseDurationsMs, 'planRevisions', async () => {
+            return await prepareRevisionSyncPlan(
+              projectMetadata,
+              localRevisionState,
+            );
+          });
           if (revisionIdsToUpload.length > 0) {
-            await syncProjectRevisionsToCloud(project.id, revisionIdsToUpload, plannedMissingAssetIds);
+            await measureCloudSyncPhase(phaseDurationsMs, 'uploadRevisions', async () => {
+              await syncProjectRevisionsToCloud(project.id, revisionIdsToUpload, plannedMissingAssetIds);
+            });
           }
           if (shouldPullFromCloud) {
-            await reconcileProjectRevisionsFromCloud(project.id);
+            await measureCloudSyncPhase(phaseDurationsMs, 'pullRevisions', async () => {
+              await reconcileProjectRevisionsFromCloud(project.id);
+            });
           }
 
           return 'saved' as const;
         });
+        return finalStatus;
       } catch (error) {
         console.error('[CloudSync] Failed to sync in-memory project:', error);
+        finalStatus = 'error';
         return 'error' as const;
+      } finally {
+        onProjectSyncMeasured?.({
+          projectId: project.id,
+          updatedAt: project.updatedAt.getTime(),
+          status: finalStatus,
+          phaseDurationsMs,
+        });
       }
     },
     [
       enabled,
       getCachedProjectSyncPayload,
+      onProjectSyncMeasured,
       prepareRevisionSyncPlan,
       reconcileProjectFromCloud,
       reconcileProjectRevisionsFromCloud,
