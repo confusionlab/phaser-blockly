@@ -54,6 +54,7 @@ import type {
   ProjectCatalogLocalProjectSummary,
   StoredProjectOrigin,
 } from '@/lib/projectExplorerCatalog';
+import { isConflictProjectId } from '@/lib/projectExplorerCatalog';
 import {
   computeProjectThumbnailVisualSignature,
   renderProjectThumbnail,
@@ -201,12 +202,18 @@ export interface LocalProjectCatalogSnapshot {
 }
 
 function normalizeStoredProjectOrigin(value: unknown): StoredProjectOrigin | null {
-  return value === 'localDraft' || value === 'cloudCache' || value === 'legacyUnknown'
+  return value === 'localDraft' || value === 'cloudCache' || value === 'conflictCopy' || value === 'legacyUnknown'
     ? value
     : null;
 }
 
-function getStoredProjectOrigin(record: Pick<ProjectRecord, 'storageOrigin' | 'cloudBacked'> | null | undefined): StoredProjectOrigin {
+function getStoredProjectOrigin(
+  record: (Pick<ProjectRecord, 'id' | 'storageOrigin' | 'cloudBacked'>) | null | undefined,
+): StoredProjectOrigin {
+  if (record && isConflictProjectId(record.id)) {
+    return 'conflictCopy';
+  }
+
   const normalized = normalizeStoredProjectOrigin(record?.storageOrigin);
   if (normalized) {
     return normalized;
@@ -1533,7 +1540,7 @@ export async function createProjectConflictCopy(project: Project): Promise<Proje
   conflictProject.name = `${project.name} (Conflict ${timestampLabel})`;
   conflictProject.updatedAt = new Date();
 
-  return await saveProject(conflictProject);
+  return await saveProjectWithOptions(conflictProject, { storageOrigin: 'conflictCopy' });
 }
 
 export async function loadProject(id: string): Promise<Project | null> {
@@ -1554,13 +1561,19 @@ export async function loadProject(id: string): Promise<Project | null> {
   return project;
 }
 
-export async function listProjects(): Promise<Array<{ id: string; name: string; updatedAt: Date }>> {
+export async function listProjects(
+  options: {
+    includeConflictCopies?: boolean;
+  } = {},
+): Promise<Array<{ id: string; name: string; updatedAt: Date }>> {
   const records = await db.projects.orderBy('updatedAt').reverse().toArray();
-  return records.map((record) => ({
+  return records
+    .filter((record) => options.includeConflictCopies || getStoredProjectOrigin(record) !== 'conflictCopy')
+    .map((record) => ({
     id: record.id,
     name: record.name,
     updatedAt: record.updatedAt,
-  }));
+    }));
 }
 
 export async function deleteProject(id: string): Promise<void> {
@@ -3223,6 +3236,8 @@ async function preserveLocalConflictCopy(existing: ProjectRecord, existingHash: 
     name: `${existing.name} (Conflict ${timestampLabel})`,
     createdAt: new Date(existing.createdAt),
     updatedAt: new Date(),
+    storageOrigin: 'conflictCopy',
+    cloudBacked: false,
     contentHash: existingHash,
   });
 }
@@ -3400,12 +3415,20 @@ export async function getProjectRevisionsForSync(
     .map(revisionRecordToSyncPayload);
 }
 
-export async function pruneLocalProjectsNotInCloud(cloudLocalIds: string[]): Promise<{ deleted: number }> {
+export async function pruneLocalProjectsNotInCloud(
+  cloudLocalIds: string[],
+  options: {
+    excludeIds?: readonly string[];
+  } = {},
+): Promise<{ deleted: number }> {
   const cloudIdSet = new Set(cloudLocalIds);
+  const excludedIdSet = new Set((options.excludeIds ?? []).filter((projectId) => typeof projectId === 'string'));
   const localRecords = await db.projects.toArray();
   const explorerState = await loadProjectExplorerStateInternal();
   const isConflictCopyId = (id: string) => /-conflict-[0-9a-f]{8}$/i.test(id);
-  const localOnlyRecords = localRecords.filter((record) => !cloudIdSet.has(record.id) && !isConflictCopyId(record.id));
+  const localOnlyRecords = localRecords.filter(
+    (record) => !cloudIdSet.has(record.id) && !excludedIdSet.has(record.id) && !isConflictCopyId(record.id),
+  );
   const localOnlyIds = localOnlyRecords.map((record) => record.id);
 
   if (localOnlyIds.length === 0) {

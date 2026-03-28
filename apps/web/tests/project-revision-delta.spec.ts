@@ -150,6 +150,7 @@ test.describe('project revision deltas', () => {
   test('creates a stable conflict copy for the same project version', async () => {
     const {
       createProjectConflictCopy,
+      db,
       listProjects,
       saveProject,
     } = await loadDatabaseModules();
@@ -159,12 +160,58 @@ test.describe('project revision deltas', () => {
 
     const firstConflict = await createProjectConflictCopy(project);
     const secondConflict = await createProjectConflictCopy(project);
-    const projects = await listProjects();
+    const visibleProjects = await listProjects();
+    const allProjects = await listProjects({ includeConflictCopies: true });
+    const storedConflict = await db.projects.get(firstConflict.id);
 
     expect(firstConflict.id).toBe(secondConflict.id);
     expect(firstConflict.id).toMatch(/-conflict-[0-9a-f]{8}$/);
     expect(firstConflict.id).not.toBe(project.id);
     expect(firstConflict.name).toContain('Conflict');
-    expect(projects.filter((entry) => entry.id === firstConflict.id)).toHaveLength(1);
+    expect(storedConflict?.storageOrigin).toBe('conflictCopy');
+    expect(visibleProjects.filter((entry) => entry.id === firstConflict.id)).toHaveLength(0);
+    expect(allProjects.filter((entry) => entry.id === firstConflict.id)).toHaveLength(1);
+  });
+
+  test('hides legacy conflict ids from default project listings', async () => {
+    const {
+      createProjectConflictCopy,
+      db,
+      listProjects,
+      saveProject,
+    } = await loadDatabaseModules();
+
+    let project = createDefaultProject('Legacy Conflict Fixture');
+    project = await saveProject(project);
+
+    const conflictProject = await createProjectConflictCopy(project);
+    await db.projects.update(conflictProject.id, {
+      storageOrigin: 'localDraft',
+      cloudBacked: false,
+    });
+
+    const visibleProjects = await listProjects();
+    const allProjects = await listProjects({ includeConflictCopies: true });
+    const storedConflict = await db.projects.get(conflictProject.id);
+
+    expect(storedConflict?.storageOrigin).toBe('localDraft');
+    expect(visibleProjects.some((entry) => entry.id === conflictProject.id)).toBe(false);
+    expect(allProjects.some((entry) => entry.id === conflictProject.id)).toBe(true);
+  });
+
+  test('prunes local-only cached projects that are absent from cloud', async () => {
+    const {
+      loadProject,
+      pruneLocalProjectsNotInCloud,
+      saveProject,
+    } = await loadDatabaseModules();
+
+    let project = createDefaultProject('Cached Project');
+    project = await saveProject(project);
+
+    const pruneResult = await pruneLocalProjectsNotInCloud([]);
+
+    expect(pruneResult.deleted).toBe(1);
+    expect(await loadProject(project.id)).toBeNull();
   });
 });

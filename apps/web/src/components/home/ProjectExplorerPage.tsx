@@ -873,17 +873,6 @@ export function ProjectExplorerPage({
                 Home
               </h1>
             )}
-            {authBootstrapState === 'reconnecting' ? (
-              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
-                <Loader2 className="size-3.5 animate-spin text-sky-600" />
-                Reconnecting to cloud...
-              </div>
-            ) : isRefreshing ? (
-              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
-                <Loader2 className="size-3.5 animate-spin text-slate-500" />
-                Refreshing workspace...
-              </div>
-            ) : null}
           </div>
 
           <div className="flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-2 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur">
@@ -970,12 +959,27 @@ export function ProjectExplorerPage({
 
         <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/75 bg-white/80 shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur">
           <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
-            <div className="text-sm font-medium text-slate-700">
-              {isInitialLoading
-                ? 'Loading projects...'
-                : visibleItems.length === 0
-                  ? 'Empty folder'
-                  : `${visibleItems.length} item${visibleItems.length === 1 ? '' : 's'}`}
+            <div className="flex items-center gap-3">
+              <div className="text-sm font-medium text-slate-700">
+                {isInitialLoading
+                  ? 'Loading projects...'
+                  : visibleItems.length === 0
+                    ? 'Empty folder'
+                    : `${visibleItems.length} item${visibleItems.length === 1 ? '' : 's'}`}
+              </div>
+              <div className="flex h-7 w-[220px] items-center">
+                {authBootstrapState === 'reconnecting' ? (
+                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
+                    <Loader2 className="size-3.5 animate-spin text-sky-600" />
+                    Reconnecting to cloud...
+                  </div>
+                ) : isRefreshing ? (
+                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
+                    <Loader2 className="size-3.5 animate-spin text-slate-500" />
+                    Refreshing workspace...
+                  </div>
+                ) : null}
+              </div>
             </div>
             {importError ? <div className="text-sm text-destructive">{importError}</div> : null}
           </div>

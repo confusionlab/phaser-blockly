@@ -7,7 +7,7 @@ import {
   type ProjectExplorerState,
 } from '@/lib/projectExplorer';
 
-export type StoredProjectOrigin = 'localDraft' | 'cloudCache' | 'legacyUnknown';
+export type StoredProjectOrigin = 'localDraft' | 'cloudCache' | 'conflictCopy' | 'legacyUnknown';
 
 export interface ProjectCatalogCloudProjectSummary {
   id: string;
@@ -23,6 +23,10 @@ export interface ProjectCatalogLocalProjectSummary {
   updatedAt: number;
   storageOrigin: StoredProjectOrigin;
   currentThumbnailVisualSignature: string | null;
+}
+
+export function isConflictProjectId(projectId: string): boolean {
+  return /-conflict-[0-9a-f]{8}$/i.test(projectId);
 }
 
 export interface ProjectExplorerCatalogFolderSummary extends ProjectExplorerFolder {
@@ -107,12 +111,11 @@ export function buildProjectExplorerCatalogSnapshot(
   const visibleProjectIds = new Set(args.cloudProjects.map((project) => project.id));
 
   for (const localProject of args.localProjects) {
-    if (!args.hasCloudSnapshot) {
-      visibleProjectIds.add(localProject.id);
+    if (localProject.storageOrigin === 'conflictCopy') {
       continue;
     }
 
-    if (cloudProjectsById.has(localProject.id) || localProject.storageOrigin === 'localDraft') {
+    if (!args.hasCloudSnapshot) {
       visibleProjectIds.add(localProject.id);
     }
   }

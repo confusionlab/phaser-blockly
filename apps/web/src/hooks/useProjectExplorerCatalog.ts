@@ -5,6 +5,7 @@ import { api } from '@convex-generated/api';
 import {
   getLocalProjectCatalogSnapshot,
   getManagedAssetLocators,
+  pruneLocalProjectsNotInCloud,
   reconcileStoredProjectOriginsWithCloud,
   type LocalProjectCatalogSnapshot,
 } from '@/db/database';
@@ -16,6 +17,7 @@ import {
   type ProjectExplorerCatalogSnapshot,
 } from '@/lib/projectExplorerCatalog';
 import { createDefaultProjectExplorerState, normalizeProjectExplorerState } from '@/lib/projectExplorer';
+import { useProjectStore } from '@/store/projectStore';
 
 type CloudProjectExplorerCatalogRecord = {
   updatedAt: number;
@@ -33,6 +35,7 @@ export function useProjectExplorerCatalog(): {
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const cloudProjects = useQuery(api.projects.list, isConvexAuthenticated ? {} : 'skip');
   const cloudExplorerCatalog = useQuery(api.projectExplorer.getCatalog, isConvexAuthenticated ? {} : 'skip');
+  const currentProjectId = useProjectStore((state) => state.project?.id ?? null);
   const [localSnapshot, setLocalSnapshot] = useState<LocalProjectCatalogSnapshot | null>(null);
   const [assetLocators, setAssetLocators] = useState<ManagedAssetLocator[]>([]);
   const [isReconcilingLocalCache, setIsReconcilingLocalCache] = useState(false);
@@ -57,10 +60,14 @@ export function useProjectExplorerCatalog(): {
     let cancelled = false;
     setIsReconcilingLocalCache(true);
     void (async () => {
+      const cloudProjectIds = cloudProjects.map((project) => project.localId);
       const changed = await reconcileStoredProjectOriginsWithCloud(
-        cloudProjects.map((project) => project.localId),
+        cloudProjectIds,
       );
-      if (changed) {
+      const pruneResult = await pruneLocalProjectsNotInCloud(cloudProjectIds, {
+        excludeIds: currentProjectId ? [currentProjectId] : [],
+      });
+      if (changed || pruneResult.deleted > 0) {
         await refresh();
       }
       if (!cancelled) {
@@ -71,7 +78,7 @@ export function useProjectExplorerCatalog(): {
     return () => {
       cancelled = true;
     };
-  }, [cloudProjects, hasLoadedCloudCatalog, isConvexAuthenticated, refresh]);
+  }, [cloudProjects, currentProjectId, hasLoadedCloudCatalog, isConvexAuthenticated, refresh]);
 
   const baseCatalog = useMemo(() => {
     const local = localSnapshot ?? {
