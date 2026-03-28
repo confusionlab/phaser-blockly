@@ -1,17 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 async function openEditorFromProjectList(page: import('@playwright/test').Page): Promise<void> {
-  const projectsHeading = page.getByRole('heading', { name: /projects/i });
-  const hasProjectList = await projectsHeading.isVisible().catch(() => false);
-  if (!hasProjectList) return;
-
-  await page.getByRole('button', { name: /^new$/i }).first().click();
-  const nameInput = page.getByPlaceholder('My Awesome Game');
-  await expect(nameInput).toBeVisible({ timeout: 5000 });
-  await nameInput.fill(`Stage Resize Test ${Date.now()}`);
-  await page.getByRole('button', { name: /create/i }).last().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(700);
+  await bootstrapEditorProject(page, { projectName: `Stage Resize Test ${Date.now()}` });
 }
 
 test.describe('Stage resize', () => {

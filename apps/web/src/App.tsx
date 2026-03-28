@@ -5,6 +5,7 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { SignIn, UserButton, useUser } from '@clerk/clerk-react';
 import { EditorLayout } from './components/layout/EditorLayout';
+import { ProjectExplorerLayout } from './components/layout/ProjectExplorerLayout';
 import { DebugPanel } from './components/debug/DebugPanel';
 import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
@@ -91,7 +92,7 @@ function AuthenticatedShell() {
         </div>
       ) : null}
       <Routes>
-        <Route path="/" element={<EditorLayout />} />
+        <Route path="/" element={<ProjectExplorerLayout />} />
         <Route path="/project/:projectId" element={<EditorLayout />} />
       </Routes>
       {(location.pathname === '/' || location.pathname.startsWith('/project/')) ? <DebugPanel /> : null}

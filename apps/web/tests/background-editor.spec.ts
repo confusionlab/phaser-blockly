@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-
-const BACKGROUND_EDITOR_TEST_URL = process.env.POCHA_E2E_BASE_URL ?? '/';
+import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 async function readBackgroundChunkCount(page: Page): Promise<number> {
   const rawValue = await page.getByTestId('background-editor-root').getAttribute('data-chunk-count');
@@ -122,19 +121,6 @@ async function addVectorLayer(page: Page): Promise<void> {
   await page.getByRole('menuitem', { name: /^vector$/i }).click();
 }
 
-async function openEditorFromProjectList(page: Page): Promise<void> {
-  const projectsHeading = page.getByRole('heading', { name: /projects/i });
-  const hasProjectList = await projectsHeading.isVisible().catch(() => false);
-  if (!hasProjectList) return;
-
-  await page.getByRole('button', { name: /^new$/i }).first().click();
-  const nameInput = page.getByPlaceholder('My Awesome Game');
-  await expect(nameInput).toBeVisible({ timeout: 5000 });
-  await nameInput.fill(`Background Test ${Date.now()}`);
-  await page.getByRole('button', { name: /create/i }).last().click();
-  await expect(page.getByRole('radio', { name: /^scene$/i })).toBeVisible({ timeout: 10000 });
-}
-
 async function openBackgroundEditor(page: Page) {
   const sceneRadio = page.getByRole('radio', { name: /^scene$/i });
   await expect(sceneRadio).toBeVisible({ timeout: 10000 });
@@ -157,8 +143,7 @@ async function openBackgroundEditor(page: Page) {
 
 test.describe('Background editor', () => {
   test('can draw and persist chunked background', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { root, box } = await openBackgroundEditor(page);
 
     const centerX = box.x + box.width / 2;
@@ -182,8 +167,7 @@ test.describe('Background editor', () => {
   });
 
   test('cancel discards uncommitted edits', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { root, box } = await openBackgroundEditor(page);
 
     const chunkCountBefore = await readBackgroundChunkCount(page);
@@ -206,8 +190,7 @@ test.describe('Background editor', () => {
   });
 
   test('overlay undo and redo buttons mirror costume canvas controls', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { box } = await openBackgroundEditor(page);
 
     const undoButton = page.getByRole('button', { name: /^undo$/i });
@@ -238,8 +221,7 @@ test.describe('Background editor', () => {
   });
 
   test('keeps explicit bitmap and vector layers in the saved background document', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { canvas, box } = await openBackgroundEditor(page);
 
     const startX = box.x + box.width * 0.28;
@@ -285,8 +267,7 @@ test.describe('Background editor', () => {
   });
 
   test('vector undo and redo round-trip through the saved background document', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
     let editor = await openBackgroundEditor(page);
     await addVectorLayer(page);
@@ -324,8 +305,7 @@ test.describe('Background editor', () => {
   });
 
   test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
     await page.evaluate(async () => {
       const [
@@ -387,8 +367,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
   });
 
   test('committing a floating selection preserves persisted background scale', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
     const { box } = await openBackgroundEditor(page);
     const startX = box.x + box.width * 0.45;
@@ -424,8 +403,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
   });
 
   test('layer opacity changes do not discard floating bitmap selections', async ({ page }) => {
-    await page.goto(BACKGROUND_EDITOR_TEST_URL);
-    await openEditorFromProjectList(page);
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
     const initialEditor = await openBackgroundEditor(page);
     const startX = initialEditor.box.x + initialEditor.box.width * 0.42;

@@ -11,18 +11,15 @@ import { ProjectDialog } from '../dialogs/ProjectDialog';
 import { PlayValidationDialog } from '../dialogs/PlayValidationDialog';
 import { ProjectHistoryDialog } from '../dialogs/ProjectHistoryDialog';
 import { AiAssistantPanel } from '../assistant/AiAssistantPanel';
-import { ProjectExplorerPage } from '@/components/home/ProjectExplorerPage';
 import type { Project } from '@/types';
 import { EditorTopBar } from '@/components/layout/EditorTopBar';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {
-  CURRENT_SCHEMA_VERSION,
   createProjectConflictCopy,
   createAutoCheckpoint,
   downloadProject,
   loadProject,
-  migrateAllLocalProjects,
   saveProject,
 } from '@/db/database';
 import {
@@ -153,7 +150,6 @@ export function EditorLayout() {
   const [isStageCanvasFullscreen, setIsStageCanvasFullscreen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isMigratingProjects, setIsMigratingProjects] = useState(true);
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [cloudSaveState, setCloudSaveState] = useState<CloudSaveState>({
@@ -328,24 +324,6 @@ export function EditorLayout() {
     return panel === 'code' || panel === 'stage' ? panel : null;
   }, []);
 
-  // Run local project migrations proactively so every project stays schema-compatible.
-  useEffect(() => {
-    void (async () => {
-      setIsMigratingProjects(true);
-      try {
-        const result = await migrateAllLocalProjects();
-        if (result.migrated > 0) {
-          console.log(`[Migration] Migrated ${result.migrated} local projects to schema v${CURRENT_SCHEMA_VERSION}`);
-        }
-        if (result.failed > 0) {
-          console.error(`[Migration] Failed to migrate ${result.failed} local projects`);
-        }
-      } finally {
-        setIsMigratingProjects(false);
-      }
-    })();
-  }, []);
-
   const markProjectAsCloudSaved = useCallback((projectSnapshot: { id: string; updatedAt: Date }) => {
     const savedAt = projectSnapshot.updatedAt.getTime();
     lastCloudSavedVersionRef.current.set(projectSnapshot.id, savedAt);
@@ -361,10 +339,12 @@ export function EditorLayout() {
   // Load project from URL
   useEffect(() => {
     const loadFromUrl = async () => {
-      if (isMigratingProjects) {
+      if (!projectId) {
+        navigate('/', { replace: true });
         return;
       }
-      if (projectId && (!project || project.id !== projectId)) {
+
+      if (!project || project.id !== projectId) {
         setIsLoading(true);
         try {
           const hydratedFromCloud = await syncProjectFromCloud(projectId);
@@ -384,18 +364,11 @@ export function EditorLayout() {
         } finally {
           setIsLoading(false);
         }
-      } else if (!projectId && project) {
-        // URL is home but we have a project open - navigate to project URL
-        navigate(`/project/${project.id}`, { replace: true });
-      } else if (!projectId && !project) {
-        // No project in URL and no project open - show project list page
-        setShowProjectDialog(false);
       }
     };
 
-    loadFromUrl();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMigratingProjects, markProjectAsCloudSaved, projectId, syncProjectFromCloud]);
+    void loadFromUrl();
+  }, [markProjectAsCloudSaved, navigate, openProject, project, projectId, syncProjectFromCloud]);
 
   // Keep selection aligned with the active project as projects open, close, or change shape.
   useEffect(() => {
@@ -1084,12 +1057,12 @@ export function EditorLayout() {
     </>
   );
 
-  if (isLoading || isMigratingProjects) {
+  if (isLoading) {
     return withProjectLeaseOverlay(
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-muted-foreground">{isMigratingProjects ? 'Migrating projects...' : 'Loading project...'}</p>
+          <p className="text-muted-foreground">Loading project...</p>
         </div>
       </div>,
     );
@@ -1113,84 +1086,84 @@ export function EditorLayout() {
     return withProjectLeaseOverlay(<WorldBoundaryEditor />);
   }
 
+  if (!project) {
+    return withProjectLeaseOverlay(
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading project...</p>
+        </div>
+      </div>,
+    );
+  }
+
   return withProjectLeaseOverlay(
     <div className="relative flex flex-col h-screen bg-background">
-      {project ? (
-        <EditorTopBar
-          hasProject={!!project}
-          isDarkMode={isDarkMode}
-          projectName={project.name}
-          projectNameDisabled={isSyncingCloud}
-          saveControlState={saveControlState}
-          saveNowDisabled={!isCloudWriteEnabled || saveControlState === 'saved'}
-          onExportProject={() => {
-            if (!project || isSyncingCloud) {
-              return;
-            }
-            void downloadProject(project);
-          }}
-          onGoToDashboard={() => {
-            void handleGoToDashboard();
-          }}
-          onOpenHistory={() => setHistoryOpen(true)}
-          onProjectNameCommit={(name) => updateProjectName(name)}
-          onSaveNow={() => {
-            void handleSaveNow();
-          }}
-          onToggleTheme={() => {
-            void handleToggleDarkMode();
-          }}
-        />
-      ) : null}
+      <EditorTopBar
+        hasProject
+        isDarkMode={isDarkMode}
+        projectName={project.name}
+        projectNameDisabled={isSyncingCloud}
+        saveControlState={saveControlState}
+        saveNowDisabled={!isCloudWriteEnabled || saveControlState === 'saved'}
+        onExportProject={() => {
+          if (isSyncingCloud) {
+            return;
+          }
+          void downloadProject(project);
+        }}
+        onGoToDashboard={() => {
+          void handleGoToDashboard();
+        }}
+        onOpenHistory={() => setHistoryOpen(true)}
+        onProjectNameCommit={(name) => updateProjectName(name)}
+        onSaveNow={() => {
+          void handleSaveNow();
+        }}
+        onToggleTheme={() => {
+          void handleToggleDarkMode();
+        }}
+      />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {project ? (
-          <>
-            {/* Object Editor - Left Panel */}
-            <div
-              className="h-full min-w-0 overflow-hidden"
-              data-editor-panel="code"
-              style={{ width: `${dividerPosition}%` }}
-              onMouseEnter={() => setHoveredPanel('code')}
-              onMouseLeave={() => setHoveredPanel(null)}
-            >
-              <ObjectEditor
-                isFullscreen={fullscreenPanel === 'code'}
-                onFullscreenChange={handleCodeEditorFullscreenChange}
-              />
-            </div>
-
-            {/* Resizable Divider */}
-            <div
-              data-testid="editor-layout-divider"
-              className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
-              onMouseDown={handleDividerDrag}
-            />
-
-            {/* Stage Panel - Right Panel */}
-            <div
-              className="h-full min-w-0 overflow-hidden"
-              data-editor-panel="stage"
-              style={{ width: `${100 - dividerPosition}%` }}
-              onMouseEnter={() => setHoveredPanel('stage')}
-              onMouseLeave={() => setHoveredPanel(null)}
-            >
-              <StagePanel
-                deferEditorResize={isMainDividerDragging}
-                isCanvasFullscreen={isStageCanvasFullscreen}
-                onCanvasFullscreenChange={handleStageCanvasFullscreenChange}
-              />
-            </div>
-          </>
-        ) : (
-          <ProjectExplorerPage
-            onProjectOpen={handleProjectOpen}
-            onProjectHydratedFromCloud={markProjectAsCloudSaved}
+        {/* Object Editor - Left Panel */}
+        <div
+          className="h-full min-w-0 overflow-hidden"
+          data-editor-panel="code"
+          style={{ width: `${dividerPosition}%` }}
+          onMouseEnter={() => setHoveredPanel('code')}
+          onMouseLeave={() => setHoveredPanel(null)}
+        >
+          <ObjectEditor
+            isFullscreen={fullscreenPanel === 'code'}
+            onFullscreenChange={handleCodeEditorFullscreenChange}
           />
-        )}
+        </div>
+
+        {/* Resizable Divider */}
+        <div
+          data-testid="editor-layout-divider"
+          className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
+          onMouseDown={handleDividerDrag}
+        />
+
+        {/* Stage Panel - Right Panel */}
+        <div
+          className="h-full min-w-0 overflow-hidden"
+          data-editor-panel="stage"
+          style={{ width: `${100 - dividerPosition}%` }}
+          onMouseEnter={() => setHoveredPanel('stage')}
+          onMouseLeave={() => setHoveredPanel(null)}
+        >
+          <StagePanel
+            deferEditorResize={isMainDividerDragging}
+            isCanvasFullscreen={isStageCanvasFullscreen}
+            onCanvasFullscreenChange={handleStageCanvasFullscreenChange}
+          />
+        </div>
       </div>
 
-      {project && showProjectDialog && (
+      {showProjectDialog && (
         <ProjectDialog
           onClose={() => setShowProjectDialog(false)}
           onProjectOpen={handleProjectOpen}

@@ -1347,7 +1347,71 @@ class GameMakerDatabase extends Dexie {
   }
 }
 
-export const db = new GameMakerDatabase();
+function syncDexieIndexedDbDependenciesFromGlobals(): void {
+  const globals = globalThis as typeof globalThis & {
+    IDBKeyRange?: typeof IDBKeyRange;
+    indexedDB?: IDBFactory;
+  };
+
+  if (globals.indexedDB) {
+    Dexie.dependencies.indexedDB = globals.indexedDB;
+  }
+
+  if (globals.IDBKeyRange) {
+    Dexie.dependencies.IDBKeyRange = globals.IDBKeyRange;
+  }
+}
+
+let activeDatabaseInstance: GameMakerDatabase | null = null;
+let activeIndexedDbDependency: IDBFactory | null = null;
+let activeIdbKeyRangeDependency: typeof IDBKeyRange | null = null;
+
+function getActiveDatabase(): GameMakerDatabase {
+  syncDexieIndexedDbDependenciesFromGlobals();
+
+  const currentIndexedDbDependency = Dexie.dependencies.indexedDB ?? null;
+  const currentIdbKeyRangeDependency = Dexie.dependencies.IDBKeyRange ?? null;
+  const shouldRecreateDatabase =
+    activeDatabaseInstance === null
+    || activeIndexedDbDependency !== currentIndexedDbDependency
+    || activeIdbKeyRangeDependency !== currentIdbKeyRangeDependency;
+
+  if (shouldRecreateDatabase) {
+    activeDatabaseInstance?.close();
+    activeDatabaseInstance = new GameMakerDatabase();
+    activeIndexedDbDependency = currentIndexedDbDependency;
+    activeIdbKeyRangeDependency = currentIdbKeyRangeDependency;
+  }
+
+  return activeDatabaseInstance;
+}
+
+const dbProxyTarget = Object.create(GameMakerDatabase.prototype) as GameMakerDatabase;
+
+export const db = new Proxy(dbProxyTarget, {
+  get(_target, property, receiver) {
+    const database = getActiveDatabase();
+    const value = Reflect.get(database, property, receiver);
+    return typeof value === 'function' ? value.bind(database) : value;
+  },
+  set(_target, property, value, receiver) {
+    return Reflect.set(getActiveDatabase(), property, value, receiver);
+  },
+  has(_target, property) {
+    return property in getActiveDatabase();
+  },
+  ownKeys() {
+    return Reflect.ownKeys(getActiveDatabase());
+  },
+  getOwnPropertyDescriptor(_target, property) {
+    const database = getActiveDatabase();
+    return Reflect.getOwnPropertyDescriptor(database, property)
+      ?? Reflect.getOwnPropertyDescriptor(GameMakerDatabase.prototype, property);
+  },
+  getPrototypeOf() {
+    return GameMakerDatabase.prototype;
+  },
+}) as GameMakerDatabase;
 
 // Project Repository
 

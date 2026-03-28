@@ -88,10 +88,12 @@ async function captureStageTransitionFrame(
   frozenCenterX: number;
   frozenCenterY: number;
 }> {
+  await page.waitForFunction((label) => (
+    document.querySelector(`button[aria-label="${label}"]`) instanceof HTMLButtonElement
+  ), buttonLabel);
+
   return page.evaluate((label) => {
-    const button = Array.from(document.querySelectorAll('button')).find(
-      (node) => node.getAttribute('aria-label') === label,
-    );
+    const button = document.querySelector(`button[aria-label="${label}"]`);
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error(`Stage transition button not found: ${label}`);
     }

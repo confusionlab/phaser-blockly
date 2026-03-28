@@ -15,6 +15,17 @@ function installAppVersionShim() {
 
 async function loadDatabaseModules(): Promise<DatabaseModule> {
   installAppVersionShim();
+  const Dexie = (await import('dexie')).default;
+  const globals = globalThis as typeof globalThis & {
+    IDBKeyRange?: typeof IDBKeyRange;
+    indexedDB?: IDBFactory;
+  };
+  if (globals.indexedDB) {
+    Dexie.dependencies.indexedDB = globals.indexedDB;
+  }
+  if (globals.IDBKeyRange) {
+    Dexie.dependencies.IDBKeyRange = globals.IDBKeyRange;
+  }
   return await import('../src/db/database');
 }
 

@@ -1,21 +1,10 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 const COSTUME_EDITOR_TEST_URL = process.env.POCHA_E2E_BASE_URL ?? '/';
 
 async function openEditorFromProjectList(page: Page): Promise<void> {
-  const projectsHeading = page.getByRole('heading', { name: /projects/i });
-  const hasProjectList = await projectsHeading.isVisible().catch(() => false);
-  if (!hasProjectList) {
-    return;
-  }
-
-  await page.getByRole('button', { name: /^new$/i }).first().click();
-  const nameInput = page.getByPlaceholder('My Awesome Game');
-  await expect(nameInput).toBeVisible({ timeout: 5000 });
-  await nameInput.fill(`Costume Test ${Date.now()}`);
-  await page.getByRole('button', { name: /create/i }).last().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(700);
+  await bootstrapEditorProject(page, { projectName: `Costume Test ${Date.now()}` });
 }
 
 async function openCostumeEditor(page: Page): Promise<void> {
