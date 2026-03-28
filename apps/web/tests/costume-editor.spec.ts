@@ -48,6 +48,11 @@ async function drawAcrossCostumeCanvas(page: Page, startXFactor: number, startYF
   await page.mouse.up();
 }
 
+async function selectBitmapBrushKind(page: Page, label: 'Hard' | 'Soft' | 'Crayon') {
+  await page.getByRole('button', { name: /^(Hard|Soft|Crayon)$/i }).click();
+  await page.getByRole('menuitemradio', { name: new RegExp(`^${label}$`, 'i') }).click();
+}
+
 async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) {
   const box = await getCostumeCanvasBox(page);
   const targetX = box.x + box.width * xFactor;
@@ -355,6 +360,27 @@ test.describe('Costume editor tools', () => {
     await openCostumeEditor(page);
 
     await page.getByRole('button', { name: /^brush$/i }).click();
+
+    const beforeSamples = await readCheckerboardInkSamples(page);
+
+    await drawAcrossCostumeCanvas(page, 0.22, 0.22, 0.40, 0.40);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+
+    await roundTripThroughCodeTab(page);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('bitmap textured brush commits on mouse-up and survives a tab round-trip', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Crayon');
 
     const beforeSamples = await readCheckerboardInkSamples(page);
 

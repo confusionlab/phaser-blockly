@@ -314,6 +314,7 @@ export class BitmapStampBrush extends BaseBrush {
 
     const strokeCanvas = this.strokeCanvas;
     const alphaThreshold = this.stampDefinition.alphaThreshold;
+    const dirtyBounds = this.dirtyBounds;
     const previewSource = this.compositeOperation === 'destination-out'
       ? cloneCanvasElement(this.canvas.contextTop.canvas as HTMLCanvasElement | null)
       : null;
@@ -334,7 +335,7 @@ export class BitmapStampBrush extends BaseBrush {
         strokeCanvas,
         compositeOperation: this.compositeOperation,
         alphaThreshold,
-        dirtyBounds: this.dirtyBounds,
+        dirtyBounds,
       });
       if (this.compositeOperation === 'destination-out') {
         void Promise.resolve(commitResult)
