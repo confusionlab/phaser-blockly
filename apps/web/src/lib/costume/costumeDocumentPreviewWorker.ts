@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { calculateBoundsFromImageData } from '@/utils/imageBounds';
+import { calculateAlphaBoundsPairFromImageData, type AlphaBoundsPair } from '@/utils/imageBounds';
 import type {
   CostumeDocumentPreviewWorkerRequest,
   CostumeDocumentPreviewWorkerResponse,
@@ -9,7 +9,7 @@ import type {
 async function renderPreview(request: CostumeDocumentPreviewWorkerRequest): Promise<{
   assetFrame?: import('@/types').CostumeAssetFrame | null;
   blob: Blob;
-  bounds: ReturnType<typeof calculateBoundsFromImageData>;
+  bounds: AlphaBoundsPair['bounds'];
 }> {
   const canvas = new OffscreenCanvas(request.canvasSize, request.canvasSize);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -50,8 +50,7 @@ async function renderPreview(request: CostumeDocumentPreviewWorkerRequest): Prom
   }
 
   const imageData = ctx.getImageData(0, 0, request.canvasSize, request.canvasSize);
-  const bounds = calculateBoundsFromImageData(imageData);
-  const cropBounds = calculateBoundsFromImageData(imageData, 0);
+  const { bounds, cropBounds } = calculateAlphaBoundsPairFromImageData(imageData);
   let targetCanvas: OffscreenCanvas = canvas;
   let assetFrame: import('@/types').CostumeAssetFrame | null | undefined;
 

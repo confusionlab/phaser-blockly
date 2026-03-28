@@ -204,6 +204,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     const fabricCanvas = new FabricCanvas(fabricCanvasElement, {
       width: CANVAS_SIZE,
       height: CANVAS_SIZE,
+      enableRetinaScaling: false,
       preserveObjectStacking: true,
       selection: false,
     });

@@ -1,6 +1,5 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
-import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import { renderBitmapAssetToSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
 import { extractVisibleCanvasRegion } from './costumeCanvasShared';
 import { normalizeVectorObjectRendering } from './costumeCanvasVectorRuntime';
@@ -327,14 +326,24 @@ export function useCostumeCanvasBitmapLayerController({
 
   const commitBitmapStampBrushStroke = useCallback((payload: BitmapStampBrushCommitPayload) => {
     return queueBitmapRasterCommit(async (_raster, rasterCtx) => {
-      const visibleBounds = calculateBoundsFromCanvas(payload.strokeCanvas, payload.alphaThreshold);
-      if (!visibleBounds) {
+      const dirtyBounds = payload.dirtyBounds;
+      if (!dirtyBounds || dirtyBounds.width <= 0 || dirtyBounds.height <= 0) {
         return;
       }
 
       rasterCtx.save();
       rasterCtx.globalCompositeOperation = payload.compositeOperation;
-      rasterCtx.drawImage(payload.strokeCanvas, 0, 0);
+      rasterCtx.drawImage(
+        payload.strokeCanvas,
+        dirtyBounds.x,
+        dirtyBounds.y,
+        dirtyBounds.width,
+        dirtyBounds.height,
+        dirtyBounds.x,
+        dirtyBounds.y,
+        dirtyBounds.width,
+        dirtyBounds.height,
+      );
       rasterCtx.restore();
     });
   }, [queueBitmapRasterCommit]);

@@ -3,11 +3,13 @@ import {
   getBitmapBrushStampDefinition,
   type BitmapBrushKind,
 } from '@/lib/background/brushCore';
+import type { CostumeBounds } from '@/types';
 import { getCanvas2dContext } from '@/utils/canvas2d';
 
 export interface BitmapStampBrushCommitPayload {
   alphaThreshold: number;
   compositeOperation: GlobalCompositeOperation;
+  dirtyBounds: CostumeBounds | null;
   strokeCanvas: HTMLCanvasElement;
 }
 
@@ -202,6 +204,7 @@ export class BitmapStampBrush extends BaseBrush {
   private readonly compositeOperation: GlobalCompositeOperation;
   private deferredPreviewCanvas: HTMLCanvasElement | null = null;
   private deferredPreviewToken = 0;
+  private dirtyBounds: CostumeBounds | null = null;
   private activeStrokePreviewToken: number | null = null;
   private lastPoint: Point | null = null;
   private readonly onCommit: (payload: BitmapStampBrushCommitPayload) => void | Promise<void>;
@@ -331,6 +334,7 @@ export class BitmapStampBrush extends BaseBrush {
         strokeCanvas,
         compositeOperation: this.compositeOperation,
         alphaThreshold,
+        dirtyBounds: this.dirtyBounds,
       });
       if (this.compositeOperation === 'destination-out') {
         void Promise.resolve(commitResult)
@@ -360,6 +364,7 @@ export class BitmapStampBrush extends BaseBrush {
     this.strokeCtx = getCanvas2dContext(strokeCanvas, 'readback');
     this.lastPoint = null;
     this.accumulatedDistance = 0;
+    this.dirtyBounds = null;
   }
 
   private resetStrokeState() {
@@ -367,6 +372,7 @@ export class BitmapStampBrush extends BaseBrush {
     this.strokeCtx = null;
     this.lastPoint = null;
     this.accumulatedDistance = 0;
+    this.dirtyBounds = null;
   }
 
   private stampSegment(from: Point, to: Point) {
@@ -410,6 +416,12 @@ export class BitmapStampBrush extends BaseBrush {
     const centerY = point.y + Math.sin(scatterAngle) * scatterRadius;
     const rotation = rotationJitter > 0 ? (Math.random() * 2 - 1) * rotationJitter : 0;
     const scale = 1 + (scaleJitter > 0 ? (Math.random() * 2 - 1) * scaleJitter : 0);
+    const scaledHalfWidth = (stamp.width * scale) / 2;
+    const scaledHalfHeight = (stamp.height * scale) / 2;
+    const absCos = Math.abs(Math.cos(rotation));
+    const absSin = Math.abs(Math.sin(rotation));
+    const boundsHalfWidth = absCos * scaledHalfWidth + absSin * scaledHalfHeight;
+    const boundsHalfHeight = absSin * scaledHalfWidth + absCos * scaledHalfHeight;
 
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
@@ -423,6 +435,32 @@ export class BitmapStampBrush extends BaseBrush {
     }
     ctx.drawImage(stamp, -stamp.width / 2, -stamp.height / 2);
     ctx.restore();
+
+    const stampBounds = {
+      x: Math.max(0, Math.floor(centerX - boundsHalfWidth)),
+      y: Math.max(0, Math.floor(centerY - boundsHalfHeight)),
+      width: Math.min(ctx.canvas.width, Math.ceil(centerX + boundsHalfWidth)) - Math.max(0, Math.floor(centerX - boundsHalfWidth)),
+      height: Math.min(ctx.canvas.height, Math.ceil(centerY + boundsHalfHeight)) - Math.max(0, Math.floor(centerY - boundsHalfHeight)),
+    };
+    if (stampBounds.width <= 0 || stampBounds.height <= 0) {
+      return;
+    }
+
+    if (!this.dirtyBounds) {
+      this.dirtyBounds = stampBounds;
+      return;
+    }
+
+    const nextLeft = Math.min(this.dirtyBounds.x, stampBounds.x);
+    const nextTop = Math.min(this.dirtyBounds.y, stampBounds.y);
+    const nextRight = Math.max(this.dirtyBounds.x + this.dirtyBounds.width, stampBounds.x + stampBounds.width);
+    const nextBottom = Math.max(this.dirtyBounds.y + this.dirtyBounds.height, stampBounds.y + stampBounds.height);
+    this.dirtyBounds = {
+      x: nextLeft,
+      y: nextTop,
+      width: nextRight - nextLeft,
+      height: nextBottom - nextTop,
+    };
   }
 
   private renderPreview() {

@@ -2,6 +2,11 @@ import type { CostumeBounds } from '@/types';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { getCanvas2dContext, readCanvasImageData } from './canvas2d';
 
+export interface AlphaBoundsPair {
+  bounds: CostumeBounds | null;
+  cropBounds: CostumeBounds | null;
+}
+
 /**
  * Calculate the bounding box of visible (non-transparent) pixels in an image.
  * Returns null if the image is fully transparent.
@@ -70,10 +75,86 @@ export function calculateBoundsFromImageData(imageData: ImageData, alphaThreshol
 }
 
 /**
+ * Calculate both user-visible bounds and exact crop bounds in a single image-data pass.
+ */
+export function calculateAlphaBoundsPairFromImageData(
+  imageData: ImageData,
+  boundsAlphaThreshold: number = 10,
+  cropAlphaThreshold: number = 0,
+): AlphaBoundsPair {
+  const { data, width, height } = imageData;
+
+  let boundsMinX = width;
+  let boundsMinY = height;
+  let boundsMaxX = -1;
+  let boundsMaxY = -1;
+
+  let cropMinX = width;
+  let cropMinY = height;
+  let cropMaxX = -1;
+  let cropMaxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const idx = (y * width + x) * 4;
+      const alpha = data[idx + 3];
+
+      if (alpha > boundsAlphaThreshold) {
+        if (x < boundsMinX) boundsMinX = x;
+        if (x > boundsMaxX) boundsMaxX = x;
+        if (y < boundsMinY) boundsMinY = y;
+        if (y > boundsMaxY) boundsMaxY = y;
+      }
+
+      if (alpha > cropAlphaThreshold) {
+        if (x < cropMinX) cropMinX = x;
+        if (x > cropMaxX) cropMaxX = x;
+        if (y < cropMinY) cropMinY = y;
+        if (y > cropMaxY) cropMaxY = y;
+      }
+    }
+  }
+
+  return {
+    bounds: boundsMaxX < 0 || boundsMaxY < 0
+      ? null
+      : {
+          x: boundsMinX,
+          y: boundsMinY,
+          width: boundsMaxX - boundsMinX + 1,
+          height: boundsMaxY - boundsMinY + 1,
+        },
+    cropBounds: cropMaxX < 0 || cropMaxY < 0
+      ? null
+      : {
+          x: cropMinX,
+          y: cropMinY,
+          width: cropMaxX - cropMinX + 1,
+          height: cropMaxY - cropMinY + 1,
+        },
+  };
+}
+
+/**
  * Calculate bounds from a canvas element directly.
  */
 export function calculateBoundsFromCanvas(canvas: HTMLCanvasElement, alphaThreshold: number = 10): CostumeBounds | null {
   const imageData = readCanvasImageData(canvas);
   if (!imageData) return null;
   return calculateBoundsFromImageData(imageData, alphaThreshold);
+}
+
+export function calculateAlphaBoundsPairFromCanvas(
+  canvas: HTMLCanvasElement,
+  boundsAlphaThreshold: number = 10,
+  cropAlphaThreshold: number = 0,
+): AlphaBoundsPair {
+  const imageData = readCanvasImageData(canvas);
+  if (!imageData) {
+    return {
+      bounds: null,
+      cropBounds: null,
+    };
+  }
+  return calculateAlphaBoundsPairFromImageData(imageData, boundsAlphaThreshold, cropAlphaThreshold);
 }

@@ -1,5 +1,5 @@
 import type { CostumeAssetFrame, CostumeBounds } from '@/types';
-import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
+import { calculateAlphaBoundsPairFromCanvas } from '@/utils/imageBounds';
 import { renderBitmapAssetToSurfaceCanvas } from './costumeBitmapSurface';
 
 export const COSTUME_ASSET_MIME_TYPE = 'image/webp';
@@ -82,8 +82,7 @@ export function optimizeCostumeRasterCanvas(
   sourceCanvas: HTMLCanvasElement,
   options: CostumeRasterEncodingOptions = {},
 ): OptimizedCostumeRasterAsset {
-  const bounds = calculateBoundsFromCanvas(sourceCanvas);
-  const cropBounds = calculateBoundsFromCanvas(sourceCanvas, 0);
+  const { bounds, cropBounds } = calculateAlphaBoundsPairFromCanvas(sourceCanvas);
   const assetFrame = cropBounds ? createOptimizedAssetFrame(cropBounds, sourceCanvas) : undefined;
   const canvas = assetFrame ? cropCanvasToFrame(sourceCanvas, assetFrame) : sourceCanvas;
 
