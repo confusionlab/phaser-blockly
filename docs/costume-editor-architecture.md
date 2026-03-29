@@ -17,11 +17,11 @@ The costume editor has three distinct state layers. They should not be treated a
 
 ### 1. Editor Session State
 
-Owned by `CostumeEditor` and the live `CostumeCanvas`.
+Owned by `CostumeEditorCoordinator`, `CostumeEditor`, and the live `CostumeCanvas`.
 
 - Session identity comes from `CostumeEditorSession`.
 - The editor canvas is authoritative while the costume editor is open.
-- `documentHistoryRef`, `workingPersistedStateRef`, and the queued runtime revision state all live here.
+- `CostumeEditorCoordinator` owns document history, working persisted state, and queued runtime revision state.
 
 This layer should answer: "What does the user currently see and what can they undo right now?"
 
@@ -158,7 +158,8 @@ When a bug is found, prefer adding or tightening the smallest test that captures
 - Session reconciliation: `src/lib/editor/costumeEditorSession.ts`
 - Runtime preview publication contract: `src/lib/editor/costumeRuntimePreview.ts`
 - Runtime preview storage: `src/store/costumeRuntimePreviewStore.ts`
-- Editor coordination and flush boundaries: `src/components/editors/CostumeEditor.tsx`
+- Session coordinator: `src/lib/editor/costumeEditorCoordinator.ts`
+- Editor coordination and UI flush boundaries: `src/components/editors/CostumeEditor.tsx`
 - Stage consumer: `src/components/stage/PhaserCanvas.tsx`
 - Shelf consumer: `src/components/stage/SpriteShelf.tsx`
 

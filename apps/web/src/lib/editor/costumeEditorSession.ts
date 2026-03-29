@@ -149,7 +149,26 @@ function areCostumeLayersEqual(a: CostumeLayer | undefined, b: CostumeLayer | un
   return false;
 }
 
-function clonePersistedState(
+export function areCostumeEditorPersistedStatesEqual(
+  a: CostumeEditorPersistedState | null | undefined,
+  b: CostumeEditorPersistedState | null | undefined,
+): boolean {
+  if (!a && !b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+
+  return (
+    a.assetId === b.assetId &&
+    areCostumeBoundsEqual(a.bounds, b.bounds) &&
+    areCostumeAssetFramesEqual(a.assetFrame, b.assetFrame) &&
+    areCostumeDocumentsEqual(a.document, b.document)
+  );
+}
+
+export function cloneCostumeEditorPersistedState(
   state: CostumeEditorPersistedState | null | undefined,
 ): CostumeEditorPersistedState | null {
   if (!state) {
@@ -164,7 +183,7 @@ function clonePersistedState(
   };
 }
 
-function createPersistedStateFromCostume(costume: Costume | null | undefined): CostumeEditorPersistedState | null {
+export function createCostumeEditorPersistedStateFromCostume(costume: Costume | null | undefined): CostumeEditorPersistedState | null {
   if (!costume) {
     return null;
   }
@@ -180,8 +199,8 @@ function createPersistedStateFromCostume(costume: Costume | null | undefined): C
 export function resolveCostumeEditorPersistedStateWithSyncMode(
   options: ResolveCostumeEditorPersistedStateOptions,
 ): ResolvedCostumeEditorPersistedStateResult | null {
-  const baseState = clonePersistedState(options.workingState)
-    ?? createPersistedStateFromCostume(options.costume);
+  const baseState = cloneCostumeEditorPersistedState(options.workingState)
+    ?? createCostumeEditorPersistedStateFromCostume(options.costume);
   if (!baseState) {
     return null;
   }
@@ -227,8 +246,8 @@ export function resolveCostumeEditorPersistedStateWithSyncMode(
 export function resolveCostumeEditorPersistedState(
   options: ResolveCostumeEditorPersistedStateOptions,
 ): CostumeEditorPersistedState | null {
-  const baseState = clonePersistedState(options.workingState)
-    ?? createPersistedStateFromCostume(options.costume);
+  const baseState = cloneCostumeEditorPersistedState(options.workingState)
+    ?? createCostumeEditorPersistedStateFromCostume(options.costume);
   if (!baseState) {
     return null;
   }

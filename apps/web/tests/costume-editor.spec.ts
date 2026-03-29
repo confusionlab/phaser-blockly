@@ -908,6 +908,99 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeThreeHash);
   });
 
+  test('fill followed by rapid bitmap brush strokes undoes through each intermediate state in order', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+    const redoButton = page.getByRole('button', { name: /^redo$/i });
+
+    await page.getByRole('button', { name: /^fill$/i }).last().click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+
+    await expect
+      .poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 })
+      .toBeGreaterThan(0);
+    const fillHash = await readHostedLayerCanvasHash(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+
+    await drawAcrossCostumeCanvas(page, 0.14, 0.22, 0.86, 0.22);
+    const strokeOneHash = await expect
+      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
+      .not.toBe(fillHash)
+      .then(async () => readHostedLayerCanvasHash(page));
+
+    await drawAcrossCostumeCanvas(page, 0.14, 0.40, 0.86, 0.40);
+    const strokeTwoHash = await expect
+      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
+      .not.toBe(strokeOneHash)
+      .then(async () => readHostedLayerCanvasHash(page));
+
+    await drawAcrossCostumeCanvas(page, 0.14, 0.58, 0.86, 0.58);
+    const strokeThreeHash = await expect
+      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
+      .not.toBe(strokeTwoHash)
+      .then(async () => readHostedLayerCanvasHash(page));
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeTwoHash);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeOneHash);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await redoButton.click();
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeOneHash);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await redoButton.click();
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeTwoHash);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await redoButton.click();
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeThreeHash);
+  });
+
+  test('burst undo after fill and rapid bitmap brush strokes settles on the fill state', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+
+    await page.getByRole('button', { name: /^fill$/i }).last().click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+
+    await expect
+      .poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 })
+      .toBeGreaterThan(0);
+    const fillHash = await readHostedLayerCanvasHash(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    for (const yFactor of [0.18, 0.28, 0.38, 0.48, 0.58, 0.68]) {
+      await drawAcrossCostumeCanvas(page, 0.14, yFactor, 0.86, yFactor);
+    }
+
+    await expect
+      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
+      .not.toBe(fillHash);
+
+    for (let index = 0; index < 6; index += 1) {
+      await expect(undoButton).toBeEnabled({ timeout: 10000 });
+      await undoButton.click();
+    }
+
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
+  });
+
   test('sprite shelf preview stays visible during rapid bitmap eraser commits', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');
