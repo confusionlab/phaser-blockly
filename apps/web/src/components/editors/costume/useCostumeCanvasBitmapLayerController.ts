@@ -22,6 +22,7 @@ interface UseCostumeCanvasBitmapLayerControllerOptions {
   drawBitmapSelectionOverlay: () => void;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
+  getHistoryGeneration: () => number;
   getLastCommittedSnapshot: () => CanvasHistorySnapshot | null;
   isLoadRequestActive: (requestId?: number) => boolean;
   saveHistory: (options?: SaveHistoryOptions) => void;
@@ -50,6 +51,7 @@ export function useCostumeCanvasBitmapLayerController({
   drawBitmapSelectionOverlay,
   editorModeRef,
   fabricCanvasRef,
+  getHistoryGeneration,
   getLastCommittedSnapshot,
   isLoadRequestActive,
   saveHistory,
@@ -371,9 +373,14 @@ export function useCostumeCanvasBitmapLayerController({
     mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,
     options: BitmapRasterCommitOptions = {},
   ) => {
+    const commitGeneration = getHistoryGeneration();
+    const isCommitGenerationCurrent = () => getHistoryGeneration() === commitGeneration;
     const nextCommit = bitmapRasterCommitQueueRef.current
       .catch(() => undefined)
       .then(async () => {
+        if (!isCommitGenerationCurrent()) {
+          return;
+        }
         const fabricCanvas = fabricCanvasRef.current;
         if (!fabricCanvas || editorModeRef.current !== 'bitmap') {
           return;
@@ -399,6 +406,18 @@ export function useCostumeCanvasBitmapLayerController({
           try {
             if (mutateRaster) {
               await mutateRaster(raster, rasterCtx);
+            }
+            if (!isCommitGenerationCurrent()) {
+              if (dirtyRegionBackup && dirtyBounds) {
+                rasterCtx.save();
+                rasterCtx.globalCompositeOperation = 'source-over';
+                rasterCtx.clearRect(dirtyBounds.x, dirtyBounds.y, dirtyBounds.width, dirtyBounds.height);
+                rasterCtx.drawImage(dirtyRegionBackup, dirtyBounds.x, dirtyBounds.y);
+                rasterCtx.restore();
+                (reusableBitmapImage as any).dirty = true;
+                fabricCanvas.requestRenderAll();
+              }
+              return;
             }
 
             (reusableBitmapImage as any).dirty = true;
@@ -445,6 +464,9 @@ export function useCostumeCanvasBitmapLayerController({
         if (mutateRaster) {
           await mutateRaster(raster, rasterCtx);
         }
+        if (!isCommitGenerationCurrent()) {
+          return;
+        }
 
         const traceStartedAtMs = performance.now();
         const bitmapHistoryState = createBitmapHistoryStateFromRaster(raster, {
@@ -479,6 +501,7 @@ export function useCostumeCanvasBitmapLayerController({
     cloneBitmapRegion,
     editorModeRef,
     fabricCanvasRef,
+    getHistoryGeneration,
     getReusableBitmapImage,
     saveHistory,
     waitForFabricRenderFlush,

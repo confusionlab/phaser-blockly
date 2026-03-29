@@ -33,6 +33,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   persistedSnapshotRef: MutableRefObject<any>;
   ref: ForwardedRef<CostumeCanvasHandle>;
   rotateSelection: () => boolean;
+  resetTransientEditorState: () => void;
   saveHistory: () => void;
   setEditorMode: (mode: CostumeEditorMode) => void;
   switchEditorMode: (mode: CostumeEditorMode) => Promise<void>;
@@ -63,6 +64,7 @@ export function useCostumeCanvasImperativeHandle({
   persistedSnapshotRef,
   ref,
   rotateSelection,
+  resetTransientEditorState,
   saveHistory,
   setEditorMode,
   switchEditorMode,
@@ -85,6 +87,7 @@ export function useCostumeCanvasImperativeHandle({
 
     loadFromDataURL: async (dataUrl: string, sessionKey?: string | null) => {
       advanceHistoryGeneration();
+      resetTransientEditorState();
       loadedSessionKeyRef.current = null;
       await loadBitmapLayer(dataUrl, false);
       setEditorMode('bitmap');
@@ -96,6 +99,7 @@ export function useCostumeCanvasImperativeHandle({
 
     loadDocument: async (sessionKey: string, document: any) => {
       advanceHistoryGeneration();
+      resetTransientEditorState();
       await loadDocument(sessionKey, document);
     },
 
@@ -165,6 +169,7 @@ export function useCostumeCanvasImperativeHandle({
     clear: () => {
       void (async () => {
         advanceHistoryGeneration();
+        resetTransientEditorState();
         loadedSessionKeyRef.current = null;
         await loadBitmapLayer('', false);
         setEditorMode('bitmap');
@@ -205,6 +210,7 @@ export function useCostumeCanvasImperativeHandle({
     persistedSnapshotRef,
     ref,
     rotateSelection,
+    resetTransientEditorState,
     saveHistory,
     setEditorMode,
     switchEditorMode,

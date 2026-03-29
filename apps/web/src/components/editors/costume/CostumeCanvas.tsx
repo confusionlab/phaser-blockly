@@ -521,6 +521,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     drawBitmapSelectionOverlay,
     editorModeRef,
     fabricCanvasRef,
+    getHistoryGeneration,
     getLastCommittedSnapshot: () => lastCommittedSnapshotRef.current,
     isLoadRequestActive,
     saveHistory,
@@ -781,6 +782,72 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorStyleRef,
   });
 
+  const resetTransientEditorState = useCallback(() => {
+    const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
+      lowerCanvasEl?: HTMLCanvasElement;
+      upperCanvasEl?: HTMLCanvasElement;
+      freeDrawingBrush?: {
+        completeDeferredPreview?: (token?: number) => void;
+      };
+    }) | null;
+
+    suppressHistoryRef.current = true;
+    try {
+      shapeDraftRef.current = null;
+      bitmapFloatingObjectRef.current = null;
+      bitmapSelectionStartRef.current = null;
+      bitmapMarqueeRectRef.current = null;
+      bitmapSelectionDragModeRef.current = 'none';
+      bitmapSelectionBusyRef.current = false;
+      suppressBitmapSelectionAutoCommitRef.current = false;
+
+      penDraftRef.current = null;
+      penAnchorPlacementSessionRef.current = null;
+      penModifierStateRef.current.alt = false;
+      penModifierStateRef.current.space = false;
+
+      insertedPathAnchorDragSessionRef.current = null;
+      pointSelectionTransformFrameRef.current = null;
+      pointSelectionTransformSessionRef.current = null;
+      pointSelectionMarqueeSessionRef.current = null;
+      activePathAnchorRef.current = null;
+      selectedPathAnchorIndicesRef.current = [];
+
+      restoreAllOriginalControls();
+      setVectorPointEditingTarget(null);
+      setHasBitmapFloatingSelection(false);
+      drawBitmapSelectionOverlay();
+
+      vectorStrokeCtxRef.current?.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      vectorGuideCtxRef.current?.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      bitmapSelectionCtxRef.current?.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+      if (fabricCanvas) {
+        fabricCanvas.discardActiveObject();
+        fabricCanvas.isDrawingMode = false;
+        if (typeof fabricCanvas.freeDrawingBrush?.completeDeferredPreview === 'function') {
+          fabricCanvas.freeDrawingBrush.completeDeferredPreview();
+        }
+        fabricCanvas.freeDrawingBrush = undefined;
+        fabricCanvas.clearContext(fabricCanvas.contextTop);
+        if (fabricCanvas.lowerCanvasEl) {
+          fabricCanvas.lowerCanvasEl.style.opacity = '';
+        }
+        if (fabricCanvas.upperCanvasEl) {
+          fabricCanvas.upperCanvasEl.style.opacity = '';
+        }
+      }
+    } finally {
+      suppressHistoryRef.current = false;
+      syncSelectionState();
+    }
+  }, [
+    drawBitmapSelectionOverlay,
+    restoreAllOriginalControls,
+    setVectorPointEditingTarget,
+    syncSelectionState,
+  ]);
+
   useCostumeCanvasFabricHostController({
     activeLayerLockedRef,
     activeLayerVisibleRef,
@@ -965,6 +1032,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     persistedSnapshotRef,
     ref,
     rotateSelection,
+    resetTransientEditorState,
     saveHistory,
     setEditorMode,
     switchEditorMode,

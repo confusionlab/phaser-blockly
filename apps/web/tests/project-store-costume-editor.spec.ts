@@ -723,4 +723,33 @@ test.describe('project store costume editor boundary', () => {
     expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.costumes[0]?.assetId).toBe('data:image/png;base64,AAA');
     expect(canUndoHistory()).toBe(false);
   });
+
+  test('costume-owned undo routing does not fall through into global history', async () => {
+    const { useProjectStore, useEditorStore, canUndoHistory } = await loadStores();
+    const project = createDefaultProject('Costume owned undo routing test');
+    const scene = project.scenes[0];
+    const object = createObject('object-a', 'costume-a', 'data:image/png;base64,AAA');
+    scene.objects = [object];
+
+    useProjectStore.getState().openProject(project);
+    useEditorStore.getState().selectScene(scene.id, { recordHistory: false });
+    useEditorStore.getState().selectObject(object.id, { recordHistory: false });
+    useEditorStore.setState({ activeObjectTab: 'costumes' });
+
+    useProjectStore.getState().updateObject(scene.id, object.id, { name: 'renamed-object' });
+    expect(canUndoHistory()).toBe(true);
+
+    useEditorStore.getState().registerCostumeUndo({
+      undo: () => undefined,
+      redo: () => undefined,
+      canUndo: () => false,
+      canRedo: () => false,
+      ownsHistoryDomain: true,
+    });
+
+    useEditorStore.getState().undo();
+
+    expect(useProjectStore.getState().project?.scenes[0]?.objects[0]?.name).toBe('renamed-object');
+    expect(canUndoHistory()).toBe(true);
+  });
 });

@@ -33,6 +33,7 @@ export type UndoRedoHandler = {
   redo: () => void;
   canUndo?: () => boolean;
   canRedo?: () => boolean;
+  ownsHistoryDomain?: boolean;
   beforeHistoryUndoRedo?: () => void;
   beforeSelectionChange?: (context: { source: string; recordHistory: boolean }) => void;
   flushPendingState?: (options?: { includePreview?: boolean; settleHistory?: boolean }) => Promise<void> | void;
@@ -929,6 +930,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         state.costumeUndoHandler.undo();
         return;
       }
+      if (state.costumeUndoHandler.ownsHistoryDomain) {
+        return;
+      }
     }
 
     if (state.activeObjectTab === 'code' && state.codeUndoHandler?.beforeHistoryUndoRedo) {
@@ -957,6 +961,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     if (state.activeObjectTab === 'costumes' && state.costumeUndoHandler) {
       if (!state.costumeUndoHandler.canRedo || state.costumeUndoHandler.canRedo()) {
         state.costumeUndoHandler.redo();
+        return;
+      }
+      if (state.costumeUndoHandler.ownsHistoryDomain) {
         return;
       }
     }

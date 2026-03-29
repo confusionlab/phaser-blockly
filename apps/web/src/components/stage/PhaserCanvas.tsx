@@ -3,7 +3,7 @@ import Phaser from 'phaser';
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { getCostumeRuntimePreview, useCostumeRuntimePreviewStore } from '@/store/costumeRuntimePreviewStore';
+import { getCostumePresentation, useCostumeRuntimePreviewStore } from '@/store/costumeRuntimePreviewStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ import type {
 import { getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
+import { applyCostumeEditorPersistedStateToCostume } from '@/lib/editor/costumeEditorSession';
 import {
   getProjectedChunkSizePx,
 } from '@/lib/background/chunkMath';
@@ -1388,14 +1389,18 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         // Update costume if changed (use effective props for component instances)
         const costumes = effectiveProps.costumes || [];
         const currentCostumeIndex = effectiveProps.currentCostumeIndex ?? 0;
-        const currentCostume = costumes[currentCostumeIndex];
-        const runtimePreview = selectedScene && currentCostume
-          ? getCostumeRuntimePreview({
+        const baseCostume = costumes[currentCostumeIndex];
+        const costumePresentation = selectedScene && baseCostume
+          ? getCostumePresentation({
               sceneId: selectedScene.id,
               objectId: obj.id,
-              costumeId: currentCostume.id,
+              costumeId: baseCostume.id,
             })
           : null;
+        const currentCostume = baseCostume && costumePresentation
+          ? applyCostumeEditorPersistedStateToCostume(baseCostume, costumePresentation.state)
+          : baseCostume;
+        const runtimePreview = costumePresentation?.preview ?? null;
         const storedCostumeId = targetContainer.getData('costumeId');
         const storedAssetId = targetContainer.getData('assetId');
         const storedAssetFrame = targetContainer.getData('assetFrame') as CostumeAssetFrame | null | undefined;

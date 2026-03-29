@@ -9,11 +9,13 @@ interface AssetSidebarTileProps {
   name: string;
   selected: boolean;
   media: ReactNode;
+  mediaTestId?: string;
   onClick: () => void;
   onNameChange: (name: string) => void;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
   cardClassName?: string;
   mediaClassName?: string;
+  testId?: string;
   inputClassName?: string;
 }
 
@@ -22,24 +24,31 @@ export function AssetSidebarTile({
   name,
   selected,
   media,
+  mediaTestId,
   onClick,
   onNameChange,
   onContextMenu,
   cardClassName,
   mediaClassName,
+  testId,
   inputClassName,
 }: AssetSidebarTileProps) {
   return (
     <Card
       onClick={onClick}
       onContextMenu={onContextMenu}
+      data-selected={selected ? 'true' : 'false'}
+      data-testid={testId}
       className={cn(
         'group relative cursor-pointer border-transparent p-1.5 shadow-none transition-colors',
         selected ? selectionSurfaceClassNames.selected : selectionSurfaceClassNames.interactiveHover,
         cardClassName,
       )}
     >
-      <div className={cn('relative aspect-square overflow-hidden rounded', mediaClassName)}>
+      <div
+        className={cn('relative aspect-square overflow-hidden rounded', mediaClassName)}
+        data-testid={mediaTestId}
+      >
         {media}
       </div>
 

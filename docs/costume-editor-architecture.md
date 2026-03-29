@@ -111,6 +111,39 @@ Required flush boundaries include:
 
 If a new boundary is added and it can make the editor lose focus or ownership of the active costume, it must either flush pending costume work or prove why no flush is needed.
 
+## Authoritative Canvas Loads
+
+Loading a persisted costume document into the live canvas is itself a state boundary.
+
+All authoritative document loads must go through the same guarded path, including:
+
+- initial costume/session loads
+- undo / redo navigation
+- document mutation reloads that replace the active canvas document
+
+This guarded load path must:
+
+- mark the editor as loading for the duration of the authoritative load
+- invalidate stale async bitmap commit work from older generations
+- suppress normal history/change dispatch while the canvas is being reconstructed
+- only finalize session readiness for the latest in-flight load
+
+Undo reliability depends on this rule. If undo/reload uses a different code path than normal session loads, the editor can reinterpret an authoritative history snapshot as fresh user work.
+
+## Undo Ownership
+
+Undo routing in the costume tab has two distinct roles that must not be conflated:
+
+- a passive costume bridge may flush pending costume state before some other history domain changes
+- the live costume editor may fully own undo/redo navigation for the active costume session
+
+The `UndoRedoHandler` contract makes this explicit with `ownsHistoryDomain`.
+
+- `ownsHistoryDomain: true` means the costume handler is authoritative for undo/redo while the costumes tab is active, even when it currently has no further local steps to take
+- omitted or `false` means the handler may participate in flushes, but global history is still allowed to handle the actual undo/redo action
+
+This distinction exists because selection/save/object-history bridges need costume flush behavior without stealing ownership from the global history stack.
+
 ## Consumer Rules
 
 ### Stage (`PhaserCanvas`)

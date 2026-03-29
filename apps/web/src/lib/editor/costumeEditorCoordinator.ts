@@ -7,6 +7,7 @@ import { cloneCostumeDocument } from '@/lib/costume/costumeDocument';
 import { renderCostumeDocument } from '@/lib/costume/costumeDocumentRender';
 import { cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
 import {
+  areCostumeDocumentsEqual,
   areCostumeEditorPersistedStatesEqual,
   cloneCostumeEditorPersistedState,
   type CostumeEditorPersistedState,
@@ -455,6 +456,29 @@ export class CostumeEditorCoordinator {
     this.syncHistoryFlags();
   }
 
+  private hydrateCurrentHistoryState(
+    session: CostumeEditorSession,
+    state: CostumeEditorPersistedState,
+  ) {
+    if (this.workingSessionKey !== session.key || this.documentHistoryIndex < 0) {
+      return;
+    }
+
+    const nextState = cloneCostumeEditorPersistedState(state);
+    if (!nextState) {
+      return;
+    }
+
+    const currentHistoryState = this.documentHistory[this.documentHistoryIndex] ?? null;
+    if (!currentHistoryState || !areCostumeDocumentsEqual(currentHistoryState.document, nextState.document)) {
+      return;
+    }
+
+    const nextHistory = [...this.documentHistory];
+    nextHistory[this.documentHistoryIndex] = nextState;
+    this.documentHistory = nextHistory;
+  }
+
   private persistRuntimeStateToStore(
     entry: CostumeRuntimeStateEntry,
     state: CostumeEditorPersistedState,
@@ -492,6 +516,10 @@ export class CostumeEditorCoordinator {
         ...currentRuntimeEntry,
         state: cloneCostumeEditorPersistedState(nextState)!,
       };
+    }
+
+    if (options.renderedPreview === true) {
+      this.hydrateCurrentHistoryState(entry.session, nextState);
     }
 
     const currentHistoryState = this.documentHistory[this.documentHistoryIndex] ?? null;

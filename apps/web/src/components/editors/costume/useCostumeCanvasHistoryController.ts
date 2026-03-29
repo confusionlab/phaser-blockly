@@ -198,6 +198,7 @@ export function useCostumeCanvasHistoryController({
     commitCurrentSnapshotWithoutDispatch,
     createSnapshot,
     getHistoryGeneration: () => historyGenerationRef.current,
+    isHistoryGenerationCurrent: (generation: number) => historyGenerationRef.current === generation,
     lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,

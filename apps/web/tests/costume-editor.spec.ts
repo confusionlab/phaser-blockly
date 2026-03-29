@@ -26,7 +26,7 @@ async function addVectorLayer(page: Page): Promise<void> {
 }
 
 async function getCostumeCanvasBox(page: Page) {
-  const canvasSurface = page.getByTestId('costume-canvas-surface');
+  const canvasSurface = page.getByTestId('costume-active-layer-visual');
   await expect(canvasSurface).toBeVisible();
   const box = await canvasSurface.boundingBox();
   expect(box).not.toBeNull();
@@ -460,6 +460,66 @@ async function captureSpriteShelfPreviewHash(page: Page): Promise<string> {
   await expect(preview).toBeVisible({ timeout: 10000 });
   const screenshot = await preview.screenshot();
   return createHash('sha1').update(screenshot).digest('hex');
+}
+
+async function captureSelectedCostumeListPreviewHash(page: Page): Promise<string> {
+  const preview = page.locator('[data-testid="costume-list-tile"][data-selected="true"] [data-testid="costume-list-tile-media"]').first();
+  await expect(preview).toBeVisible({ timeout: 10000 });
+  const screenshot = await preview.screenshot();
+  return createHash('sha1').update(screenshot).digest('hex');
+}
+
+async function captureActiveLayerThumbnailHash(page: Page): Promise<string> {
+  const thumbnail = page.locator('[data-testid="layer-row"][aria-pressed="true"] [data-testid="costume-layer-thumbnail"]').first();
+  await expect(thumbnail).toBeVisible({ timeout: 10000 });
+  const screenshot = await thumbnail.screenshot();
+  return createHash('sha1').update(screenshot).digest('hex');
+}
+
+interface CostumeVisualHashes {
+  costumeList: string;
+  editor: string;
+  layerThumbnail: string;
+  shelf: string;
+  stage: string;
+}
+
+function serializeCostumeVisualHashes(hashes: CostumeVisualHashes): string {
+  return `${hashes.editor}|${hashes.stage}|${hashes.shelf}|${hashes.costumeList}|${hashes.layerThumbnail}`;
+}
+
+async function readCostumeVisualHashes(page: Page): Promise<CostumeVisualHashes> {
+  return {
+    costumeList: await captureSelectedCostumeListPreviewHash(page),
+    editor: await readHostedLayerCanvasHash(page),
+    layerThumbnail: await captureActiveLayerThumbnailHash(page),
+    stage: await captureStagePreviewHash(page),
+    shelf: await captureSpriteShelfPreviewHash(page),
+  };
+}
+
+async function waitForCostumeVisualHashes(page: Page, expected: CostumeVisualHashes): Promise<void> {
+  const expectedSerialized = serializeCostumeVisualHashes(expected);
+  await expect.poll(async () => {
+    return serializeCostumeVisualHashes(await readCostumeVisualHashes(page));
+  }, { timeout: 10000 }).toBe(expectedSerialized);
+}
+
+async function waitForCostumeVisualHashesToChange(
+  page: Page,
+  previous: CostumeVisualHashes,
+): Promise<CostumeVisualHashes> {
+  await expect.poll(async () => {
+    const next = await readCostumeVisualHashes(page);
+    return (
+      next.costumeList !== previous.costumeList
+      && next.editor !== previous.editor
+      && next.layerThumbnail !== previous.layerThumbnail
+      && next.stage !== previous.stage
+      && next.shelf !== previous.shelf
+    );
+  }, { timeout: 10000 }).toBe(true);
+  return await readCostumeVisualHashes(page);
 }
 
 async function observeStageAndSpriteShelfPresenceTimeline(
@@ -1005,7 +1065,7 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
   });
 
-  test('keyboard undo after fill and rapid soft brush strokes settles on the fill state', async ({ page }) => {
+  test('keyboard undo after fill and successive bitmap shape commits settles on the fill state', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');
     await openCostumeEditor(page);
@@ -1018,21 +1078,59 @@ test.describe('Costume editor tools', () => {
       .toBeGreaterThan(0);
     const fillHash = await readHostedLayerCanvasHash(page);
 
-    await page.getByRole('button', { name: /^brush$/i }).click();
-    await selectBitmapBrushKind(page, 'Soft');
-    for (const yFactor of [0.18, 0.28, 0.38, 0.48, 0.58, 0.68]) {
-      await drawAcrossCostumeCanvas(page, 0.14, yFactor, 0.86, yFactor);
-    }
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.18, 0.24, 0.42, 0.40);
+    await drawAcrossCostumeCanvas(page, 0.34, 0.44, 0.58, 0.60);
+    await drawAcrossCostumeCanvas(page, 0.50, 0.64, 0.74, 0.80);
 
     await expect
       .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
       .not.toBe(fillHash);
 
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
       await pressUndoShortcut(page);
     }
 
     await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
+  });
+
+  test('undo keeps the editor canvas, layer thumbnail, costume list, stage, and sprite shelf aligned', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+    const redoButton = page.getByRole('button', { name: /^redo$/i });
+
+    await page.getByRole('button', { name: /^fill$/i }).last().click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0);
+    const fillState = await readCostumeVisualHashes(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    await drawAcrossCostumeCanvas(page, 0.18, 0.24, 0.42, 0.40);
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).not.toBe(fillState.editor);
+    const strokeOneState = await waitForCostumeVisualHashesToChange(page, fillState);
+
+    await drawAcrossCostumeCanvas(page, 0.50, 0.60, 0.74, 0.78);
+    const strokeTwoState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, strokeOneState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, fillState);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await redoButton.click();
+    await waitForCostumeVisualHashes(page, strokeOneState);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await redoButton.click();
+    await waitForCostumeVisualHashes(page, strokeTwoState);
   });
 
   test('sprite shelf preview stays visible during rapid bitmap eraser commits', async ({ page }) => {

@@ -1,6 +1,7 @@
 import type { CostumeDocument, CostumeLayer } from '@/types';
 import { MAX_COSTUME_LAYERS, getCostumeLayerIndex } from '@/lib/costume/costumeDocument';
 import {
+  getCachedCostumeLayerThumbnailDataUrl,
   getCostumeLayerThumbnailSignature,
   renderCostumeLayerThumbnailToDataUrl,
 } from '@/lib/costume/costumeDocumentRender';
@@ -30,6 +31,7 @@ export function CostumeLayerPanel(props: CostumeLayerPanelProps) {
       activeLayer={props.activeLayer}
       maxLayers={MAX_COSTUME_LAYERS}
       getLayerIndex={(layerId) => getCostumeLayerIndex(props.document, layerId)}
+      getCachedLayerThumbnailDataUrl={(layer, size) => getCachedCostumeLayerThumbnailDataUrl(layer as CostumeLayer, size)}
       getLayerThumbnailSignature={(layer, size) => getCostumeLayerThumbnailSignature(layer as CostumeLayer, size)}
       renderLayerThumbnailToDataUrl={(layer, size) => renderCostumeLayerThumbnailToDataUrl(layer as CostumeLayer, size)}
       onSelectLayer={props.onSelectLayer}

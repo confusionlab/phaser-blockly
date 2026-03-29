@@ -25,6 +25,7 @@ const MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS = 128;
 const layerCanvasCache = new Map<string, Promise<HTMLCanvasElement>>();
 const layerPreviewSourceCache = new Map<string, Promise<string | null>>();
 const layerThumbnailCache = new Map<string, Promise<string | null>>();
+const layerThumbnailValueCache = new Map<string, string | null>();
 const documentPreviewCache = new Map<string, Promise<CostumeDocumentPreview>>();
 const documentPreviewValueCache = new Map<string, CostumeDocumentPreview>();
 
@@ -87,6 +88,26 @@ function rememberResolvedPreview(
   }
 
   return preview;
+}
+
+function rememberResolvedLayerThumbnail(
+  signature: string,
+  dataUrl: string | null,
+): string | null {
+  if (layerThumbnailValueCache.has(signature)) {
+    layerThumbnailValueCache.delete(signature);
+  }
+  layerThumbnailValueCache.set(signature, dataUrl);
+
+  while (layerThumbnailValueCache.size > MAX_CACHED_COSTUME_LAYER_THUMBNAILS) {
+    const oldestKey = layerThumbnailValueCache.keys().next().value;
+    if (typeof oldestKey !== 'string') {
+      break;
+    }
+    layerThumbnailValueCache.delete(oldestKey);
+  }
+
+  return dataUrl;
 }
 
 export function getCostumeLayerRenderSignature(layer: CostumeLayer): string | null {
@@ -249,12 +270,13 @@ export async function renderCostumeLayerThumbnailToDataUrl(
   const pending = (async (): Promise<string | null> => {
     const layerCanvas = await renderCostumeLayerToCanvas(layer);
     if (!layerCanvas) {
-      return null;
+      return rememberResolvedLayerThumbnail(cacheKey, null);
     }
 
-    return drawLayerThumbnail(layerCanvas, size);
+    return rememberResolvedLayerThumbnail(cacheKey, drawLayerThumbnail(layerCanvas, size));
   })().catch((error) => {
     layerThumbnailCache.delete(cacheKey);
+    layerThumbnailValueCache.delete(cacheKey);
     throw error;
   });
 
@@ -264,6 +286,37 @@ export async function renderCostumeLayerThumbnailToDataUrl(
     pending,
     MAX_CACHED_COSTUME_LAYER_THUMBNAILS,
   );
+}
+
+export function getCachedCostumeLayerThumbnailDataUrl(
+  layer: CostumeLayer,
+  size = 48,
+): string | null | undefined {
+  const cacheKey = getCostumeLayerThumbnailSignature(layer, size);
+  if (!layerThumbnailValueCache.has(cacheKey)) {
+    return undefined;
+  }
+
+  const value = layerThumbnailValueCache.get(cacheKey);
+  layerThumbnailValueCache.delete(cacheKey);
+  layerThumbnailValueCache.set(cacheKey, value ?? null);
+  return value ?? null;
+}
+
+export function primeCostumeLayerThumbnailFromCanvas(
+  layer: CostumeLayer,
+  sourceCanvas: HTMLCanvasElement,
+  size = 48,
+): string | null {
+  const cacheKey = getCostumeLayerThumbnailSignature(layer, size);
+  const dataUrl = rememberResolvedLayerThumbnail(cacheKey, drawLayerThumbnail(sourceCanvas, size));
+  rememberCachedValue(
+    layerThumbnailCache,
+    cacheKey,
+    Promise.resolve(dataUrl),
+    MAX_CACHED_COSTUME_LAYER_THUMBNAILS,
+  );
+  return dataUrl;
 }
 
 async function renderCostumeLayerToPreviewSource(layer: CostumeLayer): Promise<string | null> {
@@ -494,4 +547,17 @@ export async function renderCostumeDocumentPreview(document: CostumeDocument): P
     pending,
     MAX_CACHED_COSTUME_DOCUMENT_PREVIEWS,
   );
+}
+
+export async function primeCostumeDocumentPresentationCache(
+  document: CostumeDocument,
+  options: {
+    layerThumbnailSize?: number;
+  } = {},
+): Promise<void> {
+  const layerThumbnailSize = options.layerThumbnailSize ?? 48;
+  await Promise.allSettled([
+    renderCostumeDocumentPreview(document),
+    ...document.layers.map((layer) => renderCostumeLayerThumbnailToDataUrl(layer, layerThumbnailSize)),
+  ]);
 }

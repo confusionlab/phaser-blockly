@@ -196,6 +196,19 @@ export function createCostumeEditorPersistedStateFromCostume(costume: Costume | 
   };
 }
 
+export function applyCostumeEditorPersistedStateToCostume(
+  costume: Costume,
+  state: CostumeEditorPersistedState,
+): Costume {
+  return {
+    ...costume,
+    assetId: state.assetId,
+    bounds: state.bounds ? { ...state.bounds } : undefined,
+    assetFrame: cloneCostumeAssetFrame(state.assetFrame),
+    document: cloneCostumeDocument(state.document),
+  };
+}
+
 export function resolveCostumeEditorPersistedStateWithSyncMode(
   options: ResolveCostumeEditorPersistedStateOptions,
 ): ResolvedCostumeEditorPersistedStateResult | null {

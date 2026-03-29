@@ -2,7 +2,11 @@ import { useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
-import { getCostumeRuntimePreview, useCostumeRuntimePreviewStore } from '@/store/costumeRuntimePreviewStore';
+import {
+  getCostumePresentation,
+  type CostumeRuntimePreviewEntry,
+  useCostumeRuntimePreviewStore,
+} from '@/store/costumeRuntimePreviewStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
@@ -49,6 +53,7 @@ import type {
   SceneFolder,
 } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
+import { applyCostumeEditorPersistedStateToCostume } from '@/lib/editor/costumeEditorSession';
 import {
   getFolderNodeKey,
   getNextSiblingOrder,
@@ -283,7 +288,7 @@ function ShelfCostumeThumbnail({
 }: {
   costume: Costume | null;
   objectName: string;
-  runtimePreview: ReturnType<typeof getCostumeRuntimePreview>;
+  runtimePreview: CostumeRuntimePreviewEntry | null;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -1570,14 +1575,19 @@ export function SpriteShelf() {
     const rowContentPaddingClass = 'py-1';
     const indentDepth = Math.max(0, level - 1);
     const rowHoverClass = selectionSurfaceClassNames.hover;
-    const costume = effectiveProps?.costumes[effectiveProps.currentCostumeIndex];
-    const runtimePreview = selectedSceneId && object && costume
-      ? getCostumeRuntimePreview({
+    const baseCostume = effectiveProps?.costumes[effectiveProps.currentCostumeIndex];
+    const costumeTarget = selectedSceneId && object && baseCostume
+      ? {
           sceneId: selectedSceneId,
           objectId: object.id,
-          costumeId: costume.id,
-        })
+          costumeId: baseCostume.id,
+        }
       : null;
+    const presentation = costumeTarget ? getCostumePresentation(costumeTarget) : null;
+    const runtimePreview = presentation?.preview ?? null;
+    const costume = baseCostume && presentation
+      ? applyCostumeEditorPersistedStateToCostume(baseCostume, presentation.state)
+      : baseCostume ?? null;
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
