@@ -30,6 +30,12 @@ export interface CostumeRuntimeStateEntry {
   traceId: string | null;
 }
 
+export interface CostumeHistoryNavigationTarget {
+  fromIndex: number;
+  toIndex: number;
+  snapshot: CostumeEditorPersistedState;
+}
+
 interface PersistRuntimeStateOptions {
   recordHistory?: boolean;
   renderedPreview?: boolean;
@@ -106,6 +112,10 @@ export class CostumeEditorCoordinator {
     return cloneCostumeEditorPersistedState(this.documentHistory[index]);
   }
 
+  getCurrentHistorySnapshot(): CostumeEditorPersistedState | null {
+    return this.getHistorySnapshot(this.documentHistoryIndex);
+  }
+
   setHistoryIndex(index: number): boolean {
     if (index < 0 || index >= this.documentHistory.length) {
       return false;
@@ -113,6 +123,76 @@ export class CostumeEditorCoordinator {
     this.documentHistoryIndex = index;
     this.syncHistoryFlags();
     return true;
+  }
+
+  peekHistoryNavigation(
+    stepDelta: -1 | 1,
+    options: { indexOffset?: number } = {},
+  ): CostumeHistoryNavigationTarget | null {
+    const fromIndex = this.documentHistoryIndex + (options.indexOffset ?? 0);
+    const toIndex = fromIndex + stepDelta;
+    if (
+      fromIndex < 0
+      || fromIndex >= this.documentHistory.length
+      || toIndex < 0
+      || toIndex >= this.documentHistory.length
+    ) {
+      return null;
+    }
+
+    const snapshot = cloneCostumeEditorPersistedState(this.documentHistory[toIndex]);
+    if (!snapshot) {
+      return null;
+    }
+
+    return {
+      fromIndex,
+      toIndex,
+      snapshot,
+    };
+  }
+
+  commitHistoryNavigation(
+    session: CostumeEditorSession | null,
+    navigation: CostumeHistoryNavigationTarget | null | undefined,
+    state: CostumeEditorPersistedState | null | undefined,
+    options: {
+      syncMode?: CostumeRuntimeSyncMode;
+      traceId?: string | null;
+    } = {},
+  ): CostumeRuntimeStateEntry | null {
+    if (!session || !navigation || !state) {
+      return null;
+    }
+
+    const nextState = cloneCostumeEditorPersistedState(state);
+    const expectedSnapshot = cloneCostumeEditorPersistedState(this.documentHistory[navigation.toIndex]);
+    if (!nextState || !expectedSnapshot) {
+      return null;
+    }
+
+    if (
+      this.documentHistoryIndex !== navigation.fromIndex
+      || !areCostumeEditorPersistedStatesEqual(expectedSnapshot, navigation.snapshot)
+    ) {
+      return null;
+    }
+
+    this.documentHistoryIndex = navigation.toIndex;
+    this.syncHistoryFlags();
+    this.setWorkingPersistedState(session, nextState);
+
+    const revision = this.runtimeStateRevision + 1;
+    this.runtimeStateRevision = revision;
+    const entry: CostumeRuntimeStateEntry = {
+      revision,
+      session: { ...session },
+      state: nextState,
+      syncMode: options.syncMode ?? 'render',
+      traceId: options.traceId ?? null,
+    };
+    this.latestRuntimeState = this.cloneRuntimeStateEntry(entry);
+    return entry;
   }
 
   getWorkingPersistedStateForSession(

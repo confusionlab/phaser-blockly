@@ -83,6 +83,7 @@ export interface CostumeCanvasHandle {
   loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
   loadDocument: (sessionKey: string, document: CostumeDocument) => Promise<void>;
   flushPendingBitmapCommits: () => Promise<void>;
+  captureActiveLayerCanvasState: (sessionKey?: string | null) => ActiveLayerCanvasState | null;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   hasUnsavedChanges: (sessionKey?: string | null) => boolean;
   markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => void;
@@ -583,8 +584,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     commitActiveStyleChanges,
     deleteSelection,
     duplicateSelection,
-    exportCostumeState,
     flipSelection,
+    exportCostumeState,
     getComposedCanvasElement,
     getSelectionMousePos,
     isTextEditing,

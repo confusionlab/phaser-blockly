@@ -130,6 +130,25 @@ This guarded load path must:
 
 Undo reliability depends on this rule. If undo/reload uses a different code path than normal session loads, the editor can reinterpret an authoritative history snapshot as fresh user work.
 
+## History Navigation Transactions
+
+Undo and redo are not allowed to mutate raw history index state from the React layer anymore.
+
+History navigation should move through a typed coordinator contract:
+
+1. Peek the next navigation target from the coordinator.
+2. Load that target snapshot authoritatively into the canvas.
+3. Reconcile the loaded canvas into the final persisted state for that revision.
+4. Commit the navigation through the coordinator as one atomic step.
+5. Publish runtime preview from the committed revision.
+
+The important rule is:
+
+- The component may decide when to request navigation, but it must not manually `setHistoryIndex` and then separately create a runtime entry.
+- History index movement and runtime revision activation must commit together through one coordinator boundary.
+
+This exists to prevent a partially applied undo state where the coordinator thinks it moved but the authoritative canvas load, preview publication, or session validation did not actually finish.
+
 ## Undo Ownership
 
 Undo routing in the costume tab has two distinct roles that must not be conflated:

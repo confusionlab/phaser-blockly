@@ -135,6 +135,19 @@ export function createBitmapSurfaceCanvas(
   return canvas;
 }
 
+export function cloneBitmapSurfaceCanvas(source: HTMLCanvasElement): HTMLCanvasElement | null {
+  const clone = document.createElement('canvas');
+  clone.width = source.width;
+  clone.height = source.height;
+  const ctx = getCanvas2dContext(clone, 'readback');
+  if (!ctx) {
+    return null;
+  }
+
+  ctx.drawImage(source, 0, 0);
+  return clone;
+}
+
 export async function renderBitmapAssetToSurfaceCanvas(
   source: string | null | undefined,
   assetFrame?: CostumeAssetFrame | null,
@@ -157,6 +170,20 @@ export async function renderBitmapAssetToSurfaceCanvas(
     });
 
   return await rememberCachedValue(bitmapSurfaceCache, cacheKey, pending, MAX_CACHED_BITMAP_SURFACES);
+}
+
+export async function renderBitmapAssetToEditableSurfaceCanvas(
+  source: string | null | undefined,
+  assetFrame?: CostumeAssetFrame | null,
+): Promise<HTMLCanvasElement | null> {
+  const surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(source, assetFrame);
+  if (!surfaceCanvas) {
+    return null;
+  }
+
+  // The editor mutates its working bitmap surface in place while drawing, so
+  // it must never receive the shared cached surface instance directly.
+  return cloneBitmapSurfaceCanvas(surfaceCanvas) ?? surfaceCanvas;
 }
 
 export async function renderBitmapAssetToSurfaceDataUrl(

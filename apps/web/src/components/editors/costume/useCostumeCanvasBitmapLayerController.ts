@@ -1,7 +1,7 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
-import { renderBitmapAssetToSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
+import { renderBitmapAssetToEditableSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
 import {
   optimizeCostumeRasterCanvas,
   optimizeCostumeRasterCanvasIncrementally,
@@ -329,7 +329,7 @@ export function useCostumeCanvasBitmapLayerController({
     let surfaceCanvas: HTMLCanvasElement | null = null;
     if (dataUrl) {
       try {
-        surfaceCanvas = await renderBitmapAssetToSurfaceCanvas(dataUrl, options?.assetFrame);
+        surfaceCanvas = await renderBitmapAssetToEditableSurfaceCanvas(dataUrl, options?.assetFrame);
       } catch (error) {
         console.error('Failed to load bitmap layer:', error);
         return false;

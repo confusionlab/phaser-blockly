@@ -195,6 +195,8 @@ async function stopLayerSelectionObserver(page: Page) {
 }
 
 async function waitForCostumeCanvasReady(page: Page): Promise<void> {
+  const editorRoot = page.getByTestId('costume-editor-root');
+  await expect(editorRoot).toHaveAttribute('data-session-ready', 'true', { timeout: 10000 });
   const activeLayerVisual = page.getByTestId('costume-active-layer-visual');
   await expect(activeLayerVisual).toBeVisible({ timeout: 10000 });
   await expect(activeLayerVisual).toHaveAttribute('data-host-ready', 'true', { timeout: 10000 });
@@ -1101,6 +1103,7 @@ test.describe('Costume editor tools', () => {
 
     const undoButton = page.getByRole('button', { name: /^undo$/i });
     const redoButton = page.getByRole('button', { name: /^redo$/i });
+    const originalState = await readCostumeVisualHashes(page);
 
     await page.getByRole('button', { name: /^fill$/i }).last().click();
     await clickCostumeCanvas(page, 0.5, 0.5);
@@ -1124,6 +1127,14 @@ test.describe('Costume editor tools', () => {
     await undoButton.click();
     await waitForCostumeVisualHashes(page, fillState);
 
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, originalState);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await redoButton.click();
+    await waitForCostumeVisualHashes(page, fillState);
+
     await expect(redoButton).toBeEnabled({ timeout: 10000 });
     await redoButton.click();
     await waitForCostumeVisualHashes(page, strokeOneState);
@@ -1131,6 +1142,171 @@ test.describe('Costume editor tools', () => {
     await expect(redoButton).toBeEnabled({ timeout: 10000 });
     await redoButton.click();
     await waitForCostumeVisualHashes(page, strokeTwoState);
+  });
+
+  test('rapid undo back to origin and a single redo stay aligned on the correct history points', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+    const redoButton = page.getByRole('button', { name: /^redo$/i });
+    const originalState = await readCostumeVisualHashes(page);
+
+    await page.getByRole('button', { name: /^fill$/i }).last().click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0);
+    const firstHistoryState = await readCostumeVisualHashes(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    let latestState = firstHistoryState;
+    for (const [startX, startY, endX, endY] of [
+      [0.12, 0.12, 0.38, 0.34],
+      [0.62, 0.14, 0.88, 0.36],
+      [0.14, 0.62, 0.40, 0.84],
+      [0.60, 0.60, 0.86, 0.82],
+      [0.36, 0.36, 0.64, 0.64],
+    ] as const) {
+      await drawAcrossCostumeCanvas(page, startX, startY, endX, endY);
+      latestState = await waitForCostumeVisualHashesToChange(page, latestState);
+    }
+
+    for (let index = 0; index < 6; index += 1) {
+      await expect(undoButton).toBeEnabled({ timeout: 10000 });
+      await undoButton.click();
+    }
+
+    await waitForCostumeVisualHashes(page, originalState);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await redoButton.click();
+    await waitForCostumeVisualHashes(page, firstHistoryState);
+  });
+
+  test('rapid keyboard undo back to origin and redo stay aligned on the correct history points', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const redoButton = page.getByRole('button', { name: /^redo$/i });
+    const originalState = await readCostumeVisualHashes(page);
+
+    await page.getByRole('button', { name: /^fill$/i }).last().click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0);
+    const firstHistoryState = await readCostumeVisualHashes(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    let latestState = firstHistoryState;
+    for (const [startX, startY, endX, endY] of [
+      [0.12, 0.12, 0.38, 0.34],
+      [0.62, 0.14, 0.88, 0.36],
+      [0.14, 0.62, 0.40, 0.84],
+      [0.60, 0.60, 0.86, 0.82],
+      [0.36, 0.36, 0.64, 0.64],
+    ] as const) {
+      await drawAcrossCostumeCanvas(page, startX, startY, endX, endY);
+      latestState = await waitForCostumeVisualHashesToChange(page, latestState);
+    }
+
+    for (let index = 0; index < 6; index += 1) {
+      await pressUndoShortcut(page);
+    }
+
+    await waitForCostumeVisualHashes(page, originalState);
+
+    await expect(redoButton).toBeEnabled({ timeout: 10000 });
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+y');
+    await waitForCostumeVisualHashes(page, firstHistoryState);
+  });
+
+  test('branching after undo does not resurrect the abandoned future history', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    await drawAcrossCostumeCanvas(page, 0.10, 0.10, 0.30, 0.28);
+    const strokeOneState = await readCostumeVisualHashes(page);
+
+    await drawAcrossCostumeCanvas(page, 0.66, 0.12, 0.88, 0.30);
+    const strokeTwoState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
+
+    await drawAcrossCostumeCanvas(page, 0.38, 0.38, 0.62, 0.62);
+    const strokeThreeState = await waitForCostumeVisualHashesToChange(page, strokeTwoState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, strokeTwoState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, strokeOneState);
+
+    await drawAcrossCostumeCanvas(page, 0.10, 0.68, 0.30, 0.88);
+    const branchStrokeOneState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
+
+    await drawAcrossCostumeCanvas(page, 0.68, 0.68, 0.88, 0.88);
+    const branchStrokeTwoState = await waitForCostumeVisualHashesToChange(page, branchStrokeOneState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, branchStrokeOneState);
+
+    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeThreeState));
+    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeTwoState));
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, strokeOneState);
+  });
+
+  test('bitmap brush branching after undo does not resurrect the abandoned future history', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+
+    await drawAcrossCostumeCanvas(page, 0.10, 0.16, 0.34, 0.22);
+    const strokeOneState = await readCostumeVisualHashes(page);
+
+    await drawAcrossCostumeCanvas(page, 0.66, 0.16, 0.90, 0.22);
+    const strokeTwoState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
+
+    await drawAcrossCostumeCanvas(page, 0.36, 0.42, 0.62, 0.48);
+    const strokeThreeState = await waitForCostumeVisualHashesToChange(page, strokeTwoState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, strokeTwoState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, strokeOneState);
+
+    await drawAcrossCostumeCanvas(page, 0.12, 0.72, 0.36, 0.78);
+    const branchStrokeOneState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
+
+    await drawAcrossCostumeCanvas(page, 0.64, 0.72, 0.88, 0.78);
+    const branchStrokeTwoState = await waitForCostumeVisualHashesToChange(page, branchStrokeOneState);
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, branchStrokeOneState);
+
+    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeThreeState));
+    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeTwoState));
+    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(branchStrokeTwoState));
+
+    await expect(undoButton).toBeEnabled({ timeout: 10000 });
+    await undoButton.click();
+    await waitForCostumeVisualHashes(page, strokeOneState);
   });
 
   test('sprite shelf preview stays visible during rapid bitmap eraser commits', async ({ page }) => {

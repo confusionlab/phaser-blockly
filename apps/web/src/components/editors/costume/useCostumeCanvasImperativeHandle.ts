@@ -2,7 +2,10 @@ import { useImperativeHandle, type ForwardedRef, type MutableRefObject } from 'r
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
-import { areHistorySnapshotsEqual } from './costumeCanvasShared';
+import {
+  areHistorySnapshotsEqual,
+  createActiveLayerCanvasStateFromSnapshot,
+} from './costumeCanvasShared';
 import type { CostumeCanvasExportState, CostumeCanvasHandle } from './CostumeCanvas';
 
 interface UseCostumeCanvasImperativeHandleOptions {
@@ -105,6 +108,13 @@ export function useCostumeCanvasImperativeHandle({
 
     flushPendingBitmapCommits: async () => {
       await bitmapRasterCommitQueueRef.current.catch(() => undefined);
+    },
+
+    captureActiveLayerCanvasState: (sessionKey?: string | null) => {
+      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
+        return null;
+      }
+      return createActiveLayerCanvasStateFromSnapshot(createSnapshot());
     },
 
     exportCostumeState,
