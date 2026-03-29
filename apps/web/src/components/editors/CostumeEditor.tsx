@@ -727,7 +727,13 @@ export function CostumeEditor() {
       redo: () => {
         void navigateDocumentHistory('redo');
       },
-      canUndo: () => coordinator.canUndo(),
+      canUndo: () => {
+        if (coordinator.canUndo()) {
+          return true;
+        }
+        const loadedSession = loadedSessionRef.current;
+        return !!loadedSession && !!canvasRef.current?.hasUnsavedChanges(loadedSession.key);
+      },
       canRedo: () => coordinator.canRedo(),
       beforeSelectionChange: ({ recordHistory }) => {
         persistCanvasStateToSession(loadedSessionRef.current, {

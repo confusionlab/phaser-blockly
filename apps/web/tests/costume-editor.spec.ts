@@ -63,6 +63,10 @@ async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) 
   await page.mouse.up();
 }
 
+async function pressUndoShortcut(page: Page) {
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+}
+
 async function expectLayerThumbnail(button: Locator): Promise<void> {
   const thumbnailImage = button.getByTestId('costume-layer-thumbnail').locator('img');
   await expect.poll(async () => {
@@ -996,6 +1000,36 @@ test.describe('Costume editor tools', () => {
     for (let index = 0; index < 6; index += 1) {
       await expect(undoButton).toBeEnabled({ timeout: 10000 });
       await undoButton.click();
+    }
+
+    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
+  });
+
+  test('keyboard undo after fill and rapid soft brush strokes settles on the fill state', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^fill$/i }).last().click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+
+    await expect
+      .poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 })
+      .toBeGreaterThan(0);
+    const fillHash = await readHostedLayerCanvasHash(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Soft');
+    for (const yFactor of [0.18, 0.28, 0.38, 0.48, 0.58, 0.68]) {
+      await drawAcrossCostumeCanvas(page, 0.14, yFactor, 0.86, yFactor);
+    }
+
+    await expect
+      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
+      .not.toBe(fillHash);
+
+    for (let index = 0; index < 6; index += 1) {
+      await pressUndoShortcut(page);
     }
 
     await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
