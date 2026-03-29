@@ -2,14 +2,10 @@ import { useImperativeHandle, type ForwardedRef, type MutableRefObject } from 'r
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
-import {
-  areHistorySnapshotsEqual,
-  createActiveLayerCanvasStateFromSnapshot,
-} from './costumeCanvasShared';
+import { areHistorySnapshotsEqual } from './costumeCanvasShared';
 import type { CostumeCanvasExportState, CostumeCanvasHandle } from './CostumeCanvas';
 
 interface UseCostumeCanvasImperativeHandleOptions {
-  advanceHistoryGeneration: () => number;
   alignSelection: (action: any) => boolean;
   bitmapRasterCommitQueueRef: MutableRefObject<Promise<void>>;
   configureCanvasForTool: () => void;
@@ -18,7 +14,6 @@ interface UseCostumeCanvasImperativeHandleOptions {
   duplicateSelection: () => Promise<boolean>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   flipSelection: (axis: any) => boolean;
-  getDirectBitmapPreviewCanvas: () => HTMLCanvasElement | null;
   getComposedCanvasElement: () => HTMLCanvasElement;
   isTextEditing: () => boolean;
   lastCommittedSnapshotRef: MutableRefObject<any>;
@@ -36,16 +31,13 @@ interface UseCostumeCanvasImperativeHandleOptions {
   persistedSnapshotRef: MutableRefObject<any>;
   ref: ForwardedRef<CostumeCanvasHandle>;
   rotateSelection: () => boolean;
-  resetTransientEditorState: () => void;
   saveHistory: () => void;
   setEditorMode: (mode: CostumeEditorMode) => void;
   switchEditorMode: (mode: CostumeEditorMode) => Promise<void>;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
-  getHistoryGeneration: () => number;
 }
 
 export function useCostumeCanvasImperativeHandle({
-  advanceHistoryGeneration,
   alignSelection,
   bitmapRasterCommitQueueRef,
   configureCanvasForTool,
@@ -54,7 +46,6 @@ export function useCostumeCanvasImperativeHandle({
   duplicateSelection,
   exportCostumeState,
   flipSelection,
-  getDirectBitmapPreviewCanvas,
   getComposedCanvasElement,
   isTextEditing,
   lastCommittedSnapshotRef,
@@ -67,12 +58,10 @@ export function useCostumeCanvasImperativeHandle({
   persistedSnapshotRef,
   ref,
   rotateSelection,
-  resetTransientEditorState,
   saveHistory,
   setEditorMode,
   switchEditorMode,
   editorModeRef,
-  getHistoryGeneration,
 }: UseCostumeCanvasImperativeHandleOptions) {
   useImperativeHandle(ref, () => ({
     toDataURL: () => {
@@ -89,8 +78,6 @@ export function useCostumeCanvasImperativeHandle({
     },
 
     loadFromDataURL: async (dataUrl: string, sessionKey?: string | null) => {
-      advanceHistoryGeneration();
-      resetTransientEditorState();
       loadedSessionKeyRef.current = null;
       await loadBitmapLayer(dataUrl, false);
       setEditorMode('bitmap');
@@ -100,21 +87,10 @@ export function useCostumeCanvasImperativeHandle({
       markCurrentSnapshotPersisted(sessionKey ?? null);
     },
 
-    loadDocument: async (sessionKey: string, document: any) => {
-      advanceHistoryGeneration();
-      resetTransientEditorState();
-      await loadDocument(sessionKey, document);
-    },
+    loadDocument,
 
     flushPendingBitmapCommits: async () => {
       await bitmapRasterCommitQueueRef.current.catch(() => undefined);
-    },
-
-    captureActiveLayerCanvasState: (sessionKey?: string | null) => {
-      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
-        return null;
-      }
-      return createActiveLayerCanvasStateFromSnapshot(createSnapshot());
     },
 
     exportCostumeState,
@@ -141,26 +117,7 @@ export function useCostumeCanvasImperativeHandle({
 
     getEditorMode: () => editorModeRef.current,
 
-    getHistoryGeneration,
-
     getLoadedSessionKey: () => loadedSessionKeyRef.current,
-
-    getDirectBitmapPreviewCanvas: (sessionKey?: string | null) => {
-      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
-        return null;
-      }
-      if (editorModeRef.current !== 'bitmap') {
-        return null;
-      }
-      return getDirectBitmapPreviewCanvas();
-    },
-
-    getComposedPreviewCanvas: (sessionKey?: string | null) => {
-      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
-        return null;
-      }
-      return getComposedCanvasElement();
-    },
 
     deleteSelection,
 
@@ -178,8 +135,6 @@ export function useCostumeCanvasImperativeHandle({
 
     clear: () => {
       void (async () => {
-        advanceHistoryGeneration();
-        resetTransientEditorState();
         loadedSessionKeyRef.current = null;
         await loadBitmapLayer('', false);
         setEditorMode('bitmap');
@@ -198,7 +153,6 @@ export function useCostumeCanvasImperativeHandle({
     canUndo: () => false,
     canRedo: () => false,
   }), [
-    advanceHistoryGeneration,
     alignSelection,
     bitmapRasterCommitQueueRef,
     configureCanvasForTool,
@@ -207,7 +161,6 @@ export function useCostumeCanvasImperativeHandle({
     duplicateSelection,
     exportCostumeState,
     flipSelection,
-    getDirectBitmapPreviewCanvas,
     getComposedCanvasElement,
     isTextEditing,
     lastCommittedSnapshotRef,
@@ -220,11 +173,9 @@ export function useCostumeCanvasImperativeHandle({
     persistedSnapshotRef,
     ref,
     rotateSelection,
-    resetTransientEditorState,
     saveHistory,
     setEditorMode,
     switchEditorMode,
     editorModeRef,
-    getHistoryGeneration,
   ]);
 }

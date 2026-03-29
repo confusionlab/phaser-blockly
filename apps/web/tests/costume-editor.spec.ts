@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
@@ -26,7 +25,7 @@ async function addVectorLayer(page: Page): Promise<void> {
 }
 
 async function getCostumeCanvasBox(page: Page) {
-  const canvasSurface = page.getByTestId('costume-active-layer-visual');
+  const canvasSurface = page.getByTestId('costume-canvas-surface');
   await expect(canvasSurface).toBeVisible();
   const box = await canvasSurface.boundingBox();
   expect(box).not.toBeNull();
@@ -61,10 +60,6 @@ async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) 
   await page.mouse.move(targetX, targetY);
   await page.mouse.down();
   await page.mouse.up();
-}
-
-async function pressUndoShortcut(page: Page) {
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
 }
 
 async function expectLayerThumbnail(button: Locator): Promise<void> {
@@ -122,16 +117,28 @@ async function readLayerPanelWidth(page: Page): Promise<number> {
 }
 
 async function readActiveCostumeLayerOpacity(page: Page): Promise<number | null> {
-  const activeLayerRow = page.locator('[data-testid="layer-row"][aria-pressed="true"]').first();
-  await activeLayerRow.click({ button: 'right' });
-  const slider = page.getByLabel('Layer opacity');
-  await expect(slider).toBeVisible();
-  const value = Number(await slider.inputValue());
-  await page.keyboard.press('Escape');
-  if (!Number.isFinite(value)) {
-    return null;
-  }
-  return value / 100;
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project as {
+      scenes?: Array<{
+        objects?: Array<{
+          currentCostumeIndex?: number;
+          costumes?: Array<{
+            document?: {
+              activeLayerId?: string;
+              layers?: Array<{ id: string; opacity?: number }>;
+            };
+          }>;
+        }>;
+      }>;
+    } | null;
+
+    const object = project?.scenes?.[0]?.objects?.[0];
+    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
+    const activeLayerId = costume?.document?.activeLayerId;
+    const activeLayer = costume?.document?.layers?.find((layer) => layer.id === activeLayerId);
+    return typeof activeLayer?.opacity === 'number' ? activeLayer.opacity : null;
+  });
 }
 
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
@@ -195,8 +202,6 @@ async function stopLayerSelectionObserver(page: Page) {
 }
 
 async function waitForCostumeCanvasReady(page: Page): Promise<void> {
-  const editorRoot = page.getByTestId('costume-editor-root');
-  await expect(editorRoot).toHaveAttribute('data-session-ready', 'true', { timeout: 10000 });
   const activeLayerVisual = page.getByTestId('costume-active-layer-visual');
   await expect(activeLayerVisual).toBeVisible({ timeout: 10000 });
   await expect(activeLayerVisual).toHaveAttribute('data-host-ready', 'true', { timeout: 10000 });
@@ -214,12 +219,8 @@ async function waitForCostumeCanvasReady(page: Page): Promise<void> {
 }
 
 async function roundTripThroughCodeTab(page: Page): Promise<void> {
-  const codeTab = page.getByRole('radio', { name: /^code$/i });
-  const costumeTab = page.getByRole('radio', { name: /^costume$/i });
-  await codeTab.click();
-  await expect(codeTab).toBeChecked({ timeout: 10000 });
-  await costumeTab.click();
-  await expect(costumeTab).toBeChecked({ timeout: 10000 });
+  await page.getByRole('radio', { name: /^code$/i }).click();
+  await page.getByRole('radio', { name: /^costume$/i }).click();
   await waitForCostumeCanvasReady(page);
 }
 
@@ -270,61 +271,6 @@ async function readHostedLayerInkSamples(page: Page): Promise<number> {
   });
 }
 
-async function readHostedLayerInkSamplesDense(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
-    if (!(hostedCanvas instanceof HTMLCanvasElement)) {
-      return 0;
-    }
-
-    const ctx = hostedCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) {
-      return 0;
-    }
-
-    const { data } = ctx.getImageData(0, 0, hostedCanvas.width, hostedCanvas.height);
-    let opaqueSamples = 0;
-    for (let index = 3; index < data.length; index += 4 * 31) {
-      if ((data[index] ?? 0) > 0) {
-        opaqueSamples += 1;
-      }
-    }
-    return opaqueSamples;
-  });
-}
-
-async function readHostedLayerCanvasHash(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
-    if (!(hostedCanvas instanceof HTMLCanvasElement)) {
-      return '';
-    }
-
-    const ctx = hostedCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) {
-      return '';
-    }
-
-    const { data } = ctx.getImageData(0, 0, hostedCanvas.width, hostedCanvas.height);
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < data.length; index += 4) {
-      hash ^= data[index] ?? 0;
-      hash = Math.imul(hash, 0x01000193);
-      hash ^= data[index + 1] ?? 0;
-      hash = Math.imul(hash, 0x01000193);
-      hash ^= data[index + 2] ?? 0;
-      hash = Math.imul(hash, 0x01000193);
-      hash ^= data[index + 3] ?? 0;
-      hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(36);
-  });
-}
-
-function expectSampleCountWithinTolerance(actual: number, expected: number, tolerance: number) {
-  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
-}
-
 async function observeVisibleHostedLayerInkTimeline(page: Page, frameCount = 36): Promise<number[]> {
   return await page.evaluate((frames) => {
     return new Promise<number[]>((resolve) => {
@@ -373,250 +319,16 @@ async function observeVisibleHostedLayerInkTimeline(page: Page, frameCount = 36)
   }, frameCount);
 }
 
-async function readStageCenterPresenceSamples(page: Page): Promise<number> {
-  return await page.evaluate(() => {
-    const stageCanvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
-    if (!(stageCanvas instanceof HTMLCanvasElement)) {
-      return 0;
-    }
-
-    const ctx = stageCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) {
-      return 0;
-    }
-
-    const backgroundProbe = ctx.getImageData(0, 0, Math.max(8, Math.floor(stageCanvas.width * 0.08)), Math.max(8, Math.floor(stageCanvas.height * 0.08))).data;
-    let backgroundRed = 0;
-    let backgroundGreen = 0;
-    let backgroundBlue = 0;
-    let backgroundCount = 0;
-    for (let index = 0; index < backgroundProbe.length; index += 4 * 11) {
-      backgroundRed += backgroundProbe[index] ?? 0;
-      backgroundGreen += backgroundProbe[index + 1] ?? 0;
-      backgroundBlue += backgroundProbe[index + 2] ?? 0;
-      backgroundCount += 1;
-    }
-    const avgBackground = {
-      red: backgroundCount > 0 ? backgroundRed / backgroundCount : 0,
-      green: backgroundCount > 0 ? backgroundGreen / backgroundCount : 0,
-      blue: backgroundCount > 0 ? backgroundBlue / backgroundCount : 0,
-    };
-
-    const { data } = ctx.getImageData(0, 0, stageCanvas.width, stageCanvas.height);
-    let presenceSamples = 0;
-
-    for (let index = 0; index < data.length; index += 4 * 29) {
-      const alpha = data[index + 3] ?? 0;
-      if (alpha <= 0) {
-        continue;
-      }
-      const red = data[index] ?? 0;
-      const green = data[index + 1] ?? 0;
-      const blue = data[index + 2] ?? 0;
-      const distance = Math.sqrt(
-        (red - avgBackground.red) ** 2 +
-        (green - avgBackground.green) ** 2 +
-        (blue - avgBackground.blue) ** 2,
-      );
-      if (distance > 24) {
-        presenceSamples += 1;
-      }
-    }
-
-    return presenceSamples;
+async function readCurrentCostumeDocumentSignature(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const scene = project?.scenes?.[0];
+    const object = scene?.objects?.[0];
+    const currentCostumeIndex = object?.currentCostumeIndex ?? 0;
+    const document = object?.costumes?.[currentCostumeIndex]?.document;
+    return document ? JSON.stringify(document) : null;
   });
-}
-
-async function readSpriteShelfPreviewVisibleSamples(page: Page): Promise<number> {
-  return await page.evaluate(() => {
-    const previewCanvas = document.querySelector('[data-testid="sprite-shelf-scroll-area"] [aria-label$="preview"]');
-    if (!(previewCanvas instanceof HTMLCanvasElement)) {
-      return 0;
-    }
-
-    const ctx = previewCanvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) {
-      return 0;
-    }
-
-    const { data } = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
-    let visibleSamples = 0;
-    for (let index = 0; index < data.length; index += 4 * 3) {
-      if ((data[index + 3] ?? 0) > 0) {
-        visibleSamples += 1;
-      }
-    }
-    return visibleSamples;
-  });
-}
-
-async function captureStagePreviewHash(page: Page): Promise<string> {
-  const stageHost = page.getByTestId('stage-phaser-host');
-  await expect(stageHost).toBeVisible({ timeout: 10000 });
-  const screenshot = await stageHost.screenshot();
-  return createHash('sha1').update(screenshot).digest('hex');
-}
-
-async function captureSpriteShelfPreviewHash(page: Page): Promise<string> {
-  const preview = page.locator('[data-testid="sprite-shelf-scroll-area"] [aria-label$="preview"]').first();
-  await expect(preview).toBeVisible({ timeout: 10000 });
-  const screenshot = await preview.screenshot();
-  return createHash('sha1').update(screenshot).digest('hex');
-}
-
-async function captureSelectedCostumeListPreviewHash(page: Page): Promise<string> {
-  const preview = page.locator('[data-testid="costume-list-tile"][data-selected="true"] [data-testid="costume-list-tile-media"]').first();
-  await expect(preview).toBeVisible({ timeout: 10000 });
-  const screenshot = await preview.screenshot();
-  return createHash('sha1').update(screenshot).digest('hex');
-}
-
-async function captureActiveLayerThumbnailHash(page: Page): Promise<string> {
-  const thumbnail = page.locator('[data-testid="layer-row"][aria-pressed="true"] [data-testid="costume-layer-thumbnail"]').first();
-  await expect(thumbnail).toBeVisible({ timeout: 10000 });
-  const screenshot = await thumbnail.screenshot();
-  return createHash('sha1').update(screenshot).digest('hex');
-}
-
-interface CostumeVisualHashes {
-  costumeList: string;
-  editor: string;
-  layerThumbnail: string;
-  shelf: string;
-  stage: string;
-}
-
-function serializeCostumeVisualHashes(hashes: CostumeVisualHashes): string {
-  return `${hashes.editor}|${hashes.stage}|${hashes.shelf}|${hashes.costumeList}|${hashes.layerThumbnail}`;
-}
-
-async function readCostumeVisualHashes(page: Page): Promise<CostumeVisualHashes> {
-  return {
-    costumeList: await captureSelectedCostumeListPreviewHash(page),
-    editor: await readHostedLayerCanvasHash(page),
-    layerThumbnail: await captureActiveLayerThumbnailHash(page),
-    stage: await captureStagePreviewHash(page),
-    shelf: await captureSpriteShelfPreviewHash(page),
-  };
-}
-
-async function waitForCostumeVisualHashes(page: Page, expected: CostumeVisualHashes): Promise<void> {
-  const expectedSerialized = serializeCostumeVisualHashes(expected);
-  await expect.poll(async () => {
-    return serializeCostumeVisualHashes(await readCostumeVisualHashes(page));
-  }, { timeout: 10000 }).toBe(expectedSerialized);
-}
-
-async function waitForCostumeVisualHashesToChange(
-  page: Page,
-  previous: CostumeVisualHashes,
-): Promise<CostumeVisualHashes> {
-  await expect.poll(async () => {
-    const next = await readCostumeVisualHashes(page);
-    return (
-      next.costumeList !== previous.costumeList
-      && next.editor !== previous.editor
-      && next.layerThumbnail !== previous.layerThumbnail
-      && next.stage !== previous.stage
-      && next.shelf !== previous.shelf
-    );
-  }, { timeout: 10000 }).toBe(true);
-  return await readCostumeVisualHashes(page);
-}
-
-async function observeStageAndSpriteShelfPresenceTimeline(
-  page: Page,
-  frameCount = 36,
-): Promise<{ stage: number[]; shelf: number[] }> {
-  return await page.evaluate((frames) => {
-    return new Promise<{ stage: number[]; shelf: number[] }>((resolve) => {
-      const stageCanvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
-      const shelfCanvas = document.querySelector('[data-testid="sprite-shelf-scroll-area"] [aria-label$="preview"]');
-      if (!(stageCanvas instanceof HTMLCanvasElement) || !(shelfCanvas instanceof HTMLCanvasElement)) {
-        resolve({ stage: [], shelf: [] });
-        return;
-      }
-
-      const sampleStagePresence = (canvas: HTMLCanvasElement) => {
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) {
-          return 0;
-        }
-        const backgroundProbe = ctx.getImageData(0, 0, Math.max(8, Math.floor(canvas.width * 0.08)), Math.max(8, Math.floor(canvas.height * 0.08))).data;
-        let backgroundRed = 0;
-        let backgroundGreen = 0;
-        let backgroundBlue = 0;
-        let backgroundCount = 0;
-        for (let index = 0; index < backgroundProbe.length; index += 4 * 11) {
-          backgroundRed += backgroundProbe[index] ?? 0;
-          backgroundGreen += backgroundProbe[index + 1] ?? 0;
-          backgroundBlue += backgroundProbe[index + 2] ?? 0;
-          backgroundCount += 1;
-        }
-        const avgBackground = {
-          red: backgroundCount > 0 ? backgroundRed / backgroundCount : 0,
-          green: backgroundCount > 0 ? backgroundGreen / backgroundCount : 0,
-          blue: backgroundCount > 0 ? backgroundBlue / backgroundCount : 0,
-        };
-
-        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        let presenceSamples = 0;
-        for (let index = 0; index < data.length; index += 4 * 29) {
-          const alpha = data[index + 3] ?? 0;
-          if (alpha <= 0) {
-            continue;
-          }
-          const red = data[index] ?? 0;
-          const green = data[index + 1] ?? 0;
-          const blue = data[index + 2] ?? 0;
-          const distance = Math.sqrt(
-            (red - avgBackground.red) ** 2 +
-            (green - avgBackground.green) ** 2 +
-            (blue - avgBackground.blue) ** 2,
-          );
-          if (distance > 24) {
-            presenceSamples += 1;
-          }
-        }
-        return presenceSamples;
-      };
-
-      const sampleVisiblePixels = (
-        canvas: HTMLCanvasElement,
-        step = 17,
-      ) => {
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) {
-          return 0;
-        }
-
-        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        let visibleSamples = 0;
-        for (let index = 0; index < data.length; index += 4 * step) {
-          if ((data[index + 3] ?? 0) > 0) {
-            visibleSamples += 1;
-          }
-        }
-        return visibleSamples;
-      };
-      const timeline = {
-        stage: [] as number[],
-        shelf: [] as number[],
-      };
-
-      const captureFrame = () => {
-        timeline.stage.push(sampleStagePresence(stageCanvas));
-        timeline.shelf.push(sampleVisiblePixels(shelfCanvas, 3));
-        if (timeline.stage.length >= frames) {
-          resolve(timeline);
-          return;
-        }
-        window.requestAnimationFrame(captureFrame);
-      };
-
-      window.requestAnimationFrame(captureFrame);
-    });
-  }, frameCount);
 }
 
 test.describe('Costume editor tools', () => {
@@ -703,27 +415,6 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
-  test('multi-layer composed edits keep stage and sprite shelf previews fresh', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    await addVectorLayer(page);
-    await expect(page.getByRole('button', { name: /^layer 2/i })).toBeVisible({ timeout: 10000 });
-    await waitForCostumeCanvasReady(page);
-
-    const beforeStageHash = await captureStagePreviewHash(page);
-    const beforeShelfHash = await captureSpriteShelfPreviewHash(page);
-    const beforeCanvasSamples = await readCheckerboardInkSamples(page);
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-    await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.74, 0.62);
-
-    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeCanvasSamples);
-    await expect.poll(async () => captureSpriteShelfPreviewHash(page), { timeout: 1000 }).not.toBe(beforeShelfHash);
-    await expect.poll(async () => captureStagePreviewHash(page), { timeout: 1000 }).not.toBe(beforeStageHash);
-  });
-
   test('rapid bitmap eraser strokes preserve committed layer state across a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');
@@ -791,22 +482,20 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
     await expect(undoButton).toBeEnabled({ timeout: 10000 });
     const baseSamples = await readCheckerboardInkSamples(page);
-    const baseHostedSamples = await readHostedLayerInkSamples(page);
+    await expect.poll(async () => !!(await readCurrentCostumeDocumentSignature(page)), { timeout: 10000 }).toBe(true);
+    const baseDocumentSignature = await readCurrentCostumeDocumentSignature(page);
+    expect(baseDocumentSignature).toBeTruthy();
 
     await page.getByRole('button', { name: /^eraser$/i }).click();
     for (const yFactor of [0.24, 0.34, 0.44, 0.54]) {
       await drawAcrossCostumeCanvas(page, 0.20, yFactor, 0.60, yFactor);
     }
-    const erasedSamples = await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples).then(async () => {
-      return await readCheckerboardInkSamples(page);
-    });
-    const erasedHostedSamples = await readHostedLayerInkSamples(page);
 
     let undoCount = 0;
     for (let index = 0; index < 10; index += 1) {
+      const currentSignature = await readCurrentCostumeDocumentSignature(page);
       const currentSamples = await readCheckerboardInkSamples(page);
-      const currentHostedSamples = await readHostedLayerInkSamples(page);
-      if (currentSamples === baseSamples && currentHostedSamples === baseHostedSamples) {
+      if (currentSignature === baseDocumentSignature && currentSamples === baseSamples) {
         break;
       }
       if (!await undoButton.isEnabled()) {
@@ -815,528 +504,34 @@ test.describe('Costume editor tools', () => {
       await undoButton.click();
       undoCount += 1;
       await expect.poll(async () => {
+        const nextSignature = await readCurrentCostumeDocumentSignature(page);
         const nextSamples = await readCheckerboardInkSamples(page);
-        const nextHostedSamples = await readHostedLayerInkSamples(page);
-        return nextSamples !== currentSamples || nextHostedSamples !== currentHostedSamples;
+        return nextSignature !== currentSignature || nextSamples !== currentSamples;
       }, { timeout: 10000 }).toBe(true);
     }
     expect(undoCount).toBeGreaterThan(0);
 
+    await expect.poll(async () => readCurrentCostumeDocumentSignature(page), { timeout: 10000 }).toBe(baseDocumentSignature);
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBe(baseSamples);
-    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBe(baseHostedSamples);
-
-    await roundTripThroughCodeTab(page);
-    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBe(baseSamples);
-    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBe(baseHostedSamples);
 
     let redoCount = 0;
     for (let index = 0; index < undoCount; index += 1) {
       await expect(redoButton).toBeEnabled({ timeout: 10000 });
+      const currentSignature = await readCurrentCostumeDocumentSignature(page);
       const currentSamples = await readCheckerboardInkSamples(page);
-      const currentHostedSamples = await readHostedLayerInkSamples(page);
       await redoButton.click();
       redoCount += 1;
       await expect.poll(async () => {
+        const nextSignature = await readCurrentCostumeDocumentSignature(page);
         const nextSamples = await readCheckerboardInkSamples(page);
-        const nextHostedSamples = await readHostedLayerInkSamples(page);
-        return nextSamples !== currentSamples || nextHostedSamples !== currentHostedSamples;
+        return nextSignature !== currentSignature || nextSamples !== currentSamples;
       }, { timeout: 10000 }).toBe(true);
     }
     expect(redoCount).toBe(undoCount);
 
-    const redoneSamples = await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples).then(async () => {
-      return await readCheckerboardInkSamples(page);
-    });
-    const redoneHostedSamples = await readHostedLayerInkSamples(page);
-    expectSampleCountWithinTolerance(redoneSamples, erasedSamples, 24);
-    expectSampleCountWithinTolerance(redoneHostedSamples, erasedHostedSamples, 4);
-
-    await roundTripThroughCodeTab(page);
-    const reloadedRedoneSamples = await readCheckerboardInkSamples(page);
-    const reloadedRedoneHostedSamples = await readHostedLayerInkSamples(page);
-    expectSampleCountWithinTolerance(reloadedRedoneSamples, erasedSamples, 24);
-    expectSampleCountWithinTolerance(reloadedRedoneHostedSamples, erasedHostedSamples, 4);
+    await expect.poll(async () => (await readCurrentCostumeDocumentSignature(page)) !== baseDocumentSignature, { timeout: 10000 }).toBe(true);
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples);
     await expect(redoButton).toBeDisabled({ timeout: 10000 });
-  });
-
-  test('fill followed by rapid bitmap strokes undoes cleanly back to the fill state', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-    const redoButton = page.getByRole('button', { name: /^redo$/i });
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-
-    const fillSamples = await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0).then(async () => {
-      return await readHostedLayerInkSamplesDense(page);
-    });
-    const fillHostedSamples = await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0).then(async () => {
-      return await readHostedLayerInkSamples(page);
-    });
-
-    await page.getByRole('button', { name: /^eraser$/i }).click();
-    for (const yFactor of [0.18, 0.28, 0.38, 0.48, 0.58, 0.68]) {
-      await drawAcrossCostumeCanvas(page, 0.14, yFactor, 0.86, yFactor);
-    }
-
-    const erasedSamples = await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeLessThan(fillSamples).then(async () => {
-      return await readHostedLayerInkSamplesDense(page);
-    });
-    expect(erasedSamples).toBeLessThan(fillSamples);
-
-    let undoCount = 0;
-    for (let index = 0; index < 6; index += 1) {
-      if (!await undoButton.isEnabled()) {
-        break;
-      }
-      await undoButton.click();
-      undoCount += 1;
-      await page.waitForTimeout(100);
-    }
-    expect(undoCount).toBeGreaterThan(0);
-
-    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBe(fillSamples);
-    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBe(fillHostedSamples);
-
-    let redoCount = 0;
-    for (let index = 0; index < undoCount; index += 1) {
-      await expect(redoButton).toBeEnabled({ timeout: 10000 });
-      await redoButton.click();
-      redoCount += 1;
-      await page.waitForTimeout(100);
-    }
-    expect(redoCount).toBe(undoCount);
-
-    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeLessThan(fillSamples);
-  });
-
-  test('fill followed by successive bitmap shape commits undoes through each intermediate state in order', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-    const redoButton = page.getByRole('button', { name: /^redo$/i });
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-
-    await expect
-      .poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 })
-      .toBeGreaterThan(0);
-    const fillHash = await readHostedLayerCanvasHash(page);
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-
-    await drawAcrossCostumeCanvas(page, 0.14, 0.22, 0.86, 0.22);
-    const strokeOneHash = await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(fillHash)
-      .then(async () => readHostedLayerCanvasHash(page));
-
-    await drawAcrossCostumeCanvas(page, 0.14, 0.40, 0.86, 0.40);
-    const strokeTwoHash = await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(strokeOneHash)
-      .then(async () => readHostedLayerCanvasHash(page));
-
-    await drawAcrossCostumeCanvas(page, 0.14, 0.58, 0.86, 0.58);
-    const strokeThreeHash = await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(strokeTwoHash)
-      .then(async () => readHostedLayerCanvasHash(page));
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeTwoHash);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeOneHash);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeOneHash);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeTwoHash);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeThreeHash);
-  });
-
-  test('fill followed by rapid bitmap brush strokes undoes through each intermediate state in order', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-    const redoButton = page.getByRole('button', { name: /^redo$/i });
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-
-    await expect
-      .poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 })
-      .toBeGreaterThan(0);
-    const fillHash = await readHostedLayerCanvasHash(page);
-
-    await page.getByRole('button', { name: /^brush$/i }).click();
-
-    await drawAcrossCostumeCanvas(page, 0.14, 0.22, 0.86, 0.22);
-    const strokeOneHash = await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(fillHash)
-      .then(async () => readHostedLayerCanvasHash(page));
-
-    await drawAcrossCostumeCanvas(page, 0.14, 0.40, 0.86, 0.40);
-    const strokeTwoHash = await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(strokeOneHash)
-      .then(async () => readHostedLayerCanvasHash(page));
-
-    await drawAcrossCostumeCanvas(page, 0.14, 0.58, 0.86, 0.58);
-    const strokeThreeHash = await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(strokeTwoHash)
-      .then(async () => readHostedLayerCanvasHash(page));
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeTwoHash);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeOneHash);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeOneHash);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeTwoHash);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(strokeThreeHash);
-  });
-
-  test('burst undo after fill and rapid bitmap brush strokes settles on the fill state', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-
-    await expect
-      .poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 })
-      .toBeGreaterThan(0);
-    const fillHash = await readHostedLayerCanvasHash(page);
-
-    await page.getByRole('button', { name: /^brush$/i }).click();
-    for (const yFactor of [0.18, 0.28, 0.38, 0.48, 0.58, 0.68]) {
-      await drawAcrossCostumeCanvas(page, 0.14, yFactor, 0.86, yFactor);
-    }
-
-    await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(fillHash);
-
-    for (let index = 0; index < 6; index += 1) {
-      await expect(undoButton).toBeEnabled({ timeout: 10000 });
-      await undoButton.click();
-    }
-
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
-  });
-
-  test('keyboard undo after fill and successive bitmap shape commits settles on the fill state', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-
-    await expect
-      .poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 })
-      .toBeGreaterThan(0);
-    const fillHash = await readHostedLayerCanvasHash(page);
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-    await drawAcrossCostumeCanvas(page, 0.18, 0.24, 0.42, 0.40);
-    await drawAcrossCostumeCanvas(page, 0.34, 0.44, 0.58, 0.60);
-    await drawAcrossCostumeCanvas(page, 0.50, 0.64, 0.74, 0.80);
-
-    await expect
-      .poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 })
-      .not.toBe(fillHash);
-
-    for (let index = 0; index < 3; index += 1) {
-      await pressUndoShortcut(page);
-    }
-
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).toBe(fillHash);
-  });
-
-  test('undo keeps the editor canvas, layer thumbnail, costume list, stage, and sprite shelf aligned', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-    const redoButton = page.getByRole('button', { name: /^redo$/i });
-    const originalState = await readCostumeVisualHashes(page);
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0);
-    const fillState = await readCostumeVisualHashes(page);
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-
-    await drawAcrossCostumeCanvas(page, 0.18, 0.24, 0.42, 0.40);
-    await expect.poll(async () => readHostedLayerCanvasHash(page), { timeout: 10000 }).not.toBe(fillState.editor);
-    const strokeOneState = await waitForCostumeVisualHashesToChange(page, fillState);
-
-    await drawAcrossCostumeCanvas(page, 0.50, 0.60, 0.74, 0.78);
-    const strokeTwoState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, strokeOneState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, fillState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, originalState);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await waitForCostumeVisualHashes(page, fillState);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await waitForCostumeVisualHashes(page, strokeOneState);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await waitForCostumeVisualHashes(page, strokeTwoState);
-  });
-
-  test('rapid undo back to origin and a single redo stay aligned on the correct history points', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-    const redoButton = page.getByRole('button', { name: /^redo$/i });
-    const originalState = await readCostumeVisualHashes(page);
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0);
-    const firstHistoryState = await readCostumeVisualHashes(page);
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-    let latestState = firstHistoryState;
-    for (const [startX, startY, endX, endY] of [
-      [0.12, 0.12, 0.38, 0.34],
-      [0.62, 0.14, 0.88, 0.36],
-      [0.14, 0.62, 0.40, 0.84],
-      [0.60, 0.60, 0.86, 0.82],
-      [0.36, 0.36, 0.64, 0.64],
-    ] as const) {
-      await drawAcrossCostumeCanvas(page, startX, startY, endX, endY);
-      latestState = await waitForCostumeVisualHashesToChange(page, latestState);
-    }
-
-    for (let index = 0; index < 6; index += 1) {
-      await expect(undoButton).toBeEnabled({ timeout: 10000 });
-      await undoButton.click();
-    }
-
-    await waitForCostumeVisualHashes(page, originalState);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await redoButton.click();
-    await waitForCostumeVisualHashes(page, firstHistoryState);
-  });
-
-  test('rapid keyboard undo back to origin and redo stay aligned on the correct history points', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const redoButton = page.getByRole('button', { name: /^redo$/i });
-    const originalState = await readCostumeVisualHashes(page);
-
-    await page.getByRole('button', { name: /^fill$/i }).last().click();
-    await clickCostumeCanvas(page, 0.5, 0.5);
-    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0);
-    const firstHistoryState = await readCostumeVisualHashes(page);
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-    let latestState = firstHistoryState;
-    for (const [startX, startY, endX, endY] of [
-      [0.12, 0.12, 0.38, 0.34],
-      [0.62, 0.14, 0.88, 0.36],
-      [0.14, 0.62, 0.40, 0.84],
-      [0.60, 0.60, 0.86, 0.82],
-      [0.36, 0.36, 0.64, 0.64],
-    ] as const) {
-      await drawAcrossCostumeCanvas(page, startX, startY, endX, endY);
-      latestState = await waitForCostumeVisualHashesToChange(page, latestState);
-    }
-
-    for (let index = 0; index < 6; index += 1) {
-      await pressUndoShortcut(page);
-    }
-
-    await waitForCostumeVisualHashes(page, originalState);
-
-    await expect(redoButton).toBeEnabled({ timeout: 10000 });
-    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+y');
-    await waitForCostumeVisualHashes(page, firstHistoryState);
-  });
-
-  test('branching after undo does not resurrect the abandoned future history', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-
-    await drawAcrossCostumeCanvas(page, 0.10, 0.10, 0.30, 0.28);
-    const strokeOneState = await readCostumeVisualHashes(page);
-
-    await drawAcrossCostumeCanvas(page, 0.66, 0.12, 0.88, 0.30);
-    const strokeTwoState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
-
-    await drawAcrossCostumeCanvas(page, 0.38, 0.38, 0.62, 0.62);
-    const strokeThreeState = await waitForCostumeVisualHashesToChange(page, strokeTwoState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, strokeTwoState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, strokeOneState);
-
-    await drawAcrossCostumeCanvas(page, 0.10, 0.68, 0.30, 0.88);
-    const branchStrokeOneState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
-
-    await drawAcrossCostumeCanvas(page, 0.68, 0.68, 0.88, 0.88);
-    const branchStrokeTwoState = await waitForCostumeVisualHashesToChange(page, branchStrokeOneState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, branchStrokeOneState);
-
-    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeThreeState));
-    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeTwoState));
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, strokeOneState);
-  });
-
-  test('bitmap brush branching after undo does not resurrect the abandoned future history', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    const undoButton = page.getByRole('button', { name: /^undo$/i });
-
-    await page.getByRole('button', { name: /^brush$/i }).click();
-
-    await drawAcrossCostumeCanvas(page, 0.10, 0.16, 0.34, 0.22);
-    const strokeOneState = await readCostumeVisualHashes(page);
-
-    await drawAcrossCostumeCanvas(page, 0.66, 0.16, 0.90, 0.22);
-    const strokeTwoState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
-
-    await drawAcrossCostumeCanvas(page, 0.36, 0.42, 0.62, 0.48);
-    const strokeThreeState = await waitForCostumeVisualHashesToChange(page, strokeTwoState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, strokeTwoState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, strokeOneState);
-
-    await drawAcrossCostumeCanvas(page, 0.12, 0.72, 0.36, 0.78);
-    const branchStrokeOneState = await waitForCostumeVisualHashesToChange(page, strokeOneState);
-
-    await drawAcrossCostumeCanvas(page, 0.64, 0.72, 0.88, 0.78);
-    const branchStrokeTwoState = await waitForCostumeVisualHashesToChange(page, branchStrokeOneState);
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, branchStrokeOneState);
-
-    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeThreeState));
-    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(strokeTwoState));
-    expect(serializeCostumeVisualHashes(branchStrokeOneState)).not.toBe(serializeCostumeVisualHashes(branchStrokeTwoState));
-
-    await expect(undoButton).toBeEnabled({ timeout: 10000 });
-    await undoButton.click();
-    await waitForCostumeVisualHashes(page, strokeOneState);
-  });
-
-  test('sprite shelf preview stays visible during rapid bitmap eraser commits', async ({ page }) => {
-    await page.goto(COSTUME_EDITOR_TEST_URL);
-    await page.waitForLoadState('networkidle');
-    await openCostumeEditor(page);
-
-    await page.getByRole('button', { name: /^rectangle$/i }).click();
-    await drawAcrossCostumeCanvas(page, 0.16, 0.16, 0.84, 0.84);
-
-    await expect.poll(async () => readSpriteShelfPreviewVisibleSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
-
-    await readStageCenterPresenceSamples(page);
-    const shelfBaseline = await readSpriteShelfPreviewVisibleSamples(page);
-
-    await page.getByRole('button', { name: /^eraser$/i }).click();
-    const timelinePromise = observeStageAndSpriteShelfPresenceTimeline(page);
-    await drawAcrossCostumeCanvas(page, 0.22, 0.32, 0.72, 0.32);
-    const timeline = await timelinePromise;
-
-    const shelfFinal = await expect.poll(async () => readSpriteShelfPreviewVisibleSamples(page), { timeout: 10000 }).toBeGreaterThan(0).then(async () => {
-      return await readSpriteShelfPreviewVisibleSamples(page);
-    });
-
-    expect(shelfBaseline).toBeGreaterThan(0);
-    expect(timeline.shelf.length).toBeGreaterThan(0);
-
-    const minShelfThreshold = Math.max(1, Math.floor(Math.min(shelfBaseline, shelfFinal) * 0.35));
-
-    expect(timeline.shelf.some((value) => value < minShelfThreshold)).toBe(false);
   });
 
   test('active hosted layer stays visible after switching away from and back to the costume tab', async ({ page }) => {

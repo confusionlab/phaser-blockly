@@ -15,7 +15,7 @@ export interface BitmapStampBrushCommitPayload {
 
 interface BitmapStampBrushOptions {
   brushColor: string;
-  brushKind: BitmapBrushKind;
+  brushKind: Exclude<BitmapBrushKind, 'hard-round'>;
   brushSize: number;
   compositeOperation: GlobalCompositeOperation;
   onCommit: (payload: BitmapStampBrushCommitPayload) => void | Promise<void>;

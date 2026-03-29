@@ -4,26 +4,19 @@ import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import type { CostumeEditorMode } from '@/types';
 import { optimizeCostumeRasterCanvas } from '@/lib/costume/costumeAssetOptimization';
 import {
-  beginCostumeCommitPerfTrace,
-  recordCostumeCommitPerfPhase,
-  setActiveCostumeCommitPerfTrace,
-} from '@/lib/perf/costumeCommitPerformance';
-import {
   areHistorySnapshotsEqual,
   cloneHistorySnapshot,
   createActiveLayerCanvasStateFromSnapshot,
   createHistorySnapshotFromActiveLayerCanvasState,
-  type SaveHistoryOptions,
   type CanvasHistorySnapshot,
 } from './costumeCanvasShared';
 import { VECTOR_JSON_EXTRA_PROPS } from './costumeCanvasVectorRuntime';
-import type { CostumeCanvasHistoryChange } from './CostumeCanvas';
 
 interface UseCostumeCanvasHistoryControllerOptions {
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   loadedSessionKeyRef: MutableRefObject<string | null>;
-  onHistoryChangeRef: MutableRefObject<((change: CostumeCanvasHistoryChange) => void) | undefined>;
+  onHistoryChangeRef: MutableRefObject<((state: ActiveLayerCanvasState) => void) | undefined>;
   suppressHistoryRef: MutableRefObject<boolean>;
 }
 
@@ -37,7 +30,6 @@ export function useCostumeCanvasHistoryController({
   const lastCommittedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
   const persistedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
   const hasUnsavedChangesRef = useRef(false);
-  const historyGenerationRef = useRef(0);
 
   const getBitmapSnapshotCanvas = useCallback((fabricCanvas: FabricCanvas): HTMLCanvasElement | null => {
     const objects = fabricCanvas.getObjects();
@@ -61,7 +53,6 @@ export function useCostumeCanvasHistoryController({
         mode: editorModeRef.current,
         bitmapDataUrl: '',
         bitmapAssetFrame: null,
-        bitmapBounds: null,
         vectorJson: null,
       };
     }
@@ -74,7 +65,6 @@ export function useCostumeCanvasHistoryController({
         mode,
         bitmapDataUrl: optimizedBitmap.dataUrl,
         bitmapAssetFrame: optimizedBitmap.assetFrame ?? null,
-        bitmapBounds: optimizedBitmap.bounds ?? null,
         vectorJson: null,
       };
     }
@@ -84,7 +74,6 @@ export function useCostumeCanvasHistoryController({
       mode,
       bitmapDataUrl: activeLayerCanvas.toDataURL('image/png'),
       bitmapAssetFrame: null,
-      bitmapBounds: null,
       vectorJson: JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS)),
     };
   }, [editorModeRef, fabricCanvasRef, getBitmapSnapshotCanvas]);
@@ -106,16 +95,6 @@ export function useCostumeCanvasHistoryController({
     markSnapshotPersisted(createSnapshot());
   }, [createSnapshot, loadedSessionKeyRef, markSnapshotPersisted]);
 
-  const commitCurrentSnapshotWithoutDispatch = useCallback((sessionKey?: string | null) => {
-    if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
-      return;
-    }
-
-    const snapshot = createSnapshot();
-    lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
-    markSnapshotPersisted(snapshot);
-  }, [createSnapshot, lastCommittedSnapshotRef, loadedSessionKeyRef, markSnapshotPersisted]);
-
   const markActiveLayerCanvasStatePersisted = useCallback((
     state: ActiveLayerCanvasState | null | undefined,
     sessionKey?: string | null,
@@ -127,78 +106,20 @@ export function useCostumeCanvasHistoryController({
     markSnapshotPersisted(state ? createHistorySnapshotFromActiveLayerCanvasState(state) : null);
   }, [loadedSessionKeyRef, markSnapshotPersisted]);
 
-  const advanceHistoryGeneration = useCallback(() => {
-    historyGenerationRef.current += 1;
-    return historyGenerationRef.current;
-  }, []);
-
-  const saveHistory = useCallback((options: SaveHistoryOptions = {}) => {
+  const saveHistory = useCallback(() => {
     if (suppressHistoryRef.current) return;
-    const traceId = beginCostumeCommitPerfTrace({
-      sessionKey: loadedSessionKeyRef.current,
-      mode: editorModeRef.current,
-      source: options.source ?? 'saveHistory',
-    }, options.traceStartedAtMs);
-    let snapshot: CanvasHistorySnapshot;
-    let historyState = options.state;
-    if (options.snapshot) {
-      snapshot = cloneHistorySnapshot(options.snapshot);
-    } else if (historyState) {
-      const snapshotStartMs = traceId && typeof options.snapshotDurationMs !== 'number'
-        ? performance.now()
-        : 0;
-      snapshot = createHistorySnapshotFromActiveLayerCanvasState(historyState);
-      if (traceId) {
-        recordCostumeCommitPerfPhase(
-          traceId,
-          'historySnapshotMs',
-          typeof options.snapshotDurationMs === 'number'
-            ? options.snapshotDurationMs
-            : performance.now() - snapshotStartMs,
-        );
-      }
-    } else {
-      const snapshotStartMs = traceId ? performance.now() : 0;
-      snapshot = createSnapshot();
-      if (traceId) {
-        recordCostumeCommitPerfPhase(traceId, 'historySnapshotMs', performance.now() - snapshotStartMs);
-      }
-      historyState = createActiveLayerCanvasStateFromSnapshot(snapshot);
-    }
+    const snapshot = createSnapshot();
     if (areHistorySnapshotsEqual(snapshot, lastCommittedSnapshotRef.current)) {
       return;
     }
 
     lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
     updateDirtyStateFromSnapshot(snapshot);
-    const dispatchStartMs = traceId ? performance.now() : 0;
-    setActiveCostumeCommitPerfTrace(traceId);
-    try {
-      onHistoryChangeRef.current?.({
-        generation: historyGenerationRef.current,
-        state: historyState ?? createActiveLayerCanvasStateFromSnapshot(snapshot),
-      });
-    } finally {
-      if (traceId) {
-        recordCostumeCommitPerfPhase(traceId, 'historyDispatchMs', performance.now() - dispatchStartMs);
-      }
-      setActiveCostumeCommitPerfTrace(null);
-    }
-  }, [
-    createSnapshot,
-    editorModeRef,
-    loadedSessionKeyRef,
-    onHistoryChangeRef,
-    suppressHistoryRef,
-    updateDirtyStateFromSnapshot,
-  ]);
+    onHistoryChangeRef.current?.(createActiveLayerCanvasStateFromSnapshot(snapshot));
+  }, [createSnapshot, onHistoryChangeRef, suppressHistoryRef, updateDirtyStateFromSnapshot]);
 
   return {
-    advanceHistoryGeneration,
-    commitCurrentSnapshotWithoutDispatch,
     createSnapshot,
-    getHistoryGeneration: () => historyGenerationRef.current,
-    isHistoryGenerationCurrent: (generation: number) => historyGenerationRef.current === generation,
     lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,

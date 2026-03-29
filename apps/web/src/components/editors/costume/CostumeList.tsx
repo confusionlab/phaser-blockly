@@ -14,7 +14,6 @@ import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
 import type { Costume, CostumeAssetFrame, CostumeBounds, CostumeDocument } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
-import type { CostumePresentationEntry } from '@/store/costumeRuntimePreviewStore';
 import {
   cloneCostume,
   cloneCostumeDocument,
@@ -29,8 +28,6 @@ import {
 
 interface CostumeListProps {
   costumes: Costume[];
-  currentCostumeId: string | null;
-  currentCostumePresentation: CostumePresentationEntry | null;
   selectedIndex: number;
   onSelectCostume: (index: number) => void;
   onAddCostume: (costume: Costume) => void;
@@ -38,34 +35,15 @@ interface CostumeListProps {
   onRenameCostume: (index: number, name: string) => void;
 }
 
-const CostumeListPreview = memo(function CostumeListPreview({
-  costume,
-  presentation,
-}: {
-  costume: Costume;
-  presentation: CostumePresentationEntry | null;
-}) {
-  const previewCostume = presentation?.state
-    ? applyCostumePresentationToCostume(costume, presentation)
-    : costume;
+const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costume: Costume }) {
   const previewSignature = useMemo(
-    () => presentation?.preview
-      ? `presentation:${presentation.revision}`
-      : getCostumeDocumentPreviewSignature(previewCostume.document),
-    [presentation?.preview, presentation?.revision, previewCostume.document],
+    () => getCostumeDocumentPreviewSignature(costume.document),
+    [costume.document],
   );
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const [previewContainerSize, setPreviewContainerSize] = useState(0);
   const [preview, setPreview] = useState<{ assetFrame?: CostumeAssetFrame | null; assetId: string; bounds?: CostumeBounds }>(() => {
-    if (presentation?.preview?.sourceCanvas) {
-      return {
-        assetFrame: presentation.preview.assetFrame,
-        assetId: presentation.preview.sourceCanvas.toDataURL('image/png'),
-        bounds: presentation.preview.bounds ?? undefined,
-      };
-    }
-
-    const cachedPreview = getCachedCostumeDocumentPreview(previewCostume.document);
+    const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
     if (cachedPreview) {
       return {
         assetFrame: cachedPreview.assetFrame,
@@ -75,26 +53,15 @@ const CostumeListPreview = memo(function CostumeListPreview({
     }
 
     return {
-      assetFrame: previewCostume.assetFrame,
-      assetId: previewCostume.assetId,
-      bounds: previewCostume.bounds,
+      assetFrame: costume.assetFrame,
+      assetId: costume.assetId,
+      bounds: costume.bounds,
     };
   });
 
   useEffect(() => {
     let cancelled = false;
-    if (presentation?.preview?.sourceCanvas) {
-      setPreview({
-        assetFrame: presentation.preview.assetFrame,
-        assetId: presentation.preview.sourceCanvas.toDataURL('image/png'),
-        bounds: presentation.preview.bounds ?? undefined,
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const cachedPreview = getCachedCostumeDocumentPreview(previewCostume.document);
+    const cachedPreview = getCachedCostumeDocumentPreview(costume.document);
     if (cachedPreview) {
       setPreview({
         assetFrame: cachedPreview.assetFrame,
@@ -106,7 +73,7 @@ const CostumeListPreview = memo(function CostumeListPreview({
       };
     }
 
-    void renderCostumeDocumentPreview(previewCostume.document).then((rendered) => {
+    void renderCostumeDocumentPreview(costume.document).then((rendered) => {
       if (cancelled) {
         return;
       }
@@ -125,7 +92,7 @@ const CostumeListPreview = memo(function CostumeListPreview({
     return () => {
       cancelled = true;
     };
-  }, [presentation?.preview, presentation?.revision, previewCostume.document, previewSignature]);
+  }, [previewSignature]);
 
   useEffect(() => {
     const element = previewContainerRef.current;
@@ -192,23 +159,8 @@ const CostumeListPreview = memo(function CostumeListPreview({
   );
 });
 
-function applyCostumePresentationToCostume(
-  costume: Costume,
-  presentation: CostumePresentationEntry,
-): Costume {
-  return {
-    ...costume,
-    assetId: presentation.state.assetId,
-    bounds: presentation.state.bounds,
-    assetFrame: presentation.state.assetFrame,
-    document: presentation.state.document,
-  };
-}
-
 export const CostumeList = memo(({
   costumes,
-  currentCostumeId,
-  currentCostumePresentation,
   selectedIndex,
   onSelectCostume,
   onAddCostume,
@@ -422,8 +374,6 @@ export const CostumeList = memo(({
             <AssetSidebarTile
               key={costume.id}
               index={index}
-              testId="costume-list-tile"
-              mediaTestId="costume-list-tile-media"
               name={costume.name}
               selected={index === selectedIndex}
               onClick={() => onSelectCostume(index)}
@@ -437,10 +387,7 @@ export const CostumeList = memo(({
                 });
               }}
               media={
-                <CostumeListPreview
-                  costume={costume}
-                  presentation={costume.id === currentCostumeId ? currentCostumePresentation : null}
-                />
+                <CostumeListPreview costume={costume} />
               }
             />
           ))

@@ -68,13 +68,7 @@ export interface CostumeCanvasExportState {
   activeLayerDataUrl: string;
   editorMode: CostumeEditorMode;
   bitmapAssetFrame?: CostumeAssetFrame | null;
-  bitmapBounds?: CostumeBounds | null;
   vectorDocument?: CostumeVectorDocument;
-}
-
-export interface CostumeCanvasHistoryChange {
-  generation: number;
-  state: ActiveLayerCanvasState;
 }
 
 export interface CostumeCanvasHandle {
@@ -83,16 +77,12 @@ export interface CostumeCanvasHandle {
   loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
   loadDocument: (sessionKey: string, document: CostumeDocument) => Promise<void>;
   flushPendingBitmapCommits: () => Promise<void>;
-  captureActiveLayerCanvasState: (sessionKey?: string | null) => ActiveLayerCanvasState | null;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   hasUnsavedChanges: (sessionKey?: string | null) => boolean;
   markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => void;
   setEditorMode: (mode: CostumeEditorMode) => Promise<void>;
   getEditorMode: () => CostumeEditorMode;
-  getHistoryGeneration: () => number;
   getLoadedSessionKey: () => string | null;
-  getDirectBitmapPreviewCanvas: (sessionKey?: string | null) => HTMLCanvasElement | null;
-  getComposedPreviewCanvas: (sessionKey?: string | null) => HTMLCanvasElement | null;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => boolean;
@@ -108,7 +98,6 @@ export interface CostumeCanvasHandle {
 }
 
 interface CostumeCanvasProps {
-  activeStyleCommitRequest: number;
   costumeDocument: CostumeDocument | null;
   initialEditorMode: CostumeEditorMode;
   isVisible: boolean;
@@ -126,7 +115,7 @@ interface CostumeCanvasProps {
   onUndo: () => void;
   onRedo: () => void;
   collider: ColliderConfig | null;
-  onHistoryChange?: (change: CostumeCanvasHistoryChange) => void;
+  onHistoryChange?: (state: ActiveLayerCanvasState) => void;
   onColliderChange?: (collider: ColliderConfig) => void;
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
@@ -141,7 +130,6 @@ interface CostumeCanvasProps {
 }
 
 export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>(({
-  activeStyleCommitRequest,
   costumeDocument,
   initialEditorMode,
   isVisible,
@@ -312,10 +300,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const loadRequestIdRef = useRef(0);
   const loadedSessionKeyRef = useRef<string | null>(null);
   const {
-    advanceHistoryGeneration,
-    commitCurrentSnapshotWithoutDispatch,
     createSnapshot,
-    getHistoryGeneration,
     lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
@@ -504,11 +489,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, []);
 
   const {
-    commitBitmapRasterMutation,
     commitBitmapSelection,
     commitBitmapStampBrushStroke,
     flattenBitmapLayer,
-    getReusableBitmapCanvas,
     loadBitmapAsSingleVectorImage,
     loadBitmapLayer,
     normalizeCanvasVectorStrokeUniform,
@@ -522,8 +505,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     drawBitmapSelectionOverlay,
     editorModeRef,
     fabricCanvasRef,
-    getHistoryGeneration,
-    getLastCommittedSnapshot: () => lastCommittedSnapshotRef.current,
     isLoadRequestActive,
     saveHistory,
     setHasBitmapFloatingSelection,
@@ -581,11 +562,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const {
     alignSelection,
     applyFill,
-    commitActiveStyleChanges,
     deleteSelection,
     duplicateSelection,
-    flipSelection,
     exportCostumeState,
+    flipSelection,
     getComposedCanvasElement,
     getSelectionMousePos,
     isTextEditing,
@@ -609,7 +589,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapSelectionDragModeRef,
     bitmapSelectionStartRef,
     brushColorRef,
-    commitBitmapRasterMutation,
     commitHostedLayerSurfaceSnapshot,
     documentLayers,
     drawBitmapSelectionOverlay,
@@ -626,7 +605,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     loadBitmapLayer,
     loadRequestIdRef,
     loadedSessionKeyRef,
-    commitCurrentSnapshotWithoutDispatch,
+    markCurrentSnapshotPersisted,
     normalizeCanvasVectorStrokeUniform,
     onTextSelectionChangeRef,
     onTextStyleSyncRef,
@@ -783,72 +762,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorStyleRef,
   });
 
-  const resetTransientEditorState = useCallback(() => {
-    const fabricCanvas = fabricCanvasRef.current as (FabricCanvas & {
-      lowerCanvasEl?: HTMLCanvasElement;
-      upperCanvasEl?: HTMLCanvasElement;
-      freeDrawingBrush?: {
-        completeDeferredPreview?: (token?: number) => void;
-      };
-    }) | null;
-
-    suppressHistoryRef.current = true;
-    try {
-      shapeDraftRef.current = null;
-      bitmapFloatingObjectRef.current = null;
-      bitmapSelectionStartRef.current = null;
-      bitmapMarqueeRectRef.current = null;
-      bitmapSelectionDragModeRef.current = 'none';
-      bitmapSelectionBusyRef.current = false;
-      suppressBitmapSelectionAutoCommitRef.current = false;
-
-      penDraftRef.current = null;
-      penAnchorPlacementSessionRef.current = null;
-      penModifierStateRef.current.alt = false;
-      penModifierStateRef.current.space = false;
-
-      insertedPathAnchorDragSessionRef.current = null;
-      pointSelectionTransformFrameRef.current = null;
-      pointSelectionTransformSessionRef.current = null;
-      pointSelectionMarqueeSessionRef.current = null;
-      activePathAnchorRef.current = null;
-      selectedPathAnchorIndicesRef.current = [];
-
-      restoreAllOriginalControls();
-      setVectorPointEditingTarget(null);
-      setHasBitmapFloatingSelection(false);
-      drawBitmapSelectionOverlay();
-
-      vectorStrokeCtxRef.current?.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-      vectorGuideCtxRef.current?.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-      bitmapSelectionCtxRef.current?.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-
-      if (fabricCanvas) {
-        fabricCanvas.discardActiveObject();
-        fabricCanvas.isDrawingMode = false;
-        if (typeof fabricCanvas.freeDrawingBrush?.completeDeferredPreview === 'function') {
-          fabricCanvas.freeDrawingBrush.completeDeferredPreview();
-        }
-        fabricCanvas.freeDrawingBrush = undefined;
-        fabricCanvas.clearContext(fabricCanvas.contextTop);
-        if (fabricCanvas.lowerCanvasEl) {
-          fabricCanvas.lowerCanvasEl.style.opacity = '';
-        }
-        if (fabricCanvas.upperCanvasEl) {
-          fabricCanvas.upperCanvasEl.style.opacity = '';
-        }
-      }
-    } finally {
-      suppressHistoryRef.current = false;
-      syncSelectionState();
-    }
-  }, [
-    drawBitmapSelectionOverlay,
-    restoreAllOriginalControls,
-    setVectorPointEditingTarget,
-    syncSelectionState,
-  ]);
-
   useCostumeCanvasFabricHostController({
     activeLayerLockedRef,
     activeLayerVisibleRef,
@@ -946,17 +859,9 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     vectorPointEditingTargetRef,
   });
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     syncActiveVectorStyle();
   }, [brushColor, textStyle, vectorStyle, syncActiveVectorStyle]);
-
-  useEffect(() => {
-    if (activeStyleCommitRequest <= 0) {
-      return;
-    }
-
-    commitActiveStyleChanges();
-  }, [activeStyleCommitRequest, commitActiveStyleChanges]);
 
   useCostumeCanvasBitmapSelectionController({
     activeTool,
@@ -1011,7 +916,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   useCostumeCanvasImperativeHandle({
-    advanceHistoryGeneration,
     alignSelection,
     bitmapRasterCommitQueueRef,
     configureCanvasForTool,
@@ -1020,7 +924,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     duplicateSelection,
     exportCostumeState,
     flipSelection,
-    getDirectBitmapPreviewCanvas: getReusableBitmapCanvas,
     getComposedCanvasElement,
     isTextEditing,
     lastCommittedSnapshotRef,
@@ -1033,12 +936,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     persistedSnapshotRef,
     ref,
     rotateSelection,
-    resetTransientEditorState,
     saveHistory,
     setEditorMode,
     switchEditorMode,
     editorModeRef,
-    getHistoryGeneration,
   });
 
   useEffect(() => {

@@ -16,6 +16,7 @@ import {
   applyCanvasCursor,
   BitmapStampBrush,
   type BitmapStampBrushCommitPayload,
+  CompositePencilBrush,
 } from './costumeCanvasBitmapRuntime';
 import {
   isDirectlyEditablePathObject,
@@ -150,15 +151,20 @@ export function useCostumeCanvasToolController({
     const isVectorPencil = layerInteractive && mode === 'vector' && tool === 'brush';
     if (isBitmapBrush) {
       const compositeOperation = getCompositeOperation(tool);
-      const brush = new BitmapStampBrush(fabricCanvas, {
-        brushKind: bitmapBrushKindRef.current,
-        brushColor: brushColorRef.current,
-        brushSize: brushSizeRef.current,
-        compositeOperation,
-        onCommit: commitBitmapStampBrushStroke,
-      });
+      const brush = bitmapBrushKindRef.current !== 'hard-round'
+        ? new BitmapStampBrush(fabricCanvas, {
+            brushKind: bitmapBrushKindRef.current,
+            brushColor: brushColorRef.current,
+            brushSize: brushSizeRef.current,
+            compositeOperation,
+            onCommit: commitBitmapStampBrushStroke,
+          })
+        : new CompositePencilBrush(fabricCanvas as any);
       brush.width = brushSizeRef.current;
       brush.color = getBrushPaintColor(tool, brushColorRef.current);
+      if (brush instanceof CompositePencilBrush) {
+        brush.compositeOperation = compositeOperation;
+      }
       (fabricCanvas as any).freeDrawingBrush = brush;
       fabricCanvas.isDrawingMode = true;
     } else if (isVectorPencil) {

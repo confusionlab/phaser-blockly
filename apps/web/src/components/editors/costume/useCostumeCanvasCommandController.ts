@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { ActiveSelection, Point, util, type Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
 import { getCanvas2dContext } from '@/utils/canvas2d';
@@ -18,7 +18,6 @@ import type {
 } from './CostumeToolbar';
 import type {
   CostumeAssetFrame,
-  CostumeBounds,
   CostumeDocument,
   CostumeEditorMode,
   CostumeVectorDocument,
@@ -39,7 +38,6 @@ import {
   vectorObjectSupportsFill,
   VECTOR_JSON_EXTRA_PROPS,
 } from './costumeCanvasVectorRuntime';
-import type { BitmapRasterCommitOptions } from './useCostumeCanvasBitmapLayerController';
 
 interface UseCostumeCanvasCommandControllerOptions {
   activeDocumentLayerId?: string;
@@ -53,11 +51,6 @@ interface UseCostumeCanvasCommandControllerOptions {
   bitmapSelectionDragModeRef: MutableRefObject<'none' | 'marquee'>;
   bitmapSelectionStartRef: MutableRefObject<{ x: number; y: number } | null>;
   brushColorRef: MutableRefObject<string>;
-  commitBitmapRasterMutation: (
-    mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,
-    options?: BitmapRasterCommitOptions,
-  ) => Promise<void>;
-  commitCurrentSnapshotWithoutDispatch: (sessionKey?: string | null) => void;
   commitHostedLayerSurfaceSnapshot: (layerId: string | null) => void;
   documentLayers: CostumeDocument['layers'];
   drawBitmapSelectionOverlay: () => void;
@@ -79,6 +72,7 @@ interface UseCostumeCanvasCommandControllerOptions {
   ) => Promise<boolean>;
   loadRequestIdRef: MutableRefObject<number>;
   loadedSessionKeyRef: MutableRefObject<string | null>;
+  markCurrentSnapshotPersisted: (sessionKey?: string | null) => void;
   normalizeCanvasVectorStrokeUniform: () => boolean;
   onTextSelectionChangeRef: MutableRefObject<((hasTextSelection: boolean) => void) | undefined>;
   onTextStyleSyncRef: MutableRefObject<((updates: Partial<TextToolStyle>) => void) | undefined>;
@@ -112,8 +106,6 @@ export function useCostumeCanvasCommandController({
   bitmapSelectionDragModeRef,
   bitmapSelectionStartRef,
   brushColorRef,
-  commitBitmapRasterMutation,
-  commitCurrentSnapshotWithoutDispatch,
   commitHostedLayerSurfaceSnapshot,
   documentLayers,
   drawBitmapSelectionOverlay,
@@ -130,6 +122,7 @@ export function useCostumeCanvasCommandController({
   loadBitmapLayer,
   loadRequestIdRef,
   loadedSessionKeyRef,
+  markCurrentSnapshotPersisted,
   normalizeCanvasVectorStrokeUniform,
   onTextSelectionChangeRef,
   onTextStyleSyncRef,
@@ -150,17 +143,6 @@ export function useCostumeCanvasCommandController({
   vectorStyle,
   waitForFabricCanvas,
 }: UseCostumeCanvasCommandControllerOptions) {
-  const hasPendingActiveStyleChangeRef = useRef(false);
-
-  const commitActiveStyleChanges = useCallback(() => {
-    if (!hasPendingActiveStyleChangeRef.current) {
-      return;
-    }
-
-    hasPendingActiveStyleChangeRef.current = false;
-    saveHistory();
-  }, [saveHistory]);
-
   const getComposedCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     const hostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId;
@@ -357,38 +339,39 @@ export function useCostumeCanvasCommandController({
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || editorModeRef.current !== 'bitmap') return;
 
-    let didFill = false;
-    await commitBitmapRasterMutation(async (_raster, ctx) => {
-      const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-      didFill = applyBitmapBucketFill(
-        imageData,
-        Math.floor(x),
-        Math.floor(y),
-        {
-          fillColor: brushColorRef.current,
-          textureId: bitmapFillStyleRef.current.textureId,
-        },
-        {
-          textureSource: resolveBitmapFillTextureSource(bitmapFillStyleRef.current.textureId),
-        },
-      );
-      if (!didFill) {
-        return;
-      }
+    const raster = fabricCanvas.toCanvasElement(1);
+    const ctx = raster.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
 
-      ctx.putImageData(imageData, 0, 0);
-    }, {
-      historyOptimization: {
-        source: 'bitmapFillCommit',
+    const imageData = ctx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    const didFill = applyBitmapBucketFill(
+      imageData,
+      Math.floor(x),
+      Math.floor(y),
+      {
+        fillColor: brushColorRef.current,
+        textureId: bitmapFillStyleRef.current.textureId,
       },
-    });
+      {
+        textureSource: resolveBitmapFillTextureSource(bitmapFillStyleRef.current.textureId),
+      },
+    );
+    if (!didFill) {
+      return;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+    const loaded = await loadBitmapLayer(raster.toDataURL('image/png'), false);
+    if (!loaded) return;
+    saveHistory();
   }, [
     bitmapFillStyleRef,
     brushColorRef,
-    commitBitmapRasterMutation,
     editorModeRef,
     fabricCanvasRef,
+    loadBitmapLayer,
     resolveBitmapFillTextureSource,
+    saveHistory,
   ]);
 
   const switchEditorMode = useCallback(async (nextMode: CostumeEditorMode) => {
@@ -424,7 +407,6 @@ export function useCostumeCanvasCommandController({
     activeLayerDataUrl: string;
     editorMode: CostumeEditorMode;
     bitmapAssetFrame?: CostumeAssetFrame | null;
-    bitmapBounds?: CostumeBounds | null;
     vectorDocument?: CostumeVectorDocument;
   } | null => {
     if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
@@ -459,7 +441,6 @@ export function useCostumeCanvasCommandController({
       activeLayerDataUrl,
       editorMode: editorModeRef.current,
       bitmapAssetFrame: optimizedBitmap.assetFrame ?? null,
-      bitmapBounds: optimizedBitmap.bounds ?? null,
     };
   }, [editorModeRef, fabricCanvasRef, loadedSessionKeyRef]);
 
@@ -761,10 +742,11 @@ export function useCostumeCanvasCommandController({
     setHostedLayerId(nextHostedLayerId);
     setHostedLayerReady(true);
     loadedSessionKeyRef.current = sessionKey;
-    commitCurrentSnapshotWithoutDispatch(sessionKey);
+    lastCommittedSnapshotRef.current = null;
+    saveHistory();
+    markCurrentSnapshotPersisted(sessionKey);
   }, [
     activeDocumentLayerId,
-    commitCurrentSnapshotWithoutDispatch,
     commitHostedLayerSurfaceSnapshot,
     hostedLayerIdRef,
     isLoadRequestActive,
@@ -772,7 +754,9 @@ export function useCostumeCanvasCommandController({
     loadBitmapLayer,
     loadRequestIdRef,
     loadedSessionKeyRef,
+    markCurrentSnapshotPersisted,
     normalizeCanvasVectorStrokeUniform,
+    saveHistory,
     setEditorMode,
     setHostedLayerId,
     setHostedLayerReady,
@@ -841,15 +825,14 @@ export function useCostumeCanvasCommandController({
 
     if (!changed) return;
 
-    hasPendingActiveStyleChangeRef.current = true;
     activeObject.setCoords?.();
     fabricCanvas.requestRenderAll();
-  }, [brushColorRef, editorModeRef, fabricCanvasRef, textStyle, vectorStyle]);
+    saveHistory();
+  }, [brushColorRef, editorModeRef, fabricCanvasRef, saveHistory, textStyle, vectorStyle]);
 
   return {
     alignSelection,
     applyFill,
-    commitActiveStyleChanges,
     deleteSelection,
     duplicateSelection,
     exportCostumeState,

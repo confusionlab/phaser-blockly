@@ -94,7 +94,6 @@ interface SharedLayerPanelProps<TLayer extends LayerPanelLayerShape> {
   activeLayer: TLayer | null;
   maxLayers: number;
   getLayerIndex: (layerId: string) => number;
-  getCachedLayerThumbnailDataUrl?: (layer: TLayer, size: number) => string | null | undefined;
   getLayerThumbnailSignature: (layer: TLayer, size: number) => string;
   renderLayerThumbnailToDataUrl: (layer: TLayer, size: number) => Promise<string | null>;
   onSelectLayer: (layerId: string) => void;
@@ -171,7 +170,6 @@ export const LayerPanel = memo(({
   activeLayer,
   maxLayers,
   getLayerIndex,
-  getCachedLayerThumbnailDataUrl,
   getLayerThumbnailSignature,
   renderLayerThumbnailToDataUrl,
   onSelectLayer,
@@ -245,19 +243,7 @@ export const LayerPanel = memo(({
     const retainedEntries = Object.fromEntries(
       layerThumbnailRequests.flatMap(({ layer }) => {
         const cachedEntry = currentEntries[layer.id];
-        if (cachedEntry) {
-          return [[layer.id, cachedEntry]];
-        }
-
-        const cachedThumbnailDataUrl = getCachedLayerThumbnailDataUrl?.(layer, DEFAULT_LAYER_THUMBNAIL_SIZE);
-        if (typeof cachedThumbnailDataUrl === 'undefined') {
-          return [];
-        }
-
-        return [[layer.id, {
-          signature: getLayerThumbnailSignature(layer, DEFAULT_LAYER_THUMBNAIL_SIZE),
-          dataUrl: cachedThumbnailDataUrl,
-        }]];
+        return cachedEntry ? [[layer.id, cachedEntry]] : [];
       }),
     ) as Record<string, LayerThumbnailEntry>;
 
@@ -559,11 +545,6 @@ export const LayerPanel = memo(({
                 const isDragged = draggedLayerId === layer.id;
                 const ariaLabel = getLayerButtonLabel(layer);
                 const activeHighlightWidth = isPanelExpanded ? '100%' : '2.75rem';
-                const thumbnailSignature = getLayerThumbnailSignature(layer, DEFAULT_LAYER_THUMBNAIL_SIZE);
-                const cachedThumbnailDataUrl = getCachedLayerThumbnailDataUrl?.(layer, DEFAULT_LAYER_THUMBNAIL_SIZE);
-                const resolvedThumbnailDataUrl = layerThumbnails[layer.id]?.signature === thumbnailSignature
-                  ? layerThumbnails[layer.id]?.dataUrl ?? null
-                  : (typeof cachedThumbnailDataUrl === 'undefined' ? null : cachedThumbnailDataUrl);
 
                 return (
                   <div
@@ -618,7 +599,7 @@ export const LayerPanel = memo(({
                       <LayerThumbnailPreview
                         layer={layer}
                         isActive={isActive}
-                        thumbnailDataUrl={resolvedThumbnailDataUrl}
+                        thumbnailDataUrl={layerThumbnails[layer.id]?.dataUrl ?? null}
                         thumbnailTestId={thumbnailTestId}
                       />
 

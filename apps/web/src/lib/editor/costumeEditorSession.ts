@@ -12,7 +12,6 @@ import {
   applyCanvasStateToCostumeDocument,
   cloneCostumeDocument,
   ensureCostumeDocument,
-  getDirectBitmapCostumePreviewLayer,
   type ActiveLayerCanvasState,
 } from '@/lib/costume/costumeDocument';
 import {
@@ -51,13 +50,6 @@ export interface ResolveCostumeEditorPersistedStateOptions {
   workingState?: CostumeEditorPersistedState | null;
   costume?: Costume | null;
   liveCanvasState?: ActiveLayerCanvasState | null;
-}
-
-export type CostumeEditorPreviewSyncMode = 'stateOnly' | 'render';
-
-export interface ResolvedCostumeEditorPersistedStateResult {
-  state: CostumeEditorPersistedState;
-  syncMode: CostumeEditorPreviewSyncMode;
 }
 
 export type CostumeEditorOperation =
@@ -149,26 +141,7 @@ function areCostumeLayersEqual(a: CostumeLayer | undefined, b: CostumeLayer | un
   return false;
 }
 
-export function areCostumeEditorPersistedStatesEqual(
-  a: CostumeEditorPersistedState | null | undefined,
-  b: CostumeEditorPersistedState | null | undefined,
-): boolean {
-  if (!a && !b) {
-    return true;
-  }
-  if (!a || !b) {
-    return false;
-  }
-
-  return (
-    a.assetId === b.assetId &&
-    areCostumeBoundsEqual(a.bounds, b.bounds) &&
-    areCostumeAssetFramesEqual(a.assetFrame, b.assetFrame) &&
-    areCostumeDocumentsEqual(a.document, b.document)
-  );
-}
-
-export function cloneCostumeEditorPersistedState(
+function clonePersistedState(
   state: CostumeEditorPersistedState | null | undefined,
 ): CostumeEditorPersistedState | null {
   if (!state) {
@@ -183,7 +156,7 @@ export function cloneCostumeEditorPersistedState(
   };
 }
 
-export function createCostumeEditorPersistedStateFromCostume(costume: Costume | null | undefined): CostumeEditorPersistedState | null {
+function createPersistedStateFromCostume(costume: Costume | null | undefined): CostumeEditorPersistedState | null {
   if (!costume) {
     return null;
   }
@@ -196,71 +169,11 @@ export function createCostumeEditorPersistedStateFromCostume(costume: Costume | 
   };
 }
 
-export function applyCostumeEditorPersistedStateToCostume(
-  costume: Costume,
-  state: CostumeEditorPersistedState,
-): Costume {
-  return {
-    ...costume,
-    assetId: state.assetId,
-    bounds: state.bounds ? { ...state.bounds } : undefined,
-    assetFrame: cloneCostumeAssetFrame(state.assetFrame),
-    document: cloneCostumeDocument(state.document),
-  };
-}
-
-export function resolveCostumeEditorPersistedStateWithSyncMode(
-  options: ResolveCostumeEditorPersistedStateOptions,
-): ResolvedCostumeEditorPersistedStateResult | null {
-  const baseState = cloneCostumeEditorPersistedState(options.workingState)
-    ?? createCostumeEditorPersistedStateFromCostume(options.costume);
-  if (!baseState) {
-    return null;
-  }
-
-  if (!options.liveCanvasState) {
-    return {
-      state: baseState,
-      syncMode: 'render',
-    };
-  }
-
-  const nextDocument = applyCanvasStateToCostumeDocument(baseState.document, options.liveCanvasState);
-  const directPreviewLayer = getDirectBitmapCostumePreviewLayer(nextDocument);
-  const canUseDirectBitmapPreview = (
-    options.liveCanvasState.editorMode === 'bitmap' &&
-    !!directPreviewLayer &&
-    directPreviewLayer.id === nextDocument.activeLayerId &&
-    directPreviewLayer.bitmap.assetId === options.liveCanvasState.dataUrl
-  );
-
-  if (canUseDirectBitmapPreview) {
-    return {
-      state: {
-        ...baseState,
-        assetId: options.liveCanvasState.dataUrl,
-        bounds: options.liveCanvasState.bitmapBounds ? { ...options.liveCanvasState.bitmapBounds } : undefined,
-        assetFrame: cloneCostumeAssetFrame(options.liveCanvasState.bitmapAssetFrame) ?? undefined,
-        document: nextDocument,
-      },
-      syncMode: 'stateOnly',
-    };
-  }
-
-  return {
-    state: {
-      ...baseState,
-      document: nextDocument,
-    },
-    syncMode: 'render',
-  };
-}
-
 export function resolveCostumeEditorPersistedState(
   options: ResolveCostumeEditorPersistedStateOptions,
 ): CostumeEditorPersistedState | null {
-  const baseState = cloneCostumeEditorPersistedState(options.workingState)
-    ?? createCostumeEditorPersistedStateFromCostume(options.costume);
+  const baseState = clonePersistedState(options.workingState)
+    ?? createPersistedStateFromCostume(options.costume);
   if (!baseState) {
     return null;
   }
