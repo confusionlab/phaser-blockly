@@ -4,7 +4,6 @@ import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import {
   clearCostumeRuntimePreview,
   getCostumeRuntimePreviewKeyForTarget,
-  publishCostumeRuntimePreview,
 } from '@/store/costumeRuntimePreviewStore';
 import { syncHistorySnapshot } from '@/store/universalHistory';
 import {
@@ -50,6 +49,7 @@ import {
   type CostumeEditorTarget,
   resolveCostumeEditorTarget,
 } from '@/lib/editor/costumeEditorSession';
+import { publishCostumeRuntimePreviewFromCanvas } from '@/lib/editor/costumeRuntimePreview';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import type { BitmapBrushKind } from '@/lib/background/brushCore';
@@ -85,7 +85,6 @@ import {
   mergeCostumeLayers,
   rasterizeCostumeLayer,
 } from '@/lib/costume/costumeLayerOperations';
-import { calculateBoundsFromCanvas } from '@/utils/imageBounds';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
@@ -409,48 +408,23 @@ export function CostumeEditor() {
     }
   }, []);
 
-  const publishDirectRuntimePreview = useCallback((
+  const publishRuntimePreview = useCallback((
     session: CostumeEditorSession,
     revision: number,
     liveCanvasState: ActiveLayerCanvasState,
+    syncMode: CostumeEditorPreviewSyncMode,
   ) => {
-    const sourceCanvas = canvasRef.current?.getDirectBitmapPreviewCanvas(session.key);
-    if (!sourceCanvas) {
+    const didPublish = publishCostumeRuntimePreviewFromCanvas({
+      canvasSource: canvasRef.current,
+      liveCanvasState,
+      revision,
+      session,
+      syncMode,
+    });
+    if (!didPublish) {
       clearPublishedRuntimePreview(session);
       return;
     }
-
-    publishCostumeRuntimePreview({
-      sceneId: session.sceneId,
-      objectId: session.objectId,
-      costumeId: session.costumeId,
-      revision,
-      sourceCanvas,
-      assetFrame: liveCanvasState.bitmapAssetFrame ?? null,
-      bounds: liveCanvasState.bitmapBounds ?? null,
-    });
-    publishedRuntimePreviewSessionKeyRef.current = session.key;
-  }, [clearPublishedRuntimePreview]);
-
-  const publishComposedRuntimePreview = useCallback((
-    session: CostumeEditorSession,
-    revision: number,
-  ) => {
-    const sourceCanvas = canvasRef.current?.getComposedPreviewCanvas(session.key);
-    if (!sourceCanvas) {
-      clearPublishedRuntimePreview(session);
-      return;
-    }
-
-    publishCostumeRuntimePreview({
-      sceneId: session.sceneId,
-      objectId: session.objectId,
-      costumeId: session.costumeId,
-      revision,
-      sourceCanvas,
-      assetFrame: null,
-      bounds: calculateBoundsFromCanvas(sourceCanvas),
-    });
     publishedRuntimePreviewSessionKeyRef.current = session.key;
   }, [clearPublishedRuntimePreview]);
 
@@ -1364,11 +1338,12 @@ export function CostumeEditor() {
     });
     if (entry) {
       canvasRef.current?.markPersisted(loadedSession.key, liveCanvasState);
-      if (resolvedPersistedState.syncMode === 'stateOnly') {
-        publishDirectRuntimePreview(loadedSession, entry.revision, liveCanvasState);
-      } else {
-        publishComposedRuntimePreview(loadedSession, entry.revision);
-      }
+      publishRuntimePreview(
+        loadedSession,
+        entry.revision,
+        liveCanvasState,
+        resolvedPersistedState.syncMode,
+      );
       scheduleRuntimeStateSync(entry);
     }
     if (traceId) {
@@ -1378,8 +1353,7 @@ export function CostumeEditor() {
     commitRuntimeState,
     getWorkingPersistedState,
     isCanvasReadyForSession,
-    publishComposedRuntimePreview,
-    publishDirectRuntimePreview,
+    publishRuntimePreview,
     resolvePersistedStateWithCanvasState,
     scheduleRuntimeStateSync,
   ]);
