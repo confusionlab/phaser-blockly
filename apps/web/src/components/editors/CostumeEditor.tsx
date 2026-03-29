@@ -17,6 +17,7 @@ import { CostumeLayerPanel } from './costume/CostumeLayerPanel';
 import {
   CostumeCanvas,
   DEFAULT_COSTUME_PREVIEW_SCALE,
+  type CostumeCanvasHistoryChange,
   type CostumeCanvasHandle,
 } from './costume/CostumeCanvas';
 import {
@@ -1311,13 +1312,17 @@ export function CostumeEditor() {
     };
   }, [clearLoadingOverlayDelay, clearScheduledRuntimeSync, persistCanvasStateToSession]);
 
-  const handleHistoryChange = useCallback((liveCanvasState: ActiveLayerCanvasState) => {
+  const handleHistoryChange = useCallback((change: CostumeCanvasHistoryChange) => {
     if (isLoadingRef.current) {
       return;
     }
 
+    const liveCanvasState = change.state;
     const loadedSession = loadedSessionRef.current;
     if (!loadedSession || !isCanvasReadyForSession(loadedSession)) {
+      return;
+    }
+    if (canvasRef.current?.getHistoryGeneration() !== change.generation) {
       return;
     }
 

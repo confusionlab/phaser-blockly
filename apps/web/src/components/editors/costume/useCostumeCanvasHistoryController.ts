@@ -17,12 +17,13 @@ import {
   type CanvasHistorySnapshot,
 } from './costumeCanvasShared';
 import { VECTOR_JSON_EXTRA_PROPS } from './costumeCanvasVectorRuntime';
+import type { CostumeCanvasHistoryChange } from './CostumeCanvas';
 
 interface UseCostumeCanvasHistoryControllerOptions {
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   loadedSessionKeyRef: MutableRefObject<string | null>;
-  onHistoryChangeRef: MutableRefObject<((state: ActiveLayerCanvasState) => void) | undefined>;
+  onHistoryChangeRef: MutableRefObject<((change: CostumeCanvasHistoryChange) => void) | undefined>;
   suppressHistoryRef: MutableRefObject<boolean>;
 }
 
@@ -36,6 +37,7 @@ export function useCostumeCanvasHistoryController({
   const lastCommittedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
   const persistedSnapshotRef = useRef<CanvasHistorySnapshot | null>(null);
   const hasUnsavedChangesRef = useRef(false);
+  const historyGenerationRef = useRef(0);
 
   const getBitmapSnapshotCanvas = useCallback((fabricCanvas: FabricCanvas): HTMLCanvasElement | null => {
     const objects = fabricCanvas.getObjects();
@@ -125,6 +127,11 @@ export function useCostumeCanvasHistoryController({
     markSnapshotPersisted(state ? createHistorySnapshotFromActiveLayerCanvasState(state) : null);
   }, [loadedSessionKeyRef, markSnapshotPersisted]);
 
+  const advanceHistoryGeneration = useCallback(() => {
+    historyGenerationRef.current += 1;
+    return historyGenerationRef.current;
+  }, []);
+
   const saveHistory = useCallback((options: SaveHistoryOptions = {}) => {
     if (suppressHistoryRef.current) return;
     const traceId = beginCostumeCommitPerfTrace({
@@ -167,7 +174,10 @@ export function useCostumeCanvasHistoryController({
     const dispatchStartMs = traceId ? performance.now() : 0;
     setActiveCostumeCommitPerfTrace(traceId);
     try {
-      onHistoryChangeRef.current?.(historyState ?? createActiveLayerCanvasStateFromSnapshot(snapshot));
+      onHistoryChangeRef.current?.({
+        generation: historyGenerationRef.current,
+        state: historyState ?? createActiveLayerCanvasStateFromSnapshot(snapshot),
+      });
     } finally {
       if (traceId) {
         recordCostumeCommitPerfPhase(traceId, 'historyDispatchMs', performance.now() - dispatchStartMs);
@@ -184,8 +194,10 @@ export function useCostumeCanvasHistoryController({
   ]);
 
   return {
+    advanceHistoryGeneration,
     commitCurrentSnapshotWithoutDispatch,
     createSnapshot,
+    getHistoryGeneration: () => historyGenerationRef.current,
     lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,

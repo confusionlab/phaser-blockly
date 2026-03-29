@@ -72,6 +72,11 @@ export interface CostumeCanvasExportState {
   vectorDocument?: CostumeVectorDocument;
 }
 
+export interface CostumeCanvasHistoryChange {
+  generation: number;
+  state: ActiveLayerCanvasState;
+}
+
 export interface CostumeCanvasHandle {
   toDataURL: () => string;
   toDataURLWithBounds: () => { dataUrl: string; bounds: CostumeBounds | null };
@@ -83,6 +88,7 @@ export interface CostumeCanvasHandle {
   markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => void;
   setEditorMode: (mode: CostumeEditorMode) => Promise<void>;
   getEditorMode: () => CostumeEditorMode;
+  getHistoryGeneration: () => number;
   getLoadedSessionKey: () => string | null;
   getDirectBitmapPreviewCanvas: (sessionKey?: string | null) => HTMLCanvasElement | null;
   getComposedPreviewCanvas: (sessionKey?: string | null) => HTMLCanvasElement | null;
@@ -119,7 +125,7 @@ interface CostumeCanvasProps {
   onUndo: () => void;
   onRedo: () => void;
   collider: ColliderConfig | null;
-  onHistoryChange?: (state: ActiveLayerCanvasState) => void;
+  onHistoryChange?: (change: CostumeCanvasHistoryChange) => void;
   onColliderChange?: (collider: ColliderConfig) => void;
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
@@ -305,8 +311,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const loadRequestIdRef = useRef(0);
   const loadedSessionKeyRef = useRef<string | null>(null);
   const {
+    advanceHistoryGeneration,
     commitCurrentSnapshotWithoutDispatch,
     createSnapshot,
+    getHistoryGeneration,
     lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,
     markCurrentSnapshotPersisted,
@@ -935,6 +943,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   useCostumeCanvasImperativeHandle({
+    advanceHistoryGeneration,
     alignSelection,
     bitmapRasterCommitQueueRef,
     configureCanvasForTool,
@@ -960,6 +969,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     setEditorMode,
     switchEditorMode,
     editorModeRef,
+    getHistoryGeneration,
   });
 
   useEffect(() => {
