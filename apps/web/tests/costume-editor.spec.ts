@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
@@ -117,28 +118,16 @@ async function readLayerPanelWidth(page: Page): Promise<number> {
 }
 
 async function readActiveCostumeLayerOpacity(page: Page): Promise<number | null> {
-  return await page.evaluate(async () => {
-    const { useProjectStore } = await import('/src/store/projectStore.ts');
-    const project = useProjectStore.getState().project as {
-      scenes?: Array<{
-        objects?: Array<{
-          currentCostumeIndex?: number;
-          costumes?: Array<{
-            document?: {
-              activeLayerId?: string;
-              layers?: Array<{ id: string; opacity?: number }>;
-            };
-          }>;
-        }>;
-      }>;
-    } | null;
-
-    const object = project?.scenes?.[0]?.objects?.[0];
-    const costume = object?.costumes?.[object?.currentCostumeIndex ?? 0];
-    const activeLayerId = costume?.document?.activeLayerId;
-    const activeLayer = costume?.document?.layers?.find((layer) => layer.id === activeLayerId);
-    return typeof activeLayer?.opacity === 'number' ? activeLayer.opacity : null;
-  });
+  const activeLayerRow = page.locator('[data-testid="layer-row"][aria-pressed="true"]').first();
+  await activeLayerRow.click({ button: 'right' });
+  const slider = page.getByLabel('Layer opacity');
+  await expect(slider).toBeVisible();
+  const value = Number(await slider.inputValue());
+  await page.keyboard.press('Escape');
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return value / 100;
 }
 
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
@@ -219,8 +208,12 @@ async function waitForCostumeCanvasReady(page: Page): Promise<void> {
 }
 
 async function roundTripThroughCodeTab(page: Page): Promise<void> {
-  await page.getByRole('radio', { name: /^code$/i }).click();
-  await page.getByRole('radio', { name: /^costume$/i }).click();
+  const codeTab = page.getByRole('radio', { name: /^code$/i });
+  const costumeTab = page.getByRole('radio', { name: /^costume$/i });
+  await codeTab.click();
+  await expect(codeTab).toBeChecked({ timeout: 10000 });
+  await costumeTab.click();
+  await expect(costumeTab).toBeChecked({ timeout: 10000 });
   await waitForCostumeCanvasReady(page);
 }
 
@@ -271,6 +264,33 @@ async function readHostedLayerInkSamples(page: Page): Promise<number> {
   });
 }
 
+async function readHostedLayerInkSamplesDense(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
+    if (!(hostedCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = hostedCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, hostedCanvas.width, hostedCanvas.height);
+    let opaqueSamples = 0;
+    for (let index = 3; index < data.length; index += 4 * 31) {
+      if ((data[index] ?? 0) > 0) {
+        opaqueSamples += 1;
+      }
+    }
+    return opaqueSamples;
+  });
+}
+
+function expectSampleCountWithinTolerance(actual: number, expected: number, tolerance: number) {
+  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
+}
+
 async function observeVisibleHostedLayerInkTimeline(page: Page, frameCount = 36): Promise<number[]> {
   return await page.evaluate((frames) => {
     return new Promise<number[]>((resolve) => {
@@ -319,16 +339,190 @@ async function observeVisibleHostedLayerInkTimeline(page: Page, frameCount = 36)
   }, frameCount);
 }
 
-async function readCurrentCostumeDocumentSignature(page: Page): Promise<string | null> {
-  return page.evaluate(async () => {
-    const { useProjectStore } = await import('/src/store/projectStore.ts');
-    const project = useProjectStore.getState().project;
-    const scene = project?.scenes?.[0];
-    const object = scene?.objects?.[0];
-    const currentCostumeIndex = object?.currentCostumeIndex ?? 0;
-    const document = object?.costumes?.[currentCostumeIndex]?.document;
-    return document ? JSON.stringify(document) : null;
+async function readStageCenterPresenceSamples(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const stageCanvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+    if (!(stageCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = stageCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const backgroundProbe = ctx.getImageData(0, 0, Math.max(8, Math.floor(stageCanvas.width * 0.08)), Math.max(8, Math.floor(stageCanvas.height * 0.08))).data;
+    let backgroundRed = 0;
+    let backgroundGreen = 0;
+    let backgroundBlue = 0;
+    let backgroundCount = 0;
+    for (let index = 0; index < backgroundProbe.length; index += 4 * 11) {
+      backgroundRed += backgroundProbe[index] ?? 0;
+      backgroundGreen += backgroundProbe[index + 1] ?? 0;
+      backgroundBlue += backgroundProbe[index + 2] ?? 0;
+      backgroundCount += 1;
+    }
+    const avgBackground = {
+      red: backgroundCount > 0 ? backgroundRed / backgroundCount : 0,
+      green: backgroundCount > 0 ? backgroundGreen / backgroundCount : 0,
+      blue: backgroundCount > 0 ? backgroundBlue / backgroundCount : 0,
+    };
+
+    const { data } = ctx.getImageData(0, 0, stageCanvas.width, stageCanvas.height);
+    let presenceSamples = 0;
+
+    for (let index = 0; index < data.length; index += 4 * 29) {
+      const alpha = data[index + 3] ?? 0;
+      if (alpha <= 0) {
+        continue;
+      }
+      const red = data[index] ?? 0;
+      const green = data[index + 1] ?? 0;
+      const blue = data[index + 2] ?? 0;
+      const distance = Math.sqrt(
+        (red - avgBackground.red) ** 2 +
+        (green - avgBackground.green) ** 2 +
+        (blue - avgBackground.blue) ** 2,
+      );
+      if (distance > 24) {
+        presenceSamples += 1;
+      }
+    }
+
+    return presenceSamples;
   });
+}
+
+async function readSpriteShelfPreviewVisibleSamples(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const previewCanvas = document.querySelector('[data-testid="sprite-shelf-scroll-area"] [aria-label$="preview"]');
+    if (!(previewCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = previewCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+    let visibleSamples = 0;
+    for (let index = 0; index < data.length; index += 4 * 3) {
+      if ((data[index + 3] ?? 0) > 0) {
+        visibleSamples += 1;
+      }
+    }
+    return visibleSamples;
+  });
+}
+
+async function captureStagePreviewHash(page: Page): Promise<string> {
+  const stageHost = page.getByTestId('stage-phaser-host');
+  await expect(stageHost).toBeVisible({ timeout: 10000 });
+  const screenshot = await stageHost.screenshot();
+  return createHash('sha1').update(screenshot).digest('hex');
+}
+
+async function captureSpriteShelfPreviewHash(page: Page): Promise<string> {
+  const preview = page.locator('[data-testid="sprite-shelf-scroll-area"] [aria-label$="preview"]').first();
+  await expect(preview).toBeVisible({ timeout: 10000 });
+  const screenshot = await preview.screenshot();
+  return createHash('sha1').update(screenshot).digest('hex');
+}
+
+async function observeStageAndSpriteShelfPresenceTimeline(
+  page: Page,
+  frameCount = 36,
+): Promise<{ stage: number[]; shelf: number[] }> {
+  return await page.evaluate((frames) => {
+    return new Promise<{ stage: number[]; shelf: number[] }>((resolve) => {
+      const stageCanvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+      const shelfCanvas = document.querySelector('[data-testid="sprite-shelf-scroll-area"] [aria-label$="preview"]');
+      if (!(stageCanvas instanceof HTMLCanvasElement) || !(shelfCanvas instanceof HTMLCanvasElement)) {
+        resolve({ stage: [], shelf: [] });
+        return;
+      }
+
+      const sampleStagePresence = (canvas: HTMLCanvasElement) => {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          return 0;
+        }
+        const backgroundProbe = ctx.getImageData(0, 0, Math.max(8, Math.floor(canvas.width * 0.08)), Math.max(8, Math.floor(canvas.height * 0.08))).data;
+        let backgroundRed = 0;
+        let backgroundGreen = 0;
+        let backgroundBlue = 0;
+        let backgroundCount = 0;
+        for (let index = 0; index < backgroundProbe.length; index += 4 * 11) {
+          backgroundRed += backgroundProbe[index] ?? 0;
+          backgroundGreen += backgroundProbe[index + 1] ?? 0;
+          backgroundBlue += backgroundProbe[index + 2] ?? 0;
+          backgroundCount += 1;
+        }
+        const avgBackground = {
+          red: backgroundCount > 0 ? backgroundRed / backgroundCount : 0,
+          green: backgroundCount > 0 ? backgroundGreen / backgroundCount : 0,
+          blue: backgroundCount > 0 ? backgroundBlue / backgroundCount : 0,
+        };
+
+        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        let presenceSamples = 0;
+        for (let index = 0; index < data.length; index += 4 * 29) {
+          const alpha = data[index + 3] ?? 0;
+          if (alpha <= 0) {
+            continue;
+          }
+          const red = data[index] ?? 0;
+          const green = data[index + 1] ?? 0;
+          const blue = data[index + 2] ?? 0;
+          const distance = Math.sqrt(
+            (red - avgBackground.red) ** 2 +
+            (green - avgBackground.green) ** 2 +
+            (blue - avgBackground.blue) ** 2,
+          );
+          if (distance > 24) {
+            presenceSamples += 1;
+          }
+        }
+        return presenceSamples;
+      };
+
+      const sampleVisiblePixels = (
+        canvas: HTMLCanvasElement,
+        step = 17,
+      ) => {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          return 0;
+        }
+
+        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        let visibleSamples = 0;
+        for (let index = 0; index < data.length; index += 4 * step) {
+          if ((data[index + 3] ?? 0) > 0) {
+            visibleSamples += 1;
+          }
+        }
+        return visibleSamples;
+      };
+      const timeline = {
+        stage: [] as number[],
+        shelf: [] as number[],
+      };
+
+      const captureFrame = () => {
+        timeline.stage.push(sampleStagePresence(stageCanvas));
+        timeline.shelf.push(sampleVisiblePixels(shelfCanvas, 3));
+        if (timeline.stage.length >= frames) {
+          resolve(timeline);
+          return;
+        }
+        window.requestAnimationFrame(captureFrame);
+      };
+
+      window.requestAnimationFrame(captureFrame);
+    });
+  }, frameCount);
 }
 
 test.describe('Costume editor tools', () => {
@@ -415,6 +609,27 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
+  test('multi-layer composed edits keep stage and sprite shelf previews fresh', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await addVectorLayer(page);
+    await expect(page.getByRole('button', { name: /^layer 2/i })).toBeVisible({ timeout: 10000 });
+    await waitForCostumeCanvasReady(page);
+
+    const beforeStageHash = await captureStagePreviewHash(page);
+    const beforeShelfHash = await captureSpriteShelfPreviewHash(page);
+    const beforeCanvasSamples = await readCheckerboardInkSamples(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.74, 0.62);
+
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeCanvasSamples);
+    await expect.poll(async () => captureSpriteShelfPreviewHash(page), { timeout: 1000 }).not.toBe(beforeShelfHash);
+    await expect.poll(async () => captureStagePreviewHash(page), { timeout: 1000 }).not.toBe(beforeStageHash);
+  });
+
   test('rapid bitmap eraser strokes preserve committed layer state across a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');
@@ -482,20 +697,22 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
     await expect(undoButton).toBeEnabled({ timeout: 10000 });
     const baseSamples = await readCheckerboardInkSamples(page);
-    await expect.poll(async () => !!(await readCurrentCostumeDocumentSignature(page)), { timeout: 10000 }).toBe(true);
-    const baseDocumentSignature = await readCurrentCostumeDocumentSignature(page);
-    expect(baseDocumentSignature).toBeTruthy();
+    const baseHostedSamples = await readHostedLayerInkSamples(page);
 
     await page.getByRole('button', { name: /^eraser$/i }).click();
     for (const yFactor of [0.24, 0.34, 0.44, 0.54]) {
       await drawAcrossCostumeCanvas(page, 0.20, yFactor, 0.60, yFactor);
     }
+    const erasedSamples = await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples).then(async () => {
+      return await readCheckerboardInkSamples(page);
+    });
+    const erasedHostedSamples = await readHostedLayerInkSamples(page);
 
     let undoCount = 0;
     for (let index = 0; index < 10; index += 1) {
-      const currentSignature = await readCurrentCostumeDocumentSignature(page);
       const currentSamples = await readCheckerboardInkSamples(page);
-      if (currentSignature === baseDocumentSignature && currentSamples === baseSamples) {
+      const currentHostedSamples = await readHostedLayerInkSamples(page);
+      if (currentSamples === baseSamples && currentHostedSamples === baseHostedSamples) {
         break;
       }
       if (!await undoButton.isEnabled()) {
@@ -504,34 +721,132 @@ test.describe('Costume editor tools', () => {
       await undoButton.click();
       undoCount += 1;
       await expect.poll(async () => {
-        const nextSignature = await readCurrentCostumeDocumentSignature(page);
         const nextSamples = await readCheckerboardInkSamples(page);
-        return nextSignature !== currentSignature || nextSamples !== currentSamples;
+        const nextHostedSamples = await readHostedLayerInkSamples(page);
+        return nextSamples !== currentSamples || nextHostedSamples !== currentHostedSamples;
       }, { timeout: 10000 }).toBe(true);
     }
     expect(undoCount).toBeGreaterThan(0);
 
-    await expect.poll(async () => readCurrentCostumeDocumentSignature(page), { timeout: 10000 }).toBe(baseDocumentSignature);
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBe(baseSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBe(baseHostedSamples);
+
+    await roundTripThroughCodeTab(page);
+    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBe(baseSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBe(baseHostedSamples);
 
     let redoCount = 0;
     for (let index = 0; index < undoCount; index += 1) {
       await expect(redoButton).toBeEnabled({ timeout: 10000 });
-      const currentSignature = await readCurrentCostumeDocumentSignature(page);
       const currentSamples = await readCheckerboardInkSamples(page);
+      const currentHostedSamples = await readHostedLayerInkSamples(page);
       await redoButton.click();
       redoCount += 1;
       await expect.poll(async () => {
-        const nextSignature = await readCurrentCostumeDocumentSignature(page);
         const nextSamples = await readCheckerboardInkSamples(page);
-        return nextSignature !== currentSignature || nextSamples !== currentSamples;
+        const nextHostedSamples = await readHostedLayerInkSamples(page);
+        return nextSamples !== currentSamples || nextHostedSamples !== currentHostedSamples;
       }, { timeout: 10000 }).toBe(true);
     }
     expect(redoCount).toBe(undoCount);
 
-    await expect.poll(async () => (await readCurrentCostumeDocumentSignature(page)) !== baseDocumentSignature, { timeout: 10000 }).toBe(true);
-    await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples);
+    const redoneSamples = await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples).then(async () => {
+      return await readCheckerboardInkSamples(page);
+    });
+    const redoneHostedSamples = await readHostedLayerInkSamples(page);
+    expectSampleCountWithinTolerance(redoneSamples, erasedSamples, 24);
+    expectSampleCountWithinTolerance(redoneHostedSamples, erasedHostedSamples, 4);
+
+    await roundTripThroughCodeTab(page);
+    const reloadedRedoneSamples = await readCheckerboardInkSamples(page);
+    const reloadedRedoneHostedSamples = await readHostedLayerInkSamples(page);
+    expectSampleCountWithinTolerance(reloadedRedoneSamples, erasedSamples, 24);
+    expectSampleCountWithinTolerance(reloadedRedoneHostedSamples, erasedHostedSamples, 4);
     await expect(redoButton).toBeDisabled({ timeout: 10000 });
+  });
+
+  test('fill followed by rapid bitmap strokes undoes cleanly back to the fill state', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const undoButton = page.getByRole('button', { name: /^undo$/i });
+    const redoButton = page.getByRole('button', { name: /^redo$/i });
+
+    await page.getByRole('button', { name: /^fill$/i }).last().click();
+    await clickCostumeCanvas(page, 0.5, 0.5);
+
+    const fillSamples = await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeGreaterThan(0).then(async () => {
+      return await readHostedLayerInkSamplesDense(page);
+    });
+    const fillHostedSamples = await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0).then(async () => {
+      return await readHostedLayerInkSamples(page);
+    });
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    for (const yFactor of [0.18, 0.28, 0.38, 0.48, 0.58, 0.68]) {
+      await drawAcrossCostumeCanvas(page, 0.14, yFactor, 0.86, yFactor);
+    }
+
+    const erasedSamples = await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeLessThan(fillSamples).then(async () => {
+      return await readHostedLayerInkSamplesDense(page);
+    });
+    expect(erasedSamples).toBeLessThan(fillSamples);
+
+    let undoCount = 0;
+    for (let index = 0; index < 6; index += 1) {
+      if (!await undoButton.isEnabled()) {
+        break;
+      }
+      await undoButton.click();
+      undoCount += 1;
+      await page.waitForTimeout(100);
+    }
+    expect(undoCount).toBeGreaterThan(0);
+
+    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBe(fillSamples);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBe(fillHostedSamples);
+
+    let redoCount = 0;
+    for (let index = 0; index < undoCount; index += 1) {
+      await expect(redoButton).toBeEnabled({ timeout: 10000 });
+      await redoButton.click();
+      redoCount += 1;
+      await page.waitForTimeout(100);
+    }
+    expect(redoCount).toBe(undoCount);
+
+    await expect.poll(async () => readHostedLayerInkSamplesDense(page), { timeout: 10000 }).toBeLessThan(fillSamples);
+  });
+
+  test('sprite shelf preview stays visible during rapid bitmap eraser commits', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.16, 0.16, 0.84, 0.84);
+
+    await expect.poll(async () => readSpriteShelfPreviewVisibleSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+
+    await readStageCenterPresenceSamples(page);
+    const shelfBaseline = await readSpriteShelfPreviewVisibleSamples(page);
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    const timelinePromise = observeStageAndSpriteShelfPresenceTimeline(page);
+    await drawAcrossCostumeCanvas(page, 0.22, 0.32, 0.72, 0.32);
+    const timeline = await timelinePromise;
+
+    const shelfFinal = await expect.poll(async () => readSpriteShelfPreviewVisibleSamples(page), { timeout: 10000 }).toBeGreaterThan(0).then(async () => {
+      return await readSpriteShelfPreviewVisibleSamples(page);
+    });
+
+    expect(shelfBaseline).toBeGreaterThan(0);
+    expect(timeline.shelf.length).toBeGreaterThan(0);
+
+    const minShelfThreshold = Math.max(1, Math.floor(Math.min(shelfBaseline, shelfFinal) * 0.35));
+
+    expect(timeline.shelf.some((value) => value < minShelfThreshold)).toBe(false);
   });
 
   test('active hosted layer stays visible after switching away from and back to the costume tab', async ({ page }) => {

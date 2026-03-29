@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
+import { getCostumeRuntimePreview, useCostumeRuntimePreviewStore } from '@/store/costumeRuntimePreviewStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
@@ -70,6 +71,7 @@ import {
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
+import { loadImageSource } from '@/lib/assets/imageSourceCache';
 
 // Global clipboard for cross-scene object copying
 let objectClipboard: {
@@ -239,6 +241,99 @@ function collectFolderDescendants(folderId: string, folders: SceneFolder[]): Set
   return descendants;
 }
 
+function drawShelfCostumePreview(
+  targetCanvas: HTMLCanvasElement,
+  source: HTMLImageElement | HTMLCanvasElement,
+  costume: Costume,
+) {
+  const ctx = targetCanvas.getContext('2d');
+  if (!ctx) {
+    return;
+  }
+
+  const size = targetCanvas.width;
+  ctx.clearRect(0, 0, size, size);
+
+  const bounds = costume.bounds;
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+    ctx.drawImage(source, 0, 0, size, size);
+    return;
+  }
+
+  const localBounds = getCostumeBoundsInAssetSpace(bounds, costume.assetFrame);
+  const scale = Math.min(1, size / Math.max(bounds.width, bounds.height));
+  const sourceWidth = source instanceof HTMLCanvasElement ? source.width : (source.naturalWidth || source.width);
+  const sourceHeight = source instanceof HTMLCanvasElement ? source.height : (source.naturalHeight || source.height);
+  const drawX = (size - bounds.width * scale) / 2 - (localBounds?.x ?? 0) * scale;
+  const drawY = (size - bounds.height * scale) / 2 - (localBounds?.y ?? 0) * scale;
+
+  ctx.drawImage(
+    source,
+    drawX,
+    drawY,
+    sourceWidth * scale,
+    sourceHeight * scale,
+  );
+}
+
+function ShelfCostumeThumbnail({
+  costume,
+  objectName,
+  runtimePreview,
+}: {
+  costume: Costume | null;
+  objectName: string;
+  runtimePreview: ReturnType<typeof getCostumeRuntimePreview>;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !costume) {
+      return;
+    }
+
+    if (runtimePreview?.sourceCanvas) {
+      drawShelfCostumePreview(canvas, runtimePreview.sourceCanvas, {
+        ...costume,
+        bounds: runtimePreview.bounds ?? costume.bounds,
+        assetFrame: runtimePreview.assetFrame ?? costume.assetFrame,
+      });
+      return;
+    }
+
+    let canceled = false;
+    void loadImageSource(costume.assetId).then((image) => {
+      if (canceled || !canvasRef.current) {
+        return;
+      }
+      drawShelfCostumePreview(canvasRef.current, image, costume);
+    }).catch((error) => {
+      if (!canceled) {
+        console.warn('Failed to load sprite shelf costume preview.', error);
+      }
+    });
+
+    return () => {
+      canceled = true;
+    };
+  }, [costume, runtimePreview]);
+
+  if (!costume?.assetId) {
+    return <span className="text-sm">📦</span>;
+  }
+
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-label={`${objectName} preview`}
+      className="h-full w-full"
+      height={24}
+      width={24}
+    />
+  );
+}
+
 export function SpriteShelf() {
   const {
     project,
@@ -364,6 +459,8 @@ export function SpriteShelf() {
   }, [editingSceneId]);
 
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
+  const runtimePreviewVersion = useCostumeRuntimePreviewStore((state) => state.version);
+  void runtimePreviewVersion;
   const folders = selectedScene?.objectFolders ?? [];
   const isInlineRenaming = !!editingObjectId || !!editingFolderId || !!editingSceneId;
 
@@ -1473,6 +1570,14 @@ export function SpriteShelf() {
     const rowContentPaddingClass = 'py-1';
     const indentDepth = Math.max(0, level - 1);
     const rowHoverClass = selectionSurfaceClassNames.hover;
+    const costume = effectiveProps?.costumes[effectiveProps.currentCostumeIndex];
+    const runtimePreview = selectedSceneId && object && costume
+      ? getCostumeRuntimePreview({
+          sceneId: selectedSceneId,
+          objectId: object.id,
+          costumeId: costume.id,
+        })
+      : null;
 
     return (
       <div key={options?.rowKey ?? item.key} className="relative">
@@ -1566,42 +1671,13 @@ export function SpriteShelf() {
               <div
                 className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center overflow-hidden rounded-md"
               >
-                {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
-                  const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
-                  const bounds = costume?.bounds;
-                  if (bounds && bounds.width > 0 && bounds.height > 0) {
-                    const scale = Math.min(1, 24 / Math.max(bounds.width, bounds.height));
-                    const localBounds = getCostumeBoundsInAssetSpace(bounds, costume?.assetFrame);
-                    return (
-                      <div
-                        className="absolute"
-                        style={{
-                          backgroundImage: `url(${costume.assetId})`,
-                          backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
-                          backgroundSize: costume?.assetFrame
-                            ? `${costume.assetFrame.width}px ${costume.assetFrame.height}px`
-                            : '1024px 1024px',
-                          backgroundRepeat: 'no-repeat',
-                          transform: `scale(${scale})`,
-                          transformOrigin: 'top left',
-                          width: bounds.width,
-                          height: bounds.height,
-                          left: '50%',
-                          top: '50%',
-                          marginLeft: (-bounds.width * scale) / 2,
-                          marginTop: (-bounds.height * scale) / 2,
-                        }}
-                      />
-                    );
-                  }
-                  return (
-                    <img
-                      src={costume?.assetId}
-                      alt={object?.name ?? 'Object'}
-                      className="w-full h-full object-contain"
-                    />
-                  );
-                })() : (
+                {costume ? (
+                  <ShelfCostumeThumbnail
+                    costume={costume}
+                    objectName={object?.name ?? 'Object'}
+                    runtimePreview={runtimePreview}
+                  />
+                ) : (
                   <span className="text-sm">📦</span>
                 )}
               </div>

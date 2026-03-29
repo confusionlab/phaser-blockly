@@ -113,6 +113,7 @@ export function CostumeCanvasStage({
 
       <div
         ref={containerRef}
+        data-testid="costume-canvas-container"
         tabIndex={-1}
         className="size-full overflow-hidden relative outline-none"
         style={{
@@ -194,6 +195,7 @@ export function CostumeCanvasStage({
 
         <div
           ref={brushCursorOverlayRef}
+          data-testid="costume-brush-cursor-overlay"
           style={{
             position: 'absolute',
             top: 0,

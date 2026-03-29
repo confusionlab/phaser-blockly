@@ -31,6 +31,15 @@ interface UseCostumeCanvasBitmapLayerControllerOptions {
   waitForFabricCanvas: (requestId?: number) => Promise<FabricCanvas | null>;
 }
 
+export interface BitmapRasterCommitOptions {
+  commitObject?: any;
+  historyOptimization?: {
+    compositeOperation?: GlobalCompositeOperation;
+    dirtyBounds?: CostumeBounds | null;
+    source?: string;
+  };
+}
+
 export function useCostumeCanvasBitmapLayerController({
   bitmapFloatingObjectRef,
   bitmapMarqueeRectRef,
@@ -61,6 +70,12 @@ export function useCostumeCanvasBitmapLayerController({
     return bitmapImage instanceof FabricImage ? bitmapImage : null;
   }, [editorModeRef, fabricCanvasRef]);
 
+  const getReusableBitmapCanvas = useCallback((): HTMLCanvasElement | null => {
+    const bitmapImage = getReusableBitmapImage();
+    const element = bitmapImage?.getElement();
+    return element instanceof HTMLCanvasElement ? element : null;
+  }, [getReusableBitmapImage]);
+
   const cloneBitmapCanvas = useCallback((source: HTMLCanvasElement): HTMLCanvasElement | null => {
     const clone = document.createElement('canvas');
     clone.width = source.width;
@@ -70,6 +85,36 @@ export function useCostumeCanvasBitmapLayerController({
       return null;
     }
     cloneCtx.drawImage(source, 0, 0);
+    return clone;
+  }, []);
+
+  const cloneBitmapRegion = useCallback((
+    source: HTMLCanvasElement,
+    bounds: CostumeBounds | null,
+  ): HTMLCanvasElement | null => {
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+      return null;
+    }
+
+    const clone = document.createElement('canvas');
+    clone.width = bounds.width;
+    clone.height = bounds.height;
+    const cloneCtx = clone.getContext('2d', { willReadFrequently: true });
+    if (!cloneCtx) {
+      return null;
+    }
+
+    cloneCtx.drawImage(
+      source,
+      bounds.x,
+      bounds.y,
+      bounds.width,
+      bounds.height,
+      0,
+      0,
+      bounds.width,
+      bounds.height,
+    );
     return clone;
   }, []);
 
@@ -324,14 +369,7 @@ export function useCostumeCanvasBitmapLayerController({
 
   const queueBitmapRasterCommit = useCallback((
     mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,
-    options: {
-      commitObject?: any;
-      historyOptimization?: {
-        compositeOperation?: GlobalCompositeOperation;
-        dirtyBounds?: CostumeBounds | null;
-        source?: string;
-      };
-    } = {},
+    options: BitmapRasterCommitOptions = {},
   ) => {
     const nextCommit = bitmapRasterCommitQueueRef.current
       .catch(() => undefined)
@@ -343,6 +381,58 @@ export function useCostumeCanvasBitmapLayerController({
 
         const reusableBitmapImage = getReusableBitmapImage();
         const reusableBitmapCanvas = reusableBitmapImage?.getElement();
+        const canCommitStampInPlace =
+          options.historyOptimization?.source === 'bitmapStampCommit'
+          && reusableBitmapImage instanceof FabricImage
+          && reusableBitmapCanvas instanceof HTMLCanvasElement
+          && fabricCanvas.getObjects().length === 1;
+
+        if (canCommitStampInPlace && reusableBitmapCanvas instanceof HTMLCanvasElement) {
+          const raster = reusableBitmapCanvas;
+          const rasterCtx = raster.getContext('2d', { willReadFrequently: true });
+          if (!rasterCtx) {
+            return;
+          }
+
+          const dirtyBounds = options.historyOptimization?.dirtyBounds ?? null;
+          const dirtyRegionBackup = cloneBitmapRegion(raster, dirtyBounds);
+          try {
+            if (mutateRaster) {
+              await mutateRaster(raster, rasterCtx);
+            }
+
+            (reusableBitmapImage as any).dirty = true;
+            reusableBitmapImage.setCoords?.();
+            fabricCanvas.requestRenderAll();
+
+            const traceStartedAtMs = performance.now();
+            const bitmapHistoryState = createBitmapHistoryStateFromRaster(raster, {
+              compositeOperation: options.historyOptimization?.compositeOperation,
+              dirtyBounds,
+            });
+
+            saveHistory({
+              source: options.historyOptimization?.source ?? 'bitmapRasterCommit',
+              state: bitmapHistoryState.state,
+              snapshotDurationMs: bitmapHistoryState.durationMs,
+              traceStartedAtMs,
+            });
+            await waitForFabricRenderFlush(fabricCanvas);
+            return;
+          } catch (error) {
+            if (dirtyRegionBackup && dirtyBounds) {
+              rasterCtx.save();
+              rasterCtx.globalCompositeOperation = 'source-over';
+              rasterCtx.clearRect(dirtyBounds.x, dirtyBounds.y, dirtyBounds.width, dirtyBounds.height);
+              rasterCtx.drawImage(dirtyRegionBackup, dirtyBounds.x, dirtyBounds.y);
+              rasterCtx.restore();
+              (reusableBitmapImage as any).dirty = true;
+              fabricCanvas.requestRenderAll();
+            }
+            throw error;
+          }
+        }
+
         const raster = reusableBitmapCanvas instanceof HTMLCanvasElement
           && (options.commitObject || fabricCanvas.getObjects().length === 1)
           ? cloneBitmapCanvas(reusableBitmapCanvas) ?? fabricCanvas.toCanvasElement(1)
@@ -386,6 +476,7 @@ export function useCostumeCanvasBitmapLayerController({
     applyBitmapLayerSource,
     bitmapRasterCommitQueueRef,
     cloneBitmapCanvas,
+    cloneBitmapRegion,
     editorModeRef,
     fabricCanvasRef,
     getReusableBitmapImage,
@@ -518,9 +609,11 @@ export function useCostumeCanvasBitmapLayerController({
   }, [fabricCanvasRef]);
 
   return {
+    commitBitmapRasterMutation: queueBitmapRasterCommit,
     commitBitmapSelection,
     commitBitmapStampBrushStroke,
     flattenBitmapLayer,
+    getReusableBitmapCanvas,
     loadBitmapAsSingleVectorImage,
     loadBitmapLayer,
     normalizeCanvasVectorStrokeUniform,

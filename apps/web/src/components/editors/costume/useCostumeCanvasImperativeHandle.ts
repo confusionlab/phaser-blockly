@@ -14,6 +14,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   duplicateSelection: () => Promise<boolean>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   flipSelection: (axis: any) => boolean;
+  getDirectBitmapPreviewCanvas: () => HTMLCanvasElement | null;
   getComposedCanvasElement: () => HTMLCanvasElement;
   isTextEditing: () => boolean;
   lastCommittedSnapshotRef: MutableRefObject<any>;
@@ -46,6 +47,7 @@ export function useCostumeCanvasImperativeHandle({
   duplicateSelection,
   exportCostumeState,
   flipSelection,
+  getDirectBitmapPreviewCanvas,
   getComposedCanvasElement,
   isTextEditing,
   lastCommittedSnapshotRef,
@@ -119,6 +121,23 @@ export function useCostumeCanvasImperativeHandle({
 
     getLoadedSessionKey: () => loadedSessionKeyRef.current,
 
+    getDirectBitmapPreviewCanvas: (sessionKey?: string | null) => {
+      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
+        return null;
+      }
+      if (editorModeRef.current !== 'bitmap') {
+        return null;
+      }
+      return getDirectBitmapPreviewCanvas();
+    },
+
+    getComposedPreviewCanvas: (sessionKey?: string | null) => {
+      if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
+        return null;
+      }
+      return getComposedCanvasElement();
+    },
+
     deleteSelection,
 
     duplicateSelection,
@@ -161,6 +180,7 @@ export function useCostumeCanvasImperativeHandle({
     duplicateSelection,
     exportCostumeState,
     flipSelection,
+    getDirectBitmapPreviewCanvas,
     getComposedCanvasElement,
     isTextEditing,
     lastCommittedSnapshotRef,

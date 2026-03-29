@@ -104,6 +104,16 @@ export function useCostumeCanvasHistoryController({
     markSnapshotPersisted(createSnapshot());
   }, [createSnapshot, loadedSessionKeyRef, markSnapshotPersisted]);
 
+  const commitCurrentSnapshotWithoutDispatch = useCallback((sessionKey?: string | null) => {
+    if (typeof sessionKey !== 'undefined' && loadedSessionKeyRef.current !== sessionKey) {
+      return;
+    }
+
+    const snapshot = createSnapshot();
+    lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
+    markSnapshotPersisted(snapshot);
+  }, [createSnapshot, lastCommittedSnapshotRef, loadedSessionKeyRef, markSnapshotPersisted]);
+
   const markActiveLayerCanvasStatePersisted = useCallback((
     state: ActiveLayerCanvasState | null | undefined,
     sessionKey?: string | null,
@@ -174,6 +184,7 @@ export function useCostumeCanvasHistoryController({
   ]);
 
   return {
+    commitCurrentSnapshotWithoutDispatch,
     createSnapshot,
     lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,

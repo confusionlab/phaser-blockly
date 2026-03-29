@@ -178,6 +178,22 @@ function createAirbrushStampCanvas(size: number, color: string) {
   return canvas;
 }
 
+function createHardRoundStampCanvas(size: number, color: string) {
+  const canvas = createStampCanvas(size);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return canvas;
+  }
+
+  const center = canvas.width / 2;
+  const radius = Math.max(1, size / 2);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(center, center, radius, 0, Math.PI * 2);
+  ctx.fill();
+  return canvas;
+}
+
 function createProceduralCrayonStampCanvas(size: number, color: string) {
   const canvas = createStampCanvas(size);
   const ctx = canvas.getContext('2d');
@@ -248,11 +264,23 @@ export function getBrushPaintColor(tool: BitmapBrushTool, brushColor: string): s
 }
 
 export function getBitmapBrushStampDefinition(
-  brushKind: Exclude<BitmapBrushKind, 'hard-round'>,
+  brushKind: BitmapBrushKind,
   brushColor: string,
   brushSize: number,
   assets?: BitmapBrushTextureAssets,
 ): BitmapBrushStampDefinition {
+  if (brushKind === 'hard-round') {
+    return {
+      stamp: createHardRoundStampCanvas(brushSize, brushColor),
+      spacing: Math.max(1, brushSize * 0.25),
+      opacity: 1,
+      rotationJitter: 0,
+      scaleJitter: 0,
+      scatter: 0,
+      alphaThreshold: 1,
+    };
+  }
+
   if (brushKind === 'airbrush') {
     return {
       stamp: createAirbrushStampCanvas(brushSize, brushColor),

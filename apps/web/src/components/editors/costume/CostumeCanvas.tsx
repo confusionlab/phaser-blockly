@@ -84,6 +84,8 @@ export interface CostumeCanvasHandle {
   setEditorMode: (mode: CostumeEditorMode) => Promise<void>;
   getEditorMode: () => CostumeEditorMode;
   getLoadedSessionKey: () => string | null;
+  getDirectBitmapPreviewCanvas: (sessionKey?: string | null) => HTMLCanvasElement | null;
+  getComposedPreviewCanvas: (sessionKey?: string | null) => HTMLCanvasElement | null;
   deleteSelection: () => boolean;
   duplicateSelection: () => Promise<boolean>;
   moveSelectionOrder: (action: MoveOrderAction) => boolean;
@@ -303,6 +305,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const loadRequestIdRef = useRef(0);
   const loadedSessionKeyRef = useRef<string | null>(null);
   const {
+    commitCurrentSnapshotWithoutDispatch,
     createSnapshot,
     lastCommittedSnapshotRef,
     markActiveLayerCanvasStatePersisted,
@@ -492,9 +495,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, []);
 
   const {
+    commitBitmapRasterMutation,
     commitBitmapSelection,
     commitBitmapStampBrushStroke,
     flattenBitmapLayer,
+    getReusableBitmapCanvas,
     loadBitmapAsSingleVectorImage,
     loadBitmapLayer,
     normalizeCanvasVectorStrokeUniform,
@@ -594,6 +599,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapSelectionDragModeRef,
     bitmapSelectionStartRef,
     brushColorRef,
+    commitBitmapRasterMutation,
     commitHostedLayerSurfaceSnapshot,
     documentLayers,
     drawBitmapSelectionOverlay,
@@ -610,7 +616,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     loadBitmapLayer,
     loadRequestIdRef,
     loadedSessionKeyRef,
-    markCurrentSnapshotPersisted,
+    commitCurrentSnapshotWithoutDispatch,
     normalizeCanvasVectorStrokeUniform,
     onTextSelectionChangeRef,
     onTextStyleSyncRef,
@@ -937,6 +943,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     duplicateSelection,
     exportCostumeState,
     flipSelection,
+    getDirectBitmapPreviewCanvas: getReusableBitmapCanvas,
     getComposedCanvasElement,
     isTextEditing,
     lastCommittedSnapshotRef,

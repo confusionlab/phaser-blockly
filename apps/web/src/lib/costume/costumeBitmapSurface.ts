@@ -44,6 +44,47 @@ function getBitmapSourceDimensions(source: HTMLImageElement | HTMLCanvasElement)
   };
 }
 
+function drawBitmapSourceIntoAssetFrameSurface(
+  ctx: CanvasRenderingContext2D,
+  source: HTMLImageElement | HTMLCanvasElement,
+  assetFrame: CostumeAssetFrame,
+) {
+  const { width: sourceWidth, height: sourceHeight } = getBitmapSourceDimensions(source);
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return;
+  }
+
+  const sourceAlreadyMatchesFullSurface =
+    sourceWidth === assetFrame.sourceWidth &&
+    sourceHeight === assetFrame.sourceHeight;
+  if (sourceAlreadyMatchesFullSurface) {
+    ctx.drawImage(source, 0, 0, assetFrame.sourceWidth, assetFrame.sourceHeight);
+    return;
+  }
+
+  const sourceAlreadyMatchesCroppedFrame =
+    sourceWidth === assetFrame.width &&
+    sourceHeight === assetFrame.height;
+  if (sourceAlreadyMatchesCroppedFrame) {
+    ctx.drawImage(
+      source,
+      assetFrame.x,
+      assetFrame.y,
+      assetFrame.width,
+      assetFrame.height,
+    );
+    return;
+  }
+
+  ctx.drawImage(
+    source,
+    assetFrame.x,
+    assetFrame.y,
+    assetFrame.width,
+    assetFrame.height,
+  );
+}
+
 export function createBitmapSurfaceCanvas(
   source: HTMLImageElement | HTMLCanvasElement,
   assetFrame?: CostumeAssetFrame | null,
@@ -60,13 +101,7 @@ export function createBitmapSurfaceCanvas(
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(
-      source,
-      assetFrame.x,
-      assetFrame.y,
-      assetFrame.width,
-      assetFrame.height,
-    );
+    drawBitmapSourceIntoAssetFrameSurface(ctx, source, assetFrame);
     return canvas;
   }
 

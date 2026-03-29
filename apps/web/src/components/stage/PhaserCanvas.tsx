@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
+import { getCostumeRuntimePreview, useCostumeRuntimePreviewStore } from '@/store/costumeRuntimePreviewStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
 import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
@@ -118,6 +119,10 @@ function getCostumeTextureKey(objectId: string, costumeId: string, assetId: stri
   return `costume_${objectId}_${costumeId}_${hashTextureInput(assetId)}`;
 }
 
+function getRuntimeCostumeTextureKey(objectId: string, costumeId: string): string {
+  return `costume_runtime_${objectId}_${costumeId}`;
+}
+
 function getElementRenderSize(element: HTMLElement): { width: number; height: number } {
   const rect = element.getBoundingClientRect();
   return {
@@ -130,6 +135,26 @@ function getPendingCostumeVisualTarget(
   container: Phaser.GameObjects.Container,
 ): PendingCostumeVisualTarget | undefined {
   return container.getData('pendingVisualTarget') as PendingCostumeVisualTarget | undefined;
+}
+
+function copyCanvasIntoOwnedTextureCanvas(
+  source: HTMLCanvasElement,
+  target?: HTMLCanvasElement | null,
+): HTMLCanvasElement {
+  const canvas = target ?? document.createElement('canvas');
+  if (canvas.width !== source.width) {
+    canvas.width = source.width;
+  }
+  if (canvas.height !== source.height) {
+    canvas.height = source.height;
+  }
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) {
+    return canvas;
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(source, 0, 0);
+  return canvas;
 }
 
 function drawWorldBoundary(
@@ -517,6 +542,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
   const { project, updateObject } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
+  const runtimePreviewVersion = useCostumeRuntimePreviewStore((state) => state.version);
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
   const selectedSceneIdRef = useRef(selectedSceneId);
@@ -1363,10 +1389,18 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         const costumes = effectiveProps.costumes || [];
         const currentCostumeIndex = effectiveProps.currentCostumeIndex ?? 0;
         const currentCostume = costumes[currentCostumeIndex];
+        const runtimePreview = selectedScene && currentCostume
+          ? getCostumeRuntimePreview({
+              sceneId: selectedScene.id,
+              objectId: obj.id,
+              costumeId: currentCostume.id,
+            })
+          : null;
         const storedCostumeId = targetContainer.getData('costumeId');
         const storedAssetId = targetContainer.getData('assetId');
         const storedAssetFrame = targetContainer.getData('assetFrame') as CostumeAssetFrame | null | undefined;
         const storedBounds = targetContainer.getData('bounds') as CostumeBounds | null | undefined;
+        const storedRuntimePreviewRevision = targetContainer.getData('runtimePreviewRevision') as number | null | undefined;
         const pendingVisualTarget = getPendingCostumeVisualTarget(targetContainer);
         const resolvedCostumeId = pendingVisualTarget?.costumeId ?? storedCostumeId;
         const resolvedAssetId = pendingVisualTarget?.assetId ?? storedAssetId;
@@ -1388,8 +1422,11 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           !areCostumeBoundsEqual(currentBounds, storedBounds) ||
           !areCostumeAssetFramesEqual(currentAssetFrame, resolvedAssetFrame)
         );
+        const runtimePreviewChanged = !!runtimePreview
+          ? storedRuntimePreviewRevision !== runtimePreview.revision
+          : storedRuntimePreviewRevision !== null && typeof storedRuntimePreviewRevision !== 'undefined';
 
-        if (costumeChanged || costumeLayoutChanged) {
+        if (costumeChanged || costumeLayoutChanged || runtimePreviewChanged) {
           const nextVisualVersion = ((targetContainer.getData('costumeVisualVersion') as number | undefined) ?? 0) + 1;
           targetContainer.setData('costumeVisualVersion', nextVisualVersion);
 
@@ -1401,7 +1438,9 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             assetFrame?: CostumeAssetFrame | null,
           ) => {
             sprite.setName('sprite');
-            cont.add(sprite);
+            if (sprite.parentContainer !== cont) {
+              cont.add(sprite);
+            }
             const hitRect = cont.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
             const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
             const assetOffset = getCostumeAssetCenterOffset(assetFrame);
@@ -1528,8 +1567,75 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
               targetContainer.setData('assetFrame', costume.assetFrame ?? null);
               targetContainer.setData('textureKey', textureKey);
               targetContainer.setData('bounds', costume.bounds);
+              targetContainer.setData('runtimePreviewRevision', null);
               updateWithSprite(sprite, targetContainer, costume.bounds, costume.assetFrame);
             }, textureKey);
+          };
+
+          const commitRuntimePreviewVisual = (costume: Costume) => {
+            if (!runtimePreview) {
+              return;
+            }
+
+            const textureKey = getRuntimeCostumeTextureKey(obj.id, costume.id);
+            const existingTexture = phaserScene.textures.exists(textureKey)
+              ? phaserScene.textures.get(textureKey)
+              : null;
+            const currentTextureSource = existingTexture && 'getSourceImage' in existingTexture
+              ? existingTexture.getSourceImage() as HTMLCanvasElement | null | undefined
+              : null;
+            const ownedTextureCanvas = copyCanvasIntoOwnedTextureCanvas(
+              runtimePreview.sourceCanvas,
+              currentTextureSource instanceof HTMLCanvasElement ? currentTextureSource : null,
+            );
+
+            if (!existingTexture || !(currentTextureSource instanceof HTMLCanvasElement)) {
+              if (phaserScene.textures.exists(textureKey)) {
+                phaserScene.textures.remove(textureKey);
+              }
+              phaserScene.textures.addCanvas(textureKey, ownedTextureCanvas);
+            } else {
+              if ('setSize' in existingTexture && typeof existingTexture.setSize === 'function') {
+                existingTexture.setSize(ownedTextureCanvas.width, ownedTextureCanvas.height);
+              }
+              if ('refresh' in existingTexture && typeof existingTexture.refresh === 'function') {
+                existingTexture.refresh();
+              }
+            }
+
+            const existingSprite = targetContainer.getByName('sprite') as Phaser.GameObjects.Image | null;
+            const existingPlaceholder = targetContainer.getByName('placeholder') as Phaser.GameObjects.Graphics | null;
+            const previousTextureKey = targetContainer.getData('textureKey') as string | undefined;
+            const sprite = existingSprite ?? phaserScene.add.image(0, 0, textureKey);
+            sprite.setName('sprite');
+            sprite.setTexture(textureKey);
+
+            if (existingPlaceholder) {
+              existingPlaceholder.destroy();
+            }
+
+            targetContainer.setData('pendingVisualTarget', undefined);
+            targetContainer.setData('costumeId', costume.id);
+            targetContainer.setData('assetId', costume.assetId);
+            targetContainer.setData('assetFrame', runtimePreview.assetFrame ?? costume.assetFrame ?? null);
+            targetContainer.setData('textureKey', textureKey);
+            targetContainer.setData('bounds', runtimePreview.bounds ?? costume.bounds);
+            targetContainer.setData('runtimePreviewRevision', runtimePreview.revision);
+            updateWithSprite(
+              sprite,
+              targetContainer,
+              runtimePreview.bounds ?? costume.bounds,
+              runtimePreview.assetFrame ?? costume.assetFrame,
+            );
+
+            if (
+              previousTextureKey &&
+              previousTextureKey !== textureKey &&
+              previousTextureKey.startsWith('costume_') &&
+              phaserScene.textures.exists(previousTextureKey)
+            ) {
+              phaserScene.textures.remove(previousTextureKey);
+            }
           };
 
           if (!hasCurrentCostumeAsset || !currentCostume) {
@@ -1539,8 +1645,11 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
               targetContainer.setData('assetFrame', null);
               targetContainer.setData('textureKey', null);
               targetContainer.setData('bounds', null);
+              targetContainer.setData('runtimePreviewRevision', null);
               applyPlaceholderVisual();
             }, null);
+          } else if (runtimePreview) {
+            commitRuntimePreviewVisual(currentCostume);
           } else {
             const textureKey = getCostumeTextureKey(obj.id, currentCostume.id, currentCostume.assetId);
             targetContainer.setData('pendingVisualTarget', {
@@ -1595,7 +1704,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         }
       }
     });
-  }, [selectedScene?.objects, isPlaying, handleObjectDragEnd, project?.components, viewMode]);
+  }, [selectedScene, isPlaying, handleObjectDragEnd, project?.components, runtimePreviewVersion, viewMode]);
 
   // Update background color when it changes (in editor mode only)
   useEffect(() => {
