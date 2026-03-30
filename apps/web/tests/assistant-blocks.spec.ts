@@ -114,7 +114,7 @@ test.describe('assistant block catalog', () => {
     expect(code).toContain('Hello bubble');
   });
 
-  test('move towards generates an instant move using resolved target position', async () => {
+  test('move towards generates an instant move toward x/y coordinates', async () => {
     installToolboxTestGlobals();
     const Blockly = await import('blockly');
     const { javascriptGenerator } = await import('blockly/javascript');
@@ -130,17 +130,20 @@ test.describe('assistant block catalog', () => {
 
     const workspace = new Blockly.Workspace();
     const moveTowards = workspace.newBlock('motion_move_towards');
-    const target = workspace.newBlock('target_mouse');
+    const x = workspace.newBlock('math_number');
+    const y = workspace.newBlock('math_number');
     const steps = workspace.newBlock('math_number');
+    x.setFieldValue('120', 'NUM');
+    y.setFieldValue('-40', 'NUM');
     steps.setFieldValue('25', 'NUM');
-    moveTowards.getInput('TARGET')?.connection?.connect(target.outputConnection);
+    moveTowards.getInput('X')?.connection?.connect(x.outputConnection);
+    moveTowards.getInput('Y')?.connection?.connect(y.outputConnection);
     moveTowards.getInput('STEPS')?.connection?.connect(steps.outputConnection);
 
     const code = javascriptGenerator.workspaceToCode(workspace);
     workspace.dispose();
 
-    expect(code).toContain('runtime.getTargetPosition("MOUSE")');
-    expect(code).toContain('sprite.moveTowards(__targetPosition.x, __targetPosition.y, 25)');
+    expect(code).toContain('sprite.moveTowards(120, (-40), 25);');
   });
 
   test('speech-and-stop blocks generate awaited speech sessions', async () => {

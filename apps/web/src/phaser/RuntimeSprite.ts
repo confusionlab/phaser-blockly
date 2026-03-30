@@ -160,11 +160,15 @@ export class RuntimeSprite {
     this.syncBodyToContainer();
   }
 
-  moveTowards(targetX: number, targetY: number, steps: number): void {
+  moveTowards(userX: number, userY: number, steps: number): void {
     if (this._stopped) return;
 
-    const dx = targetX - this.container.x;
-    const dy = targetY - this.container.y;
+    const targetPosition = this.runtime
+      ? this.runtime.userToPhaser(userX, userY)
+      : { x: userX, y: userY };
+
+    const dx = targetPosition.x - this.container.x;
+    const dy = targetPosition.y - this.container.y;
     const distance = Math.hypot(dx, dy);
     if (distance <= RuntimeSprite.MOVEMENT_EPSILON) {
       return;

@@ -764,9 +764,8 @@ export function getToolboxConfig(): any {
             kind: 'block',
             type: 'motion_move_towards',
             inputs: {
-              TARGET: {
-                block: { kind: 'block', type: 'target_mouse' },
-              },
+              X: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
+              Y: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
               STEPS: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
             }
           },
@@ -1529,18 +1528,24 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['motion_move_towards'] = {
     init: function() {
-      this.appendValueInput('TARGET')
-        .setCheck('Object')
-        .appendField('move towards');
-      this.appendValueInput('STEPS')
+      this.appendDummyInput()
+        .appendField('move towards x:');
+      this.appendValueInput('X')
         .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('y:');
+      this.appendValueInput('Y')
+        .setCheck('Number');
+      this.appendValueInput('STEPS')
+        .setCheck('Number')
+        .appendField('by');
       this.appendDummyInput()
         .appendField('steps');
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#4C97FF');
-      this.setTooltip('Move instantly toward a target without changing facing');
+      this.setTooltip('Move instantly toward an x/y position without changing facing');
     }
   };
 

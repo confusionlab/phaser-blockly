@@ -638,7 +638,7 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
     case 'motion_move_steps':
       return [indentLine(indent, `move ${renderBlocklyExpression(getValue(node, 'STEPS'))} steps`)];
     case 'motion_move_towards':
-      return [indentLine(indent, `move towards ${renderBlocklyExpression(getValue(node, 'TARGET'))} ${renderBlocklyExpression(getValue(node, 'STEPS'))} steps`)];
+      return [indentLine(indent, `move ${renderBlocklyExpression(getValue(node, 'STEPS'))} steps towards x=${renderBlocklyExpression(getValue(node, 'X'))}, y=${renderBlocklyExpression(getValue(node, 'Y'))}`)];
     case 'motion_go_to':
       return [indentLine(indent, `go to x=${renderBlocklyExpression(getValue(node, 'X'))}, y=${renderBlocklyExpression(getValue(node, 'Y'))}`)];
     case 'motion_glide_to':
