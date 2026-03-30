@@ -114,6 +114,35 @@ test.describe('assistant block catalog', () => {
     expect(code).toContain('Hello bubble');
   });
 
+  test('move towards generates an instant move using resolved target position', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    const { javascriptGenerator } = await import('blockly/javascript');
+    await import('../src/components/blockly/toolbox');
+    const { registerCodeGenerators } = await import('../src/phaser/CodeGenerator');
+
+    Blockly.utils.xml.injectDependencies({
+      document: new DOMParser().parseFromString('<xml></xml>', 'text/xml') as unknown as Document,
+      DOMParser,
+      XMLSerializer,
+    });
+    registerCodeGenerators();
+
+    const workspace = new Blockly.Workspace();
+    const moveTowards = workspace.newBlock('motion_move_towards');
+    const target = workspace.newBlock('target_mouse');
+    const steps = workspace.newBlock('math_number');
+    steps.setFieldValue('25', 'NUM');
+    moveTowards.getInput('TARGET')?.connection?.connect(target.outputConnection);
+    moveTowards.getInput('STEPS')?.connection?.connect(steps.outputConnection);
+
+    const code = javascriptGenerator.workspaceToCode(workspace);
+    workspace.dispose();
+
+    expect(code).toContain('runtime.getTargetPosition("MOUSE")');
+    expect(code).toContain('sprite.moveTowards(__targetPosition.x, __targetPosition.y, 25)');
+  });
+
   test('speech-and-stop blocks generate awaited speech sessions', async () => {
     installToolboxTestGlobals();
     const Blockly = await import('blockly');

@@ -762,6 +762,16 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
+            type: 'motion_move_towards',
+            inputs: {
+              TARGET: {
+                block: { kind: 'block', type: 'target_mouse' },
+              },
+              STEPS: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
+            }
+          },
+          {
+            kind: 'block',
             type: 'motion_go_to',
             inputs: {
               X: { shadow: { type: 'math_number', fields: { NUM: '0' } } },
@@ -1514,6 +1524,23 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#4C97FF');
       this.setTooltip('Move forward');
+    }
+  };
+
+  Blockly.Blocks['motion_move_towards'] = {
+    init: function() {
+      this.appendValueInput('TARGET')
+        .setCheck('Object')
+        .appendField('move towards');
+      this.appendValueInput('STEPS')
+        .setCheck('Number');
+      this.appendDummyInput()
+        .appendField('steps');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#4C97FF');
+      this.setTooltip('Move instantly toward a target without changing facing');
     }
   };
 

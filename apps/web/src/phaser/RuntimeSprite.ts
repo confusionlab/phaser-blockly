@@ -160,6 +160,29 @@ export class RuntimeSprite {
     this.syncBodyToContainer();
   }
 
+  moveTowards(targetX: number, targetY: number, steps: number): void {
+    if (this._stopped) return;
+
+    const dx = targetX - this.container.x;
+    const dy = targetY - this.container.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= RuntimeSprite.MOVEMENT_EPSILON) {
+      return;
+    }
+
+    const scale = steps / distance;
+    const nextX = this.container.x + dx * scale;
+    const nextY = this.container.y + dy * scale;
+
+    if (this.runtime) {
+      const clamped = this.runtime.clampPhaserPositionForSprite(this.id, nextX, nextY);
+      this.container.setPosition(clamped.x, clamped.y);
+    } else {
+      this.container.setPosition(nextX, nextY);
+    }
+    this.syncBodyToContainer();
+  }
+
   goTo(userX: number, userY: number): void {
     if (this._stopped) return;
     if (this.runtime) {

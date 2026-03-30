@@ -99,6 +99,17 @@ export function registerCodeGenerators(): void {
     return `sprite.moveSteps(${steps});\n`;
   };
 
+  javascriptGenerator.forBlock['motion_move_towards'] = function(block) {
+    const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
+    const steps = javascriptGenerator.valueToCode(block, 'STEPS', Order.ATOMIC) || '10';
+    return `{
+  const __targetPosition = runtime.getTargetPosition(${target});
+  if (__targetPosition) {
+    sprite.moveTowards(__targetPosition.x, __targetPosition.y, ${steps});
+  }
+}\n`;
+  };
+
   javascriptGenerator.forBlock['motion_go_to'] = function(block) {
     const x = javascriptGenerator.valueToCode(block, 'X', Order.ATOMIC) || '0';
     const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '0';

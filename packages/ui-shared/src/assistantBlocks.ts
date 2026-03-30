@@ -99,6 +99,7 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'motion_limit_world_boundary_off', category: 'Motion', kind: 'statement', summary: 'Allow this object to ignore the world boundary', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'motion_limit_world_boundary_on', category: 'Motion', kind: 'statement', summary: 'Keep this object inside the world boundary', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'motion_move_steps', category: 'Motion', kind: 'statement', summary: 'Move forward', inputNames: ['STEPS'], statementInputNames: [], fieldNames: [] },
+  { type: 'motion_move_towards', category: 'Motion', kind: 'statement', summary: 'Move instantly toward a target by a number of steps', inputNames: ['TARGET', 'STEPS'], statementInputNames: [], fieldNames: [] },
   { type: 'motion_my_x', category: 'Motion', kind: 'reporter', summary: 'Current x position', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'motion_my_y', category: 'Motion', kind: 'reporter', summary: 'Current y position', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'motion_point_direction', category: 'Motion', kind: 'statement', summary: 'Point in a direction (0-360)', inputNames: ['DIRECTION'], statementInputNames: [], fieldNames: [] },
