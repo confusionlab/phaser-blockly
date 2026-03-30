@@ -622,6 +622,21 @@ export function BlocklyEditor() {
     persistWorkspaceToStore(pending.sceneId, pending.objectId, pending.componentId);
   }, [persistWorkspaceToStore]);
 
+  const commitActiveBlocklyEditing = useCallback(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) {
+      return;
+    }
+
+    workspace.hideChaff();
+    flushPendingWorkspacePersist();
+    persistWorkspaceToStore(
+      currentSceneIdRef.current,
+      currentObjectIdRef.current,
+      currentComponentIdRef.current,
+    );
+  }, [flushPendingWorkspacePersist, persistWorkspaceToStore]);
+
   const scheduleWorkspacePersist = useCallback((
     sceneId: string | null,
     objectId: string | null,
@@ -657,10 +672,13 @@ export function BlocklyEditor() {
       undo: () => workspaceRef.current?.undo(false),
       redo: () => workspaceRef.current?.undo(true),
       beforeHistoryUndoRedo: () => flushPendingWorkspacePersist(),
+      prepareForPlay: () => {
+        commitActiveBlocklyEditing();
+      },
     };
     registerCodeUndo(handler);
     return () => registerCodeUndo(null);
-  }, [flushPendingWorkspacePersist, registerCodeUndo]);
+  }, [commitActiveBlocklyEditing, flushPendingWorkspacePersist, registerCodeUndo]);
 
   // Flush pending edits whenever selection target changes so we don't drop in-flight saves.
   useEffect(() => {

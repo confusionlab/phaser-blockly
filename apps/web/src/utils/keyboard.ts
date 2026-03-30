@@ -121,6 +121,7 @@ const TEXT_ENTRY_SELECTOR = [
 ].join(', ');
 
 const BLOCKLY_SELECTOR = '[data-blockly-editor], .blocklyWidgetDiv, .blocklyDropDownDiv';
+const SCENE_OBJECT_SHORTCUT_SURFACE_SELECTOR = '[data-editor-shortcut-surface="scene-objects"]';
 let activeGlobalKeyboardCaptureCount = 0;
 
 type ClosestCapableTarget = EventTarget & {
@@ -129,12 +130,25 @@ type ClosestCapableTarget = EventTarget & {
   isContentEditable?: boolean;
 };
 
+type FocusableElement = HTMLElement & {
+  focus: (options?: FocusOptions) => void;
+};
+
 function asClosestCapableTarget(target: EventTarget | null): ClosestCapableTarget | null {
   if (!target || typeof target !== 'object') {
     return null;
   }
 
   return target as ClosestCapableTarget;
+}
+
+function asFocusableElement(target: EventTarget | null): FocusableElement | null {
+  if (!target || typeof target !== 'object') {
+    return null;
+  }
+
+  const element = target as Partial<FocusableElement>;
+  return typeof element.focus === 'function' ? element as FocusableElement : null;
 }
 
 export function isTextEntryTarget(target: EventTarget | null): boolean {
@@ -158,6 +172,28 @@ export function isTextEntryTarget(target: EventTarget | null): boolean {
 export function isBlocklyShortcutTarget(target: EventTarget | null): boolean {
   const element = asClosestCapableTarget(target);
   return typeof element?.closest === 'function' && !!element.closest(BLOCKLY_SELECTOR);
+}
+
+export function isSceneObjectShortcutSurfaceTarget(target: EventTarget | null): boolean {
+  const element = asClosestCapableTarget(target);
+  return typeof element?.closest === 'function' && !!element.closest(SCENE_OBJECT_SHORTCUT_SURFACE_SELECTOR);
+}
+
+export function focusKeyboardSurface(target: EventTarget | null): void {
+  const element = asFocusableElement(target);
+  if (!element) {
+    return;
+  }
+
+  if (typeof document !== 'undefined' && document.activeElement === element) {
+    return;
+  }
+
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    element.focus();
+  }
 }
 
 export function acquireGlobalKeyboardCapture(): () => void {

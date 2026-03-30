@@ -60,27 +60,20 @@ import {
 } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
-import { acquireGlobalKeyboardCapture } from '@/utils/keyboard';
+import { acquireGlobalKeyboardCapture, focusKeyboardSurface, isTextEntryTarget } from '@/utils/keyboard';
 import {
   addComponentInstanceWithHistory,
+  copySceneObjectsToClipboard,
+  cutSceneObjectsWithHistory,
   deleteComponentWithHistory,
   deleteSceneObjectsWithHistory,
   duplicateSceneObjectsWithHistory,
+  hasSceneObjectClipboardContents,
+  pasteSceneObjectClipboardWithHistory,
 } from '@/lib/editor/objectCommands';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
-
-// Global clipboard for cross-scene object copying
-let objectClipboard: {
-  name: string;
-  costumes: Costume[];
-  sounds: Sound[];
-  blocklyXml: string;
-  physics: PhysicsConfig | null;
-  collider: ColliderConfig | null;
-  localVariables: GameObject['localVariables'];
-} | null = null;
 
 function remapLocalVariablesForInsertion(
   localVariables: GameObject['localVariables'],
@@ -308,6 +301,7 @@ export function SpriteShelf() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
+  const shortcutSurfaceRef = useRef<HTMLDivElement>(null);
   const inlineRenameSessionRef = useRef(0);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
@@ -438,6 +432,17 @@ export function SpriteShelf() {
       setSceneContextMenuPosition({ left: nextLeft, top: nextTop });
     }
   }, [sceneContextMenu, sceneContextMenuPosition]);
+
+  const focusShortcutSurface = useCallback(() => {
+    focusKeyboardSurface(shortcutSurfaceRef.current);
+  }, []);
+
+  const handleShortcutSurfacePointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (isTextEntryTarget(event.target)) {
+      return;
+    }
+    focusShortcutSurface();
+  }, [focusShortcutSurface]);
 
   if (!selectedScene || !selectedSceneId) return null;
 
@@ -801,6 +806,7 @@ export function SpriteShelf() {
 
     e.preventDefault();
     e.stopPropagation();
+    focusShortcutSurface();
     freezeEditorResizeForLayoutTransition();
 
     if (e.shiftKey) {
@@ -1013,7 +1019,7 @@ export function SpriteShelf() {
     duplicateSceneObjectsWithHistory({
       source: 'sprite-shelf:duplicate-object',
       sceneId: selectedSceneId,
-      objectIds: [contextMenu.object.id],
+      objectIds: getContextMenuObjectActionIds(),
       duplicateObject,
       selectObjects,
     });
@@ -1022,60 +1028,39 @@ export function SpriteShelf() {
 
   const handleCopy = () => {
     if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
-    const object = contextMenu.object;
-    const effectiveProps = getEffectiveObjectProps(object, project.components || []);
-    const componentLocalVariables = object.componentId
-      ? (project.components || []).find((component) => component.id === object.componentId)?.localVariables || []
-      : [];
-    const effectiveLocalVariables = componentLocalVariables.length > 0
-      ? componentLocalVariables
-      : (object.localVariables || []);
-
-    objectClipboard = {
-      name: object.name,
-      costumes: JSON.parse(JSON.stringify(effectiveProps.costumes)),
-      sounds: JSON.parse(JSON.stringify(effectiveProps.sounds)),
-      blocklyXml: effectiveProps.blocklyXml,
-      physics: effectiveProps.physics ? JSON.parse(JSON.stringify(effectiveProps.physics)) : null,
-      collider: effectiveProps.collider ? JSON.parse(JSON.stringify(effectiveProps.collider)) : null,
-      localVariables: JSON.parse(JSON.stringify(effectiveLocalVariables)),
-    };
+    copySceneObjectsToClipboard(project, selectedSceneId, getContextMenuObjectActionIds());
     handleCloseContextMenu();
   };
 
   const handlePaste = () => {
-    if (!objectClipboard) return;
-    const clipboard = objectClipboard;
-
-    runInHistoryTransaction('sprite-shelf:paste-object', () => {
-      const newObject = addObject(selectedSceneId, `${clipboard.name} (copy)`);
-      const variableRemap = remapLocalVariablesForInsertion(
-        clipboard.localVariables || [],
-        clipboard.blocklyXml,
-        newObject.id,
-      );
-
-      const newCostumes = clipboard.costumes.map((costume) => ({
-        ...costume,
-        id: crypto.randomUUID(),
-      }));
-      const newSounds = clipboard.sounds.map((sound) => ({
-        ...sound,
-        id: crypto.randomUUID(),
-      }));
-
-      updateObject(selectedSceneId, newObject.id, {
-        costumes: newCostumes,
-        sounds: newSounds,
-        blocklyXml: variableRemap.blocklyXml,
-        physics: clipboard.physics,
-        collider: clipboard.collider,
-        localVariables: variableRemap.localVariables,
-        currentCostumeIndex: 0,
-      });
-
-      selectObject(newObject.id);
+    if (!project) return;
+    pasteSceneObjectClipboardWithHistory({
+      source: 'sprite-shelf:paste-object',
+      project,
+      sceneId: selectedSceneId,
+      addObject,
+      updateObject,
+      selectObjects,
     });
+    handleCloseContextMenu();
+  };
+
+  const handleCut = () => {
+    if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
+
+    cutSceneObjectsWithHistory({
+      source: 'sprite-shelf:cut-object',
+      project,
+      sceneId: selectedSceneId,
+      deleteIds: getContextMenuObjectActionIds(),
+      orderedSceneObjectIds,
+      selectedObjectId,
+      selectedObjectIds: selectedIdsInScene,
+      removeObject,
+      selectObject,
+      selectObjects,
+    });
+
     handleCloseContextMenu();
   };
 
@@ -1808,47 +1793,55 @@ export function SpriteShelf() {
         </div>
       </div>
 
-      <ScrollArea
-        className="flex-1"
-        onDragOver={handleRootDragOver}
-        onDrop={handleRootDrop}
-        onClick={handleEmptyShelfClick}
-        data-testid="sprite-shelf-scroll-area"
+      <div
+        ref={shortcutSurfaceRef}
+        data-editor-shortcut-surface="scene-objects"
+        tabIndex={0}
+        className="flex-1 min-h-0 outline-none"
+        onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
       >
-        <div className="min-h-full">
-          {selectedScene.objects.length === 0 && folders.length === 0 ? (
-            <div className="flex h-full items-center justify-center p-4">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-auto rounded-full px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
-                onClick={handleEmptyShelfCreateObjectClick}
-              >
-                + Create an object
-              </Button>
-            </div>
-          ) : (
-            <div
-              role="tree"
-              aria-label="Scene hierarchy"
-              className="relative min-h-full outline-none"
-              onClick={handleEmptyShelfClick}
-            >
-              {treeItems.map((item) => renderTreeItem(item))}
-              <div
-                className="absolute inset-x-2 -bottom-2 z-10 h-4 rounded"
-                onDragOver={handleRootDropZoneDragOver}
-                onDrop={handleRootDropZoneDrop}
-              >
-                {layerDropTarget?.key === null ? (
-                  <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 border-t-2 rounded border-primary/80" />
-                ) : null}
+        <ScrollArea
+          className="flex-1"
+          onDragOver={handleRootDragOver}
+          onDrop={handleRootDrop}
+          onClick={handleEmptyShelfClick}
+          data-testid="sprite-shelf-scroll-area"
+        >
+          <div className="min-h-full">
+            {selectedScene.objects.length === 0 && folders.length === 0 ? (
+              <div className="flex h-full items-center justify-center p-4">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto rounded-full px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                  onClick={handleEmptyShelfCreateObjectClick}
+                >
+                  + Create an object
+                </Button>
               </div>
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+            ) : (
+              <div
+                role="tree"
+                aria-label="Scene hierarchy"
+                className="relative min-h-full outline-none"
+                onClick={handleEmptyShelfClick}
+              >
+                {treeItems.map((item) => renderTreeItem(item))}
+                <div
+                  className="absolute inset-x-2 -bottom-2 z-10 h-4 rounded"
+                  onDragOver={handleRootDropZoneDragOver}
+                  onDrop={handleRootDropZoneDrop}
+                >
+                  {layerDropTarget?.key === null ? (
+                    <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 border-t-2 rounded border-primary/80" />
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
 
       {contextMenu && (
         <>
@@ -1867,11 +1860,15 @@ export function SpriteShelf() {
                   <Copy className="size-4" />
                   Copy
                 </Button>
+                <Button variant="ghost" size="sm" onClick={handleCut} className="w-full justify-start rounded-none h-8">
+                  <Copy className="size-4" />
+                  Cut
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handlePaste}
-                  disabled={!objectClipboard}
+                  disabled={!hasSceneObjectClipboardContents()}
                   className="w-full justify-start rounded-none h-8"
                 >
                   <Clipboard className="size-4" />

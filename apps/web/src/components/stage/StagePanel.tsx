@@ -127,7 +127,7 @@ export function StagePanel({
   const handleRestartPlaying = () => {
     stopPlaying();
     requestAnimationFrame(() => {
-      tryStartPlaying();
+      void tryStartPlaying();
     });
   };
 
@@ -209,7 +209,9 @@ export function StagePanel({
       <button
         type="button"
         className={cn(stageOverlayClasses.button, stageOverlayClasses.play)}
-        onClick={tryStartPlaying}
+        onClick={() => {
+          void tryStartPlaying();
+        }}
         title="Play"
         aria-label="Play"
       >

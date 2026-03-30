@@ -27,6 +27,7 @@ import {
   getScrollCameraForViewportCenter,
   getViewportCenterFromScrollCamera,
 } from '@/lib/viewportNavigation';
+import { focusKeyboardSurface } from '@/utils/keyboard';
 import {
   getSceneBackgroundBaseColor,
   getTiledBackgroundChunkSize,
@@ -1680,9 +1681,20 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   const canGoToNextInventoryPage = totalInventoryPages > 1 && inventoryPage < totalInventoryPages - 1;
   const editorStageBaseColor = getSceneBackgroundBaseColor(selectedScene?.background);
   const editorStageShellColor = viewMode === 'camera-viewport' ? '#000000' : editorStageBaseColor;
+  const handleShortcutSurfacePointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (isPlaying) {
+      return;
+    }
+    focusKeyboardSurface(event.currentTarget);
+  }, [isPlaying]);
 
   return (
-    <div className="relative w-full h-full">
+    <div
+      className="relative w-full h-full outline-none"
+      data-editor-shortcut-surface={isPlaying ? undefined : 'scene-objects'}
+      tabIndex={isPlaying ? -1 : 0}
+      onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
+    >
       <div
         ref={containerRef}
         data-testid={isPlaying ? 'play-phaser-host' : 'stage-phaser-host'}

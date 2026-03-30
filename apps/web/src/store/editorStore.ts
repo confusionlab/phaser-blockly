@@ -35,6 +35,7 @@ export type UndoRedoHandler = {
   canRedo?: () => boolean;
   beforeHistoryUndoRedo?: () => void;
   beforeSelectionChange?: (context: { source: string; recordHistory: boolean }) => void;
+  prepareForPlay?: () => void | Promise<void>;
   deleteSelection?: () => boolean;
   duplicateSelection?: () => boolean | Promise<boolean>;
   isTextEditing?: () => boolean;
@@ -211,6 +212,7 @@ interface EditorStore {
   registerCodeUndo: (handler: UndoRedoHandler | null) => void;
   registerBackgroundUndo: (handler: UndoRedoHandler | null) => void;
   registerBackgroundShortcutHandler: (handler: BackgroundEditorShortcutHandler | null) => void;
+  prepareForPlay: () => Promise<void>;
 
   // Global undo/redo (routes to active editor)
   undo: () => void;
@@ -228,6 +230,16 @@ function getBeforeSelectionChangeHandler(state: EditorStore): UndoRedoHandler['b
     return state.codeUndoHandler?.beforeSelectionChange;
   }
   return undefined;
+}
+
+function getPrepareForPlayHandlers(state: EditorStore): Array<NonNullable<UndoRedoHandler['prepareForPlay']>> {
+  const handlers = [
+    state.backgroundUndoHandler?.prepareForPlay,
+    state.costumeUndoHandler?.prepareForPlay,
+    state.codeUndoHandler?.prepareForPlay,
+  ].filter((handler): handler is NonNullable<UndoRedoHandler['prepareForPlay']> => typeof handler === 'function');
+
+  return Array.from(new Set(handlers));
 }
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
@@ -912,6 +924,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   registerBackgroundShortcutHandler: (handler) => {
     set({ backgroundShortcutHandler: handler });
+  },
+
+  prepareForPlay: async () => {
+    const handlers = getPrepareForPlayHandlers(useEditorStore.getState());
+    for (const handler of handlers) {
+      await handler();
+    }
   },
 
   undo: () => {

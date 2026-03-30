@@ -77,6 +77,7 @@ export interface CostumeCanvasHandle {
   loadFromDataURL: (dataUrl: string, sessionKey?: string | null) => Promise<void>;
   loadDocument: (sessionKey: string, document: CostumeDocument) => Promise<void>;
   flushPendingBitmapCommits: () => Promise<void>;
+  flushPendingEdits: () => Promise<void>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   hasUnsavedChanges: (sessionKey?: string | null) => boolean;
   markPersisted: (sessionKey?: string | null, state?: ActiveLayerCanvasState | null) => void;
@@ -883,6 +884,75 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     syncSelectionState,
   });
 
+  const flushPendingEdits = useCallback(async () => {
+    const fabricCanvas = fabricCanvasRef.current;
+
+    if (isTextEditing()) {
+      const activeObject = fabricCanvas?.getActiveObject() as { exitEditing?: () => void } | null | undefined;
+      activeObject?.exitEditing?.();
+      fabricCanvas?.requestRenderAll();
+    }
+
+    if (penDraftRef.current) {
+      finalizePenDraft();
+    } else if (penAnchorPlacementSessionRef.current) {
+      commitCurrentPenPlacement();
+      fabricCanvas?.requestRenderAll();
+    }
+
+    if (pointSelectionTransformSessionRef.current) {
+      const shouldSave = pointSelectionTransformSessionRef.current.hasChanged;
+      pointSelectionTransformSessionRef.current = null;
+      if (shouldSave) {
+        saveHistory();
+      }
+    }
+
+    if (pointSelectionMarqueeSessionRef.current && fabricCanvas) {
+      const pointSelectionMarqueeSession = pointSelectionMarqueeSessionRef.current;
+      pointSelectionMarqueeSessionRef.current = null;
+      applyPointSelectionMarqueeSession(pointSelectionMarqueeSession);
+      if (
+        vectorPointEditingTargetRef.current === pointSelectionMarqueeSession.path &&
+        fabricCanvas.getObjects().includes(pointSelectionMarqueeSession.path)
+      ) {
+        fabricCanvas.setActiveObject(pointSelectionMarqueeSession.path);
+      }
+      fabricCanvas.requestRenderAll();
+    }
+
+    if (insertedPathAnchorDragSessionRef.current) {
+      insertedPathAnchorDragSessionRef.current = null;
+      saveHistory();
+    }
+
+    if (shapeDraftRef.current) {
+      const completedShapeDraft = shapeDraftRef.current;
+      shapeDraftRef.current = null;
+      if (editorModeRef.current === 'bitmap') {
+        await flattenBitmapLayer(completedShapeDraft.object);
+      } else {
+        saveHistory();
+      }
+      configureCanvasForTool();
+    }
+
+    if (bitmapFloatingObjectRef.current) {
+      await commitBitmapSelection();
+    }
+
+    await bitmapRasterCommitQueueRef.current.catch(() => undefined);
+  }, [
+    applyPointSelectionMarqueeSession,
+    commitBitmapSelection,
+    commitCurrentPenPlacement,
+    configureCanvasForTool,
+    finalizePenDraft,
+    flattenBitmapLayer,
+    isTextEditing,
+    saveHistory,
+  ]);
+
   useEffect(() => {
     if (editorModeState === 'vector' && activeTool === 'pen') {
       return;
@@ -924,6 +994,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     duplicateSelection,
     exportCostumeState,
     flipSelection,
+    flushPendingEdits,
     getComposedCanvasElement,
     isTextEditing,
     lastCommittedSnapshotRef,

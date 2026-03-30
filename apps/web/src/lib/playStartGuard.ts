@@ -2,12 +2,20 @@ import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import { validateProjectBeforePlay } from '@/lib/playValidation';
 
-export function tryStartPlaying(): boolean {
+export async function tryStartPlaying(): Promise<boolean> {
+  const editorState = useEditorStore.getState();
+
+  try {
+    await editorState.prepareForPlay();
+  } catch (error) {
+    console.error('Failed to prepare editor state before playing.', error);
+    return false;
+  }
+
   const project = useProjectStore.getState().project;
   if (!project) return false;
 
   const issues = validateProjectBeforePlay(project);
-  const editorState = useEditorStore.getState();
 
   if (issues.length > 0) {
     editorState.setPlayValidationIssues(issues);

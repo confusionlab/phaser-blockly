@@ -14,6 +14,7 @@ interface UseCostumeCanvasImperativeHandleOptions {
   duplicateSelection: () => Promise<boolean>;
   exportCostumeState: (sessionKey?: string | null) => CostumeCanvasExportState | null;
   flipSelection: (axis: any) => boolean;
+  flushPendingEdits: () => Promise<void>;
   getComposedCanvasElement: () => HTMLCanvasElement;
   isTextEditing: () => boolean;
   lastCommittedSnapshotRef: MutableRefObject<any>;
@@ -46,6 +47,7 @@ export function useCostumeCanvasImperativeHandle({
   duplicateSelection,
   exportCostumeState,
   flipSelection,
+  flushPendingEdits,
   getComposedCanvasElement,
   isTextEditing,
   lastCommittedSnapshotRef,
@@ -92,6 +94,8 @@ export function useCostumeCanvasImperativeHandle({
     flushPendingBitmapCommits: async () => {
       await bitmapRasterCommitQueueRef.current.catch(() => undefined);
     },
+
+    flushPendingEdits,
 
     exportCostumeState,
 
@@ -161,6 +165,7 @@ export function useCostumeCanvasImperativeHandle({
     duplicateSelection,
     exportCostumeState,
     flipSelection,
+    flushPendingEdits,
     getComposedCanvasElement,
     isTextEditing,
     lastCommittedSnapshotRef,

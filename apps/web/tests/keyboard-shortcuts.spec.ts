@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 test.describe('Keyboard shortcuts', () => {
@@ -51,6 +51,49 @@ test.describe('Keyboard shortcuts', () => {
 
     await expect(page.getByText(/^Object 1$/)).toBeVisible();
     await expect(page.getByText(/^Renamed Object$/)).toHaveCount(0);
+  });
+
+  test('the stage keyboard surface restores scene-object shortcuts', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Focus Shortcut ${Date.now()}`,
+      addObject: true,
+    });
+
+    const projectNameInput = page.getByLabel('Project name');
+    await expect(projectNameInput).toBeVisible();
+    await projectNameInput.click();
+
+    const stageShortcutSurface = page.locator('[data-editor-panel="stage"] [data-editor-shortcut-surface="scene-objects"]').first();
+    await expect(stageShortcutSurface).toBeVisible();
+    await stageShortcutSurface.focus();
+    await page.keyboard.press('ControlOrMeta+D');
+
+    await expect(page.getByText(/^Object 1 Copy$/)).toBeVisible();
+  });
+
+  test('clicking the object shelf restores copy, paste, and cut shortcuts', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Shelf Focus Shortcut ${Date.now()}`,
+      addObject: true,
+    });
+
+    const projectNameInput = page.getByLabel('Project name');
+    await expect(projectNameInput).toBeVisible();
+    await projectNameInput.click();
+
+    const objectRow = page.getByText(/^Object 1$/).first();
+    await expect(objectRow).toBeVisible();
+    await objectRow.click();
+
+    await page.keyboard.press('ControlOrMeta+C');
+    await page.keyboard.press('ControlOrMeta+V');
+    await expect(page.getByText(/^Object 1 Copy$/)).toBeVisible();
+
+    await page.keyboard.press('ControlOrMeta+X');
+    await expect(page.getByText(/^Object 1 Copy$/)).toHaveCount(0);
+
+    await page.keyboard.press('ControlOrMeta+V');
+    await expect(page.getByText(/^Object 1 Copy$/)).toBeVisible();
   });
 
   test('project name escape cancels without saving blur side effects', async ({ page }) => {

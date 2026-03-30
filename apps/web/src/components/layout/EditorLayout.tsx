@@ -39,8 +39,14 @@ import { assistantFeatureFlags } from '@/lib/assistant/config';
 import { shouldTreatOpenedProjectAsCloudSaved } from '@/lib/cloudProjectState';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
-import { isBlocklyShortcutTarget, isTextEntryTarget } from '@/utils/keyboard';
-import { deleteSceneObjectsWithHistory, duplicateSceneObjectsWithHistory } from '@/lib/editor/objectCommands';
+import { isBlocklyShortcutTarget, isSceneObjectShortcutSurfaceTarget, isTextEntryTarget } from '@/utils/keyboard';
+import {
+  copySceneObjectsToClipboard,
+  cutSceneObjectsWithHistory,
+  deleteSceneObjectsWithHistory,
+  duplicateSceneObjectsWithHistory,
+  pasteSceneObjectClipboardWithHistory,
+} from '@/lib/editor/objectCommands';
 
 type HoveredPanel = 'code' | 'stage' | null;
 type FullscreenPanel = 'code' | null;
@@ -147,8 +153,10 @@ export function EditorLayout() {
     openProject,
     acknowledgeProjectSaved,
     closeProject,
+    addObject,
     duplicateObject,
     removeObject,
+    updateObject,
     updateProjectName,
   } = useProjectStore();
   const {
@@ -872,8 +880,14 @@ export function EditorLayout() {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
+    const activeElement = typeof document !== 'undefined' ? document.activeElement : null;
     const isTyping = isTextEntryTarget(e.target);
     const isInBlocklyArea = isBlocklyShortcutTarget(e.target);
+    const isSceneObjectShortcutContext = isSceneObjectShortcutSurfaceTarget(e.target)
+      || isSceneObjectShortcutSurfaceTarget(activeElement);
+    const selectedSceneObjectIds = selectedObjectIds.length > 0
+      ? selectedObjectIds
+      : (selectedObjectId ? [selectedObjectId] : []);
 
     if (e.defaultPrevented || e.isComposing) {
       return;
@@ -1004,7 +1018,7 @@ export function EditorLayout() {
         return;
       }
 
-      if (activeObjectTab === 'costumes') {
+      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
         e.preventDefault();
         void Promise.resolve(costumeUndoHandler?.duplicateSelection?.()).catch((error) => {
           console.error('Failed to duplicate costume selection:', error);
@@ -1012,15 +1026,11 @@ export function EditorLayout() {
         return;
       }
 
-      if (isInBlocklyArea || !selectedSceneId) {
+      if (!isSceneObjectShortcutContext || isInBlocklyArea || !selectedSceneId) {
         return;
       }
 
-      const idsToDuplicate = selectedObjectIds.length > 0
-        ? selectedObjectIds
-        : (selectedObjectId ? [selectedObjectId] : []);
-
-      if (idsToDuplicate.length === 0) {
+      if (selectedSceneObjectIds.length === 0) {
         return;
       }
 
@@ -1029,8 +1039,75 @@ export function EditorLayout() {
       duplicateSceneObjectsWithHistory({
         source: 'shortcut:duplicate',
         sceneId: selectedSceneId,
-        objectIds: idsToDuplicate,
+        objectIds: selectedSceneObjectIds,
         duplicateObject,
+        selectObjects,
+      });
+      return;
+    }
+
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c' && !e.altKey) {
+      if (isTyping) {
+        return;
+      }
+
+      if (!isSceneObjectShortcutContext || isInBlocklyArea || !project || !selectedSceneId || selectedSceneObjectIds.length === 0) {
+        return;
+      }
+
+      e.preventDefault();
+      copySceneObjectsToClipboard(project, selectedSceneId, selectedSceneObjectIds);
+      return;
+    }
+
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v' && !e.altKey) {
+      if (isTyping) {
+        return;
+      }
+
+      if (!isSceneObjectShortcutContext || isInBlocklyArea || !project || !selectedSceneId) {
+        return;
+      }
+
+      const pastedIds = pasteSceneObjectClipboardWithHistory({
+        source: 'shortcut:paste',
+        project,
+        sceneId: selectedSceneId,
+        addObject,
+        updateObject,
+        selectObjects,
+      });
+      if (pastedIds.length > 0) {
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'x' && !e.altKey) {
+      if (isTyping) {
+        return;
+      }
+
+      if (!isSceneObjectShortcutContext || isInBlocklyArea || !project || !selectedSceneId || selectedSceneObjectIds.length === 0) {
+        return;
+      }
+
+      e.preventDefault();
+      const selectedScene = project.scenes.find((scene) => scene.id === selectedSceneId);
+      const orderedSceneObjectIds = selectedScene
+        ? getSceneObjectsInLayerOrder(selectedScene).map((object) => object.id)
+        : [];
+
+      cutSceneObjectsWithHistory({
+        source: 'shortcut:cut',
+        project,
+        sceneId: selectedSceneId,
+        deleteIds: selectedSceneObjectIds,
+        orderedSceneObjectIds,
+        selectedObjectId,
+        selectedObjectIds: selectedSceneObjectIds,
+        removeObject,
+        selectObject: (objectId) => selectObjects(objectId ? [objectId] : [], objectId),
         selectObjects,
       });
       return;
@@ -1038,21 +1115,17 @@ export function EditorLayout() {
 
     // Delete selected object(s): Delete/Backspace (disabled in Blockly area)
     if ((e.key === 'Delete' || e.key === 'Backspace') && !isTyping && !isInBlocklyArea) {
-      if (activeObjectTab === 'costumes') {
+      if (!isSceneObjectShortcutContext && activeObjectTab === 'costumes') {
         e.preventDefault();
         costumeUndoHandler?.deleteSelection?.();
         return;
       }
 
-      if (!selectedSceneId) {
+      if (!isSceneObjectShortcutContext || !selectedSceneId) {
         return;
       }
 
-      const idsToDelete = selectedObjectIds.length > 0
-        ? selectedObjectIds
-        : (selectedObjectId ? [selectedObjectId] : []);
-
-      if (idsToDelete.length === 0) {
+      if (selectedSceneObjectIds.length === 0) {
         return;
       }
 
@@ -1065,10 +1138,10 @@ export function EditorLayout() {
       deleteSceneObjectsWithHistory({
         source: 'shortcut:delete',
         sceneId: selectedSceneId,
-        deleteIds: idsToDelete,
+        deleteIds: selectedSceneObjectIds,
         orderedSceneObjectIds,
         selectedObjectId,
-        selectedObjectIds: idsToDelete.length > 0 ? idsToDelete : [],
+        selectedObjectIds: selectedSceneObjectIds,
         removeObject,
         selectObject: (objectId) => selectObjects(objectId ? [objectId] : [], objectId),
         selectObjects,
@@ -1088,7 +1161,7 @@ export function EditorLayout() {
       (fullscreenPanel === null || fullscreenPanel === 'code')
     ) {
       e.preventDefault();
-      tryStartPlaying();
+      void tryStartPlaying();
       return;
     }
   }, [
@@ -1102,8 +1175,10 @@ export function EditorLayout() {
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
+    addObject,
     duplicateObject,
     removeObject,
+    updateObject,
     selectObjects,
     getPanelFromElement,
     activeObjectTab,

@@ -2,9 +2,13 @@ import { expect, test } from '@playwright/test';
 import type { AssistantChangeSet } from '../../../packages/ui-shared/src/assistant';
 import {
   addComponentInstanceWithHistory,
+  clearSceneObjectClipboard,
+  copySceneObjectsToClipboard,
+  cutSceneObjectsWithHistory,
   deleteComponentWithHistory,
   deleteSceneObjectsWithHistory,
   duplicateSceneObjectsWithHistory,
+  pasteSceneObjectClipboardWithHistory,
 } from '../src/lib/editor/objectCommands';
 import { createAssistantProjectSnapshot } from '../src/lib/assistant/projectState';
 import { createDefaultGameObject, createDefaultProject, type ComponentDefinition } from '../src/types';
@@ -177,6 +181,7 @@ test.afterEach(async () => {
     selectedObjectIds: [],
     selectedComponentId: null,
   });
+  clearSceneObjectClipboard();
 });
 
 test.describe('Object delete undo history', () => {
@@ -306,6 +311,107 @@ test.describe('Object delete undo history', () => {
 
     expect(getSceneObjectIds(useProjectStore, fixture.sceneId)).toEqual([fixture.heroId, fixture.enemyId]);
     expect(useEditorStore.getState().selectedObjectId).toBe(fixture.heroId);
+  });
+
+  test('shared object clipboard copy/paste preserves object state and remaps local variables', async () => {
+    const { useProjectStore, useEditorStore } = await loadStores();
+    const fixture = buildProjectFixture();
+    const heroVariableId = 'var_hero_health';
+    fixture.project.scenes[0]!.objects[0] = {
+      ...fixture.project.scenes[0]!.objects[0]!,
+      x: 120,
+      y: -40,
+      localVariables: [
+        {
+          id: heroVariableId,
+          name: 'health',
+          type: 'integer',
+          defaultValue: 100,
+          scope: 'local',
+          objectId: fixture.heroId,
+        },
+      ],
+      blocklyXml: `<xml><block type="typed_variable_get"><field name="VAR">${heroVariableId}</field></block></xml>`,
+    };
+
+    useProjectStore.getState().openProject(fixture.project);
+    useEditorStore.getState().selectScene(fixture.sceneId, { recordHistory: false });
+    useEditorStore.getState().selectObject(fixture.heroId, { recordHistory: false });
+
+    const copied = copySceneObjectsToClipboard(useProjectStore.getState().project!, fixture.sceneId, [fixture.heroId]);
+    expect(copied).toBe(true);
+
+    const pastedIds = pasteSceneObjectClipboardWithHistory({
+      source: 'test:paste-object',
+      project: useProjectStore.getState().project!,
+      sceneId: fixture.sceneId,
+      addObject: useProjectStore.getState().addObject,
+      updateObject: useProjectStore.getState().updateObject,
+      selectObjects: useEditorStore.getState().selectObjects,
+    });
+
+    expect(pastedIds).toHaveLength(1);
+
+    const pastedObject = useProjectStore
+      .getState()
+      .project?.scenes
+      .find((scene) => scene.id === fixture.sceneId)
+      ?.objects.find((object) => object.id === pastedIds[0]);
+
+    expect(pastedObject).toBeTruthy();
+    expect(pastedObject?.name).toBe('Hero Copy');
+    expect(pastedObject?.x).toBe(170);
+    expect(pastedObject?.y).toBe(10);
+    expect(pastedObject?.localVariables).toHaveLength(1);
+    expect(pastedObject?.localVariables[0]?.id).not.toBe(heroVariableId);
+    expect(pastedObject?.blocklyXml).toContain(pastedObject?.localVariables[0]?.id ?? '');
+    expect(useEditorStore.getState().selectedObjectIds).toEqual(pastedIds);
+  });
+
+  test('shared object clipboard cut/paste removes and restores the object in one flow', async () => {
+    const { useProjectStore, useEditorStore } = await loadStores();
+    const fixture = buildProjectFixture();
+
+    useProjectStore.getState().openProject(fixture.project);
+    useEditorStore.getState().selectScene(fixture.sceneId, { recordHistory: false });
+    useEditorStore.getState().selectObject(fixture.heroId, { recordHistory: false });
+
+    cutSceneObjectsWithHistory({
+      source: 'test:cut-object',
+      project: useProjectStore.getState().project!,
+      sceneId: fixture.sceneId,
+      deleteIds: [fixture.heroId],
+      orderedSceneObjectIds: [fixture.heroId, fixture.enemyId],
+      selectedObjectId: fixture.heroId,
+      selectedObjectIds: [fixture.heroId],
+      removeObject: useProjectStore.getState().removeObject,
+      selectObject: useEditorStore.getState().selectObject,
+      selectObjects: useEditorStore.getState().selectObjects,
+    });
+
+    expect(getSceneObjectIds(useProjectStore, fixture.sceneId)).toEqual([fixture.enemyId]);
+
+    const pastedIds = pasteSceneObjectClipboardWithHistory({
+      source: 'test:paste-cut-object',
+      project: useProjectStore.getState().project!,
+      sceneId: fixture.sceneId,
+      addObject: useProjectStore.getState().addObject,
+      updateObject: useProjectStore.getState().updateObject,
+      selectObjects: useEditorStore.getState().selectObjects,
+    });
+
+    expect(pastedIds).toHaveLength(1);
+
+    const restoredObject = useProjectStore
+      .getState()
+      .project?.scenes
+      .find((scene) => scene.id === fixture.sceneId)
+      ?.objects.find((object) => object.id === pastedIds[0]);
+
+    expect(restoredObject?.name).toBe('Hero');
+    expect(restoredObject?.x).toBe(0);
+    expect(restoredObject?.y).toBe(0);
+    expect(useEditorStore.getState().selectedObjectIds).toEqual(pastedIds);
   });
 
   test('adding a component instance is one undoable command', async () => {
