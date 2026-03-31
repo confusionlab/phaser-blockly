@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as Blockly from 'blockly';
-import { getToolboxConfig } from './toolbox';
+import { POCHA_BLOCKLY_THEME } from './blocklyTheme';
+import {
+  getToolboxConfig,
+  type ToolboxBlockConfig,
+  type ToolboxShadowConfig,
+} from './toolbox';
 
 // Item types: 'block' for Blockly blocks, 'command' for actions
 type ItemType = 'block' | 'command';
@@ -16,31 +21,6 @@ interface SearchItem {
   categoryColor: string;
   toolboxBlock?: ToolboxBlockConfig;
 }
-
-type ToolboxBlockInputConfig = {
-  block?: ToolboxBlockConfig;
-  shadow?: ToolboxShadowConfig;
-};
-
-type ToolboxShadowConfig = {
-  type: string;
-  fields?: Record<string, string>;
-};
-
-type ToolboxBlockConfig = {
-  kind: 'block';
-  type: string;
-  inputs?: Record<string, ToolboxBlockInputConfig>;
-  fields?: Record<string, string>;
-  extraState?: Record<string, unknown>;
-};
-
-type ToolboxCategoryConfig = {
-  kind: 'category';
-  name: string;
-  colour: string;
-  contents: Array<{ kind: string } & Record<string, unknown>>;
-};
 
 const COMMAND_ITEMS: SearchItem[] = [
   { id: 'cmd_new_variable', type: 'command', commandId: 'NEW_VARIABLE', label: 'New Variable', category: 'Commands', categoryColor: '#666666' },
@@ -107,8 +87,8 @@ function getSearchLabel(config: ToolboxBlockConfig): string {
 }
 
 function buildSearchItemsFromToolbox(): SearchItem[] {
-  const toolbox = getToolboxConfig();
-  const categories = (toolbox.contents || []) as ToolboxCategoryConfig[];
+  const toolbox = getToolboxConfig({ includeAdvancedBlocks: true });
+  const categories = toolbox.contents || [];
   const items: SearchItem[] = [...COMMAND_ITEMS];
 
   for (const category of categories) {
@@ -228,6 +208,7 @@ function BlockPreview({ blockType, scale = 0.6 }: { blockType: string; scale?: n
     const workspace = Blockly.inject(containerRef.current, {
       readOnly: true,
       renderer: 'zelos',
+      theme: POCHA_BLOCKLY_THEME,
       scrollbars: false,
       zoom: { controls: false, wheel: false, startScale: scale },
       move: { scrollbars: false, drag: false, wheel: false },

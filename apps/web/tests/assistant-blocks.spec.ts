@@ -46,6 +46,20 @@ test.describe('assistant block catalog', () => {
     expect(catalogTypes).toEqual(toolboxTypes);
   });
 
+  test('toolbox visibility filtering hides advanced flyout blocks without removing supported block types', async () => {
+    installToolboxTestGlobals();
+    const { getToolboxConfig, getToolboxRegisteredBlockTypes } = await import('../src/components/blockly/toolbox');
+
+    const allToolboxTypes = getToolboxRegisteredBlockTypes();
+    const basicToolboxTypes = getToolboxRegisteredBlockTypes({ includeAdvancedBlocks: false });
+    const basicToolbox = getToolboxConfig({ includeAdvancedBlocks: false });
+    const debugCategory = basicToolbox.contents.find((category) => category.name === 'Debug');
+
+    expect(allToolboxTypes).toContain('debug_console_log');
+    expect(basicToolboxTypes).not.toContain('debug_console_log');
+    expect(debugCategory).toBeUndefined();
+  });
+
   test('searches blocks by behavior keywords without full toolbox dump in the tool result', () => {
     const results = searchAssistantBlocks({ query: 'size' }).map((entry) => entry.type);
 
@@ -272,10 +286,30 @@ test.describe('assistant block catalog', () => {
     });
 
     expect(xml).toContain('<block type="event_game_start">');
-    expect(xml).toContain('<statement name="NEXT">');
+    expect(xml).toContain('<next>');
     expect(xml).toContain('<block type="looks_change_axis_scale">');
     expect(xml).toContain('<field name="AXIS">VERTICAL</field>');
     expect(xml).toContain('<block type="math_number">');
+  });
+
+  test('uses next-connections for one-shot event hats and keeps forever as a C-block', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    await import('../src/components/blockly/toolbox');
+
+    const workspace = new Blockly.Workspace();
+    const onStart = workspace.newBlock('event_game_start');
+    const forever = workspace.newBlock('event_forever');
+
+    expect(onStart.previousConnection).toBeNull();
+    expect(onStart.nextConnection).not.toBeNull();
+    expect(onStart.getInput('NEXT')).toBeNull();
+
+    expect(forever.previousConnection).not.toBeNull();
+    expect(forever.nextConnection).toBeNull();
+    expect(forever.getInput('DO')).not.toBeNull();
+
+    workspace.dispose();
   });
 
   test('rejects block programs with unsupported connection names', () => {

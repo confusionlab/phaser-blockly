@@ -149,12 +149,12 @@ function ExplorerLoadingRows() {
           key={`loading-row:${index}`}
           className="flex items-center gap-4 border-b border-border/70 px-4 py-3"
         >
-          <div className="h-16 w-28 shrink-0 animate-pulse rounded-2xl bg-slate-200/80" />
+          <div className="h-16 w-28 shrink-0 animate-pulse rounded-2xl bg-muted/80 dark:bg-muted/60" />
           <div className="min-w-0 flex-1 space-y-2">
-            <div className="h-4 w-40 animate-pulse rounded-full bg-slate-200/80" />
-            <div className="h-3 w-24 animate-pulse rounded-full bg-slate-100" />
+            <div className="h-4 w-40 animate-pulse rounded-full bg-muted/80 dark:bg-muted/60" />
+            <div className="h-3 w-24 animate-pulse rounded-full bg-muted/55 dark:bg-muted/40" />
           </div>
-          <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-100" />
+          <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-muted/55 dark:bg-muted/40" />
         </div>
       ))}
     </div>
@@ -738,7 +738,7 @@ export function ProjectExplorerPage({
   }), [dropFolderId, handleDropToFolder, isExplorerReadOnly]);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.12),transparent_32%),radial-gradient(circle_at_top_right,rgba(244,114,182,0.10),transparent_28%),linear-gradient(180deg,#f8fafc_0%,#f3f4f6_100%)]">
+    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background text-foreground">
       <input
         ref={fileInputRef}
         accept=".json,.zip"
@@ -757,18 +757,20 @@ export function ProjectExplorerPage({
         }}
       />
 
-      <main className="mx-auto flex h-full w-full max-w-[1440px] min-h-0 flex-col px-6 py-8 lg:px-10">
+      <main className="relative z-10 mx-auto flex h-full w-full max-w-[1440px] min-h-0 flex-col px-6 py-8 lg:px-10">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
           <div className="max-w-4xl">
             {currentFolder && currentFolder.id !== PROJECT_EXPLORER_ROOT_FOLDER_ID ? (
-              <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+              <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                 {breadcrumbFolders.map((folder, index) => (
                   <div className="flex items-center gap-2" key={folder.id}>
                     <button
                       type="button"
                       className={cn(
                         'rounded-full px-2 py-1 transition-colors',
-                        folder.id === currentFolderSafeId ? 'bg-slate-900 text-white' : 'hover:bg-white/60 hover:text-slate-900',
+                        folder.id === currentFolderSafeId
+                          ? 'bg-foreground text-background shadow-sm'
+                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/8',
                         dropFolderId === folder.id && 'bg-primary/15 text-primary',
                       )}
                       onClick={() => setCurrentFolderId(folder.id)}
@@ -787,8 +789,8 @@ export function ProjectExplorerPage({
                 {isEditingCurrentFolder ? (
                   <InlineRenameField
                     autoFocus
-                    className="text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl"
-                    inputClassName="text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl"
+                    className="text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl"
+                    inputClassName="text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl"
                     onBlur={() => void commitCurrentFolderRename()}
                     onChange={(event) => setCurrentFolderNameDraft(event.target.value)}
                     onKeyDown={(event) => {
@@ -806,7 +808,7 @@ export function ProjectExplorerPage({
                   />
                 ) : (
                   <button
-                    className="text-left text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl"
+                    className="text-left text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl"
                     disabled={isExplorerReadOnly}
                     type="button"
                     onClick={() => {
@@ -822,13 +824,13 @@ export function ProjectExplorerPage({
                 )}
               </div>
             ) : (
-              <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">
+              <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl">
                 Home
               </h1>
             )}
           </div>
 
-          <div className="flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-2 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur">
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/78 px-3 py-2 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/72 dark:shadow-[0_28px_70px_-42px_rgba(0,0,0,0.82)]">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="icon-sm" variant="ghost" className="rounded-full" disabled={isExplorerReadOnly}>
@@ -910,10 +912,10 @@ export function ProjectExplorerPage({
           </div>
         </div>
 
-        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/75 bg-white/80 shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur">
+        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card/80 shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/74 dark:shadow-[0_34px_100px_-52px_rgba(0,0,0,0.9)]">
           <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
             <div className="flex items-center gap-3">
-              <div className="text-sm font-medium text-slate-700">
+              <div className="text-sm font-medium text-foreground/80">
                 {isInitialLoading
                   ? 'Loading projects...'
                   : visibleItems.length === 0
@@ -922,13 +924,13 @@ export function ProjectExplorerPage({
               </div>
               <div className="flex h-7 w-[220px] items-center">
                 {authBootstrapState === 'reconnecting' ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-300/45 bg-sky-100/75 px-3 py-1.5 text-xs font-medium text-sky-950 shadow-sm backdrop-blur dark:border-sky-400/18 dark:bg-sky-400/12 dark:text-sky-100">
                     <Loader2 className="size-3.5 animate-spin text-sky-600" />
                     Reconnecting to cloud...
                   </div>
                 ) : isRefreshing ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
-                    <Loader2 className="size-3.5 animate-spin text-slate-500" />
+                  <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-1.5 text-xs font-medium text-foreground/70 shadow-sm backdrop-blur dark:bg-card/72">
+                    <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
                     Refreshing workspace...
                   </div>
                 ) : null}
@@ -951,12 +953,12 @@ export function ProjectExplorerPage({
             {isInitialLoading ? (
               <ExplorerLoadingRows />
             ) : visibleItems.length === 0 ? (
-              <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-4 px-6 text-center text-slate-500">
-                <div className="flex size-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+              <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground">
+                <div className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground">
                   <FolderOpen className="size-8" />
                 </div>
                 <div>
-                  <div className="text-lg font-semibold text-slate-700">Nothing here yet</div>
+                  <div className="text-lg font-semibold text-foreground">Nothing here yet</div>
                   <div className="mt-2 text-sm leading-6">
                     Create a new project, import one, or drop projects into this folder from somewhere else in the explorer.
                   </div>
@@ -1013,11 +1015,11 @@ export function ProjectExplorerPage({
                       {selectionMode ? <SelectionCheckbox checked={isSelected} /> : null}
 
                       {item.kind === 'folder' ? (
-                        <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-100 text-slate-600">
+                        <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-muted-foreground">
                           <FolderOpen className="size-6" />
                         </div>
                       ) : (
-                        <div className="relative flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
+                        <div className="relative flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
                           {item.thumbnailUrl ? (
                             <img
                               alt={`${item.label} thumbnail`}
@@ -1025,9 +1027,9 @@ export function ProjectExplorerPage({
                               src={item.thumbnailUrl}
                             />
                           ) : item.staleThumbnail || item.thumbnailAssetMissing ? (
-                            <Loader2 className="size-5 animate-spin text-slate-400" />
+                            <Loader2 className="size-5 animate-spin text-muted-foreground" />
                           ) : (
-                            <ImageOff className="size-5 text-slate-400" />
+                            <ImageOff className="size-5 text-muted-foreground" />
                           )}
                         </div>
                       )}
@@ -1054,9 +1056,9 @@ export function ProjectExplorerPage({
                             value={editingValue}
                           />
                         ) : (
-                          <div className="truncate text-sm font-semibold text-slate-900">{item.label}</div>
+                          <div className="truncate text-sm font-semibold text-foreground">{item.label}</div>
                         )}
-                        <div className="mt-1 text-xs text-slate-500">
+                        <div className="mt-1 text-xs text-muted-foreground">
                           Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
                         </div>
                       </div>
@@ -1064,7 +1066,7 @@ export function ProjectExplorerPage({
 
                     <div className="flex shrink-0 items-center gap-2">
                       {item.kind === 'project' && isOpeningProjectId === item.id ? (
-                        <Loader2 className="size-4 animate-spin text-slate-500" />
+                        <Loader2 className="size-4 animate-spin text-muted-foreground" />
                       ) : null}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -1121,15 +1123,15 @@ export function ProjectExplorerPage({
       </main>
 
       {trashOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6" onClick={() => setTrashOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6" onClick={() => setTrashOpen(false)}>
           <div
-            className="flex h-full max-h-[82vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_32px_120px_-48px_rgba(15,23,42,0.65)]"
+            className="flex h-full max-h-[82vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card shadow-[0_32px_120px_-48px_rgba(15,23,42,0.65)] dark:shadow-[0_36px_120px_-54px_rgba(0,0,0,0.94)]"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5">
               <div>
-                <div className="text-2xl font-semibold tracking-[-0.03em] text-slate-950">Trash</div>
-                <div className="mt-2 text-sm text-slate-500">Restore projects and folders whenever you’re ready.</div>
+                <div className="text-2xl font-semibold tracking-[-0.03em] text-foreground">Trash</div>
+                <div className="mt-2 text-sm text-muted-foreground">Restore projects and folders whenever you’re ready.</div>
               </div>
               <Button variant="ghost" size="icon-sm" className="rounded-full" onClick={() => setTrashOpen(false)}>
                 <ArrowLeft className="size-4" />
@@ -1137,7 +1139,7 @@ export function ProjectExplorerPage({
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
               {[...trashedFolders, ...trashedProjects].length === 0 ? (
-                <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-slate-500">Trash is empty.</div>
+                <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-muted-foreground">Trash is empty.</div>
               ) : (
                 <div className="divide-y divide-border/70">
                   {trashedFolders
@@ -1145,12 +1147,12 @@ export function ProjectExplorerPage({
                     .map((folder) => (
                       <div className="flex items-center justify-between gap-4 px-5 py-4" key={`trash-folder:${folder.id}`}>
                         <div className="min-w-0 flex items-center gap-4">
-                          <div className="flex size-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-600">
+                          <div className="flex size-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
                             <FolderOpen className="size-5" />
                           </div>
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{folder.name}</div>
-                            <div className="mt-1 text-xs text-slate-500">
+                            <div className="truncate text-sm font-semibold text-foreground">{folder.name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
                               Deleted {folder.trashedAt ? formatExplorerTimestamp(new Date(folder.trashedAt)) : ''}
                             </div>
                           </div>
@@ -1166,16 +1168,16 @@ export function ProjectExplorerPage({
                     .map((project) => (
                       <div className="flex items-center justify-between gap-4 px-5 py-4" key={`trash-project:${project.id}`}>
                         <div className="min-w-0 flex items-center gap-4">
-                          <div className="relative flex h-14 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
+                          <div className="relative flex h-14 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
                             {project.thumbnailUrl ? (
                               <img alt="" className="h-full w-full object-cover" src={project.thumbnailUrl} />
                             ) : (
-                              <ImageOff className="size-5 text-slate-400" />
+                              <ImageOff className="size-5 text-muted-foreground" />
                             )}
                           </div>
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{project.name}</div>
-                            <div className="mt-1 text-xs text-slate-500">
+                            <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
                               Deleted {project.trashedAt ? formatExplorerTimestamp(new Date(project.trashedAt)) : ''}
                             </div>
                           </div>
@@ -1194,13 +1196,13 @@ export function ProjectExplorerPage({
       ) : null}
 
       {pendingTrashConfirmation ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 px-4" onClick={() => setPendingTrashConfirmation(null)}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-4" onClick={() => setPendingTrashConfirmation(null)}>
           <div
-            className="w-full max-w-lg rounded-[24px] border border-white/80 bg-white p-6 shadow-[0_28px_90px_-42px_rgba(15,23,42,0.65)]"
+            className="w-full max-w-lg rounded-[24px] border border-border/70 bg-card p-6 shadow-[0_28px_90px_-42px_rgba(15,23,42,0.65)] dark:shadow-[0_32px_100px_-48px_rgba(0,0,0,0.95)]"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="text-xl font-semibold tracking-[-0.03em] text-slate-950">{pendingTrashConfirmation.heading}</div>
-            <div className="mt-3 text-sm leading-6 text-slate-500">
+            <div className="text-xl font-semibold tracking-[-0.03em] text-foreground">{pendingTrashConfirmation.heading}</div>
+            <div className="mt-3 text-sm leading-6 text-muted-foreground">
               Everything stays recoverable from trash until you decide otherwise.
             </div>
             <div className="mt-6 flex justify-end gap-3">

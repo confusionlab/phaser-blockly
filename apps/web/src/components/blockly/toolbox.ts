@@ -3,10 +3,15 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { MessageDefinition, Variable, VariableType } from '@/types';
 import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
+import { getAppIconDataUri, type AppIconName } from '@/lib/icons/appIcons';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
 
 const CREATE_MESSAGE_OPTION = '__CREATE_MESSAGE_OPTION__';
 const RENAME_SELECTED_MESSAGE_OPTION = '__RENAME_SELECTED_MESSAGE_OPTION__';
+const ADVANCED_BLOCK_TYPES = new Set<string>(['debug_console_log']);
+const BLOCKLY_INLINE_ICON_DEFAULT_SIZE = 16;
+const BLOCKLY_INLINE_ICON_LIGHT_TEXT = '#ffffff';
+const BLOCKLY_INLINE_ICON_DARK_TEXT = '#1f2937';
 
 type MessageDialogMode = 'create' | 'rename';
 type MessageDialogCallback = (
@@ -16,6 +21,63 @@ type MessageDialogCallback = (
 ) => void;
 
 let messageDialogCallback: MessageDialogCallback | null = null;
+
+export type ToolboxShadowConfig = {
+  type: string;
+  fields?: Record<string, string>;
+};
+
+export type ToolboxBlockInputConfig = {
+  block?: ToolboxBlockConfig;
+  shadow?: ToolboxShadowConfig;
+};
+
+export type ToolboxBlockConfig = {
+  kind: 'block';
+  type: string;
+  inputs?: Record<string, ToolboxBlockInputConfig>;
+  fields?: Record<string, string>;
+  extraState?: Record<string, unknown>;
+};
+
+export type ToolboxButtonConfig = {
+  kind: 'button';
+  text: string;
+  callbackKey: string;
+};
+
+export type ToolboxSeparatorConfig = {
+  kind: 'sep';
+  gap: string;
+};
+
+export type ToolboxLabelConfig = {
+  kind: 'label';
+  text: string;
+};
+
+export type ToolboxCategoryConfig = {
+  kind: 'category';
+  name: string;
+  colour: string;
+  contents: ToolboxContentItem[];
+};
+
+export type ToolboxContentItem =
+  | ToolboxBlockConfig
+  | ToolboxButtonConfig
+  | ToolboxSeparatorConfig
+  | ToolboxLabelConfig
+  | ToolboxCategoryConfig;
+
+export type ToolboxConfig = {
+  kind: 'categoryToolbox';
+  contents: ToolboxCategoryConfig[];
+};
+
+export type ToolboxConfigOptions = {
+  includeAdvancedBlocks?: boolean;
+};
 
 // Custom FieldDropdown that preserves unknown values (for object IDs that may not be loaded yet)
 class PreservingFieldDropdown extends Blockly.FieldDropdown {
@@ -91,7 +153,7 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
       // Check global variables
       const globalVar = project.globalVariables?.find(v => v.id === value);
       if (globalVar) {
-        return `${getTypeIcon(globalVar.type)} ${globalVar.name}`;
+        return `${getVariableTypeToken(globalVar.type)} ${globalVar.name}`;
       }
 
       // Check local variables
@@ -107,7 +169,7 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
           : (obj?.localVariables || []);
         const localVar = localVariables.find(v => v.id === value);
         if (localVar) {
-          return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
+          return `(local) ${getVariableTypeToken(localVar.type)} ${localVar.name}`;
         }
       }
 
@@ -115,7 +177,7 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
         const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
         const localVar = (component?.localVariables || []).find((variable) => variable.id === value);
         if (localVar) {
-          return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
+          return `(local) ${getVariableTypeToken(localVar.type)} ${localVar.name}`;
         }
       }
     }
@@ -233,6 +295,102 @@ function buildGroupBlockToggleIcon(collapsed: boolean): string {
 const GROUP_BLOCK_EXPANDED_ICON = buildGroupBlockToggleIcon(false);
 const GROUP_BLOCK_COLLAPSED_ICON = buildGroupBlockToggleIcon(true);
 const GROUP_BLOCK_COLOUR = '#9AA0A6';
+
+type BlocklyInlineIconOptions = {
+  color?: string;
+  size?: number;
+};
+
+function getBlockSvgRoot(block: Blockly.Block | null | undefined): SVGElement | null {
+  if (!block) return null;
+  const maybeSvgBlock = block as Blockly.Block & { getSvgRoot?: () => SVGElement | null };
+  return maybeSvgBlock.getSvgRoot?.() ?? null;
+}
+
+function getBlocklyInlineIconFallbackColor(block: Blockly.Block): string {
+  const parsedColour = Blockly.utils.colour.parse(block.getColour());
+  const [red, green, blue] = Blockly.utils.colour.hexToRgb(parsedColour);
+  const srgb = [red, green, blue].map((channel) => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = (0.2126 * srgb[0]) + (0.7152 * srgb[1]) + (0.0722 * srgb[2]);
+  return luminance > 0.45 ? BLOCKLY_INLINE_ICON_DARK_TEXT : BLOCKLY_INLINE_ICON_LIGHT_TEXT;
+}
+
+function getBlocklyInlineIconTextColor(block: Blockly.Block): string {
+  const svgRoot = getBlockSvgRoot(block);
+  const textNode = svgRoot?.querySelector('.blocklyText');
+  if (textNode && typeof window !== 'undefined') {
+    const computedFill = window.getComputedStyle(textNode).fill;
+    if (computedFill && computedFill !== 'none') {
+      return computedFill;
+    }
+  }
+
+  return getBlocklyInlineIconFallbackColor(block);
+}
+
+class BlocklyInlineIconField extends Blockly.FieldImage {
+  private readonly iconName: AppIconName;
+  private readonly iconSize: number;
+  private readonly explicitColor?: string;
+
+  constructor(iconName: AppIconName, altText: string, options: BlocklyInlineIconOptions = {}) {
+    const size = options.size ?? BLOCKLY_INLINE_ICON_DEFAULT_SIZE;
+    super(
+      getAppIconDataUri(iconName, { color: options.color ?? BLOCKLY_INLINE_ICON_LIGHT_TEXT, size }),
+      size,
+      size,
+      altText,
+    );
+
+    this.iconName = iconName;
+    this.iconSize = size;
+    this.explicitColor = options.color;
+  }
+
+  override initView(): void {
+    super.initView();
+    this.syncIconColour();
+  }
+
+  override applyColour(): void {
+    super.applyColour();
+    this.syncIconColour();
+  }
+
+  private syncIconColour(): void {
+    const sourceBlock = this.getSourceBlock();
+    if (!sourceBlock) return;
+
+    const color = this.explicitColor ?? getBlocklyInlineIconTextColor(sourceBlock);
+    const nextValue = getAppIconDataUri(this.iconName, { color, size: this.iconSize });
+    if (this.getValue() !== nextValue) {
+      this.setValue(nextValue);
+    }
+  }
+}
+
+function createBlocklyInlineIcon(
+  iconName: AppIconName,
+  altText: string,
+  options: BlocklyInlineIconOptions = {},
+): BlocklyInlineIconField {
+  return new BlocklyInlineIconField(iconName, altText, options);
+}
+
+function appendBlocklyInlineIcon(
+  input: Blockly.Input,
+  iconName: AppIconName,
+  altText: string,
+  fieldName?: string,
+  options: BlocklyInlineIconOptions = {},
+): Blockly.Input {
+  return input.appendField(createBlocklyInlineIcon(iconName, altText, options), fieldName);
+}
 
 function syncGroupBlockToggleIcon(block: Blockly.Block): void {
   if (!isBlockAttachedToWorkspace(block)) return;
@@ -363,7 +521,7 @@ function generateObjectDropdownOptions(
 
   // Add "pick from stage" option at the end
   if (includePicker) {
-    result.push(['🎯 pick from stage...', PICK_FROM_STAGE]);
+    result.push(['pick from stage...', PICK_FROM_STAGE]);
   }
 
   return result;
@@ -645,8 +803,57 @@ function createMessageDropdownValidator() {
 // Register custom blocks
 registerCustomBlocks();
 
-export function getToolboxConfig(): any {
-  return {
+export function isAdvancedBlockType(blockType: string): boolean {
+  return ADVANCED_BLOCK_TYPES.has(blockType);
+}
+
+function isToolboxItemActionable(item: ToolboxContentItem): boolean {
+  return item.kind === 'block' || item.kind === 'button';
+}
+
+function pruneToolboxCategoryContents(contents: ToolboxContentItem[]): ToolboxContentItem[] {
+  return contents.filter((item, index) => {
+    if (item.kind === 'sep') {
+      const hasActionableBefore = contents.slice(0, index).some(isToolboxItemActionable);
+      const hasActionableAfter = contents.slice(index + 1).some(isToolboxItemActionable);
+      return hasActionableBefore && hasActionableAfter;
+    }
+
+    if (item.kind === 'label') {
+      return contents.slice(index + 1).some(isToolboxItemActionable);
+    }
+
+    return true;
+  });
+}
+
+function filterToolboxContentItems(
+  contents: ToolboxContentItem[],
+  includeAdvancedBlocks: boolean,
+): ToolboxContentItem[] {
+  const filtered = contents.flatMap<ToolboxContentItem>((item) => {
+    if (item.kind === 'block') {
+      return includeAdvancedBlocks || !isAdvancedBlockType(item.type) ? [item] : [];
+    }
+
+    if (item.kind === 'category') {
+      const nextContents = pruneToolboxCategoryContents(
+        filterToolboxContentItems(item.contents, includeAdvancedBlocks),
+      );
+      return nextContents.length > 0
+        ? [{ ...item, contents: nextContents }]
+        : [];
+    }
+
+    return [item];
+  });
+
+  return pruneToolboxCategoryContents(filtered);
+}
+
+export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxConfig {
+  const { includeAdvancedBlocks = true } = options;
+  const toolbox: ToolboxConfig = {
     kind: 'categoryToolbox',
     contents: [
       {
@@ -1367,6 +1574,15 @@ export function getToolboxConfig(): any {
       },
     ],
   };
+
+  if (includeAdvancedBlocks) {
+    return toolbox;
+  }
+
+  return {
+    ...toolbox,
+    contents: filterToolboxContentItems(toolbox.contents, includeAdvancedBlocks) as ToolboxCategoryConfig[],
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1418,8 +1634,8 @@ function collectToolboxBlockTypes(item: unknown, collected: Set<string>): void {
   }
 }
 
-export function getToolboxRegisteredBlockTypes(): string[] {
-  const toolbox = getToolboxConfig();
+export function getToolboxRegisteredBlockTypes(options: ToolboxConfigOptions = {}): string[] {
+  const toolbox = getToolboxConfig(options);
   const collected = new Set<string>();
   collectToolboxBlockTypes(toolbox, collected);
   return Array.from(collected).sort((a, b) => a.localeCompare(b));
@@ -1429,10 +1645,9 @@ function registerCustomBlocks() {
   // Events
   Blockly.Blocks['event_game_start'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🏁 When I start');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventStart', 'When I start')
+        .appendField('When I start');
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when this object starts (including spawned objects)');
     }
@@ -1440,12 +1655,11 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['event_key_pressed'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🔑 when')
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventKey', 'when')
+        .appendField('when')
         .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
         .appendField('is pressed');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when a key is pressed');
     }
@@ -1453,10 +1667,9 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['event_clicked'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🖱️ when this is clicked');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventClick', 'when this is clicked')
+        .appendField('when this is clicked');
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when this object is clicked');
     }
@@ -1464,10 +1677,9 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['event_world_clicked'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🌎 when world is clicked');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventWorld', 'when world is clicked')
+        .appendField('when world is clicked');
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when the world is clicked, including clicks on objects but not UI.');
     }
@@ -1475,12 +1687,11 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['event_inventory_item_dropped'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🎒 when inventory item')
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventInventory', 'when inventory item')
+        .appendField('when inventory item')
         .appendField(new PreservingFieldDropdown(getInventoryReferenceDropdownOptions), 'ITEM')
         .appendField('is dropped on me');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when the selected inventory item is dropped on this object.');
     }
@@ -1488,10 +1699,9 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['event_any_inventory_item_dropped'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🎒 when any inventory item is dropped');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventInventory', 'when any inventory item is dropped')
+        .appendField('when any inventory item is dropped');
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs whenever any inventory item is dropped, even if it is not over a valid target.');
     }
@@ -1499,8 +1709,8 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['event_forever'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🔄 forever');
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventForever', 'forever')
+        .appendField('forever');
       this.appendStatementInput('DO')
         .setCheck(null);
       this.setPreviousStatement(true, null);
@@ -2924,8 +3134,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('when I receive')
         .appendField(messageFieldRef, 'MESSAGE');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when message is received');
       const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
@@ -2938,8 +3147,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('when touching')
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when touching target');
       // Add validator for pick from stage
@@ -2954,8 +3162,7 @@ function registerCustomBlocks() {
         .setCheck('Object')
         .appendField('when touching');
       this.setInputsInline(true);
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when touching target');
     }
@@ -2968,8 +3175,7 @@ function registerCustomBlocks() {
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET')
         .appendField('from')
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when touching target from a specific direction');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
@@ -2986,8 +3192,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('from')
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
+      this.setNextStatement(true, null);
       this.setColour('#FFAB19');
       this.setTooltip('Runs when touching target from a specific direction');
     }
@@ -3559,8 +3764,8 @@ function getVariableDropdownOptions(): Array<[string, string]> {
 
   return variables.map(v => {
     const scopePrefix = v.scope === 'local' ? '(local) ' : '';
-    const typeIcon = getTypeIcon(v.type);
-    return [`${scopePrefix}${typeIcon} ${v.name}`, v.id];
+    const typeLabel = getVariableTypeToken(v.type);
+    return [`${scopePrefix}${typeLabel} ${v.name}`, v.id];
   });
 }
 
@@ -3573,18 +3778,17 @@ function getNumericVariableDropdownOptions(): Array<[string, string]> {
 
   return variables.map(v => {
     const scopePrefix = v.scope === 'local' ? '(local) ' : '';
-    const typeIcon = getTypeIcon(v.type);
-    return [`${scopePrefix}${typeIcon} ${v.name}`, v.id];
+    const typeLabel = getVariableTypeToken(v.type);
+    return [`${scopePrefix}${typeLabel} ${v.name}`, v.id];
   });
 }
 
-// Get icon for variable type
-function getTypeIcon(type: VariableType): string {
+function getVariableTypeToken(type: VariableType): string {
   switch (type) {
-    case 'string': return '📝';
-    case 'integer': return '#';
-    case 'float': return '#.#';
-    case 'boolean': return '◇';
+    case 'string': return 'Text';
+    case 'integer': return 'Int';
+    case 'float': return 'Float';
+    case 'boolean': return 'Bool';
   }
 }
 

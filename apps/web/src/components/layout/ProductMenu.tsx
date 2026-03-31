@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search } from 'lucide-react';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -24,6 +25,16 @@ type ProductMenuActionItem = {
   onSelect: () => void;
 };
 
+type ProductMenuToggleItem = {
+  kind: 'toggle';
+  id: string;
+  label: string;
+  shortcut?: string;
+  keywords?: readonly string[];
+  checked: boolean;
+  onToggle: () => void;
+};
+
 type ProductMenuSubmenuItem = {
   kind: 'submenu';
   id: string;
@@ -37,7 +48,7 @@ type ProductMenuSeparatorItem = {
   id: string;
 };
 
-type ProductMenuItem = ProductMenuActionItem | ProductMenuSubmenuItem | ProductMenuSeparatorItem;
+type ProductMenuItem = ProductMenuActionItem | ProductMenuToggleItem | ProductMenuSubmenuItem | ProductMenuSeparatorItem;
 
 type ProductMenuSearchResult = {
   id: string;
@@ -50,11 +61,13 @@ type ProductMenuSearchResult = {
 
 interface ProductMenuProps {
   isDarkMode: boolean;
+  showAdvancedBlocks: boolean;
   hasProject: boolean;
   onExportProject: () => void;
   onGoToDashboard: () => void;
   onOpenHistory: () => void;
   onRenameProject: () => void;
+  onToggleAdvancedBlocks: () => void;
   onToggleTheme: () => void;
 }
 
@@ -83,9 +96,9 @@ function collectAllActions(items: readonly ProductMenuItem[], parents: readonly 
       id: item.id,
       label: item.label,
       shortcut: item.shortcut,
-      disabled: item.disabled,
+      disabled: item.kind === 'action' ? item.disabled : false,
       breadcrumb: parents.length > 0 ? parents.join(' / ') : null,
-      onSelect: item.onSelect,
+      onSelect: item.kind === 'action' ? item.onSelect : item.onToggle,
     });
   }
 
@@ -133,9 +146,9 @@ function collectSearchResults(
       id: item.id,
       label: item.label,
       shortcut: item.shortcut,
-      disabled: item.disabled,
+      disabled: item.kind === 'action' ? item.disabled : false,
       breadcrumb: parents.length > 0 ? parents.join(' / ') : null,
-      onSelect: item.onSelect,
+      onSelect: item.kind === 'action' ? item.onSelect : item.onToggle,
     });
   }
 
@@ -161,6 +174,20 @@ function renderHierarchicalItems(items: readonly ProductMenuItem[]): React.React
       );
     }
 
+    if (item.kind === 'toggle') {
+      return (
+        <DropdownMenuCheckboxItem
+          key={item.id}
+          checked={item.checked}
+          onCheckedChange={() => item.onToggle()}
+          className="rounded-xl px-3 py-2 text-[13px]"
+        >
+          <span className="truncate">{item.label}</span>
+          {item.shortcut ? <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut> : null}
+        </DropdownMenuCheckboxItem>
+      );
+    }
+
     return (
       <DropdownMenuItem
         key={item.id}
@@ -181,11 +208,13 @@ function getFirstEnabledResult(results: readonly ProductMenuSearchResult[]): Pro
 
 export function ProductMenu({
   isDarkMode,
+  showAdvancedBlocks,
   hasProject,
   onExportProject,
   onGoToDashboard,
   onOpenHistory,
   onRenameProject,
+  onToggleAdvancedBlocks,
   onToggleTheme,
 }: ProductMenuProps) {
   const [open, setOpen] = useState(false);
@@ -239,6 +268,23 @@ export function ProductMenu({
 
     items.push({
       kind: 'submenu',
+      id: 'blocks',
+      label: 'Blocks',
+      keywords: ['blocks', 'toolbox', 'advanced', 'beginner', 'simple'],
+      children: [
+        {
+          kind: 'toggle',
+          id: 'toggle-advanced-blocks',
+          label: 'Advanced',
+          keywords: ['advanced', 'blocks', 'toolbox', 'show', 'hide'],
+          checked: showAdvancedBlocks,
+          onToggle: onToggleAdvancedBlocks,
+        },
+      ],
+    });
+
+    items.push({
+      kind: 'submenu',
       id: 'appearance',
       label: 'Appearance',
       keywords: ['theme', 'dark', 'light', 'mode'],
@@ -257,10 +303,12 @@ export function ProductMenu({
   }, [
     hasProject,
     isDarkMode,
+    onToggleAdvancedBlocks,
     onExportProject,
     onGoToDashboard,
     onOpenHistory,
     onRenameProject,
+    showAdvancedBlocks,
     onToggleTheme,
   ]);
 

@@ -1416,6 +1416,7 @@ export function SpriteShelf() {
     const folder = item.folder;
     const isObjectEditing = item.type === 'object' && editingObjectId === item.id;
     const isFolderEditing = item.type === 'folder' && editingFolderId === item.id;
+    const isInlineEditing = isObjectEditing || isFolderEditing;
     const isComponentInstance = !!object?.componentId;
     const effectiveProps = object ? getEffectiveObjectProps(object, project?.components || []) : null;
     const hasChildItems = item.children.length > 0;
@@ -1592,11 +1593,11 @@ export function SpriteShelf() {
               </div>
             )}
 
-            <div className="ml-1.5 flex flex-1 min-w-0 items-center">
+            <div className="ml-1.5 flex flex-1 min-w-0 items-center pr-[3px]">
               <InlineRenameField
-                key={(isObjectEditing || isFolderEditing) ? `rename-${inlineRenameSessionId}` : `label-${item.key}`}
+                key={isInlineEditing ? `rename-${inlineRenameSessionId}` : `label-${item.key}`}
                 ref={inputRef}
-                editing={isObjectEditing || isFolderEditing}
+                editing={isInlineEditing}
                 value={isObjectEditing ? editName : (isFolderEditing ? folderEditName : item.name)}
                 onChange={(e) => {
                   if (isObjectEditing) {
@@ -1611,9 +1612,9 @@ export function SpriteShelf() {
                 onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => e.stopPropagation()}
                 className="flex-1 min-w-0"
-                outlineClassName="inset-x-0"
+                outlineClassName="left-[-3px] right-0"
                 textClassName={`truncate text-xs leading-5 ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : 'text-foreground'}`}
-                autoFocus={isObjectEditing || isFolderEditing}
+                autoFocus={isInlineEditing}
                 focusBehavior="caret-end"
                 displayValue={
                   <>

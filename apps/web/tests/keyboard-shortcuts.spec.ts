@@ -59,9 +59,10 @@ test.describe('Keyboard shortcuts', () => {
       addObject: true,
     });
 
-    const projectNameInput = page.getByLabel('Project name');
-    await expect(projectNameInput).toBeVisible();
-    await projectNameInput.click();
+    const projectNameDisplay = page.getByRole('button', { name: 'Project name' });
+    await expect(projectNameDisplay).toBeVisible();
+    await projectNameDisplay.click();
+    await expect(page.getByRole('textbox', { name: 'Project name' })).toBeVisible();
 
     const stageShortcutSurface = page.locator('[data-editor-panel="stage"] [data-editor-shortcut-surface="scene-objects"]').first();
     await expect(stageShortcutSurface).toBeVisible();
@@ -77,9 +78,10 @@ test.describe('Keyboard shortcuts', () => {
       addObject: true,
     });
 
-    const projectNameInput = page.getByLabel('Project name');
-    await expect(projectNameInput).toBeVisible();
-    await projectNameInput.click();
+    const projectNameDisplay = page.getByRole('button', { name: 'Project name' });
+    await expect(projectNameDisplay).toBeVisible();
+    await projectNameDisplay.click();
+    await expect(page.getByRole('textbox', { name: 'Project name' })).toBeVisible();
 
     const objectRow = page.getByText(/^Object 1$/).first();
     await expect(objectRow).toBeVisible();
@@ -100,7 +102,11 @@ test.describe('Keyboard shortcuts', () => {
     const projectName = `Keyboard Test ${Date.now()}`;
     await bootstrapEditorProject(page, { projectName });
 
-    const renameInput = page.getByLabel('Project name');
+    const projectNameDisplay = page.getByRole('button', { name: 'Project name' });
+    await expect(projectNameDisplay).toHaveText(projectName);
+    await projectNameDisplay.click();
+
+    const renameInput = page.getByRole('textbox', { name: 'Project name' });
     await expect(renameInput).toBeVisible();
     const originalName = await renameInput.inputValue();
     expect(originalName).toBeTruthy();
@@ -108,7 +114,29 @@ test.describe('Keyboard shortcuts', () => {
     await renameInput.fill('Should Not Save');
     await page.keyboard.press('Escape');
 
-    await expect(renameInput).toHaveValue(originalName ?? '');
+    await expect(projectNameDisplay).toHaveText(originalName ?? '');
     await expect(page.getByText(/^Should Not Save$/)).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: 'Project name' })).toHaveCount(0);
+  });
+
+  test('project name first click places the caret at the end', async ({ page }) => {
+    const projectName = `Caret Placement ${Date.now()}`;
+    await bootstrapEditorProject(page, { projectName });
+
+    const projectNameDisplay = page.getByRole('button', { name: 'Project name' });
+    await expect(projectNameDisplay).toHaveText(projectName);
+    await projectNameDisplay.click({ position: { x: 6, y: 6 } });
+
+    const renameInput = page.getByRole('textbox', { name: 'Project name' });
+    await expect(renameInput).toBeVisible();
+
+    const selection = await renameInput.evaluate((input) => ({
+      end: input.selectionEnd,
+      length: input.value.length,
+      start: input.selectionStart,
+    }));
+
+    expect(selection.start).toBe(selection.length);
+    expect(selection.end).toBe(selection.length);
   });
 });

@@ -1,5 +1,6 @@
 import { DOMParser } from '@xmldom/xmldom';
 import { normalizeBlocklyXml } from './blocklyXml';
+import { assistantStatementUsesNextConnection } from './assistantBlocks';
 
 export type AssistantLogicTrigger =
   | { kind: 'on_start' }
@@ -831,6 +832,14 @@ function appendNextBlocks(blocks: readonly string[]): string {
   return head!.replace(/<\/block>$/, `<next>${appendNextBlocks(tail)}</next></block>`);
 }
 
+function wrapStatementChain(blockType: string, statementName: string, blocks: readonly string[]): string {
+  const chain = appendNextBlocks(blocks);
+  if (!chain) return '';
+  return assistantStatementUsesNextConnection(blockType, statementName)
+    ? `<next>${chain}</next>`
+    : `<statement name="${statementName}">${chain}</statement>`;
+}
+
 function buildConditionBlock(condition: AssistantLogicCondition): string {
   switch (condition.kind) {
     case 'key_pressed':
@@ -889,17 +898,19 @@ function buildActionBlock(action: AssistantLogicAction): string {
 }
 
 function buildScriptBlock(script: AssistantLogicScript): string {
-  const actions = appendNextBlocks(script.actions.map((action) => buildActionBlock(action)));
+  const actions = script.actions.map((action) => buildActionBlock(action));
 
   switch (script.trigger.kind) {
     case 'on_start':
-      return `<block type="event_game_start"><statement name="NEXT">${actions}</statement></block>`;
+      return `<block type="event_game_start">${wrapStatementChain('event_game_start', 'NEXT', actions)}</block>`;
     case 'forever':
-      return `<block type="event_game_start"><statement name="NEXT"><block type="event_forever"><statement name="DO">${actions}</statement></block></statement></block>`;
+      return `<block type="event_game_start">${wrapStatementChain('event_game_start', 'NEXT', [
+        `<block type="event_forever">${wrapStatementChain('event_forever', 'DO', actions)}</block>`,
+      ])}</block>`;
     case 'on_clicked':
-      return `<block type="event_clicked"><statement name="NEXT">${actions}</statement></block>`;
+      return `<block type="event_clicked">${wrapStatementChain('event_clicked', 'NEXT', actions)}</block>`;
     case 'on_key_pressed':
-      return `<block type="event_key_pressed"><field name="KEY">${escapeXml(normalizeLogicKey(script.trigger.key))}</field><statement name="NEXT">${actions}</statement></block>`;
+      return `<block type="event_key_pressed"><field name="KEY">${escapeXml(normalizeLogicKey(script.trigger.key))}</field>${wrapStatementChain('event_key_pressed', 'NEXT', actions)}</block>`;
   }
 }
 

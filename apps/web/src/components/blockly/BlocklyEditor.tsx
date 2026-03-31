@@ -43,6 +43,7 @@ import {
   setInitialPinnableToolboxPinnedState,
   UNPINNED_TOOLBOX_FLYOUT_WIDTH,
 } from './pinnableContinuousToolbox';
+import { POCHA_BLOCKLY_THEME } from './blocklyTheme';
 import type { UndoRedoHandler } from '@/store/editorStore';
 import type { Variable } from '@/types';
 
@@ -69,10 +70,10 @@ let globalBlockClipboard: Blockly.ICopyData | null = null;
 const BLOCK_CLIPBOARD_STORAGE_KEY = 'pochacoding:blocklyClipboard:v1';
 const TOOLBOX_PINNED_STORAGE_KEY = 'pochacoding:blocklyToolboxPinned:v1';
 const TOOLBOX_PIN_BUTTON_SIZE = 28;
-const EMPTY_TOOLBOX_CONFIG = {
+const EMPTY_TOOLBOX_CONFIG: ReturnType<typeof getToolboxConfig> = {
   kind: 'categoryToolbox',
   contents: [],
-} as const;
+};
 
 type PersistedBlockClipboard = {
   version: 1;
@@ -447,6 +448,7 @@ export function BlocklyEditor() {
     selectedObjectId,
     selectedComponentId,
     activeObjectTab,
+    showAdvancedBlocks,
     registerCodeUndo,
   } = useEditorStore();
   const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage, updateComponent } = useProjectStore();
@@ -816,8 +818,11 @@ export function BlocklyEditor() {
 
     // Blockly config with Zelos renderer and continuous toolbox
     workspaceRef.current = Blockly.inject(containerRef.current, {
-      toolbox: hasCodeTarget ? getToolboxConfig() : EMPTY_TOOLBOX_CONFIG,
+      toolbox: hasCodeTarget
+        ? getToolboxConfig({ includeAdvancedBlocks: showAdvancedBlocks })
+        : EMPTY_TOOLBOX_CONFIG,
       renderer: 'zelos',
+      theme: POCHA_BLOCKLY_THEME,
       plugins: {
         toolbox: PINNABLE_CONTINUOUS_TOOLBOX,
         flyoutsVerticalToolbox: PINNABLE_CONTINUOUS_FLYOUT,
@@ -992,15 +997,26 @@ export function BlocklyEditor() {
       setAddVariableCallback(null);
       setManageVariablesCallback(null);
     };
-  }, [collapseUnpinnedFlyout, flushPendingWorkspacePersist, hasCodeTarget, scheduleWorkspacePersist, updatePinButtonPosition]);
+  }, [
+    collapseUnpinnedFlyout,
+    flushPendingWorkspacePersist,
+    hasCodeTarget,
+    scheduleWorkspacePersist,
+    showAdvancedBlocks,
+    updatePinButtonPosition,
+  ]);
 
   useEffect(() => {
     const workspace = workspaceRef.current;
     if (!workspace) return;
 
-    workspace.updateToolbox(hasCodeTarget ? getToolboxConfig() : EMPTY_TOOLBOX_CONFIG);
+    workspace.updateToolbox(
+      hasCodeTarget
+        ? getToolboxConfig({ includeAdvancedBlocks: showAdvancedBlocks })
+        : EMPTY_TOOLBOX_CONFIG,
+    );
     updatePinButtonPosition();
-  }, [hasCodeTarget, updatePinButtonPosition]);
+  }, [hasCodeTarget, showAdvancedBlocks, updatePinButtonPosition]);
 
   // Keep workspace in sync with selected object XML, including undo/redo history replays.
   useEffect(() => {

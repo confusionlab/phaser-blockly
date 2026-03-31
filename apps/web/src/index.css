@@ -21,6 +21,8 @@ html, body, #root {
 
 body {
   font-family: var(--font-sans);
+  background: var(--background);
+  color: var(--foreground);
 }
 
 /* Shared editor chrome row height across the editor shell and side panels. */
@@ -430,6 +432,7 @@ body {
 }
 
 :root {
+  color-scheme: light;
   --z-editor-popup: 100120;
   --radius: 0.625rem;
   --divider-size: 2px;
@@ -491,6 +494,7 @@ body {
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.11 0.004 49.25);
   --foreground: oklch(0.985 0.001 106.423);
   --card: oklch(0.216 0.006 56.043);

@@ -7,6 +7,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { AppIcon, type AppIconName } from '@/lib/icons/appIcons';
 import { Trash2, Pencil, Check, X } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -18,12 +19,12 @@ interface VariableManagerDialogProps {
   onAddNew: () => void;
 }
 
-function getTypeIcon(type: VariableType): string {
+function getTypeIconName(type: VariableType): AppIconName {
   switch (type) {
-    case 'string': return '📝';
-    case 'integer': return '#';
-    case 'float': return '#.#';
-    case 'boolean': return '◇';
+    case 'string': return 'variableString';
+    case 'integer': return 'variableInteger';
+    case 'float': return 'variableFloat';
+    case 'boolean': return 'variableBoolean';
   }
 }
 
@@ -181,7 +182,12 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     return (
       <div className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-accent group">
         <div className="flex items-center gap-3 flex-1 min-w-0">
-          <span className="text-lg flex-shrink-0">{getTypeIcon(variable.type)}</span>
+          <AppIcon
+            className="size-4 flex-shrink-0 text-muted-foreground"
+            decorative={false}
+            name={getTypeIconName(variable.type)}
+            title={getTypeLabel(variable.type)}
+          />
           {isEditing ? (
             <div className="flex items-center gap-2 flex-1">
               <InlineRenameField

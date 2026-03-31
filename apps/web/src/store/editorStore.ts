@@ -43,6 +43,9 @@ export type UndoRedoHandler = {
 
 export type BackgroundEditorShortcutHandler = (event: KeyboardEvent) => boolean;
 
+const DARK_MODE_STORAGE_KEY = 'pochacoding-dark-mode';
+const ADVANCED_BLOCKS_STORAGE_KEY = 'pochacoding-advanced-blocks';
+
 type SelectionHistoryOptions = {
   recordHistory?: boolean;
 };
@@ -126,6 +129,7 @@ interface EditorStore {
 
   // Theme state
   isDarkMode: boolean;
+  showAdvancedBlocks: boolean;
 
   // View state
   zoom: number;
@@ -206,6 +210,8 @@ interface EditorStore {
   // Theme actions
   toggleDarkMode: () => void;
   setDarkMode: (isDarkMode: boolean) => void;
+  toggleShowAdvancedBlocks: () => void;
+  setShowAdvancedBlocks: (showAdvancedBlocks: boolean) => void;
 
   // Undo/Redo registration
   registerCostumeUndo: (handler: UndoRedoHandler | null) => void;
@@ -258,7 +264,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   // Theme state - check localStorage and system preference
   isDarkMode: (() => {
-    const stored = localStorage.getItem('pochacoding-dark-mode');
+    const stored = localStorage.getItem(DARK_MODE_STORAGE_KEY);
     if (stored !== null) {
       const isDark = stored === 'true';
       document.documentElement.classList.toggle('dark', isDark);
@@ -267,6 +273,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.classList.toggle('dark', prefersDark);
     return prefersDark;
+  })(),
+  showAdvancedBlocks: (() => {
+    const stored = localStorage.getItem(ADVANCED_BLOCKS_STORAGE_KEY);
+    if (stored !== null) {
+      return stored === 'true';
+    }
+    return true;
   })(),
 
   // View state
@@ -900,14 +913,25 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   toggleDarkMode: () => {
     const newValue = !useEditorStore.getState().isDarkMode;
     document.documentElement.classList.toggle('dark', newValue);
-    localStorage.setItem('pochacoding-dark-mode', String(newValue));
+    localStorage.setItem(DARK_MODE_STORAGE_KEY, String(newValue));
     set({ isDarkMode: newValue });
   },
 
   setDarkMode: (isDarkMode) => {
     document.documentElement.classList.toggle('dark', isDarkMode);
-    localStorage.setItem('pochacoding-dark-mode', String(isDarkMode));
+    localStorage.setItem(DARK_MODE_STORAGE_KEY, String(isDarkMode));
     set({ isDarkMode });
+  },
+
+  toggleShowAdvancedBlocks: () => {
+    const showAdvancedBlocks = !useEditorStore.getState().showAdvancedBlocks;
+    localStorage.setItem(ADVANCED_BLOCKS_STORAGE_KEY, String(showAdvancedBlocks));
+    set({ showAdvancedBlocks });
+  },
+
+  setShowAdvancedBlocks: (showAdvancedBlocks) => {
+    localStorage.setItem(ADVANCED_BLOCKS_STORAGE_KEY, String(showAdvancedBlocks));
+    set({ showAdvancedBlocks });
   },
 
   registerCostumeUndo: (handler) => {

@@ -203,7 +203,7 @@ test.describe('Blockly XML normalization', () => {
     const normalized = normalizeBlocklyXml(LIVE_WASD_ALIAS_BLOCKLY_XML);
 
     expect(normalized).toContain('type="event_game_start"');
-    expect(normalized).toContain('<statement name="NEXT">');
+    expect(normalized).toContain('<next>');
     expect(normalized).toContain('type="sensing_key_pressed"');
     expect(normalized).toContain('type="motion_change_y"');
     expect(normalized).toContain('type="motion_change_x"');
@@ -230,6 +230,23 @@ test.describe('Blockly XML normalization', () => {
     expect(
       issues.filter((issue) => issue.message.includes('Missing block type')),
     ).toEqual([]);
+  });
+
+  test('migrates legacy hat statement bodies onto Blockly next connections', () => {
+    const normalized = normalizeBlocklyXml(`
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="event_game_start">
+          <statement name="NEXT">
+            <block type="looks_show"></block>
+          </statement>
+        </block>
+      </xml>
+    `.trim());
+
+    expect(normalized).toContain('<block type="event_game_start">');
+    expect(normalized).toContain('<next>');
+    expect(normalized).toContain('<block type="looks_show">');
+    expect(normalized).not.toContain('<statement name="NEXT">');
   });
 
 });

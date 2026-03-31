@@ -168,6 +168,11 @@ const BLOCK_CATALOG_BY_TYPE = new Map(
   ASSISTANT_BLOCK_CATALOG.map((entry) => [entry.type, entry]),
 );
 
+export function assistantStatementUsesNextConnection(blockType: string, statementName: string): boolean {
+  const entry = BLOCK_CATALOG_BY_TYPE.get(blockType);
+  return entry?.kind === 'hat' && statementName === 'NEXT';
+}
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -236,6 +241,9 @@ function compileBlockNode(node: AssistantBlockNode): string {
   const statements = statementKeys
     .map((name) => {
       const blocks = (node.statements ?? {})[name] ?? [];
+      if (assistantStatementUsesNextConnection(node.type, name)) {
+        return blocks.length > 0 ? `<next>${compileBlockChain(blocks)}</next>` : '';
+      }
       return `<statement name="${escapeXml(name)}">${compileBlockChain(blocks)}</statement>`;
     })
     .join('');

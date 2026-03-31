@@ -8,6 +8,36 @@ function asJsString(value: string | null | undefined): string {
 
 let codeGeneratorsRegistered = false;
 
+// Hat blocks (event blocks) that start code execution.
+const HAT_BLOCKS = [
+  'event_game_start',
+  'event_key_pressed',
+  'event_clicked',
+  'event_world_clicked',
+  'event_forever',
+  'event_any_inventory_item_dropped',
+  'event_inventory_item_dropped',
+  'event_when_receive',
+  'event_when_touching',
+  'event_when_touching_value',
+  'event_when_touching_direction',
+  'event_when_touching_direction_value',
+] as const;
+
+const HAT_BLOCK_TYPES = new Set<string>(HAT_BLOCKS);
+const ONE_SHOT_HAT_BLOCKS = new Set<string>(HAT_BLOCKS.filter((blockType) => blockType !== 'event_forever'));
+
+function generateHatBodyFromNextConnection(block: Blockly.Block): string {
+  const nextBlock = block.getNextBlock();
+  if (!nextBlock) {
+    return '';
+  }
+
+  const nextCode = javascriptGenerator.blockToCode(nextBlock);
+  const rawCode = typeof nextCode === 'string' ? nextCode : nextCode[0];
+  return rawCode ? javascriptGenerator.prefixLines(rawCode, javascriptGenerator.INDENT) : '';
+}
+
 /**
  * Register code generators for all custom blocks.
  * Generated code calls runtime.* methods.
@@ -22,27 +52,35 @@ export function registerCodeGenerators(): void {
     return `runtime.getTargetId(${expr})`;
   };
 
+  const originalScrub = javascriptGenerator.scrub_;
+  javascriptGenerator.scrub_ = function(block, code, thisOnly) {
+    if (ONE_SHOT_HAT_BLOCKS.has(block.type)) {
+      return originalScrub.call(this, block, code, true);
+    }
+    return originalScrub.call(this, block, code, thisOnly);
+  };
+
   // --- Events ---
 
   // Event handlers receive sprite as parameter so they work correctly for clones
   javascriptGenerator.forBlock['event_game_start'] = function(block) {
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onGameStart(spriteId, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_key_pressed'] = function(block) {
     const key = block.getFieldValue('KEY');
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onKeyPressed(spriteId, ${asJsString(key)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_clicked'] = function(block) {
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onClicked(spriteId, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_world_clicked'] = function(block) {
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onWorldClicked(spriteId, async function(sprite) {\n${nextCode}});\n`;
   };
 
@@ -55,21 +93,21 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['event_when_touching'] = function(block) {
     const target = block.getFieldValue('TARGET');
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onTouching(spriteId, ${asJsString(target)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_when_touching_value'] = function(block) {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
     const targetId = objectExprToId(target);
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `if (${targetId}) runtime.onTouching(spriteId, ${targetId}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_when_touching_direction'] = function(block) {
     const target = block.getFieldValue('TARGET');
     const direction = block.getFieldValue('DIRECTION') || 'SIDE';
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onTouchingDirection(spriteId, ${asJsString(target)}, ${asJsString(direction)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
@@ -77,18 +115,18 @@ export function registerCodeGenerators(): void {
     const target = javascriptGenerator.valueToCode(block, 'TARGET', Order.ATOMIC) || 'null';
     const targetId = objectExprToId(target);
     const direction = block.getFieldValue('DIRECTION') || 'SIDE';
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `if (${targetId}) runtime.onTouchingDirection(spriteId, ${targetId}, ${asJsString(direction)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_inventory_item_dropped'] = function(block) {
     const item = block.getFieldValue('ITEM');
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onInventoryDropped(spriteId, ${asJsString(item)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
   javascriptGenerator.forBlock['event_any_inventory_item_dropped'] = function(block) {
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onAnyInventoryDropped(spriteId, async function(sprite) {\n${nextCode}});\n`;
   };
 
@@ -752,7 +790,7 @@ export function registerCodeGenerators(): void {
     if (!message) {
       return '/* when I receive: message not selected */\n';
     }
-    const nextCode = javascriptGenerator.statementToCode(block, 'NEXT');
+    const nextCode = generateHatBodyFromNextConnection(block);
     return `runtime.onMessage(spriteId, ${asJsString(message)}, async function(sprite) {\n${nextCode}});\n`;
   };
 
@@ -913,22 +951,6 @@ export function registerCodeGenerators(): void {
   };
 }
 
-// Hat blocks (event blocks) that start code execution
-const HAT_BLOCKS = [
-  'event_game_start',
-  'event_key_pressed',
-  'event_clicked',
-  'event_world_clicked',
-  'event_forever',
-  'event_any_inventory_item_dropped',
-  'event_inventory_item_dropped',
-  'event_when_receive',
-  'event_when_touching',
-  'event_when_touching_value',
-  'event_when_touching_direction',
-  'event_when_touching_direction_value',
-];
-
 interface GenerateCodeForObjectOptions {
   logErrors?: boolean;
 }
@@ -1007,7 +1029,7 @@ export function generateCodeForObject(
 
     // Get only top-level hat blocks (event blocks)
     const topBlocks = activeWorkspace.getTopBlocks(false);
-    const hatBlocks = topBlocks.filter(block => HAT_BLOCKS.includes(block.type));
+    const hatBlocks = topBlocks.filter((block) => HAT_BLOCK_TYPES.has(block.type));
 
     // Generate code only for hat blocks
     let code = '';

@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Loader2 } from 'lucide-react';
 import { ProductMenu } from '@/components/layout/ProductMenu';
-import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Button } from '@/components/ui/button';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { cn } from '@/lib/utils';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 interface EditorTopBarProps {
   hasProject: boolean;
   isDarkMode: boolean;
+  showAdvancedBlocks: boolean;
   projectName: string | null;
   projectNameDisabled?: boolean;
   saveControlState?: 'save' | 'saving' | 'saved';
@@ -18,12 +19,14 @@ interface EditorTopBarProps {
   onOpenHistory: () => void;
   onProjectNameCommit: (name: string) => void;
   onSaveNow: () => void;
+  onToggleAdvancedBlocks: () => void;
   onToggleTheme: () => void;
 }
 
 export function EditorTopBar({
   hasProject,
   isDarkMode,
+  showAdvancedBlocks,
   projectName,
   projectNameDisabled = false,
   saveControlState = 'saved',
@@ -33,13 +36,14 @@ export function EditorTopBar({
   onOpenHistory,
   onProjectNameCommit,
   onSaveNow,
+  onToggleAdvancedBlocks,
   onToggleTheme,
 }: EditorTopBarProps) {
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const lastCommittedNameRef = useRef(projectName ?? '');
-  const skipBlurCommitRef = useRef(false);
   const [draftName, setDraftName] = useState(projectName ?? '');
+  const [isProjectNameEditing, setIsProjectNameEditing] = useState(false);
 
   useEffect(() => {
     const nextName = projectName ?? '';
@@ -47,15 +51,40 @@ export function EditorTopBar({
     lastCommittedNameRef.current = nextName;
   }, [projectName]);
 
-  const focusProjectNameInput = useCallback(() => {
-    const input = inputRef.current;
-    if (!input || projectNameDisabled) {
+  useEffect(() => {
+    if (!hasProject) {
+      setIsProjectNameEditing(false);
+    }
+  }, [hasProject]);
+
+  const placeProjectNameCaretAtEnd = useCallback((input: HTMLInputElement | null) => {
+    if (!input) {
       return;
     }
 
     input.focus({ preventScroll: true });
-    queueMicrotask(() => input.select());
-  }, [projectNameDisabled]);
+    const caretIndex = input.value.length;
+    input.setSelectionRange(caretIndex, caretIndex);
+  }, []);
+
+  const focusProjectNameInput = useCallback(() => {
+    if (projectNameDisabled) {
+      return;
+    }
+
+    if (!isProjectNameEditing) {
+      setIsProjectNameEditing(true);
+      return;
+    }
+
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+
+    placeProjectNameCaretAtEnd(input);
+    queueMicrotask(() => placeProjectNameCaretAtEnd(input));
+  }, [isProjectNameEditing, placeProjectNameCaretAtEnd, projectNameDisabled]);
 
   const commitDraftName = useCallback((): boolean => {
     if (!hasProject) {
@@ -77,10 +106,27 @@ export function EditorTopBar({
     return true;
   }, [draftName, hasProject, onProjectNameCommit]);
 
-  const restoreLastCommittedName = useCallback(() => {
-    skipBlurCommitRef.current = true;
+  const cancelProjectNameEdit = useCallback(() => {
     setDraftName(lastCommittedNameRef.current);
+    setIsProjectNameEditing(false);
   }, []);
+
+  const activateProjectNameEdit = useCallback(() => {
+    if (projectNameDisabled) {
+      return;
+    }
+
+    setIsProjectNameEditing(true);
+  }, [projectNameDisabled]);
+
+  const handleProjectNameDisplayKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    activateProjectNameEdit();
+  }, [activateProjectNameEdit]);
 
   return (
     <div
@@ -94,55 +140,67 @@ export function EditorTopBar({
         <div className="flex min-w-0 justify-start">
           <ProductMenu
             isDarkMode={isDarkMode}
+            showAdvancedBlocks={showAdvancedBlocks}
             hasProject={hasProject}
             onExportProject={onExportProject}
             onGoToDashboard={onGoToDashboard}
             onOpenHistory={onOpenHistory}
             onRenameProject={focusProjectNameInput}
+            onToggleAdvancedBlocks={onToggleAdvancedBlocks}
             onToggleTheme={onToggleTheme}
           />
         </div>
 
         <div className="relative flex min-w-0 justify-center">
           {hasProject ? (
-            <div className="flex w-full max-w-[360px] items-center justify-center rounded-xl px-3 py-1.5">
+            <div className="flex w-full max-w-[360px] items-center justify-center">
               <InlineRenameField
                 id={inputId}
                 ref={inputRef}
+                editing={isProjectNameEditing}
                 value={draftName}
                 disabled={projectNameDisabled}
                 aria-label="Project name"
                 spellCheck={false}
-                editing
+                autoFocus={isProjectNameEditing}
+                focusBehavior="caret-end"
                 className="w-full"
-                outlineClassName="hidden"
-                inputClassName={cn(
-                  'truncate text-center text-sm font-medium text-foreground',
-                  projectNameDisabled ? 'cursor-not-allowed opacity-60' : 'focus-visible:outline-none',
+                displayAs="div"
+                displayProps={{
+                  'aria-label': 'Project name',
+                  className: cn(
+                    'flex h-9 cursor-text items-center justify-center rounded-md px-3',
+                    projectNameDisabled ? 'cursor-not-allowed opacity-60' : null,
+                  ),
+                  onClick: activateProjectNameEdit,
+                  onKeyDown: handleProjectNameDisplayKeyDown,
+                  role: projectNameDisabled ? undefined : 'button',
+                  tabIndex: projectNameDisabled ? -1 : 0,
+                  title: draftName,
+                }}
+                outlineClassName={cn(
+                  'inset-x-0 inset-y-0 rounded-md border-input bg-background shadow-xs',
+                  'group-focus-within/rename:border-ring group-focus-within/rename:ring-[3px] group-focus-within/rename:ring-ring/50',
                 )}
+                inputClassName={cn('h-9 px-3 text-center text-sm font-medium', projectNameDisabled ? 'opacity-60' : null)}
                 textClassName="truncate text-center text-sm font-medium"
                 onChange={(event) => setDraftName(event.target.value)}
                 onBlur={() => {
-                  if (skipBlurCommitRef.current) {
-                    skipBlurCommitRef.current = false;
-                    return;
-                  }
-
                   void commitDraftName();
+                  setIsProjectNameEditing(false);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
                     if (commitDraftName()) {
-                      event.currentTarget.blur();
+                      setIsProjectNameEditing(false);
                     }
                     return;
                   }
 
                   if (event.key === 'Escape') {
                     event.preventDefault();
-                    restoreLastCommittedName();
-                    event.currentTarget.blur();
+                    cancelProjectNameEdit();
                   }
                 }}
               />

@@ -162,6 +162,7 @@ export function EditorLayout() {
   const {
     isPlaying,
     isDarkMode,
+    showAdvancedBlocks,
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
@@ -1308,6 +1309,7 @@ export function EditorLayout() {
       <EditorTopBar
         hasProject
         isDarkMode={isDarkMode}
+        showAdvancedBlocks={showAdvancedBlocks}
         projectName={project.name}
         projectNameDisabled={isSyncingCloud}
         saveControlState={saveControlState}
@@ -1325,6 +1327,9 @@ export function EditorLayout() {
         onProjectNameCommit={(name) => updateProjectName(name)}
         onSaveNow={() => {
           void handleSaveNow();
+        }}
+        onToggleAdvancedBlocks={() => {
+          useEditorStore.getState().toggleShowAdvancedBlocks();
         }}
         onToggleTheme={() => {
           void handleToggleDarkMode();
