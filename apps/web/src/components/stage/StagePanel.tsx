@@ -7,7 +7,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
-import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from 'lucide-react';
+import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from '@/components/ui/icons';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { cn } from '@/lib/utils';
 

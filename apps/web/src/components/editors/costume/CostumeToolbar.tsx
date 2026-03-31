@@ -7,9 +7,7 @@ import {
   FloatingBottomToolbarDock,
 } from '@/components/editors/shared/FloatingBottomToolbar';
 import {
-  ColorPicker,
-  ColorPickerSelection,
-  ColorPickerHue,
+  CompactColorPicker,
 } from '@/components/ui/color-picker';
 import {
   MousePointer2,
@@ -32,7 +30,7 @@ import {
   FlipHorizontal2,
   FlipVertical2,
   RotateCw,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -307,10 +305,7 @@ const ToolbarColorControl = memo(({
         sideOffset={toolbarPopupSideOffset}
         className="w-[212px] p-3"
       >
-        <ColorPicker value={value} onChange={handleColorChange} className="w-48">
-          <ColorPickerSelection className="mb-2 h-32 rounded" />
-          <ColorPickerHue />
-        </ColorPicker>
+        <CompactColorPicker value={value} onChange={handleColorChange} />
       </AnchoredPopupSurface>
     </>
   );

@@ -6,9 +6,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { AppIcon, type AppIconName, Check, Pencil, Trash2, X } from '@/components/ui/icons';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { AppIcon, type AppIconName } from '@/lib/icons/appIcons';
-import { Trash2, Pencil, Check, X } from 'lucide-react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { Variable, VariableType } from '@/types';

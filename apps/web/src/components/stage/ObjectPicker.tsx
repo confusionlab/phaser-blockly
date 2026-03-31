@@ -5,7 +5,7 @@ import { useEditorStore } from '@/store/editorStore';
 import { getEffectiveObjectProps } from '@/types';
 import type { GameObject, ComponentDefinition } from '@/types';
 import { Button } from '@/components/ui/button';
-import { X, Crosshair } from 'lucide-react';
+import { X, Crosshair } from '@/components/ui/icons';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 

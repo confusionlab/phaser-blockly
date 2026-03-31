@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Trash2, Loader2, Image, Music } from "lucide-react";
+import { Trash2, Loader2, Image, Music } from "@/components/ui/icons";
 import type {
   Costume,
   Sound,

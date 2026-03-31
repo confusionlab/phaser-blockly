@@ -7,7 +7,7 @@ import { CostumeEditor } from './CostumeEditor';
 import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Button } from '@/components/ui/button';
-import { Code, Maximize2, Minimize2, Palette, Volume2 } from 'lucide-react';
+import { Code, Maximize2, Minimize2, Palette, Volume2 } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';

@@ -1,7 +1,7 @@
 import { memo, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import type { Sound } from '@/types';
-import { Mic, Volume2 } from 'lucide-react';
+import { Mic, Volume2 } from '@/components/ui/icons';
 import { SoundClipEditor } from './SoundClipEditor';
 
 interface WaveformEditorProps {

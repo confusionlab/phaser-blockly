@@ -38,7 +38,7 @@ import {
   FolderOpen,
   FolderPlus,
   GripVertical,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import type {
   GameObject,
   Costume,
@@ -1461,13 +1461,16 @@ export function SpriteShelf() {
     const rowHoverClass = selectionSurfaceClassNames.hover;
 
     return (
-      <div key={options?.rowKey ?? item.key} className="relative w-full min-w-0">
+      <div
+        key={options?.rowKey ?? item.key}
+        className={`relative w-full min-w-0 max-w-full ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`}
+      >
         {isDropBefore ? (
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
           data-sprite-shelf-row="true"
-          className={`group/layer-row w-full min-w-0 ${rowPaddingClass} select-none ${
+          className={`group/layer-row w-full min-w-0 max-w-full ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'} ${rowPaddingClass} select-none ${
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
@@ -1499,7 +1502,7 @@ export function SpriteShelf() {
           onDragStart={interactive ? ((e) => handleLayerDragStart(e, item)) : undefined}
           onDragEnd={interactive ? clearLayerDragState : undefined}
         >
-          <div className="relative w-full min-w-0">
+          <div className={`relative w-full min-w-0 max-w-full ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`}>
             {!isSelected && !isDropOn ? (
               <div
                 className={`pointer-events-none absolute inset-0 z-0 rounded-lg opacity-0 transition-opacity group-hover/layer-row:opacity-100 ${rowHoverClass}`}
@@ -1515,7 +1518,7 @@ export function SpriteShelf() {
                 className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex w-full min-w-0 items-stretch rounded-lg ${rowContentPaddingClass} transition-colors`}>
+            <div className={`relative z-10 flex w-full min-w-0 max-w-full items-stretch rounded-lg ${rowContentPaddingClass} transition-colors`}>
             {indentDepth > 0 ? (
               <div aria-hidden="true" className="flex self-center shrink-0">
                 {Array.from({ length: indentDepth }).map((_, index) => (
@@ -1593,7 +1596,7 @@ export function SpriteShelf() {
               </div>
             )}
 
-            <div className="ml-1.5 flex flex-1 min-w-0 items-center pr-[3px]">
+            <div className={`ml-1.5 flex flex-1 min-w-0 max-w-full items-center pr-[3px] ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`}>
               <InlineRenameField
                 key={isInlineEditing ? `rename-${inlineRenameSessionId}` : `label-${item.key}`}
                 ref={inputRef}
@@ -1618,13 +1621,13 @@ export function SpriteShelf() {
                 focusBehavior="caret-end"
                 displayAs="div"
                 displayProps={{
-                  className: 'flex min-w-0 items-center gap-1',
+                  className: `flex w-full min-w-0 items-center gap-1 ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`,
                   title: item.name,
                 }}
                 displayValue={
                   <>
-                    <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                    {isComponentInstance && <Component className="ml-1 inline-block size-3 opacity-60" />}
+                    <span className="block min-w-0 flex-1 truncate">{item.name}</span>
+                    {isComponentInstance && <Component className="size-3 shrink-0 opacity-60" />}
                   </>
                 }
               />
@@ -1803,17 +1806,17 @@ export function SpriteShelf() {
         ref={shortcutSurfaceRef}
         data-editor-shortcut-surface="scene-objects"
         tabIndex={0}
-        className="flex-1 min-h-0 min-w-0 outline-none"
+        className="flex-1 min-h-0 min-w-0 w-full overflow-x-hidden outline-none"
         onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
       >
         <ScrollArea
-          className="flex-1 min-w-0"
+          className="flex-1 min-w-0 w-full overflow-hidden"
           onDragOver={handleRootDragOver}
           onDrop={handleRootDrop}
           onClick={handleEmptyShelfClick}
           data-testid="sprite-shelf-scroll-area"
         >
-          <div className="min-h-full w-full min-w-0">
+          <div className="min-h-full w-0 min-w-full">
             {selectedScene.objects.length === 0 && folders.length === 0 ? (
               <div className="flex h-full items-center justify-center p-4">
                 <Button
@@ -1830,7 +1833,7 @@ export function SpriteShelf() {
               <div
                 role="tree"
                 aria-label="Scene hierarchy"
-                className="relative min-h-full w-full min-w-0 overflow-x-hidden outline-none"
+                className="relative min-h-full w-0 min-w-full overflow-x-hidden outline-none"
                 onClick={handleEmptyShelfClick}
               >
                 {treeItems.map((item) => renderTreeItem(item))}

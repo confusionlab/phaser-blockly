@@ -15,7 +15,7 @@ import {
   SquareCheck,
   Trash2,
   Upload,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 
 import {
   createProjectFolder,

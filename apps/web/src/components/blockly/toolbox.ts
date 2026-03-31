@@ -1,17 +1,60 @@
 import * as Blockly from 'blockly';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
+import { getAppIconDataUri, type AppIconName } from '@/components/ui/icons';
 import type { MessageDefinition, Variable, VariableType } from '@/types';
 import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
-import { getAppIconDataUri, type AppIconName } from '@/lib/icons/appIcons';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
 
 const CREATE_MESSAGE_OPTION = '__CREATE_MESSAGE_OPTION__';
 const RENAME_SELECTED_MESSAGE_OPTION = '__RENAME_SELECTED_MESSAGE_OPTION__';
-const ADVANCED_BLOCK_TYPES = new Set<string>(['debug_console_log']);
+const TOOLBOX_CATEGORY_ORDER = [
+  'Events',
+  'Actions',
+  'Motion',
+  'Looks',
+  'Sensing',
+  'Sound',
+  'Physics',
+  'Camera',
+  'Inventory',
+  'Variables',
+  'Operators',
+] as const;
+const ADVANCED_BLOCK_TYPES = new Set<string>([
+  'camera_set_follow_offset',
+  'camera_set_follow_smoothness',
+  'control_current_item',
+  'control_for_each',
+  'debug_console_log',
+  'looks_change_axis_scale',
+  'looks_speak',
+  'looks_stop_speaking',
+  'looks_target_speak',
+  'looks_target_stop_speaking',
+  'motion_attach_block_to_me',
+  'motion_attach_to_block',
+  'motion_detach',
+  'motion_limit_world_boundary_off',
+  'motion_limit_world_boundary_on',
+  'object_from_dropdown',
+  'operator_mathop',
+  'operator_mod',
+  'physics_set_bounce',
+  'physics_set_friction',
+  'event_when_touching_direction_value',
+  'sensing_my_type',
+  'sensing_all_touching_objects',
+  'sensing_touching_direction_value',
+  'sensing_type_literal',
+  'sensing_type_of_object',
+  'target_camera',
+  'target_ground',
+  'target_mouse',
+  'target_myself',
+]);
 const BLOCKLY_INLINE_ICON_DEFAULT_SIZE = 16;
-const BLOCKLY_INLINE_ICON_LIGHT_TEXT = '#ffffff';
-const BLOCKLY_INLINE_ICON_DARK_TEXT = '#1f2937';
+const BLOCKLY_INLINE_ICON_DEFAULT_TEXT = '#ffffff';
 
 type MessageDialogMode = 'create' | 'rename';
 type MessageDialogCallback = (
@@ -307,19 +350,6 @@ function getBlockSvgRoot(block: Blockly.Block | null | undefined): SVGElement | 
   return maybeSvgBlock.getSvgRoot?.() ?? null;
 }
 
-function getBlocklyInlineIconFallbackColor(block: Blockly.Block): string {
-  const parsedColour = Blockly.utils.colour.parse(block.getColour());
-  const [red, green, blue] = Blockly.utils.colour.hexToRgb(parsedColour);
-  const srgb = [red, green, blue].map((channel) => {
-    const normalized = channel / 255;
-    return normalized <= 0.03928
-      ? normalized / 12.92
-      : ((normalized + 0.055) / 1.055) ** 2.4;
-  });
-  const luminance = (0.2126 * srgb[0]) + (0.7152 * srgb[1]) + (0.0722 * srgb[2]);
-  return luminance > 0.45 ? BLOCKLY_INLINE_ICON_DARK_TEXT : BLOCKLY_INLINE_ICON_LIGHT_TEXT;
-}
-
 function getBlocklyInlineIconTextColor(block: Blockly.Block): string {
   const svgRoot = getBlockSvgRoot(block);
   const textNode = svgRoot?.querySelector(
@@ -336,7 +366,7 @@ function getBlocklyInlineIconTextColor(block: Blockly.Block): string {
     }
   }
 
-  return getBlocklyInlineIconFallbackColor(block);
+  return BLOCKLY_INLINE_ICON_DEFAULT_TEXT;
 }
 
 class BlocklyInlineIconField extends Blockly.FieldImage {
@@ -347,7 +377,7 @@ class BlocklyInlineIconField extends Blockly.FieldImage {
   constructor(iconName: AppIconName, altText: string, options: BlocklyInlineIconOptions = {}) {
     const size = options.size ?? BLOCKLY_INLINE_ICON_DEFAULT_SIZE;
     super(
-      getAppIconDataUri(iconName, { color: options.color ?? BLOCKLY_INLINE_ICON_LIGHT_TEXT, size }),
+      getAppIconDataUri(iconName, { color: options.color ?? BLOCKLY_INLINE_ICON_DEFAULT_TEXT, size }),
       size,
       size,
       altText,
@@ -361,10 +391,18 @@ class BlocklyInlineIconField extends Blockly.FieldImage {
   override initView(): void {
     super.initView();
     this.syncIconColour();
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => this.syncIconColour());
+    }
   }
 
   override applyColour(): void {
     super.applyColour();
+    this.syncIconColour();
+  }
+
+  protected override render_(): void {
+    super.render_();
     this.syncIconColour();
   }
 
@@ -857,6 +895,18 @@ function filterToolboxContentItems(
   return pruneToolboxCategoryContents(filtered);
 }
 
+function sortToolboxCategories(categories: ToolboxCategoryConfig[]): ToolboxCategoryConfig[] {
+  const rankByName = new Map<string, number>(TOOLBOX_CATEGORY_ORDER.map((name, index) => [name, index]));
+  return [...categories].sort((left, right) => {
+    const leftRank = rankByName.get(left.name) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = rankByName.get(right.name) ?? Number.MAX_SAFE_INTEGER;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
 export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxConfig {
   const { includeAdvancedBlocks = true } = options;
   const toolbox: ToolboxConfig = {
@@ -1265,16 +1315,8 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               FRICTION: { shadow: { type: 'math_number', fields: { NUM: '0.1' } } }
             }
           },
-          { kind: 'block', type: 'physics_immovable' },
-          { kind: 'block', type: 'physics_ground_on' },
-          { kind: 'block', type: 'physics_ground_off' },
-          {
-            kind: 'block',
-            type: 'physics_set_ground_y',
-            inputs: {
-              Y: { shadow: { type: 'math_number', fields: { NUM: '500' } } }
-            }
-          },
+          { kind: 'block', type: 'physics_make_dynamic' },
+          { kind: 'block', type: 'physics_make_static' },
         ],
       },
       {
@@ -1581,13 +1623,18 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
     ],
   };
 
+  const orderedToolbox: ToolboxConfig = {
+    ...toolbox,
+    contents: sortToolboxCategories(toolbox.contents),
+  };
+
   if (includeAdvancedBlocks) {
-    return toolbox;
+    return orderedToolbox;
   }
 
   return {
-    ...toolbox,
-    contents: filterToolboxContentItems(toolbox.contents, includeAdvancedBlocks) as ToolboxCategoryConfig[],
+    ...orderedToolbox,
+    contents: filterToolboxContentItems(orderedToolbox.contents, includeAdvancedBlocks) as ToolboxCategoryConfig[],
   };
 }
 
@@ -2855,14 +2902,25 @@ function registerCustomBlocks() {
     }
   };
 
-  Blockly.Blocks['physics_immovable'] = {
+  Blockly.Blocks['physics_make_dynamic'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('make immovable');
+        .appendField('make myself dynamic');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
-      this.setTooltip('Make this object immovable (like a platform)');
+      this.setTooltip('Make this object respond to forces and collisions as a dynamic physics body');
+    }
+  };
+
+  Blockly.Blocks['physics_make_static'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('make myself static');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#40BF4A');
+      this.setTooltip('Make this object a static physics body, like a platform');
     }
   };
 
@@ -2885,19 +2943,6 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
       this.setTooltip('Disable ground collision for this object');
-    }
-  };
-
-  Blockly.Blocks['physics_set_ground_y'] = {
-    init: function() {
-      this.appendValueInput('Y')
-        .setCheck('Number')
-        .appendField('set ground to y:');
-      this.setInputsInline(true);
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#40BF4A');
-      this.setTooltip('Set the Y position of the ground');
     }
   };
 

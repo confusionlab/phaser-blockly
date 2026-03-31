@@ -187,6 +187,17 @@ test.describe('Blockly XML normalization', () => {
     expect(normalized).not.toContain('value name="NUM"');
   });
 
+  test('normalizes legacy physics immovable block ids to make static', () => {
+    const normalized = normalizeBlocklyXml(`
+      <xml xmlns="https://developers.google.com/blockly/xml">
+        <block type="physics_immovable"></block>
+      </xml>
+    `.trim());
+
+    expect(normalized).toContain('type="physics_make_static"');
+    expect(normalized).not.toContain('type="physics_immovable"');
+  });
+
   test('converts direct motion VALUE fields into math_number inputs', () => {
     const normalized = normalizeBlocklyXml(DIRECT_FIELD_MOVEMENT_BLOCKLY_XML);
 

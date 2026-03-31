@@ -5,11 +5,9 @@ import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import {
-  ColorPicker,
-  ColorPickerHue,
-  ColorPickerSelection,
+  CompactColorPicker,
 } from '@/components/ui/color-picker';
-import { Paintbrush, Plus, X } from 'lucide-react';
+import { Paintbrush, Plus, X } from '@/components/ui/icons';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 
 export function SceneTabs() {
@@ -200,10 +198,7 @@ export function SceneTabs() {
               onClick={() => setShowBgColorPicker(false)}
             />
             <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-lg p-3 shadow-lg">
-              <ColorPicker value={currentBgColor} onChange={handleBgPickerChange} className="w-48">
-                <ColorPickerSelection className="h-32 rounded mb-2" />
-                <ColorPickerHue />
-              </ColorPicker>
+              <CompactColorPicker value={currentBgColor} onChange={handleBgPickerChange} />
             </div>
           </>
         )}

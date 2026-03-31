@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { formatAudioTime, generateWaveformFromBlob } from '@/lib/audioWaveform';
-import { Square } from 'lucide-react';
+import { Square } from '@/components/ui/icons';
 
 interface RecordingStudioProps {
   onReviewRecording: (draft: {

@@ -11,7 +11,7 @@ import { uploadDataUrlToStorage } from '@/utils/convexHelpers';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import type { Sound } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
-import { Library, Loader2, Mic, Save, Trash2, Upload, Volume2 } from 'lucide-react';
+import { Library, Loader2, Mic, Save, Trash2, Upload, Volume2 } from '@/components/ui/icons';
 
 interface SoundListProps {
   sounds: Sound[];

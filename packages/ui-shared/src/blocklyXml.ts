@@ -18,6 +18,7 @@ const BLOCK_TYPE_ALIASES: Readonly<Record<string, string>> = {
   change_x_by: 'motion_change_x',
   change_y_by: 'motion_change_y',
   controls_if_else: 'controls_if',
+  physics_immovable: 'physics_make_static',
 };
 
 const STATEMENT_NAME_ALIASES: ReadonlyArray<{

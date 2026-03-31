@@ -30,7 +30,7 @@ type AppIconDefinition = {
 
 type AppIconRenderOptions = {
   color?: string;
-  size?: number;
+  size?: number | string;
 };
 
 export type AppIconName =

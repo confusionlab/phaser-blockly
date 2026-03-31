@@ -686,14 +686,15 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
       return [indentLine(indent, `set bounce to ${renderBlocklyExpression(getValue(node, 'BOUNCE'))}`)];
     case 'physics_set_friction':
       return [indentLine(indent, `set friction to ${renderBlocklyExpression(getValue(node, 'FRICTION'))}`)];
+    case 'physics_make_dynamic':
+      return [indentLine(indent, 'make myself dynamic')];
+    case 'physics_make_static':
     case 'physics_immovable':
-      return [indentLine(indent, 'make immovable')];
+      return [indentLine(indent, 'make myself static')];
     case 'physics_ground_on':
       return [indentLine(indent, 'enable ground collision')];
     case 'physics_ground_off':
       return [indentLine(indent, 'disable ground collision')];
-    case 'physics_set_ground_y':
-      return [indentLine(indent, `set ground y to ${renderBlocklyExpression(getValue(node, 'Y'))}`)];
     case 'camera_follow_me':
       return [indentLine(indent, 'camera follow me')];
     case 'camera_follow_object':

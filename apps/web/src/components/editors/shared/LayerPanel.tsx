@@ -19,7 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from 'lucide-react';
+import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from '@/components/ui/icons';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
 

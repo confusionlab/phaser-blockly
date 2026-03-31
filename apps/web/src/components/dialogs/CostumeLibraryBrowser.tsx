@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Trash2, Upload, Loader2 } from "lucide-react";
+import { Trash2, Upload, Loader2 } from "@/components/ui/icons";
 import type { CostumeBounds, CostumeDocument } from "@/types";
 import {
   uploadDataUrlToStorage,

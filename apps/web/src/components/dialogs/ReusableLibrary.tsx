@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { X } from 'lucide-react';
+import { X } from '@/components/ui/icons';
 import type { ReusableObject } from '@/types';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 

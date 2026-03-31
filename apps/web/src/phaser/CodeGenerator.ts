@@ -604,8 +604,16 @@ export function registerCodeGenerators(): void {
     return `sprite.setFriction(${friction});\n`;
   };
 
+  javascriptGenerator.forBlock['physics_make_dynamic'] = function() {
+    return 'sprite.makeDynamic();\n';
+  };
+
+  javascriptGenerator.forBlock['physics_make_static'] = function() {
+    return 'sprite.makeStatic();\n';
+  };
+
   javascriptGenerator.forBlock['physics_immovable'] = function() {
-    return 'sprite.makeImmovable();\n';
+    return 'sprite.makeStatic();\n';
   };
 
   javascriptGenerator.forBlock['physics_ground_on'] = function() {
@@ -614,11 +622,6 @@ export function registerCodeGenerators(): void {
 
   javascriptGenerator.forBlock['physics_ground_off'] = function() {
     return 'runtime.setGroundEnabled(false);\n';
-  };
-
-  javascriptGenerator.forBlock['physics_set_ground_y'] = function(block) {
-    const y = javascriptGenerator.valueToCode(block, 'Y', Order.ATOMIC) || '500';
-    return `runtime.setGroundY(${y});\n`;
   };
 
   // --- Camera ---

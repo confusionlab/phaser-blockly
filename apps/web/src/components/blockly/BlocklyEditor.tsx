@@ -6,7 +6,7 @@ import {
   type CSSProperties,
 } from 'react';
 import * as Blockly from 'blockly';
-import { Pin } from 'lucide-react';
+import { Pin } from '@/components/ui/icons';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {

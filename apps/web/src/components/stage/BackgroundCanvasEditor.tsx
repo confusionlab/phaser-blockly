@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { Check, LocateFixed, X } from 'lucide-react';
+import { Check, LocateFixed, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { useProjectStore } from '@/store/projectStore';

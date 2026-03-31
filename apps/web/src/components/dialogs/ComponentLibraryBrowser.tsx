@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Component } from 'lucide-react';
+import { Component } from '@/components/ui/icons';
 import { useProjectStore } from '@/store/projectStore';
 import {
   Dialog,

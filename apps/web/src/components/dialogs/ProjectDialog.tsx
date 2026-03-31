@@ -23,7 +23,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
-import { Download, Trash2, Upload, Plus, FolderOpen } from 'lucide-react';
+import { Download, Trash2, Upload, Plus, FolderOpen } from '@/components/ui/icons';
 import { createDefaultProject } from '@/types';
 
 interface ProjectDialogProps {

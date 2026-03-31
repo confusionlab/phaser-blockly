@@ -21,7 +21,7 @@ import {
   WandSparkles,
   Wrench,
   X,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import { api } from '@convex-generated/api';
 import type { AssistantChangeSet } from '../../../../../packages/ui-shared/src/assistant';
 import {

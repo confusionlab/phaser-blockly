@@ -2,7 +2,7 @@
 
 
 import Color from "color"
-import { PipetteIcon } from "lucide-react"
+import { PipetteIcon } from "@/components/ui/icons"
 import * as Slider from "@radix-ui/react-slider"
 import {
   type ComponentProps,
@@ -33,6 +33,7 @@ interface ColorPickerContextValue {
   lightness: number
   alpha: number
   mode: string
+  setColor: (value: Parameters<typeof Color>[0]) => void
   setHue: (hue: number) => void
   setSaturation: (saturation: number) => void
   setLightness: (lightness: number) => void
@@ -53,6 +54,23 @@ interface ColorState {
   alpha: number
 }
 
+interface EyeDropperSelectionResult {
+  sRGBHex: string
+}
+
+interface EyeDropperInstance {
+  open: () => Promise<EyeDropperSelectionResult>
+}
+
+interface EyeDropperConstructor {
+  new (): EyeDropperInstance
+}
+
+type EyeDropperCapableWindow = Window &
+  typeof globalThis & {
+    EyeDropper?: EyeDropperConstructor
+  }
+
 const DEFAULT_COLOR_STATE: ColorState = {
   hue: 0,
   saturation: 100,
@@ -61,6 +79,17 @@ const DEFAULT_COLOR_STATE: ColorState = {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+const getEyeDropperConstructor = (): EyeDropperConstructor | null => {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  const browserWindow = window as EyeDropperCapableWindow
+  return typeof browserWindow.EyeDropper === "function" ? browserWindow.EyeDropper : null
+}
+
+const supportsEyeDropper = () => getEyeDropperConstructor() !== null
 
 const normalizeHue = (value: number, fallbackHue: number) => {
   if (!Number.isFinite(value)) {
@@ -167,6 +196,14 @@ export const ColorPicker = ({
     [applyState],
   )
 
+  const setColorAndNotify = useCallback(
+    (nextColor: Parameters<typeof Color>[0]) => {
+      const parsed = parseColorToState(nextColor, colorStateRef.current)
+      applyState(parsed, true)
+    },
+    [applyState],
+  )
+
   // Sync state when parent controls `value`.
   useEffect(() => {
     if (value === undefined) {
@@ -211,6 +248,7 @@ export const ColorPicker = ({
         lightness: colorState.lightness,
         alpha: colorState.alpha,
         mode,
+        setColor: setColorAndNotify,
         setHue: setHueAndNotify,
         setSaturation: setSaturationAndNotify,
         setLightness: setLightnessAndNotify,
@@ -391,27 +429,38 @@ export const ColorPickerAlpha = ({ className, ...props }: ColorPickerAlphaProps)
 export type ColorPickerEyeDropperProps = ComponentProps<typeof Button>
 
 export const ColorPickerEyeDropper = ({ className, ...props }: ColorPickerEyeDropperProps) => {
-  const { setHsla } = useColorPicker()
+  const { setColor } = useColorPicker()
+  const eyeDropperSupported = supportsEyeDropper()
 
   const handleEyeDropper = async () => {
+    const EyeDropper = getEyeDropperConstructor()
+    if (!EyeDropper) {
+      return
+    }
+
     try {
-      // @ts-expect-error - EyeDropper API is experimental
       const eyeDropper = new EyeDropper()
       const result = await eyeDropper.open()
-      const color = Color(result.sRGBHex)
-      const [h, s, l] = color.hsl().array()
-
-      setHsla(h, s, l, 100)
+      setColor(result.sRGBHex)
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return
+      }
       console.error("EyeDropper failed:", error)
     }
   }
 
+  if (!eyeDropperSupported) {
+    return null
+  }
+
   return (
     <Button
+      aria-label="Pick color from screen"
       className={cn("shrink-0 text-muted-foreground", className)}
       onClick={handleEyeDropper}
       size="icon"
+      title="Pick color from screen"
       type="button"
       variant="outline"
       {...(props as any)}
@@ -572,6 +621,26 @@ export const ColorPickerFormat = ({ className, ...props }: ColorPickerFormatProp
 
   return null
 }
+
+export type CompactColorPickerProps = Omit<ColorPickerProps, "children">
+
+export const CompactColorPicker = memo(({ className, ...props }: CompactColorPickerProps) => {
+  const eyeDropperSupported = supportsEyeDropper()
+
+  return (
+    <ColorPicker className={cn("w-48", className)} {...props}>
+      <ColorPickerSelection className="mb-2 h-32 rounded" />
+      <ColorPickerHue />
+      {eyeDropperSupported ? (
+        <div className="mt-2 flex justify-end">
+          <ColorPickerEyeDropper />
+        </div>
+      ) : null}
+    </ColorPicker>
+  )
+})
+
+CompactColorPicker.displayName = "CompactColorPicker"
 
 // Demo
 export function Demo() {

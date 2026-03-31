@@ -10,7 +10,7 @@ import { blobToDataUrl } from '@/utils/convexHelpers';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import { Button } from '@/components/ui/button';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
-import { Check, Loader2, RotateCcw } from 'lucide-react';
+import { Check, Loader2, RotateCcw } from '@/components/ui/icons';
 
 interface DraftRecording {
   blob: Blob;

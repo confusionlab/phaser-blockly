@@ -7,7 +7,7 @@ import {
 } from '@/components/editors/shared/FloatingBottomToolbar';
 import type { Sound } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
-import { Play, RotateCcw, Scissors, Square, Volume2, VolumeX } from 'lucide-react';
+import { Play, RotateCcw, Scissors, Square, Volume2, VolumeX } from '@/components/ui/icons';
 import { WaveformViewport } from './WaveformViewport';
 
 interface SoundClipEditorProps {

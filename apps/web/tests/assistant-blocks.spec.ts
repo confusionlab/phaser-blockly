@@ -54,10 +54,32 @@ test.describe('assistant block catalog', () => {
     const basicToolboxTypes = getToolboxRegisteredBlockTypes({ includeAdvancedBlocks: false });
     const basicToolbox = getToolboxConfig({ includeAdvancedBlocks: false });
     const debugCategory = basicToolbox.contents.find((category) => category.name === 'Debug');
+    const targetsCategory = basicToolbox.contents.find((category) => category.name === 'Targets');
 
     expect(allToolboxTypes).toContain('debug_console_log');
+    expect(allToolboxTypes).toContain('target_camera');
+    expect(allToolboxTypes).toContain('operator_mathop');
+    expect(allToolboxTypes).toContain('looks_speak');
+    expect(allToolboxTypes).toContain('sensing_all_touching_objects');
+    expect(allToolboxTypes).toContain('sensing_touching_direction_value');
+    expect(allToolboxTypes).toContain('event_when_touching_direction_value');
+    expect(allToolboxTypes).toContain('physics_set_bounce');
+    expect(allToolboxTypes).toContain('physics_set_friction');
     expect(basicToolboxTypes).not.toContain('debug_console_log');
+    expect(basicToolboxTypes).not.toContain('target_camera');
+    expect(basicToolboxTypes).not.toContain('operator_mathop');
+    expect(basicToolboxTypes).not.toContain('operator_mod');
+    expect(basicToolboxTypes).not.toContain('physics_set_bounce');
+    expect(basicToolboxTypes).not.toContain('physics_set_friction');
+    expect(basicToolboxTypes).not.toContain('looks_speak');
+    expect(basicToolboxTypes).not.toContain('looks_stop_speaking');
+    expect(basicToolboxTypes).not.toContain('looks_target_speak');
+    expect(basicToolboxTypes).not.toContain('looks_target_stop_speaking');
+    expect(basicToolboxTypes).not.toContain('sensing_all_touching_objects');
+    expect(basicToolboxTypes).not.toContain('sensing_touching_direction_value');
+    expect(basicToolboxTypes).not.toContain('event_when_touching_direction_value');
     expect(debugCategory).toBeUndefined();
+    expect(targetsCategory).toBeUndefined();
   });
 
   test('searches blocks by behavior keywords without full toolbox dump in the tool result', () => {

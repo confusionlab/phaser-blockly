@@ -4,7 +4,7 @@ import { api } from '@convex-generated/api';
 import type { Id } from '@convex-generated/dataModel';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Plus, Upload, Loader2, Library, Copy, Trash2 } from 'lucide-react';
+import { Plus, Upload, Loader2, Library, Copy, Trash2 } from '@/components/ui/icons';
 import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';

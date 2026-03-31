@@ -1,4 +1,4 @@
-import { ChevronDown, Redo2, Undo2 } from 'lucide-react';
+import { ChevronDown, Redo2, Undo2 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,

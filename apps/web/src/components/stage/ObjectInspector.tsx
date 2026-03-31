@@ -15,11 +15,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  ColorPicker,
-  ColorPickerSelection,
-  ColorPickerHue,
+  CompactColorPicker,
 } from '@/components/ui/color-picker';
-import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Component, Paintbrush } from 'lucide-react';
+import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Component, Paintbrush } from '@/components/ui/icons';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
 import {
@@ -84,10 +82,7 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
             onClick={() => setIsOpen(false)}
           />
           <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-lg p-3 shadow-lg">
-            <ColorPicker value={value} onChange={handleColorChange} className="w-48">
-              <ColorPickerSelection className="h-32 rounded mb-2" />
-              <ColorPickerHue />
-            </ColorPicker>
+            <CompactColorPicker value={value} onChange={handleColorChange} />
           </div>
         </>
       )}
