@@ -27,6 +27,8 @@ interface UseCostumeCanvasViewportControllerOptions {
   bitmapBrushKindRef: MutableRefObject<BitmapBrushKind>;
   brushColor: string;
   brushColorRef: MutableRefObject<string>;
+  brushOpacity: number;
+  brushOpacityRef: MutableRefObject<number>;
   brushCursorOverlayRef: RefObject<HTMLDivElement | null>;
   brushSize: number;
   brushSizeRef: MutableRefObject<number>;
@@ -46,6 +48,8 @@ export function useCostumeCanvasViewportController({
   bitmapBrushKindRef,
   brushColor,
   brushColorRef,
+  brushOpacity,
+  brushOpacityRef,
   brushCursorOverlayRef,
   brushSize,
   brushSizeRef,
@@ -168,6 +172,7 @@ export function useCostumeCanvasViewportController({
       brushColorRef.current,
       brushSizeRef.current,
       displayScale,
+      tool === 'brush' ? brushOpacityRef.current : 1,
     );
     overlay.style.width = `${cursorStyle.diameter}px`;
     overlay.style.height = `${cursorStyle.diameter}px`;
@@ -396,7 +401,7 @@ export function useCostumeCanvasViewportController({
 
   useEffect(() => {
     syncBrushCursorOverlay();
-  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, syncBrushCursorOverlay, zoom]);
+  }, [activeTool, bitmapBrushKind, brushColor, brushOpacity, brushSize, editorModeState, syncBrushCursorOverlay, zoom]);
 
   useEffect(() => {
     onViewScaleChange?.(BASE_VIEW_SCALE * zoom);

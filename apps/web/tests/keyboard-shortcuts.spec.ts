@@ -139,4 +139,25 @@ test.describe('Keyboard shortcuts', () => {
     expect(selection.start).toBe(selection.length);
     expect(selection.end).toBe(selection.length);
   });
+
+  test('project name edit enforces the max length before commit', async ({ page }) => {
+    const projectName = `Project Limit ${Date.now()}`;
+    await bootstrapEditorProject(page, { projectName });
+
+    const projectNameDisplay = page.getByRole('button', { name: 'Project name' });
+    await expect(projectNameDisplay).toHaveText(projectName);
+    await projectNameDisplay.click();
+
+    const renameInput = page.getByRole('textbox', { name: 'Project name' });
+    await expect(renameInput).toBeVisible();
+
+    const longName = 'x'.repeat(200);
+    await renameInput.fill(longName);
+
+    const value = await renameInput.inputValue();
+    expect(value.length).toBe(120);
+
+    await page.keyboard.press('Enter');
+    await expect(projectNameDisplay).toHaveText('x'.repeat(120));
+  });
 });

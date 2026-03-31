@@ -236,6 +236,7 @@ export function useCostumeCanvasPenController({
       fill: shouldClose
         ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, vectorStyleRef.current.fillColor)
         : null,
+      opacity: vectorStyleRef.current.opacity,
       stroke: getFabricStrokeValueForVectorBrush(vectorStyleRef.current.strokeBrushId, vectorStyleRef.current.strokeColor),
       strokeWidth,
       strokeUniform: true,

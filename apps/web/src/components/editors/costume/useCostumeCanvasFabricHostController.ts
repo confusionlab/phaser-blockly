@@ -395,6 +395,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         const fillColor = activeShapeStyle.fillColor;
         const strokeColor = activeShapeStyle.strokeColor;
         const strokeWidth = Math.max(0, activeShapeStyle.strokeWidth);
+        const objectOpacity = isVectorMode ? vectorStyleRef.current.opacity : 1;
         const vectorRenderFill = isVectorMode
           ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, fillColor)
           : fillColor;
@@ -418,6 +419,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             width: 0,
             height: 0,
             fill: vectorRenderFill,
+            opacity: objectOpacity,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -443,6 +445,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             rx: 0,
             ry: 0,
             fill: vectorRenderFill,
+            opacity: objectOpacity,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -473,6 +476,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             originX: 'left',
             originY: 'top',
             fill: vectorRenderFill,
+            opacity: objectOpacity,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -487,6 +491,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
           object.setBoundingBox?.(true);
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
+            opacity: objectOpacity,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,

@@ -57,6 +57,7 @@ test.describe('assistant block catalog', () => {
     const targetsCategory = basicToolbox.contents.find((category) => category.name === 'Targets');
 
     expect(allToolboxTypes).toContain('debug_console_log');
+    expect(allToolboxTypes).toContain('control_group_block');
     expect(allToolboxTypes).toContain('target_camera');
     expect(allToolboxTypes).toContain('operator_mathop');
     expect(allToolboxTypes).toContain('looks_speak');
@@ -66,6 +67,7 @@ test.describe('assistant block catalog', () => {
     expect(allToolboxTypes).toContain('physics_set_bounce');
     expect(allToolboxTypes).toContain('physics_set_friction');
     expect(basicToolboxTypes).not.toContain('debug_console_log');
+    expect(basicToolboxTypes).not.toContain('control_group_block');
     expect(basicToolboxTypes).not.toContain('target_camera');
     expect(basicToolboxTypes).not.toContain('operator_mathop');
     expect(basicToolboxTypes).not.toContain('operator_mod');

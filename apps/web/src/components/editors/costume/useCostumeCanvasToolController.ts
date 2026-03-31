@@ -34,6 +34,7 @@ interface UseCostumeCanvasToolControllerOptions {
   bitmapBrushKindRef: MutableRefObject<BitmapBrushKind>;
   bitmapFloatingObjectRef: MutableRefObject<any | null>;
   brushColorRef: MutableRefObject<string>;
+  brushOpacityRef: MutableRefObject<number>;
   brushSizeRef: MutableRefObject<number>;
   commitBitmapStampBrushStroke: (payload: BitmapStampBrushCommitPayload) => Promise<void>;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
@@ -61,6 +62,7 @@ export function useCostumeCanvasToolController({
   bitmapBrushKindRef,
   bitmapFloatingObjectRef,
   brushColorRef,
+  brushOpacityRef,
   brushSizeRef,
   commitBitmapStampBrushStroke,
   editorModeRef,
@@ -150,11 +152,13 @@ export function useCostumeCanvasToolController({
     const isBitmapBrush = layerInteractive && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
     const isVectorPencil = layerInteractive && mode === 'vector' && tool === 'brush';
     if (isBitmapBrush) {
+      const brushOpacity = tool === 'brush' ? brushOpacityRef.current : 1;
       const compositeOperation = getCompositeOperation(tool);
       const brush = bitmapBrushKindRef.current !== 'hard-round'
         ? new BitmapStampBrush(fabricCanvas, {
             brushKind: bitmapBrushKindRef.current,
             brushColor: brushColorRef.current,
+            brushOpacity,
             brushSize: brushSizeRef.current,
             compositeOperation,
             onCommit: commitBitmapStampBrushStroke,
@@ -164,11 +168,13 @@ export function useCostumeCanvasToolController({
       brush.color = getBrushPaintColor(tool, brushColorRef.current);
       if (brush instanceof CompositePencilBrush) {
         brush.compositeOperation = compositeOperation;
+        brush.opacityMultiplier = brushOpacity;
       }
       (fabricCanvas as any).freeDrawingBrush = brush;
       fabricCanvas.isDrawingMode = true;
     } else if (isVectorPencil) {
       const brush = new VectorPencilBrush(fabricCanvas, {
+        opacity: vectorStyleRef.current.opacity,
         strokeBrushId: vectorStyleRef.current.strokeBrushId,
         strokeColor: vectorStyleRef.current.strokeColor,
         strokeWidth: vectorStyleRef.current.strokeWidth,

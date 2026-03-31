@@ -74,6 +74,7 @@ export function getVectorStyleTargets(obj: unknown): any[] {
 export interface VectorBrushStylableObject {
   fill?: unknown;
   noScaleCache?: boolean;
+  opacity?: number;
   set?: (props: Record<string, unknown>) => void;
   stroke?: unknown;
   strokeUniform?: boolean;
@@ -116,6 +117,11 @@ export function getVectorObjectStrokeColor(obj: unknown): string | undefined {
     return stroke;
   }
   return undefined;
+}
+
+export function getVectorObjectOpacity(obj: unknown): number | undefined {
+  const opacity = (obj as VectorBrushStylableObject | null | undefined)?.opacity;
+  return typeof opacity === 'number' && Number.isFinite(opacity) ? opacity : undefined;
 }
 
 export function getFabricStrokeValueForVectorBrush(brushId: VectorStrokeBrushId, strokeColor: string) {
@@ -191,6 +197,23 @@ export function applyVectorStrokeStyleToObject(
   }
 
   obj.set(updates);
+  return true;
+}
+
+export function applyVectorOpacityToObject(
+  obj: VectorBrushStylableObject | null | undefined,
+  opacity: number,
+): boolean {
+  if (!obj || typeof obj.set !== 'function') {
+    return false;
+  }
+
+  const normalizedOpacity = Math.max(0, Math.min(1, opacity));
+  if (obj.opacity === normalizedOpacity) {
+    return false;
+  }
+
+  obj.set({ opacity: normalizedOpacity });
   return true;
 }
 
@@ -308,18 +331,21 @@ export function isVectorPointSelectableObject(obj: unknown): obj is Record<strin
 }
 
 interface VectorPencilBrushOptions {
+  opacity: number;
   strokeBrushId: VectorStrokeBrushId;
   strokeColor: string;
   strokeWidth: number;
 }
 
 export class VectorPencilBrush extends PencilBrush {
+  private readonly opacityValue: number;
   private readonly strokeBrushId: VectorStrokeBrushId;
   private readonly strokeColor: string;
   private readonly strokeWidthValue: number;
 
   constructor(canvas: FabricCanvas, options: VectorPencilBrushOptions) {
     super(canvas as any);
+    this.opacityValue = Math.max(0, Math.min(1, options.opacity));
     this.strokeBrushId = options.strokeBrushId;
     this.strokeColor = options.strokeColor;
     this.strokeWidthValue = Math.max(1, options.strokeWidth);
@@ -332,6 +358,7 @@ export class VectorPencilBrush extends PencilBrush {
     const path = super.createPath(pathData);
     path.set({
       fill: null,
+      opacity: this.opacityValue,
       stroke: getFabricStrokeValueForVectorBrush(this.strokeBrushId, this.strokeColor),
       strokeWidth: this.strokeWidthValue,
       strokeUniform: true,

@@ -77,6 +77,9 @@ const DEFAULT_COLOR_STATE: ColorState = {
   lightness: 50,
   alpha: 100,
 }
+const HUE_MAX = 360
+const COMPACT_OPACITY_TRACK_HEIGHT_PX = 20
+const COMPACT_OPACITY_CHECKER_ROWS = 3
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
 
@@ -91,11 +94,24 @@ const getEyeDropperConstructor = (): EyeDropperConstructor | null => {
 
 const supportsEyeDropper = () => getEyeDropperConstructor() !== null
 
+const isHueAtUpperBound = (value: number) => Math.abs(value - HUE_MAX) < STATE_EPSILON
+
 const normalizeHue = (value: number, fallbackHue: number) => {
   if (!Number.isFinite(value)) {
-    return fallbackHue
+    return clamp(fallbackHue, 0, HUE_MAX)
   }
-  return ((value % 360) + 360) % 360
+
+  const clampedFallbackHue = clamp(fallbackHue, 0, HUE_MAX)
+  if (isHueAtUpperBound(value)) {
+    return HUE_MAX
+  }
+
+  const wrappedHue = ((value % HUE_MAX) + HUE_MAX) % HUE_MAX
+  if (Math.abs(wrappedHue) < STATE_EPSILON && isHueAtUpperBound(clampedFallbackHue)) {
+    return HUE_MAX
+  }
+
+  return wrappedHue
 }
 
 const normalizeState = (state: ColorState, fallback: ColorState): ColorState => ({
@@ -382,17 +398,17 @@ export const ColorPickerHue = ({ className, ...props }: ColorPickerHueProps) => 
 
   return (
     <Slider.Root
-      className={cn("relative flex h-4 w-full touch-none", className)}
-      max={360}
+      className={cn("relative flex h-6 w-full touch-none items-center", className)}
+      max={HUE_MAX}
       onValueChange={([hue]) => setHue(hue)}
       step={1}
       value={[hue]}
       {...(props as any)}
     >
-      <Slider.Track className="relative my-0.5 h-3 w-full grow rounded-full bg-[linear-gradient(90deg,#FF0000,#FFFF00,#00FF00,#00FFFF,#0000FF,#FF00FF,#FF0000)]">
+      <Slider.Track className="relative h-5 w-full grow rounded-full bg-[linear-gradient(90deg,#FF0000,#FFFF00,#00FF00,#00FFFF,#0000FF,#FF00FF,#FF0000)]">
         <Slider.Range className="absolute h-full" />
       </Slider.Track>
-      <Slider.Thumb className="block h-4 w-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50" />
+      <Slider.Thumb className="block size-6 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50" />
     </Slider.Root>
   )
 }
@@ -469,6 +485,86 @@ export const ColorPickerEyeDropper = ({ className, ...props }: ColorPickerEyeDro
     </Button>
   )
 }
+
+type CompactColorPickerHexInputProps = ComponentProps<typeof Input>
+
+const CompactColorPickerHexInput = memo(({ className, ...props }: CompactColorPickerHexInputProps) => {
+  const { hue, saturation, lightness, setColor } = useColorPicker()
+  const hexValue = useMemo(
+    () => Color.hsl(hue, saturation, lightness).hex().toUpperCase(),
+    [hue, saturation, lightness],
+  )
+  const [draftValue, setDraftValue] = useState(hexValue)
+  const [isEditing, setIsEditing] = useState(false)
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftValue(hexValue)
+    }
+  }, [hexValue, isEditing])
+
+  const commitDraftValue = useCallback((rawValue: string) => {
+    const trimmedValue = rawValue.trim()
+    if (!trimmedValue) {
+      setDraftValue(hexValue)
+      setIsEditing(false)
+      return
+    }
+
+    const candidate = trimmedValue.startsWith("#") ? trimmedValue : `#${trimmedValue}`
+
+    try {
+      const nextHex = Color(candidate).hex().toUpperCase()
+      setColor(nextHex)
+      setDraftValue(nextHex)
+    } catch {
+      setDraftValue(hexValue)
+    }
+
+    setIsEditing(false)
+  }, [hexValue, setColor])
+
+  return (
+    <Input
+      aria-label="Hex color"
+      autoCapitalize="off"
+      autoComplete="off"
+      autoCorrect="off"
+      className={cn(
+        "h-8 flex-1 bg-secondary px-2 font-mono text-xs uppercase shadow-none",
+        className,
+      )}
+      data-testid="compact-color-picker-hex-input"
+      onBlur={event => commitDraftValue(event.currentTarget.value)}
+      onChange={event => setDraftValue(event.currentTarget.value)}
+      onFocus={event => {
+        setIsEditing(true)
+        event.currentTarget.select()
+      }}
+      onKeyDown={event => {
+        if (event.key === "Enter") {
+          event.preventDefault()
+          commitDraftValue(event.currentTarget.value)
+          event.currentTarget.blur()
+          return
+        }
+
+        if (event.key === "Escape") {
+          event.preventDefault()
+          setDraftValue(hexValue)
+          setIsEditing(false)
+          event.currentTarget.blur()
+        }
+      }}
+      spellCheck={false}
+      type="text"
+      value={draftValue}
+      {...(props as any)}
+    />
+  )
+})
+
+CompactColorPickerHexInput.displayName = "CompactColorPickerHexInput"
 
 export type ColorPickerOutputProps = ComponentProps<typeof SelectTrigger>
 
@@ -622,20 +718,86 @@ export const ColorPickerFormat = ({ className, ...props }: ColorPickerFormatProp
   return null
 }
 
-export type CompactColorPickerProps = Omit<ColorPickerProps, "children">
+interface CompactColorPickerOpacityProps {
+  value: number
+  onChange: (opacity: number) => void
+}
 
-export const CompactColorPicker = memo(({ className, ...props }: CompactColorPickerProps) => {
-  const eyeDropperSupported = supportsEyeDropper()
+const CompactColorPickerOpacity = memo(({
+  value,
+  onChange,
+}: CompactColorPickerOpacityProps) => {
+  const { hue, saturation, lightness } = useColorPicker()
+  const clampedOpacity = clamp(value, 0, 1)
+  const opacityPercent = Math.round(clampedOpacity * 100)
+  const checkerSquareSize = COMPACT_OPACITY_TRACK_HEIGHT_PX / COMPACT_OPACITY_CHECKER_ROWS
+  const checkerTileSize = checkerSquareSize * 2
+  const currentColor = Color.hsl(hue, saturation, lightness).rgb().string()
+  const transparentColor = Color(currentColor).alpha(0).rgb().string()
+  const opaqueColor = Color(currentColor).alpha(1).rgb().string()
 
   return (
-    <ColorPicker className={cn("w-48", className)} {...props}>
-      <ColorPickerSelection className="mb-2 h-32 rounded" />
-      <ColorPickerHue />
-      {eyeDropperSupported ? (
-        <div className="mt-2 flex justify-end">
-          <ColorPickerEyeDropper />
-        </div>
+    <div>
+      <Slider.Root
+        aria-label="Opacity"
+        className="relative flex h-6 w-full touch-none items-center"
+        data-testid="compact-color-picker-opacity"
+        max={100}
+        onValueChange={([nextOpacity]) => onChange(clamp(nextOpacity / 100, 0, 1))}
+        step={1}
+        value={[opacityPercent]}
+      >
+        <Slider.Track
+          className="relative h-5 w-full grow rounded-full"
+          style={{
+            backgroundColor: "rgb(248 250 252)",
+            backgroundImage: `
+              linear-gradient(45deg, rgb(148 163 184 / 0.33) 25%, transparent 25%, transparent 75%, rgb(148 163 184 / 0.33) 75%, rgb(148 163 184 / 0.33)),
+              linear-gradient(45deg, rgb(148 163 184 / 0.33) 25%, transparent 25%, transparent 75%, rgb(148 163 184 / 0.33) 75%, rgb(148 163 184 / 0.33))
+            `,
+            backgroundPosition: `0 0, ${checkerSquareSize}px ${checkerSquareSize}px`,
+            backgroundSize: `${checkerTileSize}px ${checkerTileSize}px`,
+          }}
+        >
+          <div
+            className="absolute inset-0 rounded-full"
+            style={{ background: `linear-gradient(90deg, ${transparentColor}, ${opaqueColor})` }}
+          />
+          <Slider.Range className="absolute h-full rounded-full bg-transparent" />
+        </Slider.Track>
+        <Slider.Thumb className="block size-6 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50" />
+      </Slider.Root>
+    </div>
+  )
+})
+
+CompactColorPickerOpacity.displayName = "CompactColorPickerOpacity"
+
+export type CompactColorPickerProps = Omit<ColorPickerProps, "children"> & {
+  opacity?: number
+  onOpacityChange?: (opacity: number) => void
+}
+
+export const CompactColorPicker = memo(({
+  className,
+  opacity,
+  onOpacityChange,
+  ...props
+}: CompactColorPickerProps) => {
+  const eyeDropperSupported = supportsEyeDropper()
+  const showOpacity = typeof opacity === "number" && typeof onOpacityChange === "function"
+
+  return (
+    <ColorPicker className={cn("w-48 gap-2.5", className)} {...props}>
+      <ColorPickerSelection className="h-32 rounded" />
+      <ColorPickerHue aria-label="Hue" data-testid="compact-color-picker-hue" />
+      {showOpacity ? (
+        <CompactColorPickerOpacity value={opacity} onChange={onOpacityChange} />
       ) : null}
+      <div className="flex items-center gap-1.5">
+        <CompactColorPickerHexInput />
+        {eyeDropperSupported ? <ColorPickerEyeDropper /> : null}
+      </div>
     </ColorPicker>
   )
 })

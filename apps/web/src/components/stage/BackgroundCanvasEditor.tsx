@@ -242,6 +242,7 @@ const BACKGROUND_TOOLBAR_TEXT_STYLE: TextToolStyle = {
 const BACKGROUND_TOOLBAR_VECTOR_STYLE: VectorToolStyle = {
   fillColor: '#000000',
   fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
+  opacity: 1,
   strokeColor: '#000000',
   strokeWidth: 1,
   strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
@@ -553,6 +554,7 @@ export function BackgroundCanvasEditor() {
   const [tool, setTool] = useState<BackgroundDrawingTool>('brush');
   const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
   const [brushColor, setBrushColor] = useState(INITIAL_BRUSH_COLOR);
+  const [brushOpacity, setBrushOpacity] = useState(1);
   const [backgroundColor, setBackgroundColor] = useState('#87CEEB');
   const [brushSize, setBrushSize] = useState(INITIAL_BRUSH_SIZE);
   const [bitmapFillStyle, setBitmapFillStyle] = useState<BitmapFillStyle>({
@@ -1548,7 +1550,14 @@ export function BackgroundCanvasEditor() {
       const pointerScreen = worldToScreen(pointerWorldRef.current.x, pointerWorldRef.current.y);
 
       if (editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
-        const cursor = getBitmapBrushCursorStyle(tool, bitmapBrushKind, brushColor, brushSize, zoom);
+        const cursor = getBitmapBrushCursorStyle(
+          tool,
+          bitmapBrushKind,
+          brushColor,
+          brushSize,
+          zoom,
+          tool === 'brush' ? brushOpacity : 1,
+        );
         ctx.beginPath();
         ctx.arc(pointerScreen.x, pointerScreen.y, cursor.diameter * 0.5, 0, Math.PI * 2);
         ctx.fillStyle = cursor.fill;
@@ -1581,6 +1590,7 @@ export function BackgroundCanvasEditor() {
     bitmapShapeStyle.strokeColor,
     bitmapShapeStyle.strokeWidth,
     brushColor,
+    brushOpacity,
     brushSize,
     camera.x,
     camera.y,
@@ -1676,6 +1686,7 @@ export function BackgroundCanvasEditor() {
 
     const composite = getCompositeOperation(brushTool);
     const color = getBrushPaintColor(brushTool, brushColor);
+    const opacity = brushTool === 'brush' ? brushOpacity : 1;
     let updated = false;
 
     for (const { cx, cy } of touchedChunkCoords) {
@@ -1710,6 +1721,7 @@ export function BackgroundCanvasEditor() {
       if (!ctx) continue;
       ctx.save();
       ctx.globalCompositeOperation = composite;
+      ctx.globalAlpha = opacity;
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(localX, localY, radius, 0, Math.PI * 2);
@@ -1721,7 +1733,7 @@ export function BackgroundCanvasEditor() {
     if (updated) {
       setRevision((value) => value + 1);
     }
-  }, [brushColor, brushSize, chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
+  }, [brushColor, brushOpacity, brushSize, chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
 
   const paintStampedPoint = useCallback((
     worldX: number,
@@ -1784,7 +1796,7 @@ export function BackgroundCanvasEditor() {
       if (!ctx) continue;
       ctx.save();
       ctx.globalCompositeOperation = getCompositeOperation(brushTool);
-      ctx.globalAlpha = stampDefinition.opacity;
+      ctx.globalAlpha = stampDefinition.opacity * (brushTool === 'brush' ? brushOpacity : 1);
       ctx.translate(localX, localY);
       if (rotation !== 0) {
         ctx.rotate(rotation);
@@ -1800,7 +1812,7 @@ export function BackgroundCanvasEditor() {
     if (updated) {
       setRevision((value) => value + 1);
     }
-  }, [chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
+  }, [brushOpacity, chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
 
   const paintSegment = useCallback((from: { x: number; y: number }, to: { x: number; y: number }, stroke: StrokeSession) => {
     const brushTool: BitmapBrushTool = tool === 'eraser' ? 'eraser' : 'brush';
@@ -3303,6 +3315,13 @@ export function BackgroundCanvasEditor() {
     setBrushColor(color);
   }, [busy]);
 
+  const handleToolbarBrushOpacityChange = useCallback((opacity: number) => {
+    if (busy) {
+      return;
+    }
+    setBrushOpacity(opacity);
+  }, [busy]);
+
   const handleToolbarBitmapBrushKindChange = useCallback((kind: BitmapBrushKind) => {
     if (busy) {
       return;
@@ -3417,6 +3436,7 @@ export function BackgroundCanvasEditor() {
             hasSelectedVectorPoints={false}
             bitmapBrushKind={bitmapBrushKind}
             brushColor={brushColor}
+            brushOpacity={brushOpacity}
             brushSize={brushSize}
             bitmapFillStyle={bitmapFillStyle}
             bitmapShapeStyle={bitmapShapeStyle}
@@ -3433,6 +3453,7 @@ export function BackgroundCanvasEditor() {
             onAlign={handleToolbarAlign}
             alignDisabled
             onColorChange={handleToolbarColorChange}
+            onBrushOpacityChange={handleToolbarBrushOpacityChange}
             onBitmapBrushKindChange={handleToolbarBitmapBrushKindChange}
             onBrushSizeChange={handleToolbarBrushSizeChange}
             onBitmapFillStyleChange={handleToolbarBitmapFillStyleChange}

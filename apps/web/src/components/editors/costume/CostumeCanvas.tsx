@@ -105,6 +105,7 @@ interface CostumeCanvasProps {
   activeTool: DrawingTool;
   bitmapBrushKind: BitmapBrushKind;
   brushColor: string;
+  brushOpacity: number;
   brushSize: number;
   bitmapFillStyle: BitmapFillStyle;
   bitmapShapeStyle: BitmapShapeStyle;
@@ -137,6 +138,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   activeTool,
   bitmapBrushKind,
   brushColor,
+  brushOpacity,
   brushSize,
   bitmapFillStyle,
   bitmapShapeStyle,
@@ -232,6 +234,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const brushColorRef = useRef(brushColor);
   brushColorRef.current = brushColor;
+  const brushOpacityRef = useRef(brushOpacity);
+  brushOpacityRef.current = brushOpacity;
 
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
@@ -348,6 +352,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapBrushKindRef,
     brushColor,
     brushColorRef,
+    brushOpacity,
+    brushOpacityRef,
     brushCursorOverlayRef,
     brushSize,
     brushSizeRef,
@@ -745,6 +751,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapBrushKindRef,
     bitmapFloatingObjectRef,
     brushColorRef,
+    brushOpacityRef,
     brushSizeRef,
     commitBitmapStampBrushStroke,
     editorModeRef,
@@ -838,7 +845,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   // Sync tool behavior.
   useLayoutEffect(() => {
     configureCanvasForTool();
-  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, vectorStyle, configureCanvasForTool]);
+  }, [activeTool, bitmapBrushKind, brushColor, brushOpacity, brushSize, editorModeState, hasBitmapFloatingSelection, vectorStyle, configureCanvasForTool]);
 
   useLayoutEffect(() => {
     syncActiveLayerCanvasVisibility();

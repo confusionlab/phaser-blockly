@@ -26,6 +26,7 @@ const ADVANCED_BLOCK_TYPES = new Set<string>([
   'camera_set_follow_smoothness',
   'control_current_item',
   'control_for_each',
+  'control_group_block',
   'debug_console_log',
   'looks_change_axis_scale',
   'looks_speak',
@@ -950,7 +951,6 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         name: 'Actions',
         colour: '#FFBF00',
         contents: [
-          { kind: 'block', type: 'control_group_block' },
           {
             kind: 'block',
             type: 'control_wait',
@@ -1617,6 +1617,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         name: 'Debug',
         colour: '#888888',
         contents: [
+          { kind: 'block', type: 'control_group_block' },
           { kind: 'block', type: 'debug_console_log' },
         ],
       },
@@ -2394,7 +2395,6 @@ function registerCustomBlocks() {
 
       this.appendDummyInput()
         .appendField(toggleField, 'TOGGLE')
-        .appendField('group (visual only)')
         .appendField(new Blockly.FieldTextInput('group'), 'NAME');
       this.appendStatementInput('DO')
         .setCheck(null);

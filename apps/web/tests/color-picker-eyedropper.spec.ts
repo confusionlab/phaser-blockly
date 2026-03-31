@@ -70,8 +70,52 @@ test.describe('Color picker eyedropper', () => {
     await expect(colorButton).toBeVisible();
 
     await colorButton.click();
+    const hexInput = page.getByTestId('compact-color-picker-hex-input');
+    await expect(hexInput).toBeVisible();
     await page.getByRole('button', { name: /pick color from screen/i }).click();
 
     await expect.poll(async () => readColorSwatch(colorButton)).toBe('rgb(36, 104, 172)');
+    await expect(hexInput).toHaveValue('#2468AC');
+  });
+
+  test('allows typing or pasting a hex color into the compact picker', async ({ page }) => {
+    await installMockEyeDropper(page, '#000000');
+    await openCostumeEditor(page);
+
+    await page.getByTestId('costume-toolbar-tools').getByRole('button', { name: /^brush$/i }).click();
+    const toolbar = page.getByTestId('costume-toolbar-properties');
+    await expect(toolbar).toBeVisible({ timeout: 10000 });
+    const colorButton = toolbar.getByRole('button', { name: /^color$/i });
+    await expect(colorButton).toBeVisible();
+
+    await colorButton.click();
+    const hexInput = page.getByTestId('compact-color-picker-hex-input');
+    await expect(hexInput).toBeVisible();
+    await expect(page.getByRole('button', { name: /pick color from screen/i })).toBeVisible();
+
+    await hexInput.fill('13579b');
+    await hexInput.press('Enter');
+
+    await expect.poll(async () => readColorSwatch(colorButton)).toBe('rgb(19, 87, 155)');
+    await expect(hexInput).toHaveValue('#13579B');
+  });
+
+  test('keeps the hue thumb at the end of the slider when set to 360', async ({ page }) => {
+    await openCostumeEditor(page);
+
+    await page.getByTestId('costume-toolbar-tools').getByRole('button', { name: /^brush$/i }).click();
+    const toolbar = page.getByTestId('costume-toolbar-properties');
+    await expect(toolbar).toBeVisible({ timeout: 10000 });
+
+    await toolbar.getByRole('button', { name: /^color$/i }).click();
+
+    const hueSlider = page.getByTestId('compact-color-picker-hue');
+    const hueThumb = hueSlider.locator('[role="slider"]');
+    await expect(hueThumb).toBeVisible();
+
+    await hueThumb.focus();
+    await hueThumb.press('End');
+
+    await expect(hueThumb).toHaveAttribute('aria-valuenow', '360');
   });
 });

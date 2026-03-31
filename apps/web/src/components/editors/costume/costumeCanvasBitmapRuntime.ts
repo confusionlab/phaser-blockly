@@ -16,6 +16,7 @@ export interface BitmapStampBrushCommitPayload {
 interface BitmapStampBrushOptions {
   brushColor: string;
   brushKind: Exclude<BitmapBrushKind, 'hard-round'>;
+  brushOpacity: number;
   brushSize: number;
   compositeOperation: GlobalCompositeOperation;
   onCommit: (payload: BitmapStampBrushCommitPayload) => void | Promise<void>;
@@ -84,6 +85,7 @@ export function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
 
 export class CompositePencilBrush extends PencilBrush {
   compositeOperation: GlobalCompositeOperation = 'source-over';
+  opacityMultiplier = 1;
   private deferredPreviewCanvas: HTMLCanvasElement | null = null;
   private deferredPreviewToken = 0;
   private activeStrokePreviewToken: number | null = null;
@@ -97,6 +99,7 @@ export class CompositePencilBrush extends PencilBrush {
   override _setBrushStyles(ctx: CanvasRenderingContext2D) {
     super._setBrushStyles(ctx);
     ctx.globalCompositeOperation = this.compositeOperation;
+    ctx.globalAlpha = Math.max(0, Math.min(1, this.opacityMultiplier));
   }
 
   private setPreviewSourceHidden(hidden: boolean) {
@@ -202,6 +205,7 @@ export class CompositePencilBrush extends PencilBrush {
 export class BitmapStampBrush extends BaseBrush {
   private accumulatedDistance = 0;
   private readonly compositeOperation: GlobalCompositeOperation;
+  private readonly brushOpacity: number;
   private deferredPreviewCanvas: HTMLCanvasElement | null = null;
   private deferredPreviewToken = 0;
   private dirtyBounds: CostumeBounds | null = null;
@@ -218,6 +222,7 @@ export class BitmapStampBrush extends BaseBrush {
     super(canvas as any);
     this.color = options.brushColor;
     this.width = options.brushSize;
+    this.brushOpacity = Math.max(0, Math.min(1, options.brushOpacity));
     this.compositeOperation = options.compositeOperation;
     this.onCommit = options.onCommit;
     this.stampDefinition = getBitmapBrushStampDefinition(
@@ -426,7 +431,7 @@ export class BitmapStampBrush extends BaseBrush {
 
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = opacity;
+    ctx.globalAlpha = opacity * this.brushOpacity;
     ctx.translate(centerX, centerY);
     if (rotation !== 0) {
       ctx.rotate(rotation);

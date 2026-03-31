@@ -25,10 +25,12 @@ import type {
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { CANVAS_SIZE, normalizeDegrees, type CanvasSelectionBoundsSnapshot } from './costumeCanvasShared';
 import {
+  applyVectorOpacityToObject,
   applyVectorFillStyleToObject,
   applyVectorStrokeStyleToObject,
   getVectorObjectFillColor,
   getVectorObjectFillTextureId,
+  getVectorObjectOpacity,
   getVectorObjectStrokeBrushId,
   getVectorObjectStrokeColor,
   getVectorStyleCapabilitiesForSelection,
@@ -322,6 +324,7 @@ export function useCostumeCanvasCommandController({
     onVectorStyleSyncRef.current?.({
       fillColor: getVectorObjectFillColor(vectorObject),
       fillTextureId: getVectorObjectFillTextureId(vectorObject),
+      opacity: getVectorObjectOpacity(vectorObject),
       strokeColor: getVectorObjectStrokeColor(vectorObject),
       strokeWidth: typeof vectorObject.strokeWidth === 'number' ? vectorObject.strokeWidth : undefined,
       strokeBrushId: getVectorObjectStrokeBrushId(vectorObject),
@@ -814,8 +817,10 @@ export function useCostumeCanvasCommandController({
           strokeWidth,
           strokeBrushId: vectorStyle.strokeBrushId,
         });
+        const opacityChanged = applyVectorOpacityToObject(target, vectorStyle.opacity);
         changed = changed || fillChanged;
         changed = changed || strokeChanged;
+        changed = changed || opacityChanged;
         if (strokeChanged && centerPoint && typeof target.setPositionByOrigin === 'function') {
           target.setPositionByOrigin(centerPoint, 'center', 'center');
         }

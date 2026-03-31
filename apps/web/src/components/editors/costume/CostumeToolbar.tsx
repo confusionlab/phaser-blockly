@@ -88,6 +88,7 @@ export interface TextToolStyle {
 export interface VectorToolStyle {
   fillColor: string;
   fillTextureId: VectorFillTextureId;
+  opacity: number;
   strokeColor: string;
   strokeWidth: number;
   strokeBrushId: VectorStrokeBrushId;
@@ -248,6 +249,8 @@ interface ToolbarColorControlProps {
   openMenu: ToolbarMenuId | null;
   onMenuOpenChange: (menu: ToolbarMenuId, open: boolean) => void;
   onColorChange: (color: string) => void;
+  opacity?: number;
+  onOpacityChange?: (opacity: number) => void;
   labelDisplay?: 'none' | 'left';
 }
 
@@ -258,6 +261,8 @@ const ToolbarColorControl = memo(({
   openMenu,
   onMenuOpenChange,
   onColorChange,
+  opacity,
+  onOpacityChange,
   labelDisplay = 'left',
 }: ToolbarColorControlProps) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -305,7 +310,12 @@ const ToolbarColorControl = memo(({
         sideOffset={toolbarPopupSideOffset}
         className="w-[212px] p-3"
       >
-        <CompactColorPicker value={value} onChange={handleColorChange} />
+        <CompactColorPicker
+          value={value}
+          onChange={handleColorChange}
+          opacity={opacity}
+          onOpacityChange={onOpacityChange}
+        />
       </AnchoredPopupSurface>
     </>
   );
@@ -541,6 +551,7 @@ interface CostumeToolbarProps {
   hasSelectedVectorPoints: boolean;
   bitmapBrushKind: BitmapBrushKind;
   brushColor: string;
+  brushOpacity: number;
   brushSize: number;
   bitmapFillStyle: BitmapFillStyle;
   bitmapShapeStyle: BitmapShapeStyle;
@@ -557,6 +568,7 @@ interface CostumeToolbarProps {
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
+  onBrushOpacityChange: (opacity: number) => void;
   onBitmapBrushKindChange: (kind: BitmapBrushKind) => void;
   onBrushSizeChange: (size: number) => void;
   onBitmapFillStyleChange: (updates: Partial<BitmapFillStyle>) => void;
@@ -667,6 +679,7 @@ export const CostumeToolbar = memo(({
   hasSelectedVectorPoints,
   bitmapBrushKind,
   brushColor,
+  brushOpacity,
   brushSize,
   bitmapFillStyle,
   bitmapShapeStyle,
@@ -683,6 +696,7 @@ export const CostumeToolbar = memo(({
   onAlign,
   alignDisabled,
   onColorChange,
+  onBrushOpacityChange,
   onBitmapBrushKindChange,
   onBrushSizeChange,
   onBitmapFillStyleChange,
@@ -760,6 +774,14 @@ export const CostumeToolbar = memo(({
     showVectorStyleControls ||
     showBitmapBrushSizeControl ||
     showTextToolbarControls;
+  const primaryColorOpacity = showTextControls
+    ? textStyle.opacity
+    : (editorMode === 'bitmap' && activeTool === 'brush' ? brushOpacity : undefined);
+  const handlePrimaryColorOpacityChange = showTextControls
+    ? (opacity: number) => onTextStyleChange({ opacity })
+    : (editorMode === 'bitmap' && activeTool === 'brush'
+      ? onBrushOpacityChange
+      : undefined);
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
   useEffect(() => {
@@ -931,6 +953,8 @@ export const CostumeToolbar = memo(({
                       openMenu={openMenu}
                       onMenuOpenChange={handleMenuOpenChange}
                       onColorChange={onColorChange}
+                      opacity={primaryColorOpacity}
+                      onOpacityChange={handlePrimaryColorOpacityChange}
                       labelDisplay="none"
                     />
                   )}
@@ -1052,6 +1076,8 @@ export const CostumeToolbar = memo(({
                           openMenu={openMenu}
                           onMenuOpenChange={handleMenuOpenChange}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          opacity={vectorStyle.opacity}
+                          onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1109,6 +1135,8 @@ export const CostumeToolbar = memo(({
                             openMenu={openMenu}
                             onMenuOpenChange={handleMenuOpenChange}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            opacity={vectorStyle.opacity}
+                            onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1299,6 +1327,8 @@ export const CostumeToolbar = memo(({
                           openMenu={openMenu}
                           onMenuOpenChange={handleMenuOpenChange}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          opacity={vectorStyle.opacity}
+                          onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1356,6 +1386,8 @@ export const CostumeToolbar = memo(({
                             openMenu={openMenu}
                             onMenuOpenChange={handleMenuOpenChange}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            opacity={vectorStyle.opacity}
+                            onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
                             labelDisplay="none"
                           />
                           <DropdownMenu

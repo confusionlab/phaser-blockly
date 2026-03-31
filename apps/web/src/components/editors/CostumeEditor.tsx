@@ -256,6 +256,7 @@ export function CostumeEditor() {
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
   const [brushColor, setBrushColor] = useState('#000000');
+  const [brushOpacity, setBrushOpacity] = useState(1);
   const [brushSize, setBrushSize] = useState(5);
   const [bitmapFillStyle, setBitmapFillStyle] = useState<BitmapFillStyle>({
     textureId: DEFAULT_BITMAP_FILL_TEXTURE_ID,
@@ -278,6 +279,7 @@ export function CostumeEditor() {
   const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>({
     fillColor: '#000000',
     fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
+    opacity: 1,
     strokeColor: '#000000',
     strokeWidth: 1,
     strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
@@ -1445,6 +1447,7 @@ export function CostumeEditor() {
       if (
         next.fillColor === prev.fillColor &&
         next.fillTextureId === prev.fillTextureId &&
+        next.opacity === prev.opacity &&
         next.strokeColor === prev.strokeColor &&
         next.strokeWidth === prev.strokeWidth &&
         next.strokeBrushId === prev.strokeBrushId
@@ -1524,6 +1527,7 @@ export function CostumeEditor() {
             hasSelectedVectorPoints={hasSelectedVectorPoints}
             bitmapBrushKind={bitmapBrushKind}
             brushColor={brushColor}
+            brushOpacity={brushOpacity}
             brushSize={brushSize}
             bitmapFillStyle={bitmapFillStyle}
             bitmapShapeStyle={bitmapShapeStyle}
@@ -1540,6 +1544,7 @@ export function CostumeEditor() {
             onAlign={handleAlign}
             alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
             onColorChange={setBrushColor}
+            onBrushOpacityChange={setBrushOpacity}
             onBitmapBrushKindChange={setBitmapBrushKind}
             onBrushSizeChange={setBrushSize}
             onBitmapFillStyleChange={handleBitmapFillStyleChange}
@@ -1558,6 +1563,7 @@ export function CostumeEditor() {
             activeTool={activeTool}
             bitmapBrushKind={bitmapBrushKind}
             brushColor={brushColor}
+            brushOpacity={brushOpacity}
             brushSize={brushSize}
             bitmapFillStyle={bitmapFillStyle}
             bitmapShapeStyle={bitmapShapeStyle}

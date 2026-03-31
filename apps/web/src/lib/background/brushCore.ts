@@ -282,8 +282,10 @@ export function getBitmapBrushCursorStyle(
   brushColor: string,
   brushSize: number,
   displayScale: number,
+  brushOpacity = 1,
 ): BrushCursorStyle {
   const diameter = Math.max(6, brushSize * displayScale);
+  const effectiveOpacity = clampUnit(brushOpacity);
   if (isEraseTool(tool)) {
     return {
       diameter,
@@ -296,26 +298,26 @@ export function getBitmapBrushCursorStyle(
   if (brushKind === 'airbrush') {
     return {
       diameter,
-      stroke: colorWithAlpha(brushColor, 0.8),
-      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.34)} 0%, ${colorWithAlpha(brushColor, 0.14)} 42%, ${colorWithAlpha(brushColor, 0.03)} 78%, rgba(255,255,255,0) 100%)`,
+      stroke: colorWithAlpha(brushColor, 0.8 * effectiveOpacity),
+      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.34 * effectiveOpacity)} 0%, ${colorWithAlpha(brushColor, 0.14 * effectiveOpacity)} 42%, ${colorWithAlpha(brushColor, 0.03 * effectiveOpacity)} 78%, rgba(255,255,255,0) 100%)`,
       borderWidth: 1.25,
-      boxShadow: `0 0 ${Math.max(6, diameter * 0.18)}px ${colorWithAlpha(brushColor, 0.16)}`,
+      boxShadow: `0 0 ${Math.max(6, diameter * 0.18)}px ${colorWithAlpha(brushColor, 0.16 * effectiveOpacity)}`,
     };
   }
 
   if (brushKind === 'crayon') {
     return {
       diameter,
-      stroke: colorWithAlpha(brushColor, 0.82),
-      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.18)} 0%, ${colorWithAlpha(brushColor, 0.07)} 70%, rgba(255,255,255,0) 100%)`,
+      stroke: colorWithAlpha(brushColor, 0.82 * effectiveOpacity),
+      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.18 * effectiveOpacity)} 0%, ${colorWithAlpha(brushColor, 0.07 * effectiveOpacity)} 70%, rgba(255,255,255,0) 100%)`,
       borderWidth: 1.5,
-      boxShadow: `0 0 ${Math.max(4, diameter * 0.08)}px ${colorWithAlpha(brushColor, 0.12)}`,
+      boxShadow: `0 0 ${Math.max(4, diameter * 0.08)}px ${colorWithAlpha(brushColor, 0.12 * effectiveOpacity)}`,
     };
   }
 
   return {
     diameter,
-    stroke: brushColor,
+    stroke: colorWithAlpha(brushColor, effectiveOpacity),
     fill: 'rgba(255,255,255,0.12)',
     borderWidth: 1.5,
   };
@@ -326,6 +328,7 @@ export function getBrushCursorStyle(
   brushColor: string,
   brushSize: number,
   displayScale: number,
+  brushOpacity = 1,
 ): BrushCursorStyle {
-  return getBitmapBrushCursorStyle(tool, 'hard-round', brushColor, brushSize, displayScale);
+  return getBitmapBrushCursorStyle(tool, 'hard-round', brushColor, brushSize, displayScale, brushOpacity);
 }

@@ -24,6 +24,7 @@ import type {
   VectorToolStyle,
 } from '@/components/editors/costume/CostumeToolbar';
 import {
+  applyVectorOpacityToObject,
   applyVectorFillStyleToObject,
   applyVectorStrokeStyleToObject,
   VECTOR_JSON_EXTRA_PROPS,
@@ -131,6 +132,7 @@ function buildVectorStyleProps(vectorStyle: VectorToolStyle, supportsFill: boole
     fill: supportsFill
       ? getFabricFillValueForVectorTexture(vectorStyle.fillTextureId, vectorStyle.fillColor)
       : null,
+    opacity: vectorStyle.opacity,
     stroke: getFabricStrokeValueForVectorBrush(vectorStyle.strokeBrushId, vectorStyle.strokeColor),
     strokeWidth: Math.max(1, vectorStyle.strokeWidth),
     strokeUniform: true,
@@ -480,6 +482,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     if (fabricCanvas.isDrawingMode) {
       fabricCanvas.freeDrawingBrush = new VectorPencilBrush(fabricCanvas, {
+        opacity: vectorStyle.opacity,
         strokeBrushId: vectorStyle.strokeBrushId,
         strokeColor: vectorStyle.strokeColor,
         strokeWidth: vectorStyle.strokeWidth,
@@ -753,13 +756,14 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     for (const target of targets) {
       didChange = applyVectorStrokeStyleToObject(target, vectorStyle) || didChange;
       didChange = applyVectorFillStyleToObject(target, vectorStyle) || didChange;
+      didChange = applyVectorOpacityToObject(target, vectorStyle.opacity) || didChange;
       didChange = normalizeVectorObjectRendering(target) || didChange;
     }
     if (didChange) {
       fabricCanvas.requestRenderAll();
       recordHistorySnapshot();
     }
-  }, [recordHistorySnapshot, vectorStyle.fillColor, vectorStyle.fillTextureId, vectorStyle.strokeBrushId, vectorStyle.strokeColor, vectorStyle.strokeWidth]);
+  }, [recordHistorySnapshot, vectorStyle.fillColor, vectorStyle.fillTextureId, vectorStyle.opacity, vectorStyle.strokeBrushId, vectorStyle.strokeColor, vectorStyle.strokeWidth]);
 
   return (
     <div

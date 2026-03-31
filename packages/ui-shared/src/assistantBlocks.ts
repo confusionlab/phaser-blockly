@@ -39,7 +39,7 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'control_current_item', category: 'Actions', kind: 'reporter', summary: 'Use inside "for each" loop to get the current item', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'control_delete_object', category: 'Actions', kind: 'statement', summary: 'Delete the specified object', inputNames: ['OBJECT'], statementInputNames: [], fieldNames: [] },
   { type: 'control_for_each', category: 'Actions', kind: 'statement', summary: 'Iterate over each item in a list', inputNames: ['LIST'], statementInputNames: ['DO'], fieldNames: [] },
-  { type: 'control_group_block', category: 'Actions', kind: 'statement', summary: 'Group blocks visually without changing behavior', inputNames: [], statementInputNames: ['DO'], fieldNames: ['NAME'] },
+  { type: 'control_group_block', category: 'Debug', kind: 'statement', summary: 'Group blocks visually without changing behavior', inputNames: [], statementInputNames: ['DO'], fieldNames: ['NAME'] },
   { type: 'control_random_choice', category: 'Actions', kind: 'statement', summary: 'Randomly run one of the branches', inputNames: [], statementInputNames: ['DO0', 'DO1'], fieldNames: [] },
   { type: 'control_repeat', category: 'Actions', kind: 'statement', summary: 'Repeat some number of times', inputNames: ['TIMES'], statementInputNames: ['DO'], fieldNames: [] },
   { type: 'control_repeat_until', category: 'Actions', kind: 'statement', summary: 'Repeat until condition is true', inputNames: ['CONDITION'], statementInputNames: ['DO'], fieldNames: [] },

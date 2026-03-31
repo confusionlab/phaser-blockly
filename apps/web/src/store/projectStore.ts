@@ -35,6 +35,7 @@ import {
   normalizeVariableDefinitions,
   remapVariableIdsInBlocklyXml,
 } from '@/lib/variableUtils';
+import { validateProjectName } from '@/lib/projectName';
 import { applyAssistantChangeSetToProject } from '@/lib/assistant/projectState';
 import {
   recordHistoryChange,
@@ -650,8 +651,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   updateProjectName: (name: string) => {
+    const validation = validateProjectName(name);
+    if (!validation.valid) {
+      return;
+    }
+
     set(state => ({
-      project: state.project ? { ...state.project, name, updatedAt: createUpdatedAt() } : null,
+      project: state.project ? { ...state.project, name: validation.normalized, updatedAt: createUpdatedAt() } : null,
       isDirty: true,
     }));
     recordHistoryChange({ source: 'project:update-name' });
