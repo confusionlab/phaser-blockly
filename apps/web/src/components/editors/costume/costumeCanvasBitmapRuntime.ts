@@ -94,7 +94,9 @@ export class CompositePencilBrush extends PencilBrush {
   private previousLowerCanvasOpacity = '';
 
   override needsFullRender() {
-    return this.compositeOperation === 'destination-out' || super.needsFullRender();
+    return this.compositeOperation === 'destination-out'
+      || this.opacityMultiplier < 1
+      || super.needsFullRender();
   }
 
   override _setBrushStyles(ctx: CanvasRenderingContext2D) {

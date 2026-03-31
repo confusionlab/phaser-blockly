@@ -324,6 +324,31 @@ async function readHostedLayerMaxAlpha(page: Page): Promise<number> {
   });
 }
 
+async function readPreviewLayerMaxAlpha(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const previewCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .upper-canvas');
+    if (!(previewCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = previewCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+    let maxAlpha = 0;
+    for (let index = 3; index < data.length; index += 4) {
+      const alpha = data[index] ?? 0;
+      if (alpha > maxAlpha) {
+        maxAlpha = alpha;
+      }
+    }
+
+    return maxAlpha;
+  });
+}
+
 async function observeVisibleHostedLayerInkTimeline(page: Page, frameCount = 36): Promise<number[]> {
   return await page.evaluate((frames) => {
     return new Promise<number[]>((resolve) => {
@@ -425,6 +450,35 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('hard bitmap brush preview honors stroke opacity before commit', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await page.getByRole('button', { name: /new blank costume/i }).click();
+    await addBitmapLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Hard');
+    await setBrushColorOpacity(page, 35);
+
+    const box = await getCostumeCanvasBox(page);
+    const startX = box.x + box.width * 0.24;
+    const startY = box.y + box.height * 0.28;
+    const endX = box.x + box.width * 0.56;
+    const endY = box.y + box.height * 0.28;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 12 });
+
+    await expect.poll(async () => readPreviewLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const previewAlpha = await readPreviewLayerMaxAlpha(page);
+    expect(previewAlpha).toBeLessThan(110);
+
+    await page.mouse.up();
   });
 
   test('bitmap textured brush commits on mouse-up and survives a tab round-trip', async ({ page }) => {

@@ -475,8 +475,19 @@ export function useCostumeCanvasVectorObjectController({
     const target = vectorPointEditingTargetRef.current as any;
     if (!fabricCanvas || !ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     if (editorModeRef.current !== 'vector') return;
+    const viewportTransform = fabricCanvas.viewportTransform;
+    if (viewportTransform) {
+      ctx.setTransform(
+        viewportTransform[0] ?? 1,
+        viewportTransform[1] ?? 0,
+        viewportTransform[2] ?? 0,
+        viewportTransform[3] ?? 1,
+        viewportTransform[4] ?? 0,
+        viewportTransform[5] ?? 0,
+      );
+    }
     if (activeToolRef.current === 'pen') {
       renderPenDraftGuide(ctx);
       return;

@@ -12,6 +12,7 @@ import type {
   BackgroundVectorLayer,
 } from '@/types';
 import {
+  type AlignAction,
   CostumeToolbar,
   type BitmapFillStyle,
   type BitmapShapeStyle,
@@ -262,8 +263,8 @@ const BACKGROUND_TOOLBAR_VECTOR_STYLE: VectorToolStyle = {
   strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
 };
 
-const BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE: VectorHandleMode = 'linear';
-const BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES: VectorStyleCapabilities = { supportsFill: true };
+const BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE: VectorHandleMode = 'linear';
+const BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES: VectorStyleCapabilities = { supportsFill: true };
 
 function isShapeTool(tool: BackgroundDrawingTool): tool is BackgroundShapeTool {
   return tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'triangle' || tool === 'star';
@@ -604,7 +605,12 @@ export function BackgroundCanvasEditor() {
   const [backgroundDocument, setBackgroundDocumentState] = useState<BackgroundDocument | null>(null);
   const [renderedLayerChunks, setRenderedLayerChunks] = useState<Record<string, ChunkDataMap>>({});
   const [hasVectorSelection, setHasVectorSelection] = useState(false);
+  const [canZoomToVectorSelection, setCanZoomToVectorSelection] = useState(false);
   const [hasVectorTextSelection, setHasVectorTextSelection] = useState(false);
+  const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
+  const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
+  const [vectorHandleMode, setVectorHandleMode] = useState<VectorHandleMode>(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
+  const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
 
@@ -652,6 +658,19 @@ export function BackgroundCanvasEditor() {
   const activeLayer = useMemo(() => getActiveBackgroundLayer(backgroundDocument), [backgroundDocument]);
   const editorMode = useMemo(() => getActiveBackgroundLayerKind(backgroundDocument), [backgroundDocument]);
 
+  useEffect(() => {
+    if (editorMode === 'vector') {
+      return;
+    }
+    setHasVectorSelection(false);
+    setCanZoomToVectorSelection(false);
+    setHasVectorTextSelection(false);
+    setIsVectorPointEditing(false);
+    setHasSelectedVectorPoints(false);
+    setVectorHandleMode(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
+    setVectorStyleCapabilities(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
+  }, [editorMode, activeLayer?.id]);
+
   backgroundColorRef.current = backgroundColor;
   const cameraBounds = useMemo(() => ({
     left: -(project?.settings.canvasWidth ?? 800) / 2,
@@ -659,6 +678,12 @@ export function BackgroundCanvasEditor() {
     bottom: -(project?.settings.canvasHeight ?? 600) / 2,
     top: (project?.settings.canvasHeight ?? 600) / 2,
   }), [project?.settings.canvasHeight, project?.settings.canvasWidth]);
+  const vectorAlignmentBounds = useMemo(() => ({
+    left: cameraBounds.left,
+    top: cameraBounds.bottom,
+    width: cameraBounds.right - cameraBounds.left,
+    height: cameraBounds.top - cameraBounds.bottom,
+  }), [cameraBounds.bottom, cameraBounds.left, cameraBounds.right, cameraBounds.top]);
   const overlayPillTone = isDarkMode ? 'dark' : 'light';
   const overlayPillActionClassName = overlayPillActionToneClasses[overlayPillTone];
 
@@ -797,10 +822,24 @@ export function BackgroundCanvasEditor() {
   }, [zoomAroundViewportCenter]);
 
   const handleZoomToSelection = useCallback(() => {
+    if (editorMode === 'vector') {
+      const selectionBounds = vectorCanvasRef.current?.getSelectionBounds();
+      if (!selectionBounds) {
+        return;
+      }
+      fitToBounds({
+        left: selectionBounds.left,
+        right: selectionBounds.left + selectionBounds.width,
+        bottom: selectionBounds.top,
+        top: selectionBounds.top + selectionBounds.height,
+      });
+      return;
+    }
+
     const selection = floatingSelectionRef.current;
     if (!selection) return;
     fitToBounds(getFloatingSelectionWorldBounds(selection));
-  }, [fitToBounds]);
+  }, [editorMode, fitToBounds]);
 
   const resolveBitmapFillTextureSource = useCallback((textureId: BitmapFillTextureId) => {
     const preset = getBitmapFillTexturePreset(textureId);
@@ -1024,7 +1063,12 @@ export function BackgroundCanvasEditor() {
       setTool((currentTool) => ensureToolForBackgroundMode(getActiveBackgroundLayerKind(nextDocument), currentTool));
     }
     setHasVectorSelection(false);
+    setCanZoomToVectorSelection(false);
     setHasVectorTextSelection(false);
+    setIsVectorPointEditing(false);
+    setHasSelectedVectorPoints(false);
+    setVectorHandleMode(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
+    setVectorStyleCapabilities(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
     setIsDirty(true);
     setRevision((value) => value + 1);
   }, [loadActiveBitmapLayerState, replaceBackgroundDocument, syncUndoRedoAvailability]);
@@ -3281,8 +3325,15 @@ export function BackgroundCanvasEditor() {
     }
     vectorCanvasRef.current?.rotateSelection();
   }, [editorMode]);
-  const handleToolbarVectorHandleModeChange = useCallback(() => {}, []);
-  const handleToolbarAlign = useCallback(() => {}, []);
+  const handleToolbarVectorHandleModeChange = useCallback((mode: Extract<VectorHandleMode, 'linear' | 'corner' | 'smooth' | 'symmetric'>) => {
+    setVectorHandleMode(mode);
+  }, []);
+  const handleToolbarAlign = useCallback((action: AlignAction) => {
+    if (editorMode !== 'vector') {
+      return;
+    }
+    vectorCanvasRef.current?.alignSelection(action);
+  }, [editorMode]);
   const handleToolbarTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
     setTextStyle((previous) => ({ ...previous, ...updates }));
   }, []);
@@ -3294,6 +3345,21 @@ export function BackgroundCanvasEditor() {
   }, []);
   const handleVectorTextStyleSync = useCallback((updates: Partial<TextToolStyle>) => {
     setTextStyle((previous) => ({ ...previous, ...updates }));
+  }, []);
+  const handleVectorHandleModeSync = useCallback((mode: VectorHandleMode) => {
+    setVectorHandleMode(mode);
+  }, []);
+  const handleVectorPointEditingChange = useCallback((isEditing: boolean) => {
+    setIsVectorPointEditing(isEditing);
+  }, []);
+  const handleVectorPointSelectionChange = useCallback((hasSelectedPoints: boolean) => {
+    setHasSelectedVectorPoints(hasSelectedPoints);
+  }, []);
+  const handleVectorStyleSync = useCallback((updates: Partial<VectorToolStyle>) => {
+    setVectorStyle((previous) => ({ ...previous, ...updates }));
+  }, []);
+  const handleVectorStyleCapabilitiesSync = useCallback((capabilities: VectorStyleCapabilities) => {
+    setVectorStyleCapabilities(capabilities);
   }, []);
 
   const handleToolbarColorChange = useCallback((color: string) => {
@@ -3375,7 +3441,7 @@ export function BackgroundCanvasEditor() {
             onZoomToActualSize={handleZoomToActualSize}
             onZoomToFit={fitToContent}
             onZoomToSelection={handleZoomToSelection}
-            canZoomToSelection={editorMode === 'bitmap' && hasFloatingSelection}
+            canZoomToSelection={editorMode === 'bitmap' ? hasFloatingSelection : canZoomToVectorSelection}
             rightAccessory={(
               <OverlayPill tone={overlayPillTone} size="compact">
                 <button
@@ -3414,8 +3480,8 @@ export function BackgroundCanvasEditor() {
             showModeSwitcher={false}
             selectionActionsEnabled={editorMode === 'vector'}
             showTextControls={editorMode === 'vector' && (tool === 'text' || hasVectorTextSelection)}
-            isVectorPointEditing={false}
-            hasSelectedVectorPoints={false}
+            isVectorPointEditing={isVectorPointEditing}
+            hasSelectedVectorPoints={hasSelectedVectorPoints}
             bitmapBrushKind={bitmapBrushKind}
             brushColor={brushColor}
             brushOpacity={brushOpacity}
@@ -3424,16 +3490,16 @@ export function BackgroundCanvasEditor() {
             bitmapShapeStyle={bitmapShapeStyle}
             textStyle={textStyle}
             vectorStyle={vectorStyle}
-            vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
+            vectorStyleCapabilities={vectorStyleCapabilities}
             previewScale={zoom}
             onToolChange={handleToolbarToolChange}
             onMoveOrder={handleToolbarMoveOrder}
             onFlipSelection={handleToolbarFlipSelection}
             onRotateSelection={handleToolbarRotateSelection}
-            vectorHandleMode={BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE}
+            vectorHandleMode={vectorHandleMode}
             onVectorHandleModeChange={handleToolbarVectorHandleModeChange}
             onAlign={handleToolbarAlign}
-            alignDisabled
+            alignDisabled={editorMode !== 'vector' || !hasVectorSelection}
             onColorChange={handleToolbarColorChange}
             onBrushOpacityChange={handleToolbarBrushOpacityChange}
             onBitmapBrushKindChange={handleToolbarBitmapBrushKindChange}
@@ -3466,6 +3532,7 @@ export function BackgroundCanvasEditor() {
           {isVectorBackgroundLayer(activeLayer) ? (
             <BackgroundVectorCanvas
               ref={vectorCanvasRef}
+              alignmentBounds={vectorAlignmentBounds}
               layer={activeLayer as BackgroundVectorLayer}
               viewport={viewport}
               camera={camera}
@@ -3480,6 +3547,13 @@ export function BackgroundCanvasEditor() {
               onSelectionChange={setHasVectorSelection}
               onTextSelectionChange={handleVectorTextSelectionChange}
               onTextStyleSync={handleVectorTextStyleSync}
+              vectorHandleMode={vectorHandleMode}
+              onVectorHandleModeSync={handleVectorHandleModeSync}
+              onVectorPointEditingChange={handleVectorPointEditingChange}
+              onVectorPointSelectionChange={handleVectorPointSelectionChange}
+              onVectorStyleSync={handleVectorStyleSync}
+              onVectorStyleCapabilitiesSync={handleVectorStyleCapabilitiesSync}
+              onCanZoomToSelectionChange={setCanZoomToVectorSelection}
             />
           ) : null}
           {backgroundDocument ? (

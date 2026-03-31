@@ -412,6 +412,70 @@ test.describe('Background editor', () => {
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(2);
   });
 
+  test('vector point editing uses the shared costume handle controls', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.42;
+    const startY = editor.box.y + editor.box.height * 0.42;
+    const endX = editor.box.x + editor.box.width * 0.58;
+    const endY = editor.box.y + editor.box.height * 0.58;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.mouse.dblclick(centerX, centerY);
+    await page.mouse.click(startX, startY);
+
+    await expect(page.getByText('Handles')).toBeVisible();
+  });
+
+  test('vector selection enables the shared align and zoom-to-selection controls', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.38;
+    const startY = editor.box.y + editor.box.height * 0.38;
+    const endX = editor.box.x + editor.box.width * 0.48;
+    const endY = editor.box.y + editor.box.height * 0.5;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: {
+        x: Math.round(centerX - editor.box.x),
+        y: Math.round(centerY - editor.box.y),
+      },
+    });
+
+    await expect(page.getByRole('button', { name: /^align$/i })).toBeEnabled();
+
+    const zoomButton = page.getByRole('button', { name: 'Zoom options' });
+    const initialZoomText = (await zoomButton.textContent())?.trim() ?? '';
+    await zoomButton.click();
+    const zoomToSelection = page.getByRole('menuitem', { name: /zoom to selection/i });
+    await expect(zoomToSelection).toBeEnabled();
+    await zoomToSelection.click();
+    await expect(zoomButton).not.toContainText(initialZoomText);
+  });
+
   test('selected vector shapes keep fill and stroke opacity independent', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 

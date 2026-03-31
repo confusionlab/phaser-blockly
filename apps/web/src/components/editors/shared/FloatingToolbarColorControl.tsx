@@ -1,8 +1,13 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Color from 'color';
 
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import { CompactColorPicker } from '@/components/ui/color-picker';
+import {
+  getBackgroundSampleElements,
+  resolveAdaptiveSwatchOutlineColor,
+  resolveElementSurfaceColor,
+} from '@/lib/ui/adaptiveColorSwatch';
 
 const toolbarPopupSideOffset = 10;
 
@@ -38,6 +43,8 @@ export function FloatingToolbarColorControl({
   disabled = false,
 }: FloatingToolbarColorControlProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const swatchRef = useRef<HTMLSpanElement>(null);
+  const [swatchOutlineColor, setSwatchOutlineColor] = useState<string | null>(null);
 
   const handleColorChange = useCallback((nextValue: Parameters<typeof Color.rgb>[0]) => {
     const resolved = resolveColorPickerValue(nextValue);
@@ -47,6 +54,82 @@ export function FloatingToolbarColorControl({
 
     onColorChange(resolved);
   }, [onColorChange]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const sampleRoot = buttonRef.current?.parentElement ?? swatchRef.current?.parentElement ?? null;
+    if (!sampleRoot) {
+      return undefined;
+    }
+
+    let animationFrame = 0;
+    const updateOutline = () => {
+      animationFrame = 0;
+      const surfaceColor = resolveElementSurfaceColor(sampleRoot);
+      const nextOutlineColor = resolveAdaptiveSwatchOutlineColor(value, surfaceColor);
+      setSwatchOutlineColor((currentColor) => (
+        currentColor === nextOutlineColor ? currentColor : nextOutlineColor
+      ));
+    };
+    const scheduleUpdate = () => {
+      if (animationFrame !== 0) {
+        return;
+      }
+
+      animationFrame = window.requestAnimationFrame(updateOutline);
+    };
+
+    scheduleUpdate();
+
+    const sampleElements = getBackgroundSampleElements(sampleRoot);
+    const resizeObserver = typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => scheduleUpdate())
+      : null;
+    sampleElements.forEach((element) => resizeObserver?.observe(element));
+
+    const mutationObserver = new MutationObserver(() => scheduleUpdate());
+    sampleElements.forEach((element) => {
+      mutationObserver.observe(element, {
+        attributes: true,
+        attributeFilter: ['class', 'style'],
+      });
+    });
+
+    const colorSchemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const addColorSchemeListener = colorSchemeMediaQuery.addEventListener?.bind(colorSchemeMediaQuery);
+    const removeColorSchemeListener = colorSchemeMediaQuery.removeEventListener?.bind(colorSchemeMediaQuery);
+    const legacyAddColorSchemeListener = colorSchemeMediaQuery.addListener?.bind(colorSchemeMediaQuery);
+    const legacyRemoveColorSchemeListener = colorSchemeMediaQuery.removeListener?.bind(colorSchemeMediaQuery);
+    if (addColorSchemeListener) {
+      addColorSchemeListener('change', scheduleUpdate);
+    } else {
+      legacyAddColorSchemeListener?.(scheduleUpdate);
+    }
+    window.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      if (animationFrame !== 0) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+
+      resizeObserver?.disconnect();
+      mutationObserver.disconnect();
+      if (removeColorSchemeListener) {
+        removeColorSchemeListener('change', scheduleUpdate);
+      } else {
+        legacyRemoveColorSchemeListener?.(scheduleUpdate);
+      }
+      window.removeEventListener('resize', scheduleUpdate);
+    };
+  }, [value]);
+
+  const swatchStyle = useMemo(() => ({
+    backgroundColor: value,
+    boxShadow: swatchOutlineColor ? `0 0 0 1px ${swatchOutlineColor}` : undefined,
+  }), [swatchOutlineColor, value]);
 
   return (
     <>
@@ -66,8 +149,9 @@ export function FloatingToolbarColorControl({
           disabled={disabled}
         >
           <span
-            className="size-6 rounded-md ring-1 ring-black/15"
-            style={{ backgroundColor: value }}
+            ref={swatchRef}
+            className="size-6 rounded-md transition-[box-shadow]"
+            style={swatchStyle}
             aria-hidden="true"
           />
         </button>
