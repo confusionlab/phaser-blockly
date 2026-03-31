@@ -6,10 +6,14 @@ import {
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import { appendRuntimeLog } from './RuntimeEngine';
 import { setBodyGravityY } from './gravity';
+import {
+  clampScaleMagnitude,
+  getScaleSign,
+  toggleScaleDirection,
+} from './scaleMath';
 import type { Costume, ColliderConfig, PhysicsConfig } from '../types';
 import type { RuntimeEngine } from './RuntimeEngine';
 
-const MIN_SCALE_MAGNITUDE = 0.01;
 const SPEECH_BUBBLE_MAX_TEXT_WIDTH = 220;
 const SPEECH_BUBBLE_PADDING_X = 14;
 const SPEECH_BUBBLE_PADDING_Y = 12;
@@ -389,24 +393,16 @@ export class RuntimeSprite {
     await this.speakAndStop(rawText);
   }
 
-  private getScaleSign(value: number): number {
-    return value < 0 ? -1 : 1;
-  }
-
-  private clampScaleMagnitude(value: number): number {
-    return Math.max(MIN_SCALE_MAGNITUDE, Math.abs(value));
-  }
-
   private syncStoredSizeFromContainer(): void {
     this._size = ((Math.abs(this.container.scaleX) + Math.abs(this.container.scaleY)) / 2) * 100;
   }
 
   setSize(percent: number): void {
     if (this._stopped) return;
-    const scale = this.clampScaleMagnitude(percent / 100);
+    const scale = clampScaleMagnitude(percent / 100);
     this.container.setScale(
-      this.getScaleSign(this.container.scaleX) * scale,
-      this.getScaleSign(this.container.scaleY) * scale,
+      getScaleSign(this.container.scaleX) * scale,
+      getScaleSign(this.container.scaleY) * scale,
     );
     this._size = scale * 100;
   }
@@ -414,11 +410,11 @@ export class RuntimeSprite {
   changeSize(delta: number): void {
     if (this._stopped) return;
     const deltaScale = delta / 100;
-    const nextScaleX = this.clampScaleMagnitude(Math.abs(this.container.scaleX) + deltaScale);
-    const nextScaleY = this.clampScaleMagnitude(Math.abs(this.container.scaleY) + deltaScale);
+    const nextScaleX = clampScaleMagnitude(Math.abs(this.container.scaleX) + deltaScale);
+    const nextScaleY = clampScaleMagnitude(Math.abs(this.container.scaleY) + deltaScale);
     this.container.setScale(
-      this.getScaleSign(this.container.scaleX) * nextScaleX,
-      this.getScaleSign(this.container.scaleY) * nextScaleY,
+      getScaleSign(this.container.scaleX) * nextScaleX,
+      getScaleSign(this.container.scaleY) * nextScaleY,
     );
     this.syncStoredSizeFromContainer();
   }
@@ -427,15 +423,15 @@ export class RuntimeSprite {
     if (this._stopped) return;
     const deltaScale = delta / 100;
     if (axis === 'VERTICAL') {
-      const nextScaleY = this.clampScaleMagnitude(Math.abs(this.container.scaleY) + deltaScale);
+      const nextScaleY = clampScaleMagnitude(Math.abs(this.container.scaleY) + deltaScale);
       this.container.setScale(
         this.container.scaleX,
-        this.getScaleSign(this.container.scaleY) * nextScaleY,
+        getScaleSign(this.container.scaleY) * nextScaleY,
       );
     } else {
-      const nextScaleX = this.clampScaleMagnitude(Math.abs(this.container.scaleX) + deltaScale);
+      const nextScaleX = clampScaleMagnitude(Math.abs(this.container.scaleX) + deltaScale);
       this.container.setScale(
-        this.getScaleSign(this.container.scaleX) * nextScaleX,
+        getScaleSign(this.container.scaleX) * nextScaleX,
         this.container.scaleY,
       );
     }
@@ -445,9 +441,9 @@ export class RuntimeSprite {
   flipAxis(axis: string): void {
     if (this._stopped) return;
     if (axis === 'VERTICAL') {
-      this.container.setScale(this.container.scaleX, -this.clampScaleMagnitude(this.container.scaleY));
+      this.container.setScale(this.container.scaleX, toggleScaleDirection(this.container.scaleY));
     } else {
-      this.container.setScale(-this.clampScaleMagnitude(this.container.scaleX), this.container.scaleY);
+      this.container.setScale(toggleScaleDirection(this.container.scaleX), this.container.scaleY);
     }
     this.syncStoredSizeFromContainer();
   }

@@ -69,9 +69,9 @@ class MockSprite {
   flipAxis(axis: string) {
     this.log('flipAxis', axis);
     if (axis === 'VERTICAL') {
-      this.scaleY = -Math.max(0.01, Math.abs(this.scaleY));
+      this.scaleY = (this.scaleY < 0 ? 1 : -1) * Math.max(0.01, Math.abs(this.scaleY));
     } else {
-      this.scaleX = -Math.max(0.01, Math.abs(this.scaleX));
+      this.scaleX = (this.scaleX < 0 ? 1 : -1) * Math.max(0.01, Math.abs(this.scaleX));
     }
   }
   setOpacity(opacity: number) { this.log('setOpacity', opacity); this.opacity = opacity; }
@@ -385,6 +385,31 @@ const executionTests: ExecutionTest[] = [
     },
     verify: (runtime, sprite) => {
       return sprite.scaleX === -1 && sprite.scaleY === 1.25;
+    },
+  },
+  {
+    name: 'when game starts -> flip horizontal twice restores positive scale',
+    xml: `
+      <xml>
+        <block type="event_game_start">
+          <statement name="NEXT">
+            <block type="looks_flip_axis">
+              <field name="AXIS">HORIZONTAL</field>
+              <next>
+                <block type="looks_flip_axis">
+                  <field name="AXIS">HORIZONTAL</field>
+                </block>
+              </next>
+            </block>
+          </statement>
+        </block>
+      </xml>
+    `,
+    simulate: async (runtime) => {
+      await runtime.simulateStart();
+    },
+    verify: (runtime, sprite) => {
+      return sprite.scaleX === 1 && sprite.scaleY === 1;
     },
   },
   {
