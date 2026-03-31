@@ -153,7 +153,7 @@ export function EditorTopBar({
 
         <div className="relative flex min-w-0 justify-center">
           {hasProject ? (
-            <div className="flex w-full max-w-[360px] items-center justify-center">
+            <div className="flex w-full max-w-[480px] items-center justify-center">
               <InlineRenameField
                 id={inputId}
                 ref={inputRef}
@@ -169,7 +169,7 @@ export function EditorTopBar({
                 displayProps={{
                   'aria-label': 'Project name',
                   className: cn(
-                    'flex h-9 cursor-text items-center justify-center rounded-md px-3',
+                    'flex h-8 cursor-text items-center justify-center rounded-md px-3',
                     projectNameDisabled ? 'cursor-not-allowed opacity-60' : null,
                   ),
                   onClick: activateProjectNameEdit,
@@ -182,8 +182,8 @@ export function EditorTopBar({
                   'inset-x-0 inset-y-0 rounded-md border-input bg-background shadow-xs',
                   'group-focus-within/rename:border-ring group-focus-within/rename:ring-[3px] group-focus-within/rename:ring-ring/50',
                 )}
-                inputClassName={cn('h-9 px-3 text-center text-sm font-medium', projectNameDisabled ? 'opacity-60' : null)}
-                textClassName="truncate text-center text-sm font-medium"
+                inputClassName={cn('h-8 px-3 text-center text-sm font-medium leading-5', projectNameDisabled ? 'opacity-60' : null)}
+                textClassName="truncate text-center text-sm font-medium leading-5"
                 onChange={(event) => setDraftName(event.target.value)}
                 onBlur={() => {
                   void commitDraftName();

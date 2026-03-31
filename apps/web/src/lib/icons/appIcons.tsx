@@ -227,14 +227,38 @@ function escapeXmlAttribute(value: number | string): string {
     .replaceAll('>', '&gt;');
 }
 
-function renderIconMarkup(source: AppIconSource): string {
+function renderIconMarkup(source: AppIconSource, color = 'currentColor'): string {
   if (source.kind === 'markup') {
     return source.markup.trim();
   }
 
   return source.nodes
     .map(({ attrs, tag }) => {
-      const attrString = Object.entries(attrs)
+      const resolvedAttrs: Record<string, number | string> = { ...attrs };
+      const resolvedStroke = resolvePaintValue(
+        typeof resolvedAttrs.stroke === 'string' ? resolvedAttrs.stroke : undefined,
+        color,
+        color,
+      );
+      const resolvedFill = resolvePaintValue(
+        typeof resolvedAttrs.fill === 'string' ? resolvedAttrs.fill : undefined,
+        color,
+        'none',
+      );
+
+      if (!('stroke' in resolvedAttrs) && resolvedStroke !== 'none') {
+        resolvedAttrs.stroke = resolvedStroke;
+      } else if (typeof resolvedAttrs.stroke === 'string') {
+        resolvedAttrs.stroke = resolvedStroke;
+      }
+
+      if (!('fill' in resolvedAttrs)) {
+        resolvedAttrs.fill = resolvedFill;
+      } else if (typeof resolvedAttrs.fill === 'string') {
+        resolvedAttrs.fill = resolvedFill;
+      }
+
+      const attrString = Object.entries(resolvedAttrs)
         .map(([key, value]) => `${key}="${escapeXmlAttribute(value)}"`)
         .join(' ');
       return `<${tag} ${attrString} />`;
@@ -254,7 +278,7 @@ function resolvePaintValue(value: string | undefined, color: string, fallback: s
 export function renderAppIconSvg(name: AppIconName, options: AppIconRenderOptions = {}): string {
   const { color = 'currentColor', size = 16 } = options;
   const definition = resolveIconDefinition(name);
-  const markup = renderIconMarkup(definition.source);
+  const markup = renderIconMarkup(definition.source, color);
 
   return [
     '<svg xmlns="http://www.w3.org/2000/svg"',

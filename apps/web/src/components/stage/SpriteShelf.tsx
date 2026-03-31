@@ -1461,13 +1461,13 @@ export function SpriteShelf() {
     const rowHoverClass = selectionSurfaceClassNames.hover;
 
     return (
-      <div key={options?.rowKey ?? item.key} className="relative">
+      <div key={options?.rowKey ?? item.key} className="relative w-full min-w-0">
         {isDropBefore ? (
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
           data-sprite-shelf-row="true"
-          className={`group/layer-row ${rowPaddingClass} select-none ${
+          className={`group/layer-row w-full min-w-0 ${rowPaddingClass} select-none ${
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
@@ -1499,7 +1499,7 @@ export function SpriteShelf() {
           onDragStart={interactive ? ((e) => handleLayerDragStart(e, item)) : undefined}
           onDragEnd={interactive ? clearLayerDragState : undefined}
         >
-          <div className="relative">
+          <div className="relative w-full min-w-0">
             {!isSelected && !isDropOn ? (
               <div
                 className={`pointer-events-none absolute inset-0 z-0 rounded-lg opacity-0 transition-opacity group-hover/layer-row:opacity-100 ${rowHoverClass}`}
@@ -1515,7 +1515,7 @@ export function SpriteShelf() {
                 className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
               />
             ) : null}
-            <div className={`relative z-10 flex items-stretch rounded-lg ${rowContentPaddingClass} transition-colors`}>
+            <div className={`relative z-10 flex w-full min-w-0 items-stretch rounded-lg ${rowContentPaddingClass} transition-colors`}>
             {indentDepth > 0 ? (
               <div aria-hidden="true" className="flex self-center shrink-0">
                 {Array.from({ length: indentDepth }).map((_, index) => (
@@ -1613,12 +1613,17 @@ export function SpriteShelf() {
                 onPointerDown={(e) => e.stopPropagation()}
                 className="flex-1 min-w-0"
                 outlineClassName="left-[-3px] right-0"
-                textClassName={`truncate text-xs leading-5 ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : 'text-foreground'}`}
+                textClassName={`text-xs leading-5 ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : 'text-foreground'}`}
                 autoFocus={isInlineEditing}
                 focusBehavior="caret-end"
+                displayAs="div"
+                displayProps={{
+                  className: 'flex min-w-0 items-center gap-1',
+                  title: item.name,
+                }}
                 displayValue={
                   <>
-                    {item.name}
+                    <span className="min-w-0 flex-1 truncate">{item.name}</span>
                     {isComponentInstance && <Component className="ml-1 inline-block size-3 opacity-60" />}
                   </>
                 }
@@ -1798,17 +1803,17 @@ export function SpriteShelf() {
         ref={shortcutSurfaceRef}
         data-editor-shortcut-surface="scene-objects"
         tabIndex={0}
-        className="flex-1 min-h-0 outline-none"
+        className="flex-1 min-h-0 min-w-0 outline-none"
         onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
       >
         <ScrollArea
-          className="flex-1"
+          className="flex-1 min-w-0"
           onDragOver={handleRootDragOver}
           onDrop={handleRootDrop}
           onClick={handleEmptyShelfClick}
           data-testid="sprite-shelf-scroll-area"
         >
-          <div className="min-h-full">
+          <div className="min-h-full w-full min-w-0">
             {selectedScene.objects.length === 0 && folders.length === 0 ? (
               <div className="flex h-full items-center justify-center p-4">
                 <Button
@@ -1825,7 +1830,7 @@ export function SpriteShelf() {
               <div
                 role="tree"
                 aria-label="Scene hierarchy"
-                className="relative min-h-full outline-none"
+                className="relative min-h-full w-full min-w-0 overflow-x-hidden outline-none"
                 onClick={handleEmptyShelfClick}
               >
                 {treeItems.map((item) => renderTreeItem(item))}

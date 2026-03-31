@@ -322,7 +322,13 @@ function getBlocklyInlineIconFallbackColor(block: Blockly.Block): string {
 
 function getBlocklyInlineIconTextColor(block: Blockly.Block): string {
   const svgRoot = getBlockSvgRoot(block);
-  const textNode = svgRoot?.querySelector('.blocklyText');
+  const textNode = svgRoot?.querySelector(
+    '.blocklyNonEditableField > text, '
+    + '.blocklyNonEditableField > g > text, '
+    + '.blocklyEditableField > text, '
+    + '.blocklyEditableField > g > text, '
+    + 'text.blocklyText',
+  );
   if (textNode && typeof window !== 'undefined') {
     const computedFill = window.getComputedStyle(textNode).fill;
     if (computedFill && computedFill !== 'none') {
