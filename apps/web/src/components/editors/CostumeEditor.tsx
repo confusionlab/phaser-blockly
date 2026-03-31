@@ -279,8 +279,9 @@ export function CostumeEditor() {
   const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>({
     fillColor: '#000000',
     fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
-    opacity: 1,
+    fillOpacity: 1,
     strokeColor: '#000000',
+    strokeOpacity: 1,
     strokeWidth: 1,
     strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
   });
@@ -1447,8 +1448,9 @@ export function CostumeEditor() {
       if (
         next.fillColor === prev.fillColor &&
         next.fillTextureId === prev.fillTextureId &&
-        next.opacity === prev.opacity &&
+        next.fillOpacity === prev.fillOpacity &&
         next.strokeColor === prev.strokeColor &&
+        next.strokeOpacity === prev.strokeOpacity &&
         next.strokeWidth === prev.strokeWidth &&
         next.strokeBrushId === prev.strokeBrushId
       ) {

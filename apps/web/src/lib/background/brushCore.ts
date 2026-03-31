@@ -167,9 +167,9 @@ function createAirbrushStampCanvas(size: number, color: string) {
   const center = canvas.width / 2;
   const radius = Math.max(6, size * 0.75);
   const gradient = ctx.createRadialGradient(center, center, 0, center, center, radius);
-  gradient.addColorStop(0, colorWithAlpha(color, 0.34));
-  gradient.addColorStop(0.3, colorWithAlpha(color, 0.2));
-  gradient.addColorStop(0.68, colorWithAlpha(color, 0.08));
+  gradient.addColorStop(0, colorWithAlpha(color, 1));
+  gradient.addColorStop(0.24, colorWithAlpha(color, 0.72));
+  gradient.addColorStop(0.58, colorWithAlpha(color, 0.24));
   gradient.addColorStop(1, colorWithAlpha(color, 0));
   ctx.fillStyle = gradient;
   ctx.beginPath();
@@ -256,22 +256,22 @@ export function getBitmapBrushStampDefinition(
   if (brushKind === 'airbrush') {
     return {
       stamp: createAirbrushStampCanvas(brushSize, brushColor),
-      spacing: Math.max(1, brushSize * 0.14),
-      opacity: 0.22,
+      spacing: Math.max(0.75, brushSize * 0.05),
+      opacity: 1,
       rotationJitter: 0,
-      scaleJitter: 0.08,
-      scatter: brushSize * 0.03,
+      scaleJitter: 0,
+      scatter: 0,
       alphaThreshold: 1,
     };
   }
 
   return {
     stamp: createCrayonStampCanvas(brushSize, brushColor, assets),
-    spacing: Math.max(1, brushSize * 0.18),
-    opacity: 0.32,
-    rotationJitter: Math.PI * 0.18,
-    scaleJitter: 0.16,
-    scatter: brushSize * 0.06,
+    spacing: Math.max(1, brushSize * 0.12),
+    opacity: 1,
+    rotationJitter: Math.PI * 0.12,
+    scaleJitter: 0.1,
+    scatter: brushSize * 0.04,
     alphaThreshold: 8,
   };
 }

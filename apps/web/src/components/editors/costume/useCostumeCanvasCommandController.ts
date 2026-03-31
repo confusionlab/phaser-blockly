@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { ActiveSelection, Point, util, type Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
 import { getCanvas2dContext } from '@/utils/canvas2d';
@@ -25,14 +25,14 @@ import type {
 import { deleteActiveCanvasSelection } from './costumeSelectionCommands';
 import { CANVAS_SIZE, normalizeDegrees, type CanvasSelectionBoundsSnapshot } from './costumeCanvasShared';
 import {
-  applyVectorOpacityToObject,
   applyVectorFillStyleToObject,
   applyVectorStrokeStyleToObject,
   getVectorObjectFillColor,
+  getVectorObjectFillOpacity,
   getVectorObjectFillTextureId,
-  getVectorObjectOpacity,
   getVectorObjectStrokeBrushId,
   getVectorObjectStrokeColor,
+  getVectorObjectStrokeOpacity,
   getVectorStyleCapabilitiesForSelection,
   getVectorStyleTargets,
   isActiveSelectionObject,
@@ -145,6 +145,32 @@ export function useCostumeCanvasCommandController({
   vectorStyle,
   waitForFabricCanvas,
 }: UseCostumeCanvasCommandControllerOptions) {
+  const pendingVectorStyleHistorySaveRef = useRef<number | null>(null);
+
+  const scheduleVectorStyleHistorySave = useCallback(() => {
+    if (typeof window === 'undefined') {
+      saveHistory();
+      return;
+    }
+
+    if (pendingVectorStyleHistorySaveRef.current !== null) {
+      window.clearTimeout(pendingVectorStyleHistorySaveRef.current);
+    }
+
+    pendingVectorStyleHistorySaveRef.current = window.setTimeout(() => {
+      pendingVectorStyleHistorySaveRef.current = null;
+      saveHistory();
+    }, 120);
+  }, [saveHistory]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingVectorStyleHistorySaveRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(pendingVectorStyleHistorySaveRef.current);
+      }
+    };
+  }, []);
+
   const getComposedCanvasElement = useCallback((): HTMLCanvasElement => {
     const fabricCanvas = fabricCanvasRef.current;
     const hostedLayerId = hostedLayerIdRef.current ?? activeDocumentLayerId;
@@ -323,9 +349,10 @@ export function useCostumeCanvasCommandController({
 
     onVectorStyleSyncRef.current?.({
       fillColor: getVectorObjectFillColor(vectorObject),
+      fillOpacity: getVectorObjectFillOpacity(vectorObject),
       fillTextureId: getVectorObjectFillTextureId(vectorObject),
-      opacity: getVectorObjectOpacity(vectorObject),
       strokeColor: getVectorObjectStrokeColor(vectorObject),
+      strokeOpacity: getVectorObjectStrokeOpacity(vectorObject),
       strokeWidth: typeof vectorObject.strokeWidth === 'number' ? vectorObject.strokeWidth : undefined,
       strokeBrushId: getVectorObjectStrokeBrushId(vectorObject),
     });
@@ -809,18 +836,18 @@ export function useCostumeCanvasCommandController({
         const fillChanged = vectorObjectSupportsFill(target)
           ? applyVectorFillStyleToObject(target, {
               fillColor: vectorStyle.fillColor,
+              fillOpacity: vectorStyle.fillOpacity,
               fillTextureId: vectorStyle.fillTextureId,
             })
           : false;
         const strokeChanged = applyVectorStrokeStyleToObject(target, {
           strokeColor: vectorStyle.strokeColor,
+          strokeOpacity: vectorStyle.strokeOpacity,
           strokeWidth,
           strokeBrushId: vectorStyle.strokeBrushId,
         });
-        const opacityChanged = applyVectorOpacityToObject(target, vectorStyle.opacity);
         changed = changed || fillChanged;
         changed = changed || strokeChanged;
-        changed = changed || opacityChanged;
         if (strokeChanged && centerPoint && typeof target.setPositionByOrigin === 'function') {
           target.setPositionByOrigin(centerPoint, 'center', 'center');
         }
@@ -832,8 +859,8 @@ export function useCostumeCanvasCommandController({
 
     activeObject.setCoords?.();
     fabricCanvas.requestRenderAll();
-    saveHistory();
-  }, [brushColorRef, editorModeRef, fabricCanvasRef, saveHistory, textStyle, vectorStyle]);
+    scheduleVectorStyleHistorySave();
+  }, [brushColorRef, editorModeRef, fabricCanvasRef, saveHistory, scheduleVectorStyleHistorySave, textStyle, vectorStyle]);
 
   return {
     alignSelection,

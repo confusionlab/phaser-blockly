@@ -405,7 +405,7 @@ export const ColorPickerHue = ({ className, ...props }: ColorPickerHueProps) => 
       value={[hue]}
       {...(props as any)}
     >
-      <Slider.Track className="relative h-5 w-full grow rounded-full bg-[linear-gradient(90deg,#FF0000,#FFFF00,#00FF00,#00FFFF,#0000FF,#FF00FF,#FF0000)]">
+      <Slider.Track className="relative mx-3 h-5 grow rounded-full bg-[linear-gradient(90deg,#FF0000,#FFFF00,#00FF00,#00FFFF,#0000FF,#FF00FF,#FF0000)]">
         <Slider.Range className="absolute h-full" />
       </Slider.Track>
       <Slider.Thumb className="block size-6 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50" />
@@ -748,7 +748,7 @@ const CompactColorPickerOpacity = memo(({
         value={[opacityPercent]}
       >
         <Slider.Track
-          className="relative h-5 w-full grow rounded-full"
+          className="relative mx-3 h-5 grow rounded-full"
           style={{
             backgroundColor: "rgb(248 250 252)",
             backgroundImage: `

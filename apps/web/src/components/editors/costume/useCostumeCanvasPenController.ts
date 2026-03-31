@@ -234,10 +234,18 @@ export function useCostumeCanvasPenController({
     const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
     const path = new Path(pathData, {
       fill: shouldClose
-        ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, vectorStyleRef.current.fillColor)
+        ? getFabricFillValueForVectorTexture(
+            vectorStyleRef.current.fillTextureId,
+            vectorStyleRef.current.fillColor,
+            vectorStyleRef.current.fillOpacity,
+          )
         : null,
-      opacity: vectorStyleRef.current.opacity,
-      stroke: getFabricStrokeValueForVectorBrush(vectorStyleRef.current.strokeBrushId, vectorStyleRef.current.strokeColor),
+      opacity: 1,
+      stroke: getFabricStrokeValueForVectorBrush(
+        vectorStyleRef.current.strokeBrushId,
+        vectorStyleRef.current.strokeColor,
+        vectorStyleRef.current.strokeOpacity,
+      ),
       strokeWidth,
       strokeUniform: true,
       noScaleCache: false,
@@ -250,8 +258,10 @@ export function useCostumeCanvasPenController({
       nodeHandleTypes: buildPenDraftNodeHandleTypes(draft.anchors),
       vectorFillTextureId: shouldClose ? vectorStyleRef.current.fillTextureId : undefined,
       vectorFillColor: shouldClose ? vectorStyleRef.current.fillColor : undefined,
+      vectorFillOpacity: shouldClose ? vectorStyleRef.current.fillOpacity : undefined,
       vectorStrokeBrushId: vectorStyleRef.current.strokeBrushId,
       vectorStrokeColor: vectorStyleRef.current.strokeColor,
+      vectorStrokeOpacity: vectorStyleRef.current.strokeOpacity,
     } as any);
 
     path.setCoords?.();

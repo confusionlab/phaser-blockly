@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, Trash2, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { runInHistoryTransaction } from '@/store/universalHistory';
@@ -18,6 +24,14 @@ const WORLD_BOUNDARY_EDITOR_PADDING = 160;
 const WORLD_BOUNDARY_EDITOR_MIN_ZOOM = 0.15;
 const WORLD_BOUNDARY_EDITOR_MAX_ZOOM = 4;
 const POINT_DRAG_ACTIVATION_DISTANCE_PX = 4;
+const WORLD_BOUNDARY_HELP_TEXT = 'Click to place the first points. Hover a segment to insert a midpoint. Drag points to move them. Wheel to pan. Ctrl or Cmd plus wheel to zoom. Right or middle drag to pan.';
+
+const overlayPillActionToneClasses = {
+  dark:
+    'inline-flex h-8 w-8 items-center justify-center rounded-full text-white/78 transition-[background-color,color,transform] duration-150 hover:bg-white/14 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:cursor-not-allowed disabled:opacity-45',
+  light:
+    'inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-white/22 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18 disabled:cursor-not-allowed disabled:opacity-45',
+} as const;
 
 interface WorldBoundaryEditorView {
   centerX: number;
@@ -204,13 +218,15 @@ function getScreenSpaceEllipseRadii(
 
 export function WorldBoundaryEditor() {
   const { project, updateScene } = useProjectStore();
-  const { worldBoundaryEditorSceneId, selectedSceneId, closeWorldBoundaryEditor } = useEditorStore();
+  const { isDarkMode, worldBoundaryEditorSceneId, selectedSceneId, closeWorldBoundaryEditor } = useEditorStore();
   const scene = useMemo(() => {
     const sceneId = worldBoundaryEditorSceneId ?? selectedSceneId;
     if (!project || !sceneId) return null;
     return project.scenes.find((candidate) => candidate.id === sceneId) ?? null;
   }, [project, selectedSceneId, worldBoundaryEditorSceneId]);
   const editorSurfaceColor = getSceneBackgroundBaseColor(scene?.background);
+  const overlayPillTone = isDarkMode ? 'dark' : 'light';
+  const overlayPillActionClassName = overlayPillActionToneClasses[overlayPillTone];
 
   const canvasWidth = project?.settings.canvasWidth ?? 800;
   const canvasHeight = project?.settings.canvasHeight ?? 600;
@@ -290,6 +306,22 @@ export function WorldBoundaryEditor() {
     setHoveredInsertionHandle(null);
     setView(getInitialView(nextPoints, canvasWidth, canvasHeight));
   }, [canvasHeight, canvasWidth, scene]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      event.preventDefault();
+      closeWorldBoundaryEditor();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeWorldBoundaryEditor]);
 
   useEffect(() => {
     if (dragIndex === null) return;
@@ -419,22 +451,7 @@ export function WorldBoundaryEditor() {
       pixelWidth: Math.max(1, Math.round(stageSize.width)),
       pixelHeight: Math.max(1, Math.round(stageSize.height)),
     });
-  }, [
-    backgroundRenderRevision,
-    canvasHeight,
-    canvasWidth,
-    scene,
-    stageSize.height,
-    stageSize.width,
-    viewBox.height,
-    viewBox.minX,
-    viewBox.minY,
-    viewBox.width,
-  ]);
-
-  if (!scene) {
-    return null;
-  }
+  }, [backgroundRenderRevision, canvasHeight, canvasWidth, scene, stageSize.height, stageSize.width, viewBox]);
 
   const polygonPoints = points
     .map((point) => {
@@ -468,6 +485,10 @@ export function WorldBoundaryEditor() {
     }
     return handles;
   }, [points]);
+
+  if (!scene) {
+    return null;
+  }
 
   const pointHandleRadii = getScreenSpaceEllipseRadii(10, stageSize.width, stageSize.height, viewBox.width, viewBox.height);
   const pointHitRadii = getScreenSpaceEllipseRadii(16, stageSize.width, stageSize.height, viewBox.width, viewBox.height);
@@ -629,33 +650,68 @@ export function WorldBoundaryEditor() {
 
   return (
     <div className="fixed inset-0 z-[100001] bg-background flex flex-col overscroll-none">
-      <div className="h-12 border-b bg-card px-3 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium">World Boundary</div>
-          <div className="text-xs text-muted-foreground">
-            Click to place the first points. Hover a segment to insert a midpoint. Drag points to move them. Wheel to pan. Ctrl or Cmd plus wheel to zoom. Right or middle drag to pan.
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => setPoints([])}>
-            <Trash2 className="size-4" />
-            Clear
-          </Button>
-          <Button variant="outline" size="sm" onClick={closeWorldBoundaryEditor}>
-            <X className="size-4" />
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleSave}>
-            <Check className="size-4" />
-            Done
-          </Button>
-        </div>
-      </div>
-
       <div
         className="flex-1 min-h-0 relative overflow-hidden"
         style={{ backgroundColor: editorSurfaceColor }}
       >
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-3 py-3">
+          <div className="pointer-events-auto flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-foreground/78 hover:!bg-transparent hover:text-foreground"
+                  title="Boundary help"
+                  aria-label="Boundary help"
+                >
+                  <span className="text-[11px] font-semibold">?</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="bottom" sideOffset={8} className="max-w-[320px]">
+                <div className="px-1 py-0.5 text-xs leading-5 text-muted-foreground">
+                  {WORLD_BOUNDARY_HELP_TEXT}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-foreground/78 hover:!bg-transparent hover:text-foreground"
+              onClick={() => {
+                setHoveredInsertionHandle(null);
+                setPoints(getDefaultBoundaryPoints(canvasWidth, canvasHeight));
+              }}
+            >
+              <Trash2 className="size-3.5" />
+              Clear
+            </Button>
+          </div>
+
+          <div className="pointer-events-auto flex items-center justify-end">
+            <OverlayPill tone={overlayPillTone} size="compact">
+              <button
+                type="button"
+                onClick={closeWorldBoundaryEditor}
+                title="Cancel"
+                aria-label="Cancel"
+                className={overlayPillActionClassName}
+              >
+                <X className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                title="Done"
+                aria-label="Done"
+                className={overlayPillActionClassName}
+              >
+                <Check className="size-3.5" />
+              </button>
+            </OverlayPill>
+          </div>
+        </div>
+
         <canvas
           ref={backgroundCanvasRef}
           className="absolute inset-0 h-full w-full pointer-events-none"

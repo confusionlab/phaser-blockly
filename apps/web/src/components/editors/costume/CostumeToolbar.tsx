@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import * as Slider from '@radix-ui/react-slider';
 import { Button } from '@/components/ui/button';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
@@ -6,9 +6,7 @@ import {
   FloatingBottomToolbar,
   FloatingBottomToolbarDock,
 } from '@/components/editors/shared/FloatingBottomToolbar';
-import {
-  CompactColorPicker,
-} from '@/components/ui/color-picker';
+import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
 import {
   MousePointer2,
   PenTool,
@@ -41,7 +39,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import Color from 'color';
 import type { CostumeEditorMode } from '@/types';
 import {
   BITMAP_BRUSH_OPTIONS,
@@ -88,8 +85,9 @@ export interface TextToolStyle {
 export interface VectorToolStyle {
   fillColor: string;
   fillTextureId: VectorFillTextureId;
-  opacity: number;
+  fillOpacity: number;
   strokeColor: string;
+  strokeOpacity: number;
   strokeWidth: number;
   strokeBrushId: VectorStrokeBrushId;
 }
@@ -233,95 +231,6 @@ const FloatingToolButton = memo(({
 });
 
 FloatingToolButton.displayName = 'FloatingToolButton';
-
-function resolveColorPickerValue(value: Parameters<typeof Color.rgb>[0]) {
-  try {
-    return Color(value).hex();
-  } catch {
-    return null;
-  }
-}
-
-interface ToolbarColorControlProps {
-  label: string;
-  value: string;
-  menuId: ToolbarColorMenuId;
-  openMenu: ToolbarMenuId | null;
-  onMenuOpenChange: (menu: ToolbarMenuId, open: boolean) => void;
-  onColorChange: (color: string) => void;
-  opacity?: number;
-  onOpacityChange?: (opacity: number) => void;
-  labelDisplay?: 'none' | 'left';
-}
-
-const ToolbarColorControl = memo(({
-  label,
-  value,
-  menuId,
-  openMenu,
-  onMenuOpenChange,
-  onColorChange,
-  opacity,
-  onOpacityChange,
-  labelDisplay = 'left',
-}: ToolbarColorControlProps) => {
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const isOpen = openMenu === menuId;
-
-  const handleColorChange = useCallback((nextValue: Parameters<typeof Color.rgb>[0]) => {
-    const resolved = resolveColorPickerValue(nextValue);
-    if (!resolved) {
-      return;
-    }
-
-    onColorChange(resolved);
-  }, [onColorChange]);
-
-  return (
-    <>
-      <div className="relative flex items-center gap-2">
-        {labelDisplay === 'left' && (
-          <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
-        )}
-        <button
-          ref={buttonRef}
-          type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent/60"
-          onClick={() => onMenuOpenChange(menuId, !isOpen)}
-          title={label}
-          aria-label={label}
-          aria-expanded={isOpen}
-          aria-haspopup="dialog"
-        >
-          <span
-            className="size-6 rounded-md ring-1 ring-black/15"
-            style={{ backgroundColor: value }}
-            aria-hidden="true"
-          />
-        </button>
-      </div>
-
-      <AnchoredPopupSurface
-        open={isOpen}
-        anchorRef={buttonRef}
-        onClose={() => onMenuOpenChange(menuId, false)}
-        side="top"
-        align="center"
-        sideOffset={toolbarPopupSideOffset}
-        className="w-[212px] p-3"
-      >
-        <CompactColorPicker
-          value={value}
-          onChange={handleColorChange}
-          opacity={opacity}
-          onOpacityChange={onOpacityChange}
-        />
-      </AnchoredPopupSurface>
-    </>
-  );
-});
-
-ToolbarColorControl.displayName = 'ToolbarColorControl';
 
 const toolbarSliderThumbClassName =
   'block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
@@ -575,6 +484,7 @@ interface CostumeToolbarProps {
   onBitmapShapeStyleChange: (updates: Partial<BitmapShapeStyle>) => void;
   onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
   onVectorStyleChange: (updates: Partial<VectorToolStyle>) => void;
+  toolAccessory?: ReactNode;
 }
 
 const bitmapPrimaryTools: ToolDefinition[] = [
@@ -703,6 +613,7 @@ export const CostumeToolbar = memo(({
   onBitmapShapeStyleChange,
   onTextStyleChange,
   onVectorStyleChange,
+  toolAccessory,
 }: CostumeToolbarProps) => {
   const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
   const showSelectTool = toolVisibility?.showSelectTool ?? true;
@@ -946,12 +857,11 @@ export const CostumeToolbar = memo(({
                   )}
 
                   {showPrimaryColorControl && (
-                    <ToolbarColorControl
+                    <FloatingToolbarColorControl
                       label="Color"
                       value={brushColor}
-                      menuId="color"
-                      openMenu={openMenu}
-                      onMenuOpenChange={handleMenuOpenChange}
+                      open={openMenu === 'color'}
+                      onOpenChange={(open) => handleMenuOpenChange('color', open)}
                       onColorChange={onColorChange}
                       opacity={primaryColorOpacity}
                       onOpacityChange={handlePrimaryColorOpacityChange}
@@ -1027,23 +937,21 @@ export const CostumeToolbar = memo(({
                   {showBitmapShapeStyleControls && (
                     <>
                       {showBitmapShapeFillControl && (
-                        <ToolbarColorControl
+                        <FloatingToolbarColorControl
                           label="Fill"
                           value={bitmapShapeStyle.fillColor}
-                          menuId="fill-color"
-                          openMenu={openMenu}
-                          onMenuOpenChange={handleMenuOpenChange}
+                          open={openMenu === 'fill-color'}
+                          onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                           onColorChange={(fillColor) => onBitmapShapeStyleChange({ fillColor })}
                           labelDisplay="left"
                         />
                       )}
 
-                      <ToolbarColorControl
+                      <FloatingToolbarColorControl
                         label="Stroke"
                         value={bitmapShapeStyle.strokeColor}
-                        menuId="stroke-color"
-                        openMenu={openMenu}
-                        onMenuOpenChange={handleMenuOpenChange}
+                        open={openMenu === 'stroke-color'}
+                        onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                         onColorChange={(strokeColor) => onBitmapShapeStyleChange({ strokeColor })}
                         labelDisplay="left"
                       />
@@ -1069,15 +977,14 @@ export const CostumeToolbar = memo(({
                     <>
                       <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                         <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
-                        <ToolbarColorControl
+                        <FloatingToolbarColorControl
                           label="Stroke"
                           value={vectorStyle.strokeColor}
-                          menuId="stroke-color"
-                          openMenu={openMenu}
-                          onMenuOpenChange={handleMenuOpenChange}
+                          open={openMenu === 'stroke-color'}
+                          onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
-                          opacity={vectorStyle.opacity}
-                          onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
+                          opacity={vectorStyle.strokeOpacity}
+                          onOpacityChange={(strokeOpacity) => onVectorStyleChange({ strokeOpacity })}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1128,15 +1035,14 @@ export const CostumeToolbar = memo(({
                       {showVectorFillControl && (
                         <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                           <span className="whitespace-nowrap text-xs text-muted-foreground">Fill</span>
-                          <ToolbarColorControl
+                          <FloatingToolbarColorControl
                             label="Fill"
                             value={vectorStyle.fillColor}
-                            menuId="fill-color"
-                            openMenu={openMenu}
-                            onMenuOpenChange={handleMenuOpenChange}
+                            open={openMenu === 'fill-color'}
+                            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
-                            opacity={vectorStyle.opacity}
-                            onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
+                            opacity={vectorStyle.fillOpacity}
+                            onOpacityChange={(fillOpacity) => onVectorStyleChange({ fillOpacity })}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1320,15 +1226,14 @@ export const CostumeToolbar = memo(({
                     <div className="flex min-w-max items-center justify-center gap-2">
                       <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                         <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
-                        <ToolbarColorControl
+                        <FloatingToolbarColorControl
                           label="Stroke"
                           value={vectorStyle.strokeColor}
-                          menuId="stroke-color"
-                          openMenu={openMenu}
-                          onMenuOpenChange={handleMenuOpenChange}
+                          open={openMenu === 'stroke-color'}
+                          onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
-                          opacity={vectorStyle.opacity}
-                          onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
+                          opacity={vectorStyle.strokeOpacity}
+                          onOpacityChange={(strokeOpacity) => onVectorStyleChange({ strokeOpacity })}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1379,15 +1284,14 @@ export const CostumeToolbar = memo(({
                       {showVectorFillControl && (
                         <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                           <span className="whitespace-nowrap text-xs text-muted-foreground">Fill</span>
-                          <ToolbarColorControl
+                          <FloatingToolbarColorControl
                             label="Fill"
                             value={vectorStyle.fillColor}
-                            menuId="fill-color"
-                            openMenu={openMenu}
-                            onMenuOpenChange={handleMenuOpenChange}
+                            open={openMenu === 'fill-color'}
+                            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
-                            opacity={vectorStyle.opacity}
-                            onOpacityChange={(opacity) => onVectorStyleChange({ opacity })}
+                            opacity={vectorStyle.fillOpacity}
+                            onOpacityChange={(fillOpacity) => onVectorStyleChange({ fillOpacity })}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1526,6 +1430,14 @@ export const CostumeToolbar = memo(({
                     />
                   ))}
                 </div>
+                {toolAccessory ? (
+                  <>
+                    <div className="app-divider-x app-divider-fill h-8 shrink-0" />
+                    <div className="flex min-w-max items-center gap-2">
+                      {toolAccessory}
+                    </div>
+                  </>
+                ) : null}
                 {showModeSwitcher ? <div className="hidden" /> : null}
               </div>
           </FloatingBottomToolbar>

@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { ChevronDown, Redo2, Undo2 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,6 +26,7 @@ interface CanvasViewportOverlayProps {
   onZoomToFit: () => void;
   onZoomToSelection?: () => void;
   canZoomToSelection?: boolean;
+  rightAccessory?: ReactNode;
   className?: string;
 }
 
@@ -41,6 +44,7 @@ export function CanvasViewportOverlay({
   onZoomToFit,
   onZoomToSelection,
   canZoomToSelection = false,
+  rightAccessory,
   className,
 }: CanvasViewportOverlayProps) {
   const overlayButtonClassName = 'text-foreground/78 hover:!bg-transparent hover:text-foreground';
@@ -73,7 +77,7 @@ export function CanvasViewportOverlay({
         </Button>
       </div>
 
-      <div className="pointer-events-auto ml-auto flex items-center justify-end">
+      <div className="pointer-events-auto ml-auto flex items-center justify-end gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -113,6 +117,7 @@ export function CanvasViewportOverlay({
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
+        {rightAccessory}
       </div>
     </div>
   );

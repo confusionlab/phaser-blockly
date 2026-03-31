@@ -13,6 +13,7 @@ import {
 } from '@/store/universalHistory';
 
 export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
+export type InspectorTab = 'object' | 'scene';
 export interface CostumeColliderEditorRequest {
   sceneId: string;
   objectId: string;
@@ -142,6 +143,7 @@ interface EditorStore {
   showReusableLibrary: boolean;
   showPlayValidationDialog: boolean;
   playValidationIssues: PlayValidationIssue[];
+  activeInspectorTab: InspectorTab;
   activeObjectTab: ObjectEditorTab;
   costumeColliderEditorRequest: CostumeColliderEditorRequest | null;
   collapsedFolderIdsByScene: Record<string, string[]>;
@@ -172,6 +174,7 @@ interface EditorStore {
   clearSelection: (options?: SelectionHistoryOptions) => void;
   initializeSelectionForProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   reconcileSelectionToProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
+  setActiveInspectorTab: (tab: InspectorTab) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
   openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
   consumeCostumeColliderEditorRequest: (sceneId: string, objectId: string) => boolean;
@@ -293,6 +296,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   showReusableLibrary: false,
   showPlayValidationDialog: false,
   playValidationIssues: [],
+  activeInspectorTab: 'object' as InspectorTab,
   activeObjectTab: 'code' as ObjectEditorTab,
   costumeColliderEditorRequest: null,
   collapsedFolderIdsByScene: {},
@@ -338,6 +342,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const applySelection = () => {
       set({
+        activeInspectorTab: 'scene',
         selectedSceneId: nextSelectedSceneId,
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
@@ -383,6 +388,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const applySelection = () => {
       set({
+        activeInspectorTab: 'object',
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
@@ -432,6 +438,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const applySelection = () => {
       set({
+        activeInspectorTab: 'object',
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
@@ -485,6 +492,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const applySelection = () => {
       set({
+        activeInspectorTab: 'object',
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
@@ -622,6 +630,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const applySelection = () => {
       set({
+        activeInspectorTab: nextSelectedObjectId ? 'object' : 'scene',
         selectedSceneId: nextSelectedSceneId,
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
@@ -843,6 +852,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   closeBackgroundEditor: () => {
     set({
+      activeInspectorTab: 'scene',
       backgroundEditorOpen: false,
       backgroundEditorSceneId: null,
       backgroundUndoHandler: null,
@@ -859,8 +869,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   closeWorldBoundaryEditor: () => {
     set({
+      activeInspectorTab: 'scene',
       worldBoundaryEditorOpen: false,
       worldBoundaryEditorSceneId: null,
+    });
+  },
+
+  setActiveInspectorTab: (tab) => {
+    set({
+      activeInspectorTab: tab,
     });
   },
 

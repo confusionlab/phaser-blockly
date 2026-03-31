@@ -65,6 +65,30 @@ export function useCostumeCanvasBitmapLayerController({
     return clone;
   }, []);
 
+  const createBlankBitmapCanvas = useCallback((width: number, height: number): HTMLCanvasElement => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }, []);
+
+  const createBitmapRasterBaseSnapshot = useCallback((
+    fabricCanvas: FabricCanvas,
+    options: { commitObject?: any } = {},
+  ): HTMLCanvasElement => {
+    const reusableBitmapImage = getReusableBitmapImage();
+    const reusableBitmapCanvas = reusableBitmapImage?.getElement();
+    if (reusableBitmapCanvas instanceof HTMLCanvasElement) {
+      return cloneBitmapCanvas(reusableBitmapCanvas) ?? fabricCanvas.toCanvasElement(1);
+    }
+
+    if (options.commitObject) {
+      return createBlankBitmapCanvas(fabricCanvas.getWidth(), fabricCanvas.getHeight());
+    }
+
+    return fabricCanvas.toCanvasElement(1);
+  }, [cloneBitmapCanvas, createBlankBitmapCanvas, getReusableBitmapImage]);
+
   const waitForFabricRenderFlush = useCallback((fabricCanvas: FabricCanvas): Promise<void> => {
     if (typeof window === 'undefined') {
       return Promise.resolve();
@@ -265,12 +289,7 @@ export function useCostumeCanvasBitmapLayerController({
           return;
         }
 
-        const reusableBitmapImage = getReusableBitmapImage();
-        const reusableBitmapCanvas = reusableBitmapImage?.getElement();
-        const raster = reusableBitmapCanvas instanceof HTMLCanvasElement
-          && (options.commitObject || fabricCanvas.getObjects().length === 1)
-          ? cloneBitmapCanvas(reusableBitmapCanvas) ?? fabricCanvas.toCanvasElement(1)
-          : fabricCanvas.toCanvasElement(1);
+        const raster = createBitmapRasterBaseSnapshot(fabricCanvas, options);
         const rasterCtx = raster.getContext('2d', { willReadFrequently: true });
         if (!rasterCtx) {
           return;
@@ -298,10 +317,9 @@ export function useCostumeCanvasBitmapLayerController({
   }, [
     applyBitmapLayerSource,
     bitmapRasterCommitQueueRef,
-    cloneBitmapCanvas,
+    createBitmapRasterBaseSnapshot,
     editorModeRef,
     fabricCanvasRef,
-    getReusableBitmapImage,
     saveHistory,
     waitForFabricRenderFlush,
   ]);
@@ -333,6 +351,7 @@ export function useCostumeCanvasBitmapLayerController({
 
       rasterCtx.save();
       rasterCtx.globalCompositeOperation = payload.compositeOperation;
+      rasterCtx.globalAlpha = payload.strokeOpacity;
       rasterCtx.drawImage(
         payload.strokeCanvas,
         dirtyBounds.x,

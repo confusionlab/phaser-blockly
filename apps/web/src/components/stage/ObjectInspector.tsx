@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
-import { useEditorStore } from '@/store/editorStore';
+import { useEditorStore, type InspectorTab } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Label } from '@/components/ui/label';
@@ -30,7 +30,6 @@ import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
-type InspectorTab = 'object' | 'scene';
 type PhysicsBodyType = PhysicsConfig['bodyType'];
 type ColliderType = NonNullable<GameObject['collider']>['type'];
 
@@ -276,15 +275,15 @@ function ScrubInput({
 export function ObjectInspector() {
   const { project, updateObject, updateScene } = useProjectStore();
   const {
+    activeInspectorTab,
     selectedSceneId,
-    selectedFolderId,
     selectedObjectId,
     selectedObjectIds,
+    setActiveInspectorTab,
     openBackgroundEditor,
     openWorldBoundaryEditor,
     openCostumeColliderEditor,
   } = useEditorStore();
-  const [activeTab, setActiveTab] = useState<InspectorTab>('object');
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
   const selectedObjects = scene
@@ -295,17 +294,10 @@ export function ObjectInspector() {
       : (selectedObjectId ? scene.objects.filter(o => o.id === selectedObjectId) : []))
     : [];
 
-  // Switch to object tab when an object is selected
-  useEffect(() => {
-    if (selectedFolderId || selectedObjectId || selectedObjectIds.length > 0) {
-      setActiveTab('object');
-    }
-  }, [selectedFolderId, selectedObjectId, selectedObjectIds.length]);
-
   const handleSegmentedTabChange = useCallback((value: InspectorTab) => {
     freezeEditorResizeForLayoutTransition();
-    setActiveTab(value);
-  }, []);
+    setActiveInspectorTab(value);
+  }, [setActiveInspectorTab]);
 
   return (
     <div className="inspector-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
@@ -314,17 +306,17 @@ export function ObjectInspector() {
           ariaLabel="Inspector sections"
           className="w-full"
           options={inspectorTabs}
-          value={activeTab}
+          value={activeInspectorTab}
           onValueChange={handleSegmentedTabChange}
         />
       </div>
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <ScrollArea
-          aria-hidden={activeTab !== 'object'}
+          aria-hidden={activeInspectorTab !== 'object'}
           className={cn(
             'absolute inset-0 h-full min-h-0 min-w-0',
-            activeTab === 'object' ? 'z-10' : 'hidden',
+            activeInspectorTab === 'object' ? 'z-10' : 'hidden',
           )}
         >
           <div className="min-h-full min-w-0 px-3 py-3">
@@ -338,10 +330,10 @@ export function ObjectInspector() {
         </ScrollArea>
 
         <ScrollArea
-          aria-hidden={activeTab !== 'scene'}
+          aria-hidden={activeInspectorTab !== 'scene'}
           className={cn(
             'absolute inset-0 h-full min-h-0 min-w-0',
-            activeTab === 'scene' ? 'z-10' : 'hidden',
+            activeInspectorTab === 'scene' ? 'z-10' : 'hidden',
           )}
         >
           <div className="min-h-full min-w-0 px-3 py-3">
@@ -807,7 +799,7 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
 
       <div className="border-t pt-3">
         <div className="inspector-split-row">
-          <div className="inspector-inline-controls">
+          <div className="flex min-w-0 items-center gap-2">
             <Checkbox
               id="world-boundary-toggle"
               checked={!!scene.worldBoundary?.enabled}
@@ -831,15 +823,6 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
             Edit
           </Button>
         </div>
-        {scene.worldBoundary?.points?.length ? (
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            {scene.worldBoundary.points.length} points
-          </div>
-        ) : (
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            No boundary points yet
-          </div>
-        )}
       </div>
     </div>
   );

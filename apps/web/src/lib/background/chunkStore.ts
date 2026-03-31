@@ -7,6 +7,13 @@ export const DEFAULT_BACKGROUND_HARD_CHUNK_LIMIT = 1200;
 
 export type ChunkDataMap = Record<string, string>;
 
+export interface ChunkWorldBounds {
+  left: number;
+  right: number;
+  bottom: number;
+  top: number;
+}
+
 export interface ChunkLimitState {
   count: number;
   softLimit: number;
@@ -73,6 +80,68 @@ export function createEmptyChunkCanvas(chunkSize: number = DEFAULT_BACKGROUND_CH
   canvas.width = size;
   canvas.height = size;
   return canvas;
+}
+
+export function applyRasterPatchToChunkCanvas(options: {
+  chunkSize: number;
+  chunkBounds: ChunkWorldBounds;
+  patchBounds: ChunkWorldBounds;
+  rasterCanvas: HTMLCanvasElement;
+  existingChunkCanvas?: HTMLCanvasElement | null;
+}): HTMLCanvasElement | null {
+  const {
+    chunkSize,
+    chunkBounds,
+    patchBounds,
+    rasterCanvas,
+    existingChunkCanvas = null,
+  } = options;
+
+  const nextCanvas = createEmptyChunkCanvas(chunkSize);
+  const nextCtx = getChunkCanvasContext(nextCanvas);
+  if (!nextCtx) {
+    return null;
+  }
+
+  if (existingChunkCanvas) {
+    nextCtx.drawImage(existingChunkCanvas, 0, 0);
+  }
+
+  const intersectionLeft = Math.max(chunkBounds.left, patchBounds.left);
+  const intersectionRight = Math.min(chunkBounds.right, patchBounds.right);
+  const intersectionBottom = Math.max(chunkBounds.bottom, patchBounds.bottom);
+  const intersectionTop = Math.min(chunkBounds.top, patchBounds.top);
+  const intersectionWidth = intersectionRight - intersectionLeft;
+  const intersectionHeight = intersectionTop - intersectionBottom;
+
+  if (intersectionWidth <= 0 || intersectionHeight <= 0) {
+    return nextCanvas;
+  }
+
+  const destinationX = intersectionLeft - chunkBounds.left;
+  const destinationY = chunkBounds.top - intersectionTop;
+  const sourceX = intersectionLeft - patchBounds.left;
+  const sourceY = patchBounds.top - intersectionTop;
+
+  nextCtx.clearRect(
+    destinationX,
+    destinationY,
+    intersectionWidth,
+    intersectionHeight,
+  );
+  nextCtx.drawImage(
+    rasterCanvas,
+    sourceX,
+    sourceY,
+    intersectionWidth,
+    intersectionHeight,
+    destinationX,
+    destinationY,
+    intersectionWidth,
+    intersectionHeight,
+  );
+
+  return nextCanvas;
 }
 
 export function normalizeChunkDataMap(chunks: BackgroundConfig['chunks']): ChunkDataMap {

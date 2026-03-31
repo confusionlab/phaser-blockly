@@ -26,6 +26,7 @@ function resetSessionStateForAccountBoundary() {
     showReusableLibrary: false,
     showPlayValidationDialog: false,
     playValidationIssues: [],
+    activeInspectorTab: 'object',
     objectPickerOpen: false,
     objectPickerCallback: null,
     objectPickerExcludeId: null,

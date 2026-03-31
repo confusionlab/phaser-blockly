@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { Check, LocateFixed, X } from '@/components/ui/icons';
-import { Button } from '@/components/ui/button';
+import { Check, X } from '@/components/ui/icons';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
+import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import type {
@@ -22,6 +23,7 @@ import {
   type VectorStyleCapabilities,
   type VectorToolStyle,
 } from '@/components/editors/costume/CostumeToolbar';
+import { resolveCostumeToolShortcut } from '@/components/editors/costume/costumeToolShortcuts';
 import {
   DEFAULT_BACKGROUND_CHUNK_SIZE,
   getChunkBoundsFromKeys,
@@ -37,6 +39,7 @@ import {
   MutableBackgroundChunkIndex,
 } from '@/lib/background/chunkIndex';
 import {
+  applyRasterPatchToChunkCanvas,
   DEFAULT_BACKGROUND_HARD_CHUNK_LIMIT,
   DEFAULT_BACKGROUND_SOFT_CHUNK_LIMIT,
   canCreateChunk,
@@ -118,13 +121,23 @@ const MAX_RASTER_OPERATION_DIMENSION = 8192;
 const MAX_RASTER_OPERATION_PIXELS = 36 * 1024 * 1024;
 const ZOOM_STEP = 0.1;
 
+const overlayPillActionToneClasses = {
+  dark:
+    'inline-flex h-8 w-8 items-center justify-center rounded-full text-white/78 transition-[background-color,color,transform] duration-150 hover:bg-white/14 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:cursor-not-allowed disabled:opacity-45',
+  light:
+    'inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-white/22 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18 disabled:cursor-not-allowed disabled:opacity-45',
+} as const;
+
 type ChunkDelta = {
   before: Record<string, string | null>;
   after: Record<string, string | null>;
 };
 
 type BackgroundShapeTool = Extract<CostumeDrawingTool, 'line' | 'circle' | 'rectangle' | 'triangle' | 'star'>;
-type BackgroundDrawingTool = Extract<CostumeDrawingTool, 'select' | 'brush' | 'eraser' | 'fill' | 'line' | 'circle' | 'rectangle' | 'triangle' | 'star'>;
+type BackgroundDrawingTool = Extract<
+  CostumeDrawingTool,
+  'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'line' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'text'
+>;
 
 type MutationSession = {
   touched: Set<string>;
@@ -229,7 +242,7 @@ const FLOATING_SELECTION_MIN_SCREEN_SIZE = 8;
 const FLOATING_SELECTION_BORDER_COLOR = '#0ea5e9';
 const FLOATING_SELECTION_BORDER_FILL = 'rgba(14, 165, 233, 0.08)';
 
-const BACKGROUND_TOOLBAR_TEXT_STYLE: TextToolStyle = {
+const BACKGROUND_TOOLBAR_INITIAL_TEXT_STYLE: TextToolStyle = {
   fontFamily: 'Arial',
   fontSize: 32,
   fontWeight: 'normal',
@@ -242,8 +255,9 @@ const BACKGROUND_TOOLBAR_TEXT_STYLE: TextToolStyle = {
 const BACKGROUND_TOOLBAR_VECTOR_STYLE: VectorToolStyle = {
   fillColor: '#000000',
   fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
-  opacity: 1,
+  fillOpacity: 1,
   strokeColor: '#000000',
+  strokeOpacity: 1,
   strokeWidth: 1,
   strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
 };
@@ -258,6 +272,7 @@ function isShapeTool(tool: BackgroundDrawingTool): tool is BackgroundShapeTool {
 function isBackgroundToolbarTool(tool: CostumeDrawingTool): tool is BackgroundDrawingTool {
   return (
     tool === 'select' ||
+    tool === 'pen' ||
     tool === 'brush' ||
     tool === 'eraser' ||
     tool === 'fill' ||
@@ -265,19 +280,25 @@ function isBackgroundToolbarTool(tool: CostumeDrawingTool): tool is BackgroundDr
     tool === 'circle' ||
     tool === 'triangle' ||
     tool === 'star' ||
-    tool === 'line'
+    tool === 'line' ||
+    tool === 'text'
   );
 }
 
 function ensureToolForBackgroundMode(mode: 'bitmap' | 'vector', tool: BackgroundDrawingTool): BackgroundDrawingTool {
   if (mode === 'vector') {
-    return tool === 'select' || tool === 'brush' || isShapeTool(tool) ? tool : 'select';
+    return tool === 'select' || tool === 'pen' || tool === 'brush' || tool === 'text' || isShapeTool(tool) ? tool : 'select';
   }
-  return tool;
+  return tool === 'eraser' || tool === 'fill' || tool === 'brush' || tool === 'select' || isShapeTool(tool) ? tool : 'brush';
 }
 
-function toSupportedVectorTool(tool: BackgroundDrawingTool): Extract<BackgroundDrawingTool, 'select' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line'> {
-  return ensureToolForBackgroundMode('vector', tool) as Extract<BackgroundDrawingTool, 'select' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line'>;
+function toSupportedVectorTool(
+  tool: BackgroundDrawingTool,
+): Extract<BackgroundDrawingTool, 'select' | 'pen' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line' | 'text'> {
+  return ensureToolForBackgroundMode('vector', tool) as Extract<
+    BackgroundDrawingTool,
+    'select' | 'pen' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line' | 'text'
+  >;
 }
 
 function getWorldRectFromPoints(start: WorldPoint, end: WorldPoint): WorldRect {
@@ -556,6 +577,7 @@ export function BackgroundCanvasEditor() {
   const [brushColor, setBrushColor] = useState(INITIAL_BRUSH_COLOR);
   const [brushOpacity, setBrushOpacity] = useState(1);
   const [backgroundColor, setBackgroundColor] = useState('#87CEEB');
+  const [backgroundColorPickerOpen, setBackgroundColorPickerOpen] = useState(false);
   const [brushSize, setBrushSize] = useState(INITIAL_BRUSH_SIZE);
   const [bitmapFillStyle, setBitmapFillStyle] = useState<BitmapFillStyle>({
     textureId: DEFAULT_BITMAP_FILL_TEXTURE_ID,
@@ -565,6 +587,7 @@ export function BackgroundCanvasEditor() {
     strokeColor: INITIAL_BRUSH_COLOR,
     strokeWidth: INITIAL_SHAPE_STROKE_WIDTH,
   });
+  const [textStyle, setTextStyle] = useState<TextToolStyle>(BACKGROUND_TOOLBAR_INITIAL_TEXT_STYLE);
   const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>(BACKGROUND_TOOLBAR_VECTOR_STYLE);
   const [zoom, setZoom] = useState(0.5);
   const [camera, setCamera] = useState({ x: 0, y: 0 });
@@ -581,6 +604,7 @@ export function BackgroundCanvasEditor() {
   const [backgroundDocument, setBackgroundDocumentState] = useState<BackgroundDocument | null>(null);
   const [renderedLayerChunks, setRenderedLayerChunks] = useState<Record<string, ChunkDataMap>>({});
   const [hasVectorSelection, setHasVectorSelection] = useState(false);
+  const [hasVectorTextSelection, setHasVectorTextSelection] = useState(false);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
 
@@ -592,6 +616,7 @@ export function BackgroundCanvasEditor() {
   const {
     backgroundEditorOpen,
     backgroundEditorSceneId,
+    isDarkMode,
     selectedSceneId,
     closeBackgroundEditor,
     registerBackgroundUndo,
@@ -634,6 +659,8 @@ export function BackgroundCanvasEditor() {
     bottom: -(project?.settings.canvasHeight ?? 600) / 2,
     top: (project?.settings.canvasHeight ?? 600) / 2,
   }), [project?.settings.canvasHeight, project?.settings.canvasWidth]);
+  const overlayPillTone = isDarkMode ? 'dark' : 'light';
+  const overlayPillActionClassName = overlayPillActionToneClasses[overlayPillTone];
 
   const screenToWorld = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const host = hostRef.current;
@@ -997,6 +1024,7 @@ export function BackgroundCanvasEditor() {
       setTool((currentTool) => ensureToolForBackgroundMode(getActiveBackgroundLayerKind(nextDocument), currentTool));
     }
     setHasVectorSelection(false);
+    setHasVectorTextSelection(false);
     setIsDirty(true);
     setRevision((value) => value + 1);
   }, [loadActiveBitmapLayerState, replaceBackgroundDocument, syncUndoRedoAvailability]);
@@ -2123,25 +2151,18 @@ export function BackgroundCanvasEditor() {
       }
 
       rememberChunkBeforeMutation(session, key);
-
-      const nextCanvas = createEmptyChunkCanvas(chunkSize);
-      const nextCtx = getChunkCanvasContext(nextCanvas);
-      if (!nextCtx) {
+      const chunkBounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
+      const existingChunkCanvas = chunkCanvasesRef.current.get(key) ?? null;
+      const nextCanvas = applyRasterPatchToChunkCanvas({
+        chunkSize,
+        chunkBounds,
+        patchBounds: bounds,
+        rasterCanvas,
+        existingChunkCanvas,
+      });
+      if (!nextCanvas) {
         continue;
       }
-
-      const chunkBounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
-      nextCtx.drawImage(
-        rasterCanvas,
-        chunkBounds.left - bounds.left,
-        bounds.top - chunkBounds.top,
-        chunkSize,
-        chunkSize,
-        0,
-        0,
-        chunkSize,
-        chunkSize,
-      );
 
       const hasExistingChunk = key in chunkDataRef.current || chunkCanvasesRef.current.has(key);
       const isTransparent = isChunkCanvasTransparent(nextCanvas);
@@ -2503,6 +2524,7 @@ export function BackgroundCanvasEditor() {
     }
 
     if (editorMode === 'vector') {
+      vectorCanvasRef.current?.flushPendingEdits();
       await vectorCanvasRef.current?.awaitIdle();
     }
 
@@ -2786,57 +2808,15 @@ export function BackgroundCanvasEditor() {
         return true;
       }
 
-      if (event.key.toLowerCase() === 'b' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('brush');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'v' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('select');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'e' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (editorMode !== 'bitmap') {
-          return false;
+      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+        const shortcutTool = resolveCostumeToolShortcut(event.key, editorMode);
+        if (shortcutTool && isBackgroundToolbarTool(shortcutTool)) {
+          event.preventDefault();
+          setTool(ensureToolForBackgroundMode(editorMode, shortcutTool));
+          return true;
         }
-        event.preventDefault();
-        setTool('eraser');
-        return true;
       }
-      if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (editorMode !== 'bitmap') {
-          return false;
-        }
-        event.preventDefault();
-        setTool('fill');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'r' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('rectangle');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('circle');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'g' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('triangle');
-        return true;
-      }
-      if (event.key.toLowerCase() === 's' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('star');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'l' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('line');
-        return true;
-      }
+
       if (event.key === '[' && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         if (editorMode === 'bitmap') {
@@ -3303,9 +3283,17 @@ export function BackgroundCanvasEditor() {
   }, [editorMode]);
   const handleToolbarVectorHandleModeChange = useCallback(() => {}, []);
   const handleToolbarAlign = useCallback(() => {}, []);
-  const handleToolbarTextStyleChange = useCallback(() => {}, []);
+  const handleToolbarTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
+    setTextStyle((previous) => ({ ...previous, ...updates }));
+  }, []);
   const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
     setVectorStyle((prev) => ({ ...prev, ...updates }));
+  }, []);
+  const handleVectorTextSelectionChange = useCallback((hasTextSelection: boolean) => {
+    setHasVectorTextSelection(hasTextSelection);
+  }, []);
+  const handleVectorTextStyleSync = useCallback((updates: Partial<TextToolStyle>) => {
+    setTextStyle((previous) => ({ ...previous, ...updates }));
   }, []);
 
   const handleToolbarColorChange = useCallback((color: string) => {
@@ -3361,36 +3349,6 @@ export function BackgroundCanvasEditor() {
       data-testid="background-editor-root"
       data-chunk-count={activeChunkCount}
     >
-      <div className="h-12 border-b bg-card px-3 flex items-center gap-2">
-        <Button variant="default" size="sm" onClick={handleDone} disabled={busy}>
-          <Check className="size-4" />
-          Done
-        </Button>
-        <Button variant="outline" size="sm" onClick={handleCancel} disabled={busy}>
-          <X className="size-4" />
-          Cancel
-        </Button>
-        <div className="app-divider-x app-divider-fill h-6 mx-1" />
-        <label className="text-xs text-muted-foreground">BG</label>
-        <input
-          type="color"
-          value={backgroundColor}
-          onChange={(event) => setBackgroundColor(event.target.value)}
-          className="h-8 w-10 rounded border bg-background"
-          title="Background color"
-          disabled={busy}
-        />
-        <Button variant="outline" size="sm" onClick={fitToContent} disabled={busy}>
-          <LocateFixed className="size-4" />
-          Fit
-        </Button>
-        <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-          {isRasterOperationBusy && <span>Processing</span>}
-          {(hasFloatingSelection || hasVectorSelection) && <span>Selection</span>}
-          {isPanning && <span>Panning</span>}
-        </div>
-      </div>
-
       {chunkLimitWarning && (
         <div className="px-3 py-2 text-xs bg-amber-50 text-amber-900 border-b border-amber-200">
           {chunkLimitWarning}
@@ -3418,6 +3376,30 @@ export function BackgroundCanvasEditor() {
             onZoomToFit={fitToContent}
             onZoomToSelection={handleZoomToSelection}
             canZoomToSelection={editorMode === 'bitmap' && hasFloatingSelection}
+            rightAccessory={(
+              <OverlayPill tone={overlayPillTone} size="compact">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  title="Cancel"
+                  aria-label="Cancel"
+                  className={overlayPillActionClassName}
+                  disabled={busy}
+                >
+                  <X className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDone}
+                  title="Done"
+                  aria-label="Done"
+                  className={overlayPillActionClassName}
+                  disabled={busy}
+                >
+                  <Check className="size-3.5" />
+                </button>
+              </OverlayPill>
+            )}
           />
           <CostumeToolbar
             editorMode={editorMode}
@@ -3425,13 +3407,13 @@ export function BackgroundCanvasEditor() {
             hasActiveSelection={editorMode === 'bitmap' ? hasFloatingSelection : hasVectorSelection}
             toolVisibility={{
               showSelectTool: true,
-              showPenTool: false,
-              showTextTool: false,
+              showPenTool: true,
+              showTextTool: true,
               showShapeTools: true,
             }}
             showModeSwitcher={false}
             selectionActionsEnabled={editorMode === 'vector'}
-            showTextControls={false}
+            showTextControls={editorMode === 'vector' && (tool === 'text' || hasVectorTextSelection)}
             isVectorPointEditing={false}
             hasSelectedVectorPoints={false}
             bitmapBrushKind={bitmapBrushKind}
@@ -3440,7 +3422,7 @@ export function BackgroundCanvasEditor() {
             brushSize={brushSize}
             bitmapFillStyle={bitmapFillStyle}
             bitmapShapeStyle={bitmapShapeStyle}
-            textStyle={BACKGROUND_TOOLBAR_TEXT_STYLE}
+            textStyle={textStyle}
             vectorStyle={vectorStyle}
             vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
             previewScale={zoom}
@@ -3460,6 +3442,16 @@ export function BackgroundCanvasEditor() {
             onBitmapShapeStyleChange={handleToolbarBitmapShapeStyleChange}
             onTextStyleChange={handleToolbarTextStyleChange}
             onVectorStyleChange={handleToolbarVectorStyleChange}
+            toolAccessory={(
+              <FloatingToolbarColorControl
+                label="BG"
+                value={backgroundColor}
+                open={backgroundColorPickerOpen}
+                onOpenChange={setBackgroundColorPickerOpen}
+                onColorChange={setBackgroundColor}
+                disabled={busy}
+              />
+            )}
           />
           <canvas
             ref={canvasRef}
@@ -3479,11 +3471,15 @@ export function BackgroundCanvasEditor() {
               camera={camera}
               zoom={zoom}
               activeTool={toSupportedVectorTool(tool)}
+              brushColor={brushColor}
+              textStyle={textStyle}
               vectorStyle={vectorStyle}
               interactive={editorMode === 'vector'}
               onDirty={markActiveLayerDirty}
               onHistoryStateChange={handleVectorHistoryStateChange}
               onSelectionChange={setHasVectorSelection}
+              onTextSelectionChange={handleVectorTextSelectionChange}
+              onTextStyleSync={handleVectorTextStyleSync}
             />
           ) : null}
           {backgroundDocument ? (

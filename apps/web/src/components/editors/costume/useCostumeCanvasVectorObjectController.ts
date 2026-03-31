@@ -23,9 +23,11 @@ import {
   getFabricObjectType,
   getFabricStrokeValueForVectorBrush,
   getVectorObjectFillColor,
+  getVectorObjectFillOpacity,
   getVectorObjectFillTextureId,
   getVectorObjectStrokeBrushId,
   getVectorObjectStrokeColor,
+  getVectorObjectStrokeOpacity,
   isActiveSelectionObject,
   isDirectlyEditablePathObject,
   isImageObject,
@@ -184,12 +186,14 @@ export function useCostumeCanvasVectorObjectController({
     if (!pathData) return null;
 
     const fillColor = getVectorObjectFillColor(obj) ?? (typeof obj.fill === 'string' ? obj.fill : '#000000');
+    const fillOpacity = getVectorObjectFillOpacity(obj) ?? 1;
     const fillTextureId = getVectorObjectFillTextureId(obj);
     const strokeColor = getVectorObjectStrokeColor(obj) ?? fillColor;
+    const strokeOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
     const strokeBrushId = getVectorObjectStrokeBrushId(obj);
     const path = new Path(pathData, {
-      fill: shouldFill ? getFabricFillValueForVectorTexture(fillTextureId, fillColor) : null,
-      stroke: getFabricStrokeValueForVectorBrush(strokeBrushId, strokeColor),
+      fill: shouldFill ? getFabricFillValueForVectorTexture(fillTextureId, fillColor, fillOpacity) : null,
+      stroke: getFabricStrokeValueForVectorBrush(strokeBrushId, strokeColor, strokeOpacity),
       strokeWidth: typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
       strokeUniform: true,
       noScaleCache: false,
@@ -197,7 +201,7 @@ export function useCostumeCanvasVectorObjectController({
       strokeLineJoin: obj.strokeLineJoin,
       strokeMiterLimit: obj.strokeMiterLimit,
       strokeDashArray: Array.isArray(obj.strokeDashArray) ? [...obj.strokeDashArray] : null,
-      opacity: typeof obj.opacity === 'number' ? obj.opacity : 1,
+      opacity: 1,
       globalCompositeOperation: obj.globalCompositeOperation ?? 'source-over',
       fillRule: obj.fillRule,
       paintFirst: obj.paintFirst,
@@ -205,8 +209,10 @@ export function useCostumeCanvasVectorObjectController({
       nodeHandleTypes: initialNodeHandleTypes,
       vectorFillTextureId: shouldFill ? fillTextureId : undefined,
       vectorFillColor: shouldFill ? fillColor : undefined,
+      vectorFillOpacity: shouldFill ? fillOpacity : undefined,
       vectorStrokeBrushId: strokeBrushId,
       vectorStrokeColor: strokeColor,
+      vectorStrokeOpacity: strokeOpacity,
       selectable: true,
       evented: true,
       hasControls: true,

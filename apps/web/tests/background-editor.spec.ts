@@ -116,6 +116,42 @@ async function readSavedBackgroundVectorObjectCount(page: Page): Promise<number>
   });
 }
 
+async function readSavedBackgroundVectorObjectStyle(page: Page): Promise<{
+  fillOpacity: number | null;
+  strokeOpacity: number | null;
+} | null> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{
+          vectorFillOpacity?: unknown;
+          vectorStrokeOpacity?: unknown;
+        }>;
+      };
+      const object = Array.isArray(parsed.objects) ? parsed.objects[0] : null;
+      if (!object) {
+        return null;
+      }
+
+      return {
+        fillOpacity: typeof object.vectorFillOpacity === 'number' ? object.vectorFillOpacity : null,
+        strokeOpacity: typeof object.vectorStrokeOpacity === 'number' ? object.vectorStrokeOpacity : null,
+      };
+    } catch {
+      return null;
+    }
+  });
+}
+
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
   await page.locator('[data-testid="layer-row"][aria-pressed="true"]').click({ button: 'right' });
   const slider = page.getByLabel('Layer opacity');
@@ -131,6 +167,27 @@ async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promis
 
 function backgroundLayerRow(page: Page, index: number) {
   return page.locator('[data-testid="layer-row"]').nth(index);
+}
+
+async function setToolbarColorOpacity(page: Page, label: 'Fill' | 'Stroke', opacityPercent: number): Promise<void> {
+  const button = page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }).first();
+  await button.click();
+  const slider = page.getByTestId('compact-color-picker-opacity');
+  await expect(slider).toBeVisible();
+  const box = await slider.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) {
+    throw new Error(`Missing ${label} opacity slider bounds.`);
+  }
+  const clampedOpacity = Math.max(0, Math.min(100, opacityPercent));
+
+  await slider.click({
+    position: {
+      x: 12 + ((box.width - 24) * clampedOpacity) / 100,
+      y: box.height / 2,
+    },
+  });
+  await button.click();
 }
 
 async function addVectorLayer(page: Page): Promise<void> {
@@ -321,6 +378,73 @@ test.describe('Background editor', () => {
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(editor.root).toBeHidden();
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(1);
+  });
+
+  test('vector pen and text tools persist through the saved background document', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    await expect(vectorCanvas).toBeVisible();
+
+    await page.getByRole('button', { name: /^pen$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.42), y: Math.round(editor.box.height * 0.36) },
+    });
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.54), y: Math.round(editor.box.height * 0.44) },
+    });
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.48), y: Math.round(editor.box.height * 0.58) },
+    });
+    await page.keyboard.press('Enter');
+
+    await page.getByRole('button', { name: /^text$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.64), y: Math.round(editor.box.height * 0.5) },
+    });
+    await page.keyboard.type('BG');
+    await page.getByRole('button', { name: /^select$/i }).click();
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+    await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(2);
+  });
+
+  test('selected vector shapes keep fill and stroke opacity independent', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await setToolbarColorOpacity(page, 'Fill', 60);
+    await setToolbarColorOpacity(page, 'Stroke', 85);
+
+    await page.mouse.move(editor.box.x + editor.box.width * 0.52, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.56);
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: { x: Math.round(editor.box.width * 0.62), y: Math.round(editor.box.height * 0.44) },
+    });
+    await setToolbarColorOpacity(page, 'Fill', 20);
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectStyle(page), { timeout: 10000 }).toMatchObject({
+      fillOpacity: expect.any(Number),
+      strokeOpacity: expect.any(Number),
+    });
+
+    const style = await readSavedBackgroundVectorObjectStyle(page);
+    expect(style).not.toBeNull();
+    expect(style?.fillOpacity).toBeLessThan(0.35);
+    expect(style?.strokeOpacity).toBeGreaterThan(0.75);
+    expect(style?.strokeOpacity).toBeGreaterThan((style?.fillOpacity ?? 0) + 0.3);
   });
 
   test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {

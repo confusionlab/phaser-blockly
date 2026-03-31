@@ -377,7 +377,7 @@ export const CostumeList = memo(({
               name={costume.name}
               selected={index === selectedIndex}
               onClick={() => onSelectCostume(index)}
-              onNameChange={(name) => onRenameCostume(index, name)}
+              onNameCommit={(name) => onRenameCostume(index, name)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenu({

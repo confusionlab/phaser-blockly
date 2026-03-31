@@ -24,6 +24,11 @@ async function addVectorLayer(page: Page): Promise<void> {
   await page.getByRole('menuitem', { name: /^vector$/i }).click();
 }
 
+async function addBitmapLayer(page: Page): Promise<void> {
+  await page.getByTestId('layer-add-button').click();
+  await page.getByRole('menuitem', { name: /^pixel$/i }).click();
+}
+
 async function getCostumeCanvasBox(page: Page) {
   const canvasSurface = page.getByTestId('costume-canvas-surface');
   await expect(canvasSurface).toBeVisible();
@@ -51,6 +56,29 @@ async function drawAcrossCostumeCanvas(page: Page, startXFactor: number, startYF
 async function selectBitmapBrushKind(page: Page, label: 'Hard' | 'Soft' | 'Crayon') {
   await page.getByRole('button', { name: /^(Hard|Soft|Crayon)$/i }).click();
   await page.getByRole('menuitemradio', { name: new RegExp(`^${label}$`, 'i') }).click();
+}
+
+async function setBrushColorOpacity(page: Page, opacityPercent: number): Promise<void> {
+  const colorButton = page.getByTestId('costume-toolbar-properties').getByRole('button', { name: /^color$/i });
+  await colorButton.click();
+  const slider = page.getByTestId('compact-color-picker-opacity').getByRole('slider');
+  await expect(slider).toBeVisible();
+  await slider.focus();
+
+  const targetOpacity = Math.max(0, Math.min(100, Math.round(opacityPercent)));
+  if (targetOpacity <= 50) {
+    await slider.press('Home');
+    for (let index = 0; index < targetOpacity; index += 1) {
+      await slider.press('ArrowRight');
+    }
+  } else {
+    await slider.press('End');
+    for (let index = targetOpacity; index < 100; index += 1) {
+      await slider.press('ArrowLeft');
+    }
+  }
+  await expect(slider).toHaveAttribute('aria-valuenow', String(targetOpacity));
+  await colorButton.click();
 }
 
 async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) {
@@ -271,6 +299,31 @@ async function readHostedLayerInkSamples(page: Page): Promise<number> {
   });
 }
 
+async function readHostedLayerMaxAlpha(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
+    if (!(hostedCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = hostedCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, hostedCanvas.width, hostedCanvas.height);
+    let maxAlpha = 0;
+    for (let index = 3; index < data.length; index += 4) {
+      const alpha = data[index] ?? 0;
+      if (alpha > maxAlpha) {
+        maxAlpha = alpha;
+      }
+    }
+
+    return maxAlpha;
+  });
+}
+
 async function observeVisibleHostedLayerInkTimeline(page: Page, frameCount = 36): Promise<number[]> {
   return await page.evaluate((frames) => {
     return new Promise<number[]>((resolve) => {
@@ -393,6 +446,63 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('hard bitmap brush commit preserves stroke opacity', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await page.getByRole('button', { name: /new blank costume/i }).click();
+    await addBitmapLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Hard');
+    await setBrushColorOpacity(page, 35);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.3, 0.54, 0.3);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const alphaAfterCommit = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterCommit).toBeGreaterThan(70);
+    expect(alphaAfterCommit).toBeLessThan(110);
+
+    await roundTripThroughCodeTab(page);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const alphaAfterRoundTrip = await readHostedLayerMaxAlpha(page);
+    expect(Math.abs(alphaAfterRoundTrip - alphaAfterCommit)).toBeLessThanOrEqual(6);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.3, 0.54, 0.3);
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(alphaAfterCommit + 30);
+    const alphaAfterSecondStroke = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterSecondStroke).toBeGreaterThan(alphaAfterCommit + 30);
+  });
+
+  test('soft bitmap brush uses opacity per stroke instead of flow accumulation', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await page.getByRole('button', { name: /new blank costume/i }).click();
+    await addBitmapLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Soft');
+    await setBrushColorOpacity(page, 35);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.36, 0.54, 0.36);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const alphaAfterFirstStroke = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterFirstStroke).toBeGreaterThan(70);
+    expect(alphaAfterFirstStroke).toBeLessThan(110);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.36, 0.54, 0.36);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(alphaAfterFirstStroke + 30);
+    const alphaAfterSecondStroke = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterSecondStroke).toBeGreaterThan(alphaAfterFirstStroke + 30);
   });
 
   test('bitmap shapes commit on the active layer and survive a tab round-trip', async ({ page }) => {

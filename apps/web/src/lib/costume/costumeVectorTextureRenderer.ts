@@ -226,11 +226,19 @@ function getVectorObjectFillTextureId(obj: unknown): VectorFillTextureId {
 function getVectorObjectFillColor(obj: unknown): string | undefined {
   const vectorFillColor = (obj as { vectorFillColor?: unknown } | null | undefined)?.vectorFillColor;
   if (typeof vectorFillColor === 'string' && vectorFillColor.length > 0) {
-    return vectorFillColor;
+    try {
+      return Color(vectorFillColor).alpha(1).hex();
+    } catch {
+      return vectorFillColor;
+    }
   }
   const fill = (obj as { fill?: unknown } | null | undefined)?.fill;
   if (typeof fill === 'string' && fill.length > 0) {
-    return fill;
+    try {
+      return Color(fill).alpha(1).hex();
+    } catch {
+      return fill;
+    }
   }
   return undefined;
 }
@@ -243,24 +251,88 @@ function getVectorObjectStrokeBrushId(obj: unknown): VectorStrokeBrushId {
 function getVectorObjectStrokeColor(obj: unknown): string | undefined {
   const vectorStrokeColor = (obj as { vectorStrokeColor?: unknown } | null | undefined)?.vectorStrokeColor;
   if (typeof vectorStrokeColor === 'string' && vectorStrokeColor.length > 0) {
-    return vectorStrokeColor;
+    try {
+      return Color(vectorStrokeColor).alpha(1).hex();
+    } catch {
+      return vectorStrokeColor;
+    }
   }
   const stroke = (obj as { stroke?: unknown } | null | undefined)?.stroke;
   if (typeof stroke === 'string' && stroke.length > 0) {
-    return stroke;
+    try {
+      return Color(stroke).alpha(1).hex();
+    } catch {
+      return stroke;
+    }
   }
   return undefined;
 }
 
-function getFabricStrokeValueForVectorBrush(brushId: VectorStrokeBrushId, strokeColor: string) {
+function getVectorObjectFillOpacity(obj: unknown): number | undefined {
+  const explicitOpacity = (obj as { vectorFillOpacity?: unknown } | null | undefined)?.vectorFillOpacity;
+  if (typeof explicitOpacity === 'number' && Number.isFinite(explicitOpacity)) {
+    return clampUnit(explicitOpacity);
+  }
+
+  if (getVectorObjectFillTextureId(obj) === DEFAULT_VECTOR_FILL_TEXTURE_ID) {
+    const fillValue = (obj as { vectorFillColor?: unknown; fill?: unknown } | null | undefined)?.vectorFillColor
+      ?? (obj as { fill?: unknown } | null | undefined)?.fill;
+    if (typeof fillValue === 'string' && fillValue.length > 0) {
+      try {
+        return clampUnit(Color(fillValue).alpha());
+      } catch {
+        // noop
+      }
+    }
+  }
+
+  const legacyOpacity = (obj as { opacity?: unknown } | null | undefined)?.opacity;
+  return typeof legacyOpacity === 'number' && Number.isFinite(legacyOpacity)
+    ? clampUnit(legacyOpacity)
+    : undefined;
+}
+
+function getVectorObjectStrokeOpacity(obj: unknown): number | undefined {
+  const explicitOpacity = (obj as { vectorStrokeOpacity?: unknown } | null | undefined)?.vectorStrokeOpacity;
+  if (typeof explicitOpacity === 'number' && Number.isFinite(explicitOpacity)) {
+    return clampUnit(explicitOpacity);
+  }
+
+  if (getVectorObjectStrokeBrushId(obj) === DEFAULT_VECTOR_STROKE_BRUSH_ID) {
+    const strokeValue = (obj as { vectorStrokeColor?: unknown; stroke?: unknown } | null | undefined)?.vectorStrokeColor
+      ?? (obj as { stroke?: unknown } | null | undefined)?.stroke;
+    if (typeof strokeValue === 'string' && strokeValue.length > 0) {
+      try {
+        return clampUnit(Color(strokeValue).alpha());
+      } catch {
+        // noop
+      }
+    }
+  }
+
+  const legacyOpacity = (obj as { opacity?: unknown } | null | undefined)?.opacity;
+  return typeof legacyOpacity === 'number' && Number.isFinite(legacyOpacity)
+    ? clampUnit(legacyOpacity)
+    : undefined;
+}
+
+function getFabricStrokeValueForVectorBrush(
+  brushId: VectorStrokeBrushId,
+  strokeColor: string,
+  strokeOpacity = 1,
+) {
   return brushId === DEFAULT_VECTOR_STROKE_BRUSH_ID
-    ? strokeColor
+    ? Color(strokeColor).alpha(clampUnit(strokeOpacity)).rgb().string()
     : Color(strokeColor).alpha(0).rgb().string();
 }
 
-function getFabricFillValueForVectorTexture(textureId: VectorFillTextureId, fillColor: string) {
+function getFabricFillValueForVectorTexture(
+  textureId: VectorFillTextureId,
+  fillColor: string,
+  fillOpacity = 1,
+) {
   return textureId === DEFAULT_VECTOR_FILL_TEXTURE_ID
-    ? fillColor
+    ? Color(fillColor).alpha(clampUnit(fillOpacity)).rgb().string()
     : Color(fillColor).alpha(0).rgb().string();
 }
 
@@ -292,14 +364,25 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
   const brushId = getVectorObjectStrokeBrushId(candidate);
   const fillColor = getVectorObjectFillColor(candidate);
   const fillTextureId = getVectorObjectFillTextureId(candidate);
+  const strokeOpacity = getVectorObjectStrokeOpacity(candidate) ?? 1;
+  const fillOpacity = getVectorObjectFillOpacity(candidate) ?? 1;
+  if ((candidate as { vectorStrokeOpacity?: unknown }).vectorStrokeOpacity !== strokeOpacity) {
+    updates.vectorStrokeOpacity = strokeOpacity;
+  }
+  if (vectorObjectSupportsFill(candidate) && (candidate as { vectorFillOpacity?: unknown }).vectorFillOpacity !== fillOpacity) {
+    updates.vectorFillOpacity = fillOpacity;
+  }
+  if (typeof (candidate as { opacity?: unknown }).opacity === 'number' && (candidate as { opacity?: number }).opacity !== 1) {
+    updates.opacity = 1;
+  }
   if (typeof strokeColor === 'string' && strokeColor.length > 0) {
-    const renderStroke = getFabricStrokeValueForVectorBrush(brushId, strokeColor);
+    const renderStroke = getFabricStrokeValueForVectorBrush(brushId, strokeColor, strokeOpacity);
     if (candidate.stroke !== renderStroke) {
       updates.stroke = renderStroke;
     }
   }
   if (typeof fillColor === 'string' && fillColor.length > 0) {
-    const renderFill = getFabricFillValueForVectorTexture(fillTextureId, fillColor);
+    const renderFill = getFabricFillValueForVectorTexture(fillTextureId, fillColor, fillOpacity);
     if (candidate.fill !== renderFill) {
       updates.fill = renderFill;
     }
@@ -801,7 +884,7 @@ export function renderVectorTextureOverlayForObjects(
           const pattern = ctx.createPattern(textureTile, 'repeat');
           if (pattern) {
             ctx.fillStyle = pattern;
-            ctx.globalAlpha = typeof obj.opacity === 'number' ? obj.opacity : 1;
+            ctx.globalAlpha = getVectorObjectFillOpacity(obj) ?? 1;
             ctx.clip();
             ctx.fillRect(-canvasWidth, -canvasHeight, canvasWidth * 3, canvasHeight * 3);
           }
@@ -829,7 +912,7 @@ export function renderVectorTextureOverlayForObjects(
     if (!renderStyle || renderStyle.kind !== 'bitmap-dab') {
       continue;
     }
-    const objectOpacity = typeof obj.opacity === 'number' ? obj.opacity : 1;
+    const objectOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
     const resolvedRenderStyle = objectOpacity === 1
       ? renderStyle
       : {

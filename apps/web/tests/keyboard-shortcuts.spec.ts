@@ -1,5 +1,77 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
+
+async function addSoundToSelectedObject(page: Page, name: string): Promise<void> {
+  await page.evaluate(({ soundName }) => {
+    const createSilentWavDataUrl = () => {
+      const sampleRate = 8_000;
+      const durationSeconds = 0.1;
+      const frameCount = Math.max(1, Math.floor(sampleRate * durationSeconds));
+      const bytesPerSample = 2;
+      const blockAlign = bytesPerSample;
+      const byteRate = sampleRate * blockAlign;
+      const dataSize = frameCount * bytesPerSample;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      const writeAscii = (offset: number, value: string) => {
+        for (let index = 0; index < value.length; index += 1) {
+          view.setUint8(offset + index, value.charCodeAt(index));
+        }
+      };
+
+      writeAscii(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeAscii(8, 'WAVE');
+      writeAscii(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, 16, true);
+      writeAscii(36, 'data');
+      view.setUint32(40, dataSize, true);
+
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+      }
+      return `data:audio/wav;base64,${btoa(binary)}`;
+    };
+
+    return Promise.all([
+      import('/src/store/projectStore.ts'),
+      import('/src/store/editorStore.ts'),
+    ]).then(([{ useProjectStore }, { useEditorStore }]) => {
+      const { selectedSceneId, selectedObjectId } = useEditorStore.getState();
+      const { project, updateObject } = useProjectStore.getState();
+      if (!selectedSceneId || !selectedObjectId || !project) {
+        throw new Error('No selected object was available for seeding a sound.');
+      }
+
+      const scene = project.scenes.find((candidate) => candidate.id === selectedSceneId);
+      const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
+      if (!object) {
+        throw new Error('The selected object could not be found.');
+      }
+
+      updateObject(selectedSceneId, selectedObjectId, {
+        sounds: [
+          ...object.sounds,
+          {
+            id: crypto.randomUUID(),
+            name: soundName,
+            assetId: createSilentWavDataUrl(),
+            duration: 0.1,
+          },
+        ],
+      });
+    });
+  }, { soundName: name });
+}
 
 test.describe('Keyboard shortcuts', () => {
   test('backquote uses the stage fullscreen overlay instead of the legacy stage shell', async ({ page }) => {
@@ -159,5 +231,65 @@ test.describe('Keyboard shortcuts', () => {
 
     await page.keyboard.press('Enter');
     await expect(projectNameDisplay).toHaveText('x'.repeat(120));
+  });
+
+  test('costume sidebar tile names stay plain until double-click rename starts', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Costume Tile Rename ${Date.now()}`,
+      addObject: true,
+    });
+
+    await page.getByRole('radio', { name: /^costume$/i }).click();
+
+    const costumeTile = page.locator('[data-slot="card"]').first();
+    const costumeTileName = page.getByText(/^costume1$/i).first();
+    await expect(costumeTileName).toBeVisible();
+
+    await costumeTileName.click();
+    await expect(page.getByRole('textbox', { name: 'Rename costume1' })).toHaveCount(0);
+
+    const beforeRenameBox = await costumeTile.boundingBox();
+    expect(beforeRenameBox).not.toBeNull();
+
+    await costumeTileName.dblclick();
+
+    const renameInput = page.getByRole('textbox', { name: 'Rename costume1' });
+    await expect(renameInput).toBeVisible();
+
+    const afterRenameBox = await costumeTile.boundingBox();
+    expect(afterRenameBox).not.toBeNull();
+    expect(Math.abs((afterRenameBox?.height ?? 0) - (beforeRenameBox?.height ?? 0))).toBeLessThanOrEqual(1);
+
+    await renameInput.fill('Hero Idle');
+    await renameInput.press('Enter');
+
+    await expect(page.getByText(/^Hero Idle$/)).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Rename Hero Idle' })).toHaveCount(0);
+  });
+
+  test('sound sidebar tile names stay plain until double-click rename starts', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Sound Tile Rename ${Date.now()}`,
+      addObject: true,
+    });
+    await addSoundToSelectedObject(page, 'Intro Sound');
+
+    await page.getByRole('radio', { name: /^sound$/i }).click();
+
+    const soundTileName = page.getByText(/^Intro Sound$/).first();
+    await expect(soundTileName).toBeVisible();
+
+    await soundTileName.click();
+    await expect(page.getByRole('textbox', { name: 'Rename Intro Sound' })).toHaveCount(0);
+
+    await soundTileName.dblclick();
+
+    const renameInput = page.getByRole('textbox', { name: 'Rename Intro Sound' });
+    await expect(renameInput).toBeVisible();
+    await renameInput.fill('Ambient Loop');
+    await renameInput.press('Enter');
+
+    await expect(page.getByText(/^Ambient Loop$/)).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Rename Ambient Loop' })).toHaveCount(0);
   });
 });

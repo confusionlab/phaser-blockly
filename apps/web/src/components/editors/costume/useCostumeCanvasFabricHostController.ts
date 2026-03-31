@@ -395,12 +395,19 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         const fillColor = activeShapeStyle.fillColor;
         const strokeColor = activeShapeStyle.strokeColor;
         const strokeWidth = Math.max(0, activeShapeStyle.strokeWidth);
-        const objectOpacity = isVectorMode ? vectorStyleRef.current.opacity : 1;
         const vectorRenderFill = isVectorMode
-          ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, fillColor)
+          ? getFabricFillValueForVectorTexture(
+              vectorStyleRef.current.fillTextureId,
+              fillColor,
+              vectorStyleRef.current.fillOpacity,
+            )
           : fillColor;
         const vectorRenderStroke = isVectorMode
-          ? getFabricStrokeValueForVectorBrush(vectorStyleRef.current.strokeBrushId, strokeColor)
+          ? getFabricStrokeValueForVectorBrush(
+              vectorStyleRef.current.strokeBrushId,
+              strokeColor,
+              vectorStyleRef.current.strokeOpacity,
+            )
           : strokeColor;
         let object: any;
         if (tool === 'rectangle') {
@@ -419,7 +426,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             width: 0,
             height: 0,
             fill: vectorRenderFill,
-            opacity: objectOpacity,
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -428,8 +435,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
             vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorFillOpacity: isVectorMode ? vectorStyleRef.current.fillOpacity : undefined,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         } else if (tool === 'circle') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
@@ -445,7 +454,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             rx: 0,
             ry: 0,
             fill: vectorRenderFill,
-            opacity: objectOpacity,
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -456,8 +465,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
             vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorFillOpacity: isVectorMode ? vectorStyleRef.current.fillOpacity : undefined,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         } else if (tool === 'triangle' || tool === 'star') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
@@ -476,7 +487,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             originX: 'left',
             originY: 'top',
             fill: vectorRenderFill,
-            opacity: objectOpacity,
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -485,13 +496,15 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
             vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorFillOpacity: isVectorMode ? vectorStyleRef.current.fillOpacity : undefined,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
           object.setBoundingBox?.(true);
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-            opacity: objectOpacity,
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -500,6 +513,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         }
         shapeDraftRef.current = {

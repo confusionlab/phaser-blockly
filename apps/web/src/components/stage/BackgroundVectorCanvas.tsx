@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -9,6 +10,7 @@ import {
   ActiveSelection,
   Canvas as FabricCanvas,
   Ellipse,
+  IText,
   Line,
   Polygon,
   Rect,
@@ -21,10 +23,16 @@ import type {
   DrawingTool,
   MoveOrderAction,
   SelectionFlipAxis,
+  TextToolStyle,
   VectorToolStyle,
 } from '@/components/editors/costume/CostumeToolbar';
+import { getZoomInvariantCanvasMetric } from '@/components/editors/costume/costumeCanvasShared';
 import {
-  applyVectorOpacityToObject,
+  attachTextEditingContainer,
+  beginTextEditing,
+  isTextEditableObject,
+} from '@/components/editors/costume/costumeTextCommands';
+import {
   applyVectorFillStyleToObject,
   applyVectorStrokeStyleToObject,
   VECTOR_JSON_EXTRA_PROPS,
@@ -32,13 +40,16 @@ import {
   getFabricFillValueForVectorTexture,
   getFabricStrokeValueForVectorBrush,
   getVectorStyleTargets,
+  isTextObject,
   normalizeVectorObjectRendering,
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
+import { useCostumeCanvasPenController } from '@/components/editors/costume/useCostumeCanvasPenController';
+import { useCostumeCanvasPenHotkeys } from '@/components/editors/costume/useCostumeCanvasPenHotkeys';
 import { EMPTY_BACKGROUND_VECTOR_FABRIC_JSON } from '@/lib/background/backgroundDocument';
 
 type WorldPoint = { x: number; y: number };
 
-type SupportedVectorTool = Extract<DrawingTool, 'select' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line'>;
+type SupportedVectorTool = Extract<DrawingTool, 'select' | 'pen' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line' | 'text'>;
 
 type VectorShapeDraft =
   | {
@@ -67,6 +78,7 @@ export interface BackgroundVectorCanvasHandle {
   updateShape: (currentWorld: WorldPoint) => void;
   commitShape: () => boolean;
   cancelShape: () => void;
+  flushPendingEdits: () => boolean;
   awaitIdle: () => Promise<void>;
   undo: () => void;
   redo: () => void;
@@ -85,11 +97,15 @@ interface BackgroundVectorCanvasProps {
   camera: { x: number; y: number };
   zoom: number;
   activeTool: SupportedVectorTool;
+  brushColor: string;
+  textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
   interactive: boolean;
   onDirty: () => void;
   onHistoryStateChange: (state: { canUndo: boolean; canRedo: boolean; isDirty: boolean }) => void;
   onSelectionChange: (hasSelection: boolean) => void;
+  onTextSelectionChange: (hasTextSelection: boolean) => void;
+  onTextStyleSync: (style: Partial<TextToolStyle>) => void;
 }
 
 function createPolygonShapePoints(kind: 'triangle' | 'star', start: WorldPoint, current: WorldPoint): { x: number; y: number }[] {
@@ -130,18 +146,61 @@ function createPolygonShapePoints(kind: 'triangle' | 'star', start: WorldPoint, 
 function buildVectorStyleProps(vectorStyle: VectorToolStyle, supportsFill: boolean) {
   return {
     fill: supportsFill
-      ? getFabricFillValueForVectorTexture(vectorStyle.fillTextureId, vectorStyle.fillColor)
+      ? getFabricFillValueForVectorTexture(
+          vectorStyle.fillTextureId,
+          vectorStyle.fillColor,
+          vectorStyle.fillOpacity,
+        )
       : null,
-    opacity: vectorStyle.opacity,
-    stroke: getFabricStrokeValueForVectorBrush(vectorStyle.strokeBrushId, vectorStyle.strokeColor),
+    opacity: 1,
+    stroke: getFabricStrokeValueForVectorBrush(
+      vectorStyle.strokeBrushId,
+      vectorStyle.strokeColor,
+      vectorStyle.strokeOpacity,
+    ),
     strokeWidth: Math.max(1, vectorStyle.strokeWidth),
     strokeUniform: true,
     noScaleCache: false,
     vectorFillTextureId: vectorStyle.fillTextureId,
     vectorFillColor: vectorStyle.fillColor,
+    vectorFillOpacity: vectorStyle.fillOpacity,
     vectorStrokeBrushId: vectorStyle.strokeBrushId,
     vectorStrokeColor: vectorStyle.strokeColor,
+    vectorStrokeOpacity: vectorStyle.strokeOpacity,
   } as const;
+}
+
+function getTextStyleSnapshot(obj: unknown): Partial<TextToolStyle> | null {
+  if (!isTextObject(obj)) {
+    return null;
+  }
+
+  const textObject = obj as {
+    fontFamily?: unknown;
+    fontSize?: unknown;
+    fontWeight?: unknown;
+    fontStyle?: unknown;
+    underline?: unknown;
+    textAlign?: unknown;
+    opacity?: unknown;
+  };
+
+  const snapshot: Partial<TextToolStyle> = {
+    fontWeight: textObject.fontWeight === 'bold' ? 'bold' : 'normal',
+    fontStyle: textObject.fontStyle === 'italic' ? 'italic' : 'normal',
+    underline: textObject.underline === true,
+    textAlign: textObject.textAlign === 'center' || textObject.textAlign === 'right' ? textObject.textAlign : 'left',
+  };
+  if (typeof textObject.fontFamily === 'string') {
+    snapshot.fontFamily = textObject.fontFamily;
+  }
+  if (typeof textObject.fontSize === 'number') {
+    snapshot.fontSize = textObject.fontSize;
+  }
+  if (typeof textObject.opacity === 'number') {
+    snapshot.opacity = textObject.opacity;
+  }
+  return snapshot;
 }
 
 function applyViewportTransform(
@@ -174,34 +233,54 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   camera,
   zoom,
   activeTool,
+  brushColor,
+  textStyle,
   vectorStyle,
   interactive,
   onDirty,
   onHistoryStateChange,
   onSelectionChange,
+  onTextSelectionChange,
+  onTextStyleSync,
 }, ref) => {
   const hostElementRef = useRef<HTMLDivElement | null>(null);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const loadedLayerKeyRef = useRef<string | null>(null);
   const loadRequestIdRef = useRef(0);
   const shapeDraftRef = useRef<VectorShapeDraft | null>(null);
   const shapeDraftHistoryBaselineRef = useRef<number | null>(null);
+  const editorModeRef = useRef<'vector'>('vector');
+  const activeToolRef = useRef(activeTool);
+  const brushColorRef = useRef(brushColor);
+  const textStyleRef = useRef(textStyle);
   const vectorStyleRef = useRef(vectorStyle);
+  const zoomRef = useRef(zoom);
   const onDirtyRef = useRef(onDirty);
   const onHistoryStateChangeRef = useRef(onHistoryStateChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
+  const onTextSelectionChangeRef = useRef(onTextSelectionChange);
+  const onTextStyleSyncRef = useRef(onTextStyleSync);
   const suppressDirtyRef = useRef(false);
   const pendingLoadPromiseRef = useRef<Promise<void>>(Promise.resolve());
   const ignoreCanvasHistoryEventsRef = useRef(false);
   const skipNextObjectModifiedTargetRef = useRef<object | null>(null);
+  const renderPenDraftGuideRef = useRef<(ctx: CanvasRenderingContext2D) => boolean>(() => false);
   const historySnapshotsRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
+  const pendingVectorStyleHistorySaveRef = useRef<number | null>(null);
 
+  activeToolRef.current = activeTool;
+  brushColorRef.current = brushColor;
+  textStyleRef.current = textStyle;
   vectorStyleRef.current = vectorStyle;
+  zoomRef.current = zoom;
   onDirtyRef.current = onDirty;
   onHistoryStateChangeRef.current = onHistoryStateChange;
   onSelectionChangeRef.current = onSelectionChange;
+  onTextSelectionChangeRef.current = onTextSelectionChange;
+  onTextStyleSyncRef.current = onTextStyleSync;
 
   const emitHistoryState = useMemo(() => () => {
     const historyIndex = historyIndexRef.current;
@@ -272,6 +351,148 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }, 100);
   }, []);
 
+  const scheduleVectorStyleHistorySnapshot = useMemo(() => () => {
+    if (typeof window === 'undefined') {
+      recordHistorySnapshot();
+      return;
+    }
+
+    if (pendingVectorStyleHistorySaveRef.current !== null) {
+      window.clearTimeout(pendingVectorStyleHistorySaveRef.current);
+    }
+
+    pendingVectorStyleHistorySaveRef.current = window.setTimeout(() => {
+      pendingVectorStyleHistorySaveRef.current = null;
+      recordHistorySnapshot();
+    }, 120);
+  }, [recordHistorySnapshot]);
+
+  const syncSelectionState = useMemo(() => () => {
+    const fabricCanvas = fabricCanvasRef.current;
+    const activeObject = fabricCanvas?.getActiveObject() as any;
+    const hasSelection = !!activeObject;
+    const hasTextSelection = !!activeObject && isTextObject(activeObject);
+    onSelectionChangeRef.current(hasSelection);
+    onTextSelectionChangeRef.current(hasTextSelection);
+    if (hasTextSelection) {
+      const snapshot = getTextStyleSnapshot(activeObject);
+      if (snapshot) {
+        onTextStyleSyncRef.current(snapshot);
+      }
+    }
+  }, []);
+
+  const bindTextObjectEvents = useMemo(() => (obj: unknown) => {
+    if (!isTextEditableObject(obj)) {
+      return;
+    }
+
+    const textObject = obj as any;
+    attachTextEditingContainer(textObject, hostElementRef.current);
+    if (textObject.__backgroundTextEventsBound) {
+      return;
+    }
+    textObject.__backgroundTextEventsBound = true;
+    textObject.on?.('editing:entered', () => {
+      syncSelectionState();
+    });
+    textObject.on?.('editing:exited', () => {
+      syncSelectionState();
+      recordHistorySnapshot();
+    });
+  }, [recordHistorySnapshot, syncSelectionState]);
+
+  const drawPenOverlay = useMemo(() => () => {
+    const overlayCanvas = overlayCanvasRef.current;
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!overlayCanvas || !fabricCanvas) {
+      return;
+    }
+
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    const viewportTransform = fabricCanvas.viewportTransform;
+    if (viewportTransform) {
+      ctx.setTransform(
+        viewportTransform[0] ?? 1,
+        viewportTransform[1] ?? 0,
+        viewportTransform[2] ?? 0,
+        viewportTransform[3] ?? 1,
+        viewportTransform[4] ?? 0,
+        viewportTransform[5] ?? 0,
+      );
+    }
+    renderPenDraftGuideRef.current(ctx);
+    ctx.restore();
+  }, []);
+
+  const getZoomInvariantMetric = useCallback((metric: number, zoomValue = zoomRef.current) => {
+    return getZoomInvariantCanvasMetric(metric, zoomValue);
+  }, []);
+
+  const {
+    commitCurrentPenPlacement,
+    finalizePenDraft,
+    penAnchorPlacementSessionRef,
+    penDraftRef,
+    penModifierStateRef,
+    removeLastPenDraftAnchor,
+    renderPenDraftGuide,
+    setPenAnchorMoveMode,
+    startPenAnchorPlacement,
+    syncPenPlacementToAltModifier,
+    updatePenAnchorPlacement,
+  } = useCostumeCanvasPenController({
+    activeToolRef,
+    fabricCanvasRef,
+    getZoomInvariantMetric,
+    saveHistory: recordHistorySnapshot,
+    syncSelectionState,
+    vectorStyleRef,
+  });
+  renderPenDraftGuideRef.current = renderPenDraftGuide;
+
+  const finalizePenDraftWithOverlay = useCallback(() => {
+    const didFinalize = finalizePenDraft();
+    drawPenOverlay();
+    return didFinalize;
+  }, [drawPenOverlay, finalizePenDraft]);
+
+  const removeLastPenDraftAnchorWithOverlay = useCallback(() => {
+    removeLastPenDraftAnchor();
+    drawPenOverlay();
+  }, [drawPenOverlay, removeLastPenDraftAnchor]);
+
+  const setPenAnchorMoveModeWithOverlay = useCallback((enabled: boolean) => {
+    const didChange = setPenAnchorMoveMode(enabled);
+    if (didChange) {
+      drawPenOverlay();
+    }
+    return didChange;
+  }, [drawPenOverlay, setPenAnchorMoveMode]);
+
+  const syncPenPlacementToAltModifierWithOverlay = useCallback((enabled: boolean) => {
+    const didChange = syncPenPlacementToAltModifier(enabled);
+    if (didChange) {
+      drawPenOverlay();
+    }
+    return didChange;
+  }, [drawPenOverlay, syncPenPlacementToAltModifier]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingVectorStyleHistorySaveRef.current !== null && typeof window !== 'undefined') {
+        window.clearTimeout(pendingVectorStyleHistorySaveRef.current);
+      }
+    };
+  }, []);
+
   const loadSerializedDocument = useMemo(() => (
     json: string,
     options?: { logInvalid?: boolean; resetHistory?: boolean },
@@ -303,9 +524,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         fabricCanvas.discardActiveObject();
         for (const obj of fabricCanvas.getObjects()) {
           normalizeVectorObjectRendering(obj);
+          bindTextObjectEvents(obj);
         }
         onSelectionChangeRef.current(false);
+        onTextSelectionChangeRef.current(false);
         applyViewportTransform(fabricCanvas, viewport, camera, zoom);
+        drawPenOverlay();
         if (options?.resetHistory !== false) {
           resetHistory();
         } else {
@@ -326,10 +550,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         pendingLoadPromiseRef.current = Promise.resolve();
       }
     });
-  }, [camera, emitHistoryState, resetHistory, viewport, zoom]);
+  }, [bindTextObjectEvents, camera, drawPenOverlay, emitHistoryState, resetHistory, viewport, zoom]);
 
   const supportsPointerEvents = useMemo(
-    () => interactive && (activeTool === 'select' || activeTool === 'brush'),
+    () => interactive && (activeTool === 'select' || activeTool === 'pen' || activeTool === 'brush' || activeTool === 'text'),
     [activeTool, interactive],
   );
 
@@ -359,10 +583,16 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     };
     instrumentedCanvas.upperCanvasEl?.setAttribute('data-testid', 'background-vector-layer-canvas');
     instrumentedCanvas.wrapperEl?.setAttribute('data-testid', 'background-vector-layer-surface');
+    instrumentedCanvas.wrapperEl?.classList.add('absolute', 'inset-0');
     fabricCanvas.selectionLineWidth = 1.5;
     fabricCanvas.selectionColor = 'rgba(14, 165, 233, 0.12)';
     fabricCanvas.selectionBorderColor = '#0ea5e9';
     fabricCanvas.selectionDashArray = [6, 4];
+    const overlayCanvas = document.createElement('canvas');
+    overlayCanvas.className = 'pointer-events-none absolute inset-0';
+    overlayCanvas.setAttribute('aria-hidden', 'true');
+    hostElement.appendChild(overlayCanvas);
+    overlayCanvasRef.current = overlayCanvas;
     fabricCanvas.on('path:created', (event) => {
       if (ignoreCanvasHistoryEventsRef.current) {
         return;
@@ -395,21 +625,22 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       if (ignoreCanvasHistoryEventsRef.current) {
         return;
       }
+      bindTextObjectEvents(event.target);
       if (shapeDraftRef.current?.object === event.target) {
         return;
       }
       recordHistorySnapshot();
     });
     fabricCanvas.on('selection:created', () => {
-      onSelectionChangeRef.current(true);
+      syncSelectionState();
       fabricCanvas.requestRenderAll();
     });
     fabricCanvas.on('selection:updated', () => {
-      onSelectionChangeRef.current(true);
+      syncSelectionState();
       fabricCanvas.requestRenderAll();
     });
     fabricCanvas.on('selection:cleared', () => {
-      onSelectionChangeRef.current(false);
+      syncSelectionState();
       fabricCanvas.requestRenderAll();
     });
 
@@ -421,8 +652,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       shapeDraftHistoryBaselineRef.current = null;
       loadedLayerKeyRef.current = null;
       loadRequestIdRef.current += 1;
+      overlayCanvasRef.current = null;
       clearHistory();
       onSelectionChangeRef.current(false);
+      onTextSelectionChangeRef.current(false);
       try {
         fabricCanvas.dispose();
       } finally {
@@ -431,7 +664,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         fabricCanvasRef.current = null;
       }
     };
-  }, [clearHistory, recordHistorySnapshot]);
+  }, [bindTextObjectEvents, clearHistory, recordHistorySnapshot, syncSelectionState]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -439,7 +672,27 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return;
     }
     applyViewportTransform(fabricCanvas, viewport, camera, zoom);
-  }, [camera, viewport, zoom]);
+    drawPenOverlay();
+  }, [camera, drawPenOverlay, viewport, zoom]);
+
+  useEffect(() => {
+    const overlayCanvas = overlayCanvasRef.current;
+    if (!overlayCanvas) {
+      return;
+    }
+
+    const width = Math.max(1, Math.floor(viewport.width));
+    const height = Math.max(1, Math.floor(viewport.height));
+    if (overlayCanvas.width !== width) {
+      overlayCanvas.width = width;
+    }
+    if (overlayCanvas.height !== height) {
+      overlayCanvas.height = height;
+    }
+    overlayCanvas.style.width = `${width}px`;
+    overlayCanvas.style.height = `${height}px`;
+    drawPenOverlay();
+  }, [drawPenOverlay, viewport]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -453,6 +706,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       shapeDraftHistoryBaselineRef.current = null;
       clearHistory();
       onSelectionChangeRef.current(false);
+      onTextSelectionChangeRef.current(false);
+      drawPenOverlay();
       fabricCanvas.requestRenderAll();
       return;
     }
@@ -466,7 +721,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     shapeDraftHistoryBaselineRef.current = null;
     loadedLayerKeyRef.current = layerKey;
     void loadSerializedDocument(layer.vector.fabricJson, { logInvalid: true, resetHistory: true });
-  }, [clearHistory, layer, loadSerializedDocument]);
+  }, [clearHistory, drawPenOverlay, layer, loadSerializedDocument]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -474,32 +729,176 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return;
     }
 
-    fabricCanvas.isDrawingMode = interactive && activeTool === 'brush';
-    fabricCanvas.selection = interactive && activeTool === 'select';
-    fabricCanvas.skipTargetFind = !(interactive && activeTool === 'select');
-    fabricCanvas.defaultCursor = interactive && activeTool === 'select' ? 'default' : 'crosshair';
-    fabricCanvas.hoverCursor = interactive && activeTool === 'select' ? 'move' : 'crosshair';
+    const isSelectTool = interactive && activeTool === 'select';
+    const isBrushTool = interactive && activeTool === 'brush';
+    const isTextTool = interactive && activeTool === 'text';
+    const activeObject = fabricCanvas.getActiveObject() as any;
+
+    if (activeTool !== 'text' && isTextEditableObject(activeObject) && activeObject.isEditing) {
+      activeObject.exitEditing?.();
+    }
+
+    fabricCanvas.isDrawingMode = isBrushTool;
+    fabricCanvas.selection = isSelectTool;
+    fabricCanvas.skipTargetFind = !(isSelectTool || isTextTool);
+    fabricCanvas.defaultCursor = isTextTool ? 'text' : (isSelectTool ? 'default' : 'crosshair');
+    fabricCanvas.hoverCursor = isTextTool ? 'text' : (isSelectTool ? 'move' : 'crosshair');
 
     if (fabricCanvas.isDrawingMode) {
       fabricCanvas.freeDrawingBrush = new VectorPencilBrush(fabricCanvas, {
-        opacity: vectorStyle.opacity,
         strokeBrushId: vectorStyle.strokeBrushId,
         strokeColor: vectorStyle.strokeColor,
+        strokeOpacity: vectorStyle.strokeOpacity,
         strokeWidth: vectorStyle.strokeWidth,
       });
     }
 
     fabricCanvas.forEachObject((obj) => {
-      obj.selectable = interactive && activeTool === 'select';
-      obj.evented = interactive && activeTool === 'select';
+      const selectable = isSelectTool || (isTextTool && isTextEditableObject(obj));
+      obj.selectable = selectable;
+      obj.evented = selectable;
+      obj.hasControls = selectable;
+      obj.hasBorders = selectable;
     });
+
+    if (!isSelectTool && !(isTextTool && isTextEditableObject(activeObject))) {
+      fabricCanvas.discardActiveObject();
+    }
+
+    syncSelectionState();
     fabricCanvas.requestRenderAll();
-  }, [activeTool, interactive, vectorStyle]);
+    drawPenOverlay();
+  }, [activeTool, drawPenOverlay, interactive, syncSelectionState, vectorStyle]);
+
+  useEffect(() => {
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!fabricCanvas) {
+      return;
+    }
+
+    const handleMouseDown = (opt: any) => {
+      if (!interactive || !opt.e) {
+        return;
+      }
+
+      if (activeToolRef.current === 'pen') {
+        startPenAnchorPlacement(fabricCanvas.getScenePoint(opt.e), { cuspMode: opt.e.altKey === true });
+        drawPenOverlay();
+        return;
+      }
+
+      if (activeToolRef.current !== 'text') {
+        return;
+      }
+
+      if (opt.target && isTextEditableObject(opt.target)) {
+        const textObject = opt.target as any;
+        attachTextEditingContainer(textObject, hostElementRef.current);
+        queueMicrotask(() => {
+          const canvas = fabricCanvasRef.current;
+          if (!canvas) {
+            return;
+          }
+          if (!canvas.getObjects().includes(textObject)) {
+            return;
+          }
+          beginTextEditing(canvas as any, textObject, { event: opt.e });
+          syncSelectionState();
+        });
+        return;
+      }
+
+      const pointer = fabricCanvas.getScenePoint(opt.e);
+      const textObject = new IText('text', {
+        left: pointer.x,
+        top: pointer.y,
+        fill: brushColorRef.current,
+        fontFamily: textStyleRef.current.fontFamily,
+        fontSize: textStyleRef.current.fontSize,
+        fontWeight: textStyleRef.current.fontWeight,
+        fontStyle: textStyleRef.current.fontStyle,
+        underline: textStyleRef.current.underline,
+        textAlign: textStyleRef.current.textAlign,
+        opacity: textStyleRef.current.opacity,
+      } as any);
+      bindTextObjectEvents(textObject);
+      fabricCanvas.add(textObject);
+      beginTextEditing(fabricCanvas as any, textObject, { selectAll: true });
+      syncSelectionState();
+      fabricCanvas.requestRenderAll();
+    };
+
+    const handleMouseMove = (opt: any) => {
+      if (!interactive || activeToolRef.current !== 'pen' || !opt.e) {
+        return;
+      }
+      if (updatePenAnchorPlacement(fabricCanvas.getScenePoint(opt.e))) {
+        fabricCanvas.requestRenderAll();
+        drawPenOverlay();
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (!interactive || activeToolRef.current !== 'pen') {
+        return;
+      }
+      if (commitCurrentPenPlacement()) {
+        fabricCanvas.requestRenderAll();
+        drawPenOverlay();
+      }
+    };
+
+    fabricCanvas.on('mouse:down', handleMouseDown);
+    fabricCanvas.on('mouse:move', handleMouseMove);
+    fabricCanvas.on('mouse:up', handleMouseUp);
+    return () => {
+      fabricCanvas.off('mouse:down', handleMouseDown);
+      fabricCanvas.off('mouse:move', handleMouseMove);
+      fabricCanvas.off('mouse:up', handleMouseUp);
+    };
+  }, [
+    bindTextObjectEvents,
+    commitCurrentPenPlacement,
+    drawPenOverlay,
+    interactive,
+    startPenAnchorPlacement,
+    syncSelectionState,
+    updatePenAnchorPlacement,
+  ]);
+
+  useEffect(() => {
+    if (activeTool !== 'pen') {
+      finalizePenDraftWithOverlay();
+      drawPenOverlay();
+      return;
+    }
+    drawPenOverlay();
+  }, [activeTool, drawPenOverlay, finalizePenDraftWithOverlay]);
+
+  useEffect(() => {
+    if (activeTool !== 'pen' || !penDraftRef.current) {
+      return;
+    }
+    drawPenOverlay();
+  }, [activeTool, drawPenOverlay, vectorStyle]);
+
+  useCostumeCanvasPenHotkeys({
+    activeToolRef,
+    editorModeRef,
+    fabricCanvasRef,
+    finalizePenDraft: finalizePenDraftWithOverlay,
+    penAnchorPlacementSessionRef,
+    penDraftRef,
+    penModifierStateRef,
+    removeLastPenDraftAnchor: removeLastPenDraftAnchorWithOverlay,
+    setPenAnchorMoveMode: setPenAnchorMoveModeWithOverlay,
+    syncPenPlacementToAltModifier: syncPenPlacementToAltModifierWithOverlay,
+  });
 
   useImperativeHandle(ref, () => ({
     beginShape(tool, startWorld) {
       const fabricCanvas = fabricCanvasRef.current;
-      if (!fabricCanvas || !layer || tool === 'select' || tool === 'brush') {
+      if (!fabricCanvas || !layer || tool === 'select' || tool === 'pen' || tool === 'brush' || tool === 'text') {
         return false;
       }
 
@@ -626,11 +1025,39 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       shapeDraftRef.current = null;
       shapeDraftHistoryBaselineRef.current = null;
       ignoreCanvasHistoryEventsRef.current = false;
+      drawPenOverlay();
       if (!fabricCanvas || !draft) {
         return;
       }
       fabricCanvas.remove(draft.object);
       fabricCanvas.requestRenderAll();
+    },
+    flushPendingEdits() {
+      const fabricCanvas = fabricCanvasRef.current;
+      let flushed = false;
+
+      if (penAnchorPlacementSessionRef.current) {
+        commitCurrentPenPlacement();
+        flushed = true;
+      }
+      if (penDraftRef.current) {
+        finalizePenDraft();
+        flushed = true;
+      }
+
+      const activeObject = fabricCanvas?.getActiveObject() as any;
+      if (isTextEditableObject(activeObject) && activeObject.isEditing) {
+        activeObject.exitEditing?.();
+        activeObject.setCoords?.();
+        fabricCanvas?.requestRenderAll();
+        syncSelectionState();
+        flushed = true;
+      }
+
+      if (flushed) {
+        drawPenOverlay();
+      }
+      return flushed;
     },
     awaitIdle() {
       return pendingLoadPromiseRef.current;
@@ -743,27 +1170,108 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       fabricCanvas.requestRenderAll();
       recordHistorySnapshot();
     },
-  }), [activeTool, emitHistoryState, ignoreCanvasHistoryEventsTemporarily, interactive, layer, loadSerializedDocument, recordHistorySnapshot]);
+  }), [
+    activeTool,
+    commitCurrentPenPlacement,
+    drawPenOverlay,
+    emitHistoryState,
+    finalizePenDraft,
+    ignoreCanvasHistoryEventsTemporarily,
+    interactive,
+    layer,
+    loadSerializedDocument,
+    penAnchorPlacementSessionRef,
+    penDraftRef,
+    recordHistorySnapshot,
+    syncSelectionState,
+  ]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
-    const activeObject = fabricCanvas?.getActiveObject();
+    const activeObject = fabricCanvas?.getActiveObject() as any;
     if (!fabricCanvas || !activeObject) {
       return;
     }
-    const targets = getVectorStyleTargets(activeObject);
+
     let didChange = false;
-    for (const target of targets) {
-      didChange = applyVectorStrokeStyleToObject(target, vectorStyle) || didChange;
-      didChange = applyVectorFillStyleToObject(target, vectorStyle) || didChange;
-      didChange = applyVectorOpacityToObject(target, vectorStyle.opacity) || didChange;
-      didChange = normalizeVectorObjectRendering(target) || didChange;
+    if (isTextObject(activeObject)) {
+      const textSnapshot = getTextStyleSnapshot(activeObject);
+      if (!textSnapshot) {
+        return;
+      }
+
+      if (activeObject.fill !== brushColor) {
+        didChange = true;
+      }
+      if (textSnapshot.fontFamily !== textStyle.fontFamily) {
+        didChange = true;
+      }
+      if (textSnapshot.fontSize !== textStyle.fontSize) {
+        didChange = true;
+      }
+      if (textSnapshot.fontWeight !== textStyle.fontWeight) {
+        didChange = true;
+      }
+      if (textSnapshot.fontStyle !== textStyle.fontStyle) {
+        didChange = true;
+      }
+      if (textSnapshot.underline !== textStyle.underline) {
+        didChange = true;
+      }
+      if (textSnapshot.textAlign !== textStyle.textAlign) {
+        didChange = true;
+      }
+      if (textSnapshot.opacity !== textStyle.opacity) {
+        didChange = true;
+      }
+
+      if (didChange) {
+        activeObject.set({
+          fill: brushColor,
+          fontFamily: textStyle.fontFamily,
+          fontSize: textStyle.fontSize,
+          fontWeight: textStyle.fontWeight,
+          fontStyle: textStyle.fontStyle,
+          underline: textStyle.underline,
+          textAlign: textStyle.textAlign,
+          opacity: textStyle.opacity,
+        });
+        activeObject.setCoords?.();
+      }
+    } else {
+      const targets = getVectorStyleTargets(activeObject);
+      for (const target of targets) {
+        didChange = applyVectorStrokeStyleToObject(target, vectorStyle) || didChange;
+        didChange = applyVectorFillStyleToObject(target, vectorStyle) || didChange;
+        didChange = normalizeVectorObjectRendering(target) || didChange;
+      }
     }
+
     if (didChange) {
       fabricCanvas.requestRenderAll();
-      recordHistorySnapshot();
+      scheduleVectorStyleHistorySnapshot();
+      syncSelectionState();
     }
-  }, [recordHistorySnapshot, vectorStyle.fillColor, vectorStyle.fillTextureId, vectorStyle.opacity, vectorStyle.strokeBrushId, vectorStyle.strokeColor, vectorStyle.strokeWidth]);
+  }, [
+    brushColor,
+    recordHistorySnapshot,
+    scheduleVectorStyleHistorySnapshot,
+    syncSelectionState,
+    textStyle.fontFamily,
+    textStyle.fontSize,
+    textStyle.fontStyle,
+    textStyle.fontWeight,
+    textStyle.opacity,
+    textStyle.textAlign,
+    textStyle.underline,
+    vectorStyle.fillColor,
+    vectorStyle.fillOpacity,
+    vectorStyle.fillTextureId,
+    vectorStyle.strokeBrushId,
+    vectorStyle.strokeColor,
+    vectorStyle.strokeOpacity,
+    vectorStyle.strokeWidth,
+  ]);
 
   return (
     <div

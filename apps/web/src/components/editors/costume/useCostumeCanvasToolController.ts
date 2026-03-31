@@ -174,9 +174,9 @@ export function useCostumeCanvasToolController({
       fabricCanvas.isDrawingMode = true;
     } else if (isVectorPencil) {
       const brush = new VectorPencilBrush(fabricCanvas, {
-        opacity: vectorStyleRef.current.opacity,
         strokeBrushId: vectorStyleRef.current.strokeBrushId,
         strokeColor: vectorStyleRef.current.strokeColor,
+        strokeOpacity: vectorStyleRef.current.strokeOpacity,
         strokeWidth: vectorStyleRef.current.strokeWidth,
       });
       (fabricCanvas as any).freeDrawingBrush = brush;

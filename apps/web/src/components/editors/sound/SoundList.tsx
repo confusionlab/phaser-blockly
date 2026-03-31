@@ -210,7 +210,7 @@ export const SoundList = memo(({
                   name={sound.name}
                   selected={isSelected}
                   onClick={() => onSelectSound(index)}
-                  onNameChange={(name) => onRenameSound(index, name)}
+                  onNameCommit={(name) => onRenameSound(index, name)}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setContextMenu({
