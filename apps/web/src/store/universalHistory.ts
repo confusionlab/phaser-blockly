@@ -2,10 +2,12 @@ import type { Project } from '@/types';
 
 export type SelectionSnapshot = {
   selectedSceneId: string | null;
+  selectedSceneIds: string[];
   selectedFolderId: string | null;
   selectedObjectId: string | null;
   selectedObjectIds: string[];
   selectedComponentId: string | null;
+  selectedComponentIds: string[];
 };
 
 type HistoryEntry = {
@@ -67,10 +69,12 @@ function cloneProject(project: Project | null): Project | null {
 function cloneSelection(selection: SelectionSnapshot): SelectionSnapshot {
   return {
     selectedSceneId: selection.selectedSceneId,
+    selectedSceneIds: [...selection.selectedSceneIds],
     selectedFolderId: selection.selectedFolderId,
     selectedObjectId: selection.selectedObjectId,
     selectedObjectIds: [...selection.selectedObjectIds],
     selectedComponentId: selection.selectedComponentId,
+    selectedComponentIds: [...selection.selectedComponentIds],
   };
 }
 
@@ -82,10 +86,12 @@ function getProjectStamp(project: Project | null): number | null {
 function getSelectionStamp(selection: SelectionSnapshot): string {
   return [
     selection.selectedSceneId ?? '',
+    selection.selectedSceneIds.join(','),
     selection.selectedFolderId ?? '',
     selection.selectedObjectId ?? '',
     selection.selectedObjectIds.join(','),
     selection.selectedComponentId ?? '',
+    selection.selectedComponentIds.join(','),
   ].join('|');
 }
 

@@ -67,7 +67,9 @@ interface FolderedHierarchyPaneProps<TItem extends FolderedItemShape> {
   items: TItem[];
   itemKeyPrefix: string;
   selectedItemId: string | null;
+  selectedItemIds: string[];
   onSelectItem: (item: TItem) => void;
+  onSelectItems: (itemIds: string[], primaryItemId?: string | null) => void;
   onAddItem: () => void;
   onAddFolder: () => void;
   onRenameItem: (itemId: string, name: string) => void;
@@ -89,7 +91,9 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   items,
   itemKeyPrefix,
   selectedItemId,
+  selectedItemIds,
   onSelectItem,
+  onSelectItems,
   onAddItem,
   onAddFolder,
   onRenameItem,
@@ -119,6 +123,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<HierarchyFolder | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const selectionAnchorItemIdRef = useRef<string | null>(null);
 
   const tree = useMemo(
     () => getFolderedHierarchyTree(folders, items, {
@@ -128,6 +133,36 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     }),
     [folders, itemKeyPrefix, items],
   );
+  const orderedItemIds = useMemo(() => {
+    const orderedIds: string[] = [];
+    const visit = (nodes: HierarchyTreeNode<TItem>[]) => {
+      for (const node of nodes) {
+        if (node.type === 'item' && node.item) {
+          orderedIds.push(node.item.id);
+        }
+        if (node.children.length > 0) {
+          visit(node.children);
+        }
+      }
+    };
+    visit(tree);
+    return orderedIds;
+  }, [tree]);
+  const visibleItemIds = useMemo(() => {
+    const visibleIds: string[] = [];
+    const visit = (nodes: HierarchyTreeNode<TItem>[]) => {
+      for (const node of nodes) {
+        if (node.type === 'item' && node.item) {
+          visibleIds.push(node.item.id);
+        }
+        if (node.type === 'folder' && node.folder && !collapsedFolders.has(node.folder.id) && node.children.length > 0) {
+          visit(node.children);
+        }
+      }
+    };
+    visit(tree);
+    return visibleIds;
+  }, [collapsedFolders, tree]);
 
   useEffect(() => {
     if (draggedKeys.length === 0 || typeof document === 'undefined') {
@@ -310,6 +345,73 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     setContextMenu({ x: event.clientX, y: event.clientY, kind: 'empty' });
   };
 
+  const handleItemRowClick = (event: React.MouseEvent, item: TItem) => {
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.shiftKey) {
+      const anchorId = selectionAnchorItemIdRef.current ?? selectedItemId ?? item.id;
+      const anchorIndex = visibleItemIds.indexOf(anchorId);
+      const targetIndex = visibleItemIds.indexOf(item.id);
+      if (anchorIndex === -1 || targetIndex === -1) {
+        selectionAnchorItemIdRef.current = item.id;
+        const fallbackIds = selectedItemId && selectedItemId !== item.id
+          ? orderedItemIds.filter((id) => id === selectedItemId || id === item.id)
+          : [item.id];
+        onSelectItems(fallbackIds, selectedItemId ?? item.id);
+        return;
+      }
+
+      const start = Math.min(anchorIndex, targetIndex);
+      const end = Math.max(anchorIndex, targetIndex);
+      const rangeIds = visibleItemIds.slice(start, end + 1);
+      const nextRangeIds = selectedItemId && !rangeIds.includes(selectedItemId)
+        ? orderedItemIds.filter((id) => id === selectedItemId || rangeIds.includes(id))
+        : rangeIds;
+      selectionAnchorItemIdRef.current = anchorId;
+      onSelectItems(nextRangeIds, selectedItemId ?? anchorId);
+      return;
+    }
+
+    if (event.metaKey || event.ctrlKey) {
+      const current = new Set(selectedItemIds);
+      if (current.has(item.id)) {
+        current.delete(item.id);
+      } else {
+        current.add(item.id);
+      }
+
+      if (selectedItemId) {
+        current.add(selectedItemId);
+      }
+
+      const nextIds = orderedItemIds.filter((id) => current.has(id));
+      selectionAnchorItemIdRef.current = item.id;
+      if (nextIds.length === 0) {
+        onSelectItems([], null);
+        return;
+      }
+
+      onSelectItems(nextIds, selectedItemId ?? item.id);
+      return;
+    }
+
+    selectionAnchorItemIdRef.current = item.id;
+    onSelectItem(item);
+  };
+
+  const syncSelectionForDrag = (item: TItem): string[] => {
+    if (selectedItemIds.length > 1 && selectedItemIds.includes(item.id)) {
+      return orderedItemIds
+        .filter((id) => selectedItemIds.includes(id))
+        .map((id) => getHierarchyItemNodeKey(itemKeyPrefix, id));
+    }
+
+    return [getHierarchyItemNodeKey(itemKeyPrefix, item.id)];
+  };
+
   const renderNodes = (nodes: HierarchyTreeNode<TItem>[], level = 1): React.ReactNode => nodes.map((node) => {
     const isFolder = node.type === 'folder';
     const folder = node.folder;
@@ -317,7 +419,14 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     const key = node.key;
     const isExpanded = isFolder && folder ? !collapsedFolders.has(folder.id) : false;
     const isEditing = (folder && editingFolderId === folder.id) || (item && editingItemId === item.id);
-    const isSelected = item?.id === selectedItemId;
+    const isSelected = !!item?.id && selectedItemIds.includes(item.id);
+    const visibleItemIndex = item ? visibleItemIds.indexOf(item.id) : -1;
+    const previousVisibleItemId = visibleItemIndex > 0 ? visibleItemIds[visibleItemIndex - 1] ?? null : null;
+    const nextVisibleItemId = visibleItemIndex >= 0 && visibleItemIndex < visibleItemIds.length - 1
+      ? visibleItemIds[visibleItemIndex + 1] ?? null
+      : null;
+    const connectsToPrevious = !!item && isSelected && !!previousVisibleItemId && selectedItemIds.includes(previousVisibleItemId);
+    const connectsToNext = !!item && isSelected && !!nextVisibleItemId && selectedItemIds.includes(nextVisibleItemId);
 
     return (
       <div key={key}>
@@ -331,13 +440,16 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           isDropOn={dropTarget.key === key && dropTarget.dropPosition === 'on'}
           isDropBefore={dropTarget.key === key && dropTarget.dropPosition === 'before'}
           isDropAfter={dropTarget.key === key && dropTarget.dropPosition === 'after'}
+          connectsToPrevious={connectsToPrevious}
+          connectsToNext={connectsToNext}
           isEditing={isEditing}
           showControls={isPaneHovered}
           draggable
           onDragStart={(event) => {
-            setDraggedKeys([key]);
+            const nextDraggedKeys = isFolder || !item ? [key] : syncSelectionForDrag(item);
+            setDraggedKeys(nextDraggedKeys);
             event.dataTransfer.effectAllowed = 'move';
-            event.dataTransfer.setData('text/plain', key);
+            event.dataTransfer.setData('text/plain', nextDraggedKeys.join(','));
             const dragImage = getTransparentShelfDragImage();
             if (dragImage) {
               event.dataTransfer.setDragImage(dragImage, 0, 0);
@@ -380,7 +492,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
               return next;
             });
           }) : undefined}
-          onClick={!isFolder && item ? (() => onSelectItem(item)) : undefined}
+          onClick={!isFolder && item ? ((event) => handleItemRowClick(event, item)) : undefined}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -485,7 +597,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
                 onDragOver={handleRootDropZoneDragOver}
                 onDrop={handleRootDropZoneDrop}
               >
-                {dropTarget.key === null ? (
+                {draggedKeys.length > 0 && dropTarget.key === null ? (
                   <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 rounded border-t-2 border-primary/80" />
                 ) : null}
               </div>
@@ -607,7 +719,13 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
 
 function SceneHierarchyTab() {
   const { project, addScene, updateScene, removeScene, updateSceneOrganization } = useProjectStore();
-  const { selectedSceneId, selectScene, setActiveHierarchyTab } = useEditorStore();
+  const {
+    selectedSceneId,
+    selectedSceneIds,
+    selectScene,
+    selectScenes,
+    setActiveHierarchyTab,
+  } = useEditorStore();
   const scenes = project?.scenes ?? [];
   const sceneFolders = project?.sceneFolders ?? [];
 
@@ -620,9 +738,13 @@ function SceneHierarchyTab() {
       items={scenes}
       itemKeyPrefix="scene"
       selectedItemId={selectedSceneId}
+      selectedItemIds={selectedSceneIds}
       onSelectItem={(scene) => {
         selectScene(scene.id);
         setActiveHierarchyTab('scene');
+      }}
+      onSelectItems={(sceneIds, primarySceneId) => {
+        selectScenes(sceneIds, primarySceneId, { recordHistory: false });
       }}
       onAddItem={() => addScene(`Scene ${scenes.length + 1}`)}
       onAddFolder={() => {
@@ -682,8 +804,11 @@ function ComponentHierarchyTab() {
   } = useProjectStore();
   const {
     selectedSceneId,
+    selectedSceneIds,
     selectedComponentId,
+    selectedComponentIds,
     selectComponent,
+    selectComponents,
     setActiveHierarchyTab,
   } = useEditorStore();
   const components = project?.components ?? [];
@@ -703,9 +828,13 @@ function ComponentHierarchyTab() {
       items={components}
       itemKeyPrefix="component"
       selectedItemId={selectedComponentId}
+      selectedItemIds={selectedComponentIds}
       onSelectItem={(component) => {
         selectComponent(component.id);
         setActiveHierarchyTab('component');
+      }}
+      onSelectItems={(componentIds, primaryComponentId) => {
+        selectComponents(componentIds, primaryComponentId, { recordHistory: false });
       }}
       onAddItem={handleAddInstance}
       onAddFolder={() => {
@@ -738,18 +867,6 @@ function ComponentHierarchyTab() {
       }}
       onMove={(nextComponents, nextFolders) => updateComponentOrganization(nextComponents, nextFolders)}
       renderItemIcon={() => <Component className="size-4 shrink-0 text-muted-foreground" />}
-      renderHeaderActions={selectedComponentId ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 rounded-full px-2 text-xs"
-          onClick={handleAddInstance}
-          disabled={!selectedSceneId}
-        >
-          Add to Scene
-        </Button>
-      ) : null}
       onItemDragStart={(event, component) => {
         event.dataTransfer.effectAllowed = 'copyMove';
         event.dataTransfer.setData('application/x-pocha-component-id', component.id);

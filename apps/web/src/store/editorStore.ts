@@ -118,10 +118,12 @@ function getInitialProjectSelection(project: Project | null): ProjectSelectionTa
 interface EditorStore {
   // Selection state
   selectedSceneId: string | null;
+  selectedSceneIds: string[];
   selectedFolderId: string | null;
   selectedObjectId: string | null;
   selectedObjectIds: string[];
   selectedComponentId: string | null;
+  selectedComponentIds: string[];
 
   // Play state
   isPlaying: boolean;
@@ -169,10 +171,12 @@ interface EditorStore {
 
   // Actions
   selectScene: (sceneId: string | null, options?: SelectionHistoryOptions) => void;
+  selectScenes: (sceneIds: string[], primarySceneId?: string | null, options?: SelectionHistoryOptions) => void;
   selectFolder: (folderId: string | null, options?: SelectionHistoryOptions) => void;
   selectObject: (objectId: string | null, options?: SelectionHistoryOptions) => void;
   selectObjects: (objectIds: string[], primaryObjectId?: string | null, options?: SelectionHistoryOptions) => void;
   selectComponent: (componentId: string | null, options?: SelectionHistoryOptions) => void;
+  selectComponents: (componentIds: string[], primaryComponentId?: string | null, options?: SelectionHistoryOptions) => void;
   clearSelection: (options?: SelectionHistoryOptions) => void;
   initializeSelectionForProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   reconcileSelectionToProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
@@ -257,10 +261,12 @@ function getPrepareForPlayHandlers(state: EditorStore): Array<NonNullable<UndoRe
 export const useEditorStore = create<EditorStore>((set, get) => ({
   // Selection state
   selectedSceneId: null,
+  selectedSceneIds: [],
   selectedFolderId: null,
   selectedObjectId: null,
   selectedObjectIds: [],
   selectedComponentId: null,
+  selectedComponentIds: [],
 
   // Play state
   isPlaying: false,
@@ -327,16 +333,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const recordHistory = options?.recordHistory !== false;
     const state = get();
     const nextSelectedSceneId = sceneId;
+    const nextSelectedSceneIds = sceneId ? [sceneId] : [];
     const nextSelectedFolderId = null;
     const nextSelectedObjectId = null;
     const nextSelectedObjectIds: string[] = [];
     const nextSelectedComponentId = null;
+    const nextSelectedComponentIds: string[] = [];
     const didChange =
       state.selectedSceneId !== nextSelectedSceneId ||
+      !arraysEqual(state.selectedSceneIds, nextSelectedSceneIds) ||
       state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
-      state.selectedComponentId !== nextSelectedComponentId;
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds);
     if (!didChange) {
       if (!recordHistory) {
         syncHistorySnapshot();
@@ -348,10 +358,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       set({
         activeInspectorTab: 'scene',
         selectedSceneId: nextSelectedSceneId,
+        selectedSceneIds: nextSelectedSceneIds,
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         costumeColliderEditorRequest: null,
       });
     };
@@ -371,6 +383,69 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     });
   },
 
+  selectScenes: (sceneIds, primarySceneId = null, options) => {
+    const uniqueIds = Array.from(new Set(sceneIds));
+    if (uniqueIds.length === 0) {
+      get().selectScene(null, options);
+      return;
+    }
+
+    const primary = primarySceneId && uniqueIds.includes(primarySceneId)
+      ? primarySceneId
+      : uniqueIds[0] ?? null;
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedSceneId = primary;
+    const nextSelectedSceneIds = uniqueIds;
+    const nextSelectedFolderId = null;
+    const nextSelectedObjectId = null;
+    const nextSelectedObjectIds: string[] = [];
+    const nextSelectedComponentId = null;
+    const nextSelectedComponentIds: string[] = [];
+    const didChange =
+      state.selectedSceneId !== nextSelectedSceneId ||
+      !arraysEqual(state.selectedSceneIds, nextSelectedSceneIds) ||
+      state.selectedFolderId !== nextSelectedFolderId ||
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds);
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
+    }
+
+    const applySelection = () => {
+      set({
+        activeInspectorTab: 'scene',
+        selectedSceneId: nextSelectedSceneId,
+        selectedSceneIds: nextSelectedSceneIds,
+        selectedFolderId: nextSelectedFolderId,
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
+        costumeColliderEditorRequest: null,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:scenes', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:scenes', () => {
+      beforeSelectionChange?.({ source: 'selection:scenes', recordHistory: true });
+      applySelection();
+    });
+  },
+
   selectFolder: (folderId, options) => {
     const recordHistory = options?.recordHistory !== false;
     const state = get();
@@ -378,11 +453,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedObjectId = null;
     const nextSelectedObjectIds: string[] = [];
     const nextSelectedComponentId = null;
+    const nextSelectedComponentIds: string[] = [];
     const didChange =
       state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
-      state.selectedComponentId !== nextSelectedComponentId;
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds);
     if (!didChange) {
       if (!recordHistory) {
         syncHistorySnapshot();
@@ -397,6 +474,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         costumeColliderEditorRequest: null,
       });
     };
@@ -428,11 +506,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedObjectId = objectId;
     const nextSelectedObjectIds = objectId ? [objectId] : [];
     const nextSelectedComponentId = null;
+    const nextSelectedComponentIds: string[] = [];
     const didChange =
       state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
-      state.selectedComponentId !== nextSelectedComponentId;
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds);
     if (!didChange) {
       if (!recordHistory) {
         syncHistorySnapshot();
@@ -447,6 +527,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         costumeColliderEditorRequest: null,
       });
     };
@@ -482,11 +563,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedObjectId = primary;
     const nextSelectedObjectIds = uniqueIds;
     const nextSelectedComponentId = null;
+    const nextSelectedComponentIds: string[] = [];
     const didChange =
       state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
-      state.selectedComponentId !== nextSelectedComponentId;
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds);
     if (!didChange) {
       if (!recordHistory) {
         syncHistorySnapshot();
@@ -501,6 +584,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         costumeColliderEditorRequest: null,
       });
     };
@@ -524,11 +608,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const recordHistory = options?.recordHistory !== false;
     const state = get();
     const nextSelectedComponentId = componentId;
+    const nextSelectedComponentIds = componentId ? [componentId] : [];
     const nextSelectedFolderId = null;
     const nextSelectedObjectId = null;
     const nextSelectedObjectIds: string[] = [];
     const didChange =
       state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds) ||
       state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds);
@@ -542,6 +628,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const applySelection = () => {
       set({
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
@@ -564,6 +651,62 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     });
   },
 
+  selectComponents: (componentIds, primaryComponentId = null, options) => {
+    const uniqueIds = Array.from(new Set(componentIds));
+    if (uniqueIds.length === 0) {
+      get().selectComponent(null, options);
+      return;
+    }
+
+    const primary = primaryComponentId && uniqueIds.includes(primaryComponentId)
+      ? primaryComponentId
+      : uniqueIds[0] ?? null;
+    const recordHistory = options?.recordHistory !== false;
+    const state = get();
+    const nextSelectedComponentId = primary;
+    const nextSelectedComponentIds = uniqueIds;
+    const nextSelectedFolderId = null;
+    const nextSelectedObjectId = null;
+    const nextSelectedObjectIds: string[] = [];
+    const didChange =
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds) ||
+      state.selectedFolderId !== nextSelectedFolderId ||
+      state.selectedObjectId !== nextSelectedObjectId ||
+      !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds);
+    if (!didChange) {
+      if (!recordHistory) {
+        syncHistorySnapshot();
+      }
+      return;
+    }
+
+    const applySelection = () => {
+      set({
+        selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
+        selectedFolderId: nextSelectedFolderId,
+        selectedObjectId: nextSelectedObjectId,
+        selectedObjectIds: nextSelectedObjectIds,
+        costumeColliderEditorRequest: null,
+      });
+    };
+
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:components', recordHistory: false });
+      applySelection();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:components', () => {
+      beforeSelectionChange?.({ source: 'selection:components', recordHistory: true });
+      applySelection();
+    });
+  },
+
   clearSelection: (options) => {
     const recordHistory = options?.recordHistory !== false;
     const state = get();
@@ -571,11 +714,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedObjectId = null;
     const nextSelectedObjectIds: string[] = [];
     const nextSelectedComponentId = null;
+    const nextSelectedComponentIds: string[] = [];
     const didChange =
       state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
       state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds) ||
       state.activeObjectTab !== 'code';
     if (!didChange) {
       if (!recordHistory) {
@@ -590,6 +735,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         activeObjectTab: 'code',
         costumeColliderEditorRequest: null,
       });
@@ -614,17 +760,21 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const state = get();
     const initialSelection = getInitialProjectSelection(project);
     const nextSelectedSceneId = initialSelection.sceneId;
+    const nextSelectedSceneIds = nextSelectedSceneId ? [nextSelectedSceneId] : [];
     const nextSelectedFolderId = null;
     const nextSelectedObjectId = initialSelection.objectId;
     const nextSelectedObjectIds = nextSelectedObjectId ? [nextSelectedObjectId] : [];
     const nextSelectedComponentId = null;
+    const nextSelectedComponentIds: string[] = [];
     const recordHistory = options?.recordHistory !== false;
     const didChange =
       state.selectedSceneId !== nextSelectedSceneId ||
+      !arraysEqual(state.selectedSceneIds, nextSelectedSceneIds) ||
       state.selectedFolderId !== nextSelectedFolderId ||
       state.selectedObjectId !== nextSelectedObjectId ||
       !arraysEqual(state.selectedObjectIds, nextSelectedObjectIds) ||
-      state.selectedComponentId !== nextSelectedComponentId;
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds);
     if (!didChange) {
       if (!recordHistory) {
         syncHistorySnapshot();
@@ -637,10 +787,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         activeInspectorTab: nextSelectedObjectId ? 'object' : 'scene',
         activeHierarchyTab: 'object',
         selectedSceneId: nextSelectedSceneId,
+        selectedSceneIds: nextSelectedSceneIds,
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
         selectedObjectIds: nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         costumeColliderEditorRequest: null,
       });
     };
@@ -666,9 +818,21 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const nextSelectedSceneId = project && projectContainsScene(project, state.selectedSceneId)
       ? state.selectedSceneId
       : fallbackSceneId;
+    const validSceneIds = project
+      ? state.selectedSceneIds.filter((sceneId) => projectContainsScene(project, sceneId))
+      : [];
+    const nextSelectedSceneIds = validSceneIds.length > 0
+      ? validSceneIds
+      : (nextSelectedSceneId ? [nextSelectedSceneId] : []);
     const nextSelectedComponentId = project && projectContainsComponent(project, state.selectedComponentId)
       ? state.selectedComponentId
       : null;
+    const validComponentIds = project
+      ? state.selectedComponentIds.filter((componentId) => projectContainsComponent(project, componentId))
+      : [];
+    const nextSelectedComponentIds = nextSelectedComponentId
+      ? (validComponentIds.length > 0 ? validComponentIds : [nextSelectedComponentId])
+      : [];
     const nextSelectedFolderId = project && !nextSelectedComponentId && projectContainsFolder(project, nextSelectedSceneId, state.selectedFolderId)
       ? state.selectedFolderId
       : null;
@@ -687,10 +851,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const recordHistory = options?.recordHistory !== false;
     const didChange =
       state.selectedSceneId !== nextSelectedSceneId ||
+      !arraysEqual(state.selectedSceneIds, nextSelectedSceneIds) ||
       state.selectedFolderId !== (nextSelectedComponentId ? null : nextSelectedFolderId) ||
       state.selectedObjectId !== (nextSelectedComponentId ? null : nextSelectedObjectId) ||
       !arraysEqual(state.selectedObjectIds, nextSelectedComponentId ? [] : nextSelectedObjectIds) ||
-      state.selectedComponentId !== nextSelectedComponentId;
+      state.selectedComponentId !== nextSelectedComponentId ||
+      !arraysEqual(state.selectedComponentIds, nextSelectedComponentIds);
     if (!didChange) {
       if (!recordHistory) {
         syncHistorySnapshot();
@@ -701,10 +867,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const applySelection = () => {
       set({
         selectedSceneId: nextSelectedSceneId,
+        selectedSceneIds: nextSelectedSceneIds,
         selectedFolderId: nextSelectedComponentId ? null : nextSelectedFolderId,
         selectedObjectId: nextSelectedComponentId ? null : nextSelectedObjectId,
         selectedObjectIds: nextSelectedComponentId ? [] : nextSelectedObjectIds,
         selectedComponentId: nextSelectedComponentId,
+        selectedComponentIds: nextSelectedComponentIds,
         costumeColliderEditorRequest: null,
       });
     };
@@ -785,10 +953,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       beforeSelectionChange?.({ source: 'selection:validation-focus', recordHistory: true });
       set({
         selectedSceneId: issue.sceneId,
+        selectedSceneIds: issue.sceneId ? [issue.sceneId] : [],
         selectedFolderId: null,
         selectedObjectId: issue.objectId,
         selectedObjectIds: issue.objectId ? [issue.objectId] : [],
         selectedComponentId: null,
+        selectedComponentIds: [],
         activeHierarchyTab: issue.objectId ? 'object' : 'scene',
         activeObjectTab: 'code',
         costumeColliderEditorRequest: null,
@@ -1056,19 +1226,23 @@ registerSelectionHistoryBridge(
     const state = useEditorStore.getState();
     return {
       selectedSceneId: state.selectedSceneId,
+      selectedSceneIds: [...state.selectedSceneIds],
       selectedFolderId: state.selectedFolderId,
       selectedObjectId: state.selectedObjectId,
       selectedObjectIds: [...state.selectedObjectIds],
       selectedComponentId: state.selectedComponentId,
+      selectedComponentIds: [...state.selectedComponentIds],
     };
   },
   (selection) => {
     useEditorStore.setState({
       selectedSceneId: selection.selectedSceneId,
+      selectedSceneIds: [...selection.selectedSceneIds],
       selectedFolderId: selection.selectedFolderId ?? null,
       selectedObjectId: selection.selectedObjectId,
       selectedObjectIds: [...selection.selectedObjectIds],
       selectedComponentId: selection.selectedComponentId ?? null,
+      selectedComponentIds: [...selection.selectedComponentIds],
     });
   },
 );

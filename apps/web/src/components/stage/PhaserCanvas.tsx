@@ -122,6 +122,16 @@ type PendingCostumeVisualTarget = {
   textureKey: string | null;
 };
 
+type ComponentDragPreview = {
+  componentId: string;
+  localX: number;
+  localY: number;
+  bounds: CostumeBounds | null;
+  assetId: string | null;
+  assetFrame: CostumeAssetFrame | null;
+  zoom: number;
+};
+
 function areCostumeBoundsEqual(
   a: CostumeBounds | null | undefined,
   b: CostumeBounds | null | undefined,
@@ -558,6 +568,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   } | null>(null);
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
   const [frozenStageFrame, setFrozenStageFrame] = useState<FrozenStageFrame | null>(null);
+  const [componentDragPreview, setComponentDragPreview] = useState<ComponentDragPreview | null>(null);
   const immediateResizeFreezeRef = useRef(false);
   const [manualResizeFreezeActive, setManualResizeFreezeActive] = useState(false);
 
@@ -1832,7 +1843,53 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
-  }, [isPlaying]);
+
+    if (!containerRef.current || !gameRef.current || !project) {
+      return;
+    }
+
+    const componentId = event.dataTransfer.getData('application/x-pocha-component-id');
+    if (!componentId) {
+      setComponentDragPreview(null);
+      return;
+    }
+
+    const component = (project.components || []).find((candidate) => candidate.id === componentId);
+    const costume = component?.costumes[component.currentCostumeIndex] ?? component?.costumes[0] ?? null;
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
+    const camera = phaserScene?.cameras?.main;
+    if (!component || !camera) {
+      setComponentDragPreview(null);
+      return;
+    }
+
+    const rect = containerRef.current.getBoundingClientRect();
+    setComponentDragPreview({
+      componentId,
+      localX: event.clientX - rect.left,
+      localY: event.clientY - rect.top,
+      bounds: costume?.bounds ?? null,
+      assetId: costume?.assetId ?? null,
+      assetFrame: costume?.assetFrame ?? null,
+      zoom: camera.zoom,
+    });
+  }, [isPlaying, project]);
+
+  const handleComponentDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!componentDragPreview || !containerRef.current) {
+      return;
+    }
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const isOutside = event.clientX < rect.left
+      || event.clientX > rect.right
+      || event.clientY < rect.top
+      || event.clientY > rect.bottom;
+
+    if (isOutside) {
+      setComponentDragPreview(null);
+    }
+  }, [componentDragPreview]);
 
   const handleComponentDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (isPlaying) {
@@ -1844,6 +1901,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }
 
     event.preventDefault();
+    setComponentDragPreview(null);
     const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     const camera = phaserScene?.cameras?.main;
     if (!camera) {
@@ -1874,6 +1932,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     });
   }, [addComponentInstance, isPlaying, project, selectObjects, selectedSceneId, updateObject]);
 
+  useEffect(() => {
+    if (isPlaying) {
+      setComponentDragPreview(null);
+    }
+  }, [isPlaying]);
+
+  const previewBounds = componentDragPreview?.bounds;
+  const previewZoom = componentDragPreview?.zoom ?? 1;
+  const previewWidth = previewBounds ? Math.max(1, previewBounds.width * previewZoom) : Math.max(24, 64 * previewZoom);
+  const previewHeight = previewBounds ? Math.max(1, previewBounds.height * previewZoom) : Math.max(24, 64 * previewZoom);
+  const previewBackgroundSize = componentDragPreview?.assetFrame
+    ? `${componentDragPreview.assetFrame.width * previewZoom}px ${componentDragPreview.assetFrame.height * previewZoom}px`
+    : undefined;
+  const previewBackgroundPosition = previewBounds
+    ? `${-previewBounds.x * previewZoom}px ${-previewBounds.y * previewZoom}px`
+    : 'center';
+  const previewComponentName = componentDragPreview
+    ? ((project?.components || []).find((candidate) => candidate.id === componentDragPreview.componentId)?.name ?? 'Component')
+    : 'Component';
+
   return (
     <div
       className="relative w-full h-full outline-none"
@@ -1881,6 +1959,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       tabIndex={isPlaying ? -1 : 0}
       onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
       onDragOver={handleComponentDragOver}
+      onDragLeave={handleComponentDragLeave}
       onDrop={handleComponentDrop}
     >
       <div
@@ -1895,6 +1974,39 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 z-[11]"
         />
+      ) : null}
+      {!isPlaying && componentDragPreview ? (
+        componentDragPreview.assetId ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute z-[12] overflow-hidden rounded-md opacity-70 shadow-[0_0_0_1px_rgba(14,165,233,0.35)]"
+            style={{
+              left: componentDragPreview.localX,
+              top: componentDragPreview.localY,
+              width: previewWidth,
+              height: previewHeight,
+              transform: 'translate(-50%, -50%)',
+              backgroundImage: `url(${componentDragPreview.assetId})`,
+              backgroundPosition: previewBackgroundPosition,
+              backgroundSize: previewBackgroundSize,
+              backgroundRepeat: 'no-repeat',
+            }}
+          />
+        ) : (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute z-[12] flex items-center justify-center rounded-md border border-sky-500/50 bg-sky-500/10 px-2 text-xs font-medium text-sky-700 opacity-80 dark:text-sky-200"
+            style={{
+              left: componentDragPreview.localX,
+              top: componentDragPreview.localY,
+              width: previewWidth,
+              height: previewHeight,
+              transform: 'translate(-50%, -50%)',
+            }}
+          >
+            {previewComponentName}
+          </div>
+        )
       ) : null}
       {!isPlaying && frozenStageFrame ? (
         <img

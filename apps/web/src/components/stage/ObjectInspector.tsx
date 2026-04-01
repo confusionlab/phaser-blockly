@@ -6,7 +6,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -340,15 +339,6 @@ function ComponentProperties({ component, updateComponent }: ComponentProperties
 
   return (
     <div className="w-full min-w-0 space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="component-name" className="text-xs text-muted-foreground">Name</Label>
-        <Input
-          id="component-name"
-          value={component.name}
-          onChange={(event) => updateComponent(component.id, { name: event.target.value })}
-        />
-      </div>
-
       <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
         <Component className="size-4 text-purple-600" />
         <span className="min-w-0 text-xs text-muted-foreground">Shared component properties sync across all instances</span>
