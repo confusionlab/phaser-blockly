@@ -324,14 +324,6 @@ export function useCostumeCanvasVectorPathController({
     );
   }, [getPointSelectionTransformAxes]);
 
-  const toPointSelectionTransformScenePoint = useCallback((bounds: PointSelectionTransformBounds, point: Point) => {
-    const axes = getPointSelectionTransformAxes(bounds.rotationRadians);
-    return new Point(
-      bounds.center.x + axes.x.x * point.x + axes.y.x * point.y,
-      bounds.center.y + axes.x.y * point.x + axes.y.y * point.y,
-    );
-  }, [getPointSelectionTransformAxes]);
-
   const createPointSelectionTransformBounds = useCallback((points: Point[], rotationRadians: number): PointSelectionTransformBounds | null => {
     if (points.length < 2) return null;
 
@@ -1295,7 +1287,14 @@ export function useCostumeCanvasVectorPathController({
       if (isPointInsideTransformHandle(pointerScene, point, handleRadius)) {
         return mode;
       }
-      if (isPointInsideTransformRotateRing(pointerScene, point, getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS))) {
+      const rotateCorner = mode.replace('scale-', '') as TransformGizmoCorner;
+      if (isPointInsideTransformRotateRing(
+        pointerScene,
+        point,
+        getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS),
+        rotateCorner,
+        snapshot.bounds.rotationRadians,
+      )) {
         return 'rotate';
       }
     }
@@ -1393,8 +1392,8 @@ export function useCostumeCanvasVectorPathController({
       proportional: session.proportional,
       centered: session.centered,
     });
-    const scaleX = scaled.width / Math.max(baseWidth, 0.0001);
-    const scaleY = scaled.height / Math.max(baseHeight, 0.0001);
+    const scaleX = scaled.signedWidth / Math.max(baseWidth, 0.0001);
+    const scaleY = scaled.signedHeight / Math.max(baseHeight, 0.0001);
     const localStart = rotateTransformPoint(
       {
         x: point.x - referencePoint.x,

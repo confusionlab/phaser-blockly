@@ -1,4 +1,5 @@
 export type TransformGizmoCorner = 'nw' | 'ne' | 'se' | 'sw';
+export type TransformGizmoEdge = 'horizontal' | 'vertical';
 
 export interface TransformGizmoPoint {
   x: number;
@@ -20,6 +21,16 @@ export interface TransformGizmoFrame<TPoint extends TransformGizmoPoint = Transf
 export interface CornerScaleResult<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
   width: number;
   height: number;
+  signedWidth: number;
+  signedHeight: number;
+  center: TPoint;
+}
+
+export interface EdgeScaleResult<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
+  width: number;
+  height: number;
+  signedWidth: number;
+  signedHeight: number;
   center: TPoint;
 }
 
@@ -33,18 +44,127 @@ export const TRANSFORM_GIZMO_ROTATE_RING_INSET = 2;
 export const TRANSFORM_GIZMO_ROTATE_RING_OUTSET = 12;
 export const TRANSFORM_GIZMO_TOUCH_PADDING = 4;
 export const TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH = [6, 5] as const;
+const TRANSFORM_CURSOR_SIZE = 24;
+const TRANSFORM_CURSOR_HOTSPOT = 12;
+const TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES = 45;
+const transformCursorCache = new Map<string, string>();
 
-const ROTATE_CURSOR_SVG = encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <path d="M17.6 8.1A6.5 6.5 0 1 0 18.5 14" stroke="#0ea5e9" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M14.2 5.2h4.7v4.7" stroke="#0ea5e9" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`,
-);
+const ROTATE_CURSOR_MARKUP = [
+  '<path d="M8 16.25A6.2 6.2 0 0 1 16.25 8" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M12.8 7.15H17.35V11.7" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M8 16.25A6.2 6.2 0 0 1 16.25 8" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M12.8 7.15H17.35V11.7" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+].join('');
 
-export const TRANSFORM_GIZMO_ROTATE_CURSOR = `url("data:image/svg+xml,${ROTATE_CURSOR_SVG}") 12 12, grab`;
+const SYSTEM_CORNER_RESIZE_CURSORS = [
+  'e-resize',
+  'se-resize',
+  's-resize',
+  'sw-resize',
+  'w-resize',
+  'nw-resize',
+  'n-resize',
+  'ne-resize',
+] as const;
 
-export function getTransformGizmoCornerCursor(corner: TransformGizmoCorner) {
-  return corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize';
+const SYSTEM_AXIS_RESIZE_CURSORS = [
+  'ew-resize',
+  'nwse-resize',
+  'ns-resize',
+  'nesw-resize',
+] as const;
+
+function normalizeCursorDegrees(degrees: number) {
+  if (!Number.isFinite(degrees)) {
+    return 0;
+  }
+  const normalized = degrees % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+}
+
+function quantizeCursorDegrees(degrees: number, incrementDegrees: number) {
+  return normalizeCursorDegrees(
+    Math.round(degrees / incrementDegrees) * incrementDegrees,
+  );
+}
+
+function buildTransformCursorDataUrl(markup: string, rotationDegrees: number) {
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${TRANSFORM_CURSOR_SIZE}" height="${TRANSFORM_CURSOR_SIZE}" viewBox="0 0 ${TRANSFORM_CURSOR_SIZE} ${TRANSFORM_CURSOR_SIZE}" fill="none">`,
+    `<g transform="rotate(${rotationDegrees.toFixed(2)} ${TRANSFORM_CURSOR_HOTSPOT} ${TRANSFORM_CURSOR_HOTSPOT})">`,
+    markup,
+    '</g>',
+    '</svg>',
+  ].join('');
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${TRANSFORM_CURSOR_HOTSPOT} ${TRANSFORM_CURSOR_HOTSPOT}`;
+}
+
+function getTransformCursor(
+  key: string,
+  markup: string,
+  rotationDegrees: number,
+  fallback: string,
+  incrementDegrees: number = TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES,
+) {
+  const quantizedDegrees = quantizeCursorDegrees(rotationDegrees, incrementDegrees);
+  const cacheKey = `${key}:${quantizedDegrees}`;
+  const cached = transformCursorCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const cursor = `${buildTransformCursorDataUrl(markup, quantizedDegrees)}, ${fallback}`;
+  transformCursorCache.set(cacheKey, cursor);
+  return cursor;
+}
+
+function getCornerBaseDegrees(corner: TransformGizmoCorner) {
+  switch (corner) {
+    case 'nw':
+      return 225;
+    case 'ne':
+      return 315;
+    case 'se':
+      return 45;
+    case 'sw':
+      return 135;
+  }
+}
+
+function getResizeCursorIndex(rotationDegrees: number) {
+  return Math.round(normalizeCursorDegrees(rotationDegrees) / 45) % 8;
+}
+
+function getRotateCornerBaseDegrees(corner?: TransformGizmoCorner) {
+  switch (corner) {
+    case 'ne':
+      return 0;
+    case 'se':
+      return 90;
+    case 'sw':
+      return 180;
+    case 'nw':
+      return 270;
+    default:
+      return 0;
+  }
+}
+
+export function getTransformGizmoCornerCursor(corner: TransformGizmoCorner, rotationRadians: number = 0) {
+  const rotationDegrees = getCornerBaseDegrees(corner) + (rotationRadians * 180) / Math.PI;
+  return SYSTEM_CORNER_RESIZE_CURSORS[getResizeCursorIndex(rotationDegrees)]!;
+}
+
+export function getTransformGizmoEdgeCursor(edge: TransformGizmoEdge, rotationRadians: number = 0) {
+  const baseDegrees = edge === 'horizontal' ? 0 : 90;
+  const rotationDegrees = baseDegrees + (rotationRadians * 180) / Math.PI;
+  const axisIndex = Math.round(normalizeCursorDegrees(rotationDegrees) / 45) % 4;
+  return SYSTEM_AXIS_RESIZE_CURSORS[axisIndex]!;
+}
+
+export function getTransformGizmoRotateCursor(rotationRadians: number = 0, corner?: TransformGizmoCorner) {
+  const rotationDegrees = getRotateCornerBaseDegrees(corner) + (rotationRadians * 180) / Math.PI;
+  return getTransformCursor(`rotate-${corner ?? 'free'}`, ROTATE_CURSOR_MARKUP, rotationDegrees, 'grab');
 }
 
 export function rotateTransformPoint<TPoint extends TransformGizmoPoint>(point: TPoint, radians: number): TPoint {
@@ -107,11 +227,35 @@ export function isPointInsideTransformRotateRing(
   point: TransformGizmoPoint,
   center: TransformGizmoPoint,
   handleRadius: number,
+  corner?: TransformGizmoCorner,
+  rotationRadians: number = 0,
 ) {
   const distance = getTransformGizmoDistance(point, center);
   const innerRadius = handleRadius + TRANSFORM_GIZMO_ROTATE_RING_INSET;
   const outerRadius = handleRadius + TRANSFORM_GIZMO_ROTATE_RING_OUTSET;
-  return distance > innerRadius && distance <= outerRadius;
+  if (!(distance > innerRadius && distance <= outerRadius)) {
+    return false;
+  }
+
+  if (!corner) {
+    return true;
+  }
+
+  const localOffset = rotateTransformPoint({
+    x: point.x - center.x,
+    y: point.y - center.y,
+  }, -rotationRadians);
+
+  switch (corner) {
+    case 'nw':
+      return localOffset.x <= 0 && localOffset.y <= 0;
+    case 'ne':
+      return localOffset.x >= 0 && localOffset.y <= 0;
+    case 'se':
+      return localOffset.x >= 0 && localOffset.y >= 0;
+    case 'sw':
+      return localOffset.x <= 0 && localOffset.y >= 0;
+  }
 }
 
 interface CornerScaleComputationOptions<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
@@ -126,6 +270,27 @@ interface CornerScaleComputationOptions<TPoint extends TransformGizmoPoint = Tra
   minHeight: number;
   proportional: boolean;
   centered: boolean;
+}
+
+interface EdgeScaleComputationOptions<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
+  referencePoint: TPoint;
+  pointerPoint: TPoint;
+  edge: TransformGizmoEdge;
+  handleSign: -1 | 1;
+  rotationRadians: number;
+  baseWidth: number;
+  baseHeight: number;
+  minWidth: number;
+  minHeight: number;
+  centered: boolean;
+}
+
+function clampSignedExtent(value: number, minMagnitude: number) {
+  if (!Number.isFinite(value)) {
+    return minMagnitude;
+  }
+  const sign = value < 0 ? -1 : 1;
+  return sign * Math.max(Math.abs(value), minMagnitude);
 }
 
 export function computeCornerScaleResult<TPoint extends TransformGizmoPoint>({
@@ -146,45 +311,109 @@ export function computeCornerScaleResult<TPoint extends TransformGizmoPoint>({
     y: pointerPoint.y - referencePoint.y,
   }, rotationRadians);
 
-  const rawWidth = Math.max(
-    minWidth,
-    centered
-      ? Math.abs(rotatedPointer.x) * 2
-      : handleXSign * rotatedPointer.x,
-  );
-  const rawHeight = Math.max(
-    minHeight,
-    centered
-      ? Math.abs(rotatedPointer.y) * 2
-      : handleYSign * rotatedPointer.y,
-  );
+  const rawWidth = centered
+    ? handleXSign * rotatedPointer.x * 2
+    : handleXSign * rotatedPointer.x;
+  const rawHeight = centered
+    ? handleYSign * rotatedPointer.y * 2
+    : handleYSign * rotatedPointer.y;
 
-  let width = rawWidth;
-  let height = rawHeight;
+  let signedWidth = clampSignedExtent(rawWidth, minWidth);
+  let signedHeight = clampSignedExtent(rawHeight, minHeight);
   if (proportional) {
     const safeBaseWidth = Math.max(baseWidth, 0.0001);
     const safeBaseHeight = Math.max(baseHeight, 0.0001);
-    const proportionalScale = Math.max(rawWidth / safeBaseWidth, rawHeight / safeBaseHeight);
-    width = Math.max(minWidth, safeBaseWidth * proportionalScale);
-    height = Math.max(minHeight, safeBaseHeight * proportionalScale);
+    const proportionalScale = Math.max(Math.abs(rawWidth) / safeBaseWidth, Math.abs(rawHeight) / safeBaseHeight);
+    const proportionalWidth = Math.max(minWidth, safeBaseWidth * proportionalScale);
+    const proportionalHeight = Math.max(minHeight, safeBaseHeight * proportionalScale);
+    signedWidth = (signedWidth < 0 ? -1 : 1) * proportionalWidth;
+    signedHeight = (signedHeight < 0 ? -1 : 1) * proportionalHeight;
   }
+
+  const width = Math.abs(signedWidth);
+  const height = Math.abs(signedHeight);
 
   if (centered) {
     return {
       width,
       height,
+      signedWidth,
+      signedHeight,
       center: { ...referencePoint },
     };
   }
 
   const halfExtents = rotateTransformPoint({
-    x: handleXSign * width * 0.5,
-    y: handleYSign * height * 0.5,
+    x: handleXSign * signedWidth * 0.5,
+    y: handleYSign * signedHeight * 0.5,
   }, -rotationRadians);
 
   return {
     width,
     height,
+    signedWidth,
+    signedHeight,
+    center: {
+      x: referencePoint.x + halfExtents.x,
+      y: referencePoint.y + halfExtents.y,
+    } as TPoint,
+  };
+}
+
+export function computeEdgeScaleResult<TPoint extends TransformGizmoPoint>({
+  referencePoint,
+  pointerPoint,
+  edge,
+  handleSign,
+  rotationRadians,
+  baseWidth,
+  baseHeight,
+  minWidth,
+  minHeight,
+  centered,
+}: EdgeScaleComputationOptions<TPoint>): EdgeScaleResult<TPoint> {
+  const rotatedPointer = rotateTransformPoint({
+    x: pointerPoint.x - referencePoint.x,
+    y: pointerPoint.y - referencePoint.y,
+  }, rotationRadians);
+
+  let signedWidth = baseWidth;
+  let signedHeight = baseHeight;
+  if (edge === 'horizontal') {
+    const rawWidth = centered
+      ? handleSign * rotatedPointer.x * 2
+      : handleSign * rotatedPointer.x;
+    signedWidth = clampSignedExtent(rawWidth, minWidth);
+  } else {
+    const rawHeight = centered
+      ? handleSign * rotatedPointer.y * 2
+      : handleSign * rotatedPointer.y;
+    signedHeight = clampSignedExtent(rawHeight, minHeight);
+  }
+
+  const width = Math.abs(signedWidth);
+  const height = Math.abs(signedHeight);
+
+  if (centered) {
+    return {
+      width,
+      height,
+      signedWidth,
+      signedHeight,
+      center: { ...referencePoint },
+    };
+  }
+
+  const halfExtents = rotateTransformPoint({
+    x: edge === 'horizontal' ? handleSign * signedWidth * 0.5 : 0,
+    y: edge === 'vertical' ? handleSign * signedHeight * 0.5 : 0,
+  }, -rotationRadians);
+
+  return {
+    width,
+    height,
+    signedWidth,
+    signedHeight,
     center: {
       x: referencePoint.x + halfExtents.x,
       y: referencePoint.y + halfExtents.y,

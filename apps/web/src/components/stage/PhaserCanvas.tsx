@@ -42,15 +42,18 @@ import {
   getCostumeVisibleCenterOffset,
 } from '@/lib/costume/costumeAssetFrame';
 import {
+  computeEdgeScaleResult,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
-  TRANSFORM_GIZMO_ROTATE_CURSOR,
   TRANSFORM_GIZMO_ROTATE_RING_OUTSET,
   computeCornerScaleResult,
   getTransformGizmoCornerCursor,
+  getTransformGizmoEdgeCursor,
   getTransformGizmoHandleFrame,
+  getTransformGizmoRotateCursor,
+  isPointInsideTransformRotateRing,
   rotateTransformPoint,
 } from '@/lib/editor/unifiedTransformGizmo';
-import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner, TransformGizmoEdge } from '@/lib/editor/unifiedTransformGizmo';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -2117,7 +2120,12 @@ function createEditorScene(
     name: string,
     shape: Phaser.GameObjects.Shape | Phaser.GameObjects.Arc,
     cursor: string,
-    options?: { interactiveAlpha?: number; showStroke?: boolean },
+    options?: {
+      interactiveAlpha?: number;
+      showStroke?: boolean;
+      hitArea?: Phaser.Geom.Circle;
+      hitAreaCallback?: Phaser.Types.Input.HitAreaCallback;
+    },
   ) => {
     shape.setFillStyle(0xffffff, options?.interactiveAlpha ?? 1);
     if (options?.showStroke !== false) {
@@ -2126,7 +2134,14 @@ function createEditorScene(
     shape.setName(name);
     shape.setVisible(false);
     shape.setDepth(10_004);
-    shape.setInteractive({ useHandCursor: false, cursor });
+    if (options?.hitArea && options.hitAreaCallback) {
+      shape.setInteractive(options.hitArea, options.hitAreaCallback as any);
+      if (shape.input) {
+        shape.input.cursor = cursor;
+      }
+    } else {
+      shape.setInteractive({ useHandCursor: false, cursor });
+    }
     scene.input.setDraggable(shape);
     groupHandles.set(name, shape);
   };
@@ -2135,10 +2150,34 @@ function createEditorScene(
   createGroupHandle('handle_ne', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('ne'));
   createGroupHandle('handle_sw', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('sw'));
   createGroupHandle('handle_se', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('se'));
-  createGroupHandle('handle_rotate_nw', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
-  createGroupHandle('handle_rotate_ne', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
-  createGroupHandle('handle_rotate_sw', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
-  createGroupHandle('handle_rotate_se', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
+  const createRotateGroupHandle = (name: string, corner: TransformGizmoCorner) => createGroupHandle(
+    name,
+    scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001),
+    getTransformGizmoRotateCursor(0, corner),
+    {
+      interactiveAlpha: 0.001,
+      showStroke: false,
+      hitArea: new Phaser.Geom.Circle(
+        GIZMO_ROTATE_RING_RADIUS_PX,
+        GIZMO_ROTATE_RING_RADIUS_PX,
+        GIZMO_ROTATE_RING_RADIUS_PX,
+      ),
+      hitAreaCallback: ((hitArea: Phaser.Geom.Circle, x: number, y: number, gameObject: Phaser.GameObjects.GameObject) => {
+        const frameRotation = Number(gameObject.getData('frameRotation') ?? 0);
+        return isPointInsideTransformRotateRing(
+          { x, y },
+          { x: hitArea.x, y: hitArea.y },
+          TRANSFORM_GIZMO_HANDLE_RADIUS,
+          corner,
+          frameRotation,
+        );
+      }) as Phaser.Types.Input.HitAreaCallback,
+    },
+  );
+  createRotateGroupHandle('handle_rotate_nw', 'nw');
+  createRotateGroupHandle('handle_rotate_ne', 'ne');
+  createRotateGroupHandle('handle_rotate_sw', 'sw');
+  createRotateGroupHandle('handle_rotate_se', 'se');
 
   let groupTransformContext: {
     handleName: string;
@@ -2303,21 +2342,45 @@ function createEditorScene(
     groupSelectionRect.setStrokeStyle(strokeWidth, STAGE_GIZMO_COLOR);
     groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.06);
 
-    const setHandle = (name: string, x: number, y: number) => {
+    const setHandle = (name: string, x: number, y: number, corner?: TransformGizmoCorner) => {
       const handle = groupHandles.get(name);
       if (!handle) return;
       handle.setPosition(x, y);
       handle.setScale(uiScale, uiScale);
+      if (handle.input) {
+        switch (name) {
+          case 'handle_nw':
+            handle.input.cursor = getTransformGizmoCornerCursor('nw', rotation);
+            break;
+          case 'handle_ne':
+            handle.input.cursor = getTransformGizmoCornerCursor('ne', rotation);
+            break;
+          case 'handle_sw':
+            handle.input.cursor = getTransformGizmoCornerCursor('sw', rotation);
+            break;
+          case 'handle_se':
+            handle.input.cursor = getTransformGizmoCornerCursor('se', rotation);
+            break;
+          default:
+            if (corner) {
+              handle.input.cursor = getTransformGizmoRotateCursor(rotation, corner);
+            }
+            break;
+        }
+      }
+      if (corner) {
+        handle.setData('frameRotation', rotation);
+      }
     };
 
     setHandle('handle_nw', frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
     setHandle('handle_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
     setHandle('handle_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y);
     setHandle('handle_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y);
-    setHandle('handle_rotate_nw', frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
-    setHandle('handle_rotate_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
-    setHandle('handle_rotate_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y);
-    setHandle('handle_rotate_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y);
+    setHandle('handle_rotate_nw', frameGeometry.corners.nw.x, frameGeometry.corners.nw.y, 'nw');
+    setHandle('handle_rotate_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y, 'ne');
+    setHandle('handle_rotate_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y, 'sw');
+    setHandle('handle_rotate_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y, 'se');
 
     groupProportionalGuide.clear();
     if (groupTransformContext?.corner && groupTransformContext.proportional) {
@@ -2533,8 +2596,8 @@ function createEditorScene(
           proportional,
           centered,
         });
-        const sx = Math.max(0.1, scaled.width / Math.max(1, frame.width));
-        const sy = Math.max(0.1, scaled.height / Math.max(1, frame.height));
+        const sx = scaled.signedWidth / Math.max(1, frame.width);
+        const sy = scaled.signedHeight / Math.max(1, frame.height);
         const referencePoint = centered ? { x: frame.centerX, y: frame.centerY } : resolvedCorner.anchor;
 
         for (const [id, start] of startObjects) {
@@ -2552,7 +2615,7 @@ function createEditorScene(
           const nextCenter = rotateTransformPoint(scaledLocal, -rotation);
           selectedContainer.x = referencePoint.x + nextCenter.x;
           selectedContainer.y = referencePoint.y + nextCenter.y;
-          selectedContainer.setScale(Math.max(0.1, start.scaleX * sx), Math.max(0.1, start.scaleY * sy));
+          selectedContainer.setScale(start.scaleX * sx, start.scaleY * sy);
         }
       }
 
@@ -3333,12 +3396,14 @@ function createObjectVisual(
 
     // Corner handles (for proportional scaling)
     const cornerNames = ['nw', 'ne', 'sw', 'se'];
-    const cornerCursors = ['nwse-resize', 'nesw-resize', 'nesw-resize', 'nwse-resize'];
     for (let i = 0; i < 4; i++) {
       const handle = scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, handleColor);
       handle.setName(`handle_${cornerNames[i]}`);
       handle.setVisible(false);
-      handle.setInteractive({ useHandCursor: false, cursor: cornerCursors[i] });
+      handle.setInteractive({
+        useHandCursor: false,
+        cursor: getTransformGizmoCornerCursor(cornerNames[i] as TransformGizmoCorner),
+      });
       scene.input.setDraggable(handle);
       container.add(handle);
       gizmoHandles.push(handle);
@@ -3346,13 +3411,15 @@ function createObjectVisual(
 
     // Edge handles (for axis scaling)
     const edgeNames = ['n', 's', 'e', 'w'];
-    const edgeCursors = ['ns-resize', 'ns-resize', 'ew-resize', 'ew-resize'];
     for (let i = 0; i < 4; i++) {
       const isVertical = i < 2;
       const handle = scene.add.rectangle(0, 0, isVertical ? GIZMO_EDGE_LONG_PX : GIZMO_HANDLE_SIZE_PX, isVertical ? GIZMO_HANDLE_SIZE_PX : GIZMO_EDGE_LONG_PX, handleColor);
       handle.setName(`handle_${edgeNames[i]}`);
       handle.setVisible(false);
-      handle.setInteractive({ useHandCursor: false, cursor: edgeCursors[i] });
+      handle.setInteractive({
+        useHandCursor: false,
+        cursor: getTransformGizmoEdgeCursor(isVertical ? 'vertical' : 'horizontal'),
+      });
       scene.input.setDraggable(handle);
       container.add(handle);
       gizmoHandles.push(handle);
@@ -3362,7 +3429,7 @@ function createObjectVisual(
     const rotateHandle = scene.add.circle(0, 0, GIZMO_ROTATE_RADIUS_PX, handleColor);
     rotateHandle.setName('handle_rotate');
     rotateHandle.setVisible(false);
-    rotateHandle.setInteractive({ useHandCursor: false, cursor: 'grab' });
+    rotateHandle.setInteractive({ useHandCursor: false, cursor: getTransformGizmoRotateCursor() });
     scene.input.setDraggable(rotateHandle);
     container.add(rotateHandle);
     gizmoHandles.push(rotateHandle);
@@ -3381,6 +3448,20 @@ function createObjectVisual(
     hitRect.setName('hitArea');
     container.add(hitRect);
 
+    const getSingleObjectGizmoFrame = () => {
+      const selRect = container.getByName('selection') as Phaser.GameObjects.Rectangle | null;
+      const localCenterX = selRect?.x ?? 0;
+      const localCenterY = selRect?.y ?? 0;
+      const worldCenter = container.getWorldTransformMatrix().transformPoint(localCenterX, localCenterY);
+      return {
+        centerX: worldCenter.x,
+        centerY: worldCenter.y,
+        width: Math.max(1, (selRect?.width ?? container.width) * Math.abs(container.scaleX)),
+        height: Math.max(1, (selRect?.height ?? container.height) * Math.abs(container.scaleY)),
+        rotation: container.rotation,
+      };
+    };
+
     // Set up editor interactivity immediately (with one-frame fallback for scene init edge cases).
     const setupEditorInteractivity = () => {
       if (!hitRect || !hitRect.scene) return;
@@ -3390,10 +3471,16 @@ function createObjectVisual(
 
       // Set up gizmo handle drag logic
       let startScaleX = 1, startScaleY = 1;
-      let startWidth = 0, startHeight = 0;
       let startPointerX = 0, startPointerY = 0;
       let startRotation = 0;
-      let startCenterX = 0, startCenterY = 0;
+      let startX = 0, startY = 0;
+      let startFrame: {
+        centerX: number;
+        centerY: number;
+        width: number;
+        height: number;
+        rotation: number;
+      } | null = null;
 
       for (const handle of gizmoHandles) {
         const handleName = handle.name;
@@ -3401,65 +3488,135 @@ function createObjectVisual(
         (handle as Phaser.GameObjects.Shape).on('dragstart', (pointer: Phaser.Input.Pointer) => {
           startScaleX = container.scaleX;
           startScaleY = container.scaleY;
-          startWidth = container.width * container.scaleX;
-          startHeight = container.height * container.scaleY;
           startPointerX = pointer.worldX;
           startPointerY = pointer.worldY;
           startRotation = container.rotation;
-          startCenterX = container.x;
-          startCenterY = container.y;
+          startX = container.x;
+          startY = container.y;
+          startFrame = getSingleObjectGizmoFrame();
         });
 
         (handle as Phaser.GameObjects.Shape).on('drag', (pointer: Phaser.Input.Pointer) => {
-          const dx = pointer.worldX - startPointerX;
-          const dy = pointer.worldY - startPointerY;
+          if (!startFrame) {
+            return;
+          }
+
+          const pointerEvent = pointer.event as MouseEvent | PointerEvent | undefined;
+          const centered = !!pointerEvent?.altKey;
+          const minSize = 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001);
+          const rotation = startFrame.rotation;
+          const frameCenter = {
+            x: startFrame.centerX,
+            y: startFrame.centerY,
+          };
 
           if (handleName === 'handle_rotate') {
-            // Rotation handle
-            const angleToStart = Math.atan2(startPointerY - startCenterY, startPointerX - startCenterX);
-            const angleToCurrent = Math.atan2(pointer.worldY - startCenterY, pointer.worldX - startCenterX);
-            container.rotation = startRotation + (angleToCurrent - angleToStart);
-          } else if (handleName.startsWith('handle_n') || handleName.startsWith('handle_s') ||
-                     handleName === 'handle_e' || handleName === 'handle_w') {
-            // Scale handles
-            let newScaleX = startScaleX;
-            let newScaleY = startScaleY;
-
-            // Corner handles (proportional)
-            if (handleName === 'handle_nw') {
-              const avgDelta = -dx - dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            } else if (handleName === 'handle_ne') {
-              const avgDelta = dx - dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            } else if (handleName === 'handle_sw') {
-              const avgDelta = -dx + dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            } else if (handleName === 'handle_se') {
-              const avgDelta = dx + dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            }
-            // Edge handles (axis scale)
-            else if (handleName === 'handle_n') {
-              newScaleY = startScaleY * (startHeight - (2 * dy)) / startHeight;
-            } else if (handleName === 'handle_s') {
-              newScaleY = startScaleY * (startHeight + (2 * dy)) / startHeight;
-            } else if (handleName === 'handle_e') {
-              newScaleX = startScaleX * (startWidth + (2 * dx)) / startWidth;
-            } else if (handleName === 'handle_w') {
-              newScaleX = startScaleX * (startWidth - (2 * dx)) / startWidth;
-            }
-
-            // Apply scale with minimum
-            container.setScale(Math.max(0.1, newScaleX), Math.max(0.1, newScaleY));
+            const angleToStart = Math.atan2(startPointerY - startFrame.centerY, startPointerX - startFrame.centerX);
+            const angleToCurrent = Math.atan2(pointer.worldY - startFrame.centerY, pointer.worldX - startFrame.centerX);
+            const deltaRotation = angleToCurrent - angleToStart;
+            const nextOffset = rotateTransformPoint(
+              {
+                x: startX - startFrame.centerX,
+                y: startY - startFrame.centerY,
+              },
+              deltaRotation,
+            );
+            container.x = startFrame.centerX + nextOffset.x;
+            container.y = startFrame.centerY + nextOffset.y;
+            container.rotation = startRotation + deltaRotation;
+          } else if (handleName === 'handle_nw' || handleName === 'handle_ne' || handleName === 'handle_sw' || handleName === 'handle_se') {
+            const frameGeometry = getTransformGizmoHandleFrame(frameCenter, startFrame.width, startFrame.height, rotation);
+            const proportional = shouldUseProportionalStageScale([obj.id], pointerEvent);
+            const cornerConfig: Record<TransformGizmoCorner, {
+              anchor: { x: number; y: number };
+              handleXSign: -1 | 1;
+              handleYSign: -1 | 1;
+            }> = {
+              nw: { anchor: frameGeometry.corners.se, handleXSign: -1, handleYSign: -1 },
+              ne: { anchor: frameGeometry.corners.sw, handleXSign: 1, handleYSign: -1 },
+              se: { anchor: frameGeometry.corners.nw, handleXSign: 1, handleYSign: 1 },
+              sw: { anchor: frameGeometry.corners.ne, handleXSign: -1, handleYSign: 1 },
+            };
+            const cornerName = handleName.replace('handle_', '') as TransformGizmoCorner;
+            const resolvedCorner = cornerConfig[cornerName];
+            const referencePoint = centered ? frameCenter : resolvedCorner.anchor;
+            const scaled = computeCornerScaleResult({
+              referencePoint,
+              pointerPoint: { x: pointer.worldX, y: pointer.worldY },
+              handleXSign: resolvedCorner.handleXSign,
+              handleYSign: resolvedCorner.handleYSign,
+              rotationRadians: rotation,
+              baseWidth: startFrame.width,
+              baseHeight: startFrame.height,
+              minWidth: minSize,
+              minHeight: minSize,
+              proportional,
+              centered,
+            });
+            const sx = scaled.signedWidth / Math.max(startFrame.width, 0.0001);
+            const sy = scaled.signedHeight / Math.max(startFrame.height, 0.0001);
+            const localStart = rotateTransformPoint(
+              {
+                x: startX - referencePoint.x,
+                y: startY - referencePoint.y,
+              },
+              rotation,
+            );
+            const scaledLocal = {
+              x: localStart.x * sx,
+              y: localStart.y * sy,
+            };
+            const nextOrigin = rotateTransformPoint(scaledLocal, -rotation);
+            container.x = referencePoint.x + nextOrigin.x;
+            container.y = referencePoint.y + nextOrigin.y;
+            container.setScale(startScaleX * sx, startScaleY * sy);
+          } else if (handleName === 'handle_n' || handleName === 'handle_s' || handleName === 'handle_e' || handleName === 'handle_w') {
+            const frameGeometry = getTransformGizmoHandleFrame(frameCenter, startFrame.width, startFrame.height, rotation);
+            const midpoint = (a: { x: number; y: number }, b: { x: number; y: number }) => ({
+              x: (a.x + b.x) * 0.5,
+              y: (a.y + b.y) * 0.5,
+            });
+            const edgeConfig: Record<'handle_n' | 'handle_s' | 'handle_e' | 'handle_w', {
+              anchor: { x: number; y: number };
+              edge: TransformGizmoEdge;
+              handleSign: -1 | 1;
+            }> = {
+              handle_n: { anchor: midpoint(frameGeometry.corners.sw, frameGeometry.corners.se), edge: 'vertical', handleSign: -1 },
+              handle_s: { anchor: midpoint(frameGeometry.corners.nw, frameGeometry.corners.ne), edge: 'vertical', handleSign: 1 },
+              handle_e: { anchor: midpoint(frameGeometry.corners.nw, frameGeometry.corners.sw), edge: 'horizontal', handleSign: 1 },
+              handle_w: { anchor: midpoint(frameGeometry.corners.ne, frameGeometry.corners.se), edge: 'horizontal', handleSign: -1 },
+            };
+            const resolvedEdge = edgeConfig[handleName as keyof typeof edgeConfig];
+            const referencePoint = centered ? frameCenter : resolvedEdge.anchor;
+            const scaled = computeEdgeScaleResult({
+              referencePoint,
+              pointerPoint: { x: pointer.worldX, y: pointer.worldY },
+              edge: resolvedEdge.edge,
+              handleSign: resolvedEdge.handleSign,
+              rotationRadians: rotation,
+              baseWidth: startFrame.width,
+              baseHeight: startFrame.height,
+              minWidth: minSize,
+              minHeight: minSize,
+              centered,
+            });
+            const sx = scaled.signedWidth / Math.max(startFrame.width, 0.0001);
+            const sy = scaled.signedHeight / Math.max(startFrame.height, 0.0001);
+            const localStart = rotateTransformPoint(
+              {
+                x: startX - referencePoint.x,
+                y: startY - referencePoint.y,
+              },
+              rotation,
+            );
+            const scaledLocal = {
+              x: localStart.x * sx,
+              y: localStart.y * sy,
+            };
+            const nextOrigin = rotateTransformPoint(scaledLocal, -rotation);
+            container.x = referencePoint.x + nextOrigin.x;
+            container.y = referencePoint.y + nextOrigin.y;
+            container.setScale(startScaleX * sx, startScaleY * sy);
           }
 
           // Update gizmo handle positions
@@ -3483,6 +3640,7 @@ function createObjectVisual(
       const selRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
       if (!selRect) return;
       const cameraZoom = scene.cameras.main.zoom || 1;
+      const rotation = container.rotation;
       const absScaleX = Math.max(Math.abs(container.scaleX), 0.0001);
       const absScaleY = Math.max(Math.abs(container.scaleY), 0.0001);
       const invUiScaleX = 1 / (absScaleX * cameraZoom);
@@ -3494,6 +3652,12 @@ function createObjectVisual(
       const halfH = selRect.height / 2;
       const offsetX = selRect.x;
       const offsetY = selRect.y;
+      const signX = container.scaleX < 0 ? -1 : 1;
+      const signY = container.scaleY < 0 ? -1 : 1;
+      const leftX = offsetX - halfW * signX;
+      const rightX = offsetX + halfW * signX;
+      const topY = offsetY - halfH * signY;
+      const bottomY = offsetY + halfH * signY;
       const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / (Math.max(absScaleX, absScaleY) * cameraZoom);
 
       // Corner handles
@@ -3505,10 +3669,14 @@ function createObjectVisual(
       if (ne) ne.setScale(invUiScaleX, invUiScaleY);
       if (sw) sw.setScale(invUiScaleX, invUiScaleY);
       if (se) se.setScale(invUiScaleX, invUiScaleY);
-      if (nw) nw.setPosition(offsetX - halfW, offsetY - halfH);
-      if (ne) ne.setPosition(offsetX + halfW, offsetY - halfH);
-      if (sw) sw.setPosition(offsetX - halfW, offsetY + halfH);
-      if (se) se.setPosition(offsetX + halfW, offsetY + halfH);
+      if (nw?.input) nw.input.cursor = getTransformGizmoCornerCursor('nw', rotation);
+      if (ne?.input) ne.input.cursor = getTransformGizmoCornerCursor('ne', rotation);
+      if (sw?.input) sw.input.cursor = getTransformGizmoCornerCursor('sw', rotation);
+      if (se?.input) se.input.cursor = getTransformGizmoCornerCursor('se', rotation);
+      if (nw) nw.setPosition(leftX, topY);
+      if (ne) ne.setPosition(rightX, topY);
+      if (sw) sw.setPosition(leftX, bottomY);
+      if (se) se.setPosition(rightX, bottomY);
 
       // Edge handles
       const n = container.getByName('handle_n') as Phaser.GameObjects.Rectangle;
@@ -3519,22 +3687,29 @@ function createObjectVisual(
       if (s) s.setScale(invUiScaleX, invUiScaleY);
       if (e) e.setScale(invUiScaleX, invUiScaleY);
       if (w) w.setScale(invUiScaleX, invUiScaleY);
-      if (n) n.setPosition(offsetX, offsetY - halfH);
-      if (s) s.setPosition(offsetX, offsetY + halfH);
-      if (e) e.setPosition(offsetX + halfW, offsetY);
-      if (w) w.setPosition(offsetX - halfW, offsetY);
+      if (n?.input) n.input.cursor = getTransformGizmoEdgeCursor('vertical', rotation);
+      if (s?.input) s.input.cursor = getTransformGizmoEdgeCursor('vertical', rotation);
+      if (e?.input) e.input.cursor = getTransformGizmoEdgeCursor('horizontal', rotation);
+      if (w?.input) w.input.cursor = getTransformGizmoEdgeCursor('horizontal', rotation);
+      if (n) n.setPosition(offsetX, topY);
+      if (s) s.setPosition(offsetX, bottomY);
+      if (e) e.setPosition(rightX, offsetY);
+      if (w) w.setPosition(leftX, offsetY);
 
       // Rotation handle and line
       const rotateHandle = container.getByName('handle_rotate') as Phaser.GameObjects.Arc;
       const rotateLine = container.getByName('rotate_line') as Phaser.GameObjects.Graphics;
       if (rotateHandle) {
         rotateHandle.setScale(invUiScaleX, invUiScaleY);
-        rotateHandle.setPosition(offsetX, offsetY - halfH - rotateDistance);
+        if (rotateHandle.input) {
+          rotateHandle.input.cursor = getTransformGizmoRotateCursor(rotation);
+        }
+        rotateHandle.setPosition(offsetX, topY - rotateDistance * signY);
       }
       if (rotateLine) {
         rotateLine.clear();
         rotateLine.lineStyle(Math.max(0.5, strokeWidth), 0x4A90D9, 1);
-        rotateLine.lineBetween(offsetX, offsetY - halfH, offsetX, offsetY - halfH - rotateDistance + 4);
+        rotateLine.lineBetween(offsetX, topY, offsetX, topY - rotateDistance * signY + 4 * signY);
       }
     };
 

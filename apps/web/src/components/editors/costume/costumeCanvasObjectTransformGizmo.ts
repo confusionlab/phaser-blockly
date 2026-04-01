@@ -5,10 +5,10 @@ import {
   TRANSFORM_GIZMO_HANDLE_FILL,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   TRANSFORM_GIZMO_HANDLE_STROKE,
-  TRANSFORM_GIZMO_ROTATE_CURSOR,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
   getTransformGizmoCornerCursor,
+  getTransformGizmoRotateCursor,
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
 } from '@/lib/editor/unifiedTransformGizmo';
@@ -91,6 +91,13 @@ function getCornerRadius(fabricObject: any) {
   return Math.max(TRANSFORM_GIZMO_HANDLE_RADIUS, Number(fabricObject?.cornerSize) * 0.5 || 0);
 }
 
+function getFabricObjectRotationRadians(fabricObject: any) {
+  const rotationDegrees = typeof fabricObject?.getTotalAngle === 'function'
+    ? fabricObject.getTotalAngle()
+    : (Number(fabricObject?.angle) || 0);
+  return rotationDegrees * (Math.PI / 180);
+}
+
 function shouldActivateScaleControl(
   controlKey: string,
   fabricObject: any,
@@ -118,7 +125,18 @@ function shouldActivateRotateControl(
   if (!fabricObject.isControlVisible(controlKey)) {
     return false;
   }
-  return isPointInsideTransformRotateRing(pointer, getControlCenterFromCoords(coords), getCornerRadius(fabricObject));
+  const cornerKey = controlKey.replace('_rotate', '') as keyof typeof TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER;
+  const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[cornerKey];
+  const rotationDegrees = typeof fabricObject?.getTotalAngle === 'function'
+    ? fabricObject.getTotalAngle()
+    : (Number(fabricObject?.angle) || 0);
+  return isPointInsideTransformRotateRing(
+    pointer,
+    getControlCenterFromCoords(coords),
+    getCornerRadius(fabricObject),
+    corner,
+    rotationDegrees * (Math.PI / 180),
+  );
 }
 
 function isProportionalScale(eventData: Record<string, any>, target: any) {
@@ -252,12 +270,15 @@ const rotateControlActionHandler = ((eventData: Record<string, any>, transform: 
 }) as any;
 
 function createUnifiedScaleControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER, x: number, y: number) {
+  const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[cornerKey];
   return new Control({
     x,
     y,
     actionName: 'scale',
     actionHandler: unifiedCornerScaleActionHandler as any,
-    cursorStyleHandler: () => getTransformGizmoCornerCursor(TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[cornerKey]),
+    cursorStyleHandler: (_eventData, _control, fabricObject) => (
+      getTransformGizmoCornerCursor(corner, getFabricObjectRotationRadians(fabricObject))
+    ),
     render: controlsUtils.renderCircleControl,
     shouldActivate: ((controlKey: string, fabricObject: any, pointer: any, coords: any) => (
       shouldActivateScaleControl(controlKey, fabricObject, pointer, coords)
@@ -266,12 +287,15 @@ function createUnifiedScaleControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY_
 }
 
 function createUnifiedRotateControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER, x: number, y: number) {
+  const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[cornerKey];
   return new Control({
     x,
     y,
     actionName: 'rotate',
     actionHandler: rotateControlActionHandler,
-    cursorStyleHandler: () => TRANSFORM_GIZMO_ROTATE_CURSOR,
+    cursorStyleHandler: (_eventData, _control, fabricObject) => (
+      getTransformGizmoRotateCursor(getFabricObjectRotationRadians(fabricObject), corner)
+    ),
     render: () => undefined,
     shouldActivate: ((controlKey: string, fabricObject: any, pointer: any, coords: any) => (
       shouldActivateRotateControl(controlKey, fabricObject, pointer, coords)

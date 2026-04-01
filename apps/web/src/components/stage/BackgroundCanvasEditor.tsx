@@ -111,12 +111,12 @@ import {
   TRANSFORM_GIZMO_HANDLE_FILL,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   TRANSFORM_GIZMO_HANDLE_STROKE,
-  TRANSFORM_GIZMO_ROTATE_CURSOR,
   computeCornerScaleResult,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
   getTransformGizmoCornerCursor,
   getTransformGizmoHandleFrame,
+  getTransformGizmoRotateCursor,
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
 } from '@/lib/editor/unifiedTransformGizmo';
@@ -231,6 +231,8 @@ type BackgroundFloatingSelectionTransformSession =
       rotation: number;
       sourceWidth: number;
       sourceHeight: number;
+      startScaleX: number;
+      startScaleY: number;
       proportional: boolean;
     };
 
@@ -440,8 +442,8 @@ function traceBackgroundShapePath(
 }
 
 function getFloatingSelectionWorldCorners(selection: BackgroundFloatingSelection): Array<WorldPoint> {
-  const halfWidth = selection.canvas.width * selection.scaleX * 0.5;
-  const halfHeight = selection.canvas.height * selection.scaleY * 0.5;
+  const halfWidth = selection.canvas.width * Math.abs(selection.scaleX) * 0.5;
+  const halfHeight = selection.canvas.height * Math.abs(selection.scaleY) * 0.5;
   const localCorners: Array<WorldPoint> = [
     { x: -halfWidth, y: halfHeight },
     { x: halfWidth, y: halfHeight },
@@ -482,8 +484,8 @@ function getFloatingSelectionScreenGeometry(
   zoom: number,
 ): BackgroundFloatingSelectionScreenGeometry {
   const centerScreen = worldToScreen(selection.centerWorld.x, selection.centerWorld.y);
-  const halfWidth = selection.canvas.width * selection.scaleX * zoom * 0.5;
-  const halfHeight = selection.canvas.height * selection.scaleY * zoom * 0.5;
+  const halfWidth = selection.canvas.width * Math.abs(selection.scaleX) * zoom * 0.5;
+  const halfHeight = selection.canvas.height * Math.abs(selection.scaleY) * zoom * 0.5;
   const frame = getTransformGizmoHandleFrame(centerScreen, halfWidth * 2, halfHeight * 2, -selection.rotation);
 
   return {
@@ -2323,7 +2325,13 @@ export function BackgroundCanvasEditor() {
         if (isPointInsideTransformHandle(screenPoint, point, TRANSFORM_GIZMO_HANDLE_RADIUS + 4)) {
           return target;
         }
-      } else if (isPointInsideTransformRotateRing(screenPoint, point, TRANSFORM_GIZMO_HANDLE_RADIUS)) {
+      } else if (isPointInsideTransformRotateRing(
+        screenPoint,
+        point,
+        TRANSFORM_GIZMO_HANDLE_RADIUS,
+        corner,
+        -selection.rotation,
+      )) {
         return target;
       }
     }
@@ -3043,6 +3051,8 @@ export function BackgroundCanvasEditor() {
                 rotation: floatingSelection.rotation,
                 sourceWidth: floatingSelection.canvas.width,
                 sourceHeight: floatingSelection.canvas.height,
+                startScaleX: floatingSelection.scaleX,
+                startScaleY: floatingSelection.scaleY,
                 proportional: !!event.shiftKey,
               };
             }
@@ -3179,8 +3189,8 @@ export function BackgroundCanvasEditor() {
         const centered = event.altKey;
         const proportional = !!event.shiftKey;
         floatingSelectionTransform.proportional = proportional;
-        const baseWidth = Math.max(1, floatingSelectionTransform.sourceWidth * zoom);
-        const baseHeight = Math.max(1, floatingSelectionTransform.sourceHeight * zoom);
+        const baseWidth = Math.max(1, floatingSelectionTransform.sourceWidth * Math.abs(floatingSelectionTransform.startScaleX) * zoom);
+        const baseHeight = Math.max(1, floatingSelectionTransform.sourceHeight * Math.abs(floatingSelectionTransform.startScaleY) * zoom);
         const scaled = computeCornerScaleResult({
           referencePoint: centered ? floatingSelectionTransform.centerScreen : floatingSelectionTransform.anchorScreen,
           pointerPoint: screen,
@@ -3195,8 +3205,12 @@ export function BackgroundCanvasEditor() {
           centered,
         });
         floatingSelectionTransform.selection.centerWorld = screenToWorldFromCanvasPoint(scaled.center);
-        floatingSelectionTransform.selection.scaleX = scaled.width / baseWidth;
-        floatingSelectionTransform.selection.scaleY = scaled.height / baseHeight;
+        floatingSelectionTransform.selection.scaleX = floatingSelectionTransform.startScaleX * (
+          scaled.signedWidth / Math.max(baseWidth, 0.0001)
+        );
+        floatingSelectionTransform.selection.scaleY = floatingSelectionTransform.startScaleY * (
+          scaled.signedHeight / Math.max(baseHeight, 0.0001)
+        );
       }
       setRevision((value) => value + 1);
       return;
@@ -3206,12 +3220,19 @@ export function BackgroundCanvasEditor() {
     if (canvas && editorMode === 'bitmap') {
       if (tool === 'select' && floatingSelectionRef.current) {
         const hitTarget = hitTestFloatingSelection(floatingSelectionRef.current, screen);
+        const rotationRadians = -floatingSelectionRef.current.rotation;
         if (hitTarget === 'body') {
           canvas.style.cursor = 'move';
         } else if (hitTarget?.startsWith('scale-')) {
-          canvas.style.cursor = getTransformGizmoCornerCursor(hitTarget.slice('scale-'.length) as TransformGizmoCorner);
+          canvas.style.cursor = getTransformGizmoCornerCursor(
+            hitTarget.slice('scale-'.length) as TransformGizmoCorner,
+            rotationRadians,
+          );
         } else if (hitTarget?.startsWith('rotate-')) {
-          canvas.style.cursor = TRANSFORM_GIZMO_ROTATE_CURSOR;
+          canvas.style.cursor = getTransformGizmoRotateCursor(
+            rotationRadians,
+            hitTarget.slice('rotate-'.length) as TransformGizmoCorner,
+          );
         } else {
           canvas.style.cursor = 'crosshair';
         }
