@@ -279,7 +279,7 @@ export function StagePanel({
           className={cn(
             panelHeaderClassNames.chrome,
             panelHeaderClassNames.row,
-            'shrink-0 justify-center border-b border-border',
+            'shrink-0 justify-center border-b border-border bg-card',
           )}
         >
           <SegmentedControl
