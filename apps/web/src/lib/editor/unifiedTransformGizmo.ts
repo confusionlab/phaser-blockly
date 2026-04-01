@@ -56,17 +56,6 @@ const ROTATE_CURSOR_MARKUP = [
   '<path d="M12.8 7.15H17.35V11.7" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
 ].join('');
 
-const SYSTEM_CORNER_RESIZE_CURSORS = [
-  'e-resize',
-  'se-resize',
-  's-resize',
-  'sw-resize',
-  'w-resize',
-  'nw-resize',
-  'n-resize',
-  'ne-resize',
-] as const;
-
 const SYSTEM_AXIS_RESIZE_CURSORS = [
   'ew-resize',
   'nwse-resize',
@@ -131,10 +120,6 @@ function getCornerBaseDegrees(corner: TransformGizmoCorner) {
   }
 }
 
-function getResizeCursorIndex(rotationDegrees: number) {
-  return Math.round(normalizeCursorDegrees(rotationDegrees) / 45) % 8;
-}
-
 function getRotateCornerBaseDegrees(corner?: TransformGizmoCorner) {
   switch (corner) {
     case 'ne':
@@ -150,16 +135,20 @@ function getRotateCornerBaseDegrees(corner?: TransformGizmoCorner) {
   }
 }
 
+function getDoubleSidedResizeCursor(rotationDegrees: number) {
+  const axisIndex = Math.round(normalizeCursorDegrees(rotationDegrees) / 45) % 4;
+  return SYSTEM_AXIS_RESIZE_CURSORS[axisIndex]!;
+}
+
 export function getTransformGizmoCornerCursor(corner: TransformGizmoCorner, rotationRadians: number = 0) {
   const rotationDegrees = getCornerBaseDegrees(corner) + (rotationRadians * 180) / Math.PI;
-  return SYSTEM_CORNER_RESIZE_CURSORS[getResizeCursorIndex(rotationDegrees)]!;
+  return getDoubleSidedResizeCursor(rotationDegrees);
 }
 
 export function getTransformGizmoEdgeCursor(edge: TransformGizmoEdge, rotationRadians: number = 0) {
   const baseDegrees = edge === 'horizontal' ? 0 : 90;
   const rotationDegrees = baseDegrees + (rotationRadians * 180) / Math.PI;
-  const axisIndex = Math.round(normalizeCursorDegrees(rotationDegrees) / 45) % 4;
-  return SYSTEM_AXIS_RESIZE_CURSORS[axisIndex]!;
+  return getDoubleSidedResizeCursor(rotationDegrees);
 }
 
 export function getTransformGizmoRotateCursor(rotationRadians: number = 0, corner?: TransformGizmoCorner) {

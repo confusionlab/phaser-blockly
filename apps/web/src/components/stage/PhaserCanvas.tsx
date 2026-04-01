@@ -3398,7 +3398,7 @@ function createObjectVisual(
     // Corner handles (for proportional scaling)
     const cornerNames = ['nw', 'ne', 'sw', 'se'];
     for (let i = 0; i < 4; i++) {
-      const handle = scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, handleColor);
+      const handle = scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, handleColor);
       handle.setName(`handle_${cornerNames[i]}`);
       handle.setVisible(false);
       handle.setInteractive({
