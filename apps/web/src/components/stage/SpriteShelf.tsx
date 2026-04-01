@@ -4,7 +4,6 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
-import { ComponentLibraryBrowser } from '../dialogs/ComponentLibraryBrowser';
 import { Button } from '@/components/ui/button';
 import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
@@ -38,6 +37,7 @@ import {
   FolderOpen,
   FolderPlus,
   GripVertical,
+  Shapes,
 } from '@/components/ui/icons';
 import type {
   GameObject,
@@ -147,7 +147,7 @@ interface VisibleShelfTreeEntry {
 
 interface SpriteShelfProps {
   showQuickSceneSwitch?: boolean;
-  showComponentLibraryButton?: boolean;
+  showObjectLibraryButton?: boolean;
 }
 
 function collectVisibleRenameableItems(
@@ -214,7 +214,7 @@ function collectFolderDescendants(folderId: string, folders: SceneFolder[]): Set
 
 export function SpriteShelf({
   showQuickSceneSwitch = true,
-  showComponentLibraryButton = true,
+  showObjectLibraryButton = true,
 }: SpriteShelfProps = {}) {
   const {
     project,
@@ -276,7 +276,6 @@ export function SpriteShelf({
   const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
-  const [showComponentLibrary, setShowComponentLibrary] = useState(false);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const cancelInlineRenameOnBlurRef = useRef(false);
@@ -1389,38 +1388,6 @@ export function SpriteShelf({
     });
   };
 
-  const handleComponentLibrarySelect = (componentId: string) => {
-    addComponentInstanceWithHistory({
-      source: 'sprite-shelf:add-component-instance',
-      sceneId: selectedSceneId,
-      componentId,
-      addComponentInstance,
-      selectObject,
-    });
-  };
-
-  const handleComponentLibraryDelete = (componentId: string) => {
-    handleDeleteComponentById(componentId);
-  };
-
-  const handleComponentLibraryEditCode = (componentId: string) => {
-    if (!project) return;
-
-    let sceneId = selectedSceneId;
-    if (!sceneId) {
-      sceneId = project.scenes[0]?.id ?? null;
-    }
-    if (!sceneId) return;
-
-    if (sceneId !== selectedSceneId) {
-      selectScene(sceneId);
-    }
-
-    setActiveObjectTab('code');
-    selectObjects([], null);
-    selectComponent(componentId);
-  };
-
   const willDeleteSelection = !!contextMenu
     && contextMenu.kind === 'object'
     && selectedIdsInScene.length > 1
@@ -1633,7 +1600,13 @@ export function SpriteShelf({
       onPointerEnter={() => setIsShelfHovered(true)}
       onPointerLeave={() => setIsShelfHovered(false)}
     >
-      <div className={`${panelHeaderClassNames.chrome} ${panelHeaderClassNames.splitRow}`}>
+      <div
+        className={`${panelHeaderClassNames.chrome} ${
+          showQuickSceneSwitch
+            ? panelHeaderClassNames.splitRow
+            : `${panelHeaderClassNames.row} justify-center`
+        } h-auto border-b-0 py-1`}
+      >
         {showQuickSceneSwitch ? (
           <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
             <DropdownMenuTrigger asChild>
@@ -1656,9 +1629,9 @@ export function SpriteShelf({
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
-          </DropdownMenu>
-        ) : (
-          <div aria-hidden="true" />
+            </DropdownMenu>
+          ) : (
+          null
         )}
 
         <div className="flex items-center gap-1">
@@ -1668,14 +1641,14 @@ export function SpriteShelf({
           <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
             <FolderPlus className="size-4" />
           </Button>
-          {showComponentLibraryButton ? (
+          {showObjectLibraryButton ? (
             <Button
               size="icon-xs"
               variant="ghost"
-              onClick={() => setShowComponentLibrary(true)}
-              title="Component Library"
+              onClick={() => setShowLibrary(true)}
+              title="Object Library"
             >
-              <Component className="size-4" />
+              <Shapes className="size-4" />
             </Button>
           ) : null}
         </div>
@@ -1917,13 +1890,6 @@ export function SpriteShelf({
         open={showLibrary}
         onOpenChange={setShowLibrary}
         onSelect={handleLibrarySelect}
-      />
-      <ComponentLibraryBrowser
-        open={showComponentLibrary}
-        onOpenChange={setShowComponentLibrary}
-        onSelect={handleComponentLibrarySelect}
-        onDelete={handleComponentLibraryDelete}
-        onEditCode={handleComponentLibraryEditCode}
       />
 
       <Dialog open={!!folderDeleteTarget} onOpenChange={(open) => !open && handleCancelDeleteFolder()}>

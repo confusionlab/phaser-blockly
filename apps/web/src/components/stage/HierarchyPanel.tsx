@@ -571,8 +571,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
       onPointerEnter={() => setIsPaneHovered(true)}
       onPointerLeave={() => setIsPaneHovered(false)}
     >
-      <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.splitRow)}>
-        <div aria-hidden="true" />
+      <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.row, 'h-auto justify-center border-b-0 py-1')}>
         <div className="flex items-center gap-1">
           {renderHeaderActions}
           <Button type="button" size="icon-xs" variant="ghost" onClick={onAddItem} title={`Add ${itemLabel}`}>
@@ -915,7 +914,7 @@ export function HierarchyPanel() {
       <div className="min-h-0 flex-1">
         {activeHierarchyTab === 'scene' ? <SceneHierarchyTab /> : null}
         {activeHierarchyTab === 'object' ? (
-          <SpriteShelf showQuickSceneSwitch={true} showComponentLibraryButton={false} />
+          <SpriteShelf showQuickSceneSwitch={false} showObjectLibraryButton={true} />
         ) : null}
         {activeHierarchyTab === 'component' ? <ComponentHierarchyTab /> : null}
       </div>
