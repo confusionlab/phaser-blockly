@@ -23,12 +23,14 @@ import {
   type PointSelectionTransformSnapshot,
   type SelectedPathAnchorTransformSnapshot,
 } from './costumeCanvasShared';
+import { applyCanvasCursor } from './costumeCanvasBitmapRuntime';
 import { getFabricObjectType } from './costumeCanvasVectorRuntime';
 import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   type TransformGizmoCorner,
   computeCornerScaleResult,
   getTransformGizmoHandleFrame,
+  getTransformGizmoRotateCursor,
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
   rotateTransformPoint,
@@ -1513,6 +1515,12 @@ export function useCostumeCanvasVectorPathController({
       selectionKey: snapshot.selectionKey,
       rotationRadians: nextRotation,
     };
+    if (session.mode === 'rotate') {
+      const fabricCanvas = fabricCanvasRef.current;
+      if (fabricCanvas) {
+        applyCanvasCursor(fabricCanvas, getTransformGizmoRotateCursor(nextRotation, 'n'));
+      }
+    }
 
     path.set('dirty', true);
     stabilizePathAfterAnchorMutation(path, referenceCommandPoint);

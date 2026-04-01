@@ -2639,6 +2639,10 @@ function createEditorScene(
           selectedContainer.y = frame.centerY + relX * sin + relY * cos;
           selectedContainer.rotation = start.rotation + deltaRotation;
         }
+        const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+        if (canvas && corner) {
+          canvas.style.cursor = getTransformGizmoRotateCursor((frame.rotation ?? 0) + deltaRotation, corner);
+        }
       } else if (corner) {
         const rotation = frame.rotation ?? 0;
         const localRotation = -rotation;
@@ -3582,7 +3586,7 @@ function createObjectVisual(
     );
     rotateHandle.setName('handle_rotate');
     rotateHandle.setVisible(false);
-    rotateHandle.setInteractive({ useHandCursor: false, cursor: getTransformGizmoRotateCursor() });
+    rotateHandle.setInteractive({ useHandCursor: false, cursor: getTransformGizmoRotateCursor(0, 'n') });
     scene.input.setDraggable(rotateHandle);
     container.add(rotateHandle);
     gizmoHandles.push(rotateHandle);
@@ -3678,6 +3682,10 @@ function createObjectVisual(
             container.x = startFrame.centerX + nextOffset.x;
             container.y = startFrame.centerY + nextOffset.y;
             container.rotation = startRotation + deltaRotation;
+            const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+            if (canvas) {
+              canvas.style.cursor = getTransformGizmoRotateCursor(container.rotation, 'n');
+            }
           } else if (handleName === 'handle_nw' || handleName === 'handle_ne' || handleName === 'handle_sw' || handleName === 'handle_se') {
             const frameGeometry = getTransformGizmoHandleFrame(frameCenter, startFrame.width, startFrame.height, rotation);
             const proportional = shouldUseProportionalStageScale([obj.id], pointerEvent);
@@ -3860,7 +3868,7 @@ function createObjectVisual(
       if (rotateHandle) {
         rotateHandle.setScale(invUiScaleX, invUiScaleY);
         if (rotateHandle.input) {
-          rotateHandle.input.cursor = getTransformGizmoRotateCursor(rotation);
+          rotateHandle.input.cursor = getTransformGizmoRotateCursor(rotation, 'n');
         }
         rotateHandle.setPosition(offsetX, topY - rotateDistance * signY);
       }

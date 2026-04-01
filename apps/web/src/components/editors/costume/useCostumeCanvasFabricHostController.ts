@@ -604,7 +604,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
               case 'move':
                 return 'move';
               case 'rotate':
-                return getTransformGizmoRotateCursor(rotationRadians);
+                return getTransformGizmoRotateCursor(rotationRadians, 'n');
               case 'scale-tl':
                 return getTransformGizmoCornerCursor('nw', rotationRadians);
               case 'scale-tr':

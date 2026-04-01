@@ -1,6 +1,7 @@
 export type TransformGizmoCorner = 'nw' | 'ne' | 'se' | 'sw';
 export type TransformGizmoEdge = 'horizontal' | 'vertical';
 export type TransformGizmoSide = 'n' | 'e' | 's' | 'w';
+export type TransformGizmoRotateAnchor = TransformGizmoCorner | TransformGizmoSide;
 
 export interface TransformGizmoPoint {
   x: number;
@@ -55,22 +56,26 @@ export const TRANSFORM_GIZMO_TOUCH_PADDING = 4;
 export const TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH = [6, 5] as const;
 const TRANSFORM_CURSOR_SIZE = 24;
 const TRANSFORM_CURSOR_HOTSPOT = 12;
-const TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES = 45;
+const TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES = 1;
 const transformCursorCache = new Map<string, string>();
 
-const ROTATE_CURSOR_MARKUP = [
-  '<path d="M8 16.25A6.2 6.2 0 0 1 16.25 8" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
-  '<path d="M12.8 7.15H17.35V11.7" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
-  '<path d="M8 16.25A6.2 6.2 0 0 1 16.25 8" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
-  '<path d="M12.8 7.15H17.35V11.7" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+const SCALE_CURSOR_MARKUP = [
+  '<path d="M6.25 12H17.75" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M9.35 8.9L6.25 12L9.35 15.1" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M14.65 8.9L17.75 12L14.65 15.1" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M6.25 12H17.75" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M9.35 8.9L6.25 12L9.35 15.1" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M14.65 8.9L17.75 12L14.65 15.1" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
 ].join('');
 
-const SYSTEM_AXIS_RESIZE_CURSORS = [
-  'ew-resize',
-  'nwse-resize',
-  'ns-resize',
-  'nesw-resize',
-] as const;
+const ROTATE_CURSOR_MARKUP = [
+  '<path d="M7.35 16.55A7.35 7.35 0 0 1 16.2 7.7L18.05 7.7" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M4.7 13.85L7.35 16.55L10 13.9" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M14.85 4.95L18.05 7.7L15.25 10.75" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M7.35 16.55A7.35 7.35 0 0 1 16.2 7.7L18.05 7.7" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M4.7 13.85L7.35 16.55L10 13.9" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path d="M14.85 4.95L18.05 7.7L15.25 10.75" stroke="#111827" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+].join('');
 
 function normalizeCursorDegrees(degrees: number) {
   if (!Number.isFinite(degrees)) {
@@ -104,7 +109,9 @@ function getTransformCursor(
   fallback: string,
   incrementDegrees: number = TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES,
 ) {
-  const quantizedDegrees = quantizeCursorDegrees(rotationDegrees, incrementDegrees);
+  const quantizedDegrees = incrementDegrees > 0
+    ? quantizeCursorDegrees(rotationDegrees, incrementDegrees)
+    : normalizeCursorDegrees(rotationDegrees);
   const cacheKey = `${key}:${quantizedDegrees}`;
   const cached = transformCursorCache.get(cacheKey);
   if (cached) {
@@ -129,40 +136,50 @@ function getCornerBaseDegrees(corner: TransformGizmoCorner) {
   }
 }
 
-function getRotateCornerBaseDegrees(corner?: TransformGizmoCorner) {
-  switch (corner) {
+function getRotateAnchorBaseDegrees(anchor: TransformGizmoRotateAnchor = 'n') {
+  switch (anchor) {
+    case 'n':
+      return 45;
+    case 'e':
+      return 135;
+    case 's':
+      return 225;
+    case 'w':
+      return 315;
     case 'ne':
-      return 0;
-    case 'se':
       return 90;
-    case 'sw':
+    case 'se':
       return 180;
-    case 'nw':
+    case 'sw':
       return 270;
-    default:
+    case 'nw':
       return 0;
+    default:
+      return 45;
   }
 }
 
-function getDoubleSidedResizeCursor(rotationDegrees: number) {
-  const axisIndex = Math.round(normalizeCursorDegrees(rotationDegrees) / 45) % 4;
-  return SYSTEM_AXIS_RESIZE_CURSORS[axisIndex]!;
+function getScaleCursor(rotationDegrees: number) {
+  return getTransformCursor('scale', SCALE_CURSOR_MARKUP, rotationDegrees, 'ew-resize', 0);
 }
 
 export function getTransformGizmoCornerCursor(corner: TransformGizmoCorner, rotationRadians: number = 0) {
   const rotationDegrees = getCornerBaseDegrees(corner) + (rotationRadians * 180) / Math.PI;
-  return getDoubleSidedResizeCursor(rotationDegrees);
+  return getScaleCursor(rotationDegrees);
 }
 
 export function getTransformGizmoEdgeCursor(edge: TransformGizmoEdge, rotationRadians: number = 0) {
   const baseDegrees = edge === 'horizontal' ? 0 : 90;
   const rotationDegrees = baseDegrees + (rotationRadians * 180) / Math.PI;
-  return getDoubleSidedResizeCursor(rotationDegrees);
+  return getScaleCursor(rotationDegrees);
 }
 
-export function getTransformGizmoRotateCursor(rotationRadians: number = 0, corner?: TransformGizmoCorner) {
-  const rotationDegrees = getRotateCornerBaseDegrees(corner) + (rotationRadians * 180) / Math.PI;
-  return getTransformCursor(`rotate-${corner ?? 'free'}`, ROTATE_CURSOR_MARKUP, rotationDegrees, 'grab');
+export function getTransformGizmoRotateCursor(
+  rotationRadians: number = 0,
+  anchor: TransformGizmoRotateAnchor = 'n',
+) {
+  const rotationDegrees = getRotateAnchorBaseDegrees(anchor) + (rotationRadians * 180) / Math.PI;
+  return getTransformCursor(`rotate-${anchor}`, ROTATE_CURSOR_MARKUP, rotationDegrees, 'grab');
 }
 
 export function rotateTransformPoint<TPoint extends TransformGizmoPoint>(point: TPoint, radians: number): TPoint {
