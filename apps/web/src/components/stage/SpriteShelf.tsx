@@ -269,6 +269,7 @@ export function SpriteShelf() {
   const [contextMenu, setContextMenu] = useState<
     | { x: number; y: number; kind: 'object'; object: GameObject }
     | { x: number; y: number; kind: 'folder'; folder: SceneFolder }
+    | { x: number; y: number; kind: 'empty' }
     | null
   >(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
@@ -799,6 +800,29 @@ export function SpriteShelf() {
 
     selectionAnchorObjectIdRef.current = null;
     clearSelection();
+  };
+
+  const handleEmptyShelfContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    if (draggedLayerKeys.length > 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-sprite-shelf-row="true"]')) {
+      return;
+    }
+
+    const interactiveTarget = target?.closest(
+      'button, input, textarea, select, [contenteditable="true"], [role="button"]',
+    );
+    if (interactiveTarget && interactiveTarget !== event.currentTarget) {
+      return;
+    }
+
+    event.preventDefault();
+    focusShortcutSurface();
+    setContextMenuPosition({ left: event.clientX, top: event.clientY });
+    setContextMenu({ x: event.clientX, y: event.clientY, kind: 'empty' });
   };
 
   const handleObjectRowClick = (e: React.MouseEvent, objectId: string) => {
@@ -1809,14 +1833,15 @@ export function SpriteShelf() {
         ref={shortcutSurfaceRef}
         data-editor-shortcut-surface="scene-objects"
         tabIndex={0}
-        className="flex flex-1 min-h-0 min-w-0 w-full flex-col overflow-x-hidden outline-none"
+        className="flex flex-1 min-h-0 min-w-0 w-full flex-col overflow-hidden outline-none"
         onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
       >
         <ScrollArea
-          className="flex-1 min-h-0 min-w-0 w-full overflow-hidden"
+          className="h-full min-h-0 min-w-0 w-full overflow-hidden"
           onDragOver={handleRootDragOver}
           onDrop={handleRootDrop}
           onClick={handleEmptyShelfClick}
+          onContextMenu={handleEmptyShelfContextMenu}
           data-testid="sprite-shelf-scroll-area"
         >
           <div className="min-h-full w-0 min-w-full">
@@ -1949,7 +1974,7 @@ export function SpriteShelf() {
                   {deleteLabel}
                 </Button>
               </>
-            ) : (
+            ) : contextMenu.kind === 'folder' ? (
               <>
                 <Button
                   variant="ghost"
@@ -1974,6 +1999,31 @@ export function SpriteShelf() {
                 >
                   <Trash2 className="size-4" />
                   Delete Folder
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handlePaste}
+                  disabled={!hasSceneObjectClipboardContents()}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <Clipboard className="size-4" />
+                  Paste
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    handleAddFolder(null);
+                    handleCloseContextMenu();
+                  }}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <FolderPlus className="size-4" />
+                  New Folder
                 </Button>
               </>
             )}

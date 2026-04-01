@@ -373,6 +373,21 @@ export type PathAnchorDragState = {
   previousOutgoing: Point | null;
 };
 
+export type MirroredPathAnchorHandleRole = 'incoming' | 'outgoing';
+
+export interface MirroredPathAnchorDragSession {
+  path: any;
+  anchorIndex: number;
+  handleRole: MirroredPathAnchorHandleRole;
+  dragState: PathAnchorDragState | null;
+  currentPointerScene: Point;
+  hasChanged: boolean;
+  moveAnchorMode: boolean;
+  moveAnchorStartCommandPoint: Point | null;
+  moveAnchorSnapshot: PathAnchorDragState | null;
+  controlsHydrated: boolean;
+}
+
 export type PointSelectionTransformMode =
   | 'move'
   | TransformGizmoCornerTarget;

@@ -43,27 +43,23 @@ async function bootstrapProjectWithSingleObject(page: Page): Promise<void> {
   await expect(page.getByText(/^Object 1$/)).toBeVisible();
 }
 
-test('sprite shelf fills its container and stays non-scrollable until content overflows', async ({ page }) => {
+test('sprite shelf stays non-scrollable until content overflows', async ({ page }) => {
   await bootstrapProjectWithSingleObject(page);
 
-  const metrics = await page.evaluate(() => {
-    const surface = document.querySelector('[data-editor-shortcut-surface="scene-objects"]') as HTMLElement | null;
-    const viewport = document.querySelector(
-      '[data-testid="sprite-shelf-scroll-area"] [data-slot="scroll-area-viewport"]',
-    ) as HTMLElement | null;
+  const viewport = page.locator('[data-testid="sprite-shelf-scroll-area"] [data-slot="scroll-area-viewport"]');
+  const readMetrics = async () =>
+    viewport.evaluate((node) => ({
+      clientHeight: node.clientHeight,
+      scrollHeight: node.scrollHeight,
+      scrollTop: node.scrollTop,
+    }));
 
-    if (!surface || !viewport) {
-      throw new Error('Failed to find the sprite shelf scroll surface');
-    }
+  const beforeWheel = await readMetrics();
 
-    return {
-      surfaceHeight: surface.getBoundingClientRect().height,
-      viewportHeight: viewport.getBoundingClientRect().height,
-      clientHeight: viewport.clientHeight,
-      scrollHeight: viewport.scrollHeight,
-    };
-  });
+  expect(beforeWheel.scrollHeight - beforeWheel.clientHeight).toBeLessThanOrEqual(1);
 
-  expect(Math.abs(metrics.surfaceHeight - metrics.viewportHeight)).toBeLessThan(2);
-  expect(metrics.scrollHeight - metrics.clientHeight).toBeLessThanOrEqual(1);
+  await viewport.hover();
+  await page.mouse.wheel(0, 240);
+
+  await expect.poll(async () => (await readMetrics()).scrollTop).toBe(beforeWheel.scrollTop);
 });

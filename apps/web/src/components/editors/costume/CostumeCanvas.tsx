@@ -32,6 +32,7 @@ import {
 import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import {
   CANVAS_SIZE,
+  type MirroredPathAnchorDragSession,
   MIN_ZOOM,
   MAX_ZOOM,
   ZOOM_STEP,
@@ -49,6 +50,7 @@ import { useCostumeCanvasBitmapSelectionController } from './useCostumeCanvasBit
 import { useCostumeCanvasBitmapLayerController } from './useCostumeCanvasBitmapLayerController';
 import { useCostumeCanvasCommandController } from './useCostumeCanvasCommandController';
 import { useCostumeCanvasPenController } from './useCostumeCanvasPenController';
+import { useCostumeCanvasMirroredPathHotkeys } from './useCostumeCanvasMirroredPathHotkeys';
 import { useCostumeCanvasPenHotkeys } from './useCostumeCanvasPenHotkeys';
 import { useCostumeCanvasSelectionController } from './useCostumeCanvasSelectionController';
 import { useCostumeCanvasToolController } from './useCostumeCanvasToolController';
@@ -324,6 +326,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     anchorIndex: number;
     dragState: PathAnchorDragState;
   } | null>(null);
+  const mirroredPathAnchorDragSessionRef = useRef<MirroredPathAnchorDragSession | null>(null);
+  const mirroredPathAnchorDragModifierStateRef = useRef({ space: false });
   const pointSelectionTransformFrameRef = useRef<PointSelectionTransformFrameState | null>(null);
   const pointSelectionTransformSessionRef = useRef<PointSelectionTransformSession | null>(null);
   const pointSelectionMarqueeSessionRef = useRef<PointSelectionMarqueeSession | null>(null);
@@ -645,7 +649,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, [setHostedLayerReady, syncActiveLayerCanvasVisibility]);
 
   const {
-    applyMirroredPathAnchorCurveDrag,
+    applyMirroredPathAnchorCurveDragSession,
     applyPointSelectionMarqueeSession,
     applyPointSelectionTransformSession,
     beginPointSelectionTransformSession,
@@ -673,6 +677,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     resolveAnchorFromPathControlKey,
     restoreAllOriginalControls,
     restoreOriginalControls,
+    resolveMirroredPathAnchorHandleRole,
+    setMirroredPathAnchorDragSessionMoveMode,
     setPathNodeHandleType,
     setSelectedPathAnchors,
     stabilizePathAfterAnchorMutation,
@@ -704,7 +710,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   } = useCostumeCanvasVectorObjectController({
     activePathAnchorRef,
     activeToolRef,
-    applyMirroredPathAnchorCurveDrag,
+    applyMirroredPathAnchorCurveDragSession,
     buildPathDataFromPoints,
     createFourPointEllipsePathData,
     editorModeRef,
@@ -725,11 +731,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
     movePathAnchorByDelta,
+    mirroredPathAnchorDragSessionRef,
     originalControlsRef,
     pointSelectionMarqueeSessionRef,
     pointSelectionTransformSessionRef,
     removeDuplicateClosedPathAnchorControl,
     renderPenDraftGuide,
+    resolveMirroredPathAnchorHandleRole,
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
     setPathNodeHandleType,
@@ -813,6 +821,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     insertPathPointAtScenePosition,
     isPointSelectionToggleModifierPressed,
     loadBitmapLayer,
+    mirroredPathAnchorDragSessionRef,
     movePathAnchorByDelta,
     penAnchorPlacementSessionRef,
     penDraftRef,
@@ -938,6 +947,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
       saveHistory();
     }
 
+    if (mirroredPathAnchorDragSessionRef.current) {
+      const shouldSave = mirroredPathAnchorDragSessionRef.current.hasChanged;
+      mirroredPathAnchorDragSessionRef.current = null;
+      mirroredPathAnchorDragModifierStateRef.current.space = false;
+      if (shouldSave) {
+        saveHistory();
+      }
+    }
+
     if (shapeDraftRef.current) {
       const completedShapeDraft = shapeDraftRef.current;
       shapeDraftRef.current = null;
@@ -995,6 +1013,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     removeLastPenDraftAnchor,
     setPenAnchorMoveMode,
     syncPenPlacementToAltModifier,
+  });
+
+  useCostumeCanvasMirroredPathHotkeys({
+    activeToolRef,
+    editorModeRef,
+    fabricCanvasRef,
+    mirroredPathAnchorDragModifierStateRef,
+    mirroredPathAnchorDragSessionRef,
+    setMirroredPathAnchorDragSessionMoveMode,
   });
 
   useCostumeCanvasImperativeHandle({

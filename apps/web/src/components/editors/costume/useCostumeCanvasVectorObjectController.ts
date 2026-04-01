@@ -13,6 +13,8 @@ import type { DrawingTool, VectorHandleMode, VectorPathNodeHandleType } from './
 import { vectorHandleModeToPathNodeHandleType } from './CostumeToolbar';
 import {
   HANDLE_SIZE,
+  type MirroredPathAnchorDragSession,
+  type MirroredPathAnchorHandleRole,
   VECTOR_POINT_EDIT_GUIDE_STROKE,
   VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH,
   VECTOR_POINT_HANDLE_GUIDE_STROKE,
@@ -44,12 +46,9 @@ import {
 interface UseCostumeCanvasVectorObjectControllerOptions {
   activePathAnchorRef: MutableRefObject<{ path: any; anchorIndex: number } | null>;
   activeToolRef: MutableRefObject<DrawingTool>;
-  applyMirroredPathAnchorCurveDrag: (
-    pathObj: any,
-    anchorIndex: number,
-    changed: 'anchor' | 'incoming' | 'outgoing',
+  applyMirroredPathAnchorCurveDragSession: (
+    session: MirroredPathAnchorDragSession,
     pointerScene: Point,
-    dragState?: any,
   ) => boolean;
   buildPathDataFromPoints: (points: Point[], closed: boolean) => string;
   createFourPointEllipsePathData: (obj: any) => string | null;
@@ -71,11 +70,17 @@ interface UseCostumeCanvasVectorObjectControllerOptions {
   isPathCurveDragModifierPressed: (eventData: any) => boolean;
   isPointSelectionToggleModifierPressed: (eventData: any) => boolean;
   movePathAnchorByDelta: (pathObj: any, anchorIndex: number, deltaX: number, deltaY: number, dragState?: any) => boolean;
+  mirroredPathAnchorDragSessionRef: MutableRefObject<MirroredPathAnchorDragSession | null>;
   originalControlsRef: MutableRefObject<WeakMap<object, Record<string, Control> | undefined>>;
   pointSelectionMarqueeSessionRef: MutableRefObject<any>;
   pointSelectionTransformSessionRef?: MutableRefObject<any>;
   removeDuplicateClosedPathAnchorControl: (pathObj: any, controls: Record<string, Control>) => void;
   renderPenDraftGuide: (ctx: CanvasRenderingContext2D) => void;
+  resolveMirroredPathAnchorHandleRole: (
+    pathObj: any,
+    anchorIndex: number,
+    changed: 'anchor' | 'incoming' | 'outgoing',
+  ) => MirroredPathAnchorHandleRole;
   resolveAnchorFromPathControlKey: (pathObj: any, key: string) => { anchorIndex: number; changed: 'anchor' | 'incoming' | 'outgoing' } | null;
   restoreOriginalControls: (obj: any) => void;
   setPathNodeHandleType: (pathObj: any, anchorIndex: number, type: VectorPathNodeHandleType) => void;
@@ -93,7 +98,7 @@ interface UseCostumeCanvasVectorObjectControllerOptions {
 export function useCostumeCanvasVectorObjectController({
   activePathAnchorRef,
   activeToolRef,
-  applyMirroredPathAnchorCurveDrag,
+  applyMirroredPathAnchorCurveDragSession,
   buildPathDataFromPoints,
   createFourPointEllipsePathData,
   editorModeRef,
@@ -114,11 +119,13 @@ export function useCostumeCanvasVectorObjectController({
   isPathCurveDragModifierPressed,
   isPointSelectionToggleModifierPressed,
   movePathAnchorByDelta,
+  mirroredPathAnchorDragSessionRef,
   originalControlsRef,
   pointSelectionMarqueeSessionRef,
   pointSelectionTransformSessionRef,
   removeDuplicateClosedPathAnchorControl,
   renderPenDraftGuide,
+  resolveMirroredPathAnchorHandleRole,
   resolveAnchorFromPathControlKey,
   restoreOriginalControls,
   setPathNodeHandleType,
@@ -652,22 +659,39 @@ export function useCostumeCanvasVectorObjectController({
               );
               if (curveDrag) {
                 const dragState = getPathAnchorDragState(pathObj, resolved.anchorIndex);
-                transform.__mirroredCurveDragSession = dragState
-                  ? {
-                      anchorIndex: resolved.anchorIndex,
-                      changed: resolved.changed,
-                      dragState,
-                      controlsHydrated: false,
-                    }
-                  : {
-                      anchorIndex: resolved.anchorIndex,
-                      changed: resolved.changed,
-                      dragState: undefined,
-                      controlsHydrated: false,
-                    };
+                const pointerScene = fabricCanvasRef.current && eventData?.e
+                  ? fabricCanvasRef.current.getScenePoint(eventData.e)
+                  : new Point(x, y);
+                const handleRole = resolveMirroredPathAnchorHandleRole(
+                  pathObj,
+                  resolved.anchorIndex,
+                  resolved.changed,
+                );
+                mirroredPathAnchorDragSessionRef.current = {
+                  path: pathObj,
+                  anchorIndex: resolved.anchorIndex,
+                  handleRole,
+                  dragState,
+                  currentPointerScene: new Point(pointerScene.x, pointerScene.y),
+                  hasChanged: false,
+                  moveAnchorMode: false,
+                  moveAnchorStartCommandPoint: null,
+                  moveAnchorSnapshot: null,
+                  controlsHydrated: false,
+                };
                 setPathNodeHandleType(pathObj, resolved.anchorIndex, 'symmetric');
+                if (
+                  mirroredPathAnchorDragSessionRef.current &&
+                  applyMirroredPathAnchorCurveDragSession(
+                    mirroredPathAnchorDragSessionRef.current,
+                    pointerScene,
+                  )
+                ) {
+                  applyVectorPointControls(pathObj);
+                  mirroredPathAnchorDragSessionRef.current.controlsHydrated = true;
+                }
               } else {
-                transform.__mirroredCurveDragSession = null;
+                mirroredPathAnchorDragSessionRef.current = null;
               }
 
               const selectionToggle = isPointSelectionToggleModifierPressed(eventData);
@@ -719,10 +743,10 @@ export function useCostumeCanvasVectorObjectController({
             : null;
           const mirroredCurveDragSession = (
             resolvedBefore &&
-            transform?.__mirroredCurveDragSession?.anchorIndex === resolvedBefore.anchorIndex &&
-            transform?.__mirroredCurveDragSession?.changed === resolvedBefore.changed
+            mirroredPathAnchorDragSessionRef.current?.path === pathObjBefore &&
+            mirroredPathAnchorDragSessionRef.current?.anchorIndex === resolvedBefore.anchorIndex
           )
-            ? transform.__mirroredCurveDragSession
+            ? mirroredPathAnchorDragSessionRef.current
             : null;
           const selectedAnchorsBefore = pathObjBefore && resolvedBefore
             ? getSelectedPathAnchorIndices(pathObjBefore)
@@ -758,12 +782,9 @@ export function useCostumeCanvasVectorObjectController({
             const pointerScene = fabricCanvas && eventData?.e
               ? fabricCanvas.getScenePoint(eventData.e)
               : null;
-            if (pointerScene && applyMirroredPathAnchorCurveDrag(
-              pathObjBefore,
-              resolvedBefore.anchorIndex,
-              resolvedBefore.changed,
+            if (pointerScene && applyMirroredPathAnchorCurveDragSession(
+              mirroredCurveDragSession,
               pointerScene,
-              mirroredCurveDragSession.dragState,
             )) {
               if (!mirroredCurveDragSession.controlsHydrated) {
                 applyVectorPointControls(pathObjBefore);
@@ -771,6 +792,7 @@ export function useCostumeCanvasVectorObjectController({
               }
               activePathAnchorRef.current = { path: pathObjBefore, anchorIndex: resolvedBefore.anchorIndex };
               syncVectorHandleModeFromSelection();
+              mirroredCurveDragSession.hasChanged = true;
               return true;
             }
           }
@@ -858,7 +880,7 @@ export function useCostumeCanvasVectorObjectController({
     return false;
   }, [
     activePathAnchorRef,
-    applyMirroredPathAnchorCurveDrag,
+    applyMirroredPathAnchorCurveDragSession,
     enforcePathAnchorHandleType,
     fabricCanvasRef,
     getAnchorPointForIndex,
@@ -867,9 +889,11 @@ export function useCostumeCanvasVectorObjectController({
     getSelectedPathAnchorIndices,
     isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
+    mirroredPathAnchorDragSessionRef,
     movePathAnchorByDelta,
     originalControlsRef,
     removeDuplicateClosedPathAnchorControl,
+    resolveMirroredPathAnchorHandleRole,
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
     setPathNodeHandleType,

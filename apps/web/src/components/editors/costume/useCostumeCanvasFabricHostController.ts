@@ -85,6 +85,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   fabricCanvasHostRef: MutableRefObject<HTMLDivElement | null>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   insertedPathAnchorDragSessionRef: MutableRefObject<any>;
+  mirroredPathAnchorDragSessionRef: MutableRefObject<any>;
   penAnchorPlacementSessionRef: MutableRefObject<any>;
   penDraftRef: MutableRefObject<any>;
   pointSelectionMarqueeSessionRef: MutableRefObject<any>;
@@ -173,6 +174,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       vectorPointEditingTargetRef,
       pointSelectionTransformSessionRef,
       insertedPathAnchorDragSessionRef,
+      mirroredPathAnchorDragSessionRef,
       pointSelectionMarqueeSessionRef,
       penAnchorPlacementSessionRef,
       penDraftRef,
@@ -750,6 +752,15 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       if (insertedPathAnchorDragSessionRef.current) {
         insertedPathAnchorDragSessionRef.current = null;
         callbacks.saveHistory();
+        return;
+      }
+
+      if (mirroredPathAnchorDragSessionRef.current) {
+        const shouldSave = mirroredPathAnchorDragSessionRef.current.hasChanged;
+        mirroredPathAnchorDragSessionRef.current = null;
+        if (shouldSave) {
+          callbacks.saveHistory();
+        }
         return;
       }
 

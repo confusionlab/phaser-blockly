@@ -15,6 +15,8 @@ import {
   VECTOR_POINT_SELECTION_MIN_SIZE,
   mirrorPointAcrossAnchor,
   normalizeRadians,
+  type MirroredPathAnchorDragSession,
+  type MirroredPathAnchorHandleRole,
   type PathAnchorDragState,
   type PointSelectionMarqueeSession,
   type PointSelectionTransformBounds,
@@ -1314,10 +1316,32 @@ export function useCostumeCanvasVectorPathController({
     normalizeAnchorIndex,
   ]);
 
-  const applyMirroredPathAnchorCurveDrag = useCallback((
+  const resolveMirroredPathAnchorHandleRole = useCallback((
     pathObj: any,
     anchorIndex: number,
     changed: 'anchor' | 'incoming' | 'outgoing',
+  ): MirroredPathAnchorHandleRole => {
+    if (changed === 'incoming' || changed === 'outgoing') {
+      return changed;
+    }
+
+    const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
+    const hasOutgoing = findOutgoingCubicCommandIndex(pathObj, normalizedAnchor) >= 0;
+    const hasIncoming = findIncomingCubicCommandIndex(pathObj, normalizedAnchor) >= 0;
+    if (!hasOutgoing && hasIncoming) {
+      return 'incoming';
+    }
+    return 'outgoing';
+  }, [
+    findIncomingCubicCommandIndex,
+    findOutgoingCubicCommandIndex,
+    normalizeAnchorIndex,
+  ]);
+
+  const applyMirroredPathAnchorCurveDrag = useCallback((
+    pathObj: any,
+    anchorIndex: number,
+    handleRole: MirroredPathAnchorHandleRole,
     pointerScene: Point,
     dragState?: PathAnchorDragState,
   ): boolean => {
@@ -1339,11 +1363,7 @@ export function useCostumeCanvasVectorPathController({
     anchorCommand[anchorCommand.length - 1] = anchorPoint.y;
 
     const mirroredPointer = mirrorPointAcrossAnchor(anchorPoint, pointerCommand);
-    const primaryRole: 'incoming' | 'outgoing' = (
-      changed === 'incoming' || changed === 'outgoing'
-    )
-      ? changed
-      : (outgoingCommandIndex >= 0 ? 'outgoing' : 'incoming');
+    const primaryRole: MirroredPathAnchorHandleRole = handleRole;
 
     const incomingCommand = incomingCommandIndex >= 0 ? commands[incomingCommandIndex] : null;
     if (incomingCommand && getCommandType(incomingCommand) === 'C') {
@@ -1378,6 +1398,87 @@ export function useCostumeCanvasVectorPathController({
     stabilizePathAfterAnchorMutation,
     syncPathAnchorSelectionAppearance,
     syncPathControlPointVisibility,
+    toPathCommandPoint,
+  ]);
+
+  const applyMirroredPathAnchorCurveDragSession = useCallback((
+    session: MirroredPathAnchorDragSession,
+    pointerScene: Point,
+  ): boolean => {
+    session.currentPointerScene = new Point(pointerScene.x, pointerScene.y);
+
+    if (session.moveAnchorMode && session.moveAnchorStartCommandPoint && session.moveAnchorSnapshot) {
+      const pointerCommandPoint = toPathCommandPoint(session.path, pointerScene);
+      if (!pointerCommandPoint) {
+        return false;
+      }
+      const deltaX = pointerCommandPoint.x - session.moveAnchorStartCommandPoint.x;
+      const deltaY = pointerCommandPoint.y - session.moveAnchorStartCommandPoint.y;
+      const moved = movePathAnchorByDelta(
+        session.path,
+        session.anchorIndex,
+        deltaX,
+        deltaY,
+        session.moveAnchorSnapshot,
+      );
+      if (!moved) {
+        return false;
+      }
+
+      enforcePathAnchorHandleType(
+        session.path,
+        session.anchorIndex,
+        'anchor',
+        session.moveAnchorSnapshot,
+      );
+      return true;
+    }
+
+    return applyMirroredPathAnchorCurveDrag(
+      session.path,
+      session.anchorIndex,
+      session.handleRole,
+      pointerScene,
+      session.dragState ?? undefined,
+    );
+  }, [
+    applyMirroredPathAnchorCurveDrag,
+    enforcePathAnchorHandleType,
+    movePathAnchorByDelta,
+    toPathCommandPoint,
+  ]);
+
+  const setMirroredPathAnchorDragSessionMoveMode = useCallback((
+    session: MirroredPathAnchorDragSession | null,
+    enabled: boolean,
+  ): boolean => {
+    if (!session) {
+      return false;
+    }
+    if (enabled === session.moveAnchorMode) {
+      return false;
+    }
+
+    if (enabled) {
+      const moveAnchorSnapshot = getPathAnchorDragState(session.path, session.anchorIndex) ?? session.dragState;
+      const moveAnchorStartCommandPoint = toPathCommandPoint(session.path, session.currentPointerScene);
+      if (!moveAnchorSnapshot || !moveAnchorStartCommandPoint) {
+        return false;
+      }
+      session.moveAnchorMode = true;
+      session.moveAnchorSnapshot = moveAnchorSnapshot;
+      session.moveAnchorStartCommandPoint = moveAnchorStartCommandPoint;
+      session.dragState = moveAnchorSnapshot;
+      return true;
+    }
+
+    session.moveAnchorMode = false;
+    session.moveAnchorSnapshot = null;
+    session.moveAnchorStartCommandPoint = null;
+    session.dragState = getPathAnchorDragState(session.path, session.anchorIndex) ?? session.dragState;
+    return true;
+  }, [
+    getPathAnchorDragState,
     toPathCommandPoint,
   ]);
 
@@ -1794,6 +1895,7 @@ export function useCostumeCanvasVectorPathController({
 
   return {
     applyMirroredPathAnchorCurveDrag,
+    applyMirroredPathAnchorCurveDragSession,
     applyPointSelectionMarqueeSession,
     applyPointSelectionTransformSession,
     beginPointSelectionTransformSession,
@@ -1821,6 +1923,8 @@ export function useCostumeCanvasVectorPathController({
     resolveAnchorFromPathControlKey,
     restoreAllOriginalControls,
     restoreOriginalControls,
+    resolveMirroredPathAnchorHandleRole,
+    setMirroredPathAnchorDragSessionMoveMode,
     setPathNodeHandleType,
     setSelectedPathAnchors,
     stabilizePathAfterAnchorMutation,
