@@ -69,8 +69,14 @@ import { useCostumeCanvasToolController } from '@/components/editors/costume/use
 import { useCostumeCanvasVectorHandleSync } from '@/components/editors/costume/useCostumeCanvasVectorHandleSync';
 import { useCostumeCanvasVectorObjectController } from '@/components/editors/costume/useCostumeCanvasVectorObjectController';
 import { useCostumeCanvasVectorPathController } from '@/components/editors/costume/useCostumeCanvasVectorPathController';
+import { syncCanvasSelectionGizmoAppearance } from '@/components/editors/costume/costumeCanvasSelectionGizmo';
 import type { BitmapBrushKind } from '@/lib/background/brushCore';
 import { EMPTY_BACKGROUND_VECTOR_FABRIC_JSON } from '@/lib/background/backgroundDocument';
+import {
+  markBackgroundVectorSceneDownDocument,
+  parseBackgroundVectorFabricJson,
+  reflectBackgroundVectorObjectsAcrossXAxis,
+} from '@/lib/background/backgroundVectorCoordinateSpace';
 
 type WorldPoint = { x: number; y: number };
 
@@ -98,6 +104,13 @@ type VectorShapeDraft =
       start: WorldPoint;
     };
 
+type WorldBounds = {
+  left: number;
+  right: number;
+  bottom: number;
+  top: number;
+};
+
 export interface BackgroundVectorCanvasHandle {
   beginShape: (tool: SupportedVectorTool, startWorld: WorldPoint) => boolean;
   updateShape: (currentWorld: WorldPoint) => void;
@@ -115,7 +128,7 @@ export interface BackgroundVectorCanvasHandle {
   flipSelection: (axis: SelectionFlipAxis) => void;
   rotateSelection: () => void;
   alignSelection: (action: AlignAction) => boolean;
-  getSelectionBounds: () => { left: number; top: number; width: number; height: number } | null;
+  getSelectionBounds: () => WorldBounds | null;
 }
 
 interface BackgroundVectorCanvasProps {
@@ -146,12 +159,12 @@ interface BackgroundVectorCanvasProps {
 function createPolygonShapePoints(kind: 'triangle' | 'star', start: WorldPoint, current: WorldPoint): { x: number; y: number }[] {
   const left = Math.min(start.x, current.x);
   const right = Math.max(start.x, current.x);
-  const bottom = Math.min(start.y, current.y);
-  const top = Math.max(start.y, current.y);
+  const top = Math.min(start.y, current.y);
+  const bottom = Math.max(start.y, current.y);
   const width = Math.max(1, right - left);
-  const height = Math.max(1, top - bottom);
+  const height = Math.max(1, bottom - top);
   const centerX = left + width * 0.5;
-  const centerY = bottom + height * 0.5;
+  const centerY = top + height * 0.5;
 
   if (kind === 'triangle') {
     return [
@@ -176,6 +189,22 @@ function createPolygonShapePoints(kind: 'triangle' | 'star', start: WorldPoint, 
     });
   }
   return points;
+}
+
+function worldPointToScenePoint(point: WorldPoint): WorldPoint {
+  return {
+    x: point.x,
+    y: -point.y,
+  };
+}
+
+function sceneBoundsToWorldBounds(bounds: { left: number; top: number; width: number; height: number }): WorldBounds {
+  return {
+    left: bounds.left,
+    right: bounds.left + bounds.width,
+    bottom: -(bounds.top + bounds.height),
+    top: -bounds.top,
+  };
 }
 
 function buildVectorStyleProps(vectorStyle: VectorToolStyle, supportsFill: boolean) {
@@ -255,7 +284,7 @@ function applyViewportTransform(
     zoom,
     0,
     0,
-    -zoom,
+    zoom,
     width * 0.5 - camera.x * zoom,
     height * 0.5 + camera.y * zoom,
   ];
@@ -391,7 +420,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return null;
     }
 
-    return JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS));
+    return JSON.stringify(markBackgroundVectorSceneDownDocument(
+      fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS) as Record<string, any>,
+    ));
   }, []);
 
   const resetHistory = useMemo(() => () => {
@@ -826,8 +857,11 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
       const requestId = ++loadRequestIdRef.current;
       let parsed: string | Record<string, any>;
+      let coordinateSpace: 'legacy-world-up' | 'scene-down' = 'legacy-world-up';
       try {
-        parsed = JSON.parse(json);
+        const parsedDocument = parseBackgroundVectorFabricJson(json);
+        parsed = parsedDocument.parsed;
+        coordinateSpace = parsedDocument.coordinateSpace;
       } catch (error) {
         if (options?.logInvalid !== false) {
           console.warn('Invalid background vector document. Loading an empty layer instead.', error);
@@ -840,6 +874,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         await fabricCanvas.loadFromJSON(parsed);
         if (loadRequestIdRef.current !== requestId) {
           return false;
+        }
+
+        if (coordinateSpace === 'legacy-world-up') {
+          reflectBackgroundVectorObjectsAcrossXAxis(fabricCanvas);
         }
 
         restoreAllOriginalControls();
@@ -938,10 +976,6 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     instrumentedCanvas.upperCanvasEl?.setAttribute('data-testid', 'background-vector-layer-canvas');
     instrumentedCanvas.wrapperEl?.setAttribute('data-testid', 'background-vector-layer-surface');
     instrumentedCanvas.wrapperEl?.classList.add('absolute', 'inset-0');
-    fabricCanvas.selectionLineWidth = 1.5;
-    fabricCanvas.selectionColor = 'rgba(14, 165, 233, 0.12)';
-    fabricCanvas.selectionBorderColor = '#0ea5e9';
-    fabricCanvas.selectionDashArray = [6, 4];
     const penOverlayCanvas = document.createElement('canvas');
     penOverlayCanvas.className = 'pointer-events-none absolute inset-0';
     penOverlayCanvas.setAttribute('aria-hidden', 'true');
@@ -983,9 +1017,15 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return;
     }
     applyViewportTransform(fabricCanvas, viewport, camera, zoom);
-    renderVectorPointEditingGuide();
+    syncCanvasSelectionGizmoAppearance({
+      fabricCanvas,
+      getZoomInvariantMetric,
+      pointEditingTarget: vectorPointEditingTargetRef.current,
+      renderVectorPointEditingGuide,
+      zoom,
+    });
     drawPenOverlay();
-  }, [camera, drawPenOverlay, renderVectorPointEditingGuide, viewport, zoom]);
+  }, [camera, drawPenOverlay, getZoomInvariantMetric, renderVectorPointEditingGuide, viewport, zoom]);
 
   useEffect(() => {
     const penOverlayCanvas = penOverlayCanvasRef.current;
@@ -1598,41 +1638,42 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         return false;
       }
 
+      const startScene = worldPointToScenePoint(startWorld);
       const commonStyle = buildVectorStyleProps(vectorStyleRef.current, tool !== 'line');
       let draft: VectorShapeDraft | null = null;
       if (tool === 'rectangle') {
         const rect = new Rect({
-          left: startWorld.x,
-          top: startWorld.y,
+          left: startScene.x,
+          top: startScene.y,
           width: 1,
           height: 1,
           originX: 'left',
-          originY: 'bottom',
+          originY: 'top',
           ...commonStyle,
         });
-        draft = { tool, object: rect, start: startWorld };
+        draft = { tool, object: rect, start: startScene };
       } else if (tool === 'circle') {
         const ellipse = new Ellipse({
-          left: startWorld.x,
-          top: startWorld.y,
+          left: startScene.x,
+          top: startScene.y,
           rx: 0.5,
           ry: 0.5,
           originX: 'center',
           originY: 'center',
           ...commonStyle,
         });
-        draft = { tool, object: ellipse, start: startWorld };
+        draft = { tool, object: ellipse, start: startScene };
       } else if (tool === 'line') {
-        const line = new Line([startWorld.x, startWorld.y, startWorld.x, startWorld.y], {
+        const line = new Line([startScene.x, startScene.y, startScene.x, startScene.y], {
           ...buildVectorStyleProps(vectorStyleRef.current, false),
         });
-        draft = { tool, object: line, start: startWorld };
+        draft = { tool, object: line, start: startScene };
       } else if (tool === 'triangle' || tool === 'star') {
-        const polygon = new Polygon(createPolygonShapePoints(tool, startWorld, startWorld), {
+        const polygon = new Polygon(createPolygonShapePoints(tool, startScene, startScene), {
           ...commonStyle,
           objectCaching: false,
         });
-        draft = { tool, object: polygon, start: startWorld };
+        draft = { tool, object: polygon, start: startScene };
       }
 
       if (!draft) {
@@ -1653,37 +1694,38 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       if (!draft || !fabricCanvas) {
         return;
       }
+      const currentScene = worldPointToScenePoint(currentWorld);
 
       if (draft.tool === 'rectangle') {
-        const left = Math.min(draft.start.x, currentWorld.x);
-        const right = Math.max(draft.start.x, currentWorld.x);
-        const bottom = Math.min(draft.start.y, currentWorld.y);
-        const top = Math.max(draft.start.y, currentWorld.y);
+        const left = Math.min(draft.start.x, currentScene.x);
+        const right = Math.max(draft.start.x, currentScene.x);
+        const top = Math.min(draft.start.y, currentScene.y);
+        const bottom = Math.max(draft.start.y, currentScene.y);
         draft.object.set({
           left,
           top,
           width: Math.max(1, right - left),
-          height: Math.max(1, top - bottom),
+          height: Math.max(1, bottom - top),
         });
       } else if (draft.tool === 'circle') {
-        const left = Math.min(draft.start.x, currentWorld.x);
-        const right = Math.max(draft.start.x, currentWorld.x);
-        const bottom = Math.min(draft.start.y, currentWorld.y);
-        const top = Math.max(draft.start.y, currentWorld.y);
+        const left = Math.min(draft.start.x, currentScene.x);
+        const right = Math.max(draft.start.x, currentScene.x);
+        const top = Math.min(draft.start.y, currentScene.y);
+        const bottom = Math.max(draft.start.y, currentScene.y);
         draft.object.set({
           left: left + (right - left) * 0.5,
-          top: bottom + (top - bottom) * 0.5,
+          top: top + (bottom - top) * 0.5,
           rx: Math.max(0.5, (right - left) * 0.5),
-          ry: Math.max(0.5, (top - bottom) * 0.5),
+          ry: Math.max(0.5, (bottom - top) * 0.5),
         });
       } else if (draft.tool === 'line') {
         draft.object.set({
-          x2: currentWorld.x,
-          y2: currentWorld.y,
+          x2: currentScene.x,
+          y2: currentScene.y,
         });
       } else {
         draft.object.set({
-          points: createPolygonShapePoints(draft.tool, draft.start, currentWorld),
+          points: createPolygonShapePoints(draft.tool, draft.start, currentScene),
         });
       }
       draft.object.setCoords?.();
@@ -1840,7 +1882,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return {
         engine: 'fabric',
         version: 1,
-        fabricJson: JSON.stringify(fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS)),
+        fabricJson: JSON.stringify(markBackgroundVectorSceneDownDocument(
+          fabricCanvas.toObject(VECTOR_JSON_EXTRA_PROPS) as Record<string, any>,
+        )),
       };
     },
     deleteSelection() {
@@ -1859,7 +1903,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return alignCanvasSelection(action);
     },
     getSelectionBounds() {
-      return getSelectionBoundsSnapshot()?.bounds ?? null;
+      const selectionBounds = getSelectionBoundsSnapshot()?.bounds ?? null;
+      return selectionBounds ? sceneBoundsToWorldBounds(selectionBounds) : null;
     },
   }), [
     activeTool,

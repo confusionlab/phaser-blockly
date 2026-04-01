@@ -1459,18 +1459,21 @@ export function SpriteShelf() {
     const rowContentPaddingClass = 'py-1';
     const indentDepth = Math.max(0, level - 1);
     const rowHoverClass = selectionSurfaceClassNames.hover;
+    const rowOverflowClass = (isInlineEditing || (isSelected && connectsToNext))
+      ? 'overflow-visible'
+      : 'overflow-hidden';
 
     return (
       <div
         key={options?.rowKey ?? item.key}
-        className={`relative w-full min-w-0 max-w-full ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`}
+        className={`relative w-full min-w-0 max-w-full ${rowOverflowClass}`}
       >
         {isDropBefore ? (
           <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
         ) : null}
         <div
           data-sprite-shelf-row="true"
-          className={`group/layer-row w-full min-w-0 max-w-full ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'} ${rowPaddingClass} select-none ${
+          className={`group/layer-row w-full min-w-0 max-w-full ${rowOverflowClass} ${rowPaddingClass} select-none ${
             isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
           }`}
           draggable={interactive && !isObjectEditing && !isFolderEditing}
@@ -1502,7 +1505,7 @@ export function SpriteShelf() {
           onDragStart={interactive ? ((e) => handleLayerDragStart(e, item)) : undefined}
           onDragEnd={interactive ? clearLayerDragState : undefined}
         >
-          <div className={`relative w-full min-w-0 max-w-full ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`}>
+          <div className={`relative w-full min-w-0 max-w-full ${rowOverflowClass}`}>
             {!isSelected && !isDropOn ? (
               <div
                 className={`pointer-events-none absolute inset-0 z-0 rounded-lg opacity-0 transition-opacity group-hover/layer-row:opacity-100 ${rowHoverClass}`}

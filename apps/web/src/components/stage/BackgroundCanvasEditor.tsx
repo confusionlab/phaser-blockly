@@ -680,7 +680,7 @@ export function BackgroundCanvasEditor() {
   }), [project?.settings.canvasHeight, project?.settings.canvasWidth]);
   const vectorAlignmentBounds = useMemo(() => ({
     left: cameraBounds.left,
-    top: cameraBounds.bottom,
+    top: -cameraBounds.top,
     width: cameraBounds.right - cameraBounds.left,
     height: cameraBounds.top - cameraBounds.bottom,
   }), [cameraBounds.bottom, cameraBounds.left, cameraBounds.right, cameraBounds.top]);
@@ -827,12 +827,7 @@ export function BackgroundCanvasEditor() {
       if (!selectionBounds) {
         return;
       }
-      fitToBounds({
-        left: selectionBounds.left,
-        right: selectionBounds.left + selectionBounds.width,
-        bottom: selectionBounds.top,
-        top: selectionBounds.top + selectionBounds.height,
-      });
+      fitToBounds(selectionBounds);
       return;
     }
 

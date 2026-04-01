@@ -35,10 +35,6 @@ import {
   MIN_ZOOM,
   MAX_ZOOM,
   ZOOM_STEP,
-  HANDLE_SIZE,
-  VECTOR_SELECTION_BORDER_SCALE,
-  OBJECT_SELECTION_CORNER_SIZE,
-  OBJECT_SELECTION_PADDING,
   COSTUME_WORLD_RECT,
   type PathAnchorDragState,
   type PointSelectionTransformSession,
@@ -61,6 +57,7 @@ import { useCostumeCanvasVectorBrushRenderer } from './useCostumeCanvasVectorBru
 import { useCostumeCanvasVectorObjectController } from './useCostumeCanvasVectorObjectController';
 import { useCostumeCanvasVectorPathController } from './useCostumeCanvasVectorPathController';
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
+import { syncCanvasSelectionGizmoAppearance } from './costumeCanvasSelectionGizmo';
 
 export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
 
@@ -1090,31 +1087,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
 
-    const selectionCornerSize = getZoomInvariantMetric(OBJECT_SELECTION_CORNER_SIZE, zoom);
-    const selectionBorderScale = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE, zoom);
-    const selectionPadding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING, zoom);
-    const pointEditingTarget = vectorPointEditingTargetRef.current as any;
-
-    fabricCanvas.forEachObject((obj: any) => {
-      obj.borderScaleFactor = selectionBorderScale;
-      obj.padding = obj === pointEditingTarget ? 0 : selectionPadding;
-      obj.cornerSize = obj === pointEditingTarget
-        ? getZoomInvariantMetric(HANDLE_SIZE, zoom)
-        : selectionCornerSize;
-      obj.setCoords?.();
+    syncCanvasSelectionGizmoAppearance({
+      fabricCanvas,
+      getZoomInvariantMetric,
+      pointEditingTarget: vectorPointEditingTargetRef.current,
+      renderVectorPointEditingGuide,
+      zoom,
     });
-
-    const activeObject = fabricCanvas.getActiveObject() as any;
-    if (activeObject) {
-      activeObject.borderScaleFactor = selectionBorderScale;
-      activeObject.padding = activeObject === pointEditingTarget ? 0 : selectionPadding;
-      activeObject.cornerSize = activeObject === pointEditingTarget
-        ? getZoomInvariantMetric(HANDLE_SIZE, zoom)
-        : selectionCornerSize;
-    }
-    activeObject?.setCoords?.();
-    fabricCanvas.requestRenderAll();
-    renderVectorPointEditingGuide();
     drawCollider(collider, activeTool === 'collider');
   }, [activeTool, collider, drawCollider, getZoomInvariantMetric, renderVectorPointEditingGuide, zoom]);
 
