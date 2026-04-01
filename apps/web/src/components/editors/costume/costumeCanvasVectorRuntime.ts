@@ -27,8 +27,8 @@ export const VECTOR_JSON_EXTRA_PROPS = [
 ];
 
 export const VECTOR_POINT_CONTROL_STYLE = {
-  cornerColor: '#0ea5e9',
-  cornerStrokeColor: '#ffffff',
+  cornerColor: 'rgba(0, 0, 0, 0)',
+  cornerStrokeColor: 'rgba(0, 0, 0, 0)',
   cornerSize: HANDLE_SIZE,
   transparentCorners: false,
 };
@@ -337,7 +337,12 @@ export function isActiveSelectionObject(obj: unknown): obj is ActiveSelection {
   return type === 'activeselection' || type === 'active_selection';
 }
 
-export function isTextObject(obj: unknown): obj is { type: string; set: (props: Record<string, unknown>) => void } {
+export function isTextObject(obj: unknown): obj is {
+  type: string;
+  fill?: unknown;
+  set: (props: Record<string, unknown>) => void;
+  setCoords?: () => void;
+} {
   const type = getFabricObjectType(obj);
   return type === 'itext' || type === 'i-text' || type === 'textbox' || type === 'text';
 }

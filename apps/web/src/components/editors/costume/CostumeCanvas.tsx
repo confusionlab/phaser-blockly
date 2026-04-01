@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useCallback, forwardRef, useMemo, u
 import {
   Canvas as FabricCanvas,
   Control,
+  Point,
 } from 'fabric';
 import type {
   AlignAction,
@@ -32,6 +33,7 @@ import {
 import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import {
   CANVAS_SIZE,
+  DEFAULT_COSTUME_PREVIEW_SCALE,
   type MirroredPathAnchorDragSession,
   MIN_ZOOM,
   MAX_ZOOM,
@@ -42,6 +44,7 @@ import {
   type PointSelectionMarqueeSession,
   type PointSelectionTransformFrameState,
 } from './costumeCanvasShared';
+import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
 import { useCostumeCanvasColliderController } from './useCostumeCanvasColliderController';
 import { useCostumeCanvasFabricHostController } from './useCostumeCanvasFabricHostController';
 import { useCostumeCanvasHistoryController } from './useCostumeCanvasHistoryController';
@@ -171,6 +174,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const layerSurfaceRefs = useRef(new Map<string, HTMLCanvasElement>());
   const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
+  const vectorGuideOverlayDprRef = useRef(1);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
   const colliderCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorStrokeCtxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -364,6 +368,44 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     isVisible,
     onViewScaleChange,
   });
+
+  useEffect(() => {
+    const vectorGuideCanvas = vectorGuideCanvasRef.current;
+    if (!vectorGuideCanvas) {
+      return;
+    }
+    vectorGuideOverlayDprRef.current = syncCanvasViewportSize(
+      vectorGuideCanvas,
+      viewportSize.width,
+      viewportSize.height,
+    );
+  }, [viewportSize.height, viewportSize.width]);
+
+  const clearVectorGuideOverlayContext = useCallback((ctx: CanvasRenderingContext2D) => {
+    clearCanvasInCssPixels(
+      ctx,
+      viewportSize.width,
+      viewportSize.height,
+      vectorGuideOverlayDprRef.current,
+    );
+  }, [viewportSize.height, viewportSize.width]);
+
+  const applyVectorGuideSceneTransform = useCallback((ctx: CanvasRenderingContext2D) => {
+    const previewScale = zoom * DEFAULT_COSTUME_PREVIEW_SCALE;
+    const canvasLeft = viewportSize.width / 2 - cameraCenter.x * previewScale;
+    const canvasTop = viewportSize.height / 2 - cameraCenter.y * previewScale;
+    ctx.transform(previewScale, 0, 0, previewScale, canvasLeft, canvasTop);
+  }, [cameraCenter.x, cameraCenter.y, viewportSize.height, viewportSize.width, zoom]);
+
+  const mapCostumeCanvasPointToOverlay = useCallback((point: Point) => {
+    const previewScale = zoom * DEFAULT_COSTUME_PREVIEW_SCALE;
+    const canvasLeft = viewportSize.width / 2 - cameraCenter.x * previewScale;
+    const canvasTop = viewportSize.height / 2 - cameraCenter.y * previewScale;
+    return new Point(
+      canvasLeft + point.x * previewScale,
+      canvasTop + point.y * previewScale,
+    );
+  }, [cameraCenter.x, cameraCenter.y, viewportSize.height, viewportSize.width, zoom]);
 
   const { drawCollider } = useCostumeCanvasColliderController({
     activeTool,
@@ -710,9 +752,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   } = useCostumeCanvasVectorObjectController({
     activePathAnchorRef,
     activeToolRef,
+    applyOverlaySceneTransform: applyVectorGuideSceneTransform,
     applyMirroredPathAnchorCurveDragSession,
     buildPathDataFromPoints,
     createFourPointEllipsePathData,
+    clearOverlayContext: clearVectorGuideOverlayContext,
     editorModeRef,
     enforcePathAnchorHandleType,
     fabricCanvasRef,
@@ -730,6 +774,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     hasPointSelectionMarqueeExceededThreshold,
     isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
+    mapFabricOverlayPoint: mapCostumeCanvasPointToOverlay,
     movePathAnchorByDelta,
     mirroredPathAnchorDragSessionRef,
     originalControlsRef,

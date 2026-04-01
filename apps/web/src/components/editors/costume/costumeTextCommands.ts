@@ -1,7 +1,10 @@
 type EditableTextObject = {
+  fill?: unknown;
   type?: string;
   isEditing?: boolean;
   enterEditing: (...args: any[]) => void;
+  exitEditing?: (...args: any[]) => void;
+  setCoords?: () => void;
   selectAll?: () => unknown;
   hiddenTextareaContainer?: HTMLElement | null;
 };

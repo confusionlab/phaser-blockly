@@ -189,7 +189,9 @@ const LIBRARY_ICONS = {
 export type LibraryIconName = keyof typeof LIBRARY_ICONS;
 export type IconName = LibraryIconName | AppIconName;
 
-type CustomIconProps = Omit<LucideProps, 'ref'>;
+type CustomIconProps = Omit<LucideProps, 'ref'> & {
+  title?: string;
+};
 
 function createRegistryIconComponent(name: AppIconName) {
   return function RegistryIconComponent({

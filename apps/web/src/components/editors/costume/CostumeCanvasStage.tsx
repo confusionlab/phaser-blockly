@@ -127,6 +127,14 @@ export function CostumeCanvasStage({
           className="fixed inset-0 overflow-hidden pointer-events-none"
         />
 
+        <canvas
+          ref={vectorGuideCanvasRef}
+          data-testid="costume-vector-guide-overlay"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{ zIndex: 30 }}
+        />
+
         <div
           data-testid="costume-canvas-surface"
           className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg-soft"
@@ -188,7 +196,6 @@ export function CostumeCanvasStage({
             editorModeState={editorModeState}
             hasBitmapFloatingSelection={hasBitmapFloatingSelection}
             layerZIndex={Math.max(2, hostedLayerIndex >= 0 ? hostedLayerIndex * 2 + 2 : documentLayers.length * 2 + 2)}
-            vectorGuideCanvasRef={vectorGuideCanvasRef}
           />
 
         </div>

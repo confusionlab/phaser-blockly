@@ -44,8 +44,8 @@ import {
 import {
   computeEdgeScaleResult,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
-  TRANSFORM_GIZMO_ROTATE_RING_OUTSET,
   computeCornerScaleResult,
+  getTransformGizmoRotateRingRadii,
   getTransformGizmoCornerCursor,
   getTransformGizmoEdgeCursor,
   getTransformGizmoEdgeSegments,
@@ -56,6 +56,9 @@ import {
   rotateTransformPoint,
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { TransformGizmoCorner, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
+import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
+import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
+import { projectPhaserCameraWorldPointToScreen } from '@/lib/phaserCameraProjection';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -82,9 +85,7 @@ const GIZMO_HANDLE_NAMES = [
 const PIXEL_HIT_ALPHA_TOLERANCE = 1;
 const GIZMO_STROKE_PX = 2;
 const GIZMO_EDGE_HIT_THICKNESS_PX = 16;
-const GIZMO_ROTATE_DISTANCE_PX = 24;
-const GIZMO_ROTATE_RADIUS_PX = 6;
-const GIZMO_ROTATE_RING_RADIUS_PX = TRANSFORM_GIZMO_HANDLE_RADIUS + TRANSFORM_GIZMO_ROTATE_RING_OUTSET;
+const GIZMO_ROTATE_RING_RADIUS_PX = getTransformGizmoRotateRingRadii(TRANSFORM_GIZMO_HANDLE_RADIUS).outerRadius;
 const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
 const GROUND_LAYER_DEPTH = -1000;
@@ -99,6 +100,19 @@ type FrozenStageFrame = {
   src: string;
   width: number;
   height: number;
+};
+
+type StageSelectionOverlayFrame = {
+  centerX: number;
+  centerY: number;
+  width: number;
+  height: number;
+  rotation?: number;
+};
+
+type StageSelectionOverlayGuide = {
+  proportional: boolean;
+  corner: TransformGizmoCorner | null;
 };
 
 type PendingCostumeVisualTarget = {
@@ -516,6 +530,7 @@ interface PhaserCanvasProps {
 
 export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const transformOverlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
   const inventoryUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -581,6 +596,98 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       height: canvasRect.height,
     };
   }, []);
+
+  const clearStageTransformOverlay = useCallback(() => {
+    const overlayCanvas = transformOverlayCanvasRef.current;
+    const container = containerRef.current;
+    if (!overlayCanvas || !container) {
+      return;
+    }
+
+    const width = Math.max(1, Math.round(container.clientWidth || 1));
+    const height = Math.max(1, Math.round(container.clientHeight || 1));
+    const dpr = syncCanvasViewportSize(overlayCanvas, width, height);
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    clearCanvasInCssPixels(ctx, width, height, dpr);
+  }, []);
+
+  const syncStageTransformOverlay = useCallback((scene: Phaser.Scene | null | undefined) => {
+    const overlayCanvas = transformOverlayCanvasRef.current;
+    const container = containerRef.current;
+    if (!overlayCanvas || !container || !scene || isPlaying) {
+      clearStageTransformOverlay();
+      return;
+    }
+
+    const width = Math.max(1, Math.round(container.clientWidth || scene.scale.width || 1));
+    const height = Math.max(1, Math.round(container.clientHeight || scene.scale.height || 1));
+    const dpr = syncCanvasViewportSize(overlayCanvas, width, height);
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    clearCanvasInCssPixels(ctx, width, height, dpr);
+
+    const frame = scene.data.get('stageTransformOverlayFrame') as StageSelectionOverlayFrame | null | undefined;
+    if (!frame) {
+      return;
+    }
+
+    const camera = scene.cameras.main;
+    const rotation = frame.rotation ?? 0;
+    const worldFrame = getTransformGizmoHandleFrame(
+      { x: frame.centerX, y: frame.centerY },
+      frame.width,
+      frame.height,
+      rotation,
+    );
+    const worldToScreen = (point: { x: number; y: number }) => projectPhaserCameraWorldPointToScreen({
+      x: camera.x,
+      y: camera.y,
+      width: camera.width,
+      height: camera.height,
+      scrollX: camera.scrollX,
+      scrollY: camera.scrollY,
+      zoomX: camera.zoomX,
+      zoomY: camera.zoomY,
+      rotation: (camera as { rotation?: number }).rotation ?? 0,
+    }, point);
+
+    const guide = scene.data.get('stageTransformOverlayGuide') as StageSelectionOverlayGuide | null | undefined;
+
+    renderScreenSpaceTransformOverlay(ctx, {
+      nw: worldToScreen(worldFrame.corners.nw),
+      ne: worldToScreen(worldFrame.corners.ne),
+      se: worldToScreen(worldFrame.corners.se),
+      sw: worldToScreen(worldFrame.corners.sw),
+    }, {
+      proportionalGuide: guide?.proportional ?? false,
+      corner: guide?.corner ?? null,
+    });
+  }, [clearStageTransformOverlay, isPlaying]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || isPlaying) {
+      clearStageTransformOverlay();
+      return;
+    }
+
+    const syncOverlay = () => {
+      const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+      syncStageTransformOverlay(editorScene);
+    };
+
+    syncOverlay();
+    const observer = new ResizeObserver(syncOverlay);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [clearStageTransformOverlay, isPlaying, syncStageTransformOverlay]);
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -955,6 +1062,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             const tiledBackgroundLayer = this.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
             if (tiledBackgroundLayer) {
               updateTiledBackgroundLayer(this, tiledBackgroundLayer);
+            }
+
+            if (!isPlaying) {
+              syncStageTransformOverlay(this);
             }
 
             if (isPlaying && runtimeRef.current) {
@@ -1728,6 +1839,13 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         className="w-full h-full"
         style={isPlaying ? undefined : { backgroundColor: editorStageShellColor }}
       />
+      {!isPlaying ? (
+        <canvas
+          ref={transformOverlayCanvasRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-[11]"
+        />
+      ) : null}
       {!isPlaying && frozenStageFrame ? (
         <img
           src={frozenStageFrame.src}
@@ -1934,6 +2052,8 @@ function createEditorScene(
   scene.data.set('canvasWidth', canvasWidth);
   scene.data.set('canvasHeight', canvasHeight);
   scene.data.set('tiledBackgroundLayer', tiledBackgroundLayer);
+  scene.data.set('stageTransformOverlayFrame', null);
+  scene.data.set('stageTransformOverlayGuide', null);
   scene.events.once('shutdown', () => {
     destroyTiledBackgroundLayer(scene, tiledBackgroundLayer);
   });
@@ -2122,14 +2242,10 @@ function createEditorScene(
     hasMoved: boolean;
   } | null = null;
   const groupSelectionRect = scene.add.rectangle(0, 0, 10, 10);
-  groupSelectionRect.setStrokeStyle(GIZMO_STROKE_PX, STAGE_GIZMO_COLOR);
-  groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.08);
+  groupSelectionRect.setStrokeStyle(0, STAGE_GIZMO_COLOR, 0);
+  groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.001);
   groupSelectionRect.setVisible(false);
   groupSelectionRect.setDepth(10_002);
-
-  const groupProportionalGuide = scene.add.graphics();
-  groupProportionalGuide.setVisible(false);
-  groupProportionalGuide.setDepth(10_003);
 
   const groupHandles = new Map<string, Phaser.GameObjects.Shape | Phaser.GameObjects.Arc>();
   const createGroupHandle = (
@@ -2143,7 +2259,7 @@ function createEditorScene(
       hitAreaCallback?: Phaser.Types.Input.HitAreaCallback;
     },
   ) => {
-    shape.setFillStyle(0xffffff, options?.interactiveAlpha ?? 1);
+    shape.setFillStyle(0xffffff, options?.interactiveAlpha ?? 0.001);
     if (options?.showStroke !== false) {
       shape.setStrokeStyle(1.5, STAGE_GIZMO_COLOR, 1);
     }
@@ -2162,10 +2278,30 @@ function createEditorScene(
     groupHandles.set(name, shape);
   };
 
-  createGroupHandle('handle_nw', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('nw'));
-  createGroupHandle('handle_ne', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('ne'));
-  createGroupHandle('handle_sw', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('sw'));
-  createGroupHandle('handle_se', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('se'));
+  createGroupHandle(
+    'handle_nw',
+    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    getTransformGizmoCornerCursor('nw'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_ne',
+    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    getTransformGizmoCornerCursor('ne'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_sw',
+    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    getTransformGizmoCornerCursor('sw'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_se',
+    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    getTransformGizmoCornerCursor('se'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
   createGroupHandle(
     'handle_n',
     scene.add.rectangle(0, 0, 1, 1, 0xffffff),
@@ -2284,35 +2420,6 @@ function createEditorScene(
     }
   };
 
-  const drawGroupDashedLine = (
-    graphics: Phaser.GameObjects.Graphics,
-    start: { x: number; y: number },
-    end: { x: number; y: number },
-    cameraZoom: number,
-  ) => {
-    const dashLength = 8 / Math.max(cameraZoom, 0.0001);
-    const gapLength = 6 / Math.max(cameraZoom, 0.0001);
-    const totalLength = Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y);
-    if (totalLength <= 0) {
-      return;
-    }
-
-    const dx = (end.x - start.x) / totalLength;
-    const dy = (end.y - start.y) / totalLength;
-    let distance = 0;
-    while (distance < totalLength) {
-      const segmentStart = distance;
-      const segmentEnd = Math.min(totalLength, distance + dashLength);
-      graphics.lineBetween(
-        start.x + dx * segmentStart,
-        start.y + dy * segmentStart,
-        start.x + dx * segmentEnd,
-        start.y + dy * segmentEnd,
-      );
-      distance += dashLength + gapLength;
-    }
-  };
-
   const shouldUseProportionalStageScale = (
     selectedIds: string[],
     event?: MouseEvent | PointerEvent,
@@ -2330,8 +2437,8 @@ function createEditorScene(
   const setGroupGizmoVisible = (visible: boolean) => {
     groupSelectionRect.setVisible(visible);
     if (!visible) {
-      groupProportionalGuide.clear();
-      groupProportionalGuide.setVisible(false);
+      scene.data.set('stageTransformOverlayFrame', null);
+      scene.data.set('stageTransformOverlayGuide', null);
     }
     groupHandles.forEach((handle) => handle.setVisible(visible));
   };
@@ -2406,7 +2513,6 @@ function createEditorScene(
   const updateGroupGizmo = (frame: { centerX: number; centerY: number; width: number; height: number; rotation?: number }) => {
     const cameraZoom = scene.cameras.main.zoom || 1;
     const uiScale = 1 / cameraZoom;
-    const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
     const rotation = frame.rotation ?? 0;
     const frameGeometry = getTransformGizmoHandleFrame(
       { x: frame.centerX, y: frame.centerY },
@@ -2419,8 +2525,8 @@ function createEditorScene(
     groupSelectionRect.setPosition(frame.centerX, frame.centerY);
     groupSelectionRect.setSize(frame.width, frame.height);
     groupSelectionRect.setRotation(rotation);
-    groupSelectionRect.setStrokeStyle(strokeWidth, STAGE_GIZMO_COLOR);
-    groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.06);
+    groupSelectionRect.setStrokeStyle(0, STAGE_GIZMO_COLOR, 0);
+    groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.001);
 
     const setHandle = (name: string, x: number, y: number, corner?: TransformGizmoCorner) => {
       const handle = groupHandles.get(name);
@@ -2485,15 +2591,13 @@ function createEditorScene(
     setHandle('handle_rotate_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y, 'sw');
     setHandle('handle_rotate_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y, 'se');
 
-    groupProportionalGuide.clear();
-    if (groupTransformContext?.corner && groupTransformContext.proportional) {
-      const diagonal = getTransformCornerDiagonal(frameGeometry.corners, groupTransformContext.corner);
-      groupProportionalGuide.lineStyle(strokeWidth, STAGE_GIZMO_COLOR, 1);
-      drawGroupDashedLine(groupProportionalGuide, diagonal.start, diagonal.end, cameraZoom);
-      groupProportionalGuide.setVisible(true);
-    } else {
-      groupProportionalGuide.setVisible(false);
-    }
+    scene.data.set('stageTransformOverlayFrame', frame);
+    scene.data.set('stageTransformOverlayGuide', groupTransformContext?.proportional
+      ? {
+          proportional: true,
+          corner: groupTransformContext.corner,
+        } satisfies StageSelectionOverlayGuide
+      : null);
   };
 
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
@@ -2801,8 +2905,6 @@ function createEditorScene(
           onDragEnd(id, selectedContainer.x, selectedContainer.y, selectedContainer.scaleX, selectedContainer.scaleY, rotationDeg);
         }
       });
-      groupProportionalGuide.clear();
-      groupProportionalGuide.setVisible(false);
       groupTransformContext = null;
       setLockedStageCursor(null);
     });
@@ -2997,13 +3099,6 @@ function createEditorScene(
       });
     });
 
-    // Handle transform end from gizmo (includes scale and rotation)
-    container.on('transformend', () => {
-      const rotationDeg = Phaser.Math.RadToDeg(container.rotation);
-      runInHistoryTransaction('stage:transform-object', () => {
-        onDragEnd(obj.id, container.x, container.y, container.scaleX, container.scaleY, rotationDeg);
-      });
-    });
   });
 
   // Update selection visuals on scene update
@@ -3546,9 +3641,6 @@ function createObjectVisual(
   let selectionRect: Phaser.GameObjects.Rectangle | null = null;
   // Create invisible hit area rectangle for reliable click detection
   let hitRect: Phaser.GameObjects.Rectangle | null = null;
-  // Gizmo handles for transform
-  const gizmoHandles: Phaser.GameObjects.GameObject[] = [];
-
   if (isEditorMode) {
     // Selection visual
     selectionRect = scene.add.rectangle(0, 0, defaultSize + 8, defaultSize + 8);
@@ -3558,363 +3650,11 @@ function createObjectVisual(
     selectionRect.setName('selection');
     container.add(selectionRect);
 
-    const styleSingleObjectHandle = <T extends Phaser.GameObjects.Shape | Phaser.GameObjects.Arc>(handle: T) => {
-      handle.setFillStyle(0xffffff, 1);
-      handle.setStrokeStyle(1.5, STAGE_GIZMO_COLOR, 1);
-      return handle;
-    };
-    const styleSingleObjectEdgeHitArea = <T extends Phaser.GameObjects.Shape>(handle: T) => {
-      handle.setFillStyle(0xffffff, 0.001);
-      handle.setStrokeStyle(0, STAGE_GIZMO_COLOR, 0);
-      return handle;
-    };
-
-    // Corner handles (for proportional scaling)
-    const cornerNames = ['nw', 'ne', 'sw', 'se'];
-    for (let i = 0; i < 4; i++) {
-      const handle = styleSingleObjectHandle(
-        scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
-      );
-      handle.setName(`handle_${cornerNames[i]}`);
-      handle.setVisible(false);
-      handle.setInteractive({
-        useHandCursor: false,
-        cursor: getTransformGizmoCornerCursor(cornerNames[i] as TransformGizmoCorner),
-      });
-      scene.input.setDraggable(handle);
-      container.add(handle);
-      gizmoHandles.push(handle);
-    }
-
-    // Edge handles (for axis scaling)
-    const edgeNames = ['n', 's', 'e', 'w'];
-    for (let i = 0; i < 4; i++) {
-      const isHorizontalEdge = i < 2;
-      const handle = styleSingleObjectEdgeHitArea(
-        scene.add.rectangle(
-          0,
-          0,
-          isHorizontalEdge ? 1 : GIZMO_EDGE_HIT_THICKNESS_PX,
-          isHorizontalEdge ? GIZMO_EDGE_HIT_THICKNESS_PX : 1,
-          0xffffff,
-        ),
-      );
-      handle.setName(`handle_${edgeNames[i]}`);
-      handle.setVisible(false);
-      handle.setInteractive({
-        useHandCursor: false,
-        cursor: getTransformGizmoEdgeCursor(isHorizontalEdge ? 'vertical' : 'horizontal'),
-      });
-      scene.input.setDraggable(handle);
-      container.add(handle);
-      gizmoHandles.push(handle);
-    }
-
-    // Rotation handle (circle above object)
-    const rotateHandle = styleSingleObjectHandle(
-      scene.add.circle(0, 0, GIZMO_ROTATE_RADIUS_PX, 0xffffff),
-    );
-    rotateHandle.setName('handle_rotate');
-    rotateHandle.setVisible(false);
-    rotateHandle.setInteractive({ useHandCursor: false, cursor: getTransformGizmoRotateCursor(0, 'n') });
-    scene.input.setDraggable(rotateHandle);
-    container.add(rotateHandle);
-    gizmoHandles.push(rotateHandle);
-
-    // Rotation line connecting to top edge
-    const rotateLine = scene.add.graphics();
-    rotateLine.setName('rotate_line');
-    rotateLine.setVisible(false);
-    container.add(rotateLine);
-
-    // Store gizmo data on container
-    container.setData('gizmoHandles', gizmoHandles);
-
     // Invisible hit area - this is what actually receives clicks
     hitRect = scene.add.rectangle(0, 0, defaultSize, defaultSize, 0x000000, 0);
     hitRect.setName('hitArea');
+    hitRect.setInteractive({ useHandCursor: true });
     container.add(hitRect);
-
-    const getSingleObjectGizmoFrame = () => {
-      const selRect = container.getByName('selection') as Phaser.GameObjects.Rectangle | null;
-      const localCenterX = selRect?.x ?? 0;
-      const localCenterY = selRect?.y ?? 0;
-      const worldCenter = container.getWorldTransformMatrix().transformPoint(localCenterX, localCenterY);
-      return {
-        centerX: worldCenter.x,
-        centerY: worldCenter.y,
-        width: Math.max(1, (selRect?.width ?? container.width) * Math.abs(container.scaleX)),
-        height: Math.max(1, (selRect?.height ?? container.height) * Math.abs(container.scaleY)),
-        rotation: container.rotation,
-      };
-    };
-
-    // Set up editor interactivity immediately (with one-frame fallback for scene init edge cases).
-    const setupEditorInteractivity = () => {
-      if (!hitRect || !hitRect.scene) return;
-      if (container.getData('editorInteractivityBound')) return;
-
-      hitRect.setInteractive({ useHandCursor: true });
-
-      // Set up gizmo handle drag logic
-      let startScaleX = 1, startScaleY = 1;
-      let startPointerX = 0, startPointerY = 0;
-      let startRotation = 0;
-      let startX = 0, startY = 0;
-      let startFrame: {
-        centerX: number;
-        centerY: number;
-        width: number;
-        height: number;
-        rotation: number;
-      } | null = null;
-
-      for (const handle of gizmoHandles) {
-        const handleName = handle.name;
-
-        (handle as Phaser.GameObjects.Shape).on('dragstart', (pointer: Phaser.Input.Pointer) => {
-          startScaleX = container.scaleX;
-          startScaleY = container.scaleY;
-          startPointerX = pointer.worldX;
-          startPointerY = pointer.worldY;
-          startRotation = container.rotation;
-          startX = container.x;
-          startY = container.y;
-          startFrame = getSingleObjectGizmoFrame();
-          setLockedStageCursor(handleName === 'handle_rotate'
-            ? getTransformGizmoRotateCursor(container.rotation, 'n')
-            : null);
-        });
-
-        (handle as Phaser.GameObjects.Shape).on('drag', (pointer: Phaser.Input.Pointer) => {
-          if (!startFrame) {
-            return;
-          }
-
-          const pointerEvent = pointer.event as MouseEvent | PointerEvent | undefined;
-          const centered = !!pointerEvent?.altKey;
-          const minSize = 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001);
-          const rotation = startFrame.rotation;
-          const localRotation = -rotation;
-          const frameCenter = {
-            x: startFrame.centerX,
-            y: startFrame.centerY,
-          };
-
-          if (handleName === 'handle_rotate') {
-            const angleToStart = Math.atan2(startPointerY - startFrame.centerY, startPointerX - startFrame.centerX);
-            const angleToCurrent = Math.atan2(pointer.worldY - startFrame.centerY, pointer.worldX - startFrame.centerX);
-            const deltaRotation = angleToCurrent - angleToStart;
-            const nextOffset = rotateTransformPoint(
-              {
-                x: startX - startFrame.centerX,
-                y: startY - startFrame.centerY,
-              },
-              deltaRotation,
-            );
-            container.x = startFrame.centerX + nextOffset.x;
-            container.y = startFrame.centerY + nextOffset.y;
-            container.rotation = startRotation + deltaRotation;
-            const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
-            if (canvas) {
-              canvas.style.cursor = getTransformGizmoRotateCursor(container.rotation, 'n');
-            }
-          } else if (handleName === 'handle_nw' || handleName === 'handle_ne' || handleName === 'handle_sw' || handleName === 'handle_se') {
-            const frameGeometry = getTransformGizmoHandleFrame(frameCenter, startFrame.width, startFrame.height, rotation);
-            const proportional = shouldUseProportionalStageScale([obj.id], pointerEvent);
-            const cornerConfig: Record<TransformGizmoCorner, {
-              anchor: { x: number; y: number };
-              handleXSign: -1 | 1;
-              handleYSign: -1 | 1;
-            }> = {
-              nw: { anchor: frameGeometry.corners.se, handleXSign: -1, handleYSign: -1 },
-              ne: { anchor: frameGeometry.corners.sw, handleXSign: 1, handleYSign: -1 },
-              se: { anchor: frameGeometry.corners.nw, handleXSign: 1, handleYSign: 1 },
-              sw: { anchor: frameGeometry.corners.ne, handleXSign: -1, handleYSign: 1 },
-            };
-            const cornerName = handleName.replace('handle_', '') as TransformGizmoCorner;
-            const resolvedCorner = cornerConfig[cornerName];
-            const referencePoint = centered ? frameCenter : resolvedCorner.anchor;
-            const scaled = computeCornerScaleResult({
-              referencePoint,
-              pointerPoint: { x: pointer.worldX, y: pointer.worldY },
-              handleXSign: resolvedCorner.handleXSign,
-              handleYSign: resolvedCorner.handleYSign,
-              rotationRadians: localRotation,
-              baseWidth: startFrame.width,
-              baseHeight: startFrame.height,
-              minWidth: minSize,
-              minHeight: minSize,
-              proportional,
-              centered,
-            });
-            const sx = scaled.signedWidth / Math.max(startFrame.width, 0.0001);
-            const sy = scaled.signedHeight / Math.max(startFrame.height, 0.0001);
-            const localStart = rotateTransformPoint(
-              {
-                x: startX - referencePoint.x,
-                y: startY - referencePoint.y,
-              },
-              localRotation,
-            );
-            const scaledLocal = {
-              x: localStart.x * sx,
-              y: localStart.y * sy,
-            };
-            const nextOrigin = rotateTransformPoint(scaledLocal, -localRotation);
-            container.x = referencePoint.x + nextOrigin.x;
-            container.y = referencePoint.y + nextOrigin.y;
-            container.setScale(startScaleX * sx, startScaleY * sy);
-          } else if (handleName === 'handle_n' || handleName === 'handle_s' || handleName === 'handle_e' || handleName === 'handle_w') {
-            const frameGeometry = getTransformGizmoHandleFrame(frameCenter, startFrame.width, startFrame.height, rotation);
-            const proportional = shouldUseProportionalStageScale([obj.id], pointerEvent);
-            const side = handleName.replace('handle_', '') as TransformGizmoSide;
-            const edgeSegments = getTransformGizmoEdgeSegments(frameGeometry);
-            const resolvedEdge = edgeSegments[side];
-            const referencePoint = centered ? frameCenter : edgeSegments[getOppositeTransformGizmoSide(side)].center;
-            const scaled = computeEdgeScaleResult({
-              referencePoint,
-              pointerPoint: { x: pointer.worldX, y: pointer.worldY },
-              edge: resolvedEdge.edge,
-              handleSign: resolvedEdge.handleSign,
-              rotationRadians: localRotation,
-              baseWidth: startFrame.width,
-              baseHeight: startFrame.height,
-              minWidth: minSize,
-              minHeight: minSize,
-              proportional,
-              centered,
-            });
-            const sx = scaled.signedWidth / Math.max(startFrame.width, 0.0001);
-            const sy = scaled.signedHeight / Math.max(startFrame.height, 0.0001);
-            const localStart = rotateTransformPoint(
-              {
-                x: startX - referencePoint.x,
-                y: startY - referencePoint.y,
-              },
-              localRotation,
-            );
-            const scaledLocal = {
-              x: localStart.x * sx,
-              y: localStart.y * sy,
-            };
-            const nextOrigin = rotateTransformPoint(scaledLocal, -localRotation);
-            container.x = referencePoint.x + nextOrigin.x;
-            container.y = referencePoint.y + nextOrigin.y;
-            container.setScale(startScaleX * sx, startScaleY * sy);
-          }
-
-          // Update gizmo handle positions
-          updateGizmoPositions();
-        });
-
-        (handle as Phaser.GameObjects.Shape).on('dragend', () => {
-          // Emit transform end event for editor scene to handle
-          setLockedStageCursor(null);
-          container.emit('transformend');
-        });
-      }
-
-      container.setData('editorInteractivityBound', true);
-    };
-
-    setupEditorInteractivity();
-    scene.time.delayedCall(0, setupEditorInteractivity);
-
-    // Function to update gizmo handle positions based on current bounds
-    const updateGizmoPositions = () => {
-      const selRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
-      if (!selRect) return;
-      const cameraZoom = scene.cameras.main.zoom || 1;
-      const rotation = container.rotation;
-      const absScaleX = Math.max(Math.abs(container.scaleX), 0.0001);
-      const absScaleY = Math.max(Math.abs(container.scaleY), 0.0001);
-      const invUiScaleX = 1 / (absScaleX * cameraZoom);
-      const invUiScaleY = 1 / (absScaleY * cameraZoom);
-      const strokeWidth = GIZMO_STROKE_PX / (Math.max(absScaleX, absScaleY) * cameraZoom);
-      selRect.setStrokeStyle(Math.max(0.5, strokeWidth), 0x4A90D9);
-
-      const halfW = selRect.width / 2;
-      const halfH = selRect.height / 2;
-      const offsetX = selRect.x;
-      const offsetY = selRect.y;
-      const signX = container.scaleX < 0 ? -1 : 1;
-      const signY = container.scaleY < 0 ? -1 : 1;
-      const leftX = offsetX - halfW * signX;
-      const rightX = offsetX + halfW * signX;
-      const topY = offsetY - halfH * signY;
-      const bottomY = offsetY + halfH * signY;
-      const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / (Math.max(absScaleX, absScaleY) * cameraZoom);
-
-      // Corner handles
-      const nw = container.getByName('handle_nw') as Phaser.GameObjects.Rectangle;
-      const ne = container.getByName('handle_ne') as Phaser.GameObjects.Rectangle;
-      const sw = container.getByName('handle_sw') as Phaser.GameObjects.Rectangle;
-      const se = container.getByName('handle_se') as Phaser.GameObjects.Rectangle;
-      if (nw) nw.setScale(invUiScaleX, invUiScaleY);
-      if (ne) ne.setScale(invUiScaleX, invUiScaleY);
-      if (sw) sw.setScale(invUiScaleX, invUiScaleY);
-      if (se) se.setScale(invUiScaleX, invUiScaleY);
-      if (nw?.input) nw.input.cursor = getTransformGizmoCornerCursor('nw', rotation);
-      if (ne?.input) ne.input.cursor = getTransformGizmoCornerCursor('ne', rotation);
-      if (sw?.input) sw.input.cursor = getTransformGizmoCornerCursor('sw', rotation);
-      if (se?.input) se.input.cursor = getTransformGizmoCornerCursor('se', rotation);
-      if (nw) nw.setPosition(leftX, topY);
-      if (ne) ne.setPosition(rightX, topY);
-      if (sw) sw.setPosition(leftX, bottomY);
-      if (se) se.setPosition(rightX, bottomY);
-
-      // Edge handles
-      const n = container.getByName('handle_n') as Phaser.GameObjects.Rectangle;
-      const s = container.getByName('handle_s') as Phaser.GameObjects.Rectangle;
-      const e = container.getByName('handle_e') as Phaser.GameObjects.Rectangle;
-      const w = container.getByName('handle_w') as Phaser.GameObjects.Rectangle;
-      const horizontalEdgeThickness = GIZMO_EDGE_HIT_THICKNESS_PX / (absScaleY * cameraZoom);
-      const verticalEdgeThickness = GIZMO_EDGE_HIT_THICKNESS_PX / (absScaleX * cameraZoom);
-      if (n) {
-        n.setSize(selRect.width, horizontalEdgeThickness);
-        n.setDisplaySize(selRect.width, horizontalEdgeThickness);
-      }
-      if (s) {
-        s.setSize(selRect.width, horizontalEdgeThickness);
-        s.setDisplaySize(selRect.width, horizontalEdgeThickness);
-      }
-      if (e) {
-        e.setSize(verticalEdgeThickness, selRect.height);
-        e.setDisplaySize(verticalEdgeThickness, selRect.height);
-      }
-      if (w) {
-        w.setSize(verticalEdgeThickness, selRect.height);
-        w.setDisplaySize(verticalEdgeThickness, selRect.height);
-      }
-      if (n?.input) n.input.cursor = getTransformGizmoEdgeCursor('vertical', rotation);
-      if (s?.input) s.input.cursor = getTransformGizmoEdgeCursor('vertical', rotation);
-      if (e?.input) e.input.cursor = getTransformGizmoEdgeCursor('horizontal', rotation);
-      if (w?.input) w.input.cursor = getTransformGizmoEdgeCursor('horizontal', rotation);
-      if (n) n.setPosition(offsetX, topY);
-      if (s) s.setPosition(offsetX, bottomY);
-      if (e) e.setPosition(rightX, offsetY);
-      if (w) w.setPosition(leftX, offsetY);
-
-      // Rotation handle and line
-      const rotateHandle = container.getByName('handle_rotate') as Phaser.GameObjects.Arc;
-      const rotateLine = container.getByName('rotate_line') as Phaser.GameObjects.Graphics;
-      if (rotateHandle) {
-        rotateHandle.setScale(invUiScaleX, invUiScaleY);
-        if (rotateHandle.input) {
-          rotateHandle.input.cursor = getTransformGizmoRotateCursor(rotation, 'n');
-        }
-        rotateHandle.setPosition(offsetX, topY - rotateDistance * signY);
-      }
-      if (rotateLine) {
-        rotateLine.clear();
-        rotateLine.lineStyle(Math.max(0.5, strokeWidth), 0x4A90D9, 1);
-        rotateLine.lineBetween(offsetX, topY, offsetX, topY - rotateDistance * signY + 4 * signY);
-      }
-    };
-
-    // Store updateGizmoPositions on container for external access
-    container.setData('updateGizmoPositions', updateGizmoPositions);
   }
 
   // Helper to update container size, hit area, and selection rect based on bounds
@@ -3953,10 +3693,6 @@ function createObjectVisual(
         selectionRect.setSize(w + 8, h + 8);
         selectionRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
       }
-
-      // Update gizmo handle positions
-      const updateGizmo = container.getData('updateGizmoPositions') as (() => void) | undefined;
-      if (updateGizmo) updateGizmo();
     } else {
       // No bounds - use full image size (fallback)
       const w = Math.max(imgWidth, 32);
@@ -3975,10 +3711,6 @@ function createObjectVisual(
         selectionRect.setSize(w + 8, h + 8);
         selectionRect.setPosition(0, 0);
       }
-
-      // Update gizmo handle positions
-      const updateGizmo = container.getData('updateGizmoPositions') as (() => void) | undefined;
-      if (updateGizmo) updateGizmo();
     }
   };
 

@@ -277,28 +277,25 @@ async function readCheckerboardInkSamples(page: Page): Promise<number> {
 
 async function readCostumeSelectionGizmoBluePixelCount(page: Page): Promise<number> {
   return await page.evaluate(() => {
-    const host = document.querySelector('[data-testid="costume-active-layer-host"]');
-    if (!(host instanceof HTMLElement)) {
+    const overlayCanvas = document.querySelector('[data-testid="costume-vector-guide-overlay"]');
+    if (!(overlayCanvas instanceof HTMLCanvasElement)) {
       return 0;
     }
 
     let bluePixelCount = 0;
-    const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[];
-    for (const canvas of canvases) {
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) {
-        continue;
-      }
+    const ctx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
 
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      for (let index = 0; index < imageData.data.length; index += 4) {
-        const red = imageData.data[index];
-        const green = imageData.data[index + 1];
-        const blue = imageData.data[index + 2];
-        const alpha = imageData.data[index + 3];
-        if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
-          bluePixelCount += 1;
-        }
+    const imageData = ctx.getImageData(0, 0, overlayCanvas.width, overlayCanvas.height);
+    for (let index = 0; index < imageData.data.length; index += 4) {
+      const red = imageData.data[index];
+      const green = imageData.data[index + 1];
+      const blue = imageData.data[index + 2];
+      const alpha = imageData.data[index + 3];
+      if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
+        bluePixelCount += 1;
       }
     }
 

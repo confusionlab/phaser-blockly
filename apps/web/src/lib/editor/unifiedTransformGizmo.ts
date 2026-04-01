@@ -2,6 +2,7 @@ export type TransformGizmoCorner = 'nw' | 'ne' | 'se' | 'sw';
 export type TransformGizmoEdge = 'horizontal' | 'vertical';
 export type TransformGizmoSide = 'n' | 'e' | 's' | 'w';
 export type TransformGizmoRotateAnchor = TransformGizmoCorner | TransformGizmoSide;
+export type TransformGizmoDiagonal = 'nw-se' | 'ne-sw';
 export type TransformGizmoCornerScaleTarget = `scale-${TransformGizmoCorner}`;
 export type TransformGizmoCornerRotateTarget = `rotate-${TransformGizmoCorner}`;
 export type TransformGizmoCornerTarget = TransformGizmoCornerScaleTarget | TransformGizmoCornerRotateTarget;
@@ -55,8 +56,10 @@ export const TRANSFORM_GIZMO_HANDLE_RADIUS = 7;
 export const TRANSFORM_GIZMO_STROKE_WIDTH = 1.5;
 export const TRANSFORM_GIZMO_ROTATE_RING_INSET = 2;
 export const TRANSFORM_GIZMO_ROTATE_RING_OUTSET = 12;
+export const TRANSFORM_GIZMO_ROTATE_RING_AREA_MULTIPLIER = 2.5;
 export const TRANSFORM_GIZMO_TOUCH_PADDING = 4;
 export const TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH = [6, 5] as const;
+export const DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL: TransformGizmoDiagonal = 'nw-se';
 const TRANSFORM_CURSOR_SIZE = 24;
 const TRANSFORM_CURSOR_HOTSPOT = 12;
 const TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES = 1;
@@ -226,20 +229,40 @@ export function rotateTransformPoint<TPoint extends TransformGizmoPoint>(point: 
   } as TPoint;
 }
 
+export function getTransformDiagonalFromCorner(corner: TransformGizmoCorner): TransformGizmoDiagonal {
+  switch (corner) {
+    case 'nw':
+    case 'se':
+      return 'nw-se';
+    case 'ne':
+    case 'sw':
+      return 'ne-sw';
+  }
+}
+
+export function getTransformDiagonal<TPoint extends TransformGizmoPoint>(
+  corners: TransformGizmoCorners<TPoint>,
+  diagonal: TransformGizmoDiagonal,
+) {
+  switch (diagonal) {
+    case 'nw-se':
+      return { start: corners.nw, end: corners.se };
+    case 'ne-sw':
+      return { start: corners.ne, end: corners.sw };
+  }
+}
+
+export function resolveTransformProportionalGuideDiagonal(
+  corner?: TransformGizmoCorner | null,
+): TransformGizmoDiagonal {
+  return corner ? getTransformDiagonalFromCorner(corner) : DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL;
+}
+
 export function getTransformCornerDiagonal<TPoint extends TransformGizmoPoint>(
   corners: TransformGizmoCorners<TPoint>,
   corner: TransformGizmoCorner,
 ) {
-  switch (corner) {
-    case 'nw':
-      return { start: corners.nw, end: corners.se };
-    case 'ne':
-      return { start: corners.ne, end: corners.sw };
-    case 'se':
-      return { start: corners.se, end: corners.nw };
-    case 'sw':
-      return { start: corners.sw, end: corners.ne };
-  }
+  return getTransformDiagonal(corners, getTransformDiagonalFromCorner(corner));
 }
 
 export function drawTransformProportionalGuide(
@@ -273,6 +296,17 @@ export function isPointInsideTransformHandle(
   return getTransformGizmoDistance(point, center) <= radius;
 }
 
+export function getTransformGizmoRotateRingRadii(handleRadius: number) {
+  const innerRadius = handleRadius + TRANSFORM_GIZMO_ROTATE_RING_INSET;
+  const baseOuterRadius = handleRadius + TRANSFORM_GIZMO_ROTATE_RING_OUTSET;
+  const outerRadius = Math.sqrt(
+    (innerRadius * innerRadius)
+    + ((baseOuterRadius * baseOuterRadius) - (innerRadius * innerRadius))
+      * TRANSFORM_GIZMO_ROTATE_RING_AREA_MULTIPLIER,
+  );
+  return { innerRadius, outerRadius };
+}
+
 export function isPointInsideTransformRotateRing(
   point: TransformGizmoPoint,
   center: TransformGizmoPoint,
@@ -281,8 +315,7 @@ export function isPointInsideTransformRotateRing(
   rotationRadians: number = 0,
 ) {
   const distance = getTransformGizmoDistance(point, center);
-  const innerRadius = handleRadius + TRANSFORM_GIZMO_ROTATE_RING_INSET;
-  const outerRadius = handleRadius + TRANSFORM_GIZMO_ROTATE_RING_OUTSET;
+  const { innerRadius, outerRadius } = getTransformGizmoRotateRingRadii(handleRadius);
   if (!(distance > innerRadius && distance <= outerRadius)) {
     return false;
   }

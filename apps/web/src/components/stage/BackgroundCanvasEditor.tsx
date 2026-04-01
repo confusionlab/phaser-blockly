@@ -109,13 +109,9 @@ import { calculateBoundsFromImageData } from '@/utils/imageBounds';
 import {
   TRANSFORM_GIZMO_BORDER_COLOR,
   TRANSFORM_GIZMO_FILL_COLOR,
-  TRANSFORM_GIZMO_HANDLE_FILL,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
-  TRANSFORM_GIZMO_HANDLE_STROKE,
   computeCornerScaleResult,
   computeEdgeScaleResult,
-  drawTransformProportionalGuide,
-  getTransformCornerDiagonal,
   getTransformGizmoCornerFromTarget,
   getTransformGizmoCursorForCornerTarget,
   getTransformGizmoEdgeCursor,
@@ -125,6 +121,7 @@ import {
   isPointNearTransformEdge,
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { TransformGizmoCorner, TransformGizmoCornerTarget, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
+import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
 import { BackgroundLayerPanel } from './BackgroundLayerPanel';
 import {
   BackgroundVectorCanvas,
@@ -1633,44 +1630,13 @@ export function BackgroundCanvasEditor() {
       );
       ctx.restore();
 
-      ctx.save();
-      ctx.fillStyle = TRANSFORM_GIZMO_FILL_COLOR;
-      ctx.strokeStyle = TRANSFORM_GIZMO_BORDER_COLOR;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(geometry.corners.nw.x, geometry.corners.nw.y);
-      ctx.lineTo(geometry.corners.ne.x, geometry.corners.ne.y);
-      ctx.lineTo(geometry.corners.se.x, geometry.corners.se.y);
-      ctx.lineTo(geometry.corners.sw.x, geometry.corners.sw.y);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
       const activeTransform = floatingSelectionTransformRef.current;
-      if (activeTransform?.kind === 'scale' && activeTransform.proportional && activeTransform.corner) {
-        const diagonal = getTransformCornerDiagonal(geometry.corners, activeTransform.corner);
-        drawTransformProportionalGuide(ctx, diagonal.start, diagonal.end);
-      }
-
-      const drawHandle = (
-        point: ScreenPoint,
-        fillStyle: string = TRANSFORM_GIZMO_HANDLE_FILL,
-        strokeStyle: string = TRANSFORM_GIZMO_HANDLE_STROKE,
-      ) => {
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, TRANSFORM_GIZMO_HANDLE_RADIUS, 0, Math.PI * 2);
-        ctx.fillStyle = fillStyle;
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = strokeStyle;
-        ctx.stroke();
-      };
-
-      drawHandle(geometry.corners.nw);
-      drawHandle(geometry.corners.ne);
-      drawHandle(geometry.corners.se);
-      drawHandle(geometry.corners.sw);
-      ctx.restore();
+      renderScreenSpaceTransformOverlay(ctx, geometry.corners, {
+        proportionalGuide: activeTransform?.kind === 'scale' && activeTransform.proportional,
+        corner: activeTransform?.kind === 'scale' && activeTransform.proportional && activeTransform.corner
+          ? activeTransform.corner
+          : null,
+      });
     }
 
     if (pointerWorldRef.current && !isPanning) {

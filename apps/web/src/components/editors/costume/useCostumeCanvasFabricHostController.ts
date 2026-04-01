@@ -14,7 +14,6 @@ import {
   applyUnifiedFabricTransformCanvasOptions,
   clearUnifiedCanvasTransformGuide,
   configureUnifiedObjectTransformForGesture,
-  renderUnifiedCanvasTransformGuide,
   syncUnifiedCanvasTransformGuideFromEvent,
 } from './costumeCanvasObjectTransformGizmo';
 import {
@@ -855,7 +854,6 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         callbacksRef.current.renderVectorBrushStrokeOverlay(vectorStrokeCtx);
       }
       callbacksRef.current.renderVectorPointEditingGuide();
-      renderUnifiedCanvasTransformGuide(fabricCanvas);
       callbacksRef.current.onFabricCanvasAfterRender();
     };
 

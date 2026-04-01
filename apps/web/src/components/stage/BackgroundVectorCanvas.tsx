@@ -34,6 +34,7 @@ import type {
 } from '@/components/editors/costume/CostumeToolbar';
 import {
   getZoomInvariantCanvasMetric,
+  type MirroredPathAnchorDragSession,
   type PathAnchorDragState,
   type PointSelectionMarqueeSession,
   type PointSelectionTransformFrameState,
@@ -63,6 +64,7 @@ import {
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
 import { useCostumeCanvasPenController } from '@/components/editors/costume/useCostumeCanvasPenController';
 import { useCostumeCanvasPenHotkeys } from '@/components/editors/costume/useCostumeCanvasPenHotkeys';
+import { useCostumeCanvasMirroredPathHotkeys } from '@/components/editors/costume/useCostumeCanvasMirroredPathHotkeys';
 import { useCostumeCanvasSelectionController } from '@/components/editors/costume/useCostumeCanvasSelectionController';
 import { useCostumeCanvasSelectionTransformCommands } from '@/components/editors/costume/useCostumeCanvasSelectionTransformCommands';
 import { useCostumeCanvasToolController } from '@/components/editors/costume/useCostumeCanvasToolController';
@@ -73,7 +75,6 @@ import {
   applyUnifiedFabricTransformCanvasOptions,
   clearUnifiedCanvasTransformGuide,
   configureUnifiedObjectTransformForGesture,
-  renderUnifiedCanvasTransformGuide,
   syncUnifiedCanvasTransformGuideFromEvent,
 } from '@/components/editors/costume/costumeCanvasObjectTransformGizmo';
 import { syncCanvasSelectionGizmoAppearance } from '@/components/editors/costume/costumeCanvasSelectionGizmo';
@@ -84,6 +85,7 @@ import {
   parseBackgroundVectorFabricJson,
   reflectBackgroundVectorObjectsAcrossXAxis,
 } from '@/lib/background/backgroundVectorCoordinateSpace';
+import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
 
 type WorldPoint = { x: number; y: number };
 
@@ -327,6 +329,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const penOverlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const vectorGuideOverlayDprRef = useRef(1);
+  const penOverlayDprRef = useRef(1);
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const loadedLayerKeyRef = useRef<string | null>(null);
@@ -341,6 +345,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const pointSelectionTransformFrameRef = useRef<PointSelectionTransformFrameState | null>(null);
   const pointSelectionTransformSessionRef = useRef<PointSelectionTransformSession | null>(null);
   const pointSelectionMarqueeSessionRef = useRef<PointSelectionMarqueeSession | null>(null);
+  const mirroredPathAnchorDragSessionRef = useRef<MirroredPathAnchorDragSession | null>(null);
+  const mirroredPathAnchorDragModifierStateRef = useRef({ space: false });
   const insertedPathAnchorDragSessionRef = useRef<{
     path: any;
     anchorIndex: number;
@@ -355,6 +361,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const textStyleRef = useRef(textStyle);
   const vectorStyleRef = useRef(vectorStyle);
   const zoomRef = useRef(zoom);
+  const viewportRef = useRef(viewport);
+  const cameraRef = useRef(camera);
   const onDirtyRef = useRef(onDirty);
   const onHistoryStateChangeRef = useRef(onHistoryStateChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -382,12 +390,18 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const brushOpacityRef = useRef(1);
   const brushSizeRef = useRef(1);
   const [canZoomToSelection, setCanZoomToSelection] = useState(false);
+  const clearHistoryEffectRef = useRef<() => void>(() => undefined);
+  const renderVectorPointEditingGuideEffectRef = useRef<() => void>(() => undefined);
+  const restoreAllOriginalControlsEffectRef = useRef<() => void>(() => undefined);
+  const setVectorPointEditingTargetEffectRef = useRef<(target: any | null) => void>(() => undefined);
 
   activeToolRef.current = activeTool;
   brushColorRef.current = brushColor;
   textStyleRef.current = textStyle;
   vectorStyleRef.current = vectorStyle;
   zoomRef.current = zoom;
+  viewportRef.current = viewport;
+  cameraRef.current = camera;
   vectorHandleModeRef.current = vectorHandleMode;
   activeLayerVisibleRef.current = layer?.visible ?? true;
   onDirtyRef.current = onDirty;
@@ -572,11 +586,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
 
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    clearCanvasInCssPixels(ctx, viewport.width, viewport.height, penOverlayDprRef.current);
     const viewportTransform = fabricCanvas.viewportTransform;
     if (viewportTransform) {
-      ctx.setTransform(
+      ctx.transform(
         viewportTransform[0] ?? 1,
         viewportTransform[1] ?? 0,
         viewportTransform[2] ?? 0,
@@ -587,6 +600,26 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
     renderPenDraftGuideRef.current(ctx);
     ctx.restore();
+  }, [viewport.height, viewport.width]);
+
+  const clearVectorGuideOverlayContext = useCallback((ctx: CanvasRenderingContext2D) => {
+    clearCanvasInCssPixels(ctx, viewport.width, viewport.height, vectorGuideOverlayDprRef.current);
+  }, [viewport.height, viewport.width]);
+  const mapFabricOverlayPoint = useCallback((point: Point) => point, []);
+
+  const applyVectorGuideSceneTransform = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
+    const viewportTransform = fabricCanvas.viewportTransform;
+    if (!viewportTransform) {
+      return;
+    }
+    ctx.transform(
+      viewportTransform[0] ?? 1,
+      viewportTransform[1] ?? 0,
+      viewportTransform[2] ?? 0,
+      viewportTransform[3] ?? 1,
+      viewportTransform[4] ?? 0,
+      viewportTransform[5] ?? 0,
+    );
   }, []);
 
   const getZoomInvariantMetric = useCallback((metric: number, zoomValue = zoomRef.current) => {
@@ -646,6 +679,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   });
 
   const {
+    applyMirroredPathAnchorCurveDragSession,
     applyPointSelectionMarqueeSession,
     applyPointSelectionTransformSession,
     beginPointSelectionTransformSession,
@@ -666,12 +700,15 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     hasPointSelectionMarqueeExceededThreshold,
     hitPointSelectionTransform,
     insertPathPointAtScenePosition,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
     movePathAnchorByDelta,
     removeDuplicateClosedPathAnchorControl,
     resolveAnchorFromPathControlKey,
     restoreAllOriginalControls,
     restoreOriginalControls,
+    resolveMirroredPathAnchorHandleRole,
+    setMirroredPathAnchorDragSessionMoveMode,
     setPathNodeHandleType,
     setSelectedPathAnchors,
     stabilizePathAfterAnchorMutation,
@@ -703,8 +740,11 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   } = useCostumeCanvasVectorObjectController({
     activePathAnchorRef,
     activeToolRef,
+    applyOverlaySceneTransform: applyVectorGuideSceneTransform,
+    applyMirroredPathAnchorCurveDragSession,
     buildPathDataFromPoints,
     createFourPointEllipsePathData,
+    clearOverlayContext: clearVectorGuideOverlayContext,
     editorModeRef,
     enforcePathAnchorHandleType,
     fabricCanvasRef,
@@ -720,12 +760,16 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     getSelectedPathAnchorTransformSnapshot,
     getZoomInvariantMetric,
     hasPointSelectionMarqueeExceededThreshold,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
+    mapFabricOverlayPoint,
     movePathAnchorByDelta,
+    mirroredPathAnchorDragSessionRef,
     originalControlsRef,
     pointSelectionMarqueeSessionRef,
     removeDuplicateClosedPathAnchorControl,
     renderPenDraftGuide: renderPenDraftGuideFromRef,
+    resolveMirroredPathAnchorHandleRole,
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
     setPathNodeHandleType,
@@ -834,6 +878,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
     return didChange;
   }, [drawPenOverlay, syncPenPlacementToAltModifier]);
+  clearHistoryEffectRef.current = clearHistory;
+  renderVectorPointEditingGuideEffectRef.current = renderVectorPointEditingGuide;
+  restoreAllOriginalControlsEffectRef.current = restoreAllOriginalControls;
+  setVectorPointEditingTargetEffectRef.current = setVectorPointEditingTarget;
 
   useEffect(() => {
     return () => {
@@ -968,10 +1016,11 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     hostElement.appendChild(vectorGuideCanvas);
     vectorGuideCanvasRef.current = vectorGuideCanvas;
     vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
+    const initialViewport = viewportRef.current;
 
     const fabricCanvas = new FabricCanvas(canvasElement, {
-      width: Math.max(1, Math.floor(viewport.width)),
-      height: Math.max(1, Math.floor(viewport.height)),
+      width: Math.max(1, Math.floor(initialViewport.width)),
+      height: Math.max(1, Math.floor(initialViewport.height)),
       preserveObjectStacking: true,
       renderOnAddRemove: false,
       enableRetinaScaling: true,
@@ -992,12 +1041,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     penOverlayCanvasRef.current = penOverlayCanvas;
 
     fabricCanvasRef.current = fabricCanvas;
-    applyViewportTransform(fabricCanvas, viewport, camera, zoom);
-    renderVectorPointEditingGuide();
+    applyViewportTransform(fabricCanvas, viewportRef.current, cameraRef.current, zoomRef.current);
+    renderVectorPointEditingGuideEffectRef.current();
 
     return () => {
-      restoreAllOriginalControls();
-      setVectorPointEditingTarget(null);
+      restoreAllOriginalControlsEffectRef.current();
+      setVectorPointEditingTargetEffectRef.current(null);
       activePathAnchorRef.current = null;
       shapeDraftRef.current = null;
       shapeDraftHistoryBaselineRef.current = null;
@@ -1007,7 +1056,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       vectorGuideCanvasRef.current = null;
       vectorGuideCtxRef.current = null;
       textEditingHostRef.current = null;
-      clearHistory();
+      clearHistoryEffectRef.current();
       onSelectionChangeRef.current(false);
       onTextSelectionChangeRef.current(false);
       try {
@@ -1018,7 +1067,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         fabricCanvasRef.current = null;
       }
     };
-  }, [clearHistory, renderVectorPointEditingGuide, restoreAllOriginalControls, setVectorPointEditingTarget]);
+  }, []);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1043,27 +1092,19 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       return;
     }
 
-    const width = Math.max(1, Math.floor(viewport.width));
-    const height = Math.max(1, Math.floor(viewport.height));
-    if (penOverlayCanvas.width !== width) {
-      penOverlayCanvas.width = width;
-    }
-    if (penOverlayCanvas.height !== height) {
-      penOverlayCanvas.height = height;
-    }
-    penOverlayCanvas.style.width = `${width}px`;
-    penOverlayCanvas.style.height = `${height}px`;
-    if (vectorGuideCanvas.width !== width) {
-      vectorGuideCanvas.width = width;
-    }
-    if (vectorGuideCanvas.height !== height) {
-      vectorGuideCanvas.height = height;
-    }
-    vectorGuideCanvas.style.width = `${width}px`;
-    vectorGuideCanvas.style.height = `${height}px`;
+    penOverlayDprRef.current = syncCanvasViewportSize(
+      penOverlayCanvas,
+      viewport.width,
+      viewport.height,
+    );
+    vectorGuideOverlayDprRef.current = syncCanvasViewportSize(
+      vectorGuideCanvas,
+      viewport.width,
+      viewport.height,
+    );
     renderVectorPointEditingGuide();
     drawPenOverlay();
-  }, [drawPenOverlay, renderVectorPointEditingGuide, viewport]);
+  }, [drawPenOverlay, renderVectorPointEditingGuide, viewport.height, viewport.width]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1407,6 +1448,16 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       if (insertedPathAnchorDragSessionRef.current) {
         insertedPathAnchorDragSessionRef.current = null;
         recordHistorySnapshot();
+        return;
+      }
+
+      if (mirroredPathAnchorDragSessionRef.current) {
+        const shouldSave = mirroredPathAnchorDragSessionRef.current.hasChanged;
+        mirroredPathAnchorDragSessionRef.current = null;
+        mirroredPathAnchorDragModifierStateRef.current.space = false;
+        if (shouldSave) {
+          recordHistorySnapshot();
+        }
       }
     };
 
@@ -1531,7 +1582,6 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     const handleAfterRender = () => {
       renderVectorPointEditingGuide();
-      renderUnifiedCanvasTransformGuide(fabricCanvas);
       drawPenOverlay();
     };
 
@@ -1646,6 +1696,15 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     removeLastPenDraftAnchor: removeLastPenDraftAnchorWithOverlay,
     setPenAnchorMoveMode: setPenAnchorMoveModeWithOverlay,
     syncPenPlacementToAltModifier: syncPenPlacementToAltModifierWithOverlay,
+  });
+
+  useCostumeCanvasMirroredPathHotkeys({
+    activeToolRef,
+    editorModeRef,
+    fabricCanvasRef,
+    mirroredPathAnchorDragModifierStateRef,
+    mirroredPathAnchorDragSessionRef,
+    setMirroredPathAnchorDragSessionMoveMode,
   });
 
   useImperativeHandle(ref, () => ({
@@ -1826,6 +1885,16 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       if (insertedPathAnchorDragSessionRef.current) {
         insertedPathAnchorDragSessionRef.current = null;
         recordHistorySnapshot();
+        flushed = true;
+      }
+
+      if (mirroredPathAnchorDragSessionRef.current) {
+        const shouldSave = mirroredPathAnchorDragSessionRef.current.hasChanged;
+        mirroredPathAnchorDragSessionRef.current = null;
+        mirroredPathAnchorDragModifierStateRef.current.space = false;
+        if (shouldSave) {
+          recordHistorySnapshot();
+        }
         flushed = true;
       }
 

@@ -1,9 +1,6 @@
 import { Control, controlsUtils, type Canvas as FabricCanvas } from 'fabric';
 import {
-  TRANSFORM_GIZMO_BORDER_COLOR,
-  TRANSFORM_GIZMO_HANDLE_FILL,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
-  TRANSFORM_GIZMO_HANDLE_STROKE,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
   getTransformGizmoCornerCursor,
@@ -23,7 +20,7 @@ import {
 import { applyCanvasCursor } from './costumeCanvasBitmapRuntime';
 
 type FabricTransformGuideState = {
-  corner: TransformGizmoCorner;
+  corner: TransformGizmoCorner | null;
   proportional: boolean;
   target: any | null;
 };
@@ -57,6 +54,7 @@ const TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER: Record<string, TransformGizmoCorner>
   br: 'se',
   bl: 'sw',
 };
+const HIDDEN_SELECTION_COLOR = 'rgba(0, 0, 0, 0)';
 
 const EDGE_CONTROL_KEY_TO_SIDE: Record<string, TransformGizmoSide> = {
   mt: 'n',
@@ -334,7 +332,7 @@ const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
 
 const rotateControlActionHandler = ((eventData: Record<string, any>, transform: any, x: number, y: number) => {
   clearFabricTransformGuide(transform?.target);
-  const rotated = controlsUtils.rotationWithSnapping(eventData, transform, x, y);
+  const rotated = controlsUtils.rotationWithSnapping(eventData as any, transform, x, y);
   const target = transform?.target;
   const canvas = target?.canvas;
   const cornerKey = String(transform?.corner ?? '').replace(/_rotate$/, '');
@@ -346,17 +344,26 @@ const rotateControlActionHandler = ((eventData: Record<string, any>, transform: 
 }) as any;
 
 const unifiedEdgeScaleActionHandler = ((eventData: Record<string, any>, transform: any, x: number, y: number) => {
-  clearFabricTransformGuide(transform?.target);
+  const target = transform?.target as any;
+  const scaleProportionally = isProportionalScale(eventData, target);
+  const canvas = target?.canvas as FabricCanvasWithTransformGuide | null;
+  if (canvas) {
+    setUnifiedCanvasTransformGuide(canvas, {
+      corner: null,
+      proportional: scaleProportionally,
+      target,
+    });
+  }
   const side = EDGE_CONTROL_KEY_TO_SIDE[transform?.corner ?? ''];
   if (!side) {
     return false;
   }
-  if (isProportionalScale(eventData, transform?.target)) {
-    return controlsUtils.scalingEqually(eventData, transform, x, y);
+  if (scaleProportionally) {
+    return controlsUtils.scalingEqually(eventData as any, transform, x, y);
   }
   return side === 'e' || side === 'w'
-    ? controlsUtils.scalingX(eventData, transform, x, y)
-    : controlsUtils.scalingY(eventData, transform, x, y);
+    ? controlsUtils.scalingX(eventData as any, transform, x, y)
+    : controlsUtils.scalingY(eventData as any, transform, x, y);
 }) as any;
 
 function createUnifiedScaleControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER, x: number, y: number) {
@@ -443,12 +450,12 @@ export function applyUnifiedObjectTransformGizmoAppearance(
     return;
   }
 
-  object.borderColor = TRANSFORM_GIZMO_BORDER_COLOR;
+  object.borderColor = HIDDEN_SELECTION_COLOR;
   object.borderScaleFactor = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE, zoom);
   object.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
   object.cornerStyle = 'circle';
-  object.cornerColor = TRANSFORM_GIZMO_HANDLE_FILL;
-  object.cornerStrokeColor = TRANSFORM_GIZMO_HANDLE_STROKE;
+  object.cornerColor = HIDDEN_SELECTION_COLOR;
+  object.cornerStrokeColor = HIDDEN_SELECTION_COLOR;
   object.cornerSize = getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS * 2, zoom);
   object.touchCornerSize = getZoomInvariantMetric((TRANSFORM_GIZMO_HANDLE_RADIUS + 16) * 2, zoom);
   object.transparentCorners = false;
@@ -484,7 +491,7 @@ export function renderUnifiedCanvasTransformGuide(fabricCanvas: FabricCanvas | n
     se: guide.target.oCoords.br,
     sw: guide.target.oCoords.bl,
   };
-  const diagonal = getTransformCornerDiagonal(corners, guide.corner);
+  const diagonal = getTransformCornerDiagonal(corners, guide.corner ?? 'nw');
   drawTransformProportionalGuide(ctx, diagonal.start, diagonal.end);
 }
 
@@ -503,13 +510,14 @@ export function syncUnifiedCanvasTransformGuideFromEvent(fabricCanvas: FabricCan
 
   const cornerKey = currentTransform.corner;
   const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[cornerKey];
-  if (!corner) {
+  const isEdgeScale = Boolean(EDGE_CONTROL_KEY_TO_SIDE[cornerKey]);
+  if (!corner && !isEdgeScale) {
     clearUnifiedCanvasTransformGuide(fabricCanvas);
     return;
   }
 
   setUnifiedCanvasTransformGuide(fabricCanvas as FabricCanvasWithTransformGuide, {
-    corner,
+    corner: corner ?? null,
     proportional: isProportionalScale(eventData ?? {}, activeObject),
     target: activeObject,
   });

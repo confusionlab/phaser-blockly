@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { toggleScaleDirection } from '../src/phaser/scaleMath';
-import { computeCornerScaleResult } from '../src/lib/editor/unifiedTransformGizmo';
+import {
+  DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL,
+  computeCornerScaleResult,
+  resolveTransformProportionalGuideDiagonal,
+} from '../src/lib/editor/unifiedTransformGizmo';
 
 test.describe('scale math', () => {
   test('toggleScaleDirection preserves magnitude while flipping sign', () => {
@@ -68,5 +72,13 @@ test.describe('scale math', () => {
     expect(result.width).toBe(36);
     expect(result.height).toBe(12);
     expect(result.center).toEqual({ x: 100, y: 80 });
+  });
+
+  test('proportional guide resolves to a diagonal even without a corner handle', () => {
+    expect(resolveTransformProportionalGuideDiagonal(null)).toBe(DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL);
+    expect(resolveTransformProportionalGuideDiagonal('nw')).toBe('nw-se');
+    expect(resolveTransformProportionalGuideDiagonal('se')).toBe('nw-se');
+    expect(resolveTransformProportionalGuideDiagonal('ne')).toBe('ne-sw');
+    expect(resolveTransformProportionalGuideDiagonal('sw')).toBe('ne-sw');
   });
 });

@@ -62,6 +62,34 @@ async function readPersistedDarkPixelCount(page: Page): Promise<number> {
   });
 }
 
+async function readBackgroundSelectionGizmoBluePixelCount(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('[data-testid="background-editor-canvas"]');
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let bluePixelCount = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const red = data[index] ?? 0;
+      const green = data[index + 1] ?? 0;
+      const blue = data[index + 2] ?? 0;
+      const alpha = data[index + 3] ?? 0;
+      if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
+        bluePixelCount += 1;
+      }
+    }
+
+    return bluePixelCount;
+  });
+}
+
 async function readBackgroundBrushCursorOverlay(page: Page): Promise<{
   cursor: string;
   height: number;
@@ -657,7 +685,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await page.mouse.move(reopened.box.x + reopened.box.width * 0.65, reopened.box.y + reopened.box.height * 0.65);
     await page.mouse.up();
 
-    await expect(reopened.root.getByText('Selection')).toBeVisible();
+    await expect.poll(async () => readBackgroundSelectionGizmoBluePixelCount(page), { timeout: 5000 }).toBeGreaterThan(200);
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(page.getByTestId('background-editor-root')).toBeHidden();
 
@@ -692,7 +720,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await page.mouse.move(reopened.box.x + reopened.box.width * 0.66, reopened.box.y + reopened.box.height * 0.66);
     await page.mouse.up();
 
-    await expect(reopened.root.getByText('Selection')).toBeVisible();
+    await expect.poll(async () => readBackgroundSelectionGizmoBluePixelCount(page), { timeout: 5000 }).toBeGreaterThan(200);
     await setActiveLayerOpacity(page, 60);
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(reopened.root).toBeHidden();
