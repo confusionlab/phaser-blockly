@@ -2,7 +2,7 @@ import { Point } from 'fabric';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { readCanvasImageData } from '@/utils/canvas2d';
 import { areCostumeAssetFramesEqual, cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
-import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner, TransformGizmoEdge, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
 import type { VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 
@@ -372,7 +372,11 @@ export type PointSelectionTransformMode =
   | 'scale-tl'
   | 'scale-tr'
   | 'scale-br'
-  | 'scale-bl';
+  | 'scale-bl'
+  | 'scale-n'
+  | 'scale-e'
+  | 'scale-s'
+  | 'scale-w';
 
 export interface SelectedPathAnchorTransformSnapshot {
   anchorIndex: number;
@@ -403,6 +407,9 @@ export interface PointSelectionTransformSession {
   path: any;
   mode: PointSelectionTransformMode;
   corner: TransformGizmoCorner | null;
+  side: TransformGizmoSide | null;
+  edge: TransformGizmoEdge | null;
+  handleSign: -1 | 1 | null;
   proportional: boolean;
   centered: boolean;
   startPointerScene: Point;

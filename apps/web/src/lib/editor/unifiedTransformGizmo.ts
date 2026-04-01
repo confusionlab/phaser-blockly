@@ -1,5 +1,6 @@
 export type TransformGizmoCorner = 'nw' | 'ne' | 'se' | 'sw';
 export type TransformGizmoEdge = 'horizontal' | 'vertical';
+export type TransformGizmoSide = 'n' | 'e' | 's' | 'w';
 
 export interface TransformGizmoPoint {
   x: number;
@@ -16,6 +17,14 @@ export interface TransformGizmoCorners<TPoint extends TransformGizmoPoint = Tran
 export interface TransformGizmoFrame<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
   center: TPoint;
   corners: TransformGizmoCorners<TPoint>;
+}
+
+export interface TransformGizmoEdgeSegment<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
+  start: TPoint;
+  end: TPoint;
+  center: TPoint;
+  edge: TransformGizmoEdge;
+  handleSign: -1 | 1;
 }
 
 export interface CornerScaleResult<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
@@ -271,6 +280,7 @@ interface EdgeScaleComputationOptions<TPoint extends TransformGizmoPoint = Trans
   baseHeight: number;
   minWidth: number;
   minHeight: number;
+  proportional: boolean;
   centered: boolean;
 }
 
@@ -359,6 +369,7 @@ export function computeEdgeScaleResult<TPoint extends TransformGizmoPoint>({
   baseHeight,
   minWidth,
   minHeight,
+  proportional,
   centered,
 }: EdgeScaleComputationOptions<TPoint>): EdgeScaleResult<TPoint> {
   const rotatedPointer = rotateTransformPoint({
@@ -378,6 +389,20 @@ export function computeEdgeScaleResult<TPoint extends TransformGizmoPoint>({
       ? handleSign * rotatedPointer.y * 2
       : handleSign * rotatedPointer.y;
     signedHeight = clampSignedExtent(rawHeight, minHeight);
+  }
+
+  if (proportional) {
+    const safeBaseWidth = Math.max(baseWidth, 0.0001);
+    const safeBaseHeight = Math.max(baseHeight, 0.0001);
+    if (edge === 'horizontal') {
+      const scale = signedWidth / safeBaseWidth;
+      signedHeight = scale * safeBaseHeight;
+      signedHeight = clampSignedExtent(signedHeight, minHeight);
+    } else {
+      const scale = signedHeight / safeBaseHeight;
+      signedWidth = scale * safeBaseWidth;
+      signedWidth = clampSignedExtent(signedWidth, minWidth);
+    }
   }
 
   const width = Math.abs(signedWidth);
@@ -435,4 +460,90 @@ export function getTransformGizmoHandleFrame<TPoint extends TransformGizmoPoint>
       sw: mapLocal(-halfWidth, halfHeight),
     },
   };
+}
+
+export function getTransformGizmoEdgeSegments<TPoint extends TransformGizmoPoint>(
+  frame: TransformGizmoFrame<TPoint>,
+): Record<TransformGizmoSide, TransformGizmoEdgeSegment<TPoint>> {
+  const midpoint = (start: TPoint, end: TPoint) => ({
+    x: (start.x + end.x) * 0.5,
+    y: (start.y + end.y) * 0.5,
+  }) as TPoint;
+
+  return {
+    n: {
+      start: frame.corners.nw,
+      end: frame.corners.ne,
+      center: midpoint(frame.corners.nw, frame.corners.ne),
+      edge: 'vertical',
+      handleSign: -1,
+    },
+    e: {
+      start: frame.corners.ne,
+      end: frame.corners.se,
+      center: midpoint(frame.corners.ne, frame.corners.se),
+      edge: 'horizontal',
+      handleSign: 1,
+    },
+    s: {
+      start: frame.corners.sw,
+      end: frame.corners.se,
+      center: midpoint(frame.corners.sw, frame.corners.se),
+      edge: 'vertical',
+      handleSign: 1,
+    },
+    w: {
+      start: frame.corners.nw,
+      end: frame.corners.sw,
+      center: midpoint(frame.corners.nw, frame.corners.sw),
+      edge: 'horizontal',
+      handleSign: -1,
+    },
+  };
+}
+
+export function getOppositeTransformGizmoSide(side: TransformGizmoSide): TransformGizmoSide {
+  switch (side) {
+    case 'n':
+      return 's';
+    case 'e':
+      return 'w';
+    case 's':
+      return 'n';
+    case 'w':
+      return 'e';
+  }
+}
+
+export function getTransformGizmoDistanceToSegment(
+  point: TransformGizmoPoint,
+  start: TransformGizmoPoint,
+  end: TransformGizmoPoint,
+) {
+  const segmentDx = end.x - start.x;
+  const segmentDy = end.y - start.y;
+  const segmentLengthSquared = segmentDx * segmentDx + segmentDy * segmentDy;
+  if (segmentLengthSquared <= 0.0001) {
+    return getTransformGizmoDistance(point, start);
+  }
+
+  const projection = (
+    ((point.x - start.x) * segmentDx) +
+    ((point.y - start.y) * segmentDy)
+  ) / segmentLengthSquared;
+  const clampedProjection = Math.min(1, Math.max(0, projection));
+  const closest = {
+    x: start.x + segmentDx * clampedProjection,
+    y: start.y + segmentDy * clampedProjection,
+  };
+  return getTransformGizmoDistance(point, closest);
+}
+
+export function isPointNearTransformEdge(
+  point: TransformGizmoPoint,
+  start: TransformGizmoPoint,
+  end: TransformGizmoPoint,
+  padding: number,
+) {
+  return getTransformGizmoDistanceToSegment(point, start, end) <= padding;
 }

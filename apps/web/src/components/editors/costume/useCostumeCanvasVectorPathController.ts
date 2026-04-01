@@ -27,8 +27,13 @@ import { getFabricObjectType } from './costumeCanvasVectorRuntime';
 import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   type TransformGizmoCorner,
+  type TransformGizmoSide,
   computeCornerScaleResult,
+  computeEdgeScaleResult,
+  getOppositeTransformGizmoSide,
+  getTransformGizmoEdgeSegments,
   getTransformGizmoHandleFrame,
+  isPointNearTransformEdge,
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
   rotateTransformPoint,
@@ -1299,6 +1304,26 @@ export function useCostumeCanvasVectorPathController({
       }
     }
 
+    const frame = getTransformGizmoHandleFrame(
+      snapshot.bounds.center,
+      snapshot.bounds.width,
+      snapshot.bounds.height,
+      snapshot.bounds.rotationRadians,
+    );
+    const edgeSegments = getTransformGizmoEdgeSegments(frame);
+    const edgeTargets: Array<[PointSelectionTransformMode, TransformGizmoSide]> = [
+      ['scale-n', 'n'],
+      ['scale-e', 'e'],
+      ['scale-s', 's'],
+      ['scale-w', 'w'],
+    ];
+    for (const [mode, side] of edgeTargets) {
+      const segment = edgeSegments[side];
+      if (isPointNearTransformEdge(pointerScene, segment.start, segment.end, handleRadius)) {
+        return mode;
+      }
+    }
+
     const pointerLocal = toPointSelectionTransformLocalPoint(snapshot.bounds, pointerScene);
     if (
       Math.abs(pointerLocal.x) <= snapshot.bounds.width / 2 + hitPadding &&
@@ -1331,6 +1356,21 @@ export function useCostumeCanvasVectorPathController({
         return 'se';
       case 'scale-bl':
         return 'sw';
+      default:
+        return null;
+    }
+  }, []);
+
+  const getPointSelectionTransformSide = useCallback((mode: PointSelectionTransformMode): TransformGizmoSide | null => {
+    switch (mode) {
+      case 'scale-n':
+        return 'n';
+      case 'scale-e':
+        return 'e';
+      case 'scale-s':
+        return 's';
+      case 'scale-w':
+        return 'w';
       default:
         return null;
     }
@@ -1376,22 +1416,48 @@ export function useCostumeCanvasVectorPathController({
       se: { anchor: frame.corners.nw, handleXSign: 1, handleYSign: 1 },
       sw: { anchor: frame.corners.ne, handleXSign: -1, handleYSign: 1 },
     };
-    const corner = session.corner ?? 'se';
-    const resolvedCorner = cornerConfig[corner];
-    const referencePoint = session.centered ? bounds.center : resolvedCorner.anchor;
-    const scaled = computeCornerScaleResult({
-      referencePoint,
-      pointerPoint: pointerScene,
-      handleXSign: resolvedCorner.handleXSign,
-      handleYSign: resolvedCorner.handleYSign,
-      rotationRadians: bounds.rotationRadians,
-      baseWidth,
-      baseHeight,
-      minWidth: minimumSize,
-      minHeight: minimumSize,
-      proportional: session.proportional,
-      centered: session.centered,
-    });
+    const edgeSegments = getTransformGizmoEdgeSegments(frame);
+    const referencePoint = (() => {
+      if (session.centered) {
+        return bounds.center;
+      }
+      if (session.side) {
+        return edgeSegments[getOppositeTransformGizmoSide(session.side)].center;
+      }
+      const corner = session.corner ?? 'se';
+      return cornerConfig[corner].anchor;
+    })();
+    const scaled = session.side
+      ? computeEdgeScaleResult({
+        referencePoint,
+        pointerPoint: pointerScene,
+        edge: session.edge ?? 'horizontal',
+        handleSign: session.handleSign ?? 1,
+        rotationRadians: bounds.rotationRadians,
+        baseWidth,
+        baseHeight,
+        minWidth: minimumSize,
+        minHeight: minimumSize,
+        proportional: session.proportional,
+        centered: session.centered,
+      })
+      : (() => {
+        const corner = session.corner ?? 'se';
+        const resolvedCorner = cornerConfig[corner];
+        return computeCornerScaleResult({
+          referencePoint,
+          pointerPoint: pointerScene,
+          handleXSign: resolvedCorner.handleXSign,
+          handleYSign: resolvedCorner.handleYSign,
+          rotationRadians: bounds.rotationRadians,
+          baseWidth,
+          baseHeight,
+          minWidth: minimumSize,
+          minHeight: minimumSize,
+          proportional: session.proportional,
+          centered: session.centered,
+        });
+      })();
     const scaleX = scaled.signedWidth / Math.max(baseWidth, 0.0001);
     const scaleY = scaled.signedHeight / Math.max(baseHeight, 0.0001);
     const localStart = rotateTransformPoint(
@@ -1409,9 +1475,6 @@ export function useCostumeCanvasVectorPathController({
     return new Point(referencePoint.x + nextPoint.x, referencePoint.y + nextPoint.y);
   }, [
     getZoomInvariantMetric,
-    getPointSelectionTransformCorner,
-    getTransformGizmoHandleFrame,
-    computeCornerScaleResult,
     rotateScenePointAround,
   ]);
 
@@ -1425,10 +1488,24 @@ export function useCostumeCanvasVectorPathController({
     if (!snapshot) return false;
 
     const corner = getPointSelectionTransformCorner(mode);
+    const side = getPointSelectionTransformSide(mode);
+    const edgeSegment = side
+      ? getTransformGizmoEdgeSegments(
+        getTransformGizmoHandleFrame(
+          snapshot.bounds.center,
+          snapshot.bounds.width,
+          snapshot.bounds.height,
+          snapshot.bounds.rotationRadians,
+        ),
+      )[side]
+      : null;
     pointSelectionTransformSessionRef.current = {
       path: pathObj,
       mode,
       corner,
+      side,
+      edge: edgeSegment?.edge ?? null,
+      handleSign: edgeSegment?.handleSign ?? null,
       proportional: !!eventData?.shiftKey,
       centered: !!eventData?.altKey,
       startPointerScene: new Point(pointerScene.x, pointerScene.y),
@@ -1436,7 +1513,7 @@ export function useCostumeCanvasVectorPathController({
       hasChanged: false,
     };
     return true;
-  }, [getPointSelectionTransformCorner, getSelectedPathAnchorTransformSnapshot, pointSelectionTransformSessionRef]);
+  }, [getPointSelectionTransformCorner, getPointSelectionTransformSide, getSelectedPathAnchorTransformSnapshot, pointSelectionTransformSessionRef]);
 
   const applyPointSelectionTransformSession = useCallback((
     session: PointSelectionTransformSession,
@@ -1446,7 +1523,7 @@ export function useCostumeCanvasVectorPathController({
     const { path, snapshot } = session;
     if (!path || getFabricObjectType(path) !== 'path') return false;
 
-    if (session.corner) {
+    if (session.corner || session.side) {
       session.proportional = !!eventData?.shiftKey;
       session.centered = !!eventData?.altKey;
     } else {

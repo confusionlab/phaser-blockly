@@ -19,6 +19,7 @@ import {
 } from './costumeCanvasObjectTransformGizmo';
 import {
   getTransformGizmoCornerCursor,
+  getTransformGizmoEdgeCursor,
   getTransformGizmoRotateCursor,
 } from '@/lib/editor/unifiedTransformGizmo';
 import {
@@ -613,6 +614,12 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
                 return getTransformGizmoCornerCursor('se', rotationRadians);
               case 'scale-bl':
                 return getTransformGizmoCornerCursor('sw', rotationRadians);
+              case 'scale-n':
+              case 'scale-s':
+                return getTransformGizmoEdgeCursor('vertical', rotationRadians);
+              case 'scale-e':
+              case 'scale-w':
+                return getTransformGizmoEdgeCursor('horizontal', rotationRadians);
               default:
                 return 'default';
             }
