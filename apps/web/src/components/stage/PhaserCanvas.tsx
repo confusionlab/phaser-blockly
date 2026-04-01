@@ -2048,6 +2048,7 @@ function createEditorScene(
     if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
       isPanning = false;
     }
+    setLockedStageCursor(null);
     endTranslateDrag(pointer);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
@@ -2228,6 +2229,30 @@ function createEditorScene(
     proportional: boolean;
     startObjects: Map<string, { x: number; y: number; scaleX: number; scaleY: number; rotation: number }>;
   } | null = null;
+  let lockedStageCursor: string | null = null;
+
+  const setLockedStageCursor = (cursor: string | null) => {
+    lockedStageCursor = cursor;
+    const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+    if (!canvas) {
+      return;
+    }
+    if (cursor) {
+      canvas.style.cursor = cursor;
+    } else {
+      canvas.style.removeProperty('cursor');
+    }
+  };
+
+  scene.input.on('pointermove', () => {
+    if (!lockedStageCursor) {
+      return;
+    }
+    const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+    if (canvas && canvas.style.cursor !== lockedStageCursor) {
+      canvas.style.cursor = lockedStageCursor;
+    }
+  });
 
   const getGroupCorner = (handleName: string): TransformGizmoCorner | null => {
     switch (handleName) {
@@ -2615,6 +2640,9 @@ function createEditorScene(
         proportional: shouldUseProportionalStageScale(selectedIds, pointer.event as MouseEvent | PointerEvent | undefined),
         startObjects,
       };
+      setLockedStageCursor(handleName.startsWith('handle_rotate_') && groupTransformContext.corner
+        ? getTransformGizmoRotateCursor(frame.rotation ?? 0, groupTransformContext.corner)
+        : null);
     });
 
     handle.on('drag', (pointer: Phaser.Input.Pointer) => {
@@ -2776,6 +2804,7 @@ function createEditorScene(
       groupProportionalGuide.clear();
       groupProportionalGuide.setVisible(false);
       groupTransformContext = null;
+      setLockedStageCursor(null);
     });
   }
 
@@ -3006,6 +3035,7 @@ function createEditorScene(
   });
 
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+    setLockedStageCursor(null);
     endTranslateDrag(pointer);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
@@ -3651,6 +3681,9 @@ function createObjectVisual(
           startX = container.x;
           startY = container.y;
           startFrame = getSingleObjectGizmoFrame();
+          setLockedStageCursor(handleName === 'handle_rotate'
+            ? getTransformGizmoRotateCursor(container.rotation, 'n')
+            : null);
         });
 
         (handle as Phaser.GameObjects.Shape).on('drag', (pointer: Phaser.Input.Pointer) => {
@@ -3777,6 +3810,7 @@ function createObjectVisual(
 
         (handle as Phaser.GameObjects.Shape).on('dragend', () => {
           // Emit transform end event for editor scene to handle
+          setLockedStageCursor(null);
           container.emit('transformend');
         });
       }

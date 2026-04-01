@@ -1,4 +1,4 @@
-import { ActiveSelection, Canvas as FabricCanvas, PencilBrush } from 'fabric';
+import { ActiveSelection, Canvas as FabricCanvas, PencilBrush, Point } from 'fabric';
 import Color from 'color';
 import {
   DEFAULT_VECTOR_FILL_TEXTURE_ID,
@@ -9,6 +9,7 @@ import {
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import type {
+  VectorPathNodeHandleType,
   VectorStyleCapabilities,
   VectorToolStyle,
 } from './CostumeToolbar';
@@ -33,6 +34,277 @@ export const VECTOR_POINT_CONTROL_STYLE = {
 };
 
 const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
+const MIN_VECTOR_PENCIL_DECIMATION = 1.1;
+const MAX_VECTOR_PENCIL_DECIMATION = 2.4;
+const MIN_VECTOR_PENCIL_SIMPLIFY_TOLERANCE = 1.8;
+const MAX_VECTOR_PENCIL_SIMPLIFY_TOLERANCE = 4.2;
+
+function getVectorPencilDecimation(strokeWidth: number): number {
+  // Fabric's default decimation keeps almost every captured point, which makes
+  // freehand paths harder to edit because they produce very dense handles. We
+  // use a slightly stronger, width-aware simplification so paths stay smoother
+  // while preserving the drawn silhouette.
+  return Math.min(
+    MAX_VECTOR_PENCIL_DECIMATION,
+    Math.max(MIN_VECTOR_PENCIL_DECIMATION, strokeWidth * 0.35),
+  );
+}
+
+function getVectorPencilSimplifyTolerance(strokeWidth: number): number {
+  return Math.min(
+    MAX_VECTOR_PENCIL_SIMPLIFY_TOLERANCE,
+    Math.max(MIN_VECTOR_PENCIL_SIMPLIFY_TOLERANCE, strokeWidth * 0.6),
+  );
+}
+
+function getSquaredDistanceToSegment(point: Point, segmentStart: Point, segmentEnd: Point): number {
+  const deltaX = segmentEnd.x - segmentStart.x;
+  const deltaY = segmentEnd.y - segmentStart.y;
+
+  if (deltaX === 0 && deltaY === 0) {
+    const pointDeltaX = point.x - segmentStart.x;
+    const pointDeltaY = point.y - segmentStart.y;
+    return pointDeltaX * pointDeltaX + pointDeltaY * pointDeltaY;
+  }
+
+  const projection = Math.max(
+    0,
+    Math.min(
+      1,
+      ((point.x - segmentStart.x) * deltaX + (point.y - segmentStart.y) * deltaY)
+      / (deltaX * deltaX + deltaY * deltaY),
+    ),
+  );
+  const closestX = segmentStart.x + deltaX * projection;
+  const closestY = segmentStart.y + deltaY * projection;
+  const closestDeltaX = point.x - closestX;
+  const closestDeltaY = point.y - closestY;
+  return closestDeltaX * closestDeltaX + closestDeltaY * closestDeltaY;
+}
+
+function simplifyVectorPencilPoints(points: Point[], tolerance: number): Point[] {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  const squaredTolerance = tolerance * tolerance;
+  const keep = new Uint8Array(points.length);
+  const lastIndex = points.length - 1;
+  keep[0] = 1;
+  keep[lastIndex] = 1;
+
+  const stack: Array<[startIndex: number, endIndex: number]> = [[0, lastIndex]];
+  while (stack.length > 0) {
+    const [startIndex, endIndex] = stack.pop()!;
+    let furthestIndex = -1;
+    let maxSquaredDistance = 0;
+
+    for (let index = startIndex + 1; index < endIndex; index += 1) {
+      const squaredDistance = getSquaredDistanceToSegment(
+        points[index],
+        points[startIndex],
+        points[endIndex],
+      );
+      if (squaredDistance > maxSquaredDistance) {
+        maxSquaredDistance = squaredDistance;
+        furthestIndex = index;
+      }
+    }
+
+    if (furthestIndex !== -1 && maxSquaredDistance > squaredTolerance) {
+      keep[furthestIndex] = 1;
+      stack.push([startIndex, furthestIndex], [furthestIndex, endIndex]);
+    }
+  }
+
+  const simplified: Point[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    if (keep[index]) {
+      simplified.push(points[index]);
+    }
+  }
+  return simplified.length >= 2 ? simplified : [points[0], points[lastIndex]];
+}
+
+function getVectorPathNodeHandleTypes(raw: unknown): Record<string, VectorPathNodeHandleType> {
+  if (!raw || typeof raw !== 'object') {
+    return {};
+  }
+  const next: Record<string, VectorPathNodeHandleType> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === 'linear' || value === 'corner' || value === 'smooth' || value === 'symmetric') {
+      next[key] = value;
+    }
+  }
+  return next;
+}
+
+function areVectorPathNodeHandleTypesEqual(
+  a: Record<string, VectorPathNodeHandleType>,
+  b: Record<string, VectorPathNodeHandleType>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  return aKeys.every((key) => a[key] === b[key]);
+}
+
+function convertQuadraticPathToCubic(path: unknown): any[] | null {
+  if (!Array.isArray(path)) {
+    return null;
+  }
+
+  let currentPoint: { x: number; y: number } | null = null;
+  let subpathStart: { x: number; y: number } | null = null;
+  let changed = false;
+  const nextPath = path.map((command) => {
+    if (!Array.isArray(command) || typeof command[0] !== 'string') {
+      return command;
+    }
+
+    const commandType = command[0].trim().toUpperCase();
+    if (commandType === 'Q' && currentPoint) {
+      const startX = currentPoint.x;
+      const startY = currentPoint.y;
+      const controlX = Number(command[1]);
+      const controlY = Number(command[2]);
+      const endX = Number(command[3]);
+      const endY = Number(command[4]);
+      if (
+        Number.isFinite(controlX) &&
+        Number.isFinite(controlY) &&
+        Number.isFinite(endX) &&
+        Number.isFinite(endY)
+      ) {
+        changed = true;
+        currentPoint = { x: endX, y: endY };
+        return [
+          'C',
+          startX + ((controlX - startX) * 2) / 3,
+          startY + ((controlY - startY) * 2) / 3,
+          endX + ((controlX - endX) * 2) / 3,
+          endY + ((controlY - endY) * 2) / 3,
+          endX,
+          endY,
+        ];
+      }
+    }
+
+    const cloned = command.slice();
+    const endpoint = getPathCommandEndpoint(cloned);
+    switch (commandType) {
+      case 'M':
+        currentPoint = endpoint;
+        subpathStart = endpoint;
+        break;
+      case 'L':
+      case 'C':
+      case 'Q':
+        currentPoint = endpoint;
+        break;
+      case 'Z':
+        currentPoint = subpathStart;
+        break;
+    }
+    return cloned;
+  });
+
+  return changed ? nextPath : null;
+}
+
+function findPreviousDrawablePathCommandIndex(path: any[], commandIndex: number): number {
+  for (let index = commandIndex - 1; index >= 0; index -= 1) {
+    if (getPathCommandType(path[index]) !== 'Z') {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function inferPathNodeHandleTypesFromCommands(
+  path: unknown,
+  rawNodeHandleTypes: unknown,
+): Record<string, VectorPathNodeHandleType> | null {
+  if (!Array.isArray(path)) {
+    return null;
+  }
+
+  const existing = getVectorPathNodeHandleTypes(rawNodeHandleTypes);
+  const next = { ...existing };
+  const incomingAnchors = new Set<number>();
+  const outgoingAnchors = new Set<number>();
+
+  path.forEach((command, commandIndex) => {
+    if (getPathCommandType(command) !== 'C') {
+      return;
+    }
+    incomingAnchors.add(commandIndex);
+    const previousIndex = findPreviousDrawablePathCommandIndex(path, commandIndex);
+    if (previousIndex >= 0) {
+      outgoingAnchors.add(previousIndex);
+    }
+  });
+
+  let changed = false;
+  const curvedAnchors = new Set<number>([
+    ...incomingAnchors,
+    ...outgoingAnchors,
+  ]);
+  for (const anchorIndex of curvedAnchors) {
+    const key = String(anchorIndex);
+    if (next[key]) {
+      continue;
+    }
+    next[key] = incomingAnchors.has(anchorIndex) && outgoingAnchors.has(anchorIndex)
+      ? 'smooth'
+      : 'corner';
+    changed = true;
+  }
+
+  return changed || !areVectorPathNodeHandleTypesEqual(existing, next) ? next : null;
+}
+
+function normalizeEditableVectorPathGeometry(candidate: {
+  path?: unknown;
+  nodeHandleTypes?: unknown;
+  set?: (props: Record<string, unknown>) => void;
+  setCoords?: () => void;
+  setDimensions?: () => void;
+}): boolean {
+  if (!Array.isArray(candidate.path)) {
+    return false;
+  }
+
+  const nextPath = convertQuadraticPathToCubic(candidate.path);
+  const normalizedPath = nextPath ?? candidate.path;
+  const nextNodeHandleTypes = inferPathNodeHandleTypesFromCommands(
+    normalizedPath,
+    candidate.nodeHandleTypes,
+  );
+
+  let changed = false;
+  if (nextPath) {
+    candidate.path = nextPath;
+    changed = true;
+  }
+  if (nextNodeHandleTypes) {
+    if (typeof candidate.set === 'function') {
+      candidate.set({ nodeHandleTypes: nextNodeHandleTypes });
+    } else {
+      candidate.nodeHandleTypes = nextNodeHandleTypes;
+    }
+    changed = true;
+  }
+
+  if (changed) {
+    candidate.setDimensions?.();
+    candidate.setCoords?.();
+  }
+
+  return changed;
+}
 
 const normalizeOpaqueColor = (value: string): string => {
   try {
@@ -311,14 +583,19 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
   }
 
   const candidate = obj as {
+    path?: unknown;
+    nodeHandleTypes?: unknown;
     strokeUniform?: boolean;
     noScaleCache?: boolean;
     set?: (props: Record<string, unknown>) => void;
+    setCoords?: () => void;
+    setDimensions?: () => void;
   };
   if (typeof candidate.set !== 'function') {
     return false;
   }
 
+  const didChange = normalizeEditableVectorPathGeometry(candidate);
   const updates: Record<string, unknown> = {};
   if (candidate.strokeUniform !== true) {
     updates.strokeUniform = true;
@@ -354,7 +631,7 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
     }
   }
   if (Object.keys(updates).length === 0) {
-    return false;
+    return didChange;
   }
 
   candidate.set(updates);
@@ -450,7 +727,16 @@ export class VectorPencilBrush extends PencilBrush {
     this.strokeWidthValue = Math.max(1, options.strokeWidth);
     this.width = this.strokeWidthValue;
     this.color = options.strokeColor;
-    this.decimate = 0.4;
+    this.decimate = getVectorPencilDecimation(this.strokeWidthValue);
+  }
+
+  override convertPointsToSVGPath(points: Point[]) {
+    return super.convertPointsToSVGPath(
+      simplifyVectorPencilPoints(
+        points,
+        getVectorPencilSimplifyTolerance(this.strokeWidthValue),
+      ),
+    );
   }
 
   override createPath(pathData: any) {

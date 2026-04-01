@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject, type RefObject } from 'react';
-import { getBitmapBrushCursorStyle, type BitmapBrushKind } from '@/lib/background/brushCore';
+import type { BitmapBrushKind } from '@/lib/background/brushCore';
+import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import {
   clampCameraToWorldRect,
   clampViewportZoom,
@@ -76,8 +77,6 @@ export function useCostumeCanvasViewportController({
     cameraStartX: number;
     cameraStartY: number;
   } | null>(null);
-  const brushCursorEnabledRef = useRef(false);
-  const brushCursorPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const clampZoom = useCallback((value: number) => {
     return clampViewportZoom(value, MIN_ZOOM, MAX_ZOOM);
@@ -150,53 +149,36 @@ export function useCostumeCanvasViewportController({
     zoomAtScreenPoint(view.width / 2, view.height / 2, nextZoom);
   }, [zoomAtScreenPoint]);
 
-  const syncBrushCursorOverlay = useCallback(() => {
-    const overlay = brushCursorOverlayRef.current;
-    if (!overlay) return;
-
+  const resolveBrushCursorState = useCallback(() => {
     const mode = editorModeRef.current;
     const tool = activeToolRef.current;
     const layerInteractive = activeLayerVisibleRef.current && !activeLayerLockedRef.current;
-    const isBitmapBrushTool = layerInteractive && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
-    brushCursorEnabledRef.current = isBitmapBrushTool;
-
-    if (!isBitmapBrushTool) {
-      overlay.style.opacity = '0';
-      return;
-    }
-
-    const displayScale = BASE_VIEW_SCALE * zoomRef.current;
-    const cursorStyle = getBitmapBrushCursorStyle(
-      tool,
-      bitmapBrushKindRef.current,
-      brushColorRef.current,
-      brushSizeRef.current,
-      displayScale,
-      tool === 'brush' ? brushOpacityRef.current : 1,
-    );
-    overlay.style.width = `${cursorStyle.diameter}px`;
-    overlay.style.height = `${cursorStyle.diameter}px`;
-    overlay.style.border = `${cursorStyle.borderWidth}px solid ${cursorStyle.stroke}`;
-    overlay.style.background = cursorStyle.fill;
-    overlay.style.boxShadow = cursorStyle.boxShadow ?? 'none';
-
-    const pos = brushCursorPosRef.current;
-    if (pos) {
-      overlay.style.transform = `translate(${pos.x}px, ${pos.y}px) translate(-50%, -50%)`;
-      overlay.style.opacity = '1';
-    } else {
-      overlay.style.opacity = '0';
-    }
+    const enabled = layerInteractive && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
+    return {
+      brushColor: brushColorRef.current,
+      brushKind: bitmapBrushKindRef.current,
+      brushOpacity: brushOpacityRef.current,
+      brushSize: brushSizeRef.current,
+      displayScale: BASE_VIEW_SCALE * zoomRef.current,
+      enabled,
+      tool: enabled ? tool : null,
+    };
   }, [
     activeLayerLockedRef,
     activeLayerVisibleRef,
     activeToolRef,
     bitmapBrushKindRef,
     brushColorRef,
-    brushCursorOverlayRef,
+    brushOpacityRef,
     brushSizeRef,
     editorModeRef,
   ]);
+
+  const { syncBrushCursorOverlay } = useBitmapBrushCursorOverlay({
+    containerRef,
+    overlayRef: brushCursorOverlayRef,
+    resolveCursorState: resolveBrushCursorState,
+  });
 
   const setZoomLevel = useCallback((nextZoom: number) => {
     const clampedZoom = clampZoom(nextZoom);
@@ -364,40 +346,6 @@ export function useCostumeCanvasViewportController({
       container.removeEventListener('wheel', onWheel);
     };
   }, [containerRef, handleWheel]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const onPointerMove = (event: PointerEvent) => {
-      const rect = container.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-      brushCursorPosRef.current = { x, y };
-      const overlay = brushCursorOverlayRef.current;
-      if (!overlay) return;
-      overlay.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
-      if (brushCursorEnabledRef.current) {
-        overlay.style.opacity = '1';
-      }
-    };
-
-    const onPointerLeave = () => {
-      brushCursorPosRef.current = null;
-      const overlay = brushCursorOverlayRef.current;
-      if (overlay) {
-        overlay.style.opacity = '0';
-      }
-    };
-
-    container.addEventListener('pointermove', onPointerMove);
-    container.addEventListener('pointerleave', onPointerLeave);
-
-    return () => {
-      container.removeEventListener('pointermove', onPointerMove);
-      container.removeEventListener('pointerleave', onPointerLeave);
-    };
-  }, [brushCursorOverlayRef, containerRef]);
 
   useEffect(() => {
     syncBrushCursorOverlay();

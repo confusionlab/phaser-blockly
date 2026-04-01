@@ -275,6 +275,37 @@ async function readCheckerboardInkSamples(page: Page): Promise<number> {
   });
 }
 
+async function readCostumeSelectionGizmoBluePixelCount(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const host = document.querySelector('[data-testid="costume-active-layer-host"]');
+    if (!(host instanceof HTMLElement)) {
+      return 0;
+    }
+
+    let bluePixelCount = 0;
+    const canvases = Array.from(host.querySelectorAll('canvas')) as HTMLCanvasElement[];
+    for (const canvas of canvases) {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        continue;
+      }
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      for (let index = 0; index < imageData.data.length; index += 4) {
+        const red = imageData.data[index];
+        const green = imageData.data[index + 1];
+        const blue = imageData.data[index + 2];
+        const alpha = imageData.data[index + 3];
+        if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
+          bluePixelCount += 1;
+        }
+      }
+    }
+
+    return bluePixelCount;
+  });
+}
+
 async function readHostedLayerInkSamples(page: Page): Promise<number> {
   return page.evaluate(() => {
     const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
@@ -756,6 +787,23 @@ test.describe('Costume editor tools', () => {
 
     await expect(layer1Button).toHaveAttribute('aria-pressed', 'true');
     await expect(layer2Button).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('pixel marquee selection shows its gizmo immediately after mouse-up', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.24, 0.24, 0.46, 0.46);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    expect(await readCostumeSelectionGizmoBluePixelCount(page)).toBeLessThan(40);
+
+    await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.52, 0.52);
+
+    await expect.poll(async () => readCostumeSelectionGizmoBluePixelCount(page), { timeout: 10000 }).toBeGreaterThan(120);
   });
 
   test('layer panel renders thumbnails for bitmap and vector layers', async ({ page }) => {

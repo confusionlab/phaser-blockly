@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react';
+import { useEffect, type MutableRefObject, type RefObject } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
@@ -26,7 +26,7 @@ interface UseCostumeCanvasBitmapSelectionControllerOptions {
     requestId?: number,
     options?: { assetFrame?: CostumeAssetFrame | null },
   ) => Promise<boolean>;
-  setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
+  setBitmapFloatingSelectionObject: (nextObject: any | null, options?: { activate?: boolean; syncState?: boolean }) => void;
   syncSelectionState: () => void;
 }
 
@@ -46,7 +46,7 @@ export function useCostumeCanvasBitmapSelectionController({
   getSelectionMousePos,
   hasBitmapFloatingSelection,
   loadBitmapLayer,
-  setHasBitmapFloatingSelection,
+  setBitmapFloatingSelectionObject,
   syncSelectionState,
 }: UseCostumeCanvasBitmapSelectionControllerOptions) {
   useEffect(() => {
@@ -161,11 +161,9 @@ export function useCostumeCanvasBitmapSelectionController({
         );
 
         fabricCanvas.add(floatingImage);
-        fabricCanvas.setActiveObject(floatingImage);
-        bitmapFloatingObjectRef.current = floatingImage;
-        setHasBitmapFloatingSelection(true);
-        syncSelectionState();
+        setBitmapFloatingSelectionObject(floatingImage, { activate: true, syncState: false });
         configureCanvasForTool();
+        syncSelectionState();
         fabricCanvas.requestRenderAll();
         drawBitmapSelectionOverlay();
       } finally {
@@ -197,7 +195,7 @@ export function useCostumeCanvasBitmapSelectionController({
     getSelectionMousePos,
     hasBitmapFloatingSelection,
     loadBitmapLayer,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     syncSelectionState,
   ]);
 

@@ -369,8 +369,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   const {
+    getBitmapFloatingSelectionObject,
     getSelectionBoundsSnapshot,
     restoreCanvasSelection,
+    setBitmapFloatingSelectionObject,
     setVectorPointEditingTarget,
     syncSelectionState,
   } = useCostumeCanvasSelectionController({
@@ -389,6 +391,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     pointSelectionTransformSessionRef,
     selectedPathAnchorIndicesRef,
     setCanZoomToSelection,
+    setHasBitmapFloatingSelection,
     vectorPointEditingTargetRef,
   });
 
@@ -500,7 +503,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     loadBitmapLayer,
     normalizeCanvasVectorStrokeUniform,
   } = useCostumeCanvasBitmapLayerController({
-    bitmapFloatingObjectRef,
     bitmapMarqueeRectRef,
     bitmapRasterCommitQueueRef,
     bitmapSelectionBusyRef,
@@ -509,9 +511,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     drawBitmapSelectionOverlay,
     editorModeRef,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     isLoadRequestActive,
     saveHistory,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     suppressHistoryRef,
     syncSelectionState,
     waitForFabricCanvas,
@@ -586,7 +589,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     activeLayerOpacity,
     activeLayerVisible,
     bitmapFillStyleRef,
-    bitmapFloatingObjectRef,
     bitmapMarqueeRectRef,
     bitmapSelectionCanvasRef,
     bitmapSelectionBusyRef,
@@ -599,6 +601,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     editorModeRef,
     fabricCanvasRef,
     getActiveLayerCanvasElement,
+    getBitmapFloatingSelectionObject,
     getSelectionBoundsSnapshot,
     hostedLayerIdRef,
     isLoadRequestActive,
@@ -620,7 +623,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     restoreCanvasSelection,
     saveHistory,
     setEditorMode,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     setHostedLayerId,
     setHostedLayerReady,
     suppressBitmapSelectionAutoCommitRef,
@@ -642,6 +645,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, [setHostedLayerReady, syncActiveLayerCanvasVisibility]);
 
   const {
+    applyMirroredPathAnchorCurveDrag,
     applyPointSelectionMarqueeSession,
     applyPointSelectionTransformSession,
     beginPointSelectionTransformSession,
@@ -662,6 +666,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     hasPointSelectionMarqueeExceededThreshold,
     hitPointSelectionTransform,
     insertPathPointAtScenePosition,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
     movePathAnchorByDelta,
     removeDuplicateClosedPathAnchorControl,
@@ -699,6 +704,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   } = useCostumeCanvasVectorObjectController({
     activePathAnchorRef,
     activeToolRef,
+    applyMirroredPathAnchorCurveDrag,
     buildPathDataFromPoints,
     createFourPointEllipsePathData,
     editorModeRef,
@@ -716,6 +722,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getSelectedPathAnchorTransformSnapshot,
     getZoomInvariantMetric,
     hasPointSelectionMarqueeExceededThreshold,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
     movePathAnchorByDelta,
     originalControlsRef,
@@ -747,7 +754,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyVectorPointControls,
     applyVectorPointEditingAppearance,
     bitmapBrushKindRef,
-    bitmapFloatingObjectRef,
     brushColorRef,
     brushOpacityRef,
     brushSizeRef,
@@ -755,6 +761,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     editorModeRef,
     ensurePathLikeObjectForVectorTool,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
     restoreAllOriginalControls,
@@ -885,7 +892,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getSelectionMousePos,
     hasBitmapFloatingSelection,
     loadBitmapLayer,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     syncSelectionState,
   });
 

@@ -618,6 +618,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     return renderPenDraftGuideRef.current(ctx);
   }, []);
   const commitBitmapStampBrushStroke = useCallback(async () => {}, []);
+  const getBitmapFloatingSelectionObject = useCallback(() => bitmapFloatingObjectRef.current, []);
   const syncBrushCursorOverlay = useCallback(() => {}, []);
 
   const {
@@ -749,7 +750,6 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     applyVectorPointControls,
     applyVectorPointEditingAppearance,
     bitmapBrushKindRef,
-    bitmapFloatingObjectRef,
     brushColorRef,
     brushOpacityRef,
     brushSizeRef,
@@ -757,6 +757,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     editorModeRef,
     ensurePathLikeObjectForVectorTool,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
     restoreAllOriginalControls,

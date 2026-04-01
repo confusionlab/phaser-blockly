@@ -1,4 +1,5 @@
 import type { MutableRefObject, Ref, RefObject } from 'react';
+import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import type { CostumeEditorMode, CostumeLayer } from '@/types';
 import type { DrawingTool } from './CostumeToolbar';
@@ -192,23 +193,9 @@ export function CostumeCanvasStage({
 
         </div>
 
-        <div
+        <BitmapBrushCursorOverlay
           ref={brushCursorOverlayRef}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: 12,
-            height: 12,
-            borderRadius: '9999px',
-            border: '1.5px solid #111111',
-            background: 'rgba(255,255,255,0.1)',
-            boxShadow: 'none',
-            transform: 'translate(-9999px, -9999px)',
-            opacity: 0,
-            pointerEvents: 'none',
-            zIndex: 40,
-          }}
+          testId="costume-brush-cursor-overlay"
         />
       </div>
     </div>

@@ -30,7 +30,6 @@ interface UseCostumeCanvasToolControllerOptions {
   applyVectorPointControls: (target: any) => boolean;
   applyVectorPointEditingAppearance: (target: any) => void;
   bitmapBrushKindRef: MutableRefObject<BitmapBrushKind>;
-  bitmapFloatingObjectRef: MutableRefObject<any | null>;
   brushColorRef: MutableRefObject<string>;
   brushOpacityRef: MutableRefObject<number>;
   brushSizeRef: MutableRefObject<number>;
@@ -38,6 +37,7 @@ interface UseCostumeCanvasToolControllerOptions {
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   ensurePathLikeObjectForVectorTool: (target: any) => any | null;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
+  getBitmapFloatingSelectionObject: () => any | null;
   getZoomInvariantMetric: (value: number, zoom?: number) => number;
   normalizeCanvasVectorStrokeUniform: () => void;
   restoreAllOriginalControls: () => void;
@@ -58,7 +58,6 @@ export function useCostumeCanvasToolController({
   applyVectorPointControls,
   applyVectorPointEditingAppearance,
   bitmapBrushKindRef,
-  bitmapFloatingObjectRef,
   brushColorRef,
   brushOpacityRef,
   brushSizeRef,
@@ -66,6 +65,7 @@ export function useCostumeCanvasToolController({
   editorModeRef,
   ensurePathLikeObjectForVectorTool,
   fabricCanvasRef,
+  getBitmapFloatingSelectionObject,
   getZoomInvariantMetric,
   normalizeCanvasVectorStrokeUniform,
   restoreAllOriginalControls,
@@ -192,7 +192,7 @@ export function useCostumeCanvasToolController({
     const isVectorPointMode = layerInteractive && mode === 'vector' && tool === 'select' && !!vectorPointEditingTargetRef.current;
     const isVectorSelectionMode = layerInteractive && mode === 'vector' && tool === 'select' && !isVectorPointMode;
     const isVectorTextMode = layerInteractive && mode === 'vector' && tool === 'text';
-    const floatingBitmapObject = bitmapFloatingObjectRef.current;
+    const floatingBitmapObject = getBitmapFloatingSelectionObject();
     const isBitmapFloatingSelectionMode =
       layerInteractive &&
       mode === 'bitmap' &&
@@ -317,12 +317,12 @@ export function useCostumeCanvasToolController({
     applyVectorPointControls,
     applyVectorPointEditingAppearance,
     bitmapBrushKindRef,
-    bitmapFloatingObjectRef,
     brushColorRef,
     brushSizeRef,
     commitBitmapStampBrushStroke,
     editorModeRef,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
     restoreAllOriginalControls,

@@ -62,6 +62,36 @@ async function readPersistedDarkPixelCount(page: Page): Promise<number> {
   });
 }
 
+async function readBackgroundBrushCursorOverlay(page: Page): Promise<{
+  cursor: string;
+  height: number;
+  opacity: number;
+  width: number;
+}> {
+  return await page.evaluate(() => {
+    const overlay = document.querySelector('[data-testid="background-brush-cursor-overlay"]') as HTMLDivElement | null;
+    const canvas = document.querySelector('[data-testid="background-editor-canvas"]') as HTMLCanvasElement | null;
+    if (!overlay || !canvas) {
+      return {
+        cursor: '',
+        height: 0,
+        opacity: 0,
+        width: 0,
+      };
+    }
+
+    const overlayStyle = window.getComputedStyle(overlay);
+    const canvasStyle = window.getComputedStyle(canvas);
+    const bounds = overlay.getBoundingClientRect();
+    return {
+      cursor: canvasStyle.cursor,
+      height: bounds.height,
+      opacity: Number.parseFloat(overlayStyle.opacity || '0') || 0,
+      width: bounds.width,
+    };
+  });
+}
+
 async function readBackgroundDocumentSummary(page: Page): Promise<{
   activeLayerId: string | null;
   bitmapLayerChunkCount: number;
@@ -216,6 +246,34 @@ async function openBackgroundEditor(page: Page) {
 }
 
 test.describe('Background editor', () => {
+  test('brush and eraser reuse the shared bitmap cursor overlay', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+    const { box } = await openBackgroundEditor(page);
+
+    const centerX = box.x + box.width / 2;
+    const centerY = box.y + box.height / 2;
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await page.mouse.move(centerX, centerY);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBeGreaterThan(0.5);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).width).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).height).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).cursor).toBe('none');
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    await page.mouse.move(centerX + 32, centerY + 24);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBeGreaterThan(0.5);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).width).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).height).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).cursor).toBe('none');
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBe(0);
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: /cancel/i }).first().click();
+  });
+
   test('can draw and persist chunked background', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { root, box } = await openBackgroundEditor(page);

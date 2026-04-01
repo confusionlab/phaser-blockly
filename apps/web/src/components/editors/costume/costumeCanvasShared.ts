@@ -2,7 +2,7 @@ import { Point } from 'fabric';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { readCanvasImageData } from '@/utils/canvas2d';
 import { areCostumeAssetFramesEqual, cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
-import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner, TransformGizmoCornerTarget } from '@/lib/editor/unifiedTransformGizmo';
 import type { VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 
@@ -342,6 +342,13 @@ export function cloneScenePoint(point: Point | null): Point | null {
   return point ? new Point(point.x, point.y) : null;
 }
 
+export function mirrorPointAcrossAnchor(anchor: Point, handlePoint: Point): Point {
+  return new Point(
+    anchor.x * 2 - handlePoint.x,
+    anchor.y * 2 - handlePoint.y,
+  );
+}
+
 export type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
   bitmapDataUrl: string;
@@ -368,11 +375,7 @@ export type PathAnchorDragState = {
 
 export type PointSelectionTransformMode =
   | 'move'
-  | 'rotate'
-  | 'scale-tl'
-  | 'scale-tr'
-  | 'scale-br'
-  | 'scale-bl';
+  | TransformGizmoCornerTarget;
 
 export interface SelectedPathAnchorTransformSnapshot {
   anchorIndex: number;

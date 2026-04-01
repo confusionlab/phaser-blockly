@@ -18,8 +18,7 @@ import {
   syncUnifiedCanvasTransformGuideFromEvent,
 } from './costumeCanvasObjectTransformGizmo';
 import {
-  getTransformGizmoCornerCursor,
-  getTransformGizmoRotateCursor,
+  getTransformGizmoCursorForCornerTarget,
 } from '@/lib/editor/unifiedTransformGizmo';
 import {
   CANVAS_SIZE,
@@ -600,22 +599,13 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             : null;
           const cursor = (() => {
             const rotationRadians = snapshot?.bounds.rotationRadians ?? 0;
-            switch (pointSelectionTransformHit) {
-              case 'move':
-                return 'move';
-              case 'rotate':
-                return getTransformGizmoRotateCursor(rotationRadians, 'n');
-              case 'scale-tl':
-                return getTransformGizmoCornerCursor('nw', rotationRadians);
-              case 'scale-tr':
-                return getTransformGizmoCornerCursor('ne', rotationRadians);
-              case 'scale-br':
-                return getTransformGizmoCornerCursor('se', rotationRadians);
-              case 'scale-bl':
-                return getTransformGizmoCornerCursor('sw', rotationRadians);
-              default:
-                return 'default';
+            if (pointSelectionTransformHit === 'move') {
+              return 'move';
             }
+            if (pointSelectionTransformHit?.startsWith('scale-') || pointSelectionTransformHit?.startsWith('rotate-')) {
+              return getTransformGizmoCursorForCornerTarget(pointSelectionTransformHit, rotationRadians);
+            }
+            return 'default';
           })();
           applyCanvasCursor(fabricCanvas, cursor);
         }

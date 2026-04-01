@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import { ActiveSelection, type Canvas as FabricCanvas } from 'fabric';
 import { applyBitmapBucketFill } from '@/lib/background/bitmapFillCore';
 import { getCanvas2dContext } from '@/utils/canvas2d';
@@ -46,7 +46,6 @@ interface UseCostumeCanvasCommandControllerOptions {
   activeLayerOpacity: number;
   activeLayerVisible: boolean;
   bitmapFillStyleRef: MutableRefObject<BitmapFillStyle>;
-  bitmapFloatingObjectRef: MutableRefObject<any | null>;
   bitmapMarqueeRectRef: MutableRefObject<{ x: number; y: number; width: number; height: number } | null>;
   bitmapSelectionCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
   bitmapSelectionBusyRef: MutableRefObject<boolean>;
@@ -59,6 +58,7 @@ interface UseCostumeCanvasCommandControllerOptions {
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   getActiveLayerCanvasElement: () => HTMLCanvasElement;
+  getBitmapFloatingSelectionObject: () => any | null;
   getSelectionBoundsSnapshot: () => CanvasSelectionBoundsSnapshot | null;
   hostedLayerIdRef: MutableRefObject<string | null>;
   isLoadRequestActive: (requestId?: number) => boolean;
@@ -85,7 +85,7 @@ interface UseCostumeCanvasCommandControllerOptions {
   restoreCanvasSelection: (selectedObjects: any[]) => void;
   saveHistory: () => void;
   setEditorMode: (mode: CostumeEditorMode) => void;
-  setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
+  setBitmapFloatingSelectionObject: (nextObject: any | null, options?: { activate?: boolean; syncState?: boolean }) => void;
   setHostedLayerId: (layerId: string | null) => void;
   setHostedLayerReady: (ready: boolean) => void;
   suppressBitmapSelectionAutoCommitRef: MutableRefObject<boolean>;
@@ -101,7 +101,6 @@ export function useCostumeCanvasCommandController({
   activeLayerOpacity,
   activeLayerVisible,
   bitmapFillStyleRef,
-  bitmapFloatingObjectRef,
   bitmapMarqueeRectRef,
   bitmapSelectionCanvasRef,
   bitmapSelectionBusyRef,
@@ -114,6 +113,7 @@ export function useCostumeCanvasCommandController({
   editorModeRef,
   fabricCanvasRef,
   getActiveLayerCanvasElement,
+  getBitmapFloatingSelectionObject,
   getSelectionBoundsSnapshot,
   hostedLayerIdRef,
   isLoadRequestActive,
@@ -135,7 +135,7 @@ export function useCostumeCanvasCommandController({
   restoreCanvasSelection,
   saveHistory,
   setEditorMode,
-  setHasBitmapFloatingSelection,
+  setBitmapFloatingSelectionObject,
   setHostedLayerId,
   setHostedLayerReady,
   suppressBitmapSelectionAutoCommitRef,
@@ -259,7 +259,7 @@ export function useCostumeCanvasCommandController({
 
   const deleteBitmapFloatingSelection = useCallback((): boolean => {
     const fabricCanvas = fabricCanvasRef.current;
-    const floatingObject = bitmapFloatingObjectRef.current;
+    const floatingObject = getBitmapFloatingSelectionObject();
     if (!fabricCanvas || !floatingObject) return false;
     if (editorModeRef.current !== 'bitmap') return false;
     if (bitmapSelectionBusyRef.current) return false;
@@ -271,8 +271,7 @@ export function useCostumeCanvasCommandController({
       }
 
       fabricCanvas.remove(floatingObject);
-      bitmapFloatingObjectRef.current = null;
-      setHasBitmapFloatingSelection(false);
+      setBitmapFloatingSelectionObject(null, { syncState: false });
       bitmapSelectionStartRef.current = null;
       bitmapMarqueeRectRef.current = null;
       bitmapSelectionDragModeRef.current = 'none';
@@ -287,7 +286,6 @@ export function useCostumeCanvasCommandController({
       });
     }
   }, [
-    bitmapFloatingObjectRef,
     bitmapMarqueeRectRef,
     bitmapSelectionBusyRef,
     bitmapSelectionDragModeRef,
@@ -295,8 +293,9 @@ export function useCostumeCanvasCommandController({
     drawBitmapSelectionOverlay,
     editorModeRef,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     saveHistory,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     suppressBitmapSelectionAutoCommitRef,
     syncSelectionState,
   ]);

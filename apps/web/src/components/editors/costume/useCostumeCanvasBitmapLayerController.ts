@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, type MutableRefObject } from 'react';
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
 import { renderBitmapAssetToSurfaceCanvas } from '@/lib/costume/costumeBitmapSurface';
 import { extractVisibleCanvasRegion } from './costumeCanvasShared';
@@ -7,7 +7,6 @@ import type { BitmapStampBrushCommitPayload } from './costumeCanvasBitmapRuntime
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 
 interface UseCostumeCanvasBitmapLayerControllerOptions {
-  bitmapFloatingObjectRef: MutableRefObject<any | null>;
   bitmapMarqueeRectRef: MutableRefObject<{ x: number; y: number; width: number; height: number } | null>;
   bitmapRasterCommitQueueRef: MutableRefObject<Promise<void>>;
   bitmapSelectionBusyRef: MutableRefObject<boolean>;
@@ -16,16 +15,16 @@ interface UseCostumeCanvasBitmapLayerControllerOptions {
   drawBitmapSelectionOverlay: () => void;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
+  getBitmapFloatingSelectionObject: () => any | null;
   isLoadRequestActive: (requestId?: number) => boolean;
   saveHistory: () => void;
-  setHasBitmapFloatingSelection: Dispatch<SetStateAction<boolean>>;
+  setBitmapFloatingSelectionObject: (nextObject: any | null, options?: { activate?: boolean; syncState?: boolean }) => void;
   suppressHistoryRef: MutableRefObject<boolean>;
   syncSelectionState: () => void;
   waitForFabricCanvas: (requestId?: number) => Promise<FabricCanvas | null>;
 }
 
 export function useCostumeCanvasBitmapLayerController({
-  bitmapFloatingObjectRef,
   bitmapMarqueeRectRef,
   bitmapRasterCommitQueueRef,
   bitmapSelectionBusyRef,
@@ -34,9 +33,10 @@ export function useCostumeCanvasBitmapLayerController({
   drawBitmapSelectionOverlay,
   editorModeRef,
   fabricCanvasRef,
+  getBitmapFloatingSelectionObject,
   isLoadRequestActive,
   saveHistory,
-  setHasBitmapFloatingSelection,
+  setBitmapFloatingSelectionObject,
   suppressHistoryRef,
   syncSelectionState,
   waitForFabricCanvas,
@@ -137,8 +137,7 @@ export function useCostumeCanvasBitmapLayerController({
 
     suppressHistoryRef.current = true;
     try {
-      bitmapFloatingObjectRef.current = null;
-      setHasBitmapFloatingSelection(false);
+      setBitmapFloatingSelectionObject(null, { syncState: false });
       bitmapSelectionStartRef.current = null;
       bitmapMarqueeRectRef.current = null;
       bitmapSelectionDragModeRef.current = 'none';
@@ -212,13 +211,12 @@ export function useCostumeCanvasBitmapLayerController({
       suppressHistoryRef.current = false;
     }
   }, [
-    bitmapFloatingObjectRef,
     bitmapMarqueeRectRef,
     bitmapSelectionDragModeRef,
     bitmapSelectionStartRef,
     drawBitmapSelectionOverlay,
     fabricCanvasRef,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     suppressHistoryRef,
     syncSelectionState,
     getReusableBitmapImage,
@@ -250,7 +248,7 @@ export function useCostumeCanvasBitmapLayerController({
 
   const commitBitmapSelection = useCallback(async () => {
     const fabricCanvas = fabricCanvasRef.current;
-    const floatingObject = bitmapFloatingObjectRef.current;
+    const floatingObject = getBitmapFloatingSelectionObject();
     if (!fabricCanvas || !floatingObject) return false;
     if (bitmapSelectionBusyRef.current) return false;
 
@@ -275,7 +273,7 @@ export function useCostumeCanvasBitmapLayerController({
     } finally {
       bitmapSelectionBusyRef.current = false;
     }
-  }, [applyBitmapLayerSource, bitmapFloatingObjectRef, bitmapSelectionBusyRef, fabricCanvasRef, saveHistory]);
+  }, [applyBitmapLayerSource, bitmapSelectionBusyRef, fabricCanvasRef, getBitmapFloatingSelectionObject, saveHistory]);
 
   const queueBitmapRasterCommit = useCallback((
     mutateRaster?: (raster: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => void | Promise<void>,

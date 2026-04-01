@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, X } from '@/components/ui/icons';
+import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
@@ -53,7 +55,6 @@ import {
   type ChunkDataMap,
 } from '@/lib/background/chunkStore';
 import {
-  getBitmapBrushCursorStyle,
   getBitmapBrushStampDefinition,
   getBrushPaintColor,
   getCompositeOperation,
@@ -115,16 +116,15 @@ import {
   computeEdgeScaleResult,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
-  getTransformGizmoCornerCursor,
+  getTransformGizmoCornerFromTarget,
+  getTransformGizmoCursorForCornerTarget,
   getTransformGizmoEdgeCursor,
   getTransformGizmoEdgeSegments,
   getTransformGizmoHandleFrame,
-  getTransformGizmoRotateCursor,
+  hitTransformGizmoCornerTarget,
   isPointNearTransformEdge,
-  isPointInsideTransformHandle,
-  isPointInsideTransformRotateRing,
 } from '@/lib/editor/unifiedTransformGizmo';
-import type { TransformGizmoCorner, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner, TransformGizmoCornerTarget, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
 import { BackgroundLayerPanel } from './BackgroundLayerPanel';
 import {
   BackgroundVectorCanvas,
@@ -247,18 +247,16 @@ type BackgroundFloatingSelectionTransformSession =
 
 type BackgroundFloatingSelectionHitTarget =
   | 'body'
-  | 'scale-nw'
-  | 'scale-ne'
-  | 'scale-se'
-  | 'scale-sw'
+  | TransformGizmoCornerTarget
   | 'scale-n'
   | 'scale-e'
   | 'scale-s'
   | 'scale-w'
-  | 'rotate-nw'
-  | 'rotate-ne'
-  | 'rotate-se'
-  | 'rotate-sw';
+
+type BackgroundFloatingSelectionScaleTarget = Exclude<
+  BackgroundFloatingSelectionHitTarget,
+  'body' | `rotate-${TransformGizmoCorner}`
+>;
 
 type BackgroundFloatingSelectionScreenGeometry = {
   centerScreen: ScreenPoint;
@@ -346,6 +344,12 @@ function getWorldRectFromPoints(start: WorldPoint, end: WorldPoint): WorldRect {
     width: right - left,
     height: top - bottom,
   };
+}
+
+function isBackgroundFloatingSelectionScaleTarget(
+  target: BackgroundFloatingSelectionHitTarget,
+): target is BackgroundFloatingSelectionScaleTarget {
+  return target.startsWith('scale-');
 }
 
 function getShapeWorldBounds(
@@ -554,6 +558,7 @@ export function BackgroundCanvasEditor() {
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const vectorCanvasRef = useRef<BackgroundVectorCanvasHandle | null>(null);
   const pointerWorldRef = useRef<{ x: number; y: number } | null>(null);
   const drawingStrokeRef = useRef<StrokeSession | null>(null);
@@ -674,6 +679,24 @@ export function BackgroundCanvasEditor() {
   backgroundDocumentRef.current = backgroundDocument;
   const activeLayer = useMemo(() => getActiveBackgroundLayer(backgroundDocument), [backgroundDocument]);
   const editorMode = useMemo(() => getActiveBackgroundLayerKind(backgroundDocument), [backgroundDocument]);
+  const resolveBrushCursorState = useCallback(() => {
+    const layerInteractive = !!activeLayer && activeLayer.visible && !activeLayer.locked;
+    const enabled = layerInteractive && editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
+    return {
+      brushColor,
+      brushKind: bitmapBrushKind,
+      brushOpacity,
+      brushSize,
+      displayScale: zoom,
+      enabled,
+      tool: enabled ? tool : null,
+    };
+  }, [activeLayer, bitmapBrushKind, brushColor, brushOpacity, brushSize, editorMode, tool, zoom]);
+  const { syncBrushCursorOverlay } = useBitmapBrushCursorOverlay({
+    containerRef: hostRef,
+    overlayRef: brushCursorOverlayRef,
+    resolveCursorState: resolveBrushCursorState,
+  });
 
   useEffect(() => {
     if (editorMode === 'vector') {
@@ -687,6 +710,22 @@ export function BackgroundCanvasEditor() {
     setVectorHandleMode(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
     setVectorStyleCapabilities(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
   }, [editorMode, activeLayer?.id]);
+
+  useEffect(() => {
+    syncBrushCursorOverlay();
+  }, [
+    activeLayer?.id,
+    activeLayer?.locked,
+    activeLayer?.visible,
+    bitmapBrushKind,
+    brushColor,
+    brushOpacity,
+    brushSize,
+    editorMode,
+    syncBrushCursorOverlay,
+    tool,
+    zoom,
+  ]);
 
   backgroundColorRef.current = backgroundColor;
   const cameraBounds = useMemo(() => ({
@@ -1608,7 +1647,7 @@ export function BackgroundCanvasEditor() {
       ctx.stroke();
 
       const activeTransform = floatingSelectionTransformRef.current;
-      if (activeTransform?.kind === 'scale' && activeTransform.proportional) {
+      if (activeTransform?.kind === 'scale' && activeTransform.proportional && activeTransform.corner) {
         const diagonal = getTransformCornerDiagonal(geometry.corners, activeTransform.corner);
         drawTransformProportionalGuide(ctx, diagonal.start, diagonal.end);
       }
@@ -1637,23 +1676,7 @@ export function BackgroundCanvasEditor() {
     if (pointerWorldRef.current && !isPanning) {
       const pointerScreen = worldToScreen(pointerWorldRef.current.x, pointerWorldRef.current.y);
 
-      if (editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
-        const cursor = getBitmapBrushCursorStyle(
-          tool,
-          bitmapBrushKind,
-          brushColor,
-          brushSize,
-          zoom,
-          tool === 'brush' ? brushOpacity : 1,
-        );
-        ctx.beginPath();
-        ctx.arc(pointerScreen.x, pointerScreen.y, cursor.diameter * 0.5, 0, Math.PI * 2);
-        ctx.fillStyle = cursor.fill;
-        ctx.strokeStyle = cursor.stroke;
-        ctx.lineWidth = cursor.borderWidth;
-        ctx.fill();
-        ctx.stroke();
-      } else if (tool !== 'select' && !(editorMode === 'vector' && (tool === 'brush'))) {
+      if (tool !== 'select' && !(editorMode === 'vector' && (tool === 'brush')) && !(editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser'))) {
         ctx.strokeStyle = 'rgba(255,255,255,0.9)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -2322,31 +2345,15 @@ export function BackgroundCanvasEditor() {
     screenPoint: ScreenPoint,
   ): BackgroundFloatingSelectionHitTarget | null => {
     const geometry = getFloatingSelectionScreenGeometry(selection, worldToScreen, zoom);
-    const handleTargets: Array<[BackgroundFloatingSelectionHitTarget, TransformGizmoCorner, ScreenPoint]> = [
-      ['scale-nw', 'nw', geometry.corners.nw],
-      ['scale-ne', 'ne', geometry.corners.ne],
-      ['scale-se', 'se', geometry.corners.se],
-      ['scale-sw', 'sw', geometry.corners.sw],
-      ['rotate-nw', 'nw', geometry.corners.nw],
-      ['rotate-ne', 'ne', geometry.corners.ne],
-      ['rotate-se', 'se', geometry.corners.se],
-      ['rotate-sw', 'sw', geometry.corners.sw],
-    ];
-
-    for (const [target, corner, point] of handleTargets) {
-      if (target.startsWith('scale')) {
-        if (isPointInsideTransformHandle(screenPoint, point, TRANSFORM_GIZMO_HANDLE_RADIUS + 4)) {
-          return target;
-        }
-      } else if (isPointInsideTransformRotateRing(
-        screenPoint,
-        point,
-        TRANSFORM_GIZMO_HANDLE_RADIUS,
-        corner,
-        -selection.rotation,
-      )) {
-        return target;
-      }
+    const cornerTarget = hitTransformGizmoCornerTarget(
+      screenPoint,
+      geometry.corners,
+      TRANSFORM_GIZMO_HANDLE_RADIUS + 4,
+      TRANSFORM_GIZMO_HANDLE_RADIUS,
+      -selection.rotation,
+    );
+    if (cornerTarget) {
+      return cornerTarget;
     }
 
     const frame = {
@@ -3055,11 +3062,14 @@ export function BackgroundCanvasEditor() {
                 kind: 'rotate',
                 selection: floatingSelection,
                 centerScreen: geometry.centerScreen,
-                corner: hitTarget.slice('rotate-'.length) as TransformGizmoCorner,
+                corner: getTransformGizmoCornerFromTarget(hitTarget as TransformGizmoCornerTarget) ?? 'nw',
                 startPointerAngle: Math.atan2(screen.y - geometry.centerScreen.y, screen.x - geometry.centerScreen.x),
                 startRotation: floatingSelection.rotation,
               };
             } else {
+              if (!isBackgroundFloatingSelectionScaleTarget(hitTarget)) {
+                return;
+              }
               const frame = {
                 center: geometry.centerScreen,
                 corners: geometry.corners,
@@ -3236,9 +3246,9 @@ export function BackgroundCanvasEditor() {
         );
         const canvas = canvasRef.current;
         if (canvas) {
-          canvas.style.cursor = getTransformGizmoRotateCursor(
+          canvas.style.cursor = getTransformGizmoCursorForCornerTarget(
+            `rotate-${floatingSelectionTransform.corner}` as TransformGizmoCornerTarget,
             -floatingSelectionTransform.selection.rotation,
-            floatingSelectionTransform.corner,
           );
         }
       } else {
@@ -3295,18 +3305,17 @@ export function BackgroundCanvasEditor() {
         if (hitTarget === 'body') {
           canvas.style.cursor = 'move';
         } else if (hitTarget?.startsWith('scale-')) {
-          const scaleTarget = hitTarget.slice('scale-'.length);
           canvas.style.cursor = (
-            scaleTarget === 'n' || scaleTarget === 's'
+            hitTarget === 'scale-n' || hitTarget === 'scale-s'
               ? getTransformGizmoEdgeCursor('vertical', rotationRadians)
-              : scaleTarget === 'e' || scaleTarget === 'w'
+              : hitTarget === 'scale-e' || hitTarget === 'scale-w'
                 ? getTransformGizmoEdgeCursor('horizontal', rotationRadians)
-                : getTransformGizmoCornerCursor(scaleTarget as TransformGizmoCorner, rotationRadians)
+                : getTransformGizmoCursorForCornerTarget(hitTarget as TransformGizmoCornerTarget, rotationRadians)
           );
         } else if (hitTarget?.startsWith('rotate-')) {
-          canvas.style.cursor = getTransformGizmoRotateCursor(
+          canvas.style.cursor = getTransformGizmoCursorForCornerTarget(
+            hitTarget as TransformGizmoCornerTarget,
             rotationRadians,
-            hitTarget.slice('rotate-'.length) as TransformGizmoCorner,
           );
         } else {
           canvas.style.cursor = 'crosshair';
@@ -3652,6 +3661,10 @@ export function BackgroundCanvasEditor() {
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
             onPointerLeave={onPointerLeave}
+          />
+          <BitmapBrushCursorOverlay
+            ref={brushCursorOverlayRef}
+            testId="background-brush-cursor-overlay"
           />
           {isVectorBackgroundLayer(activeLayer) ? (
             <BackgroundVectorCanvas

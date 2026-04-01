@@ -1,7 +1,6 @@
 import { Control, controlsUtils, type Canvas as FabricCanvas } from 'fabric';
 import {
   TRANSFORM_GIZMO_BORDER_COLOR,
-  TRANSFORM_GIZMO_FILL_COLOR,
   TRANSFORM_GIZMO_HANDLE_FILL,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   TRANSFORM_GIZMO_HANDLE_STROKE,
@@ -454,7 +453,7 @@ export function applyUnifiedObjectTransformGizmoAppearance(
   object.touchCornerSize = getZoomInvariantMetric((TRANSFORM_GIZMO_HANDLE_RADIUS + 16) * 2, zoom);
   object.transparentCorners = false;
   object.padding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING, zoom);
-  object.selectionBackgroundColor = TRANSFORM_GIZMO_FILL_COLOR;
+  object.selectionBackgroundColor = 'transparent';
   object.controls = createUnifiedObjectTransformControls();
   object.setCoords?.();
 }

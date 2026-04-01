@@ -11,6 +11,7 @@ import {
   clonePenDraftAnchor,
   cloneScenePoint,
   createPenDraftAnchor,
+  mirrorPointAcrossAnchor,
   type PenDraftAnchor,
 } from './costumeCanvasShared';
 import {
@@ -42,13 +43,6 @@ export function useCostumeCanvasPenController({
   } | null>(null);
   const penAnchorPlacementSessionRef = useRef<any>(null);
   const penModifierStateRef = useRef({ alt: false, space: false });
-
-  const mirrorPointAcrossAnchor = useCallback((anchor: Point, handlePoint: Point) => (
-    new Point(
-      anchor.x * 2 - handlePoint.x,
-      anchor.y * 2 - handlePoint.y,
-    )
-  ), []);
 
   const translateScenePoint = useCallback((point: Point | null, deltaX: number, deltaY: number) => {
     if (!point) return null;
@@ -145,7 +139,7 @@ export function useCostumeCanvasPenController({
     anchor.handleType = session.cuspMode ? 'corner' : 'symmetric';
     draft.previewPoint = nextPointer;
     return true;
-  }, [getZoomInvariantMetric, mirrorPointAcrossAnchor, resolvePenDraftAnchorHandleType, translateScenePoint]);
+  }, [getZoomInvariantMetric, resolvePenDraftAnchorHandleType, translateScenePoint]);
 
   const setPenAnchorMoveMode = useCallback((enabled: boolean) => {
     const draft = penDraftRef.current;

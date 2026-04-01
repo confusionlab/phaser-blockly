@@ -1658,7 +1658,7 @@ export function SpriteShelf() {
 
   return (
     <div
-      className="h-full flex flex-col bg-card"
+      className="flex h-full min-h-0 min-w-0 flex-col bg-card"
       onPointerEnter={() => setIsShelfHovered(true)}
       onPointerLeave={() => setIsShelfHovered(false)}
     >
@@ -1809,11 +1809,11 @@ export function SpriteShelf() {
         ref={shortcutSurfaceRef}
         data-editor-shortcut-surface="scene-objects"
         tabIndex={0}
-        className="flex-1 min-h-0 min-w-0 w-full overflow-x-hidden outline-none"
+        className="flex flex-1 min-h-0 min-w-0 w-full flex-col overflow-x-hidden outline-none"
         onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
       >
         <ScrollArea
-          className="flex-1 min-w-0 w-full overflow-hidden"
+          className="flex-1 min-h-0 min-w-0 w-full overflow-hidden"
           onDragOver={handleRootDragOver}
           onDrop={handleRootDrop}
           onClick={handleEmptyShelfClick}
@@ -1836,12 +1836,12 @@ export function SpriteShelf() {
               <div
                 role="tree"
                 aria-label="Scene hierarchy"
-                className="relative min-h-full w-0 min-w-full overflow-x-hidden outline-none"
+                className="relative min-h-full w-0 min-w-full overflow-x-hidden pb-2 outline-none"
                 onClick={handleEmptyShelfClick}
               >
                 {treeItems.map((item) => renderTreeItem(item))}
                 <div
-                  className="absolute inset-x-2 -bottom-2 z-10 h-4 rounded"
+                  className="absolute inset-x-2 bottom-0 z-10 h-4 rounded"
                   onDragOver={handleRootDropZoneDragOver}
                   onDrop={handleRootDropZoneDrop}
                 >

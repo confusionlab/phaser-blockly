@@ -2,6 +2,9 @@ export type TransformGizmoCorner = 'nw' | 'ne' | 'se' | 'sw';
 export type TransformGizmoEdge = 'horizontal' | 'vertical';
 export type TransformGizmoSide = 'n' | 'e' | 's' | 'w';
 export type TransformGizmoRotateAnchor = TransformGizmoCorner | TransformGizmoSide;
+export type TransformGizmoCornerScaleTarget = `scale-${TransformGizmoCorner}`;
+export type TransformGizmoCornerRotateTarget = `rotate-${TransformGizmoCorner}`;
+export type TransformGizmoCornerTarget = TransformGizmoCornerScaleTarget | TransformGizmoCornerRotateTarget;
 
 export interface TransformGizmoPoint {
   x: number;
@@ -58,6 +61,7 @@ const TRANSFORM_CURSOR_SIZE = 24;
 const TRANSFORM_CURSOR_HOTSPOT = 12;
 const TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES = 1;
 const transformCursorCache = new Map<string, string>();
+const TRANSFORM_GIZMO_CORNER_ORDER: readonly TransformGizmoCorner[] = ['nw', 'ne', 'se', 'sw'] as const;
 
 const SCALE_CURSOR_MARKUP = [
   '<path d="M6.25 12H17.75" stroke="#ffffff" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -182,6 +186,37 @@ export function getTransformGizmoRotateCursor(
   return getTransformCursor(`rotate-${anchor}`, ROTATE_CURSOR_MARKUP, rotationDegrees, 'grab');
 }
 
+export function getTransformGizmoCornerScaleTarget(corner: TransformGizmoCorner): TransformGizmoCornerScaleTarget {
+  return `scale-${corner}`;
+}
+
+export function getTransformGizmoCornerRotateTarget(corner: TransformGizmoCorner): TransformGizmoCornerRotateTarget {
+  return `rotate-${corner}`;
+}
+
+export function getTransformGizmoCornerFromTarget(target: TransformGizmoCornerTarget | null | undefined) {
+  if (!target) {
+    return null;
+  }
+  const corner = target.slice(target.indexOf('-') + 1);
+  return TRANSFORM_GIZMO_CORNER_ORDER.includes(corner as TransformGizmoCorner)
+    ? corner as TransformGizmoCorner
+    : null;
+}
+
+export function getTransformGizmoCursorForCornerTarget(
+  target: TransformGizmoCornerTarget,
+  rotationRadians: number = 0,
+) {
+  const corner = getTransformGizmoCornerFromTarget(target);
+  if (!corner) {
+    return 'default';
+  }
+  return target.startsWith('rotate-')
+    ? getTransformGizmoRotateCursor(rotationRadians, corner)
+    : getTransformGizmoCornerCursor(corner, rotationRadians);
+}
+
 export function rotateTransformPoint<TPoint extends TransformGizmoPoint>(point: TPoint, radians: number): TPoint {
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
@@ -271,6 +306,25 @@ export function isPointInsideTransformRotateRing(
     case 'sw':
       return localOffset.x <= 0 && localOffset.y >= 0;
   }
+}
+
+export function hitTransformGizmoCornerTarget<TPoint extends TransformGizmoPoint>(
+  point: TPoint,
+  corners: TransformGizmoCorners<TPoint>,
+  handleRadius: number,
+  rotateHandleRadius: number = handleRadius,
+  rotationRadians: number = 0,
+): TransformGizmoCornerTarget | null {
+  for (const corner of TRANSFORM_GIZMO_CORNER_ORDER) {
+    const cornerPoint = corners[corner];
+    if (isPointInsideTransformHandle(point, cornerPoint, handleRadius)) {
+      return getTransformGizmoCornerScaleTarget(corner);
+    }
+    if (isPointInsideTransformRotateRing(point, cornerPoint, rotateHandleRadius, corner, rotationRadians)) {
+      return getTransformGizmoCornerRotateTarget(corner);
+    }
+  }
+  return null;
 }
 
 interface CornerScaleComputationOptions<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
