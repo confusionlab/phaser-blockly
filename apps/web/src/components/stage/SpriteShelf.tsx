@@ -74,6 +74,7 @@ import {
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
+import { ShelfTreeRow } from './ShelfTreeRow';
 
 function remapLocalVariablesForInsertion(
   localVariables: GameObject['localVariables'],
@@ -1517,193 +1518,138 @@ export function SpriteShelf({
           ? 'rounded-t-lg rounded-b-none'
           : 'rounded-lg'
       : 'rounded-lg';
-    const rowPaddingClass = 'px-1 pt-1';
-    const rowContentPaddingClass = 'py-1';
-    const indentDepth = Math.max(0, level - 1);
-    const rowHoverClass = selectionSurfaceClassNames.hover;
     const rowOverflowClass = (isInlineEditing || (isSelected && connectsToNext))
       ? 'overflow-visible'
       : 'overflow-hidden';
 
     return (
-      <div
-        key={options?.rowKey ?? item.key}
-        className={`relative w-full min-w-0 max-w-full ${rowOverflowClass}`}
-      >
-        {isDropBefore ? (
-          <div className="pointer-events-none absolute inset-x-2 top-0 z-10 h-0 border-t-2 border-primary" />
-        ) : null}
-        <div
-          data-sprite-shelf-row="true"
-          className={`group/layer-row w-full min-w-0 max-w-full ${rowOverflowClass} ${rowPaddingClass} select-none ${
-            isObjectEditing || isFolderEditing ? 'cursor-default' : 'cursor-grab active:cursor-grabbing'
-          }`}
-          draggable={interactive && !isObjectEditing && !isFolderEditing}
-          onDoubleClick={interactive ? ((e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (item.type === 'object' && object) {
-              handleStartObjectEdit(object.id, object.name);
-            } else if (item.type === 'folder' && folder) {
-              handleStartFolderEdit(folder);
+      <ShelfTreeRow
+        rowKey={options?.rowKey ?? item.key}
+        name={item.name}
+        level={level}
+        hasChildren={hasChildItems}
+        isExpanded={isExpanded}
+        isSelected={isSelected}
+        isDropOn={isDropOn}
+        isDropBefore={isDropBefore}
+        isDropAfter={isDropAfter}
+        connectsToPrevious={connectsToPrevious}
+        connectsToNext={connectsToNext}
+        isEditing={isInlineEditing}
+        showControls={isShelfHovered}
+        draggable={interactive && !isObjectEditing && !isFolderEditing}
+        onDoubleClick={interactive ? ((e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (item.type === 'object' && object) {
+            handleStartObjectEdit(object.id, object.name);
+          } else if (item.type === 'folder' && folder) {
+            handleStartFolderEdit(folder);
+          }
+        }) : undefined}
+        onClick={interactive ? ((e) => {
+          if (item.type === 'object' && object) {
+            handleObjectRowClick(e, object.id);
+          } else if (item.type === 'folder' && folder) {
+            handleFolderRowClick(e, folder.id);
+          }
+        }) : undefined}
+        onContextMenu={interactive ? ((e) => {
+          if (item.type === 'object' && object) {
+            handleObjectContextMenu(e, object);
+          } else if (item.type === 'folder' && folder) {
+            handleFolderContextMenu(e, folder);
+          }
+        }) : undefined}
+        onDragOver={interactive ? ((e) => handleLayerDragOver(e, item)) : undefined}
+        onDrop={interactive ? ((e) => handleLayerDrop(e, item)) : undefined}
+        onDragStart={interactive ? ((e) => handleLayerDragStart(e, item)) : undefined}
+        onDragEnd={interactive ? clearLayerDragState : undefined}
+        onToggleChildren={interactive ? ((e) => {
+          e.stopPropagation();
+          if (folder) {
+            handleToggleFolder(folder.id);
+          }
+        }) : undefined}
+        leadingIcon={item.type === 'folder' ? (
+          isExpanded ? <FolderOpen className="size-[1.125rem] shrink-0" /> : <Folder className="size-[1.125rem] shrink-0" />
+        ) : (
+          effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
+            const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
+            const bounds = costume?.bounds;
+            if (bounds && bounds.width > 0 && bounds.height > 0) {
+              const scale = Math.min(1, 24 / Math.max(bounds.width, bounds.height));
+              const localBounds = getCostumeBoundsInAssetSpace(bounds, costume?.assetFrame);
+              return (
+                <div
+                  className="absolute"
+                  style={{
+                    backgroundImage: `url(${costume.assetId})`,
+                    backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
+                    backgroundSize: costume?.assetFrame
+                      ? `${costume.assetFrame.width}px ${costume.assetFrame.height}px`
+                      : '1024px 1024px',
+                    backgroundRepeat: 'no-repeat',
+                    transform: `scale(${scale})`,
+                    transformOrigin: 'top left',
+                    width: bounds.width,
+                    height: bounds.height,
+                    left: '50%',
+                    top: '50%',
+                    marginLeft: (-bounds.width * scale) / 2,
+                    marginTop: (-bounds.height * scale) / 2,
+                  }}
+                />
+              );
             }
-          }) : undefined}
-          onClick={interactive ? ((e) => {
-            if (item.type === 'object' && object) {
-              handleObjectRowClick(e, object.id);
-            } else if (item.type === 'folder' && folder) {
-              handleFolderRowClick(e, folder.id);
+            return (
+              <img
+                src={costume?.assetId}
+                alt={object?.name ?? 'Object'}
+                className="h-full w-full object-contain"
+              />
+            );
+          })() : (
+            <span className="text-sm">📦</span>
+          )
+        )}
+        content={(
+          <InlineRenameField
+            key={isInlineEditing ? `rename-${inlineRenameSessionId}` : `label-${item.key}`}
+            ref={inputRef}
+            editing={isInlineEditing}
+            value={isObjectEditing ? editName : (isFolderEditing ? folderEditName : item.name)}
+            onChange={(e) => {
+              if (isObjectEditing) {
+                setEditName(e.target.value);
+                return;
+              }
+              setFolderEditName(e.target.value);
+            }}
+            onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
+            onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename, cancelActiveInlineRename)}
+            data-hotkeys="ignore"
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="flex-1 min-w-0"
+            outlineClassName="left-[-3px] right-0"
+            textClassName={`text-xs leading-5 ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : 'text-foreground'}`}
+            autoFocus={isInlineEditing}
+            focusBehavior="caret-end"
+            displayAs="div"
+            displayProps={{
+              className: `flex w-full min-w-0 items-center gap-1 ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`,
+              title: item.name,
+            }}
+            displayValue={
+              <>
+                <span className="block min-w-0 flex-1 truncate">{item.name}</span>
+                {isComponentInstance && <Component className="size-3 shrink-0 opacity-60" />}
+              </>
             }
-          }) : undefined}
-          onContextMenu={interactive ? ((e) => {
-            if (item.type === 'object' && object) {
-              handleObjectContextMenu(e, object);
-            } else if (item.type === 'folder' && folder) {
-              handleFolderContextMenu(e, folder);
-            }
-          }) : undefined}
-          onDragOver={interactive ? ((e) => handleLayerDragOver(e, item)) : undefined}
-          onDrop={interactive ? ((e) => handleLayerDrop(e, item)) : undefined}
-          onDragStart={interactive ? ((e) => handleLayerDragStart(e, item)) : undefined}
-          onDragEnd={interactive ? clearLayerDragState : undefined}
-        >
-          <div className={`relative w-full min-w-0 max-w-full ${rowOverflowClass}`}>
-            {!isSelected && !isDropOn ? (
-              <div
-                className={`pointer-events-none absolute inset-0 z-0 rounded-lg opacity-0 transition-opacity group-hover/layer-row:opacity-100 ${rowHoverClass}`}
-              />
-            ) : null}
-            {(isSelected || isDropOn) ? (
-              <div
-                className={`pointer-events-none absolute inset-0 z-0 ${rowShapeClass} ${rowHighlightClass}`}
-              />
-            ) : null}
-            {isSelected && connectsToNext ? (
-              <div
-                className={`pointer-events-none absolute inset-x-0 top-full z-0 h-2 ${rowHighlightClass}`}
-              />
-            ) : null}
-            <div className={`relative z-10 flex w-full min-w-0 max-w-full items-stretch rounded-lg ${rowContentPaddingClass} transition-colors`}>
-            {indentDepth > 0 ? (
-              <div aria-hidden="true" className="flex self-center shrink-0">
-                {Array.from({ length: indentDepth }).map((_, index) => (
-                  <span key={`${item.key}-indent-${index}`} className="block w-4 shrink-0" />
-                ))}
-              </div>
-            ) : null}
-            <button
-              type="button"
-              disabled={!hasChildItems}
-              aria-label={hasChildItems ? `Toggle ${item.name}` : undefined}
-              className={`-mx-1 self-stretch shrink-0 rounded px-1 flex items-center justify-center transition-opacity disabled:pointer-events-none ${
-                isShelfHovered ? 'opacity-100' : 'opacity-0'
-              }`}
-              onClick={interactive ? ((e) => {
-                e.stopPropagation();
-                if (folder) {
-                  handleToggleFolder(folder.id);
-                }
-              }) : undefined}
-            >
-              {hasChildItems ? (
-                isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />
-              ) : (
-                <span className="block h-2.5 w-2.5" />
-              )}
-            </button>
-
-            {item.type === 'folder' ? (
-              <div className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center rounded-md">
-                {isExpanded ? <FolderOpen className="size-[1.125rem] shrink-0" /> : <Folder className="size-[1.125rem] shrink-0" />}
-              </div>
-            ) : (
-              <div
-                className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center overflow-hidden rounded-md"
-              >
-                {effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
-                  const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
-                  const bounds = costume?.bounds;
-                  if (bounds && bounds.width > 0 && bounds.height > 0) {
-                    const scale = Math.min(1, 24 / Math.max(bounds.width, bounds.height));
-                    const localBounds = getCostumeBoundsInAssetSpace(bounds, costume?.assetFrame);
-                    return (
-                      <div
-                        className="absolute"
-                        style={{
-                          backgroundImage: `url(${costume.assetId})`,
-                          backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
-                          backgroundSize: costume?.assetFrame
-                            ? `${costume.assetFrame.width}px ${costume.assetFrame.height}px`
-                            : '1024px 1024px',
-                          backgroundRepeat: 'no-repeat',
-                          transform: `scale(${scale})`,
-                          transformOrigin: 'top left',
-                          width: bounds.width,
-                          height: bounds.height,
-                          left: '50%',
-                          top: '50%',
-                          marginLeft: (-bounds.width * scale) / 2,
-                          marginTop: (-bounds.height * scale) / 2,
-                        }}
-                      />
-                    );
-                  }
-                  return (
-                    <img
-                      src={costume?.assetId}
-                      alt={object?.name ?? 'Object'}
-                      className="w-full h-full object-contain"
-                    />
-                  );
-                })() : (
-                  <span className="text-sm">📦</span>
-                )}
-              </div>
-            )}
-
-            <div className={`ml-1.5 flex flex-1 min-w-0 max-w-full items-center pr-[3px] ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`}>
-              <InlineRenameField
-                key={isInlineEditing ? `rename-${inlineRenameSessionId}` : `label-${item.key}`}
-                ref={inputRef}
-                editing={isInlineEditing}
-                value={isObjectEditing ? editName : (isFolderEditing ? folderEditName : item.name)}
-                onChange={(e) => {
-                  if (isObjectEditing) {
-                    setEditName(e.target.value);
-                    return;
-                  }
-                  setFolderEditName(e.target.value);
-                }}
-                onBlur={() => handleInlineRenameBlur(inlineRenameSessionId)}
-                onKeyDown={(e) => handleInlineRenameKeyDown(e, commitActiveInlineRename, cancelActiveInlineRename)}
-                data-hotkeys="ignore"
-                onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="flex-1 min-w-0"
-                outlineClassName="left-[-3px] right-0"
-                textClassName={`text-xs leading-5 ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : 'text-foreground'}`}
-                autoFocus={isInlineEditing}
-                focusBehavior="caret-end"
-                displayAs="div"
-                displayProps={{
-                  className: `flex w-full min-w-0 items-center gap-1 ${isInlineEditing ? 'overflow-visible' : 'overflow-hidden'}`,
-                  title: item.name,
-                }}
-                displayValue={
-                  <>
-                    <span className="block min-w-0 flex-1 truncate">{item.name}</span>
-                    {isComponentInstance && <Component className="size-3 shrink-0 opacity-60" />}
-                  </>
-                }
-              />
-            </div>
-            </div>
-          </div>
-        </div>
-        {isDropAfter ? (
-          <div className="pointer-events-none absolute inset-x-2 bottom-0 z-10 h-0 border-t-2 border-primary" />
-        ) : null}
-      </div>
+          />
+        )}
+      />
     );
   };
 

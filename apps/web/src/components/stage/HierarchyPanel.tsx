@@ -1,20 +1,30 @@
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { SpriteShelf } from './SpriteShelf';
 import {
-  ChevronDown,
-  ChevronRight,
   Component,
   Folder,
   FolderOpen,
   FolderPlus,
+  Layers3,
+  Pencil,
   Plus,
   Trash2,
 } from '@/components/ui/icons';
+import { ShelfTreeRow } from './ShelfTreeRow';
 import type { ComponentDefinition, ComponentFolder, HierarchyFolder, Scene, SceneFolder } from '@/types';
 import {
   getFolderedHierarchyTree,
@@ -67,6 +77,7 @@ interface FolderedHierarchyPaneProps<TItem extends FolderedItemShape> {
   renderItemIcon?: (item: TItem) => React.ReactNode;
   renderHeaderActions?: React.ReactNode;
   onItemDragStart?: (event: React.DragEvent<HTMLDivElement>, item: TItem) => void;
+  renderItemContextMenuActions?: (item: TItem, closeMenu: () => void) => React.ReactNode;
 }
 
 function FolderedHierarchyPane<TItem extends FolderedItemShape>({
@@ -88,14 +99,25 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   renderItemIcon,
   renderHeaderActions,
   onItemDragStart,
+  renderItemContextMenuActions,
 }: FolderedHierarchyPaneProps<TItem>) {
+  const [isPaneHovered, setIsPaneHovered] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [draggedKeys, setDraggedKeys] = useState<string[]>([]);
   const [dropTarget, setDropTarget] = useState<HierarchyDropTarget>({ key: null, dropPosition: null });
+  const [contextMenu, setContextMenu] = useState<
+    | { x: number; y: number; kind: 'item'; item: TItem }
+    | { x: number; y: number; kind: 'folder'; folder: HierarchyFolder }
+    | { x: number; y: number; kind: 'empty' }
+    | null
+  >(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [folderDeleteTarget, setFolderDeleteTarget] = useState<HierarchyFolder | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const tree = useMemo(
     () => getFolderedHierarchyTree(folders, items, {
@@ -154,7 +176,122 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     setDropTarget({ key: null, dropPosition: null });
   };
 
-  const renderNodes = (nodes: HierarchyTreeNode<TItem>[], level = 0): React.ReactNode => nodes.map((node) => {
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current || !contextMenuPosition) return;
+
+    const margin = 8;
+    const menuRect = contextMenuRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let nextLeft = contextMenuPosition.left;
+    let nextTop = contextMenuPosition.top;
+
+    if (nextLeft + menuRect.width + margin > viewportWidth) {
+      nextLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
+    }
+    if (nextTop + menuRect.height + margin > viewportHeight) {
+      nextTop = Math.max(margin, viewportHeight - menuRect.height - margin);
+    }
+
+    if (nextLeft !== contextMenuPosition.left || nextTop !== contextMenuPosition.top) {
+      setContextMenuPosition({ left: nextLeft, top: nextTop });
+    }
+  }, [contextMenu, contextMenuPosition]);
+
+  const closeContextMenu = () => {
+    setContextMenu(null);
+    setContextMenuPosition(null);
+  };
+
+  const handleRequestDeleteFolder = (folder: HierarchyFolder) => {
+    const descendants = collectFolderDescendants(folder.id, folders);
+    const hasChildFolders = descendants.size > 1;
+    const hasChildItems = items.some((item) => !!item.folderId && descendants.has(item.folderId));
+    if (!hasChildFolders && !hasChildItems) {
+      onDeleteFolder(folder.id);
+      return;
+    }
+    setFolderDeleteTarget(folder);
+  };
+
+  const handleConfirmDeleteFolder = () => {
+    if (!folderDeleteTarget) return;
+    onDeleteFolder(folderDeleteTarget.id);
+    setFolderDeleteTarget(null);
+  };
+
+  const handleRootDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedKeys.length === 0 || tree.length === 0) {
+      return;
+    }
+
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTarget({ key: null, dropPosition: null });
+  };
+
+  const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedKeys.length === 0) {
+      return;
+    }
+
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    event.preventDefault();
+    handleDrop({ key: null, dropPosition: null });
+  };
+
+  const handleRootDropZoneDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedKeys.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTarget({ key: null, dropPosition: null });
+  };
+
+  const handleRootDropZoneDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedKeys.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    handleDrop({ key: null, dropPosition: null });
+  };
+
+  const handleEmptyPaneContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    if (draggedKeys.length > 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-sprite-shelf-row="true"]')) {
+      return;
+    }
+
+    const interactiveTarget = target?.closest(
+      'button, input, textarea, select, [contenteditable="true"], [role="button"]',
+    );
+    if (interactiveTarget && interactiveTarget !== event.currentTarget) {
+      return;
+    }
+
+    event.preventDefault();
+    setContextMenuPosition({ left: event.clientX, top: event.clientY });
+    setContextMenu({ x: event.clientX, y: event.clientY, kind: 'empty' });
+  };
+
+  const renderNodes = (nodes: HierarchyTreeNode<TItem>[], level = 1): React.ReactNode => nodes.map((node) => {
     const isFolder = node.type === 'folder';
     const folder = node.folder;
     const item = node.item;
@@ -165,7 +302,18 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
 
     return (
       <div key={key}>
-        <div
+        <ShelfTreeRow
+          rowKey={key}
+          name={folder?.name ?? (item as { name?: string } | undefined)?.name ?? itemLabel}
+          level={level}
+          hasChildren={node.children.length > 0}
+          isExpanded={isExpanded}
+          isSelected={isSelected}
+          isDropOn={dropTarget.key === key && dropTarget.dropPosition === 'on'}
+          isDropBefore={dropTarget.key === key && dropTarget.dropPosition === 'before'}
+          isDropAfter={dropTarget.key === key && dropTarget.dropPosition === 'after'}
+          isEditing={isEditing}
+          showControls={isPaneHovered}
           draggable
           onDragStart={(event) => {
             setDraggedKeys([key]);
@@ -183,146 +331,103 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
             event.preventDefault();
             const rect = event.currentTarget.getBoundingClientRect();
             const midpoint = rect.top + rect.height / 2;
-            const dropPosition: HierarchyDropTarget['dropPosition'] = isFolder && event.clientY > rect.top + rect.height * 0.28 && event.clientY < rect.bottom - rect.height * 0.28
+            const nextDropPosition: HierarchyDropTarget['dropPosition'] = isFolder && event.clientY > rect.top + rect.height * 0.28 && event.clientY < rect.bottom - rect.height * 0.28
               ? 'on'
               : event.clientY < midpoint
                 ? 'before'
                 : 'after';
-            setDropTarget({ key, dropPosition });
+            setDropTarget({ key, dropPosition: nextDropPosition });
           }}
           onDrop={(event) => {
             event.preventDefault();
             handleDrop(dropTarget.key === key ? dropTarget : { key, dropPosition: 'after' });
           }}
-          className={cn(
-            'group relative flex items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-            isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
-          )}
-          style={{ paddingLeft: `${level * 16 + 8}px` }}
-        >
-          {dropTarget.key === key && dropTarget.dropPosition === 'before' ? (
-            <div className="absolute inset-x-1 top-0 border-t-2 border-primary" />
-          ) : null}
-          {dropTarget.key === key && dropTarget.dropPosition === 'after' ? (
-            <div className="absolute inset-x-1 bottom-0 border-t-2 border-primary" />
-          ) : null}
-          {isFolder && folder ? (
-            <button
-              type="button"
-              className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                setCollapsedFolders((current) => {
-                  const next = new Set(current);
-                  if (next.has(folder.id)) {
-                    next.delete(folder.id);
-                  } else {
-                    next.add(folder.id);
-                  }
-                  return next;
-                });
-              }}
-            >
-              {isExpanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-            </button>
-          ) : (
-            <div className="size-5" />
-          )}
-
-          {isFolder && folder ? (
-            isEditing ? (
-              <InlineRenameField
-                ref={inputRef}
-                editing={true}
-                value={draftName}
-                onChange={(event) => setDraftName(event.target.value)}
-                onBlur={commitRename}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') commitRename();
-                  if (event.key === 'Escape') {
-                    setEditingFolderId(null);
-                    setEditingItemId(null);
-                    setDraftName('');
-                  }
-                }}
-                className="min-w-0 flex-1"
-                textClassName="truncate text-sm font-medium leading-5"
-                autoFocus
-              />
-            ) : (
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                onDoubleClick={() => {
-                  setEditingFolderId(folder.id);
-                  setEditingItemId(null);
-                  setDraftName(folder.name);
-                }}
-              >
-                {isExpanded ? <FolderOpen className="size-4 shrink-0 text-muted-foreground" /> : <Folder className="size-4 shrink-0 text-muted-foreground" />}
-                <span className="truncate">{folder.name}</span>
-              </button>
-            )
-          ) : item ? (
-            isEditing ? (
-              <InlineRenameField
-                ref={inputRef}
-                editing={true}
-                value={draftName}
-                onChange={(event) => setDraftName(event.target.value)}
-                onBlur={commitRename}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') commitRename();
-                  if (event.key === 'Escape') {
-                    setEditingFolderId(null);
-                    setEditingItemId(null);
-                    setDraftName('');
-                  }
-                }}
-                className="min-w-0 flex-1"
-                textClassName="truncate text-sm font-medium leading-5"
-                autoFocus
-              />
-            ) : (
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                onClick={() => onSelectItem(item)}
-                onDoubleClick={() => {
-                  setEditingItemId(item.id);
-                  setEditingFolderId(null);
-                  setDraftName((item as { name?: string }).name ?? itemLabel);
-                }}
-              >
-                {renderItemIcon ? renderItemIcon(item) : null}
-                <span className="truncate">{(item as { name?: string }).name ?? itemLabel}</span>
-              </button>
-            )
-          ) : null}
-
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-6 opacity-0 transition-opacity group-hover:opacity-100"
-            onClick={() => {
-              if (folder) {
-                onDeleteFolder(folder.id);
-              } else if (item) {
-                onDeleteItem(item.id);
+          onToggleChildren={isFolder && folder ? ((event) => {
+            event.stopPropagation();
+            setCollapsedFolders((current) => {
+              const next = new Set(current);
+              if (next.has(folder.id)) {
+                next.delete(folder.id);
+              } else {
+                next.add(folder.id);
               }
-            }}
-            title={folder ? 'Delete folder' : `Delete ${itemLabel.toLowerCase()}`}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
+              return next;
+            });
+          }) : undefined}
+          onClick={!isFolder && item ? (() => onSelectItem(item)) : undefined}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (folder) {
+              setContextMenuPosition({ left: event.clientX, top: event.clientY });
+              setContextMenu({ x: event.clientX, y: event.clientY, kind: 'folder', folder });
+              return;
+            }
+            if (item) {
+              setContextMenuPosition({ left: event.clientX, top: event.clientY });
+              setContextMenu({ x: event.clientX, y: event.clientY, kind: 'item', item });
+            }
+          }}
+          onDoubleClick={() => {
+            if (folder) {
+              setEditingFolderId(folder.id);
+              setEditingItemId(null);
+              setDraftName(folder.name);
+              return;
+            }
+            if (item) {
+              setEditingItemId(item.id);
+              setEditingFolderId(null);
+              setDraftName((item as { name?: string }).name ?? itemLabel);
+            }
+          }}
+          leadingIcon={isFolder && folder ? (
+            isExpanded ? <FolderOpen className="size-[1.125rem] shrink-0" /> : <Folder className="size-[1.125rem] shrink-0" />
+          ) : (
+            renderItemIcon ? renderItemIcon(item as TItem) : <Layers3 className="size-[1.125rem] shrink-0 text-muted-foreground" />
+          )}
+          content={isEditing ? (
+            <InlineRenameField
+              ref={inputRef}
+              editing={true}
+              value={draftName}
+              onChange={(event) => setDraftName(event.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') commitRename();
+                if (event.key === 'Escape') {
+                  setEditingFolderId(null);
+                  setEditingItemId(null);
+                  setDraftName('');
+                }
+              }}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              className="flex-1 min-w-0"
+              outlineClassName="left-[-3px] right-0"
+              textClassName="text-xs leading-5 text-foreground"
+              autoFocus
+              focusBehavior="caret-end"
+            />
+          ) : (
+            <div className="flex w-full min-w-0 items-center overflow-hidden" title={folder?.name ?? (item as { name?: string } | undefined)?.name ?? itemLabel}>
+              <span className="block min-w-0 flex-1 truncate text-xs leading-5 text-foreground">
+                {folder?.name ?? (item as { name?: string } | undefined)?.name ?? itemLabel}
+              </span>
+            </div>
+          )}
+        />
         {isFolder && folder && isExpanded ? renderNodes(node.children, level + 1) : null}
       </div>
     );
   });
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col bg-card">
+    <div
+      className="flex h-full min-h-0 min-w-0 flex-col bg-card"
+      onPointerEnter={() => setIsPaneHovered(true)}
+      onPointerLeave={() => setIsPaneHovered(false)}
+    >
       <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.splitRow)}>
         <div aria-hidden="true" />
         <div className="flex items-center gap-1">
@@ -337,27 +442,139 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div
-          className="min-h-full px-2 py-2"
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDropTarget({ key: null, dropPosition: null });
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            handleDrop({ key: null, dropPosition: null });
-          }}
+          className="min-h-full w-0 min-w-full"
+          onDragOver={handleRootDragOver}
+          onDrop={handleRootDrop}
+          onContextMenu={handleEmptyPaneContextMenu}
         >
           {tree.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 py-10 text-sm text-muted-foreground">
               {emptyLabel}
             </div>
           ) : (
-            <div role="tree" aria-label={title} className="space-y-0.5">
+            <div role="tree" aria-label={title} className="relative min-h-full w-0 min-w-full overflow-x-hidden pb-2 outline-none">
               {renderNodes(tree)}
+              <div
+                className="absolute inset-x-2 bottom-0 z-10 h-4 rounded"
+                onDragOver={handleRootDropZoneDragOver}
+                onDrop={handleRootDropZoneDrop}
+              >
+                {dropTarget.key === null ? (
+                  <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 rounded border-t-2 border-primary/80" />
+                ) : null}
+              </div>
             </div>
           )}
         </div>
       </ScrollArea>
+
+      {contextMenu ? (
+        <>
+          <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
+          <Card
+            ref={contextMenuRef}
+            className="fixed z-50 min-w-36 gap-0 py-1"
+            style={{
+              left: contextMenuPosition?.left ?? contextMenu.x,
+              top: contextMenuPosition?.top ?? contextMenu.y,
+            }}
+          >
+            {contextMenu.kind === 'item' ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    onSelectItem(contextMenu.item);
+                    setEditingItemId(contextMenu.item.id);
+                    setEditingFolderId(null);
+                    setDraftName((contextMenu.item as { name?: string }).name ?? itemLabel);
+                    closeContextMenu();
+                  }}
+                  className="h-8 w-full justify-start rounded-none"
+                >
+                  <Pencil className="size-4" />
+                  Rename {itemLabel}
+                </Button>
+                {renderItemContextMenuActions ? renderItemContextMenuActions(contextMenu.item, closeContextMenu) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    onDeleteItem(contextMenu.item.id);
+                    closeContextMenu();
+                  }}
+                  className="h-8 w-full justify-start rounded-none text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                  Delete {itemLabel}
+                </Button>
+              </>
+            ) : contextMenu.kind === 'folder' ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setEditingFolderId(contextMenu.folder.id);
+                    setEditingItemId(null);
+                    setDraftName(contextMenu.folder.name);
+                    closeContextMenu();
+                  }}
+                  className="h-8 w-full justify-start rounded-none"
+                >
+                  <Pencil className="size-4" />
+                  Rename Folder
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    handleRequestDeleteFolder(contextMenu.folder);
+                    closeContextMenu();
+                  }}
+                  className="h-8 w-full justify-start rounded-none text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                  Delete Folder
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onAddFolder();
+                  closeContextMenu();
+                }}
+                className="h-8 w-full justify-start rounded-none"
+              >
+                <FolderPlus className="size-4" />
+                New Folder
+              </Button>
+            )}
+          </Card>
+        </>
+      ) : null}
+
+      <Dialog open={!!folderDeleteTarget} onOpenChange={(open) => !open && setFolderDeleteTarget(null)}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete Folder</DialogTitle>
+            <DialogDescription>
+              everything inside the folder will be deleted as well.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFolderDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleConfirmDeleteFolder}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -411,6 +628,20 @@ function SceneHierarchyTab() {
         );
       }}
       onMove={(nextScenes, nextFolders) => updateSceneOrganization(nextScenes, nextFolders)}
+      renderItemContextMenuActions={(scene, closeMenu) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            selectScene(scene.id);
+            closeMenu();
+          }}
+          className="h-8 w-full justify-start rounded-none"
+        >
+          <Layers3 className="size-4" />
+          Switch to Scene
+        </Button>
+      )}
     />
   );
 }
@@ -497,6 +728,24 @@ function ComponentHierarchyTab() {
         event.dataTransfer.effectAllowed = 'copyMove';
         event.dataTransfer.setData('application/x-pocha-component-id', component.id);
       }}
+      renderItemContextMenuActions={(component, closeMenu) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            selectComponent(component.id);
+            if (selectedSceneId) {
+              addComponentInstance(selectedSceneId, component.id);
+            }
+            closeMenu();
+          }}
+          disabled={!selectedSceneId}
+          className="h-8 w-full justify-start rounded-none"
+        >
+          <Plus className="size-4" />
+          Add to Scene
+        </Button>
+      )}
     />
   );
 }
