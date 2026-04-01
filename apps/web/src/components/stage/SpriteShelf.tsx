@@ -75,6 +75,7 @@ import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize'
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { ShelfTreeRow } from './ShelfTreeRow';
+import { getTransparentShelfDragImage } from './shelfDrag';
 
 function remapLocalVariablesForInsertion(
   localVariables: GameObject['localVariables'],
@@ -144,36 +145,9 @@ interface VisibleShelfTreeEntry {
   level: number;
 }
 
-let transparentDragImage: HTMLImageElement | null = null;
-
 interface SpriteShelfProps {
   showQuickSceneSwitch?: boolean;
   showComponentLibraryButton?: boolean;
-}
-
-function getTransparentDragImage(): HTMLImageElement | null {
-  if (typeof document === 'undefined') {
-    return null;
-  }
-
-  if (transparentDragImage) {
-    return transparentDragImage;
-  }
-
-  const image = document.createElement('img');
-  image.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
-  image.alt = '';
-  image.width = 1;
-  image.height = 1;
-  image.setAttribute('aria-hidden', 'true');
-  image.style.position = 'fixed';
-  image.style.left = '-9999px';
-  image.style.top = '-9999px';
-  image.style.pointerEvents = 'none';
-  image.style.opacity = '0';
-  document.body.appendChild(image);
-  transparentDragImage = image;
-  return transparentDragImage;
 }
 
 function collectVisibleRenameableItems(
@@ -679,7 +653,7 @@ export function SpriteShelf({
       event.dataTransfer.setData('text/plain', dragKeys.join(','));
     });
 
-    const dragImage = getTransparentDragImage();
+    const dragImage = getTransparentShelfDragImage();
     if (dragImage) {
       event.dataTransfer.setDragImage(dragImage, 0, 0);
     }

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -25,6 +25,7 @@ import {
   Trash2,
 } from '@/components/ui/icons';
 import { ShelfTreeRow } from './ShelfTreeRow';
+import { getTransparentShelfDragImage } from './shelfDrag';
 import type { ComponentDefinition, ComponentFolder, HierarchyFolder, Scene, SceneFolder } from '@/types';
 import {
   getFolderedHierarchyTree,
@@ -127,6 +128,24 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     }),
     [folders, itemKeyPrefix, items],
   );
+
+  useEffect(() => {
+    if (draggedKeys.length === 0 || typeof document === 'undefined') {
+      return;
+    }
+
+    const { body, documentElement } = document;
+    const previousBodyCursor = body.style.cursor;
+    const previousDocumentCursor = documentElement.style.cursor;
+
+    body.style.cursor = 'grabbing';
+    documentElement.style.cursor = 'grabbing';
+
+    return () => {
+      body.style.cursor = previousBodyCursor;
+      documentElement.style.cursor = previousDocumentCursor;
+    };
+  }, [draggedKeys.length]);
 
   const commitRename = () => {
     const nextName = draftName.trim();
@@ -319,6 +338,10 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
             setDraggedKeys([key]);
             event.dataTransfer.effectAllowed = 'move';
             event.dataTransfer.setData('text/plain', key);
+            const dragImage = getTransparentShelfDragImage();
+            if (dragImage) {
+              event.dataTransfer.setDragImage(dragImage, 0, 0);
+            }
             if (!isFolder && item && onItemDragStart) {
               onItemDragStart(event, item);
             }
@@ -329,6 +352,8 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           }}
           onDragOver={(event) => {
             event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
             const rect = event.currentTarget.getBoundingClientRect();
             const midpoint = rect.top + rect.height / 2;
             const nextDropPosition: HierarchyDropTarget['dropPosition'] = isFolder && event.clientY > rect.top + rect.height * 0.28 && event.clientY < rect.bottom - rect.height * 0.28
@@ -340,6 +365,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           }}
           onDrop={(event) => {
             event.preventDefault();
+            event.stopPropagation();
             handleDrop(dropTarget.key === key ? dropTarget : { key, dropPosition: 'after' });
           }}
           onToggleChildren={isFolder && folder ? ((event) => {
