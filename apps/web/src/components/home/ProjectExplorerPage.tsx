@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConvexAuth } from 'convex/react';
+import { UserProfile } from '@clerk/clerk-react';
 import {
   ArrowLeft,
   Check,
@@ -8,13 +9,17 @@ import {
   Folder,
   FolderOpen,
   ImageOff,
+  LayoutGrid,
   Loader2,
   MoreHorizontal,
   Plus,
   RotateCcw,
+  Rows3,
+  Settings2,
   SquareCheck,
   Trash2,
   Upload,
+  User,
 } from '@/components/ui/icons';
 
 import {
@@ -44,8 +49,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { NameInputDialog } from '@/components/dialogs/NameInputDialog';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { createDefaultProject } from '@/types';
 
 type ExplorerKey = `folder:${string}` | `project:${string}`;
@@ -78,6 +85,11 @@ type PendingTrashConfirmation =
   | null;
 
 type ExplorerViewMode = 'row' | 'card';
+type RenameDialogState = {
+  id: string;
+  kind: VisibleItem['kind'];
+  label: string;
+};
 
 type ProjectExplorerPageProps = {
   authBootstrapState?: 'steady' | 'reconnecting';
@@ -105,12 +117,13 @@ function formatExplorerTimestamp(date: Date): string {
   return isSameDay ? timeFormatter.format(date) : dateFormatter.format(date);
 }
 
-function SelectionCheckbox({ checked }: { checked: boolean }) {
+function SelectionCheckbox({ checked, className }: { checked: boolean; className?: string }) {
   return (
     <div
       className={cn(
         'inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors',
         checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background',
+        className,
       )}
     >
       {checked ? <Check className="size-3" /> : null}
@@ -240,13 +253,15 @@ export function ProjectExplorerPage({
   const [viewMode, setViewMode] = useState<ExplorerViewMode>('card');
   const [selectedKeys, setSelectedKeys] = useState<ExplorerKey[]>([]);
   const [selectionAnchorKey, setSelectionAnchorKey] = useState<ExplorerKey | null>(null);
-  const [editingKey, setEditingKey] = useState<ExplorerKey | null>(null);
-  const [editingValue, setEditingValue] = useState('');
+  const [renameDialogState, setRenameDialogState] = useState<RenameDialogState | null>(null);
+  const [renameDialogValue, setRenameDialogValue] = useState('');
+  const [renameDialogError, setRenameDialogError] = useState<string | null>(null);
   const [isEditingCurrentFolder, setIsEditingCurrentFolder] = useState(false);
   const [currentFolderNameDraft, setCurrentFolderNameDraft] = useState('');
   const [dragKeys, setDragKeys] = useState<ExplorerKey[]>([]);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [pendingTrashConfirmation, setPendingTrashConfirmation] = useState<PendingTrashConfirmation>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const explorerShellRef = useRef<HTMLElement | null>(null);
@@ -352,15 +367,6 @@ export function ProjectExplorerPage({
   }, [visibleKeySet]);
 
   useEffect(() => {
-    if (!editingKey || visibleKeySet.has(editingKey)) {
-      return;
-    }
-
-    setEditingKey(null);
-    setEditingValue('');
-  }, [editingKey, visibleKeySet]);
-
-  useEffect(() => {
     if (currentFolderSafeId === PROJECT_EXPLORER_ROOT_FOLDER_ID) {
       setIsEditingCurrentFolder(false);
       setCurrentFolderNameDraft('');
@@ -383,12 +389,14 @@ export function ProjectExplorerPage({
     }
 
     exitSelectionMode();
-    setEditingKey(null);
-    setEditingValue('');
+    setRenameDialogState(null);
+    setRenameDialogValue('');
+    setRenameDialogError(null);
     setIsEditingCurrentFolder(false);
     setCurrentFolderNameDraft('');
     setDragKeys([]);
     setDropFolderId(null);
+    setAccountOpen(false);
     setTrashOpen(false);
     setPendingTrashConfirmation(null);
   }, [exitSelectionMode, isExplorerReadOnly]);
@@ -528,6 +536,16 @@ export function ProjectExplorerPage({
       return;
     }
 
+    if (selectionMode) {
+      setSelectedKeys((current) => (
+        current.includes(key)
+          ? current.filter((currentKey) => currentKey !== key)
+          : [...current, key]
+      ));
+      setSelectionAnchorKey(key);
+      return;
+    }
+
     setSelectedKeys((current) => {
       if (append) {
         return current.includes(key)
@@ -577,10 +595,16 @@ export function ProjectExplorerPage({
       return;
     }
 
-    const folderId = await createProjectFolder(`New folder ${visibleFolders.length + 1}`, currentFolderSafeId);
+    const folderName = `New folder ${visibleFolders.length + 1}`;
+    const folderId = await createProjectFolder(folderName, currentFolderSafeId);
     await refreshExplorer();
-    setEditingKey(`folder:${folderId}`);
-    setEditingValue(`New folder ${visibleFolders.length + 1}`);
+    setRenameDialogState({
+      id: folderId,
+      kind: 'folder',
+      label: folderName,
+    });
+    setRenameDialogValue(folderName);
+    setRenameDialogError(null);
     queueExplorerCloudSync();
   }, [currentFolderSafeId, isExplorerReadOnly, queueExplorerCloudSync, refreshExplorer, visibleFolders.length]);
 
@@ -605,33 +629,58 @@ export function ProjectExplorerPage({
     }
   }, [currentFolderSafeId, isExplorerReadOnly, onProjectOpen, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer]);
 
-  const commitRename = useCallback(async () => {
-    if (!editingKey || isExplorerReadOnly) {
+  const handleRenameDialogOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      return;
+    }
+    setRenameDialogState(null);
+    setRenameDialogValue('');
+    setRenameDialogError(null);
+  }, []);
+
+  const openRenameDialog = useCallback((item: VisibleItem) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+    setRenameDialogState({
+      id: item.id,
+      kind: item.kind,
+      label: item.label,
+    });
+    setRenameDialogValue(item.label);
+    setRenameDialogError(null);
+  }, [isExplorerReadOnly]);
+
+  const submitRenameDialog = useCallback(async () => {
+    if (!renameDialogState || isExplorerReadOnly) {
       return;
     }
 
-    const nextValue = editingValue.trim();
+    const nextValue = renameDialogValue.trim();
     if (!nextValue) {
-      setEditingKey(null);
-      setEditingValue('');
+      setRenameDialogError('Name cannot be empty.');
       return;
     }
 
-    if (editingKey.startsWith('folder:')) {
-      await renameProjectFolder(editingKey.slice('folder:'.length), nextValue);
-      queueExplorerCloudSync();
-    } else {
-      const projectId = editingKey.slice('project:'.length);
-      const changed = await renameStoredProject(projectId, nextValue);
-      if (changed) {
-        queueProjectCloudSync(projectId);
+    try {
+      if (renameDialogState.kind === 'folder') {
+        await renameProjectFolder(renameDialogState.id, nextValue);
+        queueExplorerCloudSync();
+      } else {
+        const changed = await renameStoredProject(renameDialogState.id, nextValue);
+        if (changed) {
+          queueProjectCloudSync(renameDialogState.id);
+        }
       }
-    }
 
-    await refreshExplorer();
-    setEditingKey(null);
-    setEditingValue('');
-  }, [editingKey, editingValue, isExplorerReadOnly, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer]);
+      await refreshExplorer();
+      setRenameDialogState(null);
+      setRenameDialogValue('');
+      setRenameDialogError(null);
+    } catch (error) {
+      setRenameDialogError(error instanceof Error ? error.message : 'Failed to rename item.');
+    }
+  }, [isExplorerReadOnly, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer, renameDialogState, renameDialogValue]);
 
   const commitCurrentFolderRename = useCallback(async () => {
     if (isExplorerReadOnly) {
@@ -797,9 +846,6 @@ export function ProjectExplorerPage({
       handleSelectKey(item.key, event.nativeEvent);
       return;
     }
-    if (editingKey === item.key) {
-      return;
-    }
     if (item.kind === 'folder') {
       setCurrentFolderId(item.id);
       return;
@@ -809,7 +855,6 @@ export function ProjectExplorerPage({
     }
     void handleOpenProject(item.id);
   }, [
-    editingKey,
     handleOpenProject,
     handleSelectKey,
     isExplorerInteractionBlocked,
@@ -835,11 +880,11 @@ export function ProjectExplorerPage({
         <DropdownMenuItem
           onClick={(event) => {
             event.preventDefault();
+            event.stopPropagation();
             if (isExplorerReadOnly) {
               return;
             }
-            setEditingKey(item.key);
-            setEditingValue(item.label);
+            openRenameDialog(item);
           }}
         >
           Rename
@@ -849,6 +894,7 @@ export function ProjectExplorerPage({
           variant="destructive"
           onClick={(event) => {
             event.preventDefault();
+            event.stopPropagation();
             if (isExplorerReadOnly) {
               return;
             }
@@ -867,6 +913,35 @@ export function ProjectExplorerPage({
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background text-foreground">
+      <div className="fixed right-4 top-3 z-[100300]">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon-sm"
+              variant="outline"
+              className="rounded-full border-border/70 bg-background/82 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/72 dark:shadow-[0_28px_70px_-42px_rgba(0,0,0,0.82)]"
+              aria-label="Home settings"
+            >
+              <Settings2 className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuItem
+              onClick={() => setTrashOpen(true)}
+            >
+              <Trash2 className="size-4" />
+              Trash
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setAccountOpen(true)}
+            >
+              <User className="size-4" />
+              Account
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <input
         ref={fileInputRef}
         accept=".json,.zip"
@@ -889,7 +964,24 @@ export function ProjectExplorerPage({
         ref={explorerShellRef}
         className="relative z-10 mx-auto flex h-full w-full max-w-[1440px] min-h-0 flex-col px-6 py-8 lg:px-10"
       >
-        <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
+        <NameInputDialog
+          open={!!renameDialogState}
+          title={renameDialogState?.kind === 'folder' ? 'Rename Folder' : 'Rename Project'}
+          label="Name"
+          value={renameDialogValue}
+          submitLabel={renameDialogState?.kind === 'folder' ? 'Rename Folder' : 'Rename Project'}
+          description={
+            renameDialogState
+              ? `Choose a new name for "${renameDialogState.label}".`
+              : undefined
+          }
+          error={renameDialogError}
+          onValueChange={setRenameDialogValue}
+          onOpenChange={handleRenameDialogOpenChange}
+          onSubmit={() => void submitRenameDialog()}
+        />
+
+        <div className="mb-8">
           <div className="max-w-4xl">
             {currentFolder && currentFolder.id !== PROJECT_EXPLORER_ROOT_FOLDER_ID ? (
               <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -960,90 +1052,49 @@ export function ProjectExplorerPage({
               </h1>
             )}
           </div>
-
-          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/78 px-3 py-2 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/72 dark:shadow-[0_28px_70px_-42px_rgba(0,0,0,0.82)]">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="icon-sm" variant="ghost" className="rounded-full" disabled={isExplorerReadOnly}>
-                  <Plus className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuItem onClick={() => void handleCreateProject()}>
-                  <FileCode2 className="size-4" />
-                  Blank project
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-                  <Upload className="size-4" />
-                  Import project
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => void handleCreateFolder()}>
-                  <Folder className="size-4" />
-                  New folder
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {parentFolder ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className={cn('rounded-full', dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
-                disabled={isExplorerInteractionBlocked}
-                onClick={() => setCurrentFolderId(parentFolder.id)}
-                {...dropTargetProps(parentFolder.id)}
-              >
-                <ArrowLeft className="size-4" />
-              </Button>
-            ) : null}
-
-            {selectionMode && selectedKeys.length > 0 ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className="rounded-full"
-                disabled={isExplorerReadOnly}
-                onClick={() => void requestTrashForSelection()}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            ) : null}
-
-            <Button
-              size="icon-sm"
-              variant={selectionMode ? 'default' : 'ghost'}
-              className="rounded-full"
-              disabled={isExplorerReadOnly}
-              onClick={() => {
-                if (isExplorerReadOnly) {
-                  return;
-                }
-                if (selectionMode) {
-                  exitSelectionMode();
-                  return;
-                }
-                setSelectionMode(true);
-              }}
-            >
-              <SquareCheck className="size-4" />
-            </Button>
-
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="rounded-full"
-              disabled={isExplorerReadOnly}
-              onClick={() => setTrashOpen(true)}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
         </div>
 
         <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card/80 shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/74 dark:shadow-[0_34px_100px_-52px_rgba(0,0,0,0.9)]">
           <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
-            <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <div className="flex shrink-0 items-center gap-1.5">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="icon-sm" variant="ghost" className="rounded-full" disabled={isExplorerReadOnly}>
+                      <Plus className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    <DropdownMenuItem onClick={() => void handleCreateProject()}>
+                      <FileCode2 className="size-4" />
+                      Blank project
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+                      <Upload className="size-4" />
+                      Import project
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => void handleCreateFolder()}>
+                      <Folder className="size-4" />
+                      New folder
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {parentFolder ? (
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    className={cn('rounded-full', dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
+                    disabled={isExplorerInteractionBlocked}
+                    onClick={() => setCurrentFolderId(parentFolder.id)}
+                    {...dropTargetProps(parentFolder.id)}
+                  >
+                    <ArrowLeft className="size-4" />
+                    </Button>
+                ) : null}
+              </div>
+
               {explorerStatusLabel ? (
                 <div className="text-sm font-medium text-foreground/80">
                   {explorerStatusLabel}
@@ -1065,13 +1116,43 @@ export function ProjectExplorerPage({
             </div>
             <div className="flex items-center gap-3">
               {importError ? <div className="text-sm text-destructive">{importError}</div> : null}
+              {selectionMode && selectedKeys.length > 0 ? (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  className="rounded-full"
+                  disabled={isExplorerReadOnly}
+                  onClick={() => void requestTrashForSelection()}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              ) : null}
+              <Button
+                size="icon-sm"
+                variant={selectionMode ? 'default' : 'ghost'}
+                className="rounded-full"
+                disabled={isExplorerReadOnly}
+                onClick={() => {
+                  if (isExplorerReadOnly) {
+                    return;
+                  }
+                  if (selectionMode) {
+                    exitSelectionMode();
+                    return;
+                  }
+                  setSelectionMode(true);
+                }}
+              >
+                <SquareCheck className="size-4" />
+              </Button>
               <SegmentedControl
                 ariaLabel="Project explorer view"
-                className="w-[154px] bg-muted/80"
-                optionClassName="text-xs"
+                className="bg-muted/80"
+                layout="content"
+                optionClassName="min-w-9 px-2"
                 options={[
-                  { value: 'row', label: 'Rows' },
-                  { value: 'card', label: 'Cards' },
+                  { value: 'row', label: 'Rows', icon: <Rows3 className="size-3.5" />, iconOnly: true },
+                  { value: 'card', label: 'Cards', icon: <LayoutGrid className="size-3.5" />, iconOnly: true },
                 ] as const}
                 value={viewMode}
                 onValueChange={(nextValue) => setViewMode(nextValue)}
@@ -1081,7 +1162,7 @@ export function ProjectExplorerPage({
 
           <div
             ref={explorerListRef}
-            className={cn('min-h-0 flex-1 overflow-auto', viewMode === 'card' && 'bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.08),_transparent_46%)]')}
+            className="min-h-0 flex-1 overflow-auto"
             onClick={() => {
               if (!selectionMode) {
                 return;
@@ -1118,7 +1199,7 @@ export function ProjectExplorerPage({
                         dropTarget: isDropTarget,
                         selected: isSelected,
                       })}
-                      draggable={!isExplorerReadOnly && editingKey !== item.key}
+                      draggable={!isExplorerReadOnly}
                       onDragStart={(event) => handleDragStart(event, item.key)}
                       onDragEnd={() => {
                         setDragKeys([]);
@@ -1127,18 +1208,14 @@ export function ProjectExplorerPage({
                       onClick={(event) => handleItemClick(item, event)}
                       {...(item.kind === 'folder' ? dropTargetProps(item.id) : {})}
                     >
-                      {selectionMode ? (
-                        <div className="absolute left-3 top-3 z-10 rounded-full border border-border/70 bg-background/90 p-1 shadow-sm backdrop-blur">
-                          <SelectionCheckbox checked={isSelected} />
-                        </div>
-                      ) : null}
+                      {selectionMode ? <SelectionCheckbox checked={isSelected} className="absolute left-3 top-3 z-10 shadow-sm" /> : null}
 
                       <div className="absolute right-3 top-3 z-10">
                         {renderItemActions(item, 'rounded-full bg-background/88 shadow-sm backdrop-blur')}
                       </div>
 
                       {item.kind === 'folder' ? (
-                        <div className="flex aspect-[16/10] items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.16),_transparent_58%),linear-gradient(180deg,rgba(248,250,252,0.72),rgba(241,245,249,0.36))] text-muted-foreground dark:bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.22),_transparent_58%),linear-gradient(180deg,rgba(30,41,59,0.72),rgba(15,23,42,0.42))]">
+                        <div className="flex aspect-[16/10] items-center justify-center bg-muted/60 text-muted-foreground dark:bg-muted/35">
                           <div className="flex size-[4.5rem] items-center justify-center rounded-[28px] border border-border/70 bg-background/78 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]">
                             <FolderOpen className="size-8" />
                           </div>
@@ -1148,7 +1225,8 @@ export function ProjectExplorerPage({
                           {item.thumbnailUrl ? (
                             <img
                               alt={`${item.label} thumbnail`}
-                              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                              className="pointer-events-none h-full w-full select-none object-cover"
+                              draggable={false}
                               src={item.thumbnailUrl}
                             />
                           ) : item.staleThumbnail || item.thumbnailAssetMissing ? (
@@ -1165,43 +1243,17 @@ export function ProjectExplorerPage({
 
                       <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
                         <div className="min-w-0">
-                          {editingKey === item.key ? (
-                            <InlineRenameField
-                              autoFocus
-                              className="max-w-full"
-                              inputClassName="text-sm font-semibold"
-                              onBlur={() => void commitRename()}
-                              onChange={(event) => setEditingValue(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') {
-                                  event.preventDefault();
-                                  void commitRename();
-                                }
-                                if (event.key === 'Escape') {
-                                  event.preventDefault();
-                                  setEditingKey(null);
-                                  setEditingValue('');
-                                }
-                              }}
-                              value={editingValue}
-                            />
-                          ) : (
-                            <div className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">{item.label}</div>
-                          )}
+                          <div className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">{item.label}</div>
                           <div className="mt-1 text-xs text-muted-foreground">
                             Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
                           </div>
                         </div>
 
-                        <div className="mt-auto flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                          <div className="inline-flex items-center gap-2">
-                            {item.kind === 'folder' ? <Folder className="size-3.5" /> : <FileCode2 className="size-3.5" />}
-                            {item.kind === 'folder' ? 'Open folder' : 'Open project'}
-                          </div>
-                          {item.kind === 'project' && isOpeningProjectId === item.id ? (
+                        {item.kind === 'project' && isOpeningProjectId === item.id ? (
+                          <div className="mt-auto flex items-center justify-end text-xs text-muted-foreground">
                             <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                          ) : null}
-                        </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -1221,7 +1273,7 @@ export function ProjectExplorerPage({
                       dropTarget: isDropTarget,
                       selected: isSelected,
                     })}
-                    draggable={!isExplorerReadOnly && editingKey !== item.key}
+                    draggable={!isExplorerReadOnly}
                     onDragStart={(event) => handleDragStart(event, item.key)}
                     onDragEnd={() => {
                       setDragKeys([]);
@@ -1242,7 +1294,8 @@ export function ProjectExplorerPage({
                           {item.thumbnailUrl ? (
                             <img
                               alt={`${item.label} thumbnail`}
-                              className="h-full w-full object-cover"
+                              className="pointer-events-none h-full w-full select-none object-cover"
+                              draggable={false}
                               src={item.thumbnailUrl}
                             />
                           ) : item.staleThumbnail || item.thumbnailAssetMissing ? (
@@ -1254,29 +1307,7 @@ export function ProjectExplorerPage({
                       )}
 
                       <div className="min-w-0 flex-1">
-                        {editingKey === item.key ? (
-                          <InlineRenameField
-                            autoFocus
-                            className="max-w-lg"
-                            inputClassName="text-sm font-medium"
-                            onBlur={() => void commitRename()}
-                            onChange={(event) => setEditingValue(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') {
-                                event.preventDefault();
-                                void commitRename();
-                              }
-                              if (event.key === 'Escape') {
-                                event.preventDefault();
-                                setEditingKey(null);
-                                setEditingValue('');
-                              }
-                            }}
-                            value={editingValue}
-                          />
-                        ) : (
-                          <div className="truncate text-sm font-semibold text-foreground">{item.label}</div>
-                        )}
+                        <div className="truncate text-sm font-semibold text-foreground">{item.label}</div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
                         </div>
@@ -1296,6 +1327,17 @@ export function ProjectExplorerPage({
           </div>
         </section>
       </main>
+
+      <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="w-auto max-w-none sm:max-w-none border-none bg-transparent p-0 shadow-none"
+        >
+          <div className="max-h-[84vh] overflow-auto">
+            <UserProfile routing="hash" />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {trashOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6" onClick={() => setTrashOpen(false)}>
@@ -1345,7 +1387,7 @@ export function ProjectExplorerPage({
                         <div className="min-w-0 flex items-center gap-4">
                           <div className="relative flex h-14 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
                             {project.thumbnailUrl ? (
-                              <img alt="" className="h-full w-full object-cover" src={project.thumbnailUrl} />
+                              <img alt="" className="pointer-events-none h-full w-full select-none object-cover" draggable={false} src={project.thumbnailUrl} />
                             ) : (
                               <ImageOff className="size-5 text-muted-foreground" />
                             )}

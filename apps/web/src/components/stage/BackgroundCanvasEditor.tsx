@@ -105,6 +105,22 @@ import {
 } from '@/lib/viewportNavigation';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
+import {
+  TRANSFORM_GIZMO_BORDER_COLOR,
+  TRANSFORM_GIZMO_FILL_COLOR,
+  TRANSFORM_GIZMO_HANDLE_FILL,
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  TRANSFORM_GIZMO_HANDLE_STROKE,
+  TRANSFORM_GIZMO_ROTATE_CURSOR,
+  TransformGizmoCorner,
+  computeCornerScaleResult,
+  drawTransformProportionalGuide,
+  getTransformCornerDiagonal,
+  getTransformGizmoCornerCursor,
+  getTransformGizmoHandleFrame,
+  isPointInsideTransformHandle,
+  isPointInsideTransformRotateRing,
+} from '@/lib/editor/unifiedTransformGizmo';
 import { BackgroundLayerPanel } from './BackgroundLayerPanel';
 import {
   BackgroundVectorCanvas,
@@ -208,20 +224,26 @@ type BackgroundFloatingSelectionTransformSession =
       kind: 'scale';
       selection: BackgroundFloatingSelection;
       anchorScreen: ScreenPoint;
+      centerScreen: ScreenPoint;
+      corner: TransformGizmoCorner;
       handleXSign: -1 | 1;
       handleYSign: -1 | 1;
       rotation: number;
       sourceWidth: number;
       sourceHeight: number;
+      proportional: boolean;
     };
 
 type BackgroundFloatingSelectionHitTarget =
   | 'body'
-  | 'rotate'
   | 'scale-nw'
   | 'scale-ne'
   | 'scale-se'
-  | 'scale-sw';
+  | 'scale-sw'
+  | 'rotate-nw'
+  | 'rotate-ne'
+  | 'rotate-se'
+  | 'rotate-sw';
 
 type BackgroundFloatingSelectionScreenGeometry = {
   centerScreen: ScreenPoint;
@@ -231,17 +253,11 @@ type BackgroundFloatingSelectionScreenGeometry = {
     se: ScreenPoint;
     sw: ScreenPoint;
   };
-  rotateHandle: ScreenPoint;
-  topCenter: ScreenPoint;
   halfWidth: number;
   halfHeight: number;
 };
 
-const FLOATING_SELECTION_HANDLE_RADIUS = 7;
-const FLOATING_SELECTION_ROTATE_HANDLE_OFFSET = 26;
 const FLOATING_SELECTION_MIN_SCREEN_SIZE = 8;
-const FLOATING_SELECTION_BORDER_COLOR = '#0ea5e9';
-const FLOATING_SELECTION_BORDER_FILL = 'rgba(14, 165, 233, 0.08)';
 
 const BACKGROUND_TOOLBAR_INITIAL_TEXT_STYLE: TextToolStyle = {
   fontFamily: 'Arial',
@@ -468,25 +484,11 @@ function getFloatingSelectionScreenGeometry(
   const centerScreen = worldToScreen(selection.centerWorld.x, selection.centerWorld.y);
   const halfWidth = selection.canvas.width * selection.scaleX * zoom * 0.5;
   const halfHeight = selection.canvas.height * selection.scaleY * zoom * 0.5;
-  const screenRotation = -selection.rotation;
-  const mapLocal = (x: number, y: number): ScreenPoint => {
-    const rotated = rotatePoint({ x, y }, screenRotation);
-    return {
-      x: centerScreen.x + rotated.x,
-      y: centerScreen.y + rotated.y,
-    };
-  };
+  const frame = getTransformGizmoHandleFrame(centerScreen, halfWidth * 2, halfHeight * 2, -selection.rotation);
 
   return {
     centerScreen,
-    corners: {
-      nw: mapLocal(-halfWidth, -halfHeight),
-      ne: mapLocal(halfWidth, -halfHeight),
-      se: mapLocal(halfWidth, halfHeight),
-      sw: mapLocal(-halfWidth, halfHeight),
-    },
-    topCenter: mapLocal(0, -halfHeight),
-    rotateHandle: mapLocal(0, -halfHeight - FLOATING_SELECTION_ROTATE_HANDLE_OFFSET),
+    corners: frame.corners,
     halfWidth,
     halfHeight,
   };
@@ -1553,8 +1555,8 @@ export function BackgroundCanvasEditor() {
       const topLeft = worldToScreen(marqueeBounds.left, marqueeBounds.top);
       ctx.save();
       ctx.setLineDash([8, 6]);
-      ctx.fillStyle = FLOATING_SELECTION_BORDER_FILL;
-      ctx.strokeStyle = FLOATING_SELECTION_BORDER_COLOR;
+      ctx.fillStyle = TRANSFORM_GIZMO_FILL_COLOR;
+      ctx.strokeStyle = TRANSFORM_GIZMO_BORDER_COLOR;
       ctx.lineWidth = 1.5;
       ctx.fillRect(topLeft.x, topLeft.y, marqueeBounds.width * zoom, marqueeBounds.height * zoom);
       ctx.strokeRect(topLeft.x, topLeft.y, marqueeBounds.width * zoom, marqueeBounds.height * zoom);
@@ -1578,8 +1580,8 @@ export function BackgroundCanvasEditor() {
       ctx.restore();
 
       ctx.save();
-      ctx.fillStyle = FLOATING_SELECTION_BORDER_FILL;
-      ctx.strokeStyle = FLOATING_SELECTION_BORDER_COLOR;
+      ctx.fillStyle = TRANSFORM_GIZMO_FILL_COLOR;
+      ctx.strokeStyle = TRANSFORM_GIZMO_BORDER_COLOR;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(geometry.corners.nw.x, geometry.corners.nw.y);
@@ -1590,14 +1592,19 @@ export function BackgroundCanvasEditor() {
       ctx.fill();
       ctx.stroke();
 
-      ctx.beginPath();
-      ctx.moveTo(geometry.topCenter.x, geometry.topCenter.y);
-      ctx.lineTo(geometry.rotateHandle.x, geometry.rotateHandle.y);
-      ctx.stroke();
+      const activeTransform = floatingSelectionTransformRef.current;
+      if (activeTransform?.kind === 'scale' && activeTransform.proportional) {
+        const diagonal = getTransformCornerDiagonal(geometry.corners, activeTransform.corner);
+        drawTransformProportionalGuide(ctx, diagonal.start, diagonal.end);
+      }
 
-      const drawHandle = (point: ScreenPoint, fillStyle: string = '#ffffff', strokeStyle: string = FLOATING_SELECTION_BORDER_COLOR) => {
+      const drawHandle = (
+        point: ScreenPoint,
+        fillStyle: string = TRANSFORM_GIZMO_HANDLE_FILL,
+        strokeStyle: string = TRANSFORM_GIZMO_HANDLE_STROKE,
+      ) => {
         ctx.beginPath();
-        ctx.arc(point.x, point.y, FLOATING_SELECTION_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, TRANSFORM_GIZMO_HANDLE_RADIUS, 0, Math.PI * 2);
         ctx.fillStyle = fillStyle;
         ctx.fill();
         ctx.lineWidth = 2;
@@ -1609,7 +1616,6 @@ export function BackgroundCanvasEditor() {
       drawHandle(geometry.corners.ne);
       drawHandle(geometry.corners.se);
       drawHandle(geometry.corners.sw);
-      drawHandle(geometry.rotateHandle, FLOATING_SELECTION_BORDER_COLOR, '#ffffff');
       ctx.restore();
     }
 
@@ -2301,20 +2307,23 @@ export function BackgroundCanvasEditor() {
     screenPoint: ScreenPoint,
   ): BackgroundFloatingSelectionHitTarget | null => {
     const geometry = getFloatingSelectionScreenGeometry(selection, worldToScreen, zoom);
-    const handleRadius = FLOATING_SELECTION_HANDLE_RADIUS + 4;
-
-    const handleTargets: Array<[BackgroundFloatingSelectionHitTarget, ScreenPoint]> = [
-      ['scale-nw', geometry.corners.nw],
-      ['scale-ne', geometry.corners.ne],
-      ['scale-se', geometry.corners.se],
-      ['scale-sw', geometry.corners.sw],
-      ['rotate', geometry.rotateHandle],
+    const handleTargets: Array<[BackgroundFloatingSelectionHitTarget, TransformGizmoCorner, ScreenPoint]> = [
+      ['scale-nw', 'nw', geometry.corners.nw],
+      ['scale-ne', 'ne', geometry.corners.ne],
+      ['scale-se', 'se', geometry.corners.se],
+      ['scale-sw', 'sw', geometry.corners.sw],
+      ['rotate-nw', 'nw', geometry.corners.nw],
+      ['rotate-ne', 'ne', geometry.corners.ne],
+      ['rotate-se', 'se', geometry.corners.se],
+      ['rotate-sw', 'sw', geometry.corners.sw],
     ];
 
-    for (const [target, point] of handleTargets) {
-      const dx = screenPoint.x - point.x;
-      const dy = screenPoint.y - point.y;
-      if (Math.hypot(dx, dy) <= handleRadius) {
+    for (const [target, corner, point] of handleTargets) {
+      if (target.startsWith('scale')) {
+        if (isPointInsideTransformHandle(screenPoint, point, TRANSFORM_GIZMO_HANDLE_RADIUS + 4)) {
+          return target;
+        }
+      } else if (isPointInsideTransformRotateRing(screenPoint, point, TRANSFORM_GIZMO_HANDLE_RADIUS)) {
         return target;
       }
     }
@@ -3002,7 +3011,7 @@ export function BackgroundCanvasEditor() {
                 startScreen: screen,
                 startCenterWorld: { ...floatingSelection.centerWorld },
               };
-            } else if (hitTarget === 'rotate') {
+            } else if (hitTarget.startsWith('rotate-')) {
               floatingSelectionTransformRef.current = {
                 kind: 'rotate',
                 selection: floatingSelection,
@@ -3011,26 +3020,30 @@ export function BackgroundCanvasEditor() {
                 startRotation: floatingSelection.rotation,
               };
             } else {
-              const handleMap: Record<Exclude<BackgroundFloatingSelectionHitTarget, 'body' | 'rotate'>, {
+              const handleMap: Record<Exclude<BackgroundFloatingSelectionHitTarget, 'body' | `rotate-${TransformGizmoCorner}`>, {
                 anchor: ScreenPoint;
+                corner: TransformGizmoCorner;
                 handleXSign: -1 | 1;
                 handleYSign: -1 | 1;
               }> = {
-                'scale-nw': { anchor: geometry.corners.se, handleXSign: -1, handleYSign: -1 },
-                'scale-ne': { anchor: geometry.corners.sw, handleXSign: 1, handleYSign: -1 },
-                'scale-se': { anchor: geometry.corners.nw, handleXSign: 1, handleYSign: 1 },
-                'scale-sw': { anchor: geometry.corners.ne, handleXSign: -1, handleYSign: 1 },
+                'scale-nw': { anchor: geometry.corners.se, corner: 'nw', handleXSign: -1, handleYSign: -1 },
+                'scale-ne': { anchor: geometry.corners.sw, corner: 'ne', handleXSign: 1, handleYSign: -1 },
+                'scale-se': { anchor: geometry.corners.nw, corner: 'se', handleXSign: 1, handleYSign: 1 },
+                'scale-sw': { anchor: geometry.corners.ne, corner: 'sw', handleXSign: -1, handleYSign: 1 },
               };
               const handle = handleMap[hitTarget];
               floatingSelectionTransformRef.current = {
                 kind: 'scale',
                 selection: floatingSelection,
                 anchorScreen: handle.anchor,
+                centerScreen: geometry.centerScreen,
+                corner: handle.corner,
                 handleXSign: handle.handleXSign,
                 handleYSign: handle.handleYSign,
                 rotation: floatingSelection.rotation,
                 sourceWidth: floatingSelection.canvas.width,
                 sourceHeight: floatingSelection.canvas.height,
+                proportional: !!event.shiftKey,
               };
             }
             setIsDrawing(true);
@@ -3163,37 +3176,54 @@ export function BackgroundCanvasEditor() {
           (angle - floatingSelectionTransform.startPointerAngle)
         );
       } else {
-        const rotatedPointer = rotatePoint(
-          {
-            x: screen.x - floatingSelectionTransform.anchorScreen.x,
-            y: screen.y - floatingSelectionTransform.anchorScreen.y,
-          },
-          floatingSelectionTransform.rotation,
-        );
-        const width = Math.max(
-          FLOATING_SELECTION_MIN_SCREEN_SIZE,
-          floatingSelectionTransform.handleXSign * rotatedPointer.x,
-        );
-        const height = Math.max(
-          FLOATING_SELECTION_MIN_SCREEN_SIZE,
-          floatingSelectionTransform.handleYSign * rotatedPointer.y,
-        );
-        const centerScreen = {
-          x: floatingSelectionTransform.anchorScreen.x + rotatePoint({
-            x: floatingSelectionTransform.handleXSign * width * 0.5,
-            y: floatingSelectionTransform.handleYSign * height * 0.5,
-          }, -floatingSelectionTransform.rotation).x,
-          y: floatingSelectionTransform.anchorScreen.y + rotatePoint({
-            x: floatingSelectionTransform.handleXSign * width * 0.5,
-            y: floatingSelectionTransform.handleYSign * height * 0.5,
-          }, -floatingSelectionTransform.rotation).y,
-        };
-        floatingSelectionTransform.selection.centerWorld = screenToWorldFromCanvasPoint(centerScreen);
-        floatingSelectionTransform.selection.scaleX = width / Math.max(1, floatingSelectionTransform.sourceWidth * zoom);
-        floatingSelectionTransform.selection.scaleY = height / Math.max(1, floatingSelectionTransform.sourceHeight * zoom);
+        const centered = event.altKey;
+        const proportional = !!event.shiftKey;
+        floatingSelectionTransform.proportional = proportional;
+        const baseWidth = Math.max(1, floatingSelectionTransform.sourceWidth * zoom);
+        const baseHeight = Math.max(1, floatingSelectionTransform.sourceHeight * zoom);
+        const scaled = computeCornerScaleResult({
+          referencePoint: centered ? floatingSelectionTransform.centerScreen : floatingSelectionTransform.anchorScreen,
+          pointerPoint: screen,
+          handleXSign: floatingSelectionTransform.handleXSign,
+          handleYSign: floatingSelectionTransform.handleYSign,
+          rotationRadians: floatingSelectionTransform.rotation,
+          baseWidth,
+          baseHeight,
+          minWidth: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+          minHeight: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+          proportional,
+          centered,
+        });
+        floatingSelectionTransform.selection.centerWorld = screenToWorldFromCanvasPoint(scaled.center);
+        floatingSelectionTransform.selection.scaleX = scaled.width / baseWidth;
+        floatingSelectionTransform.selection.scaleY = scaled.height / baseHeight;
       }
       setRevision((value) => value + 1);
       return;
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas && editorMode === 'bitmap') {
+      if (tool === 'select' && floatingSelectionRef.current) {
+        const hitTarget = hitTestFloatingSelection(floatingSelectionRef.current, screen);
+        if (hitTarget === 'body') {
+          canvas.style.cursor = 'move';
+        } else if (hitTarget?.startsWith('scale-')) {
+          canvas.style.cursor = getTransformGizmoCornerCursor(hitTarget.slice('scale-'.length) as TransformGizmoCorner);
+        } else if (hitTarget?.startsWith('rotate-')) {
+          canvas.style.cursor = TRANSFORM_GIZMO_ROTATE_CURSOR;
+        } else {
+          canvas.style.cursor = 'crosshair';
+        }
+      } else if (tool === 'brush' || tool === 'eraser') {
+        canvas.style.cursor = 'none';
+      } else if (tool === 'text') {
+        canvas.style.cursor = 'text';
+      } else if (tool === 'fill' || isShapeTool(tool)) {
+        canvas.style.cursor = 'crosshair';
+      } else {
+        canvas.style.cursor = 'default';
+      }
     }
 
     const selectionMarquee = selectionMarqueeRef.current;
@@ -3267,6 +3297,9 @@ export function BackgroundCanvasEditor() {
 
   const onPointerLeave = useCallback(() => {
     pointerWorldRef.current = null;
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = 'default';
+    }
     setRevision((value) => value + 1);
   }, []);
 

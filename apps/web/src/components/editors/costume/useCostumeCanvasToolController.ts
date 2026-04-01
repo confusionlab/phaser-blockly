@@ -4,13 +4,7 @@ import { getBrushPaintColor, getCompositeOperation, type BitmapBrushKind } from 
 import type { CostumeEditorMode } from '@/types';
 import { attachTextEditingContainer, isTextEditableObject } from './costumeTextCommands';
 import {
-  OBJECT_SELECTION_CORNER_SIZE,
-  OBJECT_SELECTION_PADDING,
-  VECTOR_SELECTION_BORDER_OPACITY,
-  VECTOR_SELECTION_BORDER_SCALE,
   VECTOR_SELECTION_COLOR,
-  VECTOR_SELECTION_CORNER_COLOR,
-  VECTOR_SELECTION_CORNER_STROKE,
 } from './costumeCanvasShared';
 import {
   applyCanvasCursor,
@@ -24,6 +18,10 @@ import {
   VectorPencilBrush,
 } from './costumeCanvasVectorRuntime';
 import type { DrawingTool } from './CostumeToolbar';
+import {
+  applyUnifiedFabricTransformCanvasOptions,
+  applyUnifiedObjectTransformGizmoAppearance,
+} from './costumeCanvasObjectTransformGizmo';
 
 interface UseCostumeCanvasToolControllerOptions {
   activeLayerLocked: boolean;
@@ -202,6 +200,7 @@ export function useCostumeCanvasToolController({
       !!floatingBitmapObject;
 
     restoreAllOriginalControls();
+    applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvas.selection = isVectorSelectionMode;
     fabricCanvas.selectionColor = 'rgba(0, 94, 255, 0.14)';
     fabricCanvas.selectionBorderColor = VECTOR_SELECTION_COLOR;
@@ -232,15 +231,7 @@ export function useCostumeCanvasToolController({
       obj.lockRotation = !selectable || isVectorPointMode;
       obj.lockScalingX = !selectable || isVectorPointMode;
       obj.lockScalingY = !selectable || isVectorPointMode;
-      obj.borderColor = VECTOR_SELECTION_COLOR;
-      obj.borderScaleFactor = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE);
-      obj.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
-      obj.cornerStyle = 'rect';
-      obj.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
-      obj.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
-      obj.cornerSize = getZoomInvariantMetric(OBJECT_SELECTION_CORNER_SIZE);
-      obj.transparentCorners = false;
-      obj.padding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING);
+      applyUnifiedObjectTransformGizmoAppearance(obj, getZoomInvariantMetric, 1);
 
       if (isVectorPointMode) {
         if (isPointEditingTarget) {
@@ -289,6 +280,8 @@ export function useCostumeCanvasToolController({
 
       if (activeObject && isVectorPointMode && activeObject === vectorPointEditingTargetRef.current) {
         activateVectorPointEditing(activeObject, false);
+      } else if (activeObject) {
+        applyUnifiedObjectTransformGizmoAppearance(activeObject, getZoomInvariantMetric, 1);
       }
     }
 

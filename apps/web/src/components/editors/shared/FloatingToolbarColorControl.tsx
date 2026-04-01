@@ -3,6 +3,7 @@ import Color from 'color';
 
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import { CompactColorPicker } from '@/components/ui/color-picker';
+import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
 
 const toolbarPopupSideOffset = 10;
 
@@ -54,23 +55,18 @@ export function FloatingToolbarColorControl({
         {labelDisplay === 'left' && (
           <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
         )}
-        <button
+        <ColorSwatchButton
           ref={buttonRef}
-          type="button"
+          value={value}
           className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60"
+          swatchClassName="size-6 rounded-md"
           onClick={() => onOpenChange(!open)}
           title={label}
           aria-label={label}
           aria-expanded={open}
           aria-haspopup="dialog"
           disabled={disabled}
-        >
-          <span
-            className="size-6 rounded-md ring-1 ring-black/15"
-            style={{ backgroundColor: value }}
-            aria-hidden="true"
-          />
-        </button>
+        />
       </div>
 
       <AnchoredPopupSurface

@@ -17,6 +17,7 @@ import {
 import {
   CompactColorPicker,
 } from '@/components/ui/color-picker';
+import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
 import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Component, Paintbrush } from '@/components/ui/icons';
 import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
@@ -67,11 +68,11 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
 
   return (
     <div className="relative">
-      <button
-        type="button"
+      <ColorSwatchButton
+        value={value}
         onClick={() => setIsOpen(!isOpen)}
-        className="w-8 h-8 rounded-md border border-border cursor-pointer shadow-sm hover:scale-105 transition-transform"
-        style={{ backgroundColor: value }}
+        className="h-8 w-8 cursor-pointer rounded-md shadow-sm transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        swatchClassName="size-full rounded-[inherit]"
         title={value}
       />
       {isOpen && (
@@ -358,7 +359,6 @@ interface ObjectPropertiesProps {
 }
 
 function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderEditor }: ObjectPropertiesProps) {
-  const [linkScale, setLinkScale] = useState(true);
   const dragStartValuesRef = useRef<Partial<Record<'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation', Map<string, number>>>>({});
   const activeDragTransactionsRef = useRef(0);
   const object = objects[0];
@@ -391,10 +391,17 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
     return { value: first, mixed };
   };
 
+  const getSharedBoolean = (picker: (obj: GameObject) => boolean) => {
+    const first = picker(objects[0]);
+    const mixed = objects.some((selectedObj) => picker(selectedObj) !== first);
+    return { value: first, mixed };
+  };
+
   const xField = getSharedNumber((selectedObj) => selectedObj.x);
   const yField = getSharedNumber((selectedObj) => selectedObj.y);
   const scaleXField = getSharedNumber((selectedObj) => Math.abs(selectedObj.scaleX));
   const scaleYField = getSharedNumber((selectedObj) => Math.abs(selectedObj.scaleY));
+  const scaleLockField = getSharedBoolean((selectedObj) => selectedObj.lockScaleProportions ?? true);
   const rotationField = getSharedNumber((selectedObj) => selectedObj.rotation);
 
   const applyToSelected = (buildUpdates: (obj: GameObject) => Partial<GameObject>) => {
@@ -457,7 +464,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
         const startAbsScaleX = startValues.get(selectedObj.id) ?? Math.abs(selectedObj.scaleX);
         const newAbsScaleX = clamp(startAbsScaleX + delta, 0.01);
         const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * newAbsScaleX;
-        if (linkScale) {
+        if (selectedObj.lockScaleProportions ?? true) {
           const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * newAbsScaleX;
           return { scaleX, scaleY };
         }
@@ -469,7 +476,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
     const clampedAbsScaleX = clamp(nextAbsScaleX, 0.01);
     applyToSelected((selectedObj) => {
       const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * clampedAbsScaleX;
-      if (linkScale) {
+      if (selectedObj.lockScaleProportions ?? true) {
         const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * clampedAbsScaleX;
         return { scaleX, scaleY };
       }
@@ -485,7 +492,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
         const startAbsScaleY = startValues.get(selectedObj.id) ?? Math.abs(selectedObj.scaleY);
         const newAbsScaleY = clamp(startAbsScaleY + delta, 0.01);
         const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * newAbsScaleY;
-        if (linkScale) {
+        if (selectedObj.lockScaleProportions ?? true) {
           const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * newAbsScaleY;
           return { scaleX, scaleY };
         }
@@ -497,7 +504,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
     const clampedAbsScaleY = clamp(nextAbsScaleY, 0.01);
     applyToSelected((selectedObj) => {
       const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * clampedAbsScaleY;
-      if (linkScale) {
+      if (selectedObj.lockScaleProportions ?? true) {
         const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * clampedAbsScaleY;
         return { scaleX, scaleY };
       }
@@ -624,14 +631,14 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => setLinkScale(!linkScale)}
+            onClick={() => applyToSelected(() => ({ lockScaleProportions: !scaleLockField.value || scaleLockField.mixed }))}
             className={cn(
               'inspector-inline-icon-action',
-              linkScale ? 'text-primary' : 'text-muted-foreground',
+              scaleLockField.value && !scaleLockField.mixed ? 'text-primary' : 'text-muted-foreground',
             )}
-            title={linkScale ? 'Unlink scale' : 'Link scale'}
+            title={scaleLockField.value && !scaleLockField.mixed ? 'Unlock proportions' : 'Lock proportions'}
           >
-            {linkScale ? <Link className="size-4" /> : <Unlink className="size-4" />}
+            {scaleLockField.value && !scaleLockField.mixed ? <Link className="size-4" /> : <Unlink className="size-4" />}
           </Button>
         </div>
       </div>

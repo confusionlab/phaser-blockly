@@ -143,6 +143,7 @@ export interface GameObject {
   y: number;
   scaleX: number;
   scaleY: number;
+  lockScaleProportions?: boolean;
   rotation: number;
   visible: boolean;
   parentId: string | null;
@@ -430,6 +431,7 @@ export function createDefaultGameObject(name: string): GameObject {
     y: 0,
     scaleX: 1,
     scaleY: 1,
+    lockScaleProportions: true,
     rotation: 0,
     visible: true,
     parentId: null,

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
-import { SignIn, UserButton, useAuth, useUser } from '@clerk/clerk-react';
+import { SignIn, useAuth, useUser } from '@clerk/clerk-react';
 import { EditorLayout } from './components/layout/EditorLayout';
 import { ProjectExplorerLayout } from './components/layout/ProjectExplorerLayout';
 import { DebugPanel } from './components/debug/DebugPanel';
@@ -89,15 +89,8 @@ function AppShell({
     setDarkMode(userSettings.isDarkMode);
   }, [setDarkMode, userSettings]);
 
-  const isHomeRoute = location.pathname === '/';
-
   return (
     <div className="app-shell h-full">
-      {isAuthenticated && user && isHomeRoute ? (
-        <div className="fixed right-4 top-3 z-[100300]">
-          <UserButton />
-        </div>
-      ) : null}
       <Routes>
         <Route path="/" element={<ProjectExplorerLayout authBootstrapState={authBootstrapState} />} />
         <Route path="/project/:projectId" element={<EditorLayout />} />

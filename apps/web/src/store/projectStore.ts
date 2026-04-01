@@ -1577,6 +1577,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       y: 0,
       scaleX: 1,
       scaleY: 1,
+      lockScaleProportions: true,
       rotation: 0,
       visible: true,
       parentId: null,

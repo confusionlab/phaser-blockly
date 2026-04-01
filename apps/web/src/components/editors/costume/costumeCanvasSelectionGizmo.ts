@@ -5,6 +5,7 @@ import {
   OBJECT_SELECTION_PADDING,
   VECTOR_SELECTION_BORDER_SCALE,
 } from './costumeCanvasShared';
+import { applyUnifiedObjectTransformGizmoAppearance } from './costumeCanvasObjectTransformGizmo';
 
 interface SyncCanvasSelectionGizmoAppearanceOptions {
   fabricCanvas: FabricCanvas;
@@ -26,21 +27,29 @@ export function syncCanvasSelectionGizmoAppearance({
   const selectionPadding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING, zoom);
 
   fabricCanvas.forEachObject((obj: any) => {
-    obj.borderScaleFactor = selectionBorderScale;
-    obj.padding = obj === pointEditingTarget ? 0 : selectionPadding;
-    obj.cornerSize = obj === pointEditingTarget
-      ? getZoomInvariantMetric(HANDLE_SIZE, zoom)
-      : selectionCornerSize;
+    if (obj === pointEditingTarget) {
+      obj.borderScaleFactor = selectionBorderScale;
+      obj.padding = 0;
+      obj.cornerSize = getZoomInvariantMetric(HANDLE_SIZE, zoom);
+    } else {
+      applyUnifiedObjectTransformGizmoAppearance(obj, getZoomInvariantMetric, zoom);
+      obj.padding = selectionPadding;
+      obj.cornerSize = selectionCornerSize;
+    }
     obj.setCoords?.();
   });
 
   const activeObject = fabricCanvas.getActiveObject() as any;
   if (activeObject) {
-    activeObject.borderScaleFactor = selectionBorderScale;
-    activeObject.padding = activeObject === pointEditingTarget ? 0 : selectionPadding;
-    activeObject.cornerSize = activeObject === pointEditingTarget
-      ? getZoomInvariantMetric(HANDLE_SIZE, zoom)
-      : selectionCornerSize;
+    if (activeObject === pointEditingTarget) {
+      activeObject.borderScaleFactor = selectionBorderScale;
+      activeObject.padding = 0;
+      activeObject.cornerSize = getZoomInvariantMetric(HANDLE_SIZE, zoom);
+    } else {
+      applyUnifiedObjectTransformGizmoAppearance(activeObject, getZoomInvariantMetric, zoom);
+      activeObject.padding = selectionPadding;
+      activeObject.cornerSize = selectionCornerSize;
+    }
     activeObject.setCoords?.();
   }
 

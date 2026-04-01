@@ -41,6 +41,16 @@ import {
   getCostumeBoundsInAssetSpace,
   getCostumeVisibleCenterOffset,
 } from '@/lib/costume/costumeAssetFrame';
+import {
+  TRANSFORM_GIZMO_BORDER_COLOR,
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  TRANSFORM_GIZMO_ROTATE_CURSOR,
+  TRANSFORM_GIZMO_ROTATE_RING_OUTSET,
+  TransformGizmoCorner,
+  computeCornerScaleResult,
+  getTransformGizmoCornerCursor,
+  rotateTransformPoint,
+} from '@/lib/editor/unifiedTransformGizmo';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -49,13 +59,14 @@ registerCodeGenerators();
 
 // Track runtimes for each scene (for pause/resume across scene switches)
 const sceneRuntimes: Map<string, RuntimeEngine> = new Map();
-const GIZMO_HANDLE_NAMES = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se', 'handle_n', 'handle_s', 'handle_e', 'handle_w', 'handle_rotate'];
+const GIZMO_HANDLE_NAMES = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se', 'handle_rotate_nw', 'handle_rotate_ne', 'handle_rotate_sw', 'handle_rotate_se'];
 const PIXEL_HIT_ALPHA_TOLERANCE = 1;
 const GIZMO_STROKE_PX = 2;
-const GIZMO_HANDLE_SIZE_PX = 8;
+const GIZMO_HANDLE_SIZE_PX = TRANSFORM_GIZMO_HANDLE_RADIUS * 2;
 const GIZMO_EDGE_LONG_PX = 16;
 const GIZMO_ROTATE_DISTANCE_PX = 24;
 const GIZMO_ROTATE_RADIUS_PX = 6;
+const GIZMO_ROTATE_RING_RADIUS_PX = TRANSFORM_GIZMO_HANDLE_RADIUS + TRANSFORM_GIZMO_ROTATE_RING_OUTSET;
 const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
 const GROUND_LAYER_DEPTH = -1000;
@@ -64,6 +75,7 @@ const INVENTORY_PAGE_SIZE = 8;
 const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
 const EDITOR_RESIZE_FREEZE_EVENT = 'pocha-editor-resize-freeze';
+const STAGE_GIZMO_COLOR = 0x0ea5e9;
 
 type FrozenStageFrame = {
   src: string;
@@ -1351,6 +1363,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         });
       } else {
         const targetContainer = container;
+        targetContainer.setData('objectData', obj);
         // Update existing object - convert user coords to Phaser coords
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
         const ch = phaserScene.data.get('canvasHeight') as number || 600;
@@ -2094,19 +2107,26 @@ function createEditorScene(
     hasMoved: boolean;
   } | null = null;
   const groupSelectionRect = scene.add.rectangle(0, 0, 10, 10);
-  groupSelectionRect.setStrokeStyle(GIZMO_STROKE_PX, 0x4A90D9);
-  groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
+  groupSelectionRect.setStrokeStyle(GIZMO_STROKE_PX, STAGE_GIZMO_COLOR);
+  groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.08);
   groupSelectionRect.setVisible(false);
   groupSelectionRect.setDepth(10_002);
 
-  const groupRotateLine = scene.add.graphics();
-  groupRotateLine.setVisible(false);
-  groupRotateLine.setDepth(10_003);
+  const groupProportionalGuide = scene.add.graphics();
+  groupProportionalGuide.setVisible(false);
+  groupProportionalGuide.setDepth(10_003);
 
   const groupHandles = new Map<string, Phaser.GameObjects.Shape | Phaser.GameObjects.Arc>();
-  const createGroupHandle = (name: string, shape: Phaser.GameObjects.Shape | Phaser.GameObjects.Arc, cursor: string) => {
-    shape.setFillStyle(0xffffff, 1);
-    shape.setStrokeStyle(1.5, 0x4A90D9, 1);
+  const createGroupHandle = (
+    name: string,
+    shape: Phaser.GameObjects.Shape | Phaser.GameObjects.Arc,
+    cursor: string,
+    options?: { interactiveAlpha?: number; showStroke?: boolean },
+  ) => {
+    shape.setFillStyle(0xffffff, options?.interactiveAlpha ?? 1);
+    if (options?.showStroke !== false) {
+      shape.setStrokeStyle(1.5, STAGE_GIZMO_COLOR, 1);
+    }
     shape.setName(name);
     shape.setVisible(false);
     shape.setDepth(10_004);
@@ -2115,28 +2135,90 @@ function createEditorScene(
     groupHandles.set(name, shape);
   };
 
-  createGroupHandle('handle_nw', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nwse-resize');
-  createGroupHandle('handle_ne', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nesw-resize');
-  createGroupHandle('handle_sw', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nesw-resize');
-  createGroupHandle('handle_se', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nwse-resize');
-  createGroupHandle('handle_n', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'ns-resize');
-  createGroupHandle('handle_s', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'ns-resize');
-  createGroupHandle('handle_e', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9), 'ew-resize');
-  createGroupHandle('handle_w', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9), 'ew-resize');
-  createGroupHandle('handle_rotate', scene.add.circle(0, 0, GIZMO_ROTATE_RADIUS_PX, 0x4A90D9), 'grab');
+  createGroupHandle('handle_nw', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('nw'));
+  createGroupHandle('handle_ne', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('ne'));
+  createGroupHandle('handle_sw', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('sw'));
+  createGroupHandle('handle_se', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('se'));
+  createGroupHandle('handle_rotate_nw', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
+  createGroupHandle('handle_rotate_ne', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
+  createGroupHandle('handle_rotate_sw', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
+  createGroupHandle('handle_rotate_se', scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001), TRANSFORM_GIZMO_ROTATE_CURSOR, { interactiveAlpha: 0.001, showStroke: false });
 
   let groupTransformContext: {
     handleName: string;
     selectedIds: string[];
     startPointerX: number;
     startPointerY: number;
-    bounds: { centerX: number; centerY: number; width: number; height: number };
+    frame: { centerX: number; centerY: number; width: number; height: number; rotation?: number };
+    corner: TransformGizmoCorner | null;
+    proportional: boolean;
     startObjects: Map<string, { x: number; y: number; scaleX: number; scaleY: number; rotation: number }>;
   } | null = null;
 
+  const getGroupCorner = (handleName: string): TransformGizmoCorner | null => {
+    switch (handleName) {
+      case 'handle_nw':
+        return 'nw';
+      case 'handle_ne':
+        return 'ne';
+      case 'handle_sw':
+        return 'sw';
+      case 'handle_se':
+        return 'se';
+      default:
+        return null;
+    }
+  };
+
+  const drawGroupDashedLine = (
+    graphics: Phaser.GameObjects.Graphics,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    cameraZoom: number,
+  ) => {
+    const dashLength = 8 / Math.max(cameraZoom, 0.0001);
+    const gapLength = 6 / Math.max(cameraZoom, 0.0001);
+    const totalLength = Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y);
+    if (totalLength <= 0) {
+      return;
+    }
+
+    const dx = (end.x - start.x) / totalLength;
+    const dy = (end.y - start.y) / totalLength;
+    let distance = 0;
+    while (distance < totalLength) {
+      const segmentStart = distance;
+      const segmentEnd = Math.min(totalLength, distance + dashLength);
+      graphics.lineBetween(
+        start.x + dx * segmentStart,
+        start.y + dy * segmentStart,
+        start.x + dx * segmentEnd,
+        start.y + dy * segmentEnd,
+      );
+      distance += dashLength + gapLength;
+    }
+  };
+
+  const shouldUseProportionalStageScale = (
+    selectedIds: string[],
+    event?: MouseEvent | PointerEvent,
+  ) => {
+    if (event?.shiftKey) {
+      return true;
+    }
+    return selectedIds.some((selectedId) => {
+      const selectedContainer = scene.children.getByName(selectedId) as Phaser.GameObjects.Container | null;
+      const objectData = selectedContainer?.getData('objectData') as GameObject | undefined;
+      return objectData?.lockScaleProportions ?? true;
+    });
+  };
+
   const setGroupGizmoVisible = (visible: boolean) => {
     groupSelectionRect.setVisible(visible);
-    groupRotateLine.setVisible(visible);
+    if (!visible) {
+      groupProportionalGuide.clear();
+      groupProportionalGuide.setVisible(false);
+    }
     groupHandles.forEach((handle) => handle.setVisible(visible));
   };
 
@@ -2211,67 +2293,45 @@ function createEditorScene(
     const cameraZoom = scene.cameras.main.zoom || 1;
     const uiScale = 1 / cameraZoom;
     const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
-    const frameColor = 0x7bb4e8;
-    const halfW = frame.width / 2;
-    const halfH = frame.height / 2;
-    const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / cameraZoom;
     const rotation = frame.rotation ?? 0;
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    const rotateOffset = (ox: number, oy: number) => ({
-      x: frame.centerX + ox * cos - oy * sin,
-      y: frame.centerY + ox * sin + oy * cos,
-    });
+    const frameGeometry = getTransformGizmoHandleFrame(
+      { x: frame.centerX, y: frame.centerY },
+      frame.width,
+      frame.height,
+      rotation,
+    );
 
     groupSelectionRect.setPosition(frame.centerX, frame.centerY);
     groupSelectionRect.setSize(frame.width, frame.height);
     groupSelectionRect.setRotation(rotation);
-    groupSelectionRect.setStrokeStyle(strokeWidth, frameColor);
-    groupSelectionRect.setFillStyle(frameColor, 0.06);
+    groupSelectionRect.setStrokeStyle(strokeWidth, STAGE_GIZMO_COLOR);
+    groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.06);
 
     const setHandle = (name: string, x: number, y: number) => {
       const handle = groupHandles.get(name);
       if (!handle) return;
       handle.setPosition(x, y);
-      const isHorizontalSide = name === 'handle_n' || name === 'handle_s';
-      const isVerticalSide = name === 'handle_e' || name === 'handle_w';
-      if (isHorizontalSide) {
-        handle.setScale(uiScale, uiScale * 0.7);
-      } else if (isVerticalSide) {
-        handle.setScale(uiScale * 0.7, uiScale);
-      } else {
-        handle.setScale(uiScale, uiScale);
-      }
-      if (name !== 'handle_rotate') {
-        handle.setRotation(rotation);
-      }
+      handle.setScale(uiScale, uiScale);
     };
 
-    const nw = rotateOffset(-halfW, -halfH);
-    const ne = rotateOffset(halfW, -halfH);
-    const sw = rotateOffset(-halfW, halfH);
-    const se = rotateOffset(halfW, halfH);
-    const n = rotateOffset(0, -halfH);
-    const s = rotateOffset(0, halfH);
-    const e = rotateOffset(halfW, 0);
-    const w = rotateOffset(-halfW, 0);
-    const rotateHandlePos = rotateOffset(0, -halfH - rotateDistance);
+    setHandle('handle_nw', frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
+    setHandle('handle_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
+    setHandle('handle_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y);
+    setHandle('handle_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y);
+    setHandle('handle_rotate_nw', frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
+    setHandle('handle_rotate_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
+    setHandle('handle_rotate_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y);
+    setHandle('handle_rotate_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y);
 
-    setHandle('handle_nw', nw.x, nw.y);
-    setHandle('handle_ne', ne.x, ne.y);
-    setHandle('handle_sw', sw.x, sw.y);
-    setHandle('handle_se', se.x, se.y);
-    setHandle('handle_n', n.x, n.y);
-    setHandle('handle_s', s.x, s.y);
-    setHandle('handle_e', e.x, e.y);
-    setHandle('handle_w', w.x, w.y);
-    setHandle('handle_rotate', rotateHandlePos.x, rotateHandlePos.y);
-
-    groupRotateLine.clear();
-    groupRotateLine.lineStyle(strokeWidth, frameColor, 1);
-    const lineStart = rotateOffset(0, -halfH);
-    const lineEnd = rotateOffset(0, -halfH - rotateDistance + 4 / cameraZoom);
-    groupRotateLine.lineBetween(lineStart.x, lineStart.y, lineEnd.x, lineEnd.y);
+    groupProportionalGuide.clear();
+    if (groupTransformContext?.corner && groupTransformContext.proportional) {
+      const diagonal = getTransformCornerDiagonal(frameGeometry.corners, groupTransformContext.corner);
+      groupProportionalGuide.lineStyle(strokeWidth, STAGE_GIZMO_COLOR, 1);
+      drawGroupDashedLine(groupProportionalGuide, diagonal.start, diagonal.end, cameraZoom);
+      groupProportionalGuide.setVisible(true);
+    } else {
+      groupProportionalGuide.setVisible(false);
+    }
   };
 
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
@@ -2388,8 +2448,8 @@ function createEditorScene(
         return;
       }
 
-      const bounds = getSelectionBounds(selectedIds);
-      if (!bounds) {
+      const frame = getSelectionGizmoFrame(selectedIds);
+      if (!frame) {
         groupTransformContext = null;
         return;
       }
@@ -2413,7 +2473,9 @@ function createEditorScene(
         selectedIds,
         startPointerX: pointer.worldX,
         startPointerY: pointer.worldY,
-        bounds,
+        frame,
+        corner: getGroupCorner(handleName),
+        proportional: shouldUseProportionalStageScale(selectedIds, pointer.event as MouseEvent | PointerEvent | undefined),
         startObjects,
       };
     });
@@ -2421,66 +2483,79 @@ function createEditorScene(
     handle.on('drag', (pointer: Phaser.Input.Pointer) => {
       if (!groupTransformContext || groupTransformContext.handleName !== handleName) return;
 
-      const { bounds, startPointerX, startPointerY, startObjects } = groupTransformContext;
-      const dx = pointer.worldX - startPointerX;
-      const dy = pointer.worldY - startPointerY;
-
-      if (handleName === 'handle_rotate') {
-        const angleToStart = Math.atan2(startPointerY - bounds.centerY, startPointerX - bounds.centerX);
-        const angleToCurrent = Math.atan2(pointer.worldY - bounds.centerY, pointer.worldX - bounds.centerX);
+      const { frame, corner, startObjects, startPointerX, startPointerY } = groupTransformContext;
+      const pointerEvent = pointer.event as MouseEvent | PointerEvent | undefined;
+      if (handleName.startsWith('handle_rotate_')) {
+        const angleToStart = Math.atan2(startPointerY - frame.centerY, startPointerX - frame.centerX);
+        const angleToCurrent = Math.atan2(pointer.worldY - frame.centerY, pointer.worldX - frame.centerX);
         const deltaRotation = angleToCurrent - angleToStart;
 
         for (const [id, start] of startObjects) {
           const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
           if (!selectedContainer) continue;
 
-          const relX = start.x - bounds.centerX;
-          const relY = start.y - bounds.centerY;
+          const relX = start.x - frame.centerX;
+          const relY = start.y - frame.centerY;
           const cos = Math.cos(deltaRotation);
           const sin = Math.sin(deltaRotation);
-          selectedContainer.x = bounds.centerX + relX * cos - relY * sin;
-          selectedContainer.y = bounds.centerY + relX * sin + relY * cos;
+          selectedContainer.x = frame.centerX + relX * cos - relY * sin;
+          selectedContainer.y = frame.centerY + relX * sin + relY * cos;
           selectedContainer.rotation = start.rotation + deltaRotation;
         }
-      } else {
-        let sx = 1;
-        let sy = 1;
-        const safeWidth = Math.max(1, bounds.width);
-        const safeHeight = Math.max(1, bounds.height);
-
-        if (handleName === 'handle_n') sy = (bounds.height - (2 * dy)) / safeHeight;
-        else if (handleName === 'handle_s') sy = (bounds.height + (2 * dy)) / safeHeight;
-        else if (handleName === 'handle_e') sx = (bounds.width + (2 * dx)) / safeWidth;
-        else if (handleName === 'handle_w') sx = (bounds.width - (2 * dx)) / safeWidth;
-        else if (handleName === 'handle_nw') {
-          const uniform = (safeWidth + (-dx - dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
-        } else if (handleName === 'handle_ne') {
-          const uniform = (safeWidth + (dx - dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
-        } else if (handleName === 'handle_sw') {
-          const uniform = (safeWidth + (-dx + dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
-        } else if (handleName === 'handle_se') {
-          const uniform = (safeWidth + (dx + dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
-        }
-
-        sx = Math.max(0.1, sx);
-        sy = Math.max(0.1, sy);
+      } else if (corner) {
+        const rotation = frame.rotation ?? 0;
+        const frameGeometry = getTransformGizmoHandleFrame(
+          { x: frame.centerX, y: frame.centerY },
+          frame.width,
+          frame.height,
+          rotation,
+        );
+        const centered = !!pointerEvent?.altKey;
+        const proportional = shouldUseProportionalStageScale(groupTransformContext.selectedIds, pointerEvent);
+        groupTransformContext.proportional = proportional;
+        const cornerConfig: Record<TransformGizmoCorner, {
+          anchor: { x: number; y: number };
+          handleXSign: -1 | 1;
+          handleYSign: -1 | 1;
+        }> = {
+          nw: { anchor: frameGeometry.corners.se, handleXSign: -1, handleYSign: -1 },
+          ne: { anchor: frameGeometry.corners.sw, handleXSign: 1, handleYSign: -1 },
+          se: { anchor: frameGeometry.corners.nw, handleXSign: 1, handleYSign: 1 },
+          sw: { anchor: frameGeometry.corners.ne, handleXSign: -1, handleYSign: 1 },
+        };
+        const resolvedCorner = cornerConfig[corner];
+        const scaled = computeCornerScaleResult({
+          referencePoint: centered ? { x: frame.centerX, y: frame.centerY } : resolvedCorner.anchor,
+          pointerPoint: { x: pointer.worldX, y: pointer.worldY },
+          handleXSign: resolvedCorner.handleXSign,
+          handleYSign: resolvedCorner.handleYSign,
+          rotationRadians: rotation,
+          baseWidth: Math.max(1, frame.width),
+          baseHeight: Math.max(1, frame.height),
+          minWidth: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
+          minHeight: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
+          proportional,
+          centered,
+        });
+        const sx = Math.max(0.1, scaled.width / Math.max(1, frame.width));
+        const sy = Math.max(0.1, scaled.height / Math.max(1, frame.height));
+        const referencePoint = centered ? { x: frame.centerX, y: frame.centerY } : resolvedCorner.anchor;
 
         for (const [id, start] of startObjects) {
           const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
           if (!selectedContainer) continue;
 
-          const relX = start.x - bounds.centerX;
-          const relY = start.y - bounds.centerY;
-          selectedContainer.x = bounds.centerX + relX * sx;
-          selectedContainer.y = bounds.centerY + relY * sy;
+          const localStart = rotateTransformPoint(
+            { x: start.x - referencePoint.x, y: start.y - referencePoint.y },
+            rotation,
+          );
+          const scaledLocal = {
+            x: localStart.x * sx,
+            y: localStart.y * sy,
+          };
+          const nextCenter = rotateTransformPoint(scaledLocal, -rotation);
+          selectedContainer.x = referencePoint.x + nextCenter.x;
+          selectedContainer.y = referencePoint.y + nextCenter.y;
           selectedContainer.setScale(Math.max(0.1, start.scaleX * sx), Math.max(0.1, start.scaleY * sy));
         }
       }
@@ -2502,6 +2577,8 @@ function createEditorScene(
           onDragEnd(id, selectedContainer.x, selectedContainer.y, selectedContainer.scaleX, selectedContainer.scaleY, rotationDeg);
         }
       });
+      groupProportionalGuide.clear();
+      groupProportionalGuide.setVisible(false);
       groupTransformContext = null;
     });
   }

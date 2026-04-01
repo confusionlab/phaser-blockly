@@ -69,6 +69,13 @@ import { useCostumeCanvasToolController } from '@/components/editors/costume/use
 import { useCostumeCanvasVectorHandleSync } from '@/components/editors/costume/useCostumeCanvasVectorHandleSync';
 import { useCostumeCanvasVectorObjectController } from '@/components/editors/costume/useCostumeCanvasVectorObjectController';
 import { useCostumeCanvasVectorPathController } from '@/components/editors/costume/useCostumeCanvasVectorPathController';
+import {
+  applyUnifiedFabricTransformCanvasOptions,
+  clearUnifiedCanvasTransformGuide,
+  configureUnifiedObjectTransformForGesture,
+  renderUnifiedCanvasTransformGuide,
+  syncUnifiedCanvasTransformGuideFromEvent,
+} from '@/components/editors/costume/costumeCanvasObjectTransformGizmo';
 import { syncCanvasSelectionGizmoAppearance } from '@/components/editors/costume/costumeCanvasSelectionGizmo';
 import type { BitmapBrushKind } from '@/lib/background/brushCore';
 import { EMPTY_BACKGROUND_VECTOR_FABRIC_JSON } from '@/lib/background/backgroundDocument';
@@ -969,6 +976,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       enableRetinaScaling: true,
       stopContextMenu: true,
     });
+    applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     const instrumentedCanvas = fabricCanvas as FabricCanvas & {
       upperCanvasEl?: HTMLCanvasElement;
       wrapperEl?: HTMLDivElement;
@@ -1130,6 +1138,8 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       }
 
       const pointer = fabricCanvas.getScenePoint(opt.e);
+      configureUnifiedObjectTransformForGesture(fabricCanvas, opt.e);
+      syncUnifiedCanvasTransformGuideFromEvent(fabricCanvas, opt.e);
       const tool = activeToolRef.current;
 
       if (tool === 'pen') {
@@ -1361,6 +1371,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     };
 
     const handleMouseUp = () => {
+      clearUnifiedCanvasTransformGuide(fabricCanvas);
       if (interactive && activeToolRef.current === 'pen') {
         if (commitCurrentPenPlacement()) {
           fabricCanvas.requestRenderAll();
@@ -1414,6 +1425,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     };
 
     const handleObjectModified = (event: { target?: any }) => {
+      clearUnifiedCanvasTransformGuide(fabricCanvas);
       if (ignoreCanvasHistoryEventsRef.current) {
         return;
       }
@@ -1466,10 +1478,13 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       ) {
         activateVectorPointEditing(activeObject, false);
         configureCanvasForTool();
+      } else {
+        configureCanvasForTool();
       }
     };
 
     const handleSelectionCleared = () => {
+      clearUnifiedCanvasTransformGuide(fabricCanvas);
       if (
         vectorPointEditingTargetRef.current &&
         activeToolRef.current === 'select'
@@ -1515,6 +1530,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     const handleAfterRender = () => {
       renderVectorPointEditingGuide();
+      renderUnifiedCanvasTransformGuide(fabricCanvas);
       drawPenOverlay();
     };
 

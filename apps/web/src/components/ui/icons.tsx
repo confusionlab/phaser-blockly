@@ -38,6 +38,7 @@ import {
   Layers3 as LucideLayers3,
   Library as LucideLibrary,
   Link as LucideLink,
+  LayoutGrid as LucideLayoutGrid,
   Loader2 as LucideLoader2,
   LoaderCircle as LucideLoaderCircle,
   LocateFixed as LucideLocateFixed,
@@ -62,9 +63,11 @@ import {
   Redo2 as LucideRedo2,
   RotateCcw as LucideRotateCcw,
   RotateCw as LucideRotateCw,
+  Rows3 as LucideRows3,
   Save as LucideSave,
   Scissors as LucideScissors,
   Search as LucideSearch,
+  Settings2 as LucideSettings2,
   Shapes as LucideShapes,
   Sparkles as LucideSparkles,
   Square as LucideSquare,
@@ -77,6 +80,7 @@ import {
   Undo2 as LucideUndo2,
   Unlink as LucideUnlink,
   Upload as LucideUpload,
+  User as LucideUser,
   Volume2 as LucideVolume2,
   VolumeX as LucideVolumeX,
   WandSparkles as LucideWandSparkles,
@@ -131,6 +135,7 @@ const LIBRARY_ICONS = {
   Layers3: LucideLayers3,
   Library: LucideLibrary,
   Link: LucideLink,
+  LayoutGrid: LucideLayoutGrid,
   Loader2: LucideLoader2,
   LoaderCircle: LucideLoaderCircle,
   LocateFixed: LucideLocateFixed,
@@ -155,9 +160,11 @@ const LIBRARY_ICONS = {
   Redo2: LucideRedo2,
   RotateCcw: LucideRotateCcw,
   RotateCw: LucideRotateCw,
+  Rows3: LucideRows3,
   Save: LucideSave,
   Scissors: LucideScissors,
   Search: LucideSearch,
+  Settings2: LucideSettings2,
   Shapes: LucideShapes,
   Sparkles: LucideSparkles,
   Square: LucideSquare,
@@ -170,6 +177,7 @@ const LIBRARY_ICONS = {
   Undo2: LucideUndo2,
   Unlink: LucideUnlink,
   Upload: LucideUpload,
+  User: LucideUser,
   Volume2: LucideVolume2,
   VolumeX: LucideVolumeX,
   WandSparkles: LucideWandSparkles,
@@ -275,6 +283,7 @@ export const ImageOff = LucideImageOff;
 export const Layers3 = LucideLayers3;
 export const Library = LucideLibrary;
 export const Link = LucideLink;
+export const LayoutGrid = LucideLayoutGrid;
 export const Loader2 = LucideLoader2;
 export const LoaderCircle = LucideLoaderCircle;
 export const LocateFixed = LucideLocateFixed;
@@ -299,9 +308,11 @@ export const Plus = LucidePlus;
 export const Redo2 = LucideRedo2;
 export const RotateCcw = LucideRotateCcw;
 export const RotateCw = LucideRotateCw;
+export const Rows3 = LucideRows3;
 export const Save = LucideSave;
 export const Scissors = LucideScissors;
 export const Search = LucideSearch;
+export const Settings2 = LucideSettings2;
 export const Shapes = LucideShapes;
 export const Sparkles = LucideSparkles;
 export const Square = LucideSquare;
@@ -314,6 +325,7 @@ export const Type = LucideType;
 export const Undo2 = LucideUndo2;
 export const Unlink = LucideUnlink;
 export const Upload = LucideUpload;
+export const User = LucideUser;
 export const Volume2 = LucideVolume2;
 export const VolumeX = LucideVolumeX;
 export const WandSparkles = LucideWandSparkles;

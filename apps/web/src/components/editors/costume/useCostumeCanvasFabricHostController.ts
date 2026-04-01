@@ -10,6 +10,13 @@ import {
 } from 'fabric';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
 import {
+  applyUnifiedFabricTransformCanvasOptions,
+  clearUnifiedCanvasTransformGuide,
+  configureUnifiedObjectTransformForGesture,
+  renderUnifiedCanvasTransformGuide,
+  syncUnifiedCanvasTransformGuideFromEvent,
+} from './costumeCanvasObjectTransformGizmo';
+import {
   CANVAS_SIZE,
   buildStarPoints,
   buildTrianglePoints,
@@ -208,6 +215,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       preserveObjectStacking: true,
       selection: false,
     });
+    applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvasRef.current = fabricCanvas;
     onFabricCanvasReady();
 
@@ -225,6 +233,9 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       if (!layerInteractive) {
         return;
       }
+
+      configureUnifiedObjectTransformForGesture(fabricCanvas, opt.e);
+      syncUnifiedCanvasTransformGuideFromEvent(fabricCanvas, opt.e);
 
       if (mode === 'bitmap' && tool === 'select' && floatingBitmapObject) {
         if (!opt.target || opt.target !== floatingBitmapObject) {
@@ -673,6 +684,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onMouseUp = () => {
       const callbacks = callbacksRef.current;
+      clearUnifiedCanvasTransformGuide(fabricCanvas);
       if (penAnchorPlacementSessionRef.current) {
         callbacks.commitCurrentPenPlacement();
         fabricCanvas.requestRenderAll();
@@ -748,6 +760,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     };
 
     const onObjectModified = () => {
+      clearUnifiedCanvasTransformGuide(fabricCanvas);
       if (editorModeRef.current === 'vector') {
         callbacksRef.current.saveHistory();
       }
@@ -780,6 +793,8 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       ) {
         callbacks.activateVectorPointEditing(activeObject, false);
         callbacks.configureCanvasForTool();
+      } else {
+        callbacks.configureCanvasForTool();
       }
     };
 
@@ -796,11 +811,13 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         callbacksRef.current.renderVectorBrushStrokeOverlay(vectorStrokeCtx);
       }
       callbacksRef.current.renderVectorPointEditingGuide();
+      renderUnifiedCanvasTransformGuide(fabricCanvas);
       callbacksRef.current.onFabricCanvasAfterRender();
     };
 
     const onSelectionCleared = () => {
       const callbacks = callbacksRef.current;
+      clearUnifiedCanvasTransformGuide(fabricCanvas);
       if (
         editorModeRef.current === 'bitmap' &&
         activeToolRef.current === 'select' &&

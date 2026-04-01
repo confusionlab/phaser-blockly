@@ -7,6 +7,7 @@ import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import {
   CompactColorPicker,
 } from '@/components/ui/color-picker';
+import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
 import { Paintbrush, Plus, X } from '@/components/ui/icons';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 
@@ -184,11 +185,11 @@ export function SceneTabs() {
           <Paintbrush className="size-3.5" />
           Draw
         </Button>
-        <button
-          type="button"
+        <ColorSwatchButton
+          value={currentBgColor}
           onClick={() => setShowBgColorPicker(!showBgColorPicker)}
-          className="w-7 h-7 rounded border-2 border-border hover:border-primary transition-colors cursor-pointer"
-          style={{ backgroundColor: currentBgColor }}
+          className="h-7 w-7 cursor-pointer rounded transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          swatchClassName="size-full rounded-[inherit]"
           title="Change background color"
         />
         {showBgColorPicker && (

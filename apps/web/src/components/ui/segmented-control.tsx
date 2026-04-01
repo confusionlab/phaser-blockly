@@ -8,6 +8,7 @@ export type SegmentedControlOption<T extends string> = {
   label: string;
   disabled?: boolean;
   icon?: React.ReactNode;
+  iconOnly?: boolean;
 };
 
 type SegmentedControlProps<T extends string> = Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange'> & {
@@ -104,10 +105,6 @@ export function SegmentedControl<T extends string>({
     };
   }, [layout, options.length, updateThumbMetrics]);
 
-  if (options.length === 0) {
-    return null;
-  }
-
   const containerSizeClassName = 'h-7 rounded-[10px] p-[2px]';
   const thumbClassName = 'inset-y-[2px] rounded-[8px]';
   const optionSizeClassName = 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
@@ -170,6 +167,10 @@ export function SegmentedControl<T extends string>({
     }
   }, [activeIndex, enabledIndices, moveSelection]);
 
+  if (options.length === 0) {
+    return null;
+  }
+
   return (
     <div
       ref={containerRef}
@@ -212,10 +213,12 @@ export function SegmentedControl<T extends string>({
             }}
             type="button"
             role="radio"
+            aria-label={option.iconOnly ? option.label : undefined}
             aria-checked={isActive}
             disabled={option.disabled}
             data-state={isActive ? 'active' : 'inactive'}
             tabIndex={isActive ? 0 : -1}
+            title={option.iconOnly ? option.label : undefined}
             className={cn(
               'relative z-10 flex min-w-0 items-center justify-center font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
               optionSizeClassName,
@@ -225,7 +228,7 @@ export function SegmentedControl<T extends string>({
             onKeyDown={handleKeyDown}
           >
             {option.icon}
-            <span className="truncate">{option.label}</span>
+            <span className={cn(option.iconOnly ? 'sr-only' : 'truncate')}>{option.label}</span>
           </button>
         );
       })}
