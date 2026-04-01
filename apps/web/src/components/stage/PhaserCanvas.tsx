@@ -2563,6 +2563,7 @@ function createEditorScene(
         }
       } else if (corner) {
         const rotation = frame.rotation ?? 0;
+        const localRotation = -rotation;
         const frameGeometry = getTransformGizmoHandleFrame(
           { x: frame.centerX, y: frame.centerY },
           frame.width,
@@ -2588,7 +2589,7 @@ function createEditorScene(
           pointerPoint: { x: pointer.worldX, y: pointer.worldY },
           handleXSign: resolvedCorner.handleXSign,
           handleYSign: resolvedCorner.handleYSign,
-          rotationRadians: rotation,
+          rotationRadians: localRotation,
           baseWidth: Math.max(1, frame.width),
           baseHeight: Math.max(1, frame.height),
           minWidth: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
@@ -2606,13 +2607,13 @@ function createEditorScene(
 
           const localStart = rotateTransformPoint(
             { x: start.x - referencePoint.x, y: start.y - referencePoint.y },
-            rotation,
+            localRotation,
           );
           const scaledLocal = {
             x: localStart.x * sx,
             y: localStart.y * sy,
           };
-          const nextCenter = rotateTransformPoint(scaledLocal, -rotation);
+          const nextCenter = rotateTransformPoint(scaledLocal, -localRotation);
           selectedContainer.x = referencePoint.x + nextCenter.x;
           selectedContainer.y = referencePoint.y + nextCenter.y;
           selectedContainer.setScale(start.scaleX * sx, start.scaleY * sy);
@@ -3505,6 +3506,7 @@ function createObjectVisual(
           const centered = !!pointerEvent?.altKey;
           const minSize = 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001);
           const rotation = startFrame.rotation;
+          const localRotation = -rotation;
           const frameCenter = {
             x: startFrame.centerX,
             y: startFrame.centerY,
@@ -3545,7 +3547,7 @@ function createObjectVisual(
               pointerPoint: { x: pointer.worldX, y: pointer.worldY },
               handleXSign: resolvedCorner.handleXSign,
               handleYSign: resolvedCorner.handleYSign,
-              rotationRadians: rotation,
+              rotationRadians: localRotation,
               baseWidth: startFrame.width,
               baseHeight: startFrame.height,
               minWidth: minSize,
@@ -3560,13 +3562,13 @@ function createObjectVisual(
                 x: startX - referencePoint.x,
                 y: startY - referencePoint.y,
               },
-              rotation,
+              localRotation,
             );
             const scaledLocal = {
               x: localStart.x * sx,
               y: localStart.y * sy,
             };
-            const nextOrigin = rotateTransformPoint(scaledLocal, -rotation);
+            const nextOrigin = rotateTransformPoint(scaledLocal, -localRotation);
             container.x = referencePoint.x + nextOrigin.x;
             container.y = referencePoint.y + nextOrigin.y;
             container.setScale(startScaleX * sx, startScaleY * sy);
@@ -3593,7 +3595,7 @@ function createObjectVisual(
               pointerPoint: { x: pointer.worldX, y: pointer.worldY },
               edge: resolvedEdge.edge,
               handleSign: resolvedEdge.handleSign,
-              rotationRadians: rotation,
+              rotationRadians: localRotation,
               baseWidth: startFrame.width,
               baseHeight: startFrame.height,
               minWidth: minSize,
@@ -3607,13 +3609,13 @@ function createObjectVisual(
                 x: startX - referencePoint.x,
                 y: startY - referencePoint.y,
               },
-              rotation,
+              localRotation,
             );
             const scaledLocal = {
               x: localStart.x * sx,
               y: localStart.y * sy,
             };
-            const nextOrigin = rotateTransformPoint(scaledLocal, -rotation);
+            const nextOrigin = rotateTransformPoint(scaledLocal, -localRotation);
             container.x = referencePoint.x + nextOrigin.x;
             container.y = referencePoint.y + nextOrigin.y;
             container.setScale(startScaleX * sx, startScaleY * sy);
