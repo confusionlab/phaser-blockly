@@ -89,11 +89,18 @@ export default defineSchema({
     ownerUserId: v.optional(v.string()),
     name: v.string(),
     thumbnail: v.string(), // Base64 preview
+    assetRefs: v.optional(v.array(
+      v.object({
+        assetId: v.string(),
+        kind: v.union(v.literal("image"), v.literal("audio")),
+      }),
+    )),
     costumes: v.array(
       v.object({
         id: v.string(),
         name: v.string(),
-        storageId: v.id("_storage"),
+        // Legacy object-library rows stored a dedicated preview blob per costume.
+        storageId: v.optional(v.id("_storage")),
         bounds: v.optional(boundsValidator),
         document: costumeDocumentValidator,
       }),
@@ -102,7 +109,9 @@ export default defineSchema({
       v.object({
         id: v.string(),
         name: v.string(),
-        storageId: v.id("_storage"),
+        // Legacy object-library rows stored a dedicated audio blob per sound.
+        storageId: v.optional(v.id("_storage")),
+        assetId: v.optional(v.string()),
         duration: v.optional(v.number()),
         trimStart: v.optional(v.number()),
         trimEnd: v.optional(v.number()),

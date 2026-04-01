@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
+import { useConvex, useConvexAuth, useMutation } from 'convex/react';
+import { api } from '@convex-generated/api';
+import type { Id } from '@convex-generated/dataModel';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -37,7 +40,8 @@ import {
   FolderOpen,
   FolderPlus,
   GripVertical,
-  Shapes,
+  Library,
+  Save,
 } from '@/components/ui/icons';
 import type {
   GameObject,
@@ -48,6 +52,10 @@ import type {
   SceneFolder,
 } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
+import {
+  ensureObjectLibraryAssetRefsInCloud,
+  prepareObjectLibraryCreatePayload,
+} from '@/lib/objectLibrary/objectLibraryAssets';
 import {
   getFolderNodeKey,
   getNextSiblingOrder,
@@ -248,6 +256,11 @@ export function SpriteShelf({
     setCollapsedFoldersForScene,
     clearSceneUiState,
   } = useEditorStore();
+  const convex = useConvex();
+  const { isAuthenticated } = useConvexAuth();
+  const createObjectLibraryItem = useMutation(api.objectLibrary.create);
+  const generateProjectAssetUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
+  const upsertProjectAsset = useMutation(api.projectAssets.upsert);
 
   const [contextMenu, setContextMenu] = useState<
     | { x: number; y: number; kind: 'object'; object: GameObject }
@@ -276,6 +289,7 @@ export function SpriteShelf({
   const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
+  const [savingObjectLibrary, setSavingObjectLibrary] = useState<string | null>(null);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
   const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const cancelInlineRenameOnBlurRef = useRef(false);
@@ -1329,6 +1343,60 @@ export function SpriteShelf({
     handleCloseContextMenu();
   };
 
+  const handleSaveObjectToLibrary = async () => {
+    if (!contextMenu || contextMenu.kind !== 'object' || !project) {
+      return;
+    }
+    if (!isAuthenticated) {
+      window.alert('Sign in to save objects to the cloud library.');
+      return;
+    }
+
+    const effectiveProps = getEffectiveObjectProps(contextMenu.object, project.components || []);
+    setSavingObjectLibrary(contextMenu.object.id);
+    try {
+      const prepared = await prepareObjectLibraryCreatePayload({
+        name: contextMenu.object.name,
+        costumes: effectiveProps.costumes,
+        sounds: effectiveProps.sounds,
+        blocklyXml: effectiveProps.blocklyXml,
+        currentCostumeIndex: effectiveProps.currentCostumeIndex,
+        physics: effectiveProps.physics,
+        collider: effectiveProps.collider,
+        localVariables: effectiveProps.localVariables,
+      });
+
+      await ensureObjectLibraryAssetRefsInCloud(prepared.assetRefs, {
+        listMissingAssetIds: async (assetIds) => {
+          return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
+        },
+        generateUploadUrl: generateProjectAssetUploadUrl,
+        upsertAsset: async (args) => {
+          return await upsertProjectAsset({
+            assetId: args.assetId,
+            kind: args.kind,
+            mimeType: args.mimeType,
+            size: args.size,
+            storageId: args.storageId,
+          });
+        },
+      });
+
+      await createObjectLibraryItem({
+        ...prepared.payload,
+        physics: prepared.payload.physics ?? undefined,
+        collider: prepared.payload.collider ?? undefined,
+        localVariables: prepared.payload.localVariables,
+      });
+      handleCloseContextMenu();
+    } catch (error) {
+      console.error('Failed to save object to library:', error);
+      window.alert('Failed to save object to library');
+    } finally {
+      setSavingObjectLibrary(null);
+    }
+  };
+
   const handleDeleteComponentById = (componentId: string) => {
     if (!project) return;
     if (!componentId) return;
@@ -1648,7 +1716,7 @@ export function SpriteShelf({
               onClick={() => setShowLibrary(true)}
               title="Object Library"
             >
-              <Shapes className="size-4" />
+              <Library className="size-4" />
             </Button>
           ) : null}
         </div>
@@ -1768,6 +1836,18 @@ export function SpriteShelf({
                     Move to {folder.name}
                   </Button>
                 ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    void handleSaveObjectToLibrary();
+                  }}
+                  disabled={savingObjectLibrary === contextMenu.object.id}
+                  className="w-full justify-start rounded-none h-8"
+                >
+                  <Save className="size-4" />
+                  Save to Library
+                </Button>
                 {!contextMenu.object.componentId ? (
                   <Button
                     variant="ghost"

@@ -21,40 +21,13 @@ import type {
   CostumeBounds,
   CostumeDocument,
 } from "@/types";
-import { urlToDataUrl } from "@/utils/convexHelpers";
 import {
-  cloneCostumeDocument,
-  ensureCostumeDocument,
-  getActiveCostumeLayer,
-  isBitmapCostumeLayer,
-} from "@/lib/costume/costumeDocument";
+  hydrateObjectLibraryItemForInsertion,
+  type ObjectLibraryListItemData,
+} from '@/lib/objectLibrary/objectLibraryAssets';
 
-interface ObjectLibraryItem {
+interface ObjectLibraryItem extends ObjectLibraryListItemData {
   _id: Id<"objectLibrary">;
-  name: string;
-  thumbnail: string;
-  costumes: Array<{
-    id: string;
-    name: string;
-    storageId: Id<"_storage">;
-    url: string | null;
-    bounds?: CostumeBounds;
-    document: CostumeDocument;
-  }>;
-  sounds: Array<{
-    id: string;
-    name: string;
-    storageId: Id<"_storage">;
-    url: string | null;
-    duration?: number;
-    trimStart?: number;
-    trimEnd?: number;
-  }>;
-  blocklyXml: string;
-  currentCostumeIndex?: number;
-  physics?: PhysicsConfig;
-  collider?: ColliderConfig;
-  localVariables?: Variable[];
   createdAt: number;
 }
 
@@ -86,7 +59,7 @@ export function ObjectLibraryBrowser({
   const removeItem = useMutation(api.objectLibrary.remove);
 
   const handleDelete = async (id: Id<"objectLibrary">) => {
-    if (!confirm("Delete this object from library? All associated costumes and sounds will be removed.")) return;
+    if (!confirm("Delete this object from library?")) return;
     try {
       await removeItem({ id });
       if (selectedId === id) setSelectedId(null);
@@ -104,56 +77,8 @@ export function ObjectLibraryBrowser({
 
     setLoadingSelect(true);
     try {
-      // Download all costumes and convert to embedded data URLs
-      const costumes: Costume[] = await Promise.all(
-        item.costumes.map(async (costume) => {
-          if (!costume.url) {
-            throw new Error(`Costume ${costume.name} has no URL`);
-          }
-          const dataUrl = await urlToDataUrl(costume.url);
-          const document = cloneCostumeDocument(ensureCostumeDocument(costume as { document?: unknown }));
-          const activeLayer = getActiveCostumeLayer(document);
-          if (isBitmapCostumeLayer(activeLayer) && !activeLayer.bitmap.assetId) {
-            activeLayer.bitmap.assetId = dataUrl;
-          }
-          return {
-            id: crypto.randomUUID(), // Generate new IDs for the imported object
-            name: costume.name,
-            assetId: dataUrl,
-            bounds: costume.bounds,
-            document,
-          };
-        })
-      );
-
-      // Download all sounds and convert to embedded data URLs
-      const sounds: Sound[] = await Promise.all(
-        item.sounds.map(async (sound) => {
-          if (!sound.url) {
-            throw new Error(`Sound ${sound.name} has no URL`);
-          }
-          const dataUrl = await urlToDataUrl(sound.url);
-          return {
-            id: crypto.randomUUID(),
-            name: sound.name,
-            assetId: dataUrl,
-            duration: sound.duration,
-            trimStart: sound.trimStart,
-            trimEnd: sound.trimEnd,
-          };
-        })
-      );
-
-      onSelect?.({
-        name: item.name,
-        costumes,
-        sounds,
-        blocklyXml: item.blocklyXml,
-        currentCostumeIndex: item.currentCostumeIndex ?? 0,
-        physics: item.physics ?? null,
-        collider: item.collider ?? null,
-        localVariables: item.localVariables ?? [],
-      });
+      const runtimeObject = await hydrateObjectLibraryItemForInsertion(item);
+      onSelect?.(runtimeObject);
       onOpenChange(false);
     } catch (error) {
       console.error("Failed to load object:", error);

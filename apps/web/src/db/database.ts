@@ -342,7 +342,7 @@ function cloneValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function isManagedAssetId(value: unknown): value is string {
+export function isManagedAssetId(value: unknown): value is string {
   return typeof value === 'string' && MANAGED_ASSET_ID_PATTERN.test(value.trim());
 }
 
@@ -516,6 +516,24 @@ async function storeManagedAssetBlob(
 
 export async function hasManagedAsset(assetId: string): Promise<boolean> {
   return (await db.assets.get(assetId)) !== undefined;
+}
+
+export async function ensureManagedAssetFromSource(
+  source: string,
+  kind: ManagedAssetKind,
+): Promise<{
+  assetId: string;
+  kind: ManagedAssetKind;
+  mimeType: string;
+  size: number;
+}> {
+  const record = await ensureAssetRecordFromSource(source, kind);
+  return {
+    assetId: record.id,
+    kind: record.kind,
+    mimeType: record.mimeType,
+    size: record.size,
+  };
 }
 
 export async function getManagedAssetBlob(assetId: string): Promise<Blob | null> {
