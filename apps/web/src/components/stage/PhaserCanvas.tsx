@@ -561,7 +561,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   const immediateResizeFreezeRef = useRef(false);
   const [manualResizeFreezeActive, setManualResizeFreezeActive] = useState(false);
 
-  const { project, updateObject } = useProjectStore();
+  const { project, updateObject, addComponentInstance } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
@@ -1826,12 +1826,62 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     focusKeyboardSurface(event.currentTarget);
   }, [isPlaying]);
 
+  const handleComponentDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (isPlaying || !event.dataTransfer.types.includes('application/x-pocha-component-id')) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }, [isPlaying]);
+
+  const handleComponentDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (isPlaying) {
+      return;
+    }
+    const componentId = event.dataTransfer.getData('application/x-pocha-component-id');
+    if (!componentId || !selectedSceneId || !project || !containerRef.current || !gameRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
+    const camera = phaserScene?.cameras?.main;
+    if (!camera) {
+      return;
+    }
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
+    const worldPoint = camera.getWorldPoint(localX, localY);
+    const userPoint = phaserToUser(
+      worldPoint.x,
+      worldPoint.y,
+      project.settings.canvasWidth,
+      project.settings.canvasHeight,
+    );
+
+    runInHistoryTransaction('stage:drop-component-instance', () => {
+      const createdObject = addComponentInstance(selectedSceneId, componentId);
+      if (!createdObject) {
+        return;
+      }
+      updateObject(selectedSceneId, createdObject.id, {
+        x: userPoint.x,
+        y: userPoint.y,
+      });
+      selectObjects([createdObject.id], createdObject.id);
+    });
+  }, [addComponentInstance, isPlaying, project, selectObjects, selectedSceneId, updateObject]);
+
   return (
     <div
       className="relative w-full h-full outline-none"
       data-editor-shortcut-surface={isPlaying ? undefined : 'scene-objects'}
       tabIndex={isPlaying ? -1 : 0}
       onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
+      onDragOver={handleComponentDragOver}
+      onDrop={handleComponentDrop}
     >
       <div
         ref={containerRef}

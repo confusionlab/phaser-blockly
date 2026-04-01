@@ -1,14 +1,16 @@
 import { useCallback, useState } from 'react';
 import { PhaserCanvas } from './PhaserCanvas';
-import { SpriteShelf } from './SpriteShelf';
+import { HierarchyPanel } from './HierarchyPanel';
 import { ObjectInspector } from './ObjectInspector';
-import { useEditorStore } from '@/store/editorStore';
+import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
+import { useEditorStore, type HierarchyTab } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from '@/components/ui/icons';
 import { tryStartPlaying } from '@/lib/playStartGuard';
+import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { cn } from '@/lib/utils';
 
 interface StagePanelProps {
@@ -17,6 +19,12 @@ interface StagePanelProps {
   isCanvasFullscreen: boolean;
   onCanvasFullscreenChange: (isFullscreen: boolean) => void;
 }
+
+const hierarchyTabs: SegmentedControlOption<HierarchyTab>[] = [
+  { value: 'scene', label: 'Scene' },
+  { value: 'object', label: 'Object' },
+  { value: 'component', label: 'Component' },
+];
 
 function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
@@ -55,6 +63,8 @@ export function StagePanel({
   const isDarkMode = useEditorStore((state) => state.isDarkMode);
   const viewMode = useEditorStore((state) => state.viewMode);
   const cycleViewMode = useEditorStore((state) => state.cycleViewMode);
+  const activeHierarchyTab = useEditorStore((state) => state.activeHierarchyTab);
+  const setActiveHierarchyTab = useEditorStore((state) => state.setActiveHierarchyTab);
   const selectedSceneId = useEditorStore((state) => state.selectedSceneId);
   const project = useProjectStore((state) => state.project);
   const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
@@ -260,26 +270,44 @@ export function StagePanel({
       <div
         aria-hidden={isCanvasFullscreen}
         className={cn(
-          'flex min-h-0 min-w-0 shrink-0 overflow-hidden',
+          'flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden',
           isCanvasFullscreen && 'hidden',
         )}
         style={isCanvasFullscreen ? undefined : { height: `${bottomHeightPercent}%` }}
       >
-        {/* Objects list */}
-        <div className="min-h-0 overflow-hidden" style={{ width: `${objectsWidth}%` }}>
-          <SpriteShelf />
+        <div
+          className={cn(
+            panelHeaderClassNames.chrome,
+            panelHeaderClassNames.row,
+            'shrink-0 border-b border-border',
+          )}
+        >
+          <SegmentedControl
+            ariaLabel="Hierarchy sections"
+            className="w-full"
+            options={hierarchyTabs}
+            value={activeHierarchyTab}
+            onValueChange={(value) => setActiveHierarchyTab(value)}
+          />
         </div>
 
-        {/* Resizable horizontal divider */}
-        <div
-          data-testid="stage-panel-horizontal-divider"
-          className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
-          onMouseDown={handleHorizontalDividerDrag}
-        />
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          {/* Objects list */}
+          <div className="min-h-0 overflow-hidden" style={{ width: `${objectsWidth}%` }}>
+            <HierarchyPanel />
+          </div>
 
-        {/* Properties panel */}
-        <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-          <ObjectInspector />
+          {/* Resizable horizontal divider */}
+          <div
+            data-testid="stage-panel-horizontal-divider"
+            className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
+            onMouseDown={handleHorizontalDividerDrag}
+          />
+
+          {/* Properties panel */}
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+            <ObjectInspector />
+          </div>
         </div>
       </div>
     </div>

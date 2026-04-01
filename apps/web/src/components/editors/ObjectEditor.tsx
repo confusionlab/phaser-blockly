@@ -38,7 +38,7 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const hasCodeTarget = !!selectedObjectId || !!selectedComponentId;
-  const hasObjectAssetTarget = !!selectedObjectId;
+  const hasObjectAssetTarget = !!selectedObjectId || !!selectedComponentId;
   const emptyStateMessage = !hasCodeTarget ? NO_OBJECT_SELECTED_MESSAGE : null;
   const [mountedTabs, setMountedTabs] = useState<Record<ObjectEditorTab, boolean>>({
     code: true,
@@ -57,10 +57,10 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [scene, selectedObjectId, selectedComponentId, selectedFolderId, selectObject]);
 
   useEffect(() => {
-    if ((selectedComponentId || selectedFolderId || !selectedObjectId) && activeObjectTab !== 'code') {
+    if ((selectedFolderId || !hasCodeTarget) && activeObjectTab !== 'code') {
       setActiveObjectTab('code');
     }
-  }, [selectedComponentId, selectedFolderId, selectedObjectId, activeObjectTab, setActiveObjectTab]);
+  }, [activeObjectTab, hasCodeTarget, selectedFolderId, setActiveObjectTab]);
 
   useEffect(() => {
     setMountedTabs((current) => (

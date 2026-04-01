@@ -1,5 +1,6 @@
 import { getEffectiveObjectProps } from '@/types';
 import type {
+  ComponentDefinition,
   Costume,
   CostumeAssetFrame,
   CostumeBounds,
@@ -19,16 +20,31 @@ import {
   cloneCostumeAssetFrame,
 } from '@/lib/costume/costumeAssetFrame';
 
-export interface CostumeEditorTarget {
+export interface ObjectCostumeEditorTarget {
   sceneId: string;
   objectId: string;
   costumeId: string;
 }
 
-export interface CostumeEditorObjectTarget {
+export interface ComponentCostumeEditorTarget {
+  componentId: string;
+  costumeId: string;
+}
+
+export type CostumeEditorTarget = ObjectCostumeEditorTarget | ComponentCostumeEditorTarget;
+
+export interface ObjectCostumeEditorObjectTarget {
   sceneId: string;
   objectId: string;
 }
+
+export interface ComponentCostumeEditorObjectTarget {
+  componentId: string;
+}
+
+export type CostumeEditorObjectTarget =
+  | ObjectCostumeEditorObjectTarget
+  | ComponentCostumeEditorObjectTarget;
 
 export interface CostumeEditorSession extends CostumeEditorTarget {
   key: string;
@@ -58,13 +74,23 @@ export type CostumeEditorOperation =
   | { type: 'add'; costume: Costume }
   | { type: 'remove'; costumeId: string };
 
-export interface ResolvedCostumeEditorObjectTarget extends CostumeEditorObjectTarget {
+export interface ResolvedObjectCostumeEditorObjectTarget extends ObjectCostumeEditorObjectTarget {
   object: GameObject;
   costumes: Costume[];
   currentCostumeIndex: number;
 }
 
-export interface ResolvedCostumeEditorTarget extends CostumeEditorTarget {
+export interface ResolvedComponentCostumeEditorObjectTarget extends ComponentCostumeEditorObjectTarget {
+  component: ComponentDefinition;
+  costumes: Costume[];
+  currentCostumeIndex: number;
+}
+
+export type ResolvedCostumeEditorObjectTarget =
+  | ResolvedObjectCostumeEditorObjectTarget
+  | ResolvedComponentCostumeEditorObjectTarget;
+
+export interface ResolvedObjectCostumeEditorTarget extends ObjectCostumeEditorTarget {
   object: GameObject;
   costumes: Costume[];
   costume: Costume;
@@ -72,10 +98,24 @@ export interface ResolvedCostumeEditorTarget extends CostumeEditorTarget {
   currentCostumeIndex: number;
 }
 
+export interface ResolvedComponentCostumeEditorTarget extends ComponentCostumeEditorTarget {
+  component: ComponentDefinition;
+  costumes: Costume[];
+  costume: Costume;
+  costumeIndex: number;
+  currentCostumeIndex: number;
+}
+
+export type ResolvedCostumeEditorTarget =
+  | ResolvedObjectCostumeEditorTarget
+  | ResolvedComponentCostumeEditorTarget;
+
 export function createCostumeEditorSession(target: CostumeEditorTarget): CostumeEditorSession {
   return {
     ...target,
-    key: `${target.sceneId}:${target.objectId}:${target.costumeId}`,
+    key: 'componentId' in target
+      ? `component:${target.componentId}:${target.costumeId}`
+      : `${target.sceneId}:${target.objectId}:${target.costumeId}`,
   };
 }
 
@@ -262,6 +302,25 @@ export function resolveCostumeEditorObject(
   project: Project,
   target: CostumeEditorObjectTarget
 ): ResolvedCostumeEditorObjectTarget | null {
+  if ('componentId' in target) {
+    const component = (project.components || []).find((candidate) => candidate.id === target.componentId);
+    if (!component) {
+      return null;
+    }
+
+    const costumes = (component.costumes || []).map((costume) => ({
+      ...costume,
+      document: ensureCostumeDocument(costume),
+    }));
+
+    return {
+      ...target,
+      component,
+      costumes,
+      currentCostumeIndex: component.currentCostumeIndex ?? 0,
+    };
+  }
+
   const scene = project.scenes.find((candidate) => candidate.id === target.sceneId);
   const object = scene?.objects.find((candidate) => candidate.id === target.objectId);
   if (!object) {
@@ -291,15 +350,26 @@ export function resolveCostumeEditorTarget(
     return null;
   }
 
-  const { object, costumes, currentCostumeIndex } = resolvedObject;
+  const { costumes, currentCostumeIndex } = resolvedObject;
   const costumeIndex = costumes.findIndex((costume) => costume.id === target.costumeId);
   if (costumeIndex < 0) {
     return null;
   }
 
+  if ('componentId' in resolvedObject) {
+    return {
+      ...target,
+      component: resolvedObject.component,
+      costumes,
+      costume: costumes[costumeIndex],
+      costumeIndex,
+      currentCostumeIndex,
+    };
+  }
+
   return {
     ...target,
-    object,
+    object: resolvedObject.object,
     costumes,
     costume: costumes[costumeIndex],
     costumeIndex,

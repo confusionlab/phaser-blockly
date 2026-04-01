@@ -13,7 +13,8 @@ import {
 } from '@/store/universalHistory';
 
 export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
-export type InspectorTab = 'object' | 'scene';
+export type HierarchyTab = 'scene' | 'object' | 'component';
+export type InspectorTab = HierarchyTab;
 export interface CostumeColliderEditorRequest {
   sceneId: string;
   objectId: string;
@@ -144,6 +145,7 @@ interface EditorStore {
   showPlayValidationDialog: boolean;
   playValidationIssues: PlayValidationIssue[];
   activeInspectorTab: InspectorTab;
+  activeHierarchyTab: HierarchyTab;
   activeObjectTab: ObjectEditorTab;
   costumeColliderEditorRequest: CostumeColliderEditorRequest | null;
   collapsedFolderIdsByScene: Record<string, string[]>;
@@ -175,6 +177,7 @@ interface EditorStore {
   initializeSelectionForProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   reconcileSelectionToProject: (project: Project | null, options?: SelectionHistoryOptions) => void;
   setActiveInspectorTab: (tab: InspectorTab) => void;
+  setActiveHierarchyTab: (tab: HierarchyTab) => void;
   setActiveObjectTab: (tab: ObjectEditorTab) => void;
   openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
   consumeCostumeColliderEditorRequest: (sceneId: string, objectId: string) => boolean;
@@ -297,6 +300,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   showPlayValidationDialog: false,
   playValidationIssues: [],
   activeInspectorTab: 'object' as InspectorTab,
+  activeHierarchyTab: 'object' as HierarchyTab,
   activeObjectTab: 'code' as ObjectEditorTab,
   costumeColliderEditorRequest: null,
   collapsedFolderIdsByScene: {},
@@ -631,6 +635,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     const applySelection = () => {
       set({
         activeInspectorTab: nextSelectedObjectId ? 'object' : 'scene',
+        activeHierarchyTab: 'object',
         selectedSceneId: nextSelectedSceneId,
         selectedFolderId: nextSelectedFolderId,
         selectedObjectId: nextSelectedObjectId,
@@ -784,6 +789,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         selectedObjectId: issue.objectId,
         selectedObjectIds: issue.objectId ? [issue.objectId] : [],
         selectedComponentId: null,
+        activeHierarchyTab: issue.objectId ? 'object' : 'scene',
         activeObjectTab: 'code',
         costumeColliderEditorRequest: null,
         showPlayValidationDialog: false,
@@ -853,6 +859,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   closeBackgroundEditor: () => {
     set({
       activeInspectorTab: 'scene',
+      activeHierarchyTab: 'scene',
       backgroundEditorOpen: false,
       backgroundEditorSceneId: null,
       backgroundUndoHandler: null,
@@ -870,6 +877,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   closeWorldBoundaryEditor: () => {
     set({
       activeInspectorTab: 'scene',
+      activeHierarchyTab: 'scene',
       worldBoundaryEditorOpen: false,
       worldBoundaryEditorSceneId: null,
     });
@@ -877,6 +885,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   setActiveInspectorTab: (tab) => {
     set({
+      activeInspectorTab: tab,
+      activeHierarchyTab: tab,
+    });
+  },
+
+  setActiveHierarchyTab: (tab) => {
+    set({
+      activeHierarchyTab: tab,
       activeInspectorTab: tab,
     });
   },

@@ -135,31 +135,52 @@ function getLayerCanvasSourceSignature(layer: ReturnType<typeof getActiveCostume
 function createCostumeTarget(
   sceneId: string | null,
   objectId: string | null,
+  componentId: string | null,
   costumeId: string | null,
 ): CostumeEditorTarget | null {
-  if (!sceneId || !objectId || !costumeId) {
-    return null;
+  if (componentId && costumeId) {
+    return {
+      componentId,
+      costumeId,
+    };
   }
 
-  return {
-    sceneId,
-    objectId,
-    costumeId,
-  };
+  if (sceneId && objectId && costumeId) {
+    return {
+      sceneId,
+      objectId,
+      costumeId,
+    };
+  }
+
+  return null;
 }
 
 function createCostumeObjectTarget(
   sceneId: string | null,
   objectId: string | null,
+  componentId: string | null,
 ): CostumeEditorObjectTarget | null {
-  if (!sceneId || !objectId) {
-    return null;
+  if (componentId) {
+    return {
+      componentId,
+    };
   }
 
-  return {
-    sceneId,
-    objectId,
-  };
+  if (sceneId && objectId) {
+    return {
+      sceneId,
+      objectId,
+    };
+  }
+
+  return null;
+}
+
+function doCostumeTargetsMatch(a: CostumeEditorTarget, b: CostumeEditorTarget): boolean {
+  return 'componentId' in a || 'componentId' in b
+    ? ('componentId' in a && 'componentId' in b && a.componentId === b.componentId && a.costumeId === b.costumeId)
+    : a.sceneId === b.sceneId && a.objectId === b.objectId && a.costumeId === b.costumeId;
 }
 
 export function CostumeEditor() {
@@ -173,6 +194,7 @@ export function CostumeEditor() {
   const {
     selectedSceneId,
     selectedObjectId,
+    selectedComponentId,
     registerCostumeUndo,
     activeObjectTab,
     costumeColliderEditorRequest,
@@ -181,9 +203,10 @@ export function CostumeEditor() {
 
   const currentCostumeIdRef = useRef<string | null>(null);
   const currentCostumeRef = useRef<Costume | undefined>(undefined);
-  const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null }>({
+  const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null; componentId: string | null }>({
     sceneId: null,
     objectId: null,
+    componentId: null,
   });
   const loadRequestIdRef = useRef(0);
   const workingPersistedStateSessionKeyRef = useRef<string | null>(null);
@@ -206,20 +229,31 @@ export function CostumeEditor() {
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
+  const component = (project?.components || []).find((candidate) => candidate.id === selectedComponentId);
 
   const effectiveProps = useMemo(() => {
+    if (component) {
+      return {
+        blocklyXml: component.blocklyXml,
+        costumes: component.costumes,
+        currentCostumeIndex: component.currentCostumeIndex,
+        physics: component.physics,
+        collider: component.collider,
+        sounds: component.sounds,
+      };
+    }
     if (!object || !project) return null;
     return getEffectiveObjectProps(object, project.components || []);
-  }, [object, project]);
+  }, [component, object, project]);
 
   const costumes = useMemo(() => effectiveProps?.costumes || [], [effectiveProps]);
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
   const currentCostume = costumes[currentCostumeIndex];
   const currentSession = useMemo(() => {
-    const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
+    const target = createCostumeTarget(selectedSceneId, selectedObjectId, selectedComponentId, currentCostume?.id ?? null);
     return target ? createCostumeEditorSession(target) : null;
-  }, [currentCostume?.id, selectedObjectId, selectedSceneId]);
+  }, [currentCostume?.id, selectedComponentId, selectedObjectId, selectedSceneId]);
   const currentWorkingPersistedState = currentSession && workingPersistedStateSessionKeyRef.current === currentSession.key
     ? workingPersistedState
     : null;
@@ -244,8 +278,8 @@ export function CostumeEditor() {
     ? `${editorCostume.id}:${editorCostume.document.activeLayerId}`
     : null;
   const currentObjectTarget = useMemo(
-    () => createCostumeObjectTarget(selectedSceneId, selectedObjectId),
-    [selectedObjectId, selectedSceneId],
+    () => createCostumeObjectTarget(selectedSceneId, selectedObjectId, selectedComponentId),
+    [selectedComponentId, selectedObjectId, selectedSceneId],
   );
   currentSessionRef.current = currentSession;
   const initialEditorMode: CostumeEditorMode = editorCostume
@@ -947,9 +981,7 @@ export function CostumeEditor() {
       didApply &&
       loadedSession &&
       persistedSession &&
-      persistedSession.target.sceneId === loadedSession.sceneId &&
-      persistedSession.target.objectId === loadedSession.objectId &&
-      persistedSession.target.costumeId === loadedSession.costumeId
+      doCostumeTargetsMatch(persistedSession.target, loadedSession)
     ) {
       canvasRef.current?.markPersisted(loadedSession.key);
     }
@@ -960,7 +992,8 @@ export function CostumeEditor() {
     const previousSelection = previousSelectionRef.current;
     const selectionChanged =
       previousSelection.sceneId !== selectedSceneId ||
-      previousSelection.objectId !== selectedObjectId;
+      previousSelection.objectId !== selectedObjectId ||
+      previousSelection.componentId !== selectedComponentId;
 
     if (selectionChanged) {
       if (saveTimeoutRef.current) {
@@ -970,14 +1003,15 @@ export function CostumeEditor() {
 
       loadRequestIdRef.current += 1;
       currentCostumeIdRef.current = null;
-      beginSessionLoad(!!selectedObjectId);
+      beginSessionLoad(!!currentObjectTarget);
     }
 
     previousSelectionRef.current = {
       sceneId: selectedSceneId,
       objectId: selectedObjectId,
+      componentId: selectedComponentId,
     };
-  }, [beginSessionLoad, selectedSceneId, selectedObjectId]);
+  }, [beginSessionLoad, currentObjectTarget, selectedComponentId, selectedObjectId, selectedSceneId]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -985,7 +1019,7 @@ export function CostumeEditor() {
     if (!editorCostume || !currentSession) {
       currentCostumeIdRef.current = null;
       const requestId = ++loadRequestIdRef.current;
-      beginSessionLoad(!!selectedObjectId);
+      beginSessionLoad(!!currentObjectTarget);
       const fallbackMode: CostumeEditorMode = 'bitmap';
       setCanvasEditorMode(fallbackMode);
       setActiveTool((prev) => ensureToolForMode(fallbackMode, prev));
@@ -1079,7 +1113,7 @@ export function CostumeEditor() {
   ]);
 
   const handleSelectCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!currentObjectTarget) return;
 
     const nextCostume = costumes[index];
     if (!nextCostume) return;
@@ -1088,19 +1122,19 @@ export function CostumeEditor() {
       type: 'select',
       costumeId: nextCostume.id,
     });
-  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
+  }, [applyOperationToCurrentObject, costumes, currentObjectTarget]);
 
   const handleAddCostume = useCallback((costume: Costume) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!currentObjectTarget) return;
 
     applyOperationToCurrentObject({
       type: 'add',
       costume,
     });
-  }, [applyOperationToCurrentObject, selectedObjectId, selectedSceneId]);
+  }, [applyOperationToCurrentObject, currentObjectTarget]);
 
   const handleDeleteCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!currentObjectTarget) return;
 
     const costume = costumes[index];
     if (!costume) return;
@@ -1109,10 +1143,10 @@ export function CostumeEditor() {
       type: 'remove',
       costumeId: costume.id,
     });
-  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
+  }, [applyOperationToCurrentObject, costumes, currentObjectTarget]);
 
   const handleRenameCostume = useCallback((index: number, name: string) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!currentObjectTarget) return;
 
     const costume = costumes[index];
     if (!costume) return;
@@ -1122,7 +1156,7 @@ export function CostumeEditor() {
       costumeId: costume.id,
       name,
     });
-  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
+  }, [applyOperationToCurrentObject, costumes, currentObjectTarget]);
 
   const handleSelectLayer = useCallback((layerId: string) => {
     if (isLoadingRef.current) {
@@ -1487,6 +1521,9 @@ export function CostumeEditor() {
   const handleColliderChange = useCallback((newCollider: ColliderConfig) => {
     const loadedSession = loadedSessionRef.current;
     if (!loadedSession || isLoadingRef.current || !isCanvasReadyForSession(loadedSession)) return;
+    if ('componentId' in loadedSession) {
+      return;
+    }
 
     updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: newCollider });
   }, [isCanvasReadyForSession, updateObject]);
@@ -1499,7 +1536,7 @@ export function CostumeEditor() {
     void navigateDocumentHistory('redo');
   }, [navigateDocumentHistory]);
 
-  if (!object) {
+  if (!object && !component) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
         {NO_OBJECT_SELECTED_MESSAGE}

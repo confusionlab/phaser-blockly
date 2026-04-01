@@ -28,17 +28,28 @@ export function SoundEditor() {
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
 
-  const { project, updateObject } = useProjectStore();
-  const { selectedSceneId, selectedObjectId } = useEditorStore();
+  const { project, updateObject, updateComponent } = useProjectStore();
+  const { selectedSceneId, selectedObjectId, selectedComponentId } = useEditorStore();
 
   const scene = project?.scenes.find((s) => s.id === selectedSceneId);
   const object = scene?.objects.find((o) => o.id === selectedObjectId);
+  const component = (project?.components || []).find((item) => item.id === selectedComponentId);
 
   // Get effective sounds (from component if applicable)
   const effectiveProps = useMemo(() => {
+    if (component) {
+      return {
+        blocklyXml: component.blocklyXml,
+        costumes: component.costumes,
+        currentCostumeIndex: component.currentCostumeIndex,
+        physics: component.physics,
+        collider: component.collider,
+        sounds: component.sounds,
+      };
+    }
     if (!object || !project) return null;
     return getEffectiveObjectProps(object, project.components || []);
-  }, [object, project]);
+  }, [component, object, project]);
 
   const sounds = useMemo(() => effectiveProps?.sounds || [], [effectiveProps]);
 
@@ -77,6 +88,15 @@ export function SoundEditor() {
 
   const handleAddSound = useCallback(
     (sound: Sound) => {
+      if (selectedComponentId) {
+        const updatedSounds = [...sounds, sound];
+        updateComponent(selectedComponentId, { sounds: updatedSounds });
+        setSelectedSoundIndex(updatedSounds.length - 1);
+        setDraftRecording(null);
+        setDraftError(null);
+        setWorkspaceMode('edit');
+        return;
+      }
       if (!selectedSceneId || !selectedObjectId) return;
       const updatedSounds = [...sounds, sound];
       updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
@@ -86,11 +106,19 @@ export function SoundEditor() {
       setDraftError(null);
       setWorkspaceMode('edit');
     },
-    [selectedSceneId, selectedObjectId, sounds, updateObject]
+    [selectedComponentId, selectedObjectId, selectedSceneId, sounds, updateComponent, updateObject]
   );
 
   const handleDeleteSound = useCallback(
     (index: number) => {
+      if (selectedComponentId) {
+        const updatedSounds = sounds.filter((_, i) => i !== index);
+        updateComponent(selectedComponentId, { sounds: updatedSounds });
+        if (index <= validSelectedIndex && validSelectedIndex > 0) {
+          setSelectedSoundIndex(validSelectedIndex - 1);
+        }
+        return;
+      }
       if (!selectedSceneId || !selectedObjectId) return;
 
       const updatedSounds = sounds.filter((_, i) => i !== index);
@@ -101,29 +129,43 @@ export function SoundEditor() {
         setSelectedSoundIndex(validSelectedIndex - 1);
       }
     },
-    [selectedSceneId, selectedObjectId, sounds, validSelectedIndex, updateObject]
+    [selectedComponentId, selectedObjectId, selectedSceneId, sounds, updateComponent, updateObject, validSelectedIndex]
   );
 
   const handleRenameSound = useCallback(
     (index: number, newName: string) => {
+      if (selectedComponentId) {
+        const updatedSounds = sounds.map((s, i) =>
+          i === index ? { ...s, name: newName } : s
+        );
+        updateComponent(selectedComponentId, { sounds: updatedSounds });
+        return;
+      }
       if (!selectedSceneId || !selectedObjectId) return;
       const updatedSounds = sounds.map((s, i) =>
         i === index ? { ...s, name: newName } : s
       );
       updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
     },
-    [selectedSceneId, selectedObjectId, sounds, updateObject]
+    [selectedComponentId, selectedObjectId, selectedSceneId, sounds, updateComponent, updateObject]
   );
 
   const handleTrimChange = useCallback(
     (trimStart: number, trimEnd: number) => {
+      if (selectedComponentId && selectedSound) {
+        const updatedSounds = sounds.map((s, i) =>
+          i === validSelectedIndex ? { ...s, trimStart, trimEnd } : s
+        );
+        updateComponent(selectedComponentId, { sounds: updatedSounds });
+        return;
+      }
       if (!selectedSceneId || !selectedObjectId || !selectedSound) return;
       const updatedSounds = sounds.map((s, i) =>
         i === validSelectedIndex ? { ...s, trimStart, trimEnd } : s
       );
       updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
     },
-    [selectedSceneId, selectedObjectId, selectedSound, sounds, validSelectedIndex, updateObject]
+    [selectedComponentId, selectedObjectId, selectedSceneId, selectedSound, sounds, updateComponent, updateObject, validSelectedIndex]
   );
 
   const handleReviewTrimChange = useCallback((trimStart: number, trimEnd: number) => {
@@ -208,7 +250,7 @@ export function SoundEditor() {
     </div>
   ) : undefined;
 
-  if (!object) {
+  if (!object && !component) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
         {NO_OBJECT_SELECTED_MESSAGE}

@@ -7,16 +7,27 @@ export interface Project {
   updatedAt: Date;
   schemaVersion: number;
   scenes: Scene[];
+  sceneFolders: SceneFolder[];
   messages: MessageDefinition[];
   globalVariables: Variable[];
   settings: ProjectSettings;
   components: ComponentDefinition[];
+  componentFolders: ComponentFolder[];
+}
+
+export interface HierarchyFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  order: number;
 }
 
 // Component Definition - the "master" that instances reference
 export interface ComponentDefinition {
   id: string;
   name: string;
+  folderId?: string | null;
+  order?: number;
   blocklyXml: string;
   costumes: Costume[];
   currentCostumeIndex: number;
@@ -38,6 +49,7 @@ export interface Scene {
   id: string;
   name: string;
   order: number;
+  folderId?: string | null;
   background: BackgroundConfig | null;
   objects: GameObject[];
   objectFolders: SceneFolder[];
@@ -46,12 +58,8 @@ export interface Scene {
   worldBoundary?: WorldBoundaryConfig;
 }
 
-export interface SceneFolder {
-  id: string;
-  name: string;
-  parentId: string | null;
-  order: number;
-}
+export type SceneFolder = HierarchyFolder;
+export type ComponentFolder = HierarchyFolder;
 
 export interface GroundConfig {
   enabled: boolean;
@@ -340,9 +348,11 @@ export function createDefaultProject(name: string): Project {
     updatedAt: new Date(),
     schemaVersion: 9,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
+    sceneFolders: [],
     messages: [],
     globalVariables: [],
     components: [],
+    componentFolders: [],
     settings: {
       canvasWidth: 800,
       canvasHeight: 600,
@@ -363,6 +373,7 @@ export function createDefaultScene(id: string, name: string, order: number): Sce
     id,
     name,
     order,
+    folderId: null,
     background: { type: 'color', value: '#87CEEB' },
     objects: [],
     objectFolders: [],

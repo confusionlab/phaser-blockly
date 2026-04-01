@@ -6,6 +6,7 @@ import type {
   Costume,
   Variable,
   ComponentDefinition,
+  ComponentFolder,
   SceneFolder,
   MessageDefinition,
 } from '../types';
@@ -28,6 +29,10 @@ import {
   normalizeProjectLayering,
   normalizeSceneLayering,
 } from '@/utils/layerTree';
+import {
+  normalizeFolderedHierarchy,
+  type FolderedItemShape,
+} from '@/utils/hierarchyTree';
 import {
   hasVariableNameConflict,
   isValidVariableName,
@@ -82,6 +87,7 @@ interface ProjectStore {
   removeScene: (sceneId: string) => void;
   updateScene: (sceneId: string, updates: Partial<Scene>) => void;
   reorderScenes: (sceneIds: string[]) => void;
+  updateSceneOrganization: (scenes: Scene[], sceneFolders: SceneFolder[]) => void;
 
   // Object actions
   addObject: (sceneId: string, name: string) => GameObject;
@@ -124,6 +130,7 @@ interface ProjectStore {
   // Component actions
   makeComponent: (sceneId: string, objectId: string) => ComponentDefinition | null;
   updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
+  updateComponentOrganization: (components: ComponentDefinition[], componentFolders: ComponentFolder[]) => void;
   deleteComponent: (componentId: string) => void;
   addComponentInstance: (sceneId: string, componentId: string) => GameObject | null;
   detachFromComponent: (sceneId: string, objectId: string) => void;
@@ -201,6 +208,30 @@ function cloneVariableDefinitions(variables: GameObject['localVariables']): Game
 function normalizeComponentName(name: string): string {
   return name.trim().toLowerCase();
 }
+
+const sceneHierarchyConfig = {
+  itemKeyPrefix: 'scene',
+  setItemFolderId: (scene: Scene, folderId: string | null): Scene => ({
+    ...scene,
+    folderId,
+  }),
+  setItemOrder: (scene: Scene, order: number): Scene => ({
+    ...scene,
+    order,
+  }),
+};
+
+const componentHierarchyConfig = {
+  itemKeyPrefix: 'component',
+  setItemFolderId: (component: ComponentDefinition, folderId: string | null): ComponentDefinition => ({
+    ...component,
+    folderId,
+  }),
+  setItemOrder: (component: ComponentDefinition, order: number): ComponentDefinition => ({
+    ...component,
+    order,
+  }),
+};
 
 function hasDuplicateVariableNames(variables: Variable[]): boolean {
   const seen = new Set<string>();
@@ -282,6 +313,28 @@ function getEffectiveComponentLocalVariables(
   }
 
   return [];
+}
+
+function normalizeSceneHierarchy(
+  scenes: Scene[],
+  sceneFolders: SceneFolder[],
+): { scenes: Scene[]; sceneFolders: SceneFolder[] } {
+  const normalized = normalizeFolderedHierarchy(sceneFolders, scenes, sceneHierarchyConfig);
+  return {
+    scenes: normalized.items,
+    sceneFolders: normalized.folders,
+  };
+}
+
+function normalizeComponentHierarchy(
+  components: ComponentDefinition[],
+  componentFolders: ComponentFolder[],
+): { components: ComponentDefinition[]; componentFolders: ComponentFolder[] } {
+  const normalized = normalizeFolderedHierarchy(componentFolders, components, componentHierarchyConfig);
+  return {
+    components: normalized.items,
+    componentFolders: normalized.folders,
+  };
 }
 
 function applyObjectUpdatesToProject(
@@ -434,7 +487,7 @@ function buildCostumeEditorOperationUpdates(
     persistedSession?: CostumeEditorPersistedSession;
     operation: CostumeEditorOperation;
   },
-): Partial<GameObject> | null {
+): Partial<ComponentBackedObjectFields> | null {
   const resolvedObject = resolveCostumeEditorObject(project, target);
   if (!resolvedObject) {
     return null;
@@ -447,15 +500,18 @@ function buildCostumeEditorOperationUpdates(
   const operation = options.operation;
 
   if (persistedSession) {
-    if (
-      persistedSession.target.sceneId !== target.sceneId ||
-      persistedSession.target.objectId !== target.objectId
-    ) {
+    const persistedTarget = persistedSession.target;
+    const targetsMatch = 'componentId' in target
+      ? ('componentId' in persistedTarget && persistedTarget.componentId === target.componentId)
+      : (!('componentId' in persistedTarget)
+        && persistedTarget.sceneId === target.sceneId
+        && persistedTarget.objectId === target.objectId);
+    if (!targetsMatch) {
       return null;
     }
 
     const persistedCostumeIndex = nextCostumes.findIndex(
-      (costume) => costume.id === persistedSession.target.costumeId,
+      (costume) => costume.id === persistedTarget.costumeId,
     );
     if (persistedCostumeIndex < 0) {
       return null;
@@ -463,7 +519,7 @@ function buildCostumeEditorOperationUpdates(
 
     const persistedCostumes = applyCostumeEditorState(
       nextCostumes,
-      persistedSession.target.costumeId,
+      persistedTarget.costumeId,
       persistedSession.state,
     );
     if (persistedCostumes) {
@@ -514,7 +570,7 @@ function buildCostumeEditorOperationUpdates(
     }
   }
 
-  const updates: Partial<GameObject> = {};
+  const updates: Partial<ComponentBackedObjectFields> = {};
   if (costumesChanged) {
     updates.costumes = cloneCostumes(nextCostumes);
   }
@@ -539,18 +595,29 @@ function getCostumeEditorOperationHistoryOptions(operation: CostumeEditorOperati
 }
 
 function normalizeProject(project: Project): Project {
+  const normalizedSceneHierarchy = normalizeSceneHierarchy(
+    Array.isArray(project.scenes) ? project.scenes : [],
+    Array.isArray(project.sceneFolders) ? project.sceneFolders : [],
+  );
   const normalizedGlobalVariables = normalizeVariableDefinitions(project.globalVariables || [], { scope: 'global' });
   const normalizedComponents = (Array.isArray(project.components) ? project.components : []).map((component) =>
     normalizePhysicsCollider({
       ...component,
+      folderId: component.folderId ?? null,
+      order: Number.isFinite(component.order) ? component.order : 0,
       blocklyXml: normalizeBlocklyXml(component.blocklyXml || ''),
       costumes: cloneCostumes(component.costumes || []),
       localVariables: normalizeVariableDefinitions(component.localVariables || [], { scope: 'local' }),
     })
   );
+  const normalizedComponentHierarchy = normalizeComponentHierarchy(
+    normalizedComponents,
+    Array.isArray(project.componentFolders) ? project.componentFolders : [],
+  );
 
   return normalizeProjectLayering({
     ...project,
+    sceneFolders: normalizedSceneHierarchy.sceneFolders,
     messages: (Array.isArray(project.messages) ? project.messages : []).filter(
       (message): message is MessageDefinition =>
         typeof message?.id === 'string' &&
@@ -559,8 +626,9 @@ function normalizeProject(project: Project): Project {
         message.name.trim().length > 0,
     ),
     globalVariables: normalizedGlobalVariables,
-    components: normalizedComponents,
-    scenes: (Array.isArray(project.scenes) ? project.scenes : []).map((scene) => {
+    components: normalizedComponentHierarchy.components,
+    componentFolders: normalizedComponentHierarchy.componentFolders,
+    scenes: normalizedSceneHierarchy.scenes.map((scene) => {
       const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
       const objects: GameObject[] = (Array.isArray(scene.objects) ? scene.objects : []).map((obj) =>
         normalizePhysicsCollider({
@@ -737,16 +805,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project) return state;
 
+      const normalizedHierarchy = normalizeSceneHierarchy(
+        state.project.scenes,
+        state.project.sceneFolders || [],
+      );
       const newScene = createDefaultScene(
         crypto.randomUUID(),
         name,
-        state.project.scenes.length
+        normalizedHierarchy.scenes.length,
+      );
+      const nextHierarchy = normalizeSceneHierarchy(
+        [...normalizedHierarchy.scenes, newScene],
+        normalizedHierarchy.sceneFolders,
       );
 
       return {
         project: {
           ...state.project,
-          scenes: [...state.project.scenes, newScene],
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
@@ -759,10 +836,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project || state.project.scenes.length <= 1) return state;
 
+      const nextHierarchy = normalizeSceneHierarchy(
+        state.project.scenes.filter((scene) => scene.id !== sceneId),
+        state.project.sceneFolders || [],
+      );
+
       return {
         project: {
           ...state.project,
-          scenes: state.project.scenes.filter(s => s.id !== sceneId),
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
@@ -775,12 +858,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project) return state;
 
+      const nextScenes = state.project.scenes.map((scene) =>
+        scene.id === sceneId ? normalizeSceneLayering({ ...scene, ...updates }) : scene,
+      );
+      const nextHierarchy = normalizeSceneHierarchy(nextScenes, state.project.sceneFolders || []);
+
       return {
         project: {
           ...state.project,
-          scenes: state.project.scenes.map(s =>
-            s.id === sceneId ? normalizeSceneLayering({ ...s, ...updates }) : s
-          ),
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
@@ -800,17 +887,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           return scene ? { ...scene, order: index } : null;
         })
         .filter((s): s is Scene => s !== null);
+      const nextHierarchy = normalizeSceneHierarchy(reorderedScenes, state.project.sceneFolders || []);
 
       return {
         project: {
           ...state.project,
-          scenes: reorderedScenes,
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
     recordHistoryChange({ source: 'project:reorder-scenes' });
+  },
+
+  updateSceneOrganization: (scenes, sceneFolders) => {
+    set((state) => {
+      if (!state.project) return state;
+      const nextHierarchy = normalizeSceneHierarchy(scenes, sceneFolders);
+      return {
+        project: {
+          ...state.project,
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+    recordHistoryChange({ source: 'project:update-scene-organization' });
   },
 
   // Object actions
@@ -905,9 +1011,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return state;
       }
 
-      const nextProject = applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, {
-        costumes: nextCostumes,
-      });
+      const nextProject = 'componentId' in target
+        ? (() => {
+            const component = (state.project.components || []).find((candidate) => candidate.id === target.componentId);
+            if (!component) return null;
+            const nextComponents = (state.project.components || []).map((candidate) =>
+              candidate.id === target.componentId
+                ? normalizePhysicsCollider({ ...component, costumes: nextCostumes })
+                : candidate,
+            );
+            const nextHierarchy = normalizeComponentHierarchy(nextComponents, state.project.componentFolders || []);
+            return {
+              ...state.project,
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+              scenes: state.project.scenes.map((scene) => ({
+                ...normalizeSceneLayering({
+                  ...scene,
+                  objects: scene.objects.map((obj) =>
+                    obj.componentId === target.componentId
+                      ? normalizePhysicsCollider({ ...obj, costumes: nextCostumes })
+                      : obj,
+                  ),
+                }),
+              })),
+              updatedAt: createUpdatedAt(state.project.updatedAt),
+            };
+          })()
+        : applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, {
+            costumes: nextCostumes,
+          });
       if (!nextProject) {
         return state;
       }
@@ -919,7 +1052,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       };
     });
     if (didUpdate && options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'project:update-object-costume', allowMerge: true });
+      recordHistoryChange({ source: 'project:update-costume', allowMerge: true });
     }
     return didUpdate;
   },
@@ -934,7 +1067,34 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return state;
       }
 
-      const nextProject = applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, updates);
+      const nextProject = 'componentId' in target
+        ? (() => {
+            const component = (state.project.components || []).find((candidate) => candidate.id === target.componentId);
+            if (!component) return null;
+            const nextComponents = (state.project.components || []).map((candidate) =>
+              candidate.id === target.componentId
+                ? normalizePhysicsCollider({ ...component, ...updates })
+                : candidate,
+            );
+            const nextHierarchy = normalizeComponentHierarchy(nextComponents, state.project.componentFolders || []);
+            return {
+              ...state.project,
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+              scenes: state.project.scenes.map((scene) => ({
+                ...normalizeSceneLayering({
+                  ...scene,
+                  objects: scene.objects.map((obj) =>
+                    obj.componentId === target.componentId
+                      ? normalizePhysicsCollider({ ...obj, ...updates })
+                      : obj,
+                  ),
+                }),
+              })),
+              updatedAt: createUpdatedAt(state.project.updatedAt),
+            };
+          })()
+        : applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, updates);
       if (!nextProject) {
         return state;
       }
@@ -1413,17 +1573,28 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (hasDuplicateName) return null;
 
     // Create component definition from the object
+    const normalizedComponentHierarchy = normalizeComponentHierarchy(
+      state.project.components || [],
+      state.project.componentFolders || [],
+    );
     const componentId = crypto.randomUUID();
     const component: ComponentDefinition = {
       id: componentId,
+      folderId: null,
+      order: normalizedComponentHierarchy.components.length,
       ...toComponentBackedFieldsFromObject(obj),
     };
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...normalizedComponentHierarchy.components, component],
+      normalizedComponentHierarchy.componentFolders,
+    );
 
     set(state => ({
       project: state.project
         ? {
             ...state.project,
-            components: [...(state.project.components || []), component],
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
             scenes: state.project.scenes.map(s =>
               s.id === sceneId
                 ? {
@@ -1487,9 +1658,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: {
           ...state.project,
-          components: (state.project.components || []).map((component) =>
-            component.id === componentId ? nextComponent : component
-          ),
+          ...(() => {
+            const nextComponents = (state.project.components || []).map((component) =>
+              component.id === componentId ? nextComponent : component,
+            );
+            const nextHierarchy = normalizeComponentHierarchy(nextComponents, state.project.componentFolders || []);
+            return {
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+            };
+          })(),
           scenes: hasSyncedUpdates
             ? state.project.scenes.map((scene) => ({
                 ...normalizeSceneLayering({
@@ -1521,6 +1699,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     recordHistoryChange({ source: 'project:update-component', allowMerge: true });
   },
 
+  updateComponentOrganization: (components, componentFolders) => {
+    set((state) => {
+      if (!state.project) return state;
+      const nextHierarchy = normalizeComponentHierarchy(components, componentFolders);
+      return {
+        project: {
+          ...state.project,
+          components: nextHierarchy.components,
+          componentFolders: nextHierarchy.componentFolders,
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+    recordHistoryChange({ source: 'project:update-component-organization' });
+  },
+
   deleteComponent: (componentId: string) => {
     set(state => {
       if (!state.project) return state;
@@ -1549,7 +1744,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: {
           ...state.project,
-          components: (state.project.components || []).filter(c => c.id !== componentId),
+          ...(() => {
+            const nextHierarchy = normalizeComponentHierarchy(
+              (state.project.components || []).filter((component) => component.id !== componentId),
+              state.project.componentFolders || [],
+            );
+            return {
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+            };
+          })(),
           scenes: updatedScenes,
           updatedAt: createUpdatedAt(),
         },

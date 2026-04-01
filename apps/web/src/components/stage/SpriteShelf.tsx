@@ -145,6 +145,11 @@ interface VisibleShelfTreeEntry {
 
 let transparentDragImage: HTMLImageElement | null = null;
 
+interface SpriteShelfProps {
+  showQuickSceneSwitch?: boolean;
+  showComponentLibraryButton?: boolean;
+}
+
 function getTransparentDragImage(): HTMLImageElement | null {
   if (typeof document === 'undefined') {
     return null;
@@ -232,7 +237,10 @@ function collectFolderDescendants(folderId: string, folders: SceneFolder[]): Set
   return descendants;
 }
 
-export function SpriteShelf() {
+export function SpriteShelf({
+  showQuickSceneSwitch = true,
+  showComponentLibraryButton = true,
+}: SpriteShelfProps = {}) {
   const {
     project,
     addObject,
@@ -307,6 +315,7 @@ export function SpriteShelf() {
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
+  const ignoreNextEmptyShelfClickRef = useRef(false);
 
   const focusInputCaretAtEnd = useCallback((input: HTMLInputElement | null) => {
     if (!input) {
@@ -789,6 +798,10 @@ export function SpriteShelf() {
   };
 
   const handleEmptyShelfClick = (event: React.MouseEvent<HTMLElement>) => {
+    if (ignoreNextEmptyShelfClickRef.current) {
+      ignoreNextEmptyShelfClickRef.current = false;
+      return;
+    }
     if (draggedLayerKeys.length > 0) {
       return;
     }
@@ -800,6 +813,27 @@ export function SpriteShelf() {
 
     selectionAnchorObjectIdRef.current = null;
     clearSelection();
+  };
+
+  const handleEmptyShelfPointerDownCapture = (event: React.PointerEvent<HTMLElement>) => {
+    if (draggedLayerKeys.length > 0 || event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('[data-sprite-shelf-row="true"]')) {
+      return;
+    }
+
+    const interactiveTarget = target?.closest(
+      'button, input, textarea, select, [contenteditable="true"], [role="button"]',
+    );
+    if (interactiveTarget && interactiveTarget !== event.currentTarget) {
+      return;
+    }
+
+    selectionAnchorObjectIdRef.current = null;
+    clearSelection({ recordHistory: false });
   };
 
   const handleEmptyShelfContextMenu = (event: React.MouseEvent<HTMLElement>) => {
@@ -892,12 +926,16 @@ export function SpriteShelf() {
       const newName = `Object ${selectedScene.objects.length + 1}`;
       const newObject = addObject(selectedSceneId, newName);
       selectObject(newObject.id);
+      queueMicrotask(() => {
+        selectObject(newObject.id, { recordHistory: false });
+      });
     });
   };
 
   const handleEmptyShelfCreateObjectClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    ignoreNextEmptyShelfClickRef.current = true;
     handleAddObject();
   };
 
@@ -1687,129 +1725,32 @@ export function SpriteShelf() {
       onPointerLeave={() => setIsShelfHovered(false)}
     >
       <div className={`${panelHeaderClassNames.chrome} ${panelHeaderClassNames.splitRow}`}>
-        <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="inline-flex h-6 min-w-0 items-center gap-1 text-xs font-medium transition-colors hover:text-primary"
-            >
-              {selectedScene.name}
-              <ChevronRight className="size-3" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="start"
-            className={`min-w-48 ${sceneContextMenu ? 'pointer-events-none' : ''}`}
-          >
-            {project?.scenes.map((scene) => (
-              editingSceneId === scene.id ? (
-                <div
-                  key={scene.id}
-                  className={`flex items-center gap-2 rounded-sm px-2 py-1.5 ${
-                    scene.id === selectedSceneId ? selectionSurfaceClassNames.selected : ''
-                  }`}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <GripVertical className="size-3 shrink-0 text-muted-foreground/70" />
-                  <InlineRenameField
-                    ref={sceneInputRef}
-                    value={editName}
-                    onChange={(e) => {
-                      setEditName(e.target.value);
-                      setSceneEditError(null);
-                    }}
-                    onBlur={handleSceneRenameBlur}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSaveSceneRename();
-                      }
-                      if (e.key === 'Escape') {
-                        e.preventDefault();
-                        cancelSceneRenameOnBlurRef.current = true;
-                        setEditingSceneId(null);
-                        setEditName('');
-                        setSceneEditError(null);
-                      }
-                    }}
-                    data-hotkeys="ignore"
-                    onClick={(e) => e.stopPropagation()}
-                    invalid={!!sceneEditError}
-                    className="flex-1 min-w-0"
-                    textClassName="text-sm leading-5 text-foreground"
-                    autoFocus
-                    focusBehavior="caret-end"
-                  />
-                  <div className="h-6 w-6 shrink-0 opacity-0" aria-hidden="true" />
-                </div>
-              ) : (
+        {showQuickSceneSwitch ? (
+          <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex h-6 min-w-0 max-w-32 items-center gap-1 rounded-md px-1 text-left text-xs font-medium transition-colors hover:text-primary"
+              >
+                <span className="truncate">{selectedScene.name}</span>
+                <ChevronRight className="size-3" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-48">
+              {project?.scenes.map((scene) => (
                 <DropdownMenuItem
                   key={scene.id}
-                  draggable
-                  onPointerMoveCapture={preventSceneMenuHoverFocus}
                   onClick={() => selectScene(scene.id)}
-                  onDragStart={(e) => {
-                    setDraggedSceneId(scene.id);
-                    setSceneDropTarget(null);
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.setData('text/plain', scene.id);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedSceneId(null);
-                    setSceneDropTarget(null);
-                  }}
-                  onDragOver={(e) => {
-                    if (!draggedSceneId || draggedSceneId === scene.id) return;
-                    e.preventDefault();
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const position: 'before' | 'after' = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-                    setSceneDropTarget({ sceneId: scene.id, position });
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    handleSceneDrop(scene.id);
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setSceneContextMenuPosition({ left: e.clientX, top: e.clientY });
-                    setSceneContextMenu({
-                      x: e.clientX,
-                      y: e.clientY,
-                      sceneId: scene.id,
-                    });
-                  }}
-                  className={`group flex items-center justify-between ${
-                    scene.id === selectedSceneId ? selectionSurfaceClassNames.selected : ''
-                  } ${
-                    sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'before'
-                      ? 'border-t-2 border-primary'
-                      : ''
-                  } ${
-                    sceneDropTarget?.sceneId === scene.id && sceneDropTarget.position === 'after'
-                      ? 'border-b-2 border-primary'
-                      : ''
-                  } ${selectionSurfaceClassNames.hoverFocus}`}
+                  className={scene.id === selectedSceneId ? selectionSurfaceClassNames.selected : ''}
                 >
-                  <GripVertical className="size-3 text-muted-foreground/70" />
-                  <span className="flex-1">{scene.name}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={(e) => handleStartSceneEdit(scene.id, scene.name, e)}
-                    className={`h-6 w-6 transition-opacity ${isShelfHovered ? 'opacity-100' : 'opacity-0'}`}
-                  >
-                    <Pencil className="size-3" />
-                  </Button>
+                  {scene.name}
                 </DropdownMenuItem>
-              )
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onPointerMoveCapture={preventSceneMenuHoverFocus} onClick={handleAddScene}>
-              <Plus className="size-4 mr-2" />
-              New Scene
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <div aria-hidden="true" />
+        )}
 
         <div className="flex items-center gap-1">
           <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
@@ -1818,14 +1759,16 @@ export function SpriteShelf() {
           <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
             <FolderPlus className="size-4" />
           </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => setShowComponentLibrary(true)}
-            title="Component Library"
-          >
-            <Component className="size-4" />
-          </Button>
+          {showComponentLibraryButton ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => setShowComponentLibrary(true)}
+              title="Component Library"
+            >
+              <Component className="size-4" />
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -1838,6 +1781,7 @@ export function SpriteShelf() {
       >
         <ScrollArea
           className="h-full min-h-0 min-w-0 w-full overflow-hidden"
+          onPointerDownCapture={handleEmptyShelfPointerDownCapture}
           onDragOver={handleRootDragOver}
           onDrop={handleRootDrop}
           onClick={handleEmptyShelfClick}
@@ -1867,6 +1811,7 @@ export function SpriteShelf() {
                 {treeItems.map((item) => renderTreeItem(item))}
                 <div
                   className="absolute inset-x-2 bottom-0 z-10 h-4 rounded"
+                  onClick={handleEmptyShelfClick}
                   onDragOver={handleRootDropZoneDragOver}
                   onDrop={handleRootDropZoneDrop}
                 >
