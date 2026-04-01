@@ -1,0 +1,1 @@
+export const CURRENT_PROJECT_SCHEMA_VERSION = 10;

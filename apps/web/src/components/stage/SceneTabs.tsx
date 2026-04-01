@@ -8,7 +8,7 @@ import {
   CompactColorPicker,
 } from '@/components/ui/color-picker';
 import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
-import { Paintbrush, Plus, X } from '@/components/ui/icons';
+import { Earth, Paintbrush, Plus, X } from '@/components/ui/icons';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 
 export function SceneTabs() {
@@ -117,6 +117,7 @@ export function SceneTabs() {
           }`}
           style={editingId === scene.id && editWidth ? { width: `${editWidth}px` } : undefined}
         >
+          <Earth className="size-4 shrink-0 text-current" />
           <InlineRenameField
             editing={editingId === scene.id}
             value={editingId === scene.id ? editName : scene.name}

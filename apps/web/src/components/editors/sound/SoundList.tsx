@@ -1,17 +1,17 @@
 import { type ChangeEvent, memo, useEffect, useRef, useState } from 'react';
-import { useConvexAuth, useMutation } from 'convex/react';
+import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
-import type { Id } from '@convex-generated/dataModel';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { SoundLibraryBrowser } from '@/components/dialogs/SoundLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
-import { uploadDataUrlToStorage } from '@/utils/convexHelpers';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import type { Sound } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { Library, Loader2, Mic, Save, Trash2, Upload, Volume2 } from '@/components/ui/icons';
+import { prepareSoundLibraryCreatePayload } from '@/lib/soundLibrary/soundLibraryAssets';
+import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
 
 interface SoundListProps {
   sounds: Sound[];
@@ -37,9 +37,11 @@ export const SoundList = memo(({
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{ index: number; x: number; y: number } | null>(null);
+  const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
 
-  const generateUploadUrl = useMutation(api.soundLibrary.generateUploadUrl);
+  const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
+  const upsertProjectAsset = useMutation(api.projectAssets.upsert);
   const createLibraryItem = useMutation(api.soundLibrary.create);
 
   useEffect(() => {
@@ -126,18 +128,24 @@ export const SoundList = memo(({
 
     setSavingToLibrary(index);
     try {
-      const { storageId, size, mimeType } = await uploadDataUrlToStorage(
-        sound.assetId,
+      const prepared = await prepareSoundLibraryCreatePayload(sound);
+      await ensureLibraryAssetRefsInCloud(prepared.assetRefs, {
+        listMissingAssetIds: async (assetIds) => {
+          return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
+        },
         generateUploadUrl,
-      );
-
-      await createLibraryItem({
-        name: sound.name,
-        storageId: storageId as Id<'_storage'>,
-        mimeType,
-        size,
-        duration: sound.duration,
+        upsertAsset: async (args) => {
+          return await upsertProjectAsset({
+            assetId: args.assetId,
+            kind: args.kind,
+            mimeType: args.mimeType,
+            size: args.size,
+            storageId: args.storageId,
+          });
+        },
       });
+
+      await createLibraryItem(prepared.payload);
     } catch (error) {
       console.error('Failed to save sound to library:', error);
       alert('Failed to save sound to library');

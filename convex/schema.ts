@@ -1,54 +1,21 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
+import {
+  colliderValidator,
+  physicsValidator,
+  sceneTemplateValidator,
+  variableValidator,
+} from "./libraryValidators";
+import { templateScopeValidator } from "./templateLibrary";
 
 // Project data schema version. Keep aligned with src/db/database.ts.
 export const SCHEMA_VERSION = 10;
 
-// Physics config validator
-const physicsValidator = v.object({
-  enabled: v.boolean(),
-  bodyType: v.union(v.literal("dynamic"), v.literal("static")),
-  gravityY: v.number(),
-  velocityX: v.number(),
-  velocityY: v.number(),
-  bounce: v.number(),
-  friction: v.number(),
-  allowRotation: v.boolean(),
-});
-
-// Collider config validator
-const colliderValidator = v.object({
-  type: v.union(
-    v.literal("none"),
-    v.literal("box"),
-    v.literal("circle"),
-    v.literal("capsule"),
-  ),
-  offsetX: v.number(),
-  offsetY: v.number(),
-  width: v.number(),
-  height: v.number(),
-  radius: v.number(),
-});
-
-const variableValidator = v.object({
-  id: v.string(),
-  name: v.string(),
-  type: v.union(
-    v.literal("string"),
-    v.literal("integer"),
-    v.literal("float"),
-    v.literal("boolean"),
-  ),
-  defaultValue: v.union(v.number(), v.string(), v.boolean()),
-  scope: v.union(v.literal("global"), v.literal("local")),
-  objectId: v.optional(v.string()),
-});
-
 export default defineSchema({
   projectAssets: defineTable({
     ownerUserId: v.optional(v.string()),
+    scope: v.optional(templateScopeValidator),
     assetId: v.string(),
     kind: v.union(v.literal("image"), v.literal("audio"), v.literal("background")),
     mimeType: v.string(),
@@ -57,36 +24,57 @@ export default defineSchema({
     createdAt: v.number(),
     orphanedAt: v.optional(v.number()),
   })
+    .index("by_scope_and_assetId", ["scope", "assetId"])
+    .index("by_scope_and_createdAt", ["scope", "createdAt"])
     .index("by_ownerUserId_and_assetId", ["ownerUserId", "assetId"])
     .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
 
   // Costume library - images for sprites
   costumeLibrary: defineTable({
     ownerUserId: v.optional(v.string()),
+    scope: v.optional(templateScopeValidator),
+    schemaVersion: v.optional(v.number()),
     name: v.string(),
-    storageId: v.id("_storage"),
+    storageId: v.optional(v.id("_storage")),
     thumbnail: v.string(), // Base64 small preview
     bounds: v.optional(boundsValidator),
     document: costumeDocumentValidator,
-    mimeType: v.string(),
-    size: v.number(),
+    assetRefs: v.optional(v.array(v.object({
+      assetId: v.string(),
+      kind: v.literal("image"),
+    }))),
+    mimeType: v.optional(v.string()),
+    size: v.optional(v.number()),
     createdAt: v.number(),
-  }).index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_scope_and_createdAt", ["scope", "createdAt"])
+    .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
 
   // Sound library - audio files
   soundLibrary: defineTable({
     ownerUserId: v.optional(v.string()),
+    scope: v.optional(templateScopeValidator),
+    schemaVersion: v.optional(v.number()),
     name: v.string(),
-    storageId: v.id("_storage"),
-    mimeType: v.string(),
-    size: v.number(),
+    storageId: v.optional(v.id("_storage")),
+    assetId: v.optional(v.string()),
+    mimeType: v.optional(v.string()),
+    size: v.optional(v.number()),
     duration: v.optional(v.number()),
+    trimStart: v.optional(v.number()),
+    trimEnd: v.optional(v.number()),
     createdAt: v.number(),
-  }).index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_scope_and_createdAt", ["scope", "createdAt"])
+    .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
 
   // Object library - complete game objects with costumes, sounds, and code
   objectLibrary: defineTable({
     ownerUserId: v.optional(v.string()),
+    scope: v.optional(templateScopeValidator),
+    schemaVersion: v.optional(v.number()),
     name: v.string(),
     thumbnail: v.string(), // Base64 preview
     assetRefs: v.optional(v.array(
@@ -123,7 +111,29 @@ export default defineSchema({
     collider: v.optional(colliderValidator),
     localVariables: v.optional(v.array(variableValidator)),
     createdAt: v.number(),
-  }).index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_scope_and_createdAt", ["scope", "createdAt"])
+    .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
+
+  sceneLibrary: defineTable({
+    ownerUserId: v.optional(v.string()),
+    scope: v.optional(templateScopeValidator),
+    schemaVersion: v.optional(v.number()),
+    name: v.string(),
+    thumbnail: v.string(),
+    assetRefs: v.array(
+      v.object({
+        assetId: v.string(),
+        kind: v.union(v.literal("image"), v.literal("audio"), v.literal("background")),
+      }),
+    ),
+    template: sceneTemplateValidator,
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_scope_and_createdAt", ["scope", "createdAt"])
+    .index("by_ownerUserId_and_createdAt", ["ownerUserId", "createdAt"]),
 
   // Projects - cloud-synced project storage
   projects: defineTable({

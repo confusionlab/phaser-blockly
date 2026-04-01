@@ -1,13 +1,11 @@
 import { useRef, useState, memo, useEffect, useMemo } from 'react';
-import { useMutation } from 'convex/react';
+import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
-import type { Id } from '@convex-generated/dataModel';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Plus, Upload, Loader2, Library, Copy, Trash2 } from '@/components/ui/icons';
 import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
-import { uploadDataUrlToStorage, generateThumbnail } from '@/utils/convexHelpers';
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
@@ -25,6 +23,8 @@ import {
   getCostumeDocumentPreviewSignature,
   renderCostumeDocumentPreview,
 } from '@/lib/costume/costumeDocumentRender';
+import { prepareCostumeLibraryCreatePayload } from '@/lib/costumeLibrary/costumeLibraryAssets';
+import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
 
 interface CostumeListProps {
   costumes: Costume[];
@@ -172,6 +172,8 @@ export const CostumeList = memo(({
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{ index: number; x: number; y: number } | null>(null);
+  const convex = useConvex();
+  const { isAuthenticated } = useConvexAuth();
 
   const handleCloseContextMenu = () => setContextMenu(null);
 
@@ -189,7 +191,8 @@ export const CostumeList = memo(({
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, []);
 
-  const generateUploadUrl = useMutation(api.costumeLibrary.generateUploadUrl);
+  const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
+  const upsertProjectAsset = useMutation(api.projectAssets.upsert);
   const createLibraryItem = useMutation(api.costumeLibrary.create);
 
   const handleAddBlank = () => {
@@ -271,32 +274,31 @@ export const CostumeList = memo(({
   const handleSaveToLibrary = async (index: number) => {
     const costume = costumes[index];
     if (!costume) return;
+    if (!isAuthenticated) {
+      alert('Sign in to save costumes to the cloud library.');
+      return;
+    }
 
     setSavingToLibrary(index);
     try {
-      const renderedCostume = await renderCostumeDocumentPreview(costume.document);
-      const resolvedAssetId = renderedCostume.dataUrl;
-      const resolvedBounds = renderedCostume.bounds ?? costume.bounds;
-
-      // Generate thumbnail
-      const thumbnail = await generateThumbnail(resolvedAssetId, 128);
-
-      // Upload to Convex storage
-      const { storageId, size, mimeType } = await uploadDataUrlToStorage(
-        resolvedAssetId,
-        generateUploadUrl
-      );
-
-      // Create the library entry
-      await createLibraryItem({
-        name: costume.name,
-        storageId: storageId as Id<"_storage">,
-        thumbnail,
-        bounds: resolvedBounds,
-        document: cloneCostumeDocument(costume.document),
-        mimeType,
-        size,
+      const prepared = await prepareCostumeLibraryCreatePayload(costume);
+      await ensureLibraryAssetRefsInCloud(prepared.assetRefs, {
+        listMissingAssetIds: async (assetIds) => {
+          return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
+        },
+        generateUploadUrl,
+        upsertAsset: async (args) => {
+          return await upsertProjectAsset({
+            assetId: args.assetId,
+            kind: args.kind,
+            mimeType: args.mimeType,
+            size: args.size,
+            storageId: args.storageId,
+          });
+        },
       });
+
+      await createLibraryItem(prepared.payload);
     } catch (error) {
       console.error('Failed to save costume to library:', error);
       alert('Failed to save costume to library');

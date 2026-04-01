@@ -126,8 +126,7 @@ function ProjectRouteLoadingScreen({ detail, progress }: ProjectLoadState) {
       <div className="flex min-h-screen items-center justify-center px-6">
         <div className="w-full max-w-sm">
           <div className="space-y-4">
-            <div className="space-y-1">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-muted-foreground/70">Loading</p>
+            <div>
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">Loading</h1>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-border/70">

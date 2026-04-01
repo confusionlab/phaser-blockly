@@ -64,6 +64,10 @@ import {
   cloneCostume,
   ensureCostumeDocument,
 } from '@/lib/costume/costumeDocument';
+import {
+  cloneBackgroundDocument,
+  ensureBackgroundDocument,
+} from '@/lib/background/backgroundDocument';
 import { useEditorStore } from '@/store/editorStore';
 
 interface ProjectStore {
@@ -84,6 +88,12 @@ interface ProjectStore {
 
   // Scene actions
   addScene: (name: string) => void;
+  addSceneFromTemplate: (template: {
+    name: string;
+    scene: Scene;
+    components: ComponentDefinition[];
+    componentFolders: ComponentFolder[];
+  }) => Scene | null;
   removeScene: (sceneId: string) => void;
   updateScene: (sceneId: string, updates: Partial<Scene>) => void;
   reorderScenes: (sceneIds: string[]) => void;
@@ -128,6 +138,16 @@ interface ProjectStore {
   updateVariable: (variableId: string, updates: Partial<Variable>) => void;
 
   // Component actions
+  addComponentFromLibrary: (data: {
+    name: string;
+    costumes: Costume[];
+    sounds: GameObject['sounds'];
+    blocklyXml: string;
+    currentCostumeIndex: number;
+    physics: GameObject['physics'];
+    collider: GameObject['collider'];
+    localVariables: Variable[];
+  }) => ComponentDefinition | null;
   makeComponent: (sceneId: string, objectId: string) => ComponentDefinition | null;
   updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
   updateComponentOrganization: (components: ComponentDefinition[], componentFolders: ComponentFolder[]) => void;
@@ -192,6 +212,19 @@ function cloneColliderConfig(collider: GameObject['collider']): GameObject['coll
   return collider ? { ...collider } : null;
 }
 
+function cloneBackgroundConfig(background: Scene['background']): Scene['background'] {
+  if (!background) {
+    return null;
+  }
+
+  return {
+    ...background,
+    scrollFactor: background.scrollFactor ? { ...background.scrollFactor } : undefined,
+    chunks: background.chunks ? { ...background.chunks } : undefined,
+    document: background.document ? cloneBackgroundDocument(ensureBackgroundDocument(background)) : undefined,
+  };
+}
+
 type PhysicsColliderEntity = {
   physics: GameObject['physics'];
   collider: GameObject['collider'];
@@ -207,6 +240,21 @@ function cloneVariableDefinitions(variables: GameObject['localVariables']): Game
 
 function normalizeComponentName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+function getUniqueComponentName(
+  requestedName: string,
+  usedNames: Set<string>,
+): string {
+  const baseName = requestedName.trim() || 'Component';
+  let nextName = baseName;
+  let suffix = 2;
+  while (usedNames.has(normalizeComponentName(nextName))) {
+    nextName = `${baseName} ${suffix}`;
+    suffix += 1;
+  }
+  usedNames.add(normalizeComponentName(nextName));
+  return nextName;
 }
 
 const sceneHierarchyConfig = {
@@ -830,6 +878,146 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       };
     });
     recordHistoryChange({ source: 'project:add-scene' });
+  },
+
+  addSceneFromTemplate: (template) => {
+    const state = get();
+    if (!state.project) {
+      return null;
+    }
+
+    const existingProject = state.project;
+    const componentNameSet = new Set(
+      (existingProject.components || []).map((component) => normalizeComponentName(component.name)),
+    );
+
+    const componentFolderIdMap = new Map<string, string>();
+    const importedComponentFolders = (template.componentFolders || []).map((folder) => {
+      const nextId = crypto.randomUUID();
+      componentFolderIdMap.set(folder.id, nextId);
+      return {
+        ...folder,
+        id: nextId,
+        parentId: folder.parentId ? (componentFolderIdMap.get(folder.parentId) ?? folder.parentId) : null,
+      };
+    }).map((folder) => ({
+      ...folder,
+      parentId: folder.parentId && componentFolderIdMap.has(folder.parentId)
+        ? componentFolderIdMap.get(folder.parentId) ?? null
+        : folder.parentId,
+    }));
+
+    const componentIdMap = new Map<string, string>();
+    const importedComponents = (template.components || []).map((component) => {
+      const nextId = crypto.randomUUID();
+      componentIdMap.set(component.id, nextId);
+      return normalizePhysicsCollider({
+        ...component,
+        id: nextId,
+        name: getUniqueComponentName(component.name, componentNameSet),
+        folderId: component.folderId ? (componentFolderIdMap.get(component.folderId) ?? null) : null,
+        costumes: cloneCostumes(component.costumes),
+        sounds: cloneSounds(component.sounds),
+        physics: clonePhysicsConfig(component.physics),
+        collider: cloneColliderConfig(component.collider),
+        localVariables: cloneVariableDefinitions(component.localVariables || []).map((variable) => ({
+          ...variable,
+          objectId: undefined,
+        })),
+      });
+    });
+
+    const objectFolderIdMap = new Map<string, string>();
+    const importedObjectFolders = (template.scene.objectFolders || []).map((folder) => {
+      const nextId = crypto.randomUUID();
+      objectFolderIdMap.set(folder.id, nextId);
+      return {
+        ...folder,
+        id: nextId,
+      };
+    }).map((folder) => ({
+      ...folder,
+      parentId: folder.parentId && objectFolderIdMap.has(folder.parentId)
+        ? objectFolderIdMap.get(folder.parentId) ?? null
+        : folder.parentId,
+    }));
+
+    const objectIdMap = new Map<string, string>();
+    const importedObjects = (template.scene.objects || []).map((object) => {
+      const nextId = crypto.randomUUID();
+      objectIdMap.set(object.id, nextId);
+      return normalizePhysicsCollider({
+        ...object,
+        id: nextId,
+        folderId: object.folderId ? (objectFolderIdMap.get(object.folderId) ?? null) : null,
+        parentId: object.parentId,
+        componentId: object.componentId ? (componentIdMap.get(object.componentId) ?? object.componentId) : undefined,
+        costumes: cloneCostumes(object.costumes),
+        sounds: cloneSounds(object.sounds),
+        physics: clonePhysicsConfig(object.physics),
+        collider: cloneColliderConfig(object.collider),
+        localVariables: cloneVariableDefinitions(object.localVariables).map((variable) => ({
+          ...variable,
+          objectId: nextId,
+        })),
+      });
+    }).map((object) => ({
+      ...object,
+      parentId: object.parentId ? (objectIdMap.get(object.parentId) ?? null) : null,
+    }));
+
+    const sceneId = crypto.randomUUID();
+    const nextSceneOrder = normalizeSceneHierarchy(existingProject.scenes, existingProject.sceneFolders || []).scenes.length;
+    const importedScene = normalizeSceneLayering({
+      ...template.scene,
+      id: sceneId,
+      name: template.name || template.scene.name,
+      order: nextSceneOrder,
+      folderId: null,
+      background: cloneBackgroundConfig(template.scene.background),
+      objectFolders: importedObjectFolders,
+      objects: importedObjects,
+      cameraConfig: {
+        ...template.scene.cameraConfig,
+        bounds: template.scene.cameraConfig.bounds ? { ...template.scene.cameraConfig.bounds } : null,
+        followTarget: template.scene.cameraConfig.followTarget
+          ? (objectIdMap.get(template.scene.cameraConfig.followTarget) ?? null)
+          : null,
+      },
+      ground: template.scene.ground ? { ...template.scene.ground } : undefined,
+      worldBoundary: template.scene.worldBoundary
+        ? {
+            enabled: template.scene.worldBoundary.enabled,
+            points: template.scene.worldBoundary.points.map((point) => ({ ...point })),
+          }
+        : undefined,
+    });
+
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...(existingProject.components || []), ...importedComponents],
+      [...(existingProject.componentFolders || []), ...importedComponentFolders],
+    );
+    const nextSceneHierarchy = normalizeSceneHierarchy(
+      [...existingProject.scenes, importedScene],
+      existingProject.sceneFolders || [],
+    );
+
+    set((currentState) => ({
+      project: currentState.project
+        ? {
+            ...currentState.project,
+            scenes: nextSceneHierarchy.scenes,
+            sceneFolders: nextSceneHierarchy.sceneFolders,
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:add-scene-from-template' });
+
+    return importedScene;
   },
 
   removeScene: (sceneId: string) => {
@@ -1553,6 +1741,58 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   // Component actions
+  addComponentFromLibrary: (data) => {
+    const state = get();
+    if (!state.project) return null;
+
+    const normalizedComponentHierarchy = normalizeComponentHierarchy(
+      state.project.components || [],
+      state.project.componentFolders || [],
+    );
+    const componentNameSet = new Set(
+      (state.project.components || []).map((component) => normalizeComponentName(component.name)),
+    );
+    const safeCostumeIndex = data.costumes.length === 0
+      ? 0
+      : Math.min(Math.max(0, data.currentCostumeIndex), data.costumes.length - 1);
+    const normalizedPhysicsCollider = normalizePhysicsCollider({
+      physics: clonePhysicsConfig(data.physics),
+      collider: cloneColliderConfig(data.collider),
+    });
+    const component: ComponentDefinition = {
+      id: crypto.randomUUID(),
+      name: getUniqueComponentName(data.name, componentNameSet),
+      folderId: null,
+      order: normalizedComponentHierarchy.components.length,
+      blocklyXml: normalizeBlocklyXml(data.blocklyXml),
+      costumes: cloneCostumes(data.costumes),
+      currentCostumeIndex: safeCostumeIndex,
+      physics: normalizedPhysicsCollider.physics,
+      collider: normalizedPhysicsCollider.collider,
+      sounds: cloneSounds(data.sounds),
+      localVariables: normalizeVariableDefinitions(data.localVariables, { scope: 'local' }),
+    };
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...normalizedComponentHierarchy.components, component],
+      normalizedComponentHierarchy.componentFolders,
+    );
+
+    set((currentState) => ({
+      project: currentState.project
+        ? {
+            ...currentState.project,
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:add-component-from-library' });
+
+    return component;
+  },
+
   makeComponent: (sceneId: string, objectId: string) => {
     const state = get();
     if (!state.project) return null;

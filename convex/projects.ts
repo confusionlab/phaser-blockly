@@ -762,6 +762,7 @@ async function syncStoredProjectRevisionState(
 type StoredProjectAsset = {
   _id: Id<"projectAssets">;
   ownerUserId?: string;
+  scope?: "system" | "user";
   assetId: string;
   kind: "image" | "audio" | "background";
   mimeType: string;
@@ -785,6 +786,101 @@ async function getProjectExplorerAssetIds(ctx: any, ownerUserId: string): Promis
     .first();
 
   return normalizeManagedAssetIds(record?.assetIds);
+}
+
+function collectManagedAssetIdsFromCostumeDocument(
+  document: {
+    layers?: Array<{
+      kind?: unknown;
+      bitmap?: { assetId?: unknown };
+    }>;
+  },
+  assetIds: Set<string>,
+): void {
+  for (const layer of document.layers ?? []) {
+    if (layer.kind !== "bitmap") {
+      continue;
+    }
+    const assetId = layer.bitmap?.assetId;
+    if (typeof assetId === "string" && MANAGED_ASSET_ID_PATTERN.test(assetId.trim())) {
+      assetIds.add(assetId.trim());
+    }
+  }
+}
+
+async function getLibraryReferencedAssetIds(ctx: any, ownerUserId: string): Promise<string[]> {
+  const assetIds = new Set<string>();
+
+  const [costumeRows, soundRows, objectRows, sceneRows] = await Promise.all([
+    ctx.db
+      .query("costumeLibrary")
+      .withIndex("by_ownerUserId_and_createdAt", (q: any) => q.eq("ownerUserId", ownerUserId))
+      .collect(),
+    ctx.db
+      .query("soundLibrary")
+      .withIndex("by_ownerUserId_and_createdAt", (q: any) => q.eq("ownerUserId", ownerUserId))
+      .collect(),
+    ctx.db
+      .query("objectLibrary")
+      .withIndex("by_ownerUserId_and_createdAt", (q: any) => q.eq("ownerUserId", ownerUserId))
+      .collect(),
+    ctx.db
+      .query("sceneLibrary")
+      .withIndex("by_ownerUserId_and_createdAt", (q: any) => q.eq("ownerUserId", ownerUserId))
+      .collect(),
+  ]);
+
+  for (const row of costumeRows as Array<{
+    assetRefs?: Array<{ assetId: string }>;
+    document?: { layers?: Array<{ kind?: unknown; bitmap?: { assetId?: unknown } }> };
+  }>) {
+    for (const ref of row.assetRefs ?? []) {
+      if (MANAGED_ASSET_ID_PATTERN.test(ref.assetId.trim())) {
+        assetIds.add(ref.assetId.trim());
+      }
+    }
+    if (row.document) {
+      collectManagedAssetIdsFromCostumeDocument(row.document, assetIds);
+    }
+  }
+
+  for (const row of soundRows as Array<{ assetId?: string }>) {
+    if (typeof row.assetId === "string" && MANAGED_ASSET_ID_PATTERN.test(row.assetId.trim())) {
+      assetIds.add(row.assetId.trim());
+    }
+  }
+
+  for (const row of objectRows as Array<{
+    assetRefs?: Array<{ assetId: string }>;
+    costumes?: Array<{ document?: { layers?: Array<{ kind?: unknown; bitmap?: { assetId?: unknown } }> } }>;
+    sounds?: Array<{ assetId?: string }>;
+  }>) {
+    for (const ref of row.assetRefs ?? []) {
+      if (MANAGED_ASSET_ID_PATTERN.test(ref.assetId.trim())) {
+        assetIds.add(ref.assetId.trim());
+      }
+    }
+    for (const costume of row.costumes ?? []) {
+      if (costume.document) {
+        collectManagedAssetIdsFromCostumeDocument(costume.document, assetIds);
+      }
+    }
+    for (const sound of row.sounds ?? []) {
+      if (typeof sound.assetId === "string" && MANAGED_ASSET_ID_PATTERN.test(sound.assetId.trim())) {
+        assetIds.add(sound.assetId.trim());
+      }
+    }
+  }
+
+  for (const row of sceneRows as Array<{ assetRefs?: Array<{ assetId: string }> }>) {
+    for (const ref of row.assetRefs ?? []) {
+      if (MANAGED_ASSET_ID_PATTERN.test(ref.assetId.trim())) {
+        assetIds.add(ref.assetId.trim());
+      }
+    }
+  }
+
+  return Array.from(assetIds);
 }
 
 async function cleanupDuplicateProjects(
@@ -889,6 +985,12 @@ async function garbageCollectProjectAssets(
     }
   }
 
+  for (const assetId of await getLibraryReferencedAssetIds(ctx, ownerUserId)) {
+    if (candidateIds.has(assetId)) {
+      referencedIds.add(assetId);
+    }
+  }
+
   const now = Date.now();
   for (const row of projectAssets) {
     if (!candidateIds.has(row.assetId)) {
@@ -899,6 +1001,7 @@ async function garbageCollectProjectAssets(
       if (row.orphanedAt !== undefined) {
         await ctx.db.replace(row._id, {
           ownerUserId: row.ownerUserId,
+          scope: row.scope ?? "user",
           assetId: row.assetId,
           kind: row.kind,
           mimeType: row.mimeType,

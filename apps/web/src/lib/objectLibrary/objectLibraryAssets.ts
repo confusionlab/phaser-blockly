@@ -1,11 +1,8 @@
 import type { Id } from '@convex-generated/dataModel';
 import {
   ensureManagedAssetFromSource,
-  getManagedAssetBlob,
   getManagedAssetLocators,
-  getManagedAssetMetadata,
-  hasManagedAsset,
-  storeManagedAsset,
+  migrateRuntimeProjectDataForTemplate,
   type ManagedAssetKind,
 } from '@/db/database';
 import {
@@ -25,7 +22,18 @@ import type {
   Sound,
   Variable,
 } from '@/types';
-import { assetSourceToBlob, generateThumbnail, urlToDataUrl } from '@/utils/convexHelpers';
+import { createDefaultGameObject, createDefaultScene } from '@/types';
+import { generateThumbnail, urlToDataUrl } from '@/utils/convexHelpers';
+import {
+  collectUniqueLibraryAssetRefs,
+  ensureLibraryAssetRefsInCloud,
+  ensureLibraryAssetsAvailableLocally,
+} from '@/lib/templateLibrary/libraryAssetRefs';
+import {
+  assertSupportedTemplateSchemaVersion,
+  normalizeTemplateLibraryScope,
+  type TemplateLibraryScope,
+} from '@/lib/templateLibrary/templateSchema';
 
 export interface ObjectLibraryAssetRef {
   assetId: string;
@@ -53,6 +61,8 @@ export interface ObjectLibraryStoredSound {
 export interface ObjectLibraryListItemData {
   name: string;
   thumbnail: string;
+  scope: TemplateLibraryScope;
+  schemaVersion: number;
   assetRefs: Array<ObjectLibraryAssetRef & { url: string | null }>;
   costumes: ObjectLibraryStoredCostume[];
   sounds: ObjectLibraryStoredSound[];
@@ -117,69 +127,11 @@ function createTransparentThumbnailDataUrl(): string {
   return canvas.toDataURL('image/png');
 }
 
-async function uploadManagedAssetToCloud(
-  assetId: string,
-  kind: ObjectLibraryAssetRef['kind'],
-  generateUploadUrl: () => Promise<string>,
-): Promise<{ storageId: string; mimeType: string; size: number }> {
-  const blob = await getManagedAssetBlob(assetId);
-  const metadata = await getManagedAssetMetadata(assetId);
-  if (!blob || !metadata) {
-    throw new Error(`Missing managed asset ${assetId}`);
-  }
-
-  const uploadUrl = await generateUploadUrl();
-  const response = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': metadata.mimeType },
-    body: blob,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Asset upload failed (${response.status})`);
-  }
-
-  const result = (await response.json()) as { storageId: string };
-  return {
-    storageId: result.storageId,
-    mimeType: metadata.mimeType,
-    size: metadata.size,
-  };
-}
-
-function collectUniqueAssetRefs(refs: Iterable<ObjectLibraryAssetRef>): ObjectLibraryAssetRef[] {
-  return Array.from(
-    Array.from(refs).reduce((map, ref) => {
-      map.set(`${ref.kind}:${ref.assetId}`, ref);
-      return map;
-    }, new Map<string, ObjectLibraryAssetRef>()).values(),
-  );
-}
-
 export async function ensureObjectLibraryAssetRefsInCloud(
   refs: Iterable<ObjectLibraryAssetRef>,
   api: CloudAssetApi,
 ): Promise<void> {
-  const uniqueRefs = collectUniqueAssetRefs(refs);
-  if (uniqueRefs.length === 0) {
-    return;
-  }
-
-  const missingAssetIds = new Set(await api.listMissingAssetIds(uniqueRefs.map((ref) => ref.assetId)));
-  for (const ref of uniqueRefs) {
-    if (!missingAssetIds.has(ref.assetId)) {
-      continue;
-    }
-
-    const upload = await uploadManagedAssetToCloud(ref.assetId, ref.kind, api.generateUploadUrl);
-    await api.upsertAsset({
-      assetId: ref.assetId,
-      kind: ref.kind,
-      mimeType: upload.mimeType,
-      size: upload.size,
-      storageId: upload.storageId as Id<'_storage'>,
-    });
-  }
+  await ensureLibraryAssetRefsInCloud(refs, api);
 }
 
 export async function prepareObjectLibraryCreatePayload(data: {
@@ -257,25 +209,80 @@ export async function prepareObjectLibraryCreatePayload(data: {
       collider: data.collider,
       localVariables: data.localVariables,
     },
-    assetRefs: collectUniqueAssetRefs(assetRefs),
+    assetRefs: collectUniqueLibraryAssetRefs(assetRefs),
   };
 }
 
 export async function hydrateObjectLibraryItemForInsertion(
   item: ObjectLibraryListItemData,
 ): Promise<RuntimeLibraryObjectData> {
-  for (const asset of item.assetRefs) {
-    if (await hasManagedAsset(asset.assetId)) {
-      continue;
-    }
-    if (!asset.url) {
-      throw new Error(`Object library asset ${asset.assetId} is unavailable`);
-    }
-    const blob = await assetSourceToBlob(asset.url);
-    await storeManagedAsset(asset.assetId, blob, asset.kind);
+  const schemaVersion = assertSupportedTemplateSchemaVersion(
+    item.schemaVersion,
+    `${normalizeTemplateLibraryScope(item.scope)} object template`,
+  );
+  const baseObject = createDefaultGameObject(item.name);
+  const migratedRuntimeProject = migrateRuntimeProjectDataForTemplate({
+    schemaVersion,
+    scenes: [{
+      ...createDefaultScene('template-scene', 'Template Scene', 0),
+      background: null,
+      objects: [{
+        ...baseObject,
+        id: 'template-object',
+        name: item.name,
+        blocklyXml: item.blocklyXml,
+        costumes: cloneCostumesForMigration(item.costumes),
+        currentCostumeIndex: item.currentCostumeIndex ?? 0,
+        physics: item.physics ?? null,
+        collider: item.collider ?? null,
+        sounds: cloneSoundsForMigration(item.sounds),
+        localVariables: cloneVariablesForMigration(item.localVariables ?? []),
+      }],
+      objectFolders: [],
+    }],
+    sceneFolders: [],
+    messages: [],
+    globalVariables: [],
+    settings: {
+      canvasWidth: 800,
+      canvasHeight: 600,
+      backgroundColor: '#87CEEB',
+    },
+    components: [],
+    componentFolders: [],
+  }, schemaVersion);
+  const migratedObject = migratedRuntimeProject.scenes[0]?.objects[0];
+  if (!migratedObject) {
+    throw new Error(`Object library item "${item.name}" is unavailable`);
   }
 
-  const assetLocators = await getManagedAssetLocators(item.assetRefs.map((asset) => asset.assetId));
+  const migratedItem: ObjectLibraryListItemData = {
+    ...item,
+    name: migratedObject.name,
+    blocklyXml: migratedObject.blocklyXml,
+    currentCostumeIndex: migratedObject.currentCostumeIndex,
+    physics: migratedObject.physics ?? undefined,
+    collider: migratedObject.collider ?? undefined,
+    localVariables: migratedObject.localVariables,
+    costumes: migratedObject.costumes.map((costume) => ({
+      id: costume.id,
+      name: costume.name,
+      bounds: costume.bounds,
+      document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+    })),
+    sounds: migratedObject.sounds.map((sound) => ({
+      id: sound.id,
+      name: sound.name,
+      assetId: sound.assetId,
+      duration: sound.duration,
+      trimStart: sound.trimStart,
+      trimEnd: sound.trimEnd,
+    })),
+  };
+
+  await ensureLibraryAssetsAvailableLocally(migratedItem.assetRefs);
+
+  const assetLocators = await getManagedAssetLocators(migratedItem.assetRefs.map((asset) => asset.assetId));
   const assetUrlById = new Map(
     assetLocators
       .filter((locator) => locator.url)
@@ -284,7 +291,7 @@ export async function hydrateObjectLibraryItemForInsertion(
   const legacyPreviewCache = new Map<string, string>();
 
   const costumes = await Promise.all(
-    item.costumes.map(async (costume) => {
+    migratedItem.costumes.map(async (costume) => {
       const document = cloneCostumeDocument(ensureCostumeDocument(costume));
       for (const layer of document.layers) {
         if (!isBitmapCostumeLayer(layer) || !layer.bitmap.assetId) {
@@ -322,7 +329,7 @@ export async function hydrateObjectLibraryItemForInsertion(
   );
 
   const sounds = await Promise.all(
-    item.sounds.map(async (sound) => {
+    migratedItem.sounds.map(async (sound) => {
       let assetSource = sound.assetId ? assetUrlById.get(sound.assetId) ?? null : null;
       if (!assetSource && sound.url) {
         assetSource = sound.url;
@@ -343,13 +350,38 @@ export async function hydrateObjectLibraryItemForInsertion(
   );
 
   return {
-    name: item.name,
+    name: migratedItem.name,
     costumes,
     sounds,
-    blocklyXml: item.blocklyXml,
-    currentCostumeIndex: item.currentCostumeIndex ?? 0,
-    physics: item.physics ?? null,
-    collider: item.collider ?? null,
-    localVariables: item.localVariables ?? [],
+    blocklyXml: migratedItem.blocklyXml,
+    currentCostumeIndex: migratedItem.currentCostumeIndex ?? 0,
+    physics: migratedItem.physics ?? null,
+    collider: migratedItem.collider ?? null,
+    localVariables: migratedItem.localVariables ?? [],
   };
+}
+
+function cloneCostumesForMigration(costumes: ObjectLibraryStoredCostume[]): Costume[] {
+  return costumes.map((costume) => ({
+    id: costume.id,
+    name: costume.name,
+    assetId: '',
+    bounds: costume.bounds,
+    document: cloneCostumeDocument(ensureCostumeDocument(costume)),
+  }));
+}
+
+function cloneSoundsForMigration(sounds: ObjectLibraryStoredSound[]): Sound[] {
+  return sounds.map((sound) => ({
+    id: sound.id,
+    name: sound.name,
+    assetId: sound.assetId ?? '',
+    duration: sound.duration,
+    trimStart: sound.trimStart,
+    trimEnd: sound.trimEnd,
+  }));
+}
+
+function cloneVariablesForMigration(variables: Variable[]): Variable[] {
+  return variables.map((variable) => ({ ...variable }));
 }

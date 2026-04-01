@@ -1,3 +1,5 @@
+import { CURRENT_PROJECT_SCHEMA_VERSION } from '@/lib/persistence/schemaVersion';
+
 // Project Types
 
 export interface Project {
@@ -346,7 +348,7 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 9,
+    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
     sceneFolders: [],
     messages: [],
@@ -494,6 +496,7 @@ export function getEffectiveObjectProps(
   physics: PhysicsConfig | null;
   collider: ColliderConfig | null;
   sounds: Sound[];
+  localVariables: Variable[];
 } {
   if (obj.componentId) {
     const component = components.find(c => c.id === obj.componentId);
@@ -505,6 +508,7 @@ export function getEffectiveObjectProps(
         physics: component.physics,
         collider: component.collider ?? null,
         sounds: component.sounds,
+        localVariables: component.localVariables ?? [],
       };
     }
   }
@@ -515,6 +519,7 @@ export function getEffectiveObjectProps(
     physics: obj.physics,
     collider: obj.collider,
     sounds: obj.sounds,
+    localVariables: obj.localVariables ?? [],
   };
 }
 

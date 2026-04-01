@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { useUser } from "@clerk/clerk-react";
+import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@convex-generated/api";
 import type { Id } from "@convex-generated/dataModel";
 import {
@@ -13,20 +12,14 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Trash2, Upload, Loader2 } from "@/components/ui/icons";
 import type { CostumeBounds, CostumeDocument } from "@/types";
-import {
-  uploadDataUrlToStorage,
-  generateThumbnail,
-  urlToDataUrl,
-} from "@/utils/convexHelpers";
-import { calculateVisibleBounds } from "@/utils/imageBounds";
 import { processImage } from "@/utils/imageProcessor";
+import { createBitmapCostumeDocument } from "@/lib/costume/costumeDocument";
 import {
-  cloneCostumeDocument,
-  createBitmapCostumeDocument,
-  ensureCostumeDocument,
-  getActiveCostumeLayer,
-  isBitmapCostumeLayer,
-} from "@/lib/costume/costumeDocument";
+  hydrateCostumeLibraryItemForInsertion,
+  prepareCostumeLibraryCreatePayload,
+  type CostumeLibraryListItemData,
+} from "@/lib/costumeLibrary/costumeLibraryAssets";
+import { ensureLibraryAssetRefsInCloud } from "@/lib/templateLibrary/libraryAssetRefs";
 
 interface CostumeLibraryBrowserProps {
   open: boolean;
@@ -39,20 +32,26 @@ interface CostumeLibraryBrowserProps {
   }) => void;
 }
 
+interface CostumeLibraryItem extends CostumeLibraryListItemData {
+  _id: Id<"costumeLibrary">;
+  createdAt: number;
+}
+
 export function CostumeLibraryBrowser({
   open,
   onOpenChange,
   onSelect,
 }: CostumeLibraryBrowserProps) {
-  const { user } = useUser();
+  const convex = useConvex();
+  const { isAuthenticated } = useConvexAuth();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [loadingSelect, setLoadingSelect] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const canAccessLibrary = !!user;
 
-  const items = useQuery(api.costumeLibrary.list, open && canAccessLibrary ? {} : "skip");
-  const generateUploadUrl = useMutation(api.costumeLibrary.generateUploadUrl);
+  const items = useQuery(api.costumeLibrary.list, open ? {} : "skip") as CostumeLibraryItem[] | undefined;
+  const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
+  const upsertProjectAsset = useMutation(api.projectAssets.upsert);
   const createItem = useMutation(api.costumeLibrary.create);
   const removeItem = useMutation(api.costumeLibrary.remove);
 
@@ -65,34 +64,34 @@ export function CostumeLibraryBrowser({
       for (const file of Array.from(files)) {
         if (!file.type.startsWith("image/")) continue;
 
-        // Process the image (resize to 1024x1024 max)
         const processedDataUrl = await processImage(file);
-
-        // Calculate visible bounds
-        const bounds = await calculateVisibleBounds(processedDataUrl);
-
-        // Generate thumbnail
-        const thumbnail = await generateThumbnail(processedDataUrl, 128);
-
-        // Upload to Convex storage
-        const { storageId, size, mimeType } = await uploadDataUrlToStorage(
-          processedDataUrl,
-          generateUploadUrl
-        );
-
-        // Create the library entry
-        await createItem({
+        const prepared = await prepareCostumeLibraryCreatePayload({
+          id: crypto.randomUUID(),
           name: file.name.replace(/\.[^/.]+$/, ""),
-          storageId: storageId as Id<"_storage">,
-          thumbnail,
-          bounds: bounds || undefined,
+          assetId: processedDataUrl,
           document: createBitmapCostumeDocument(
             processedDataUrl,
             file.name.replace(/\.[^/.]+$/, "") || "Layer 1",
           ),
-          mimeType,
-          size,
         });
+
+        await ensureLibraryAssetRefsInCloud(prepared.assetRefs, {
+          listMissingAssetIds: async (assetIds) => {
+            return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
+          },
+          generateUploadUrl,
+          upsertAsset: async (args) => {
+            return await upsertProjectAsset({
+              assetId: args.assetId,
+              kind: args.kind,
+              mimeType: args.mimeType,
+              size: args.size,
+              storageId: args.storageId,
+            });
+          },
+        });
+
+        await createItem(prepared.payload);
       }
     } catch (error) {
       console.error("Failed to upload costume:", error);
@@ -118,25 +117,11 @@ export function CostumeLibraryBrowser({
     if (!selectedId || !items) return;
 
     const item = items.find((i) => i._id === selectedId);
-    if (!item || !item.url) return;
+    if (!item) return;
 
     setLoadingSelect(true);
     try {
-      // Download the image and convert to data URL
-      const dataUrl = await urlToDataUrl(item.url);
-
-      const document = cloneCostumeDocument(ensureCostumeDocument(item as { document?: unknown }));
-      const activeLayer = getActiveCostumeLayer(document);
-      if (isBitmapCostumeLayer(activeLayer) && !activeLayer.bitmap.assetId) {
-        activeLayer.bitmap.assetId = dataUrl;
-      }
-
-      onSelect?.({
-        name: item.name,
-        dataUrl,
-        bounds: item.bounds ?? undefined,
-        document,
-      });
+      onSelect?.(await hydrateCostumeLibraryItemForInsertion(item));
       onOpenChange(false);
     } catch (error) {
       console.error("Failed to load costume:", error);
@@ -154,7 +139,7 @@ export function CostumeLibraryBrowser({
           <Button
             size="sm"
             onClick={() => fileInputRef.current?.click()}
-            disabled={!canAccessLibrary || uploading}
+            disabled={!isAuthenticated || uploading}
           >
             {uploading ? (
               <Loader2 className="size-4 animate-spin" />
@@ -174,19 +159,16 @@ export function CostumeLibraryBrowser({
         </DialogHeader>
 
         <ScrollArea className="flex-1 mt-4">
-          {!canAccessLibrary ? (
-            <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
-              <p className="mb-2">Sign in to use the costume library</p>
-              <p className="text-sm">You can still create and edit local costumes without it.</p>
-            </div>
-          ) : !items ? (
+          {!items ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
             </div>
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <p className="mb-2">No costumes in library</p>
-              <p className="text-sm">Upload images to build your collection</p>
+              <p className="text-sm">
+                {isAuthenticated ? "Upload images to build your collection" : "Sign in to add your own costumes"}
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-4 gap-3 pr-4">
@@ -208,17 +190,19 @@ export function CostumeLibraryBrowser({
                   <div className="absolute inset-x-0 bottom-0 bg-black/60 px-2 py-1 text-xs text-white truncate">
                     {item.name}
                   </div>
-                  <Button
-                    variant="destructive"
-                    size="icon"
-                    className="absolute top-1 right-1 size-6 opacity-0 group-hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(item._id);
-                    }}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
+                  {item.scope === 'user' ? (
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      className="absolute top-1 right-1 size-6 opacity-0 group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(item._id);
+                      }}
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -231,7 +215,7 @@ export function CostumeLibraryBrowser({
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!canAccessLibrary || !selectedId || loadingSelect}
+            disabled={!selectedId || loadingSelect}
           >
             {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
             Insert Costume

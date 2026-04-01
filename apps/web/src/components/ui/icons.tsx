@@ -23,6 +23,7 @@ import {
   Copy as LucideCopy,
   Crosshair as LucideCrosshair,
   Download as LucideDownload,
+  Earth as LucideEarth,
   Eraser as LucideEraser,
   Eye as LucideEye,
   EyeOff as LucideEyeOff,
@@ -120,6 +121,7 @@ const LIBRARY_ICONS = {
   Copy: LucideCopy,
   Crosshair: LucideCrosshair,
   Download: LucideDownload,
+  Earth: LucideEarth,
   Eraser: LucideEraser,
   Eye: LucideEye,
   EyeOff: LucideEyeOff,
@@ -270,6 +272,7 @@ export const Component = LucideComponent;
 export const Copy = LucideCopy;
 export const Crosshair = LucideCrosshair;
 export const Download = LucideDownload;
+export const Earth = LucideEarth;
 export const Eraser = LucideEraser;
 export const Eye = LucideEye;
 export const EyeOff = LucideEyeOff;

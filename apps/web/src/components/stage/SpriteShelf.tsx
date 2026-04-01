@@ -35,6 +35,7 @@ import {
   ChevronRight,
   ChevronDown,
   Component,
+  Earth,
   Unlink,
   Folder,
   FolderOpen,
@@ -1668,57 +1669,58 @@ export function SpriteShelf({
       onPointerEnter={() => setIsShelfHovered(true)}
       onPointerLeave={() => setIsShelfHovered(false)}
     >
-      <div
-        className={`${panelHeaderClassNames.chrome} ${
-          showQuickSceneSwitch
-            ? panelHeaderClassNames.splitRow
-            : `${panelHeaderClassNames.row} justify-center`
-        } h-auto border-b-0 py-1`}
-      >
-        {showQuickSceneSwitch ? (
-          <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex h-6 min-w-0 max-w-32 items-center gap-1 rounded-md px-1 text-left text-xs font-medium transition-colors hover:text-primary"
-              >
-                <span className="truncate">{selectedScene.name}</span>
-                <ChevronRight className="size-3" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-48">
-              {project?.scenes.map((scene) => (
-                <DropdownMenuItem
-                  key={scene.id}
-                  onClick={() => selectScene(scene.id)}
-                  className={scene.id === selectedSceneId ? selectionSurfaceClassNames.selected : ''}
-                >
-                  {scene.name}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-          null
-        )}
+      <div className={`${panelHeaderClassNames.chrome} ${panelHeaderClassNames.row} h-auto border-b-0 py-1`}>
+        <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
+          <div className="flex min-w-0 items-center justify-start">
+            {showQuickSceneSwitch ? (
+              <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-6 min-w-0 max-w-32 items-center gap-1 rounded-md px-1 text-left text-xs font-medium transition-colors hover:text-primary"
+                  >
+                    <Earth className="size-3.5 shrink-0" />
+                    <span className="truncate">{selectedScene.name}</span>
+                    <ChevronRight className="size-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-48">
+                  {project?.scenes.map((scene) => (
+                    <DropdownMenuItem
+                      key={scene.id}
+                      onClick={() => selectScene(scene.id)}
+                      className={scene.id === selectedSceneId ? selectionSurfaceClassNames.selected : ''}
+                    >
+                      <Earth className="size-3.5 shrink-0" />
+                      <span className="truncate">{scene.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </div>
 
-        <div className="flex items-center gap-1">
-          <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
-            <Plus className="size-4" />
-          </Button>
-          <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
-            <FolderPlus className="size-4" />
-          </Button>
-          {showObjectLibraryButton ? (
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              onClick={() => setShowLibrary(true)}
-              title="Object Library"
-            >
-              <Library className="size-4" />
+          <div className="flex items-center justify-center gap-1">
+            <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
+              <Plus className="size-4" />
             </Button>
-          ) : null}
+            <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
+              <FolderPlus className="size-4" />
+            </Button>
+          </div>
+
+          <div className="flex items-center justify-end gap-1">
+            {showObjectLibraryButton ? (
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                onClick={() => setShowLibrary(true)}
+                title="Object Library"
+              >
+                <Library className="size-4" />
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
 

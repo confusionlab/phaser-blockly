@@ -2,10 +2,13 @@ import Dexie, { type EntityTable } from 'dexie';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type {
   BackgroundConfig,
+  ComponentDefinition,
+  ComponentFolder,
   CostumeAssetFrame,
   MessageDefinition,
   Project,
   ReusableObject,
+  Scene,
 } from '../types';
 import {
   COMPONENT_ANY_PREFIX,
@@ -64,17 +67,24 @@ import {
 } from '@/lib/costume/costumeDocumentRender';
 import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
 import {
+  canonicalizePersistedComponentDefinition,
+  canonicalizePersistedScene,
   canonicalizePersistedProjectData,
+  inflatePersistedComponentDefinition,
+  inflatePersistedScene,
   inflatePersistedProjectData,
   parsePersistedProjectData,
   stringifyPersistedProjectData,
+  type PersistedComponentDefinition,
   type PersistedProjectData,
+  type PersistedScene,
   type RuntimeProjectData,
 } from '@/lib/persistence/projectDataCodec';
+import { CURRENT_PROJECT_SCHEMA_VERSION } from '@/lib/persistence/schemaVersion';
 import { doesLocalProjectMatchCloudHead } from '@/lib/cloudProjectState';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = CURRENT_PROJECT_SCHEMA_VERSION;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -165,6 +175,12 @@ interface AssetRecord {
 interface PersistedProjectAssetRef {
   assetId: string;
   kind: ManagedAssetKind;
+}
+
+export interface PersistedSceneTemplateData {
+  scene: PersistedScene;
+  components: PersistedComponentDefinition[];
+  componentFolders: ComponentFolder[];
 }
 
 interface ReusableRecord {
@@ -1201,6 +1217,88 @@ async function normalizeProjectAssetsForStorage(
   };
 }
 
+export async function prepareSceneTemplateForStorage(
+  scene: Scene,
+  components: ComponentDefinition[],
+  componentFolders: ComponentFolder[],
+): Promise<{
+  template: PersistedSceneTemplateData;
+  assetRefs: Array<{ assetId: string; kind: ManagedAssetKind }>;
+}> {
+  const nextScene = cloneValue(scene);
+  const nextComponents = cloneValue(components);
+  const nextComponentFolders = cloneValue(componentFolders);
+  const refsById = new Map<string, PersistedProjectAssetRef>();
+
+  const normalizeSoundAsset = async (sound: { assetId: string }) => {
+    if (!isLikelyAssetSource(sound.assetId)) return;
+    const record = await ensureAssetRecordFromSource(sound.assetId, 'audio');
+    addPersistedAssetRef(refsById, record.id, 'audio');
+    sound.assetId = record.id;
+  };
+
+  const normalizeBackground = async (background: BackgroundConfig | null | undefined) => {
+    if (!background) return;
+    if (background.type === 'image' && isLikelyAssetSource(background.value)) {
+      const record = await ensureAssetRecordFromSource(background.value, 'background');
+      addPersistedAssetRef(refsById, record.id, 'background');
+      background.value = record.id;
+    }
+
+    const document = getTiledBackgroundDocument(background);
+    if (!document) {
+      delete (background as { document?: unknown }).document;
+      delete (background as { chunks?: Record<string, string> }).chunks;
+      return;
+    }
+
+    for (const layer of document.layers) {
+      if (!isBitmapBackgroundLayer(layer)) {
+        continue;
+      }
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, source] of Object.entries(layer.bitmap.chunks)) {
+        if (!isLikelyAssetSource(source)) continue;
+        const record = await ensureAssetRecordFromSource(source, 'background');
+        addPersistedAssetRef(refsById, record.id, 'background');
+        nextChunks[chunkKey] = record.id;
+      }
+      layer.bitmap.chunks = nextChunks;
+    }
+
+    background.document = document;
+    delete (background as { chunks?: Record<string, string> }).chunks;
+  };
+
+  await normalizeBackground(nextScene.background);
+  for (const object of nextScene.objects || []) {
+    for (const costume of object.costumes || []) {
+      await normalizeCostumeAssetsForStorage(costume, refsById);
+    }
+    for (const sound of object.sounds || []) {
+      await normalizeSoundAsset(sound);
+    }
+  }
+
+  for (const component of nextComponents || []) {
+    for (const costume of component.costumes || []) {
+      await normalizeCostumeAssetsForStorage(costume, refsById);
+    }
+    for (const sound of component.sounds || []) {
+      await normalizeSoundAsset(sound);
+    }
+  }
+
+  return {
+    template: {
+      scene: canonicalizePersistedScene(nextScene),
+      components: nextComponents.map((component) => canonicalizePersistedComponentDefinition(component)),
+      componentFolders: nextComponentFolders,
+    },
+    assetRefs: Array.from(refsById.values()),
+  };
+}
+
 async function hydrateProjectAssetsFromStorage(
   projectData: PersistedProjectData,
 ): Promise<RuntimeProjectData> {
@@ -1279,6 +1377,115 @@ async function hydrateProjectAssetsFromStorage(
   }
 
   return nextProject;
+}
+
+export async function hydrateSceneTemplateFromStorage(
+  template: PersistedSceneTemplateData,
+  sourceSchemaVersion: number = CURRENT_SCHEMA_VERSION,
+): Promise<{
+  scene: Scene;
+  components: ComponentDefinition[];
+  componentFolders: ComponentFolder[];
+}> {
+  const migratedRuntimeProject = migrateRuntimeProjectDataForTemplate({
+    schemaVersion: sourceSchemaVersion,
+    scenes: [inflatePersistedScene(template.scene)],
+    sceneFolders: [],
+    messages: [],
+    globalVariables: [],
+    settings: {
+      canvasWidth: 800,
+      canvasHeight: 600,
+      backgroundColor: '#87CEEB',
+    },
+    components: template.components.map((component) => inflatePersistedComponentDefinition(component)),
+    componentFolders: cloneValue(template.componentFolders),
+  }, sourceSchemaVersion);
+  const nextScene = cloneValue(migratedRuntimeProject.scenes[0] ?? inflatePersistedScene(template.scene));
+  const nextComponents = cloneValue(migratedRuntimeProject.components);
+
+  const hydrateSoundAsset = async (sound: { assetId: string }) => {
+    if (!isManagedAssetId(sound.assetId)) {
+      return;
+    }
+    const objectUrl = await resolveManagedAssetUrl(sound.assetId);
+    if (objectUrl) {
+      rememberResolvedManagedAsset(sound.assetId, objectUrl);
+      sound.assetId = objectUrl;
+    }
+  };
+
+  const hydrateBackground = async (background: BackgroundConfig | null | undefined) => {
+    if (!background) return;
+    if (background.type === 'image' && isManagedAssetId(background.value)) {
+      const objectUrl = await resolveManagedAssetUrl(background.value);
+      if (objectUrl) {
+        rememberResolvedManagedAsset(background.value, objectUrl);
+        background.value = objectUrl;
+      }
+    }
+
+    const document = getTiledBackgroundDocument(background);
+    if (!document) {
+      delete (background as { document?: unknown }).document;
+      delete (background as { chunks?: Record<string, string> }).chunks;
+      return;
+    }
+
+    for (const layer of document.layers) {
+      if (!isBitmapBackgroundLayer(layer)) {
+        continue;
+      }
+
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, value] of Object.entries(layer.bitmap.chunks)) {
+        if (!isManagedAssetId(value)) {
+          nextChunks[chunkKey] = value;
+          continue;
+        }
+
+        const objectUrl = await resolveManagedAssetUrl(value);
+        if (objectUrl) {
+          rememberResolvedManagedAsset(value, objectUrl);
+          nextChunks[chunkKey] = objectUrl;
+        }
+      }
+      layer.bitmap.chunks = nextChunks;
+    }
+
+    background.document = document;
+    background.chunks = document.layers.reduce<Record<string, string>>((chunks, layer) => {
+      if (!isBitmapBackgroundLayer(layer)) {
+        return chunks;
+      }
+      return { ...chunks, ...layer.bitmap.chunks };
+    }, {});
+  };
+
+  await hydrateBackground(nextScene.background);
+  for (const object of nextScene.objects || []) {
+    for (const costume of object.costumes || []) {
+      await hydrateCostumeAssetsFromStorage(costume);
+    }
+    for (const sound of object.sounds || []) {
+      await hydrateSoundAsset(sound);
+    }
+  }
+
+  for (const component of nextComponents || []) {
+    for (const costume of component.costumes || []) {
+      await hydrateCostumeAssetsFromStorage(costume);
+    }
+    for (const sound of component.sounds || []) {
+      await hydrateSoundAsset(sound);
+    }
+  }
+
+  return {
+    scene: nextScene,
+    components: nextComponents,
+    componentFolders: cloneValue(migratedRuntimeProject.componentFolders),
+  };
 }
 
 function collectPersistedAssetRefsFromProjectData(
@@ -4281,6 +4488,67 @@ function migrateProject(project: Project, fromVersion: number): Project {
   }
 
   return currentProject;
+}
+
+function createSyntheticProjectFromRuntimeData(
+  projectData: RuntimeProjectData,
+  sourceSchemaVersion: number,
+): Project {
+  const now = new Date(0);
+  return {
+    id: 'template-migration-project',
+    name: 'Template Migration',
+    createdAt: now,
+    updatedAt: now,
+    schemaVersion: sourceSchemaVersion,
+    scenes: Array.isArray(projectData.scenes) ? cloneValue(projectData.scenes) : [],
+    sceneFolders: Array.isArray(projectData.sceneFolders) ? cloneValue(projectData.sceneFolders) : [],
+    messages: Array.isArray(projectData.messages) ? cloneValue(projectData.messages) : [],
+    globalVariables: Array.isArray(projectData.globalVariables) ? cloneValue(projectData.globalVariables) : [],
+    settings: cloneValue(projectData.settings),
+    components: Array.isArray(projectData.components) ? cloneValue(projectData.components) : [],
+    componentFolders: Array.isArray(projectData.componentFolders) ? cloneValue(projectData.componentFolders) : [],
+  };
+}
+
+function extractRuntimeProjectData(project: Project): RuntimeProjectData {
+  return {
+    schemaVersion: project.schemaVersion,
+    scenes: cloneValue(project.scenes),
+    sceneFolders: cloneValue(project.sceneFolders),
+    messages: cloneValue(project.messages),
+    globalVariables: cloneValue(project.globalVariables),
+    settings: cloneValue(project.settings),
+    components: cloneValue(project.components),
+    componentFolders: cloneValue(project.componentFolders),
+  };
+}
+
+export function migrateRuntimeProjectDataForTemplate(
+  projectData: RuntimeProjectData,
+  sourceSchemaVersion: number,
+): RuntimeProjectData {
+  if (sourceSchemaVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `Template requires schema v${sourceSchemaVersion} but this app supports up to v${CURRENT_SCHEMA_VERSION}.`,
+    );
+  }
+
+  let migratedProject = createSyntheticProjectFromRuntimeData(projectData, sourceSchemaVersion);
+  if (sourceSchemaVersion < CURRENT_SCHEMA_VERSION) {
+    migratedProject = migrateProject(migratedProject, sourceSchemaVersion);
+  }
+
+  migratedProject = {
+    ...migratedProject,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+  };
+  migratedProject = normalizeMessagesInProject(migratedProject);
+  migratedProject = normalizeCostumeDocumentsInProject(migratedProject);
+  migratedProject = normalizeBackgroundDocumentsInProject(migratedProject);
+  migratedProject = normalizeProjectLayering(migratedProject);
+
+  return extractRuntimeProjectData(migratedProject);
 }
 
 function getAssetArchiveExtension(mimeType: string): string {

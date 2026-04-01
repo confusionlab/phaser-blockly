@@ -55,7 +55,7 @@ export function ObjectLibraryBrowser({
   const [loadingSelect, setLoadingSelect] = useState(false);
   const { isAuthenticated } = useConvexAuth();
 
-  const items = useQuery(api.objectLibrary.list, isAuthenticated ? {} : "skip") as ObjectLibraryItem[] | undefined;
+  const items = useQuery(api.objectLibrary.list, open ? {} : "skip") as ObjectLibraryItem[] | undefined;
   const removeItem = useMutation(api.objectLibrary.remove);
 
   const handleDelete = async (id: Id<"objectLibrary">) => {
@@ -96,17 +96,16 @@ export function ObjectLibraryBrowser({
         </DialogHeader>
 
         <ScrollArea className="flex-1 mt-4">
-          {!isAuthenticated ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>Sign in for the object library.</p>
-            </div>
-          ) : !items ? (
+          {!items ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
             </div>
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
               <p>No objects in library</p>
+              <p className="text-sm">
+                {isAuthenticated ? "Save objects to build your collection" : "Sign in to add your own objects"}
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-4 pr-4">
@@ -149,17 +148,19 @@ export function ObjectLibraryBrowser({
                   </div>
 
                   {/* Delete button */}
-                  <Button
-                    variant="destructive"
-                    size="icon"
-                    className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(item._id);
-                    }}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
+                  {item.scope === 'user' ? (
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(item._id);
+                      }}
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  ) : null}
                 </Card>
               ))}
             </div>
@@ -172,7 +173,7 @@ export function ObjectLibraryBrowser({
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!isAuthenticated || !selectedId || loadingSelect}
+            disabled={!selectedId || loadingSelect}
           >
             {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
             Insert Object

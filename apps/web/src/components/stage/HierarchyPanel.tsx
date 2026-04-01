@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useConvex, useConvexAuth, useMutation } from 'convex/react';
+import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,14 +16,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { SpriteShelf } from './SpriteShelf';
+import { ObjectLibraryBrowser } from '@/components/dialogs/ObjectLibraryBrowser';
+import { SceneLibraryBrowser } from '@/components/dialogs/SceneLibraryBrowser';
 import {
   Component,
   Folder,
   FolderOpen,
   FolderPlus,
+  Library,
   Layers3,
   Pencil,
   Plus,
+  Save,
   Trash2,
 } from '@/components/ui/icons';
 import { ShelfTreeRow } from './ShelfTreeRow';
@@ -40,6 +46,10 @@ import {
 } from '@/utils/hierarchyTree';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { cn } from '@/lib/utils';
+import {
+  ensureSceneLibraryAssetRefsInCloud,
+  prepareSceneLibraryCreatePayload,
+} from '@/lib/sceneLibrary/sceneLibraryAssets';
 
 type SceneItem = Scene & FolderedItemShape;
 type ComponentItem = ComponentDefinition & FolderedItemShape;
@@ -571,15 +581,20 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
       onPointerEnter={() => setIsPaneHovered(true)}
       onPointerLeave={() => setIsPaneHovered(false)}
     >
-      <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.row, 'h-auto justify-center border-b-0 py-1')}>
-        <div className="flex items-center gap-1">
-          {renderHeaderActions}
-          <Button type="button" size="icon-xs" variant="ghost" onClick={onAddItem} title={`Add ${itemLabel}`}>
-            <Plus className="size-4" />
-          </Button>
-          <Button type="button" size="icon-xs" variant="ghost" onClick={onAddFolder} title="Add Folder">
-            <FolderPlus className="size-4" />
-          </Button>
+      <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.row, 'h-auto border-b-0 py-1')}>
+        <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
+          <div />
+          <div className="flex items-center justify-center gap-1">
+            <Button type="button" size="icon-xs" variant="ghost" onClick={onAddItem} title={`Add ${itemLabel}`}>
+              <Plus className="size-4" />
+            </Button>
+            <Button type="button" size="icon-xs" variant="ghost" onClick={onAddFolder} title="Add Folder">
+              <FolderPlus className="size-4" />
+            </Button>
+          </div>
+          <div className="flex items-center justify-end gap-1">
+            {renderHeaderActions}
+          </div>
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1" onContextMenu={handleEmptyPaneContextMenu}>
@@ -727,7 +742,14 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
 }
 
 function SceneHierarchyTab() {
-  const { project, addScene, updateScene, removeScene, updateSceneOrganization } = useProjectStore();
+  const {
+    project,
+    addScene,
+    addSceneFromTemplate,
+    updateScene,
+    removeScene,
+    updateSceneOrganization,
+  } = useProjectStore();
   const {
     selectedSceneId,
     selectedSceneIds,
@@ -735,77 +757,177 @@ function SceneHierarchyTab() {
     selectScenes,
     setActiveHierarchyTab,
   } = useEditorStore();
+  const convex = useConvex();
+  const { isAuthenticated } = useConvexAuth();
+  const createSceneLibraryItem = useMutation(api.sceneLibrary.create);
+  const generateProjectAssetUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
+  const upsertProjectAsset = useMutation(api.projectAssets.upsert);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [savingSceneId, setSavingSceneId] = useState<string | null>(null);
   const scenes = project?.scenes ?? [];
   const sceneFolders = project?.sceneFolders ?? [];
 
+  const handleInsertSceneTemplate = (data: {
+    name: string;
+    scene: Scene;
+    components: ComponentDefinition[];
+    componentFolders: ComponentFolder[];
+  }) => {
+    const insertedScene = addSceneFromTemplate(data);
+    if (insertedScene) {
+      selectScene(insertedScene.id);
+      setActiveHierarchyTab('scene');
+    }
+  };
+
+  const handleSaveSceneToLibrary = async (scene: Scene) => {
+    if (!project) {
+      return;
+    }
+    if (!isAuthenticated) {
+      window.alert('Sign in to save scenes to the cloud library.');
+      return;
+    }
+
+    const includedComponents = project.components || [];
+    const includedComponentFolders = project.componentFolders || [];
+
+    setSavingSceneId(scene.id);
+    try {
+      const payload = await prepareSceneLibraryCreatePayload({
+        name: scene.name,
+        scene,
+        components: includedComponents,
+        componentFolders: includedComponentFolders,
+      });
+
+      await ensureSceneLibraryAssetRefsInCloud(payload.assetRefs, {
+        listMissingAssetIds: async (assetIds) => {
+          return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
+        },
+        generateUploadUrl: generateProjectAssetUploadUrl,
+        upsertAsset: async (args) => {
+          return await upsertProjectAsset({
+            assetId: args.assetId,
+            kind: args.kind,
+            mimeType: args.mimeType,
+            size: args.size,
+            storageId: args.storageId,
+          });
+        },
+      });
+
+      await createSceneLibraryItem(payload);
+    } catch (error) {
+      console.error('Failed to save scene to library:', error);
+      window.alert('Failed to save scene to library');
+    } finally {
+      setSavingSceneId(null);
+    }
+  };
+
   return (
-    <FolderedHierarchyPane<SceneItem>
-      title="Scenes"
-      itemLabel="Scene"
-      emptyLabel="No scenes yet"
-      folders={sceneFolders}
-      items={scenes}
-      itemKeyPrefix="scene"
-      selectedItemId={selectedSceneId}
-      selectedItemIds={selectedSceneIds}
-      onSelectItem={(scene) => {
-        selectScene(scene.id);
-        setActiveHierarchyTab('scene');
-      }}
-      onSelectItems={(sceneIds, primarySceneId) => {
-        selectScenes(sceneIds, primarySceneId, { recordHistory: false });
-      }}
-      onAddItem={() => addScene(`Scene ${scenes.length + 1}`)}
-      onAddFolder={() => {
-        const newFolder: SceneFolder = {
-          id: crypto.randomUUID(),
-          name: `Folder ${sceneFolders.length + 1}`,
-          parentId: null,
-          order: getNextFolderedSiblingOrder(sceneFolders, scenes, null, {
-            itemKeyPrefix: 'scene',
-            setItemFolderId: (scene, folderId) => ({ ...scene, folderId }),
-            setItemOrder: (scene, order) => ({ ...scene, order }),
-          }),
-        };
-        updateSceneOrganization(scenes, [...sceneFolders, newFolder]);
-      }}
-      onRenameItem={(sceneId, name) => updateScene(sceneId, { name })}
-      onRenameFolder={(folderId, name) => {
-        updateSceneOrganization(
-          scenes,
-          sceneFolders.map((folder) => (folder.id === folderId ? { ...folder, name } : folder)),
-        );
-      }}
-      onDeleteItem={(sceneId) => removeScene(sceneId)}
-      onDeleteFolder={(folderId) => {
-        const descendants = collectFolderDescendants(folderId, sceneFolders);
-        updateSceneOrganization(
-          scenes.map((scene) => descendants.has(scene.folderId ?? '') ? { ...scene, folderId: null } : scene),
-          sceneFolders.filter((folder) => !descendants.has(folder.id)),
-        );
-      }}
-      onMove={(nextScenes, nextFolders) => updateSceneOrganization(nextScenes, nextFolders)}
-      renderItemContextMenuActions={(scene, closeMenu) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            selectScene(scene.id);
-            closeMenu();
-          }}
-          className="h-8 w-full justify-start rounded-none"
-        >
-          <Layers3 className="size-4" />
-          Switch to Scene
-        </Button>
-      )}
-    />
+    <>
+      <FolderedHierarchyPane<SceneItem>
+        title="Scenes"
+        itemLabel="Scene"
+        emptyLabel="No scenes yet"
+        folders={sceneFolders}
+        items={scenes}
+        itemKeyPrefix="scene"
+        selectedItemId={selectedSceneId}
+        selectedItemIds={selectedSceneIds}
+        onSelectItem={(scene) => {
+          selectScene(scene.id);
+          setActiveHierarchyTab('scene');
+        }}
+        onSelectItems={(sceneIds, primarySceneId) => {
+          selectScenes(sceneIds, primarySceneId, { recordHistory: false });
+        }}
+        onAddItem={() => addScene(`Scene ${scenes.length + 1}`)}
+        onAddFolder={() => {
+          const newFolder: SceneFolder = {
+            id: crypto.randomUUID(),
+            name: `Folder ${sceneFolders.length + 1}`,
+            parentId: null,
+            order: getNextFolderedSiblingOrder(sceneFolders, scenes, null, {
+              itemKeyPrefix: 'scene',
+              setItemFolderId: (scene, folderId) => ({ ...scene, folderId }),
+              setItemOrder: (scene, order) => ({ ...scene, order }),
+            }),
+          };
+          updateSceneOrganization(scenes, [...sceneFolders, newFolder]);
+        }}
+        onRenameItem={(sceneId, name) => updateScene(sceneId, { name })}
+        onRenameFolder={(folderId, name) => {
+          updateSceneOrganization(
+            scenes,
+            sceneFolders.map((folder) => (folder.id === folderId ? { ...folder, name } : folder)),
+          );
+        }}
+        onDeleteItem={(sceneId) => removeScene(sceneId)}
+        onDeleteFolder={(folderId) => {
+          const descendants = collectFolderDescendants(folderId, sceneFolders);
+          updateSceneOrganization(
+            scenes.map((scene) => descendants.has(scene.folderId ?? '') ? { ...scene, folderId: null } : scene),
+            sceneFolders.filter((folder) => !descendants.has(folder.id)),
+          );
+        }}
+        onMove={(nextScenes, nextFolders) => updateSceneOrganization(nextScenes, nextFolders)}
+        renderHeaderActions={(
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => setShowLibrary(true)}
+            title="Scene Library"
+          >
+            <Library className="size-4" />
+          </Button>
+        )}
+        renderItemContextMenuActions={(scene, closeMenu) => (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void handleSaveSceneToLibrary(scene);
+                closeMenu();
+              }}
+              disabled={savingSceneId === scene.id}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <Save className="size-4" />
+              Save to Library
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                selectScene(scene.id);
+                closeMenu();
+              }}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <Layers3 className="size-4" />
+              Switch to Scene
+            </Button>
+          </>
+        )}
+      />
+      <SceneLibraryBrowser
+        open={showLibrary}
+        onOpenChange={setShowLibrary}
+        onSelect={handleInsertSceneTemplate}
+      />
+    </>
   );
 }
 
 function ComponentHierarchyTab() {
   const {
     project,
+    addComponentFromLibrary,
     addComponentInstance,
     deleteComponent,
     updateComponent,
@@ -820,6 +942,7 @@ function ComponentHierarchyTab() {
     selectComponents,
     setActiveHierarchyTab,
   } = useEditorStore();
+  const [showLibrary, setShowLibrary] = useState(false);
   const components = project?.components ?? [];
   const componentFolders = project?.componentFolders ?? [];
 
@@ -828,81 +951,118 @@ function ComponentHierarchyTab() {
     addComponentInstance(selectedSceneId, selectedComponentId);
   };
 
+  const handleLibrarySelect = (data: {
+    name: string;
+    costumes: import('@/types').Costume[];
+    sounds: import('@/types').Sound[];
+    blocklyXml: string;
+    currentCostumeIndex: number;
+    physics: import('@/types').PhysicsConfig | null;
+    collider: import('@/types').ColliderConfig | null;
+    localVariables: import('@/types').Variable[];
+  }) => {
+    const created = addComponentFromLibrary(data);
+    if (!created) {
+      window.alert('Failed to add component from library');
+      return;
+    }
+    selectComponent(created.id);
+    setActiveHierarchyTab('component');
+  };
+
   return (
-    <FolderedHierarchyPane<ComponentItem>
-      title="Components"
-      itemLabel="Component"
-      emptyLabel="No components yet"
-      folders={componentFolders}
-      items={components}
-      itemKeyPrefix="component"
-      selectedItemId={selectedComponentId}
-      selectedItemIds={selectedComponentIds}
-      onSelectItem={(component) => {
-        selectComponent(component.id);
-        setActiveHierarchyTab('component');
-      }}
-      onSelectItems={(componentIds, primaryComponentId) => {
-        selectComponents(componentIds, primaryComponentId, { recordHistory: false });
-      }}
-      onAddItem={handleAddInstance}
-      onAddFolder={() => {
-        const newFolder: ComponentFolder = {
-          id: crypto.randomUUID(),
-          name: `Folder ${componentFolders.length + 1}`,
-          parentId: null,
-          order: getNextFolderedSiblingOrder(componentFolders, components, null, {
-            itemKeyPrefix: 'component',
-            setItemFolderId: (component, folderId) => ({ ...component, folderId }),
-            setItemOrder: (component, order) => ({ ...component, order }),
-          }),
-        };
-        updateComponentOrganization(components, [...componentFolders, newFolder]);
-      }}
-      onRenameItem={(componentId, name) => updateComponent(componentId, { name })}
-      onRenameFolder={(folderId, name) => {
-        updateComponentOrganization(
-          components,
-          componentFolders.map((folder) => (folder.id === folderId ? { ...folder, name } : folder)),
-        );
-      }}
-      onDeleteItem={(componentId) => deleteComponent(componentId)}
-      onDeleteFolder={(folderId) => {
-        const descendants = collectFolderDescendants(folderId, componentFolders);
-        updateComponentOrganization(
-          components.map((component) => descendants.has(component.folderId ?? '') ? { ...component, folderId: null } : component),
-          componentFolders.filter((folder) => !descendants.has(folder.id)),
-        );
-      }}
-      onMove={(nextComponents, nextFolders) => updateComponentOrganization(nextComponents, nextFolders)}
-      renderItemIcon={() => <Component className="size-4 shrink-0 text-muted-foreground" />}
-      onItemDragStart={(event, component) => {
-        setDraggedComponentId(component.id);
-        event.dataTransfer.effectAllowed = 'copyMove';
-        event.dataTransfer.setData('application/x-pocha-component-id', component.id);
-      }}
-      onItemDragEnd={() => {
-        setDraggedComponentId(null);
-      }}
-      renderItemContextMenuActions={(component, closeMenu) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            selectComponent(component.id);
-            if (selectedSceneId) {
-              addComponentInstance(selectedSceneId, component.id);
-            }
-            closeMenu();
-          }}
-          disabled={!selectedSceneId}
-          className="h-8 w-full justify-start rounded-none"
-        >
-          <Plus className="size-4" />
-          Add to Scene
-        </Button>
-      )}
-    />
+    <>
+      <FolderedHierarchyPane<ComponentItem>
+        title="Components"
+        itemLabel="Component"
+        emptyLabel="No components yet"
+        folders={componentFolders}
+        items={components}
+        itemKeyPrefix="component"
+        selectedItemId={selectedComponentId}
+        selectedItemIds={selectedComponentIds}
+        onSelectItem={(component) => {
+          selectComponent(component.id);
+          setActiveHierarchyTab('component');
+        }}
+        onSelectItems={(componentIds, primaryComponentId) => {
+          selectComponents(componentIds, primaryComponentId, { recordHistory: false });
+        }}
+        onAddItem={handleAddInstance}
+        onAddFolder={() => {
+          const newFolder: ComponentFolder = {
+            id: crypto.randomUUID(),
+            name: `Folder ${componentFolders.length + 1}`,
+            parentId: null,
+            order: getNextFolderedSiblingOrder(componentFolders, components, null, {
+              itemKeyPrefix: 'component',
+              setItemFolderId: (component, folderId) => ({ ...component, folderId }),
+              setItemOrder: (component, order) => ({ ...component, order }),
+            }),
+          };
+          updateComponentOrganization(components, [...componentFolders, newFolder]);
+        }}
+        onRenameItem={(componentId, name) => updateComponent(componentId, { name })}
+        onRenameFolder={(folderId, name) => {
+          updateComponentOrganization(
+            components,
+            componentFolders.map((folder) => (folder.id === folderId ? { ...folder, name } : folder)),
+          );
+        }}
+        onDeleteItem={(componentId) => deleteComponent(componentId)}
+        onDeleteFolder={(folderId) => {
+          const descendants = collectFolderDescendants(folderId, componentFolders);
+          updateComponentOrganization(
+            components.map((component) => descendants.has(component.folderId ?? '') ? { ...component, folderId: null } : component),
+            componentFolders.filter((folder) => !descendants.has(folder.id)),
+          );
+        }}
+        onMove={(nextComponents, nextFolders) => updateComponentOrganization(nextComponents, nextFolders)}
+        renderHeaderActions={(
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => setShowLibrary(true)}
+            title="Object Library"
+          >
+            <Library className="size-4" />
+          </Button>
+        )}
+        renderItemIcon={() => <Component className="size-4 shrink-0 text-muted-foreground" />}
+        onItemDragStart={(event, component) => {
+          setDraggedComponentId(component.id);
+          event.dataTransfer.effectAllowed = 'copyMove';
+          event.dataTransfer.setData('application/x-pocha-component-id', component.id);
+        }}
+        onItemDragEnd={() => {
+          setDraggedComponentId(null);
+        }}
+        renderItemContextMenuActions={(component, closeMenu) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              selectComponent(component.id);
+              if (selectedSceneId) {
+                addComponentInstance(selectedSceneId, component.id);
+              }
+              closeMenu();
+            }}
+            disabled={!selectedSceneId}
+            className="h-8 w-full justify-start rounded-none"
+          >
+            <Plus className="size-4" />
+            Add to Scene
+          </Button>
+        )}
+      />
+      <ObjectLibraryBrowser
+        open={showLibrary}
+        onOpenChange={setShowLibrary}
+        onSelect={handleLibrarySelect}
+      />
+    </>
   );
 }
 

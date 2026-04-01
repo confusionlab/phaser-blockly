@@ -260,7 +260,10 @@ export const ColorSwatchButton = React.forwardRef<HTMLButtonElement, ColorSwatch
       <button
         ref={handleRef}
         type={type}
-        className={cn(className)}
+        className={cn(
+          'inline-flex shrink-0 items-center justify-center overflow-hidden p-0 align-middle',
+          className,
+        )}
         style={style}
         {...props}
       >

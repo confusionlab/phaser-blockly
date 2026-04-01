@@ -2,73 +2,29 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
-
-async function requireAuthenticatedUserId(ctx: any): Promise<string> {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error("unauthenticated");
-  }
-  return identity.subject;
-}
-
-const physicsValidator = v.object({
-  enabled: v.boolean(),
-  bodyType: v.union(v.literal("dynamic"), v.literal("static")),
-  gravityY: v.number(),
-  velocityX: v.number(),
-  velocityY: v.number(),
-  bounce: v.number(),
-  friction: v.number(),
-  allowRotation: v.boolean(),
-});
-
-const colliderValidator = v.object({
-  type: v.union(
-    v.literal("none"),
-    v.literal("box"),
-    v.literal("circle"),
-    v.literal("capsule"),
-  ),
-  offsetX: v.number(),
-  offsetY: v.number(),
-  width: v.number(),
-  height: v.number(),
-  radius: v.number(),
-});
-
-const variableValidator = v.object({
-  id: v.string(),
-  name: v.string(),
-  type: v.union(
-    v.literal("string"),
-    v.literal("integer"),
-    v.literal("float"),
-    v.literal("boolean"),
-  ),
-  defaultValue: v.union(v.number(), v.string(), v.boolean()),
-  scope: v.union(v.literal("global"), v.literal("local")),
-  objectId: v.optional(v.string()),
-});
+import {
+  colliderValidator,
+  costumeValidator,
+  physicsValidator,
+  soundValidator,
+  variableValidator,
+} from "./libraryValidators";
+import {
+  buildTemplateRenamePatch,
+  buildUserTemplateMetadata,
+  canMutateTemplateRow,
+  listVisibleTemplateRows,
+  normalizeTemplateSchemaVersion,
+  normalizeTemplateScope,
+  requireAuthenticatedUserId,
+  requireTemplateAssetRefs,
+  resolveTemplateAssetUrl,
+  templateScopeValidator,
+} from "./templateLibrary";
 
 const objectLibraryAssetRefValidator = v.object({
   assetId: v.string(),
   kind: v.union(v.literal("image"), v.literal("audio")),
-});
-
-const objectLibraryCostumeValidator = v.object({
-  id: v.string(),
-  name: v.string(),
-  bounds: v.optional(boundsValidator),
-  document: costumeDocumentValidator,
-});
-
-const objectLibrarySoundValidator = v.object({
-  id: v.string(),
-  name: v.string(),
-  assetId: v.string(),
-  duration: v.optional(v.number()),
-  trimStart: v.optional(v.number()),
-  trimEnd: v.optional(v.number()),
 });
 
 const storedObjectLibraryCostumeValidator = v.object({
@@ -116,6 +72,8 @@ const objectLibrarySoundWithUrlValidator = v.object({
 const objectLibraryWithUrlsValidator = v.object({
   _id: v.id("objectLibrary"),
   _creationTime: v.number(),
+  scope: templateScopeValidator,
+  schemaVersion: v.number(),
   name: v.string(),
   thumbnail: v.string(),
   assetRefs: v.array(objectLibraryAssetWithUrlValidator),
@@ -127,6 +85,7 @@ const objectLibraryWithUrlsValidator = v.object({
   collider: v.optional(colliderValidator),
   localVariables: v.optional(v.array(variableValidator)),
   createdAt: v.number(),
+  updatedAt: v.number(),
 });
 
 type AssetKind = "image" | "audio";
@@ -178,65 +137,72 @@ function collectObjectLibraryAssetRefs(
   return Array.from(refsById.entries()).map(([assetId, kind]) => ({ assetId, kind }));
 }
 
-async function resolveOwnedProjectAssetUrl(
-  ctx: any,
-  ownerUserId: string,
-  assetId: string,
-): Promise<string | null> {
-  const row = await ctx.db
-    .query("projectAssets")
-    .withIndex("by_ownerUserId_and_assetId", (q: any) => q.eq("ownerUserId", ownerUserId).eq("assetId", assetId))
-    .first();
-
-  if (!row) {
-    return null;
+function normalizeBounds(
+  bounds: unknown,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (!bounds || typeof bounds !== "object") {
+    return undefined;
   }
 
-  return await ctx.storage.getUrl(row.storageId as Id<"_storage">);
-}
-
-async function requireReferencedAssets(
-  ctx: any,
-  ownerUserId: string,
-  refs: Array<{ assetId: string; kind: AssetKind }>,
-): Promise<void> {
-  const uniqueRefs = Array.from(
-    refs.reduce((map, ref) => {
-      map.set(`${ref.kind}:${ref.assetId}`, ref);
-      return map;
-    }, new Map<string, { assetId: string; kind: AssetKind }>() ).values(),
-  );
-
-  const missingRefs: string[] = [];
-  for (const ref of uniqueRefs) {
-    const row = await ctx.db
-      .query("projectAssets")
-      .withIndex("by_ownerUserId_and_assetId", (q: any) => q.eq("ownerUserId", ownerUserId).eq("assetId", ref.assetId))
-      .first();
-
-    if (!row || row.kind !== ref.kind) {
-      missingRefs.push(`${ref.kind}:${ref.assetId}`);
-    }
+  const maybe = bounds as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
+  if (
+    typeof maybe.x !== "number" ||
+    typeof maybe.y !== "number" ||
+    typeof maybe.width !== "number" ||
+    typeof maybe.height !== "number"
+  ) {
+    return undefined;
   }
 
-  if (missingRefs.length > 0) {
-    throw new Error(`Missing object library asset refs: ${missingRefs.join(", ")}`);
-  }
+  return {
+    x: maybe.x,
+    y: maybe.y,
+    width: maybe.width,
+    height: maybe.height,
+  };
 }
 
 export const list = query({
   args: {},
   returns: v.array(objectLibraryWithUrlsValidator),
   handler: async (ctx) => {
-    const ownerUserId = await requireAuthenticatedUserId(ctx);
-    const items = await ctx.db
-      .query("objectLibrary")
-      .withIndex("by_ownerUserId_and_createdAt", (q) => q.eq("ownerUserId", ownerUserId))
-      .order("desc")
-      .collect();
+    const items = await listVisibleTemplateRows<{
+      _id: Id<"objectLibrary">;
+      _creationTime: number;
+      ownerUserId?: string;
+      scope?: "system" | "user";
+      schemaVersion?: number;
+      name: string;
+      thumbnail: string;
+      assetRefs?: Array<{ assetId: string; kind: AssetKind }>;
+      costumes: Array<{
+        id: string;
+        name: string;
+        storageId?: Id<"_storage">;
+        bounds?: unknown;
+        document: typeof costumeDocumentValidator.type;
+      }>;
+      sounds: Array<{
+        id: string;
+        name: string;
+        assetId?: string;
+        storageId?: Id<"_storage">;
+        duration?: number;
+        trimStart?: number;
+        trimEnd?: number;
+      }>;
+      blocklyXml: string;
+      currentCostumeIndex?: number;
+      physics?: typeof physicsValidator.type;
+      collider?: typeof colliderValidator.type;
+      localVariables?: Array<typeof variableValidator.type>;
+      createdAt: number;
+      updatedAt?: number;
+    }>(ctx, "objectLibrary");
 
     return await Promise.all(
       items.map(async (item) => {
+        const scope = normalizeTemplateScope(item.scope, item.ownerUserId);
         const derivedAssetRefs = (item.assetRefs ?? collectObjectLibraryAssetRefs(
           item.costumes as Array<{ document: { layers?: Array<{ kind?: unknown; bitmap?: { assetId?: unknown } }> } }>,
           (item.sounds || [])
@@ -248,7 +214,11 @@ export const list = query({
           derivedAssetRefs.map(async (ref) => ({
             assetId: ref.assetId,
             kind: ref.kind,
-            url: await resolveOwnedProjectAssetUrl(ctx, ownerUserId, ref.assetId),
+            url: await resolveTemplateAssetUrl(ctx, {
+              assetId: ref.assetId,
+              ownerUserId: item.ownerUserId,
+              scope,
+            }),
           })),
         );
 
@@ -264,7 +234,7 @@ export const list = query({
           }>).map(async (costume) => ({
             id: costume.id,
             name: costume.name,
-            bounds: costume.bounds,
+            bounds: normalizeBounds(costume.bounds),
             document: costume.document,
             previewUrl: costume.storageId ? await ctx.storage.getUrl(costume.storageId) : null,
           })),
@@ -295,6 +265,8 @@ export const list = query({
         return {
           _id: item._id,
           _creationTime: item._creationTime,
+          scope,
+          schemaVersion: normalizeTemplateSchemaVersion(item.schemaVersion),
           name: item.name,
           thumbnail: item.thumbnail,
           blocklyXml: item.blocklyXml,
@@ -303,6 +275,7 @@ export const list = query({
           collider: item.collider,
           localVariables: item.localVariables,
           createdAt: item.createdAt,
+          updatedAt: item.updatedAt ?? item.createdAt,
           assetRefs: resolvedAssetRefs,
           costumes,
           sounds,
@@ -325,8 +298,8 @@ export const create = mutation({
   args: {
     name: v.string(),
     thumbnail: v.string(),
-    costumes: v.array(objectLibraryCostumeValidator),
-    sounds: v.array(objectLibrarySoundValidator),
+    costumes: v.array(costumeValidator),
+    sounds: v.array(soundValidator),
     blocklyXml: v.string(),
     currentCostumeIndex: v.number(),
     physics: v.optional(physicsValidator),
@@ -337,10 +310,14 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const ownerUserId = await requireAuthenticatedUserId(ctx);
     const assetRefs = collectObjectLibraryAssetRefs(args.costumes, args.sounds);
-    await requireReferencedAssets(ctx, ownerUserId, assetRefs);
+    await requireTemplateAssetRefs(ctx, {
+      ownerUserId,
+      scope: "user",
+      refs: assetRefs,
+    });
 
     return await ctx.db.insert("objectLibrary", {
-      ownerUserId,
+      ...buildUserTemplateMetadata(ownerUserId),
       name: args.name,
       thumbnail: args.thumbnail,
       assetRefs,
@@ -351,7 +328,6 @@ export const create = mutation({
       physics: args.physics,
       collider: args.collider,
       localVariables: args.localVariables,
-      createdAt: Date.now(),
     });
   },
 });
@@ -362,7 +338,7 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const ownerUserId = await requireAuthenticatedUserId(ctx);
     const item = await ctx.db.get(args.id);
-    if (item && item.ownerUserId === ownerUserId) {
+    if (item && canMutateTemplateRow(item, ownerUserId)) {
       for (const costume of item.costumes as Array<{ storageId?: Id<"_storage"> }>) {
         if (costume.storageId) {
           await ctx.storage.delete(costume.storageId);
@@ -385,10 +361,10 @@ export const rename = mutation({
   handler: async (ctx, args) => {
     const ownerUserId = await requireAuthenticatedUserId(ctx);
     const item = await ctx.db.get(args.id);
-    if (!item || item.ownerUserId !== ownerUserId) {
+    if (!canMutateTemplateRow(item, ownerUserId)) {
       return null;
     }
-    await ctx.db.patch(args.id, { name: args.name });
+    await ctx.db.patch(args.id, buildTemplateRenamePatch(args.name));
     return null;
   },
 });
