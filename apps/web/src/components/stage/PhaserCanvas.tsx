@@ -81,8 +81,7 @@ const GIZMO_HANDLE_NAMES = [
 ];
 const PIXEL_HIT_ALPHA_TOLERANCE = 1;
 const GIZMO_STROKE_PX = 2;
-const GIZMO_HANDLE_SIZE_PX = TRANSFORM_GIZMO_HANDLE_RADIUS * 2;
-const GIZMO_EDGE_LONG_PX = 16;
+const GIZMO_EDGE_HIT_THICKNESS_PX = 16;
 const GIZMO_ROTATE_DISTANCE_PX = 24;
 const GIZMO_ROTATE_RADIUS_PX = 6;
 const GIZMO_ROTATE_RING_RADIUS_PX = TRANSFORM_GIZMO_HANDLE_RADIUS + TRANSFORM_GIZMO_ROTATE_RING_OUTSET;
@@ -2166,10 +2165,30 @@ function createEditorScene(
   createGroupHandle('handle_ne', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('ne'));
   createGroupHandle('handle_sw', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('sw'));
   createGroupHandle('handle_se', scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff), getTransformGizmoCornerCursor('se'));
-  createGroupHandle('handle_n', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0xffffff), getTransformGizmoEdgeCursor('vertical'));
-  createGroupHandle('handle_e', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0xffffff), getTransformGizmoEdgeCursor('horizontal'));
-  createGroupHandle('handle_s', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0xffffff), getTransformGizmoEdgeCursor('vertical'));
-  createGroupHandle('handle_w', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0xffffff), getTransformGizmoEdgeCursor('horizontal'));
+  createGroupHandle(
+    'handle_n',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('vertical'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_e',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('horizontal'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_s',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('vertical'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_w',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('horizontal'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
   const createRotateGroupHandle = (name: string, corner: TransformGizmoCorner) => createGroupHandle(
     name,
     scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001),
@@ -2382,7 +2401,18 @@ function createEditorScene(
       const handle = groupHandles.get(name);
       if (!handle) return;
       handle.setPosition(x, y);
-      handle.setScale(uiScale, uiScale);
+      const isEdgeHandle = name === 'handle_n' || name === 'handle_e' || name === 'handle_s' || name === 'handle_w';
+      if (isEdgeHandle && handle instanceof Phaser.GameObjects.Rectangle) {
+        const isHorizontalEdge = name === 'handle_n' || name === 'handle_s';
+        const displayWidth = isHorizontalEdge ? frame.width : GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom;
+        const displayHeight = isHorizontalEdge ? GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom : frame.height;
+        handle.setSize(displayWidth, displayHeight);
+        handle.setDisplaySize(displayWidth, displayHeight);
+        handle.setRotation(rotation);
+      } else {
+        handle.setScale(uiScale, uiScale);
+        handle.setRotation(0);
+      }
       if (handle.input) {
         switch (name) {
           case 'handle_nw':
@@ -3499,6 +3529,11 @@ function createObjectVisual(
       handle.setStrokeStyle(1.5, STAGE_GIZMO_COLOR, 1);
       return handle;
     };
+    const styleSingleObjectEdgeHitArea = <T extends Phaser.GameObjects.Shape>(handle: T) => {
+      handle.setFillStyle(0xffffff, 0.001);
+      handle.setStrokeStyle(0, STAGE_GIZMO_COLOR, 0);
+      return handle;
+    };
 
     // Corner handles (for proportional scaling)
     const cornerNames = ['nw', 'ne', 'sw', 'se'];
@@ -3520,13 +3555,13 @@ function createObjectVisual(
     // Edge handles (for axis scaling)
     const edgeNames = ['n', 's', 'e', 'w'];
     for (let i = 0; i < 4; i++) {
-      const isVertical = i < 2;
-      const handle = styleSingleObjectHandle(
+      const isHorizontalEdge = i < 2;
+      const handle = styleSingleObjectEdgeHitArea(
         scene.add.rectangle(
           0,
           0,
-          isVertical ? GIZMO_EDGE_LONG_PX : GIZMO_HANDLE_SIZE_PX,
-          isVertical ? GIZMO_HANDLE_SIZE_PX : GIZMO_EDGE_LONG_PX,
+          isHorizontalEdge ? 1 : GIZMO_EDGE_HIT_THICKNESS_PX,
+          isHorizontalEdge ? GIZMO_EDGE_HIT_THICKNESS_PX : 1,
           0xffffff,
         ),
       );
@@ -3534,7 +3569,7 @@ function createObjectVisual(
       handle.setVisible(false);
       handle.setInteractive({
         useHandCursor: false,
-        cursor: getTransformGizmoEdgeCursor(isVertical ? 'vertical' : 'horizontal'),
+        cursor: getTransformGizmoEdgeCursor(isHorizontalEdge ? 'vertical' : 'horizontal'),
       });
       scene.input.setDraggable(handle);
       container.add(handle);
@@ -3792,10 +3827,24 @@ function createObjectVisual(
       const s = container.getByName('handle_s') as Phaser.GameObjects.Rectangle;
       const e = container.getByName('handle_e') as Phaser.GameObjects.Rectangle;
       const w = container.getByName('handle_w') as Phaser.GameObjects.Rectangle;
-      if (n) n.setScale(invUiScaleX, invUiScaleY);
-      if (s) s.setScale(invUiScaleX, invUiScaleY);
-      if (e) e.setScale(invUiScaleX, invUiScaleY);
-      if (w) w.setScale(invUiScaleX, invUiScaleY);
+      const horizontalEdgeThickness = GIZMO_EDGE_HIT_THICKNESS_PX / (absScaleY * cameraZoom);
+      const verticalEdgeThickness = GIZMO_EDGE_HIT_THICKNESS_PX / (absScaleX * cameraZoom);
+      if (n) {
+        n.setSize(selRect.width, horizontalEdgeThickness);
+        n.setDisplaySize(selRect.width, horizontalEdgeThickness);
+      }
+      if (s) {
+        s.setSize(selRect.width, horizontalEdgeThickness);
+        s.setDisplaySize(selRect.width, horizontalEdgeThickness);
+      }
+      if (e) {
+        e.setSize(verticalEdgeThickness, selRect.height);
+        e.setDisplaySize(verticalEdgeThickness, selRect.height);
+      }
+      if (w) {
+        w.setSize(verticalEdgeThickness, selRect.height);
+        w.setDisplaySize(verticalEdgeThickness, selRect.height);
+      }
       if (n?.input) n.input.cursor = getTransformGizmoEdgeCursor('vertical', rotation);
       if (s?.input) s.input.cursor = getTransformGizmoEdgeCursor('vertical', rotation);
       if (e?.input) e.input.cursor = getTransformGizmoEdgeCursor('horizontal', rotation);

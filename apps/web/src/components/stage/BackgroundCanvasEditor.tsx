@@ -112,19 +112,15 @@ import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   TRANSFORM_GIZMO_HANDLE_STROKE,
   computeCornerScaleResult,
-  computeEdgeScaleResult,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
   getTransformGizmoCornerCursor,
-  getTransformGizmoEdgeCursor,
-  getTransformGizmoEdgeSegments,
   getTransformGizmoHandleFrame,
   getTransformGizmoRotateCursor,
-  isPointNearTransformEdge,
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
 } from '@/lib/editor/unifiedTransformGizmo';
-import type { TransformGizmoCorner, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
 import { BackgroundLayerPanel } from './BackgroundLayerPanel';
 import {
   BackgroundVectorCanvas,
@@ -229,13 +225,9 @@ type BackgroundFloatingSelectionTransformSession =
       selection: BackgroundFloatingSelection;
       anchorScreen: ScreenPoint;
       centerScreen: ScreenPoint;
-      scaleMode: 'corner' | 'edge';
-      corner: TransformGizmoCorner | null;
-      side: TransformGizmoSide | null;
-      handleXSign: -1 | 1 | null;
-      handleYSign: -1 | 1 | null;
-      edge: 'horizontal' | 'vertical' | null;
-      handleSign: -1 | 1 | null;
+      corner: TransformGizmoCorner;
+      handleXSign: -1 | 1;
+      handleYSign: -1 | 1;
       rotation: number;
       sourceWidth: number;
       sourceHeight: number;
@@ -250,10 +242,6 @@ type BackgroundFloatingSelectionHitTarget =
   | 'scale-ne'
   | 'scale-se'
   | 'scale-sw'
-  | 'scale-n'
-  | 'scale-e'
-  | 'scale-s'
-  | 'scale-w'
   | 'rotate-nw'
   | 'rotate-ne'
   | 'rotate-se'
@@ -2348,24 +2336,6 @@ export function BackgroundCanvasEditor() {
       }
     }
 
-    const frame = {
-      center: geometry.centerScreen,
-      corners: geometry.corners,
-    };
-    const edgeSegments = getTransformGizmoEdgeSegments(frame);
-    const edgeTargets: Array<[BackgroundFloatingSelectionHitTarget, TransformGizmoSide]> = [
-      ['scale-n', 'n'],
-      ['scale-e', 'e'],
-      ['scale-s', 's'],
-      ['scale-w', 'w'],
-    ];
-    for (const [target, side] of edgeTargets) {
-      const segment = edgeSegments[side];
-      if (isPointNearTransformEdge(screenPoint, segment.start, segment.end, TRANSFORM_GIZMO_HANDLE_RADIUS + 4)) {
-        return target;
-      }
-    }
-
     const local = rotatePoint(
       {
         x: screenPoint.x - geometry.centerScreen.x,
@@ -3058,29 +3028,16 @@ export function BackgroundCanvasEditor() {
                 startRotation: floatingSelection.rotation,
               };
             } else {
-              const frame = {
-                center: geometry.centerScreen,
-                corners: geometry.corners,
-              };
-              const edgeSegments = getTransformGizmoEdgeSegments(frame);
               const handleMap: Record<Exclude<BackgroundFloatingSelectionHitTarget, 'body' | `rotate-${TransformGizmoCorner}`>, {
                 anchor: ScreenPoint;
-                scaleMode: 'corner' | 'edge';
-                corner: TransformGizmoCorner | null;
-                side: TransformGizmoSide | null;
-                handleXSign: -1 | 1 | null;
-                handleYSign: -1 | 1 | null;
-                edge: 'horizontal' | 'vertical' | null;
-                handleSign: -1 | 1 | null;
+                corner: TransformGizmoCorner;
+                handleXSign: -1 | 1;
+                handleYSign: -1 | 1;
               }> = {
-                'scale-nw': { anchor: geometry.corners.se, scaleMode: 'corner', corner: 'nw', side: null, handleXSign: -1, handleYSign: -1, edge: null, handleSign: null },
-                'scale-ne': { anchor: geometry.corners.sw, scaleMode: 'corner', corner: 'ne', side: null, handleXSign: 1, handleYSign: -1, edge: null, handleSign: null },
-                'scale-se': { anchor: geometry.corners.nw, scaleMode: 'corner', corner: 'se', side: null, handleXSign: 1, handleYSign: 1, edge: null, handleSign: null },
-                'scale-sw': { anchor: geometry.corners.ne, scaleMode: 'corner', corner: 'sw', side: null, handleXSign: -1, handleYSign: 1, edge: null, handleSign: null },
-                'scale-n': { anchor: edgeSegments.s.center, scaleMode: 'edge', corner: null, side: 'n', handleXSign: null, handleYSign: null, edge: edgeSegments.n.edge, handleSign: edgeSegments.n.handleSign },
-                'scale-e': { anchor: edgeSegments.w.center, scaleMode: 'edge', corner: null, side: 'e', handleXSign: null, handleYSign: null, edge: edgeSegments.e.edge, handleSign: edgeSegments.e.handleSign },
-                'scale-s': { anchor: edgeSegments.n.center, scaleMode: 'edge', corner: null, side: 's', handleXSign: null, handleYSign: null, edge: edgeSegments.s.edge, handleSign: edgeSegments.s.handleSign },
-                'scale-w': { anchor: edgeSegments.e.center, scaleMode: 'edge', corner: null, side: 'w', handleXSign: null, handleYSign: null, edge: edgeSegments.w.edge, handleSign: edgeSegments.w.handleSign },
+                'scale-nw': { anchor: geometry.corners.se, corner: 'nw', handleXSign: -1, handleYSign: -1 },
+                'scale-ne': { anchor: geometry.corners.sw, corner: 'ne', handleXSign: 1, handleYSign: -1 },
+                'scale-se': { anchor: geometry.corners.nw, corner: 'se', handleXSign: 1, handleYSign: 1 },
+                'scale-sw': { anchor: geometry.corners.ne, corner: 'sw', handleXSign: -1, handleYSign: 1 },
               };
               const handle = handleMap[hitTarget];
               floatingSelectionTransformRef.current = {
@@ -3088,13 +3045,9 @@ export function BackgroundCanvasEditor() {
                 selection: floatingSelection,
                 anchorScreen: handle.anchor,
                 centerScreen: geometry.centerScreen,
-                scaleMode: handle.scaleMode,
                 corner: handle.corner,
-                side: handle.side,
                 handleXSign: handle.handleXSign,
                 handleYSign: handle.handleYSign,
-                edge: handle.edge,
-                handleSign: handle.handleSign,
                 rotation: floatingSelection.rotation,
                 sourceWidth: floatingSelection.canvas.width,
                 sourceHeight: floatingSelection.canvas.height,
@@ -3238,34 +3191,19 @@ export function BackgroundCanvasEditor() {
         floatingSelectionTransform.proportional = proportional;
         const baseWidth = Math.max(1, floatingSelectionTransform.sourceWidth * Math.abs(floatingSelectionTransform.startScaleX) * zoom);
         const baseHeight = Math.max(1, floatingSelectionTransform.sourceHeight * Math.abs(floatingSelectionTransform.startScaleY) * zoom);
-        const referencePoint = centered ? floatingSelectionTransform.centerScreen : floatingSelectionTransform.anchorScreen;
-        const scaled = floatingSelectionTransform.scaleMode === 'edge'
-          ? computeEdgeScaleResult({
-            referencePoint,
-            pointerPoint: screen,
-            edge: floatingSelectionTransform.edge ?? 'horizontal',
-            handleSign: floatingSelectionTransform.handleSign ?? 1,
-            rotationRadians: floatingSelectionTransform.rotation,
-            baseWidth,
-            baseHeight,
-            minWidth: FLOATING_SELECTION_MIN_SCREEN_SIZE,
-            minHeight: FLOATING_SELECTION_MIN_SCREEN_SIZE,
-            proportional,
-            centered,
-          })
-          : computeCornerScaleResult({
-            referencePoint,
-            pointerPoint: screen,
-            handleXSign: floatingSelectionTransform.handleXSign ?? 1,
-            handleYSign: floatingSelectionTransform.handleYSign ?? 1,
-            rotationRadians: floatingSelectionTransform.rotation,
-            baseWidth,
-            baseHeight,
-            minWidth: FLOATING_SELECTION_MIN_SCREEN_SIZE,
-            minHeight: FLOATING_SELECTION_MIN_SCREEN_SIZE,
-            proportional,
-            centered,
-          });
+        const scaled = computeCornerScaleResult({
+          referencePoint: centered ? floatingSelectionTransform.centerScreen : floatingSelectionTransform.anchorScreen,
+          pointerPoint: screen,
+          handleXSign: floatingSelectionTransform.handleXSign,
+          handleYSign: floatingSelectionTransform.handleYSign,
+          rotationRadians: floatingSelectionTransform.rotation,
+          baseWidth,
+          baseHeight,
+          minWidth: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+          minHeight: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+          proportional,
+          centered,
+        });
         floatingSelectionTransform.selection.centerWorld = screenToWorldFromCanvasPoint(scaled.center);
         floatingSelectionTransform.selection.scaleX = floatingSelectionTransform.startScaleX * (
           scaled.signedWidth / Math.max(baseWidth, 0.0001)
@@ -3286,13 +3224,9 @@ export function BackgroundCanvasEditor() {
         if (hitTarget === 'body') {
           canvas.style.cursor = 'move';
         } else if (hitTarget?.startsWith('scale-')) {
-          const scaleTarget = hitTarget.slice('scale-'.length);
-          canvas.style.cursor = (
-            scaleTarget === 'n' || scaleTarget === 's'
-              ? getTransformGizmoEdgeCursor('vertical', rotationRadians)
-              : scaleTarget === 'e' || scaleTarget === 'w'
-                ? getTransformGizmoEdgeCursor('horizontal', rotationRadians)
-                : getTransformGizmoCornerCursor(scaleTarget as TransformGizmoCorner, rotationRadians)
+          canvas.style.cursor = getTransformGizmoCornerCursor(
+            hitTarget.slice('scale-'.length) as TransformGizmoCorner,
+            rotationRadians,
           );
         } else if (hitTarget?.startsWith('rotate-')) {
           canvas.style.cursor = getTransformGizmoRotateCursor(

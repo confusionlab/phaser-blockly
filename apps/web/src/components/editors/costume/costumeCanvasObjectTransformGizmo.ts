@@ -8,14 +8,11 @@ import {
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
   getTransformGizmoCornerCursor,
-  getTransformGizmoEdgeCursor,
-  getTransformGizmoEdgeSegments,
   getTransformGizmoRotateCursor,
-  isPointNearTransformEdge,
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
 } from '@/lib/editor/unifiedTransformGizmo';
-import type { TransformGizmoCorner, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
 import {
   OBJECT_SELECTION_PADDING,
   VECTOR_SELECTION_BORDER_OPACITY,
@@ -58,13 +55,6 @@ const TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER: Record<string, TransformGizmoCorner>
   bl: 'sw',
 };
 
-const EDGE_CONTROL_KEY_TO_SIDE: Record<string, TransformGizmoSide> = {
-  mt: 'n',
-  mr: 'e',
-  mb: 's',
-  ml: 'w',
-};
-
 function invertTransformOrigin(origin: unknown) {
   switch (origin) {
     case 'left':
@@ -101,25 +91,6 @@ function getCornerRadius(fabricObject: any) {
   return Math.max(TRANSFORM_GIZMO_HANDLE_RADIUS, Number(fabricObject?.cornerSize) * 0.5 || 0);
 }
 
-function getObjectTransformFrame(fabricObject: any) {
-  const coords = fabricObject?.oCoords;
-  if (!coords?.tl || !coords?.tr || !coords?.br || !coords?.bl) {
-    return null;
-  }
-  return {
-    center: {
-      x: (coords.tl.x + coords.tr.x + coords.br.x + coords.bl.x) * 0.25,
-      y: (coords.tl.y + coords.tr.y + coords.br.y + coords.bl.y) * 0.25,
-    },
-    corners: {
-      nw: coords.tl,
-      ne: coords.tr,
-      se: coords.br,
-      sw: coords.bl,
-    },
-  };
-}
-
 function getFabricObjectRotationRadians(fabricObject: any) {
   const rotationDegrees = typeof fabricObject?.getTotalAngle === 'function'
     ? fabricObject.getTotalAngle()
@@ -140,45 +111,6 @@ function shouldActivateScaleControl(
     return false;
   }
   return isPointInsideTransformHandle(pointer, getControlCenterFromCoords(coords), getCornerRadius(fabricObject));
-}
-
-function shouldActivateEdgeScaleControl(
-  controlKey: string,
-  fabricObject: any,
-  pointer: { x: number; y: number },
-) {
-  if (fabricObject.canvas?.getActiveObject() !== fabricObject) {
-    return false;
-  }
-  if (!fabricObject.isControlVisible(controlKey)) {
-    return false;
-  }
-
-  const side = EDGE_CONTROL_KEY_TO_SIDE[controlKey];
-  if (!side) {
-    return false;
-  }
-
-  const frame = getObjectTransformFrame(fabricObject);
-  if (!frame) {
-    return false;
-  }
-
-  const edgeSegments = getTransformGizmoEdgeSegments(frame);
-  const edgeSegment = edgeSegments[side];
-  const cornerRadius = getCornerRadius(fabricObject);
-  const adjacentCorners = side === 'n'
-    ? [frame.corners.nw, frame.corners.ne]
-    : side === 'e'
-      ? [frame.corners.ne, frame.corners.se]
-      : side === 's'
-        ? [frame.corners.sw, frame.corners.se]
-        : [frame.corners.nw, frame.corners.sw];
-  if (adjacentCorners.some((cornerPoint) => isPointInsideTransformHandle(pointer, cornerPoint, cornerRadius))) {
-    return false;
-  }
-
-  return isPointNearTransformEdge(pointer, edgeSegment.start, edgeSegment.end, cornerRadius);
 }
 
 function shouldActivateRotateControl(
@@ -337,21 +269,6 @@ const rotateControlActionHandler = ((eventData: Record<string, any>, transform: 
   return controlsUtils.rotationWithSnapping(eventData, transform, x, y);
 }) as any;
 
-const unifiedEdgeScaleActionHandler = ((eventData: Record<string, any>, transform: any, x: number, y: number) => {
-  clearFabricTransformGuide(transform?.target);
-  const side = EDGE_CONTROL_KEY_TO_SIDE[transform?.corner ?? ''];
-  if (!side) {
-    return false;
-  }
-  const scaleProportionally = isProportionalScale(eventData, transform?.target);
-  if (scaleProportionally) {
-    return controlsUtils.scalingEqually(eventData, transform, x, y);
-  }
-  return side === 'e' || side === 'w'
-    ? controlsUtils.scalingX(eventData, transform, x, y)
-    : controlsUtils.scalingY(eventData, transform, x, y);
-}) as any;
-
 function createUnifiedScaleControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER, x: number, y: number) {
   const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[cornerKey];
   return new Control({
@@ -386,33 +303,12 @@ function createUnifiedRotateControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY
   });
 }
 
-function createUnifiedEdgeScaleControl(controlKey: keyof typeof EDGE_CONTROL_KEY_TO_SIDE, x: number, y: number) {
-  const side = EDGE_CONTROL_KEY_TO_SIDE[controlKey];
-  return new Control({
-    x,
-    y,
-    actionName: 'scale',
-    actionHandler: unifiedEdgeScaleActionHandler,
-    cursorStyleHandler: (_eventData, _control, fabricObject) => (
-      getTransformGizmoEdgeCursor(side === 'n' || side === 's' ? 'vertical' : 'horizontal', getFabricObjectRotationRadians(fabricObject))
-    ),
-    render: () => undefined,
-    shouldActivate: ((controlName: string, fabricObject: any, pointer: any) => (
-      shouldActivateEdgeScaleControl(controlName, fabricObject, pointer)
-    )) as any,
-  });
-}
-
 export function createUnifiedObjectTransformControls() {
   return {
     tl: createUnifiedScaleControl('tl', -0.5, -0.5),
     tr: createUnifiedScaleControl('tr', 0.5, -0.5),
     br: createUnifiedScaleControl('br', 0.5, 0.5),
     bl: createUnifiedScaleControl('bl', -0.5, 0.5),
-    mt: createUnifiedEdgeScaleControl('mt', 0, -0.5),
-    mr: createUnifiedEdgeScaleControl('mr', 0.5, 0),
-    mb: createUnifiedEdgeScaleControl('mb', 0, 0.5),
-    ml: createUnifiedEdgeScaleControl('ml', -0.5, 0),
     tl_rotate: createUnifiedRotateControl('tl', -0.5, -0.5),
     tr_rotate: createUnifiedRotateControl('tr', 0.5, -0.5),
     br_rotate: createUnifiedRotateControl('br', 0.5, 0.5),
