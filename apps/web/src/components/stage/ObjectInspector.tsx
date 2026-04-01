@@ -25,6 +25,7 @@ import {
   endHistoryTransaction,
   runInHistoryTransaction,
 } from '@/store/universalHistory';
+import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
 
@@ -305,6 +306,7 @@ export function ObjectInspector() {
               objects={selectedObjects}
               sceneId={selectedSceneId}
               updateObject={updateObject}
+              updateComponent={updateComponent}
               openCostumeColliderEditor={openCostumeColliderEditor}
             />
           ) : null}
@@ -365,10 +367,17 @@ interface ObjectPropertiesProps {
   objects: GameObject[];
   sceneId: string | null;
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
+  updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
   openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
 }
 
-function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderEditor }: ObjectPropertiesProps) {
+function ObjectProperties({
+  objects,
+  sceneId,
+  updateObject,
+  updateComponent,
+  openCostumeColliderEditor,
+}: ObjectPropertiesProps) {
   const dragStartValuesRef = useRef<Partial<Record<'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation', Map<string, number>>>>({});
   const activeDragTransactionsRef = useRef(0);
   const object = objects[0];
@@ -552,6 +561,9 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
   };
 
   const anyComponentInstance = objects.some((selectedObj) => !!selectedObj.componentId);
+  const syncedComponent = object.componentId
+    ? components.find((component) => component.id === object.componentId) ?? null
+    : null;
   const effectiveObjectProps = getEffectiveObjectProps(object, components);
   const effectivePhysics = effectiveObjectProps.physics;
   const effectiveCollider = effectiveObjectProps.collider;
@@ -707,22 +719,42 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
       {/* Physics is single-object only */}
       {!isMultiSelection && (
         <>
-          <PhysicsToggle
-            object={object}
-            sceneId={sceneId}
-            updateObject={updateObject}
-            physics={effectivePhysics}
-            collider={effectiveCollider}
-          />
-          <PhysicsProperties
-            object={object}
-            sceneId={sceneId}
-            updateObject={updateObject}
-            physics={effectivePhysics}
-            collider={effectiveCollider}
-            enabled={!!effectivePhysics?.enabled}
-            onEditCollider={() => openCostumeColliderEditor(sceneId, object.id)}
-          />
+          {syncedComponent ? (
+            <>
+              <ComponentPhysicsToggle
+                component={syncedComponent}
+                updateComponent={updateComponent}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+              />
+              <ComponentPhysicsProperties
+                component={syncedComponent}
+                updateComponent={updateComponent}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+                enabled={!!effectivePhysics?.enabled}
+              />
+            </>
+          ) : (
+            <>
+              <PhysicsToggle
+                object={object}
+                sceneId={sceneId}
+                updateObject={updateObject}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+              />
+              <PhysicsProperties
+                object={object}
+                sceneId={sceneId}
+                updateObject={updateObject}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+                enabled={!!effectivePhysics?.enabled}
+                onEditCollider={() => openCostumeColliderEditor(sceneId, object.id)}
+              />
+            </>
+          )}
         </>
       )}
     </div>
@@ -1158,12 +1190,18 @@ function ComponentPhysicsProperties({
   const resolvedCollider = collider ?? createDefaultColliderConfig('circle');
 
   const updatePhysics = (updates: Partial<PhysicsConfig>) => {
+    if (!enabled) {
+      return;
+    }
     updateComponent(component.id, {
       physics: { ...resolvedPhysics, ...updates },
     });
   };
 
   const updateColliderType = (type: ColliderType) => {
+    if (!enabled) {
+      return;
+    }
     updateComponent(component.id, {
       collider: { ...resolvedCollider, type },
     });
@@ -1172,7 +1210,13 @@ function ComponentPhysicsProperties({
   const syncedLabelClass = 'text-purple-600';
 
   return (
-    <div className={cn('space-y-4', !enabled && 'opacity-60')}>
+    <div
+      aria-hidden={!enabled}
+      className={cn(
+        'mt-3 w-full min-w-0 space-y-4',
+        !enabled && 'hidden',
+      )}
+    >
       <div>
         <div className={`text-xs mb-2 ${syncedLabelClass}`}>Body Type</div>
         <div className="inspector-select-row">

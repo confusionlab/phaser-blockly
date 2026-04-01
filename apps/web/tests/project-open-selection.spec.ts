@@ -113,4 +113,35 @@ test.describe('Project open selection', () => {
       selectedComponentId: null,
     });
   });
+
+  test('openProject preserves valid multi-selection when reopening the same project', async () => {
+    const { useProjectStore, useEditorStore } = await loadStores();
+    const project = createDefaultProject('Reopen selection fixture');
+    const scene = project.scenes[0]!;
+    scene.objects = [];
+
+    const objectOne = createDefaultGameObject('Object 1');
+    objectOne.id = 'object_one';
+    objectOne.order = 0;
+    const objectTwo = createDefaultGameObject('Object 2');
+    objectTwo.id = 'object_two';
+    objectTwo.order = 1;
+    const objectThree = createDefaultGameObject('Object 3');
+    objectThree.id = 'object_three';
+    objectThree.order = 2;
+    scene.objects = [objectOne, objectTwo, objectThree];
+
+    useProjectStore.getState().openProject(project);
+    useEditorStore.getState().selectObjects([objectOne.id, objectTwo.id], objectTwo.id, { recordHistory: false });
+
+    useProjectStore.getState().openProject(project);
+
+    expect(useEditorStore.getState()).toMatchObject({
+      selectedSceneId: scene.id,
+      selectedFolderId: null,
+      selectedObjectId: objectTwo.id,
+      selectedObjectIds: [objectOne.id, objectTwo.id],
+      selectedComponentId: null,
+    });
+  });
 });

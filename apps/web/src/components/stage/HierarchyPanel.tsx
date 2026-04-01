@@ -19,7 +19,7 @@ import { SpriteShelf } from './SpriteShelf';
 import { ObjectLibraryBrowser } from '@/components/dialogs/ObjectLibraryBrowser';
 import { SceneLibraryBrowser } from '@/components/dialogs/SceneLibraryBrowser';
 import {
-  Component,
+  Earth,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -31,6 +31,7 @@ import {
   Trash2,
 } from '@/components/ui/icons';
 import { ShelfTreeRow } from './ShelfTreeRow';
+import { ShelfObjectThumbnail } from './ShelfObjectThumbnail';
 import { getShelfRowDropPosition, getTransparentShelfDragImage, setDraggedComponentId } from './shelfDrag';
 import type { ComponentDefinition, ComponentFolder, HierarchyFolder, Scene, SceneFolder } from '@/types';
 import {
@@ -582,19 +583,14 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
       onPointerLeave={() => setIsPaneHovered(false)}
     >
       <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.row, 'h-auto border-b-0 py-1')}>
-        <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
-          <div />
-          <div className="flex items-center justify-center gap-1">
-            <Button type="button" size="icon-xs" variant="ghost" onClick={onAddItem} title={`Add ${itemLabel}`}>
-              <Plus className="size-4" />
-            </Button>
-            <Button type="button" size="icon-xs" variant="ghost" onClick={onAddFolder} title="Add Folder">
-              <FolderPlus className="size-4" />
-            </Button>
-          </div>
-          <div className="flex items-center justify-end gap-1">
-            {renderHeaderActions}
-          </div>
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-1">
+          <Button type="button" size="icon-xs" variant="ghost" onClick={onAddItem} title={`Add ${itemLabel}`}>
+            <Plus className="size-4" />
+          </Button>
+          <Button type="button" size="icon-xs" variant="ghost" onClick={onAddFolder} title="Add Folder">
+            <FolderPlus className="size-4" />
+          </Button>
+          {renderHeaderActions}
         </div>
       </div>
       <ScrollArea className="min-h-0 flex-1" onContextMenu={handleEmptyPaneContextMenu}>
@@ -874,6 +870,7 @@ function SceneHierarchyTab() {
           );
         }}
         onMove={(nextScenes, nextFolders) => updateSceneOrganization(nextScenes, nextFolders)}
+        renderItemIcon={() => <Earth className="size-4 shrink-0 text-muted-foreground" />}
         renderHeaderActions={(
           <Button
             type="button"
@@ -909,7 +906,7 @@ function SceneHierarchyTab() {
               }}
               className="h-8 w-full justify-start rounded-none"
             >
-              <Layers3 className="size-4" />
+              <Earth className="size-4" />
               Switch to Scene
             </Button>
           </>
@@ -1029,7 +1026,13 @@ function ComponentHierarchyTab() {
             <Library className="size-4" />
           </Button>
         )}
-        renderItemIcon={() => <Component className="size-4 shrink-0 text-muted-foreground" />}
+        renderItemIcon={(component) => (
+          <ShelfObjectThumbnail
+            name={component.name}
+            costumes={component.costumes}
+            currentCostumeIndex={component.currentCostumeIndex}
+          />
+        )}
         onItemDragStart={(event, component) => {
           setDraggedComponentId(component.id);
           event.dataTransfer.effectAllowed = 'copyMove';

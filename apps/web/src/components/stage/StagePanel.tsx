@@ -8,7 +8,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
-import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw, LayoutGrid, Shapes, Component } from '@/components/ui/icons';
+import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw, Earth, Shapes, Component } from '@/components/ui/icons';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { cn } from '@/lib/utils';
@@ -21,7 +21,7 @@ interface StagePanelProps {
 }
 
 const hierarchyTabs: SegmentedControlOption<HierarchyTab>[] = [
-  { value: 'scene', label: 'Scene', icon: <LayoutGrid className="size-3.5" /> },
+  { value: 'scene', label: 'Scene', icon: <Earth className="size-3.5" /> },
   { value: 'object', label: 'Object', icon: <Shapes className="size-3.5" /> },
   { value: 'component', label: 'Component', icon: <Component className="size-3.5" /> },
 ];

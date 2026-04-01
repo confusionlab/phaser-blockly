@@ -123,7 +123,7 @@ export function ShelfTreeRow({
               disabled={!hasChildren}
               aria-label={hasChildren ? `Toggle ${name}` : undefined}
               className={`-mx-1 flex self-stretch shrink-0 items-center justify-center rounded px-1 transition-opacity disabled:pointer-events-none ${
-                showControls ? 'opacity-100' : 'opacity-0'
+                hasChildren || showControls ? 'opacity-100' : 'opacity-0'
               }`}
               onClick={onToggleChildren}
             >

@@ -8,7 +8,6 @@ import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { Button } from '@/components/ui/button';
-import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
 import {
@@ -84,6 +83,7 @@ import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize'
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { ShelfTreeRow } from './ShelfTreeRow';
+import { ShelfObjectThumbnail } from './ShelfObjectThumbnail';
 import { getShelfRowDropPosition, getTransparentShelfDragImage } from './shelfDrag';
 
 function remapLocalVariablesForInsertion(
@@ -1573,44 +1573,13 @@ export function SpriteShelf({
         leadingIcon={item.type === 'folder' ? (
           isExpanded ? <FolderOpen className="size-[1.125rem] shrink-0" /> : <Folder className="size-[1.125rem] shrink-0" />
         ) : (
-          effectiveProps && effectiveProps.costumes.length > 0 ? (() => {
-            const costume = effectiveProps.costumes[effectiveProps.currentCostumeIndex];
-            const bounds = costume?.bounds;
-            if (bounds && bounds.width > 0 && bounds.height > 0) {
-              const scale = Math.min(1, 24 / Math.max(bounds.width, bounds.height));
-              const localBounds = getCostumeBoundsInAssetSpace(bounds, costume?.assetFrame);
-              return (
-                <div
-                  className="absolute"
-                  style={{
-                    backgroundImage: `url(${costume.assetId})`,
-                    backgroundPosition: localBounds ? `${-localBounds.x}px ${-localBounds.y}px` : '0 0',
-                    backgroundSize: costume?.assetFrame
-                      ? `${costume.assetFrame.width}px ${costume.assetFrame.height}px`
-                      : '1024px 1024px',
-                    backgroundRepeat: 'no-repeat',
-                    transform: `scale(${scale})`,
-                    transformOrigin: 'top left',
-                    width: bounds.width,
-                    height: bounds.height,
-                    left: '50%',
-                    top: '50%',
-                    marginLeft: (-bounds.width * scale) / 2,
-                    marginTop: (-bounds.height * scale) / 2,
-                  }}
-                />
-              );
-            }
-            return (
-              <img
-                src={costume?.assetId}
-                alt={object?.name ?? 'Object'}
-                className="h-full w-full object-contain"
-              />
-            );
-          })() : (
-            <span className="text-sm">📦</span>
-          )
+          effectiveProps ? (
+            <ShelfObjectThumbnail
+              name={object?.name ?? 'Object'}
+              costumes={effectiveProps.costumes}
+              currentCostumeIndex={effectiveProps.currentCostumeIndex}
+            />
+          ) : null
         )}
         content={(
           <InlineRenameField
@@ -1670,9 +1639,9 @@ export function SpriteShelf({
       onPointerLeave={() => setIsShelfHovered(false)}
     >
       <div className={`${panelHeaderClassNames.chrome} ${panelHeaderClassNames.row} h-auto border-b-0 py-1`}>
-        <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1">
-          <div className="flex min-w-0 items-center justify-start">
-            {showQuickSceneSwitch ? (
+        <div className="relative flex min-w-0 flex-1 items-center justify-center gap-1">
+          {showQuickSceneSwitch ? (
+            <div className="absolute left-0 flex min-w-0 items-center justify-start">
               <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -1697,30 +1666,25 @@ export function SpriteShelf({
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
 
-          <div className="flex items-center justify-center gap-1">
-            <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
-              <Plus className="size-4" />
+          <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
+            <Plus className="size-4" />
+          </Button>
+          <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
+            <FolderPlus className="size-4" />
+          </Button>
+          {showObjectLibraryButton ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => setShowLibrary(true)}
+              title="Object Library"
+            >
+              <Library className="size-4" />
             </Button>
-            <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
-              <FolderPlus className="size-4" />
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-end gap-1">
-            {showObjectLibraryButton ? (
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                onClick={() => setShowLibrary(true)}
-                title="Object Library"
-              >
-                <Library className="size-4" />
-              </Button>
-            ) : null}
-          </div>
+          ) : null}
         </div>
       </div>
 

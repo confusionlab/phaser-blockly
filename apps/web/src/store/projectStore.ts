@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import type {
   Project,
   Scene,
@@ -160,6 +160,11 @@ interface ProjectStore {
   getObject: (sceneId: string, objectId: string) => GameObject | undefined;
   getComponent: (componentId: string) => ComponentDefinition | undefined;
 }
+
+type ProjectStoreHook = UseBoundStore<StoreApi<ProjectStore>>;
+type ProjectStoreGlobal = typeof globalThis & {
+  __pochaProjectStore?: ProjectStoreHook;
+};
 
 let lastUpdatedAtMs = 0;
 
@@ -714,7 +719,8 @@ function normalizeProject(project: Project): Project {
   });
 }
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
+function createProjectStore(): ProjectStoreHook {
+  return create<ProjectStore>((set, get) => ({
   project: null,
   isDirty: false,
 
@@ -727,11 +733,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   openProject: (project: Project) => {
+    const previousProject = get().project;
     const normalizedProject = normalizeProject(project);
     seedUpdatedAt(normalizedProject);
     set({ project: normalizedProject, isDirty: false });
     resetHistory();
-    useEditorStore.getState().initializeSelectionForProject(normalizedProject, { recordHistory: false });
+    const editorStore = useEditorStore.getState();
+    if (previousProject?.id === normalizedProject.id) {
+      editorStore.reconcileSelectionToProject(normalizedProject, { recordHistory: false });
+      return;
+    }
+    editorStore.initializeSelectionForProject(normalizedProject, { recordHistory: false });
   },
 
   saveCurrentProject: async () => {
@@ -2102,7 +2114,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { project } = get();
     return (project?.components || []).find(c => c.id === componentId);
   },
-}));
+  }));
+}
+
+const projectStoreGlobal = globalThis as ProjectStoreGlobal;
+
+export const useProjectStore = projectStoreGlobal.__pochaProjectStore
+  ?? (projectStoreGlobal.__pochaProjectStore = createProjectStore());
 
 registerProjectHistoryBridge(
   () => useProjectStore.getState().project,

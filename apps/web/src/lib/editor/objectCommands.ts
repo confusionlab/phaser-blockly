@@ -18,7 +18,19 @@ export type SceneObjectClipboardState = {
   entries: SceneObjectClipboardEntry[];
 };
 
-let sceneObjectClipboard: SceneObjectClipboardState | null = null;
+type SceneObjectClipboardGlobal = typeof globalThis & {
+  __pochaSceneObjectClipboard?: SceneObjectClipboardState | null;
+};
+
+const sceneObjectClipboardGlobal = globalThis as SceneObjectClipboardGlobal;
+
+function getSceneObjectClipboard(): SceneObjectClipboardState | null {
+  return sceneObjectClipboardGlobal.__pochaSceneObjectClipboard ?? null;
+}
+
+function setSceneObjectClipboard(value: SceneObjectClipboardState | null): void {
+  sceneObjectClipboardGlobal.__pochaSceneObjectClipboard = value;
+}
 
 function cloneValue<T>(value: T): T {
   if (typeof structuredClone === 'function') {
@@ -103,11 +115,11 @@ function resolveClipboardPasteParentId(
 }
 
 export function clearSceneObjectClipboard(): void {
-  sceneObjectClipboard = null;
+  setSceneObjectClipboard(null);
 }
 
 export function hasSceneObjectClipboardContents(): boolean {
-  return (sceneObjectClipboard?.entries.length ?? 0) > 0;
+  return (getSceneObjectClipboard()?.entries.length ?? 0) > 0;
 }
 
 export function copySceneObjectsToClipboard(
@@ -121,10 +133,10 @@ export function copySceneObjectsToClipboard(
     return false;
   }
 
-  sceneObjectClipboard = {
+  setSceneObjectClipboard({
     mode: options?.mode ?? 'copy',
     entries,
-  };
+  });
   return true;
 }
 
@@ -222,7 +234,7 @@ export function pasteSceneObjectClipboardWithHistory({
   updateObject,
   selectObjects,
 }: PasteSceneObjectClipboardWithHistoryArgs): string[] {
-  const clipboard = sceneObjectClipboard;
+  const clipboard = getSceneObjectClipboard();
   const scene = project.scenes.find((candidate) => candidate.id === sceneId);
   if (!clipboard || !scene) {
     return [];
@@ -271,13 +283,13 @@ export function pasteSceneObjectClipboardWithHistory({
   });
 
   if (clipboard.mode === 'cut' && pastedIds.length > 0) {
-    sceneObjectClipboard = {
+    setSceneObjectClipboard({
       mode: 'copy',
       entries: clipboard.entries.map((entry) => ({
         sourceSceneId: sceneId,
         object: cloneValue(entry.object),
       })),
-    };
+    });
   }
 
   return pastedIds;
@@ -304,10 +316,10 @@ export function cutSceneObjectsWithHistory({
     return;
   }
 
-  sceneObjectClipboard = {
+  setSceneObjectClipboard({
     mode: 'cut',
     entries: clipboardEntries,
-  };
+  });
 
   const uniqueDeleteIds = Array.from(new Set(deleteIds));
   const deleteSet = new Set(uniqueDeleteIds);

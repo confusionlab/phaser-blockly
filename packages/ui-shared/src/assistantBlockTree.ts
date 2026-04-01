@@ -446,7 +446,11 @@ function resolveBlockReference(root: Element, path: string): BlockReference {
       continue;
     }
 
-    const container = getDirectChildByTagName(currentRef.block, 'statement', step.name);
+    const blockType = currentRef.block.getAttribute('type') || '';
+    const usesNextConnection = assistantStatementUsesNextConnection(blockType, step.name);
+    const container = usesNextConnection
+      ? getDirectChildByTagName(currentRef.block, 'next')
+      : getDirectChildByTagName(currentRef.block, 'statement', step.name);
     let statementBlock = getFirstChildBlock(container);
     if (!container || !statementBlock) {
       throw new Error(`Block path "${path}" points to missing statement input "${step.name}".`);

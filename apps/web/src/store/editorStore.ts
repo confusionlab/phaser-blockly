@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import type { PlayValidationIssue } from '@/lib/playValidation';
 import type { Project } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
@@ -235,6 +235,11 @@ interface EditorStore {
   redo: () => void;
 }
 
+type EditorStoreHook = UseBoundStore<StoreApi<EditorStore>>;
+type EditorStoreGlobal = typeof globalThis & {
+  __pochaEditorStore?: EditorStoreHook;
+};
+
 function getBeforeSelectionChangeHandler(state: EditorStore): UndoRedoHandler['beforeSelectionChange'] | undefined {
   if (state.backgroundEditorOpen) {
     return state.backgroundUndoHandler?.beforeSelectionChange;
@@ -258,7 +263,8 @@ function getPrepareForPlayHandlers(state: EditorStore): Array<NonNullable<UndoRe
   return Array.from(new Set(handlers));
 }
 
-export const useEditorStore = create<EditorStore>((set, get) => ({
+function createEditorStore(): EditorStoreHook {
+  return create<EditorStore>((set, get) => ({
   // Selection state
   selectedSceneId: null,
   selectedSceneIds: [],
@@ -1219,7 +1225,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       state.codeUndoHandler.redo();
     }
   },
-}));
+  }));
+}
+
+const editorStoreGlobal = globalThis as EditorStoreGlobal;
+
+export const useEditorStore = editorStoreGlobal.__pochaEditorStore
+  ?? (editorStoreGlobal.__pochaEditorStore = createEditorStore());
 
 registerSelectionHistoryBridge(
   () => {
