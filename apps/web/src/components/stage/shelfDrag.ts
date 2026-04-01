@@ -1,4 +1,7 @@
 let transparentDragImage: HTMLImageElement | null = null;
+let draggedComponentId: string | null = null;
+
+export type ShelfDropPosition = 'before' | 'after' | 'on';
 
 export function getTransparentShelfDragImage(): HTMLImageElement | null {
   if (typeof document === 'undefined') {
@@ -23,4 +26,36 @@ export function getTransparentShelfDragImage(): HTMLImageElement | null {
   document.body.appendChild(image);
   transparentDragImage = image;
   return transparentDragImage;
+}
+
+export function getShelfRowDropPosition(options: {
+  isFolder: boolean;
+  isExpandedFolder: boolean;
+  clientY: number;
+  rect: DOMRect;
+}): ShelfDropPosition {
+  const { isFolder, isExpandedFolder, clientY, rect } = options;
+  if (!isFolder) {
+    return clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+  }
+
+  const relativeY = clientY - rect.top;
+  const topZone = rect.height * 0.25;
+  const bottomZone = rect.height * 0.75;
+
+  if (relativeY < topZone) {
+    return 'before';
+  }
+  if (!isExpandedFolder && relativeY > bottomZone) {
+    return 'after';
+  }
+  return 'on';
+}
+
+export function setDraggedComponentId(componentId: string | null): void {
+  draggedComponentId = componentId;
+}
+
+export function getDraggedComponentId(): string | null {
+  return draggedComponentId;
 }

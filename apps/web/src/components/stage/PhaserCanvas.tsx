@@ -28,6 +28,7 @@ import {
   getViewportCenterFromScrollCamera,
 } from '@/lib/viewportNavigation';
 import { focusKeyboardSurface } from '@/utils/keyboard';
+import { getDraggedComponentId, setDraggedComponentId } from './shelfDrag';
 import {
   getSceneBackgroundBaseColor,
   getTiledBackgroundChunkSize,
@@ -844,6 +845,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       const nextIds = alreadySelected
         ? currentSelection.filter(id => id !== objectId)
         : [...currentSelection, objectId];
+      state.setActiveHierarchyTab('object');
       state.selectObjects(nextIds, nextIds.includes(objectId) ? objectId : (nextIds[0] ?? null));
       return;
     }
@@ -852,15 +854,18 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       const nextIds = currentSelection.includes(objectId)
         ? currentSelection
         : [...currentSelection, objectId];
+      state.setActiveHierarchyTab('object');
       state.selectObjects(nextIds, objectId);
       return;
     }
 
     if (currentSelection.length > 1 && currentSelection.includes(objectId)) {
       // Keep multi-selection intact so immediate drag can move the whole selection.
+      state.setActiveHierarchyTab('object');
       return;
     }
 
+    state.setActiveHierarchyTab('object');
     state.selectObject(objectId);
   }, []);
 
@@ -1848,7 +1853,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       return;
     }
 
-    const componentId = event.dataTransfer.getData('application/x-pocha-component-id');
+    const componentId = event.dataTransfer.getData('application/x-pocha-component-id') || getDraggedComponentId();
     if (!componentId) {
       setComponentDragPreview(null);
       return;
@@ -1895,13 +1900,14 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     if (isPlaying) {
       return;
     }
-    const componentId = event.dataTransfer.getData('application/x-pocha-component-id');
+    const componentId = event.dataTransfer.getData('application/x-pocha-component-id') || getDraggedComponentId();
     if (!componentId || !selectedSceneId || !project || !containerRef.current || !gameRef.current) {
       return;
     }
 
     event.preventDefault();
     setComponentDragPreview(null);
+    setDraggedComponentId(null);
     const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     const camera = phaserScene?.cameras?.main;
     if (!camera) {
@@ -1937,6 +1943,47 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       setComponentDragPreview(null);
     }
   }, [isPlaying]);
+
+  useEffect(() => {
+    if (!componentDragPreview) {
+      return;
+    }
+
+    const handleWindowDragOver = (event: DragEvent) => {
+      const container = containerRef.current;
+      if (!container) {
+        setComponentDragPreview(null);
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const isOutside = event.clientX < rect.left
+        || event.clientX > rect.right
+        || event.clientY < rect.top
+        || event.clientY > rect.bottom;
+
+      if (isOutside) {
+        setComponentDragPreview(null);
+      }
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver);
+    };
+  }, [componentDragPreview]);
+
+  useEffect(() => {
+    const handleWindowDragEnd = () => {
+      setComponentDragPreview(null);
+      setDraggedComponentId(null);
+    };
+
+    window.addEventListener('dragend', handleWindowDragEnd);
+    return () => {
+      window.removeEventListener('dragend', handleWindowDragEnd);
+    };
+  }, []);
 
   const previewBounds = componentDragPreview?.bounds;
   const previewZoom = componentDragPreview?.zoom ?? 1;

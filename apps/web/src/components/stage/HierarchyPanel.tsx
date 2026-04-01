@@ -25,7 +25,7 @@ import {
   Trash2,
 } from '@/components/ui/icons';
 import { ShelfTreeRow } from './ShelfTreeRow';
-import { getTransparentShelfDragImage } from './shelfDrag';
+import { getShelfRowDropPosition, getTransparentShelfDragImage, setDraggedComponentId } from './shelfDrag';
 import type { ComponentDefinition, ComponentFolder, HierarchyFolder, Scene, SceneFolder } from '@/types';
 import {
   getFolderedHierarchyTree,
@@ -80,6 +80,7 @@ interface FolderedHierarchyPaneProps<TItem extends FolderedItemShape> {
   renderItemIcon?: (item: TItem) => React.ReactNode;
   renderHeaderActions?: React.ReactNode;
   onItemDragStart?: (event: React.DragEvent<HTMLDivElement>, item: TItem) => void;
+  onItemDragEnd?: (item: TItem) => void;
   renderItemContextMenuActions?: (item: TItem, closeMenu: () => void) => React.ReactNode;
 }
 
@@ -104,6 +105,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   renderItemIcon,
   renderHeaderActions,
   onItemDragStart,
+  onItemDragEnd,
   renderItemContextMenuActions,
 }: FolderedHierarchyPaneProps<TItem>) {
   const [isPaneHovered, setIsPaneHovered] = useState(false);
@@ -459,6 +461,9 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
             }
           }}
           onDragEnd={() => {
+            if (!isFolder && item && onItemDragEnd) {
+              onItemDragEnd(item);
+            }
             setDraggedKeys([]);
             setDropTarget({ key: null, dropPosition: null });
           }}
@@ -467,12 +472,12 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
             event.stopPropagation();
             event.dataTransfer.dropEffect = 'move';
             const rect = event.currentTarget.getBoundingClientRect();
-            const midpoint = rect.top + rect.height / 2;
-            const nextDropPosition: HierarchyDropTarget['dropPosition'] = isFolder && event.clientY > rect.top + rect.height * 0.28 && event.clientY < rect.bottom - rect.height * 0.28
-              ? 'on'
-              : event.clientY < midpoint
-                ? 'before'
-                : 'after';
+            const nextDropPosition: HierarchyDropTarget['dropPosition'] = getShelfRowDropPosition({
+              isFolder,
+              isExpandedFolder: !!(isFolder && node.children.length > 0 && isExpanded),
+              clientY: event.clientY,
+              rect,
+            });
             setDropTarget({ key, dropPosition: nextDropPosition });
           }}
           onDrop={(event) => {
@@ -578,24 +583,29 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           </Button>
         </div>
       </div>
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" onContextMenu={handleEmptyPaneContextMenu}>
         <div
           className="min-h-full w-0 min-w-full"
           onDragOver={handleRootDragOver}
           onDrop={handleRootDrop}
-          onContextMenu={handleEmptyPaneContextMenu}
         >
           {tree.length === 0 ? (
             <div className="flex h-full items-center justify-center px-4 py-10 text-sm text-muted-foreground">
               {emptyLabel}
             </div>
           ) : (
-            <div role="tree" aria-label={title} className="relative min-h-full w-0 min-w-full overflow-x-hidden pb-2 outline-none">
+            <div
+              role="tree"
+              aria-label={title}
+              className="relative min-h-full w-0 min-w-full overflow-x-hidden pb-2 outline-none"
+              onContextMenu={handleEmptyPaneContextMenu}
+            >
               {renderNodes(tree)}
               <div
                 className="absolute inset-x-2 bottom-0 z-10 h-4 rounded"
                 onDragOver={handleRootDropZoneDragOver}
                 onDrop={handleRootDropZoneDrop}
+                onContextMenu={handleEmptyPaneContextMenu}
               >
                 {draggedKeys.length > 0 && dropTarget.key === null ? (
                   <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 rounded border-t-2 border-primary/80" />
@@ -868,8 +878,12 @@ function ComponentHierarchyTab() {
       onMove={(nextComponents, nextFolders) => updateComponentOrganization(nextComponents, nextFolders)}
       renderItemIcon={() => <Component className="size-4 shrink-0 text-muted-foreground" />}
       onItemDragStart={(event, component) => {
+        setDraggedComponentId(component.id);
         event.dataTransfer.effectAllowed = 'copyMove';
         event.dataTransfer.setData('application/x-pocha-component-id', component.id);
+      }}
+      onItemDragEnd={() => {
+        setDraggedComponentId(null);
       }}
       renderItemContextMenuActions={(component, closeMenu) => (
         <Button

@@ -75,7 +75,7 @@ import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize'
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { ShelfTreeRow } from './ShelfTreeRow';
-import { getTransparentShelfDragImage } from './shelfDrag';
+import { getShelfRowDropPosition, getTransparentShelfDragImage } from './shelfDrag';
 
 function remapLocalVariablesForInsertion(
   localVariables: GameObject['localVariables'],
@@ -663,24 +663,13 @@ export function SpriteShelf({
     item: ShelfTreeItem,
     event: React.DragEvent<HTMLDivElement>,
   ): 'before' | 'after' | 'on' => {
-    if (item.type !== 'folder') {
-      const rect = event.currentTarget.getBoundingClientRect();
-      return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-    }
-
     const rect = event.currentTarget.getBoundingClientRect();
-    const relativeY = event.clientY - rect.top;
-    const topZone = rect.height * 0.25;
-    const bottomZone = rect.height * 0.75;
-    const isExpandedFolder = item.children.length > 0 && expandedKeys.has(item.key);
-
-    if (relativeY < topZone) {
-      return 'before';
-    }
-    if (!isExpandedFolder && relativeY > bottomZone) {
-      return 'after';
-    }
-    return 'on';
+    return getShelfRowDropPosition({
+      isFolder: item.type === 'folder',
+      isExpandedFolder: item.type === 'folder' && item.children.length > 0 && expandedKeys.has(item.key),
+      clientY: event.clientY,
+      rect,
+    });
   };
 
   const handleLayerDragOver = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {

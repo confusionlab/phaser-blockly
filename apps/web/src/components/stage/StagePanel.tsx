@@ -8,7 +8,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
-import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw } from '@/components/ui/icons';
+import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw, LayoutGrid, Shapes, Component } from '@/components/ui/icons';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { cn } from '@/lib/utils';
@@ -21,9 +21,9 @@ interface StagePanelProps {
 }
 
 const hierarchyTabs: SegmentedControlOption<HierarchyTab>[] = [
-  { value: 'scene', label: 'Scene' },
-  { value: 'object', label: 'Object' },
-  { value: 'component', label: 'Component' },
+  { value: 'scene', label: 'Scene', icon: <LayoutGrid className="size-3.5" /> },
+  { value: 'object', label: 'Object', icon: <Shapes className="size-3.5" /> },
+  { value: 'component', label: 'Component', icon: <Component className="size-3.5" /> },
 ];
 
 function dispatchEditorResizeFreeze(active: boolean): void {
@@ -279,12 +279,13 @@ export function StagePanel({
           className={cn(
             panelHeaderClassNames.chrome,
             panelHeaderClassNames.row,
-            'shrink-0 border-b border-border',
+            'shrink-0 justify-center border-b border-border',
           )}
         >
           <SegmentedControl
             ariaLabel="Hierarchy sections"
-            className="w-full"
+            className="max-w-full"
+            layout="content"
             options={hierarchyTabs}
             value={activeHierarchyTab}
             onValueChange={(value) => setActiveHierarchyTab(value)}
