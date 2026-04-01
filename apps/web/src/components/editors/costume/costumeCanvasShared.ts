@@ -2,6 +2,7 @@ import { Point } from 'fabric';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { readCanvasImageData } from '@/utils/canvas2d';
 import { areCostumeAssetFramesEqual, cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
+import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
 import type { VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 
@@ -25,7 +26,6 @@ export const VECTOR_POINT_HANDLE_GUIDE_STROKE = '#94a3b8';
 export const VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH = 2;
 export const VECTOR_POINT_SELECTION_BOX_FILL = 'rgba(0, 94, 255, 0.08)';
 export const VECTOR_POINT_SELECTION_HANDLE_SIZE = 12;
-export const VECTOR_POINT_SELECTION_ROTATE_OFFSET = 28;
 export const VECTOR_POINT_SELECTION_HIT_PADDING = 6;
 export const VECTOR_POINT_SELECTION_MIN_SIZE = 12;
 export const VECTOR_POINT_INSERTION_HIT_RADIUS_PX = 8;
@@ -402,6 +402,9 @@ export interface PointSelectionTransformSnapshot {
 export interface PointSelectionTransformSession {
   path: any;
   mode: PointSelectionTransformMode;
+  corner: TransformGizmoCorner | null;
+  proportional: boolean;
+  centered: boolean;
   startPointerScene: Point;
   snapshot: PointSelectionTransformSnapshot;
   hasChanged: boolean;

@@ -42,15 +42,15 @@ import {
   getCostumeVisibleCenterOffset,
 } from '@/lib/costume/costumeAssetFrame';
 import {
-  TRANSFORM_GIZMO_BORDER_COLOR,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   TRANSFORM_GIZMO_ROTATE_CURSOR,
   TRANSFORM_GIZMO_ROTATE_RING_OUTSET,
-  TransformGizmoCorner,
   computeCornerScaleResult,
   getTransformGizmoCornerCursor,
+  getTransformGizmoHandleFrame,
   rotateTransformPoint,
 } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -1277,14 +1277,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           const selRect = newContainer.getByName('selection') as Phaser.GameObjects.Rectangle;
           if (selRect) selRect.setVisible(visible);
 
+          // Per-object gizmo handles stay disabled; stage transforms use the shared global selection gizmo.
           for (const name of [...GIZMO_HANDLE_NAMES, 'rotate_line']) {
             const handle = newContainer.getByName(name);
-            if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(visible);
-          }
-
-          if (visible) {
-            const updateGizmo = newContainer.getData('updateGizmoPositions') as (() => void) | undefined;
-            if (updateGizmo) updateGizmo();
+            if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(false);
           }
         };
         newContainer.setData('setSelectionVisible', setSelectionVisible);

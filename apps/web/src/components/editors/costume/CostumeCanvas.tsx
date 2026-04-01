@@ -720,6 +720,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     movePathAnchorByDelta,
     originalControlsRef,
     pointSelectionMarqueeSessionRef,
+    pointSelectionTransformSessionRef,
     removeDuplicateClosedPathAnchorControl,
     renderPenDraftGuide,
     resolveAnchorFromPathControlKey,

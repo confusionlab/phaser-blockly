@@ -1,17 +1,23 @@
 import { useCallback, type MutableRefObject } from 'react';
 import { Path, Point, controlsUtils, type Canvas as FabricCanvas, type Control } from 'fabric';
 import type { CostumeEditorMode } from '@/types';
+import {
+  TRANSFORM_GIZMO_BORDER_COLOR,
+  TRANSFORM_GIZMO_FILL_COLOR,
+  TRANSFORM_GIZMO_HANDLE_FILL,
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  TRANSFORM_GIZMO_HANDLE_STROKE,
+  drawTransformProportionalGuide,
+  getTransformCornerDiagonal,
+} from '@/lib/editor/unifiedTransformGizmo';
 import type { DrawingTool, VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import { vectorHandleModeToPathNodeHandleType } from './CostumeToolbar';
 import {
-  CANVAS_SIZE,
   HANDLE_SIZE,
   VECTOR_POINT_EDIT_GUIDE_STROKE,
   VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH,
   VECTOR_POINT_HANDLE_GUIDE_STROKE,
   VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH,
-  VECTOR_POINT_SELECTION_BOX_FILL,
-  VECTOR_POINT_SELECTION_HANDLE_SIZE,
   VECTOR_SELECTION_BORDER_SCALE,
   VECTOR_SELECTION_COLOR,
   VECTOR_SELECTION_CORNER_COLOR,
@@ -60,6 +66,7 @@ interface UseCostumeCanvasVectorObjectControllerOptions {
   movePathAnchorByDelta: (pathObj: any, anchorIndex: number, deltaX: number, deltaY: number, dragState?: any) => boolean;
   originalControlsRef: MutableRefObject<WeakMap<object, Record<string, Control> | undefined>>;
   pointSelectionMarqueeSessionRef: MutableRefObject<any>;
+  pointSelectionTransformSessionRef?: MutableRefObject<any>;
   removeDuplicateClosedPathAnchorControl: (pathObj: any, controls: Record<string, Control>) => void;
   renderPenDraftGuide: (ctx: CanvasRenderingContext2D) => void;
   resolveAnchorFromPathControlKey: (pathObj: any, key: string) => { anchorIndex: number; changed: 'anchor' | 'incoming' | 'outgoing' } | null;
@@ -100,6 +107,7 @@ export function useCostumeCanvasVectorObjectController({
   movePathAnchorByDelta,
   originalControlsRef,
   pointSelectionMarqueeSessionRef,
+  pointSelectionTransformSessionRef,
   removeDuplicateClosedPathAnchorControl,
   renderPenDraftGuide,
   resolveAnchorFromPathControlKey,
@@ -405,13 +413,12 @@ export function useCostumeCanvasVectorObjectController({
     if (!snapshot) return;
 
     const handlePoints = getPointSelectionTransformHandlePoints(snapshot.bounds);
-    const handleSize = getZoomInvariantMetric(VECTOR_POINT_SELECTION_HANDLE_SIZE);
-    const handleHalfSize = handleSize / 2;
+    const handleRadius = getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS);
 
     ctx.save();
     try {
-      ctx.fillStyle = VECTOR_POINT_SELECTION_BOX_FILL;
-      ctx.strokeStyle = VECTOR_SELECTION_COLOR;
+      ctx.fillStyle = TRANSFORM_GIZMO_FILL_COLOR;
+      ctx.strokeStyle = TRANSFORM_GIZMO_BORDER_COLOR;
       ctx.lineWidth = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE);
       ctx.setLineDash([]);
       ctx.beginPath();
@@ -423,22 +430,25 @@ export function useCostumeCanvasVectorObjectController({
       ctx.fill();
       ctx.stroke();
 
-      ctx.beginPath();
-      ctx.moveTo(handlePoints.topCenter.x, handlePoints.topCenter.y);
-      ctx.lineTo(handlePoints.rotate.x, handlePoints.rotate.y);
-      ctx.stroke();
-
-      ctx.fillStyle = '#ffffff';
-      const scaleHandlePoints = [handlePoints.scaleTl, handlePoints.scaleTr, handlePoints.scaleBr, handlePoints.scaleBl];
-      for (const point of scaleHandlePoints) {
-        ctx.fillRect(point.x - handleHalfSize, point.y - handleHalfSize, handleSize, handleSize);
-        ctx.strokeRect(point.x - handleHalfSize, point.y - handleHalfSize, handleSize, handleSize);
+      const activeTransform = pointSelectionTransformSessionRef?.current;
+      if (
+        activeTransform?.path === target &&
+        activeTransform.corner &&
+        activeTransform.proportional
+      ) {
+        const diagonal = getTransformCornerDiagonal(handlePoints.corners, activeTransform.corner);
+        drawTransformProportionalGuide(ctx, diagonal.start, diagonal.end);
       }
 
-      ctx.beginPath();
-      ctx.arc(handlePoints.rotate.x, handlePoints.rotate.y, handleHalfSize, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
+      ctx.fillStyle = TRANSFORM_GIZMO_HANDLE_FILL;
+      ctx.strokeStyle = TRANSFORM_GIZMO_HANDLE_STROKE;
+      const scaleHandlePoints = [handlePoints.scaleTl, handlePoints.scaleTr, handlePoints.scaleBr, handlePoints.scaleBl];
+      for (const point of scaleHandlePoints) {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, handleRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     } finally {
       ctx.restore();
     }
@@ -446,6 +456,7 @@ export function useCostumeCanvasVectorObjectController({
     getPointSelectionTransformHandlePoints,
     getSelectedPathAnchorTransformSnapshot,
     getZoomInvariantMetric,
+    pointSelectionTransformSessionRef,
   ]);
 
   const renderPointSelectionMarquee = useCallback((ctx: CanvasRenderingContext2D) => {

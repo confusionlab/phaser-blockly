@@ -764,6 +764,17 @@ body {
   background-color: currentColor;
 }
 
+.pocha-account-profile [data-clerk-component="UserProfile"] {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.pocha-account-profile :is(.cl-rootBox, .cl-cardBox, .cl-pageScrollBox, .cl-navbar, .cl-card) {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

@@ -11,10 +11,8 @@ import {
   VECTOR_POINT_INSERTION_ENDPOINT_RADIUS_PX,
   VECTOR_POINT_INSERTION_HIT_RADIUS_PX,
   VECTOR_POINT_MARQUEE_DRAG_THRESHOLD_PX,
-  VECTOR_POINT_SELECTION_HANDLE_SIZE,
   VECTOR_POINT_SELECTION_HIT_PADDING,
   VECTOR_POINT_SELECTION_MIN_SIZE,
-  VECTOR_POINT_SELECTION_ROTATE_OFFSET,
   normalizeRadians,
   type PathAnchorDragState,
   type PointSelectionMarqueeSession,
@@ -26,6 +24,15 @@ import {
   type SelectedPathAnchorTransformSnapshot,
 } from './costumeCanvasShared';
 import { getFabricObjectType } from './costumeCanvasVectorRuntime';
+import {
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  type TransformGizmoCorner,
+  computeCornerScaleResult,
+  getTransformGizmoHandleFrame,
+  isPointInsideTransformHandle,
+  isPointInsideTransformRotateRing,
+  rotateTransformPoint,
+} from '@/lib/editor/unifiedTransformGizmo';
 
 interface UseCostumeCanvasVectorPathControllerOptions {
   activePathAnchorRef: MutableRefObject<{ path: any; anchorIndex: number } | null>;
@@ -1258,33 +1265,40 @@ export function useCostumeCanvasVectorPathController({
   ]);
 
   const getPointSelectionTransformHandlePoints = useCallback((bounds: PointSelectionTransformBounds) => {
-    const rotateOffset = getZoomInvariantMetric(VECTOR_POINT_SELECTION_ROTATE_OFFSET);
-    const halfHeight = bounds.height / 2;
+    const frame = getTransformGizmoHandleFrame(
+      bounds.center,
+      bounds.width,
+      bounds.height,
+      bounds.rotationRadians,
+    );
     return {
-      topCenter: toPointSelectionTransformScenePoint(bounds, new Point(0, -halfHeight)),
-      rotate: toPointSelectionTransformScenePoint(bounds, new Point(0, -halfHeight - rotateOffset)),
-      scaleTl: bounds.topLeft,
-      scaleTr: bounds.topRight,
-      scaleBr: bounds.bottomRight,
-      scaleBl: bounds.bottomLeft,
+      corners: frame.corners,
+      scaleTl: frame.corners.nw,
+      scaleTr: frame.corners.ne,
+      scaleBr: frame.corners.se,
+      scaleBl: frame.corners.sw,
     };
-  }, [getZoomInvariantMetric, toPointSelectionTransformScenePoint]);
+  }, []);
 
   const hitPointSelectionTransform = useCallback((snapshot: PointSelectionTransformSnapshot, pointerScene: Point): PointSelectionTransformMode | null => {
-    const handleHalfSize = getZoomInvariantMetric(VECTOR_POINT_SELECTION_HANDLE_SIZE) / 2;
     const hitPadding = getZoomInvariantMetric(VECTOR_POINT_SELECTION_HIT_PADDING);
     const handlePoints = getPointSelectionTransformHandlePoints(snapshot.bounds);
+    const handleRadius = getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS + 4);
+    const handleTargets: Array<[PointSelectionTransformMode, Point]> = [
+      ['scale-tl', handlePoints.scaleTl],
+      ['scale-tr', handlePoints.scaleTr],
+      ['scale-br', handlePoints.scaleBr],
+      ['scale-bl', handlePoints.scaleBl],
+    ];
 
-    const isInsideHandle = (point: Point) => (
-      Math.abs(pointerScene.x - point.x) <= handleHalfSize &&
-      Math.abs(pointerScene.y - point.y) <= handleHalfSize
-    );
-
-    if (isInsideHandle(handlePoints.rotate)) return 'rotate';
-    if (isInsideHandle(handlePoints.scaleTl)) return 'scale-tl';
-    if (isInsideHandle(handlePoints.scaleTr)) return 'scale-tr';
-    if (isInsideHandle(handlePoints.scaleBr)) return 'scale-br';
-    if (isInsideHandle(handlePoints.scaleBl)) return 'scale-bl';
+    for (const [mode, point] of handleTargets) {
+      if (isPointInsideTransformHandle(pointerScene, point, handleRadius)) {
+        return mode;
+      }
+      if (isPointInsideTransformRotateRing(pointerScene, point, getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS))) {
+        return 'rotate';
+      }
+    }
 
     const pointerLocal = toPointSelectionTransformLocalPoint(snapshot.bounds, pointerScene);
     if (
@@ -1306,6 +1320,21 @@ export function useCostumeCanvasVectorPathController({
       center.x + dx * cos - dy * sin,
       center.y + dx * sin + dy * cos,
     );
+  }, []);
+
+  const getPointSelectionTransformCorner = useCallback((mode: PointSelectionTransformMode): TransformGizmoCorner | null => {
+    switch (mode) {
+      case 'scale-tl':
+        return 'nw';
+      case 'scale-tr':
+        return 'ne';
+      case 'scale-br':
+        return 'se';
+      case 'scale-bl':
+        return 'sw';
+      default:
+        return null;
+    }
   }, []);
 
   const transformPointSelectionScenePoint = useCallback((point: Point, session: PointSelectionTransformSession, pointerScene: Point): Point => {
@@ -1332,61 +1361,99 @@ export function useCostumeCanvasVectorPathController({
     const minimumSize = getZoomInvariantMetric(VECTOR_POINT_SELECTION_MIN_SIZE);
     const baseWidth = Math.max(bounds.width, minimumSize);
     const baseHeight = Math.max(bounds.height, minimumSize);
-    const pointLocal = toPointSelectionTransformLocalPoint(bounds, point);
-    const pointerLocal = toPointSelectionTransformLocalPoint(bounds, pointerScene);
-
-    let fixedPointLocal = new Point(-bounds.width / 2, -bounds.height / 2);
-    let scaleX = 1;
-    let scaleY = 1;
-    if (session.mode === 'scale-tl') {
-      fixedPointLocal = new Point(bounds.width / 2, bounds.height / 2);
-      scaleX = Math.max(minimumSize, fixedPointLocal.x - pointerLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, fixedPointLocal.y - pointerLocal.y) / baseHeight;
-    } else if (session.mode === 'scale-tr') {
-      fixedPointLocal = new Point(-bounds.width / 2, bounds.height / 2);
-      scaleX = Math.max(minimumSize, pointerLocal.x - fixedPointLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, fixedPointLocal.y - pointerLocal.y) / baseHeight;
-    } else if (session.mode === 'scale-br') {
-      fixedPointLocal = new Point(-bounds.width / 2, -bounds.height / 2);
-      scaleX = Math.max(minimumSize, pointerLocal.x - fixedPointLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, pointerLocal.y - fixedPointLocal.y) / baseHeight;
-    } else if (session.mode === 'scale-bl') {
-      fixedPointLocal = new Point(bounds.width / 2, -bounds.height / 2);
-      scaleX = Math.max(minimumSize, fixedPointLocal.x - pointerLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, pointerLocal.y - fixedPointLocal.y) / baseHeight;
-    }
-
-    return toPointSelectionTransformScenePoint(
-      bounds,
-      new Point(
-        fixedPointLocal.x + (pointLocal.x - fixedPointLocal.x) * scaleX,
-        fixedPointLocal.y + (pointLocal.y - fixedPointLocal.y) * scaleY,
-      ),
+    const frame = getTransformGizmoHandleFrame(
+      bounds.center,
+      bounds.width,
+      bounds.height,
+      bounds.rotationRadians,
     );
+    const cornerConfig: Record<TransformGizmoCorner, {
+      anchor: Point;
+      handleXSign: -1 | 1;
+      handleYSign: -1 | 1;
+    }> = {
+      nw: { anchor: frame.corners.se, handleXSign: -1, handleYSign: -1 },
+      ne: { anchor: frame.corners.sw, handleXSign: 1, handleYSign: -1 },
+      se: { anchor: frame.corners.nw, handleXSign: 1, handleYSign: 1 },
+      sw: { anchor: frame.corners.ne, handleXSign: -1, handleYSign: 1 },
+    };
+    const corner = session.corner ?? 'se';
+    const resolvedCorner = cornerConfig[corner];
+    const referencePoint = session.centered ? bounds.center : resolvedCorner.anchor;
+    const scaled = computeCornerScaleResult({
+      referencePoint,
+      pointerPoint: pointerScene,
+      handleXSign: resolvedCorner.handleXSign,
+      handleYSign: resolvedCorner.handleYSign,
+      rotationRadians: bounds.rotationRadians,
+      baseWidth,
+      baseHeight,
+      minWidth: minimumSize,
+      minHeight: minimumSize,
+      proportional: session.proportional,
+      centered: session.centered,
+    });
+    const scaleX = scaled.width / Math.max(baseWidth, 0.0001);
+    const scaleY = scaled.height / Math.max(baseHeight, 0.0001);
+    const localStart = rotateTransformPoint(
+      {
+        x: point.x - referencePoint.x,
+        y: point.y - referencePoint.y,
+      },
+      bounds.rotationRadians,
+    );
+    const scaledLocal = {
+      x: localStart.x * scaleX,
+      y: localStart.y * scaleY,
+    };
+    const nextPoint = rotateTransformPoint(scaledLocal, -bounds.rotationRadians);
+    return new Point(referencePoint.x + nextPoint.x, referencePoint.y + nextPoint.y);
   }, [
     getZoomInvariantMetric,
+    getPointSelectionTransformCorner,
+    getTransformGizmoHandleFrame,
+    computeCornerScaleResult,
     rotateScenePointAround,
-    toPointSelectionTransformLocalPoint,
-    toPointSelectionTransformScenePoint,
   ]);
 
-  const beginPointSelectionTransformSession = useCallback((pathObj: any, mode: PointSelectionTransformMode, pointerScene: Point): boolean => {
+  const beginPointSelectionTransformSession = useCallback((
+    pathObj: any,
+    mode: PointSelectionTransformMode,
+    pointerScene: Point,
+    eventData?: Record<string, any> | null,
+  ): boolean => {
     const snapshot = getSelectedPathAnchorTransformSnapshot(pathObj);
     if (!snapshot) return false;
 
+    const corner = getPointSelectionTransformCorner(mode);
     pointSelectionTransformSessionRef.current = {
       path: pathObj,
       mode,
+      corner,
+      proportional: !!eventData?.shiftKey,
+      centered: !!eventData?.altKey,
       startPointerScene: new Point(pointerScene.x, pointerScene.y),
       snapshot,
       hasChanged: false,
     };
     return true;
-  }, [getSelectedPathAnchorTransformSnapshot, pointSelectionTransformSessionRef]);
+  }, [getPointSelectionTransformCorner, getSelectedPathAnchorTransformSnapshot, pointSelectionTransformSessionRef]);
 
-  const applyPointSelectionTransformSession = useCallback((session: PointSelectionTransformSession, pointerScene: Point): boolean => {
+  const applyPointSelectionTransformSession = useCallback((
+    session: PointSelectionTransformSession,
+    pointerScene: Point,
+    eventData?: Record<string, any> | null,
+  ): boolean => {
     const { path, snapshot } = session;
     if (!path || getFabricObjectType(path) !== 'path') return false;
+
+    if (session.corner) {
+      session.proportional = !!eventData?.shiftKey;
+      session.centered = !!eventData?.altKey;
+    } else {
+      session.proportional = false;
+      session.centered = false;
+    }
 
     const commands = getPathCommands(path);
     let referenceCommandPoint: Point | null = null;

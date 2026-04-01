@@ -2,14 +2,8 @@ import { useEffect, type Dispatch, type MutableRefObject, type RefObject, type S
 import { FabricImage, type Canvas as FabricCanvas } from 'fabric';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
 import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
-import {
-  VECTOR_SELECTION_BORDER_OPACITY,
-  VECTOR_SELECTION_BORDER_SCALE,
-  VECTOR_SELECTION_COLOR,
-  VECTOR_SELECTION_CORNER_COLOR,
-  VECTOR_SELECTION_CORNER_STROKE,
-} from './costumeCanvasShared';
 import type { DrawingTool } from './CostumeToolbar';
+import { applyUnifiedObjectTransformGizmoAppearance } from './costumeCanvasObjectTransformGizmo';
 
 interface UseCostumeCanvasBitmapSelectionControllerOptions {
   activeTool: DrawingTool;
@@ -160,14 +154,11 @@ export function useCostumeCanvasBitmapSelectionController({
           lockScalingY: false,
         } as any);
         (floatingImage as any).__bitmapFloatingSelection = true;
-        floatingImage.borderColor = VECTOR_SELECTION_COLOR;
-        floatingImage.borderScaleFactor = VECTOR_SELECTION_BORDER_SCALE;
-        floatingImage.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
-        floatingImage.cornerStyle = 'rect';
-        floatingImage.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
-        floatingImage.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
-        floatingImage.cornerSize = 12;
-        floatingImage.transparentCorners = false;
+        applyUnifiedObjectTransformGizmoAppearance(
+          floatingImage as any,
+          (metric: number) => metric,
+          1,
+        );
 
         fabricCanvas.add(floatingImage);
         fabricCanvas.setActiveObject(floatingImage);

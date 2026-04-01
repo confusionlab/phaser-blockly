@@ -9,6 +9,7 @@ import {
   Rect,
 } from 'fabric';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
+import { applyCanvasCursor } from './costumeCanvasBitmapRuntime';
 import {
   applyUnifiedFabricTransformCanvasOptions,
   clearUnifiedCanvasTransformGuide,
@@ -16,6 +17,11 @@ import {
   renderUnifiedCanvasTransformGuide,
   syncUnifiedCanvasTransformGuideFromEvent,
 } from './costumeCanvasObjectTransformGizmo';
+import {
+  TRANSFORM_GIZMO_ROTATE_CURSOR,
+  type TransformGizmoCorner,
+  getTransformGizmoCornerCursor,
+} from '@/lib/editor/unifiedTransformGizmo';
 import {
   CANVAS_SIZE,
   buildStarPoints,
@@ -101,10 +107,10 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   activateVectorPointEditing: (target: any, saveConversionToHistory: boolean) => boolean;
   applyFill: (x: number, y: number) => void | Promise<void>;
   applyPointSelectionMarqueeSession: (session: any) => boolean;
-  applyPointSelectionTransformSession: (session: any, pointer: Point) => boolean;
+  applyPointSelectionTransformSession: (session: any, pointer: Point, eventData?: Record<string, any> | null) => boolean;
   applyVectorPointControls: (target: any) => boolean;
   applyVectorPointEditingAppearance: (target: any) => void;
-  beginPointSelectionTransformSession: (target: any, hit: any, pointer: Point) => boolean;
+  beginPointSelectionTransformSession: (target: any, hit: any, pointer: Point, eventData?: Record<string, any> | null) => boolean;
   clearSelectedPathAnchors: (target?: any) => void;
   commitBitmapSelection: () => Promise<boolean>;
   commitCurrentPenPlacement: () => void;
@@ -215,6 +221,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       preserveObjectStacking: true,
       selection: false,
     });
+    (fabricCanvas as any).__manageUnifiedTransformGuideTopLayer = true;
     applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvasRef.current = fabricCanvas;
     onFabricCanvasReady();
@@ -269,7 +276,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         if (pointEditingTarget && pointSelectionTransformHit) {
           pointSelectionTransformSessionRef.current = null;
           insertedPathAnchorDragSessionRef.current = null;
-          if (callbacks.beginPointSelectionTransformSession(pointEditingTarget, pointSelectionTransformHit, pointer)) {
+          if (callbacks.beginPointSelectionTransformSession(pointEditingTarget, pointSelectionTransformHit, pointer, opt.e)) {
             fabricCanvas.setActiveObject(pointEditingTarget);
             fabricCanvas.requestRenderAll();
             return;
@@ -569,13 +576,49 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
           return;
         }
 
-        const transformed = callbacks.applyPointSelectionTransformSession(pointSelectionTransformSession, pointer);
+        const transformed = callbacks.applyPointSelectionTransformSession(pointSelectionTransformSession, pointer, opt.e);
         if (transformed) {
           pointSelectionTransformSession.hasChanged = true;
           fabricCanvas.setActiveObject(pointSelectionTransformSession.path);
           fabricCanvas.requestRenderAll();
         }
         return;
+      }
+
+      if (
+        editorModeRef.current === 'vector' &&
+        activeToolRef.current === 'select' &&
+        !pointSelectionMarqueeSessionRef.current &&
+        !insertedPathAnchorDragSessionRef.current &&
+        opt.e
+      ) {
+        const pointEditingTarget = vectorPointEditingTargetRef.current;
+        if (pointEditingTarget && getFabricObjectType(pointEditingTarget) === 'path') {
+          const pointer = fabricCanvas.getScenePoint(opt.e);
+          const snapshot = callbacks.getSelectedPathAnchorTransformSnapshot(pointEditingTarget);
+          const pointSelectionTransformHit = snapshot
+            ? callbacks.hitPointSelectionTransform(snapshot, pointer)
+            : null;
+          const cursor = (() => {
+            switch (pointSelectionTransformHit) {
+              case 'move':
+                return 'move';
+              case 'rotate':
+                return TRANSFORM_GIZMO_ROTATE_CURSOR;
+              case 'scale-tl':
+                return getTransformGizmoCornerCursor('nw' satisfies TransformGizmoCorner);
+              case 'scale-tr':
+                return getTransformGizmoCornerCursor('ne' satisfies TransformGizmoCorner);
+              case 'scale-br':
+                return getTransformGizmoCornerCursor('se' satisfies TransformGizmoCorner);
+              case 'scale-bl':
+                return getTransformGizmoCornerCursor('sw' satisfies TransformGizmoCorner);
+              default:
+                return 'default';
+            }
+          })();
+          applyCanvasCursor(fabricCanvas, cursor);
+        }
       }
 
       const pointSelectionMarqueeSession = pointSelectionMarqueeSessionRef.current;
@@ -684,7 +727,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onMouseUp = () => {
       const callbacks = callbacksRef.current;
-      clearUnifiedCanvasTransformGuide(fabricCanvas);
+      clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (penAnchorPlacementSessionRef.current) {
         callbacks.commitCurrentPenPlacement();
         fabricCanvas.requestRenderAll();
@@ -760,7 +803,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     };
 
     const onObjectModified = () => {
-      clearUnifiedCanvasTransformGuide(fabricCanvas);
+      clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (editorModeRef.current === 'vector') {
         callbacksRef.current.saveHistory();
       }
@@ -817,7 +860,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onSelectionCleared = () => {
       const callbacks = callbacksRef.current;
-      clearUnifiedCanvasTransformGuide(fabricCanvas);
+      clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (
         editorModeRef.current === 'bitmap' &&
         activeToolRef.current === 'select' &&

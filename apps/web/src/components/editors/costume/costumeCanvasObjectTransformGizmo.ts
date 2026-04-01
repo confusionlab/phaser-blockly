@@ -6,13 +6,13 @@ import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   TRANSFORM_GIZMO_HANDLE_STROKE,
   TRANSFORM_GIZMO_ROTATE_CURSOR,
-  TransformGizmoCorner,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
   getTransformGizmoCornerCursor,
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
 } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
 import {
   OBJECT_SELECTION_PADDING,
   VECTOR_SELECTION_BORDER_OPACITY,
@@ -27,6 +27,9 @@ type FabricTransformGuideState = {
 
 type FabricCanvasWithTransformGuide = FabricCanvas & {
   __unifiedTransformGuide?: FabricTransformGuideState | null;
+  __manageUnifiedTransformGuideTopLayer?: boolean;
+  contextTopDirty?: boolean;
+  renderTop?: () => void;
 };
 
 type FabricObjectWithTransformGizmo = {
@@ -137,7 +140,21 @@ function isTransformCentered(transform: { originX?: string; originY?: string }) 
 function clearFabricTransformGuide(target: any) {
   const canvas = target?.canvas as FabricCanvasWithTransformGuide | null;
   if (canvas) {
-    canvas.__unifiedTransformGuide = null;
+    setUnifiedCanvasTransformGuide(canvas, null);
+  }
+}
+
+function setUnifiedCanvasTransformGuide(
+  fabricCanvas: FabricCanvasWithTransformGuide | null,
+  guide: FabricTransformGuideState | null,
+) {
+  if (!fabricCanvas) {
+    return;
+  }
+
+  fabricCanvas.__unifiedTransformGuide = guide;
+  if (fabricCanvas.__manageUnifiedTransformGuideTopLayer) {
+    fabricCanvas.contextTopDirty = true;
   }
 }
 
@@ -219,11 +236,11 @@ const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
     const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[transform.corner] ?? 'se';
     const canvas = target.canvas as FabricCanvasWithTransformGuide | null;
     if (canvas) {
-      canvas.__unifiedTransformGuide = {
+      setUnifiedCanvasTransformGuide(canvas, {
         corner,
         proportional: scaleProportionally,
         target,
-      };
+      });
     }
     return previousScaleX !== target.scaleX || previousScaleY !== target.scaleY;
   }),
@@ -306,9 +323,15 @@ export function applyUnifiedObjectTransformGizmoAppearance(
   object.setCoords?.();
 }
 
-export function clearUnifiedCanvasTransformGuide(fabricCanvas: FabricCanvas | null) {
-  if (fabricCanvas) {
-    (fabricCanvas as FabricCanvasWithTransformGuide).__unifiedTransformGuide = null;
+export function clearUnifiedCanvasTransformGuide(fabricCanvas: FabricCanvas | null, renderTop: boolean = false) {
+  const instrumentedCanvas = fabricCanvas as FabricCanvasWithTransformGuide | null;
+  if (!instrumentedCanvas) {
+    return;
+  }
+
+  setUnifiedCanvasTransformGuide(instrumentedCanvas, null);
+  if (renderTop && instrumentedCanvas.__manageUnifiedTransformGuideTopLayer) {
+    instrumentedCanvas.renderTop?.();
   }
 }
 
@@ -350,11 +373,11 @@ export function syncUnifiedCanvasTransformGuideFromEvent(fabricCanvas: FabricCan
     return;
   }
 
-  (fabricCanvas as FabricCanvasWithTransformGuide).__unifiedTransformGuide = {
+  setUnifiedCanvasTransformGuide(fabricCanvas as FabricCanvasWithTransformGuide, {
     corner,
     proportional: isProportionalScale(eventData ?? {}, activeObject),
     target: activeObject,
-  };
+  });
 }
 
 export function configureUnifiedObjectTransformForGesture(

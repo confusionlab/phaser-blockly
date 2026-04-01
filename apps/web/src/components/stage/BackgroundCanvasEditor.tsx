@@ -112,7 +112,6 @@ import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
   TRANSFORM_GIZMO_HANDLE_STROKE,
   TRANSFORM_GIZMO_ROTATE_CURSOR,
-  TransformGizmoCorner,
   computeCornerScaleResult,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
@@ -121,6 +120,7 @@ import {
   isPointInsideTransformHandle,
   isPointInsideTransformRotateRing,
 } from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner } from '@/lib/editor/unifiedTransformGizmo';
 import { BackgroundLayerPanel } from './BackgroundLayerPanel';
 import {
   BackgroundVectorCanvas,

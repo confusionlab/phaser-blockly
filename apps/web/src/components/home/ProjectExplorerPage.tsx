@@ -455,15 +455,11 @@ export function ProjectExplorerPage({
     };
   }, [queueExplorerCloudSync, refreshExplorer, staleVisibleProjects]);
 
-  const requestTrashForSelection = useCallback(async () => {
-    if (isExplorerReadOnly) {
-      return;
-    }
-
-    const folderIds = selectedKeys
+  const requestTrashForKeys = useCallback((keys: ExplorerKey[]) => {
+    const folderIds = keys
       .filter((key): key is `folder:${string}` => key.startsWith('folder:'))
       .map((key) => key.slice('folder:'.length));
-    const projectIds = selectedKeys
+    const projectIds = keys
       .filter((key): key is `project:${string}` => key.startsWith('project:'))
       .map((key) => key.slice('project:'.length));
 
@@ -476,7 +472,15 @@ export function ProjectExplorerPage({
       heading: 'Move selected items to trash?',
       projectIds,
     });
-  }, [isExplorerReadOnly, selectedKeys]);
+  }, []);
+
+  const requestTrashForSelection = useCallback(async () => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
+    requestTrashForKeys(selectedKeys);
+  }, [isExplorerReadOnly, requestTrashForKeys, selectedKeys]);
 
   useEffect(() => {
     if (!selectionMode) {
@@ -896,6 +900,10 @@ export function ProjectExplorerPage({
             event.preventDefault();
             event.stopPropagation();
             if (isExplorerReadOnly) {
+              return;
+            }
+            if (selectionMode && selectedKeys.includes(item.key)) {
+              requestTrashForKeys(selectedKeys);
               return;
             }
             if (item.kind === 'folder') {
@@ -1331,9 +1339,9 @@ export function ProjectExplorerPage({
       <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
         <DialogContent
           showCloseButton={false}
-          className="w-auto max-w-none sm:max-w-none border-none bg-transparent p-0 shadow-none"
+          className="w-[calc(100vw-2rem)] max-w-none sm:max-w-none border-none bg-transparent p-0 shadow-none"
         >
-          <div className="max-h-[84vh] overflow-auto">
+          <div className="pocha-account-profile max-h-[84vh] overflow-y-auto overflow-x-hidden">
             <UserProfile routing="hash" />
           </div>
         </DialogContent>
