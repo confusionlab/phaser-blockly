@@ -14,6 +14,7 @@ type StageMetrics = {
   coversHostBottom: boolean;
   canvasVisibility: string;
   surfaceResizeCount: number;
+  tiledBackgroundRenderCount: number;
   frozenFrameCount: number;
 };
 
@@ -46,6 +47,28 @@ async function waitForStageToSettle(page: Page): Promise<void> {
   });
 }
 
+async function waitForTiledBackgroundToSettle(page: Page): Promise<void> {
+  await expect.poll(async () => {
+    const before = await getStageMetrics(page);
+    if (!before || before.tiledBackgroundRenderCount <= 0) {
+      return false;
+    }
+
+    await page.evaluate(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setTimeout(resolve, 80);
+          });
+        });
+      });
+    });
+
+    const after = await getStageMetrics(page);
+    return !!after && after.tiledBackgroundRenderCount === before.tiledBackgroundRenderCount;
+  }).toBe(true);
+}
+
 async function getStageMetrics(page: Page): Promise<StageMetrics | null> {
   return page.evaluate(() => {
     const host = document.querySelector('[data-testid="stage-phaser-host"]');
@@ -71,8 +94,61 @@ async function getStageMetrics(page: Page): Promise<StageMetrics | null> {
       coversHostBottom: canvasRect.bottom >= hostRect.bottom - 0.5,
       canvasVisibility: window.getComputedStyle(canvas).visibility,
       surfaceResizeCount: snapshot?.surfaceResizeCount ?? -1,
+      tiledBackgroundRenderCount: snapshot?.tiledBackgroundRenderCount ?? -1,
       frozenFrameCount: document.querySelectorAll('[data-testid="stage-frozen-frame"]').length,
     };
+  });
+}
+
+async function enableDenseTiledBackground(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const [{ useProjectStore }, { useEditorStore }, { decodeBackgroundChunkImage }] = await Promise.all([
+      import('/src/store/projectStore.ts'),
+      import('/src/store/editorStore.ts'),
+      import('/src/lib/background/chunkImageCache.ts'),
+    ]);
+
+    const sceneId = useEditorStore.getState().selectedSceneId;
+    if (!sceneId) {
+      throw new Error('No selected scene to update.');
+    }
+
+    const tileCanvas = document.createElement('canvas');
+    tileCanvas.width = 64;
+    tileCanvas.height = 64;
+    const ctx = tileCanvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Failed to create background tile canvas.');
+    }
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(0, 0, 32, 32);
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(32, 0, 32, 32);
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(0, 32, 32, 32);
+    ctx.fillStyle = '#ef4444';
+    ctx.fillRect(32, 32, 32, 32);
+    const tileDataUrl = tileCanvas.toDataURL('image/png');
+    await decodeBackgroundChunkImage(tileDataUrl);
+
+    const chunks: Record<string, string> = {};
+    for (let cx = -6; cx <= 6; cx += 1) {
+      for (let cy = -6; cy <= 6; cy += 1) {
+        chunks[`${cx},${cy}`] = tileDataUrl;
+      }
+    }
+
+    useProjectStore.getState().updateScene(sceneId, {
+      background: {
+        type: 'tiled',
+        value: '#87CEEB',
+        chunkSize: 256,
+        chunks,
+      },
+    });
   });
 }
 
@@ -375,5 +451,55 @@ test.describe('Stage resize', () => {
     expect(after.centerX).toBeCloseTo(before.centerX, 6);
     expect(after.centerY).toBeCloseTo(before.centerY, 6);
     expect(after.width).toBeGreaterThan(before.width + 150);
+  });
+
+  test('tiled background stays on the cached live surface during stage resize drags', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Background Live Resize ${Date.now()}`,
+    });
+
+    await waitForStageHost(page);
+    await waitForStageDebug(page);
+    await enableDenseTiledBackground(page);
+    await waitForStageToSettle(page);
+    await waitForTiledBackgroundToSettle(page);
+
+    const initialMetrics = await getStageMetrics(page);
+    expect(initialMetrics).not.toBeNull();
+    if (!initialMetrics) {
+      return;
+    }
+
+    const divider = page.getByTestId('editor-layout-divider');
+    const dividerBox = await divider.boundingBox();
+    expect(dividerBox).not.toBeNull();
+    if (!dividerBox) {
+      return;
+    }
+
+    const pointerX = dividerBox.x + dividerBox.width / 2;
+    const pointerY = dividerBox.y + dividerBox.height / 2;
+    await page.mouse.move(pointerX, pointerY);
+    await page.mouse.down();
+    await page.mouse.move(pointerX - 180, pointerY, { steps: 12 });
+
+    await expect.poll(async () => {
+      const metrics = await getStageMetrics(page);
+      if (!metrics) {
+        return null;
+      }
+
+      return {
+        widthGrew: metrics.hostWidth - initialMetrics.hostWidth >= 40,
+        backgroundStable: metrics.tiledBackgroundRenderCount - initialMetrics.tiledBackgroundRenderCount <= 1,
+        surfaceStable: metrics.surfaceResizeCount === initialMetrics.surfaceResizeCount,
+      };
+    }).toEqual({
+      widthGrew: true,
+      backgroundStable: true,
+      surfaceStable: true,
+    });
+
+    await page.mouse.up();
   });
 });

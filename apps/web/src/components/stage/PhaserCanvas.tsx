@@ -166,6 +166,7 @@ type StageDebugSnapshot = {
   hostSize: StageSize;
   surfaceSize: StageSize | null;
   surfaceResizeCount: number;
+  tiledBackgroundRenderCount: number;
   visibleRect: {
     x: number;
     y: number;
@@ -542,8 +543,8 @@ function drawWorldBoundary(
 }
 
 interface TiledBackgroundRenderSnapshot {
-  viewportWidth: number;
-  viewportHeight: number;
+  pixelWidth: number;
+  pixelHeight: number;
   worldLeft: number;
   worldTop: number;
   worldWidth: number;
@@ -564,6 +565,7 @@ interface TiledBackgroundLayerState {
   renderScale: number;
   lastBackgroundRef: BackgroundConfig | null;
   lastRenderSnapshot: TiledBackgroundRenderSnapshot | null;
+  renderCount: number;
 }
 
 function createTiledBackgroundLayerState(
@@ -602,6 +604,7 @@ function createTiledBackgroundLayerState(
     renderScale: 1,
     lastBackgroundRef: null,
     lastRenderSnapshot: null,
+    renderCount: 0,
   });
   return layer;
 }
@@ -621,14 +624,51 @@ function hasTiledBackgroundSnapshotChanged(
   if (!previous) return true;
   const epsilon = 1e-3;
   return (
-    previous.viewportWidth !== next.viewportWidth ||
-    previous.viewportHeight !== next.viewportHeight ||
+    previous.pixelWidth !== next.pixelWidth ||
+    previous.pixelHeight !== next.pixelHeight ||
     Math.abs(previous.worldLeft - next.worldLeft) > epsilon ||
     Math.abs(previous.worldTop - next.worldTop) > epsilon ||
     Math.abs(previous.worldWidth - next.worldWidth) > epsilon ||
     Math.abs(previous.worldHeight - next.worldHeight) > epsilon ||
     Math.abs(previous.zoom - next.zoom) > epsilon
   );
+}
+
+function getTiledBackgroundRenderSnapshot(
+  scene: Phaser.Scene,
+  layer: TiledBackgroundLayerState,
+  camera: Phaser.Cameras.Scene2D.Camera,
+): TiledBackgroundRenderSnapshot {
+  const stageViewportController = getStageViewportController(scene);
+  const projection = stageViewportController?.getProjection() ?? null;
+  const zoom = Math.max(Math.abs(camera.zoom), 1e-6);
+
+  if (projection?.mode === 'editor') {
+    const editorViewport = stageViewportController?.getEditorViewport();
+    const worldWidth = projection.surfaceSize.width / zoom;
+    const worldHeight = projection.surfaceSize.height / zoom;
+    const centerX = editorViewport?.centerX ?? camera.worldView.centerX;
+    const centerY = editorViewport?.centerY ?? camera.worldView.centerY;
+    return {
+      pixelWidth: Math.max(1, Math.round(projection.surfaceSize.width * layer.renderScale)),
+      pixelHeight: Math.max(1, Math.round(projection.surfaceSize.height * layer.renderScale)),
+      worldLeft: centerX - (worldWidth / 2),
+      worldTop: centerY - (worldHeight / 2),
+      worldWidth,
+      worldHeight,
+      zoom: camera.zoom,
+    };
+  }
+
+  return {
+    pixelWidth: Math.max(1, Math.round(camera.width * layer.renderScale)),
+    pixelHeight: Math.max(1, Math.round(camera.height * layer.renderScale)),
+    worldLeft: camera.worldView.left,
+    worldTop: camera.worldView.top,
+    worldWidth: camera.worldView.width,
+    worldHeight: camera.worldView.height,
+    zoom: camera.zoom,
+  };
 }
 
 function getUserViewportFromPhaserWorldView(
@@ -673,36 +713,32 @@ function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundL
   }
 
   camera.preRender();
-  const worldView = camera.worldView;
-  const viewportWidth = Math.max(1, Math.round(camera.width));
-  const viewportHeight = Math.max(1, Math.round(camera.height));
-  const nextSnapshot: TiledBackgroundRenderSnapshot = {
-    viewportWidth,
-    viewportHeight,
-    worldLeft: worldView.left,
-    worldTop: worldView.top,
-    worldWidth: worldView.width,
-    worldHeight: worldView.height,
-    zoom: camera.zoom,
-  };
+  const nextSnapshot = getTiledBackgroundRenderSnapshot(scene, layer, camera);
 
   if (layer.needsRedraw || hasTiledBackgroundSnapshotChanged(layer.lastRenderSnapshot, nextSnapshot)) {
-    const viewport = getUserViewportFromPhaserWorldView(worldView, layer.canvasWidth, layer.canvasHeight);
+    const renderWorldView = new Phaser.Geom.Rectangle(
+      nextSnapshot.worldLeft,
+      nextSnapshot.worldTop,
+      nextSnapshot.worldWidth,
+      nextSnapshot.worldHeight,
+    );
+    const viewport = getUserViewportFromPhaserWorldView(renderWorldView, layer.canvasWidth, layer.canvasHeight);
     const { pending } = layer.compositor.render({
       canvas: layer.canvas,
       background,
       viewport,
-      pixelWidth: viewportWidth * layer.renderScale,
-      pixelHeight: viewportHeight * layer.renderScale,
+      pixelWidth: nextSnapshot.pixelWidth,
+      pixelHeight: nextSnapshot.pixelHeight,
     });
     layer.texture.setSize(layer.canvas.width, layer.canvas.height);
     layer.texture.refresh();
     layer.needsRedraw = pending;
     layer.lastRenderSnapshot = nextSnapshot;
+    layer.renderCount += 1;
   }
 
-  layer.image.setPosition(worldView.left, worldView.top);
-  layer.image.setDisplaySize(worldView.width, worldView.height);
+  layer.image.setPosition(nextSnapshot.worldLeft, nextSnapshot.worldTop);
+  layer.image.setDisplaySize(nextSnapshot.worldWidth, nextSnapshot.worldHeight);
   layer.image.setVisible(true);
 }
 
@@ -1004,7 +1040,6 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
     if (phaserScene) {
       getStageViewportController(phaserScene)?.syncProjection();
-      refreshTiledBackgroundLayer(phaserScene);
     }
   }, [ensureEditorSurfaceSize, isPlaying, syncEditorCanvasElementBox]);
 
@@ -1103,6 +1138,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         const camera = editorScene.cameras.main;
         const projection = controller?.getProjection() ?? null;
         const hostSize = getElementRenderSize(host);
+        const tiledBackgroundLayer = editorScene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
         camera.preRender();
         const cameraViewportCenter = {
           x: camera.worldView.centerX,
@@ -1116,6 +1152,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
           hostSize,
           surfaceSize: projection?.surfaceSize ?? null,
           surfaceResizeCount: editorSurfaceResizeCountRef.current,
+          tiledBackgroundRenderCount: tiledBackgroundLayer?.renderCount ?? 0,
           visibleRect: projection?.visibleRect ?? null,
           gameLoopFrame: game?.loop?.frame ?? 0,
           canvasState: canvas
