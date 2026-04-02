@@ -151,6 +151,9 @@ export function EditMessagesDialog({
                     name={message.name}
                     isEditing={isEditing}
                     editValue={editName}
+                    renameLabel="Rename Message"
+                    deleteLabel="Delete Message"
+                    renameFieldLabel={`Rename ${message.name}`}
                     onEditValueChange={setEditName}
                     onEditSave={() => saveRename(message.id)}
                     onEditCancel={() => {

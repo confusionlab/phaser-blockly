@@ -1,9 +1,12 @@
-import type { ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { WindowDialogChrome } from '@/components/shared/WindowDialogChrome';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { Check, Pencil, Plus, Trash2, X } from '@/components/ui/icons';
+import { MenuItemButton } from '@/components/ui/menu-item-button';
+import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { Pencil, Plus, Trash2 } from '@/components/ui/icons';
 
 interface ProjectPropertyManagerDialogProps {
   open: boolean;
@@ -29,6 +32,9 @@ interface ProjectPropertyManagerRowProps {
   onEditCancel?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  renameLabel?: string;
+  deleteLabel?: string;
+  renameFieldLabel?: string;
   primaryActionLabel?: string;
   onPrimaryAction?: () => void;
 }
@@ -94,104 +100,202 @@ export function ProjectPropertyManagerRow({
   onEditCancel,
   onEdit,
   onDelete,
+  renameLabel = 'Rename',
+  deleteLabel = 'Delete',
+  renameFieldLabel,
   primaryActionLabel,
   onPrimaryAction,
 }: ProjectPropertyManagerRowProps) {
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const cancelRenameOnBlurRef = useRef(false);
+  const hasContextMenuActions = Boolean(onEdit || onDelete);
+
+  useLayoutEffect(() => {
+    if (!contextMenuPosition || !contextMenuRef.current) {
+      return;
+    }
+
+    const margin = 8;
+    const menuRect = contextMenuRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let nextLeft = contextMenuPosition.left;
+    let nextTop = contextMenuPosition.top;
+
+    if (nextLeft + menuRect.width + margin > viewportWidth) {
+      nextLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
+    }
+    if (nextTop + menuRect.height + margin > viewportHeight) {
+      nextTop = Math.max(margin, viewportHeight - menuRect.height - margin);
+    }
+
+    if (nextLeft !== contextMenuPosition.left || nextTop !== contextMenuPosition.top) {
+      setContextMenuPosition({ left: nextLeft, top: nextTop });
+    }
+  }, [contextMenuPosition]);
+
+  useEffect(() => {
+    if (!contextMenuPosition || typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setContextMenuPosition(null);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [contextMenuPosition]);
+
+  const closeContextMenu = () => {
+    setContextMenuPosition(null);
+  };
+
+  const handleContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+    if (isEditing || !hasContextMenuActions) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenuPosition({ left: event.clientX, top: event.clientY });
+  };
+
+  const beginRename = () => {
+    closeContextMenu();
+    onEdit?.();
+  };
+
+  const cancelRename = () => {
+    cancelRenameOnBlurRef.current = true;
+    onEditCancel?.();
+  };
+
+  const handleRenameBlur = () => {
+    if (cancelRenameOnBlurRef.current) {
+      cancelRenameOnBlurRef.current = false;
+      return;
+    }
+    onEditSave?.();
+  };
+
   return (
-    <div className="group flex items-center justify-between rounded-lg px-3 py-2 select-none hover:bg-accent">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        {icon}
-        {isEditing ? (
-          <div className="flex flex-1 items-center gap-2">
-            <InlineRenameField
-              value={editValue}
-              onChange={(event) => onEditValueChange?.(event.target.value)}
-              autoFocus
-              className="flex-1"
-              textClassName="text-sm leading-5"
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  onEditSave?.();
-                }
-                if (event.key === 'Escape') {
-                  onEditCancel?.();
-                }
-              }}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onEditSave}
-              className="h-7 w-7 p-0 text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
-            >
-              <Check className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onEditCancel}
-              className="h-7 w-7 p-0 text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        ) : (
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="truncate font-medium">{name}</div>
-              {nameMeta ? (
-                <div className="shrink-0 text-xs text-muted-foreground/80">
-                  {nameMeta}
-                </div>
+    <>
+      <div
+        className="group flex items-center justify-between rounded-lg px-3 py-2 select-none hover:bg-accent"
+        onContextMenu={handleContextMenu}
+        onDoubleClick={(event) => {
+          if (isEditing || !onEdit) {
+            return;
+          }
+          const target = event.target as HTMLElement | null;
+          if (target?.closest('button, input, textarea, a')) {
+            return;
+          }
+          event.preventDefault();
+          beginRename();
+        }}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {icon}
+          {isEditing ? (
+            <div className="flex flex-1 items-center">
+              <InlineRenameField
+                aria-label={renameFieldLabel ?? `Rename ${name}`}
+                value={editValue}
+                onBlur={handleRenameBlur}
+                onChange={(event) => onEditValueChange?.(event.target.value)}
+                autoFocus
+                className="flex-1"
+                textClassName="text-sm leading-5"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    onEditSave?.();
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    cancelRename();
+                  }
+                }}
+              />
+            </div>
+          ) : (
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate font-medium">{name}</div>
+                {nameMeta ? (
+                  <div className="shrink-0 text-xs text-muted-foreground/80">
+                    {nameMeta}
+                  </div>
+                ) : null}
+              </div>
+              {subtitle ? (
+                <div className="text-xs text-muted-foreground">{subtitle}</div>
               ) : null}
             </div>
-            {subtitle ? (
-              <div className="text-xs text-muted-foreground">{subtitle}</div>
+          )}
+        </div>
+        {!isEditing ? (
+          <div className="flex items-center gap-2">
+            {trailingMeta ? (
+              <div className="shrink-0 text-xs text-muted-foreground/80">
+                {trailingMeta}
+              </div>
+            ) : null}
+            {primaryActionLabel && onPrimaryAction ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onPrimaryAction}
+                className="h-7 px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                {primaryActionLabel}
+              </Button>
             ) : null}
           </div>
-        )}
+        ) : null}
       </div>
-      {!isEditing ? (
-        <div className="flex items-center gap-2">
-          {trailingMeta ? (
-            <div className="shrink-0 text-xs text-muted-foreground/80">
-              {trailingMeta}
-            </div>
-          ) : null}
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
-          {primaryActionLabel && onPrimaryAction ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onPrimaryAction}
-              className="h-7 px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              {primaryActionLabel}
-            </Button>
-          ) : null}
+
+      {contextMenuPosition && hasContextMenuActions ? (
+        <Card
+          ref={contextMenuRef}
+          className="fixed z-50 min-w-40 gap-0 py-1"
+          style={{
+            left: contextMenuPosition.left,
+            top: contextMenuPosition.top,
+          }}
+        >
           {onEdit ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onEdit}
-              className="h-7 w-7 p-0 text-muted-foreground hover:bg-accent hover:text-foreground"
+            <MenuItemButton
+              icon={<Pencil className="size-4" />}
+              onClick={beginRename}
             >
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
+              {renameLabel}
+            </MenuItemButton>
           ) : null}
+          {onEdit && onDelete ? <DropdownMenuSeparator /> : null}
           {onDelete ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onDelete}
-              className="h-7 w-7 p-0 text-red-500 hover:bg-red-500/15 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300"
+            <MenuItemButton
+              icon={<Trash2 className="size-4" />}
+              intent="destructive"
+              onClick={() => {
+                closeContextMenu();
+                onDelete();
+              }}
             >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+              {deleteLabel}
+            </MenuItemButton>
           ) : null}
-          </div>
-        </div>
+        </Card>
       ) : null}
-    </div>
+    </>
   );
 }

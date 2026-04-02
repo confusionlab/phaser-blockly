@@ -23,6 +23,8 @@ body {
   font-family: var(--font-sans);
   background: var(--background);
   color: var(--foreground);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Shared editor chrome row height across the editor shell and side panels. */
@@ -35,7 +37,7 @@ body {
   user-select: none;
 }
 
-.app-shell :is(
+body :is(
   input,
   textarea,
   select,
@@ -46,8 +48,8 @@ body {
   user-select: text;
 }
 
-.app-shell [data-allow-text-selection="true"],
-.app-shell [data-allow-text-selection="true"] * {
+[data-allow-text-selection="true"],
+[data-allow-text-selection="true"] * {
   -webkit-user-select: text;
   user-select: text;
 }

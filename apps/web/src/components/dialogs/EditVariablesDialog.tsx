@@ -75,8 +75,8 @@ type LocalHierarchySceneNode = {
 };
 
 const VARIABLE_SCOPE_OPTIONS: { value: AddVariableScope; label: string }[] = [
-  { value: 'global', label: 'Global' },
   { value: 'local', label: 'Local' },
+  { value: 'global', label: 'Global' },
 ];
 
 const VARIABLE_LIST_TABS: { value: VariableListTab; label: string }[] = [
@@ -85,8 +85,8 @@ const VARIABLE_LIST_TABS: { value: VariableListTab; label: string }[] = [
 ];
 
 const VARIABLE_TYPES: { value: VariableType; label: string }[] = [
-  { value: 'string', label: 'Text' },
   { value: 'number', label: 'Number' },
+  { value: 'string', label: 'Text' },
   { value: 'boolean', label: 'Boolean' },
 ];
 const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string }[] = [
@@ -629,6 +629,9 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         subtitle={entry.note}
         isEditing={isEditing}
         editValue={editName}
+        renameLabel="Rename Variable"
+        deleteLabel="Delete Variable"
+        renameFieldLabel={`Rename ${entry.variable.name}`}
         onEditValueChange={setEditName}
         onEditSave={() => saveRename(entry)}
         onEditCancel={() => {
