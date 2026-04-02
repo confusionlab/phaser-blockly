@@ -580,22 +580,22 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
       ];
     case 'event_when_touching':
       return [
-        indentLine(indent, `when touching ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}:`),
+        indentLine(indent, `when I touch ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'event_when_touching_value':
       return [
-        indentLine(indent, `when touching ${renderBlocklyExpression(getValue(node, 'TARGET'))}:`),
+        indentLine(indent, `when I touch ${renderBlocklyExpression(getValue(node, 'TARGET'))}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'event_when_touching_direction':
       return [
-        indentLine(indent, `when touching ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
+        indentLine(indent, `when I touch ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'event_when_touching_direction_value':
       return [
-        indentLine(indent, `when touching ${renderBlocklyExpression(getValue(node, 'TARGET'))} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
+        indentLine(indent, `when I touch ${renderBlocklyExpression(getValue(node, 'TARGET'))} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'looks_show':

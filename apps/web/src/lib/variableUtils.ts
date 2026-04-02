@@ -1,12 +1,21 @@
-import type { ComponentDefinition, GameObject, Variable, VariableType } from '@/types';
+import type {
+  ComponentDefinition,
+  GameObject,
+  Variable,
+  VariableCardinality,
+  VariableScalarValue,
+  VariableType,
+  VariableValue,
+} from '@/types';
 import { VARIABLE_REFERENCE_BLOCKS } from '@/lib/blocklyReferenceMaps';
 
 export interface VariableDefinitionSnapshot {
   id: string;
   name: string;
   type: VariableType;
+  cardinality: VariableCardinality;
   scope: 'global' | 'local';
-  defaultValue: number | string | boolean;
+  defaultValue: VariableValue;
 }
 
 export interface VariableDefinitionConflict {
@@ -59,10 +68,14 @@ export function normalizeVariableType(type: unknown): VariableType {
   }
 }
 
-export function coerceDefaultValue(
+export function normalizeVariableCardinality(cardinality: unknown): VariableCardinality {
+  return cardinality === 'array' ? 'array' : 'single';
+}
+
+export function coerceScalarDefaultValue(
   type: VariableType,
   value: unknown,
-): number | string | boolean {
+): VariableScalarValue {
   switch (type) {
     case 'integer': {
       const numeric = Number(value);
@@ -84,17 +97,59 @@ export function coerceDefaultValue(
   }
 }
 
+export function coerceDefaultValue(
+  type: VariableType,
+  cardinality: VariableCardinality,
+  value: unknown,
+): VariableValue {
+  if (cardinality === 'array') {
+    if (Array.isArray(value)) {
+      return value.map((entry) => coerceScalarDefaultValue(type, entry));
+    }
+    if (value === null || value === undefined) {
+      return [];
+    }
+    return [coerceScalarDefaultValue(type, value)];
+  }
+
+  return coerceScalarDefaultValue(type, value);
+}
+
+export function getDefaultVariableValue(
+  type: VariableType,
+  cardinality: VariableCardinality,
+): VariableValue {
+  return coerceDefaultValue(type, cardinality, cardinality === 'array' ? [] : undefined);
+}
+
+export function cloneVariableValue(value: VariableValue): VariableValue {
+  return Array.isArray(value) ? [...value] : value;
+}
+
+export function cloneVariableDefinition(variable: Variable): Variable {
+  return {
+    ...variable,
+    defaultValue: cloneVariableValue(variable.defaultValue),
+  };
+}
+
+export function cloneVariableDefinitions(variables: Variable[] | undefined): Variable[] {
+  return (variables || []).map((variable) => cloneVariableDefinition(variable));
+}
+
 export function normalizeVariableDefinition(
   variable: Variable,
   { scope, objectId }: NormalizeVariableOptions,
 ): Variable {
   const type = normalizeVariableType(variable.type);
+  const cardinality = normalizeVariableCardinality(variable.cardinality);
   const normalizedName = normalizeVariableName(variable.name) || 'variable';
   const normalized: Variable = {
     id: safeVariableId(variable.id),
     name: normalizedName,
     type,
-    defaultValue: coerceDefaultValue(type, variable.defaultValue),
+    cardinality,
+    defaultValue: coerceDefaultValue(type, cardinality, variable.defaultValue),
     scope,
   };
   if (scope === 'local' && objectId) {
@@ -128,9 +183,24 @@ function normalizeVariableSnapshot(
     id: normalized.id,
     name: normalized.name,
     type: normalized.type,
+    cardinality: normalizeVariableCardinality(normalized.cardinality),
     scope: normalized.scope,
-    defaultValue: normalized.defaultValue,
+    defaultValue: cloneVariableValue(normalized.defaultValue),
   };
+}
+
+export function areVariableValuesEqual(left: VariableValue, right: VariableValue): boolean {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) {
+      return false;
+    }
+    if (left.length !== right.length) {
+      return false;
+    }
+    return left.every((value, index) => Object.is(value, right[index]));
+  }
+
+  return Object.is(left, right);
 }
 
 function sameDefinition(
@@ -141,8 +211,9 @@ function sameDefinition(
     left.id === right.id &&
     left.name === right.name &&
     left.type === right.type &&
+    left.cardinality === right.cardinality &&
     left.scope === right.scope &&
-    left.defaultValue === right.defaultValue
+    areVariableValuesEqual(left.defaultValue, right.defaultValue)
   );
 }
 
@@ -166,8 +237,9 @@ function pushDefinition(
       id: existing.id,
       name: existing.name,
       type: existing.type,
+      cardinality: existing.cardinality,
       scope: existing.scope,
-      defaultValue: existing.defaultValue,
+      defaultValue: cloneVariableValue(existing.defaultValue),
     },
     incoming,
     existingSource: existing.source,
@@ -248,8 +320,9 @@ export function buildVariableDefinitionIndex(
       id,
       name: variable.name,
       type: variable.type,
+      cardinality: variable.cardinality,
       scope: variable.scope,
-      defaultValue: variable.defaultValue,
+      defaultValue: cloneVariableValue(variable.defaultValue),
     });
   }
 

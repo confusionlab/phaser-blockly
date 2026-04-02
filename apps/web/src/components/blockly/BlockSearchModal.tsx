@@ -4,6 +4,7 @@ import { POCHA_BLOCKLY_THEME } from './blocklyTheme';
 import {
   getToolboxConfig,
   type ToolboxBlockConfig,
+  type ToolboxCategoryConfig,
   type ToolboxShadowConfig,
 } from './toolbox';
 
@@ -77,7 +78,12 @@ function getSearchLabel(config: ToolboxBlockConfig): string {
   if (config.type === 'event_game_start') return 'when I start';
   if (config.type === 'event_key_pressed') return 'when [key] is pressed';
   if (config.type === 'event_clicked') return 'when this is clicked';
+  if (config.type === 'event_when_receive') return 'when I receive [message]';
+  if (config.type === 'event_when_touching_value') return 'when I touch [object]';
+  if (config.type === 'event_when_touching_direction_value') return 'when I touch [object] from [direction]';
   if (config.type === 'event_forever') return 'forever';
+  if (config.type === 'control_broadcast') return 'broadcast [message]';
+  if (config.type === 'control_broadcast_wait') return 'broadcast [message] and wait';
   if (config.type === 'object_from_dropdown') return 'object';
   if (config.type === 'target_camera') return 'camera';
   if (config.type === 'target_myself') return 'myself';
@@ -88,28 +94,36 @@ function getSearchLabel(config: ToolboxBlockConfig): string {
 
 function buildSearchItemsFromToolbox(): SearchItem[] {
   const toolbox = getToolboxConfig({ includeAdvancedBlocks: true });
-  const categories = toolbox.contents || [];
   const items: SearchItem[] = [...COMMAND_ITEMS];
 
-  for (const category of categories) {
-    if (category.kind !== 'category') continue;
+  const visitCategory = (category: ToolboxCategoryConfig, path: string[]) => {
     const typeCounts = new Map<string, number>();
+
     for (const content of category.contents || []) {
-      if (content.kind !== 'block') continue;
-      const block = content as unknown as ToolboxBlockConfig;
-      const nextCount = (typeCounts.get(block.type) || 0) + 1;
-      typeCounts.set(block.type, nextCount);
-      items.push({
-        id: getSearchId(block, nextCount),
-        type: 'block',
-        blockType: block.type,
-        label: getSearchLabel(block),
-        category: category.name,
-        categoryColor: category.colour,
-        toolboxBlock: block,
-      });
+      if (content.kind === 'block') {
+        const block = content as unknown as ToolboxBlockConfig;
+        const nextCount = (typeCounts.get(block.type) || 0) + 1;
+        typeCounts.set(block.type, nextCount);
+        items.push({
+          id: getSearchId(block, nextCount),
+          type: 'block',
+          blockType: block.type,
+          label: getSearchLabel(block),
+          category: path.join(' / '),
+          categoryColor: category.colour,
+          toolboxBlock: block,
+        });
+      } else if (content.kind === 'category') {
+        visitCategory(content as ToolboxCategoryConfig, [...path, content.name]);
+      }
     }
+  };
+
+  for (const content of toolbox.contents || []) {
+    if (content.kind !== 'category') continue;
+    visitCategory(content, [content.name]);
   }
+
   return items;
 }
 

@@ -21,7 +21,7 @@ import {
   VALID_OBJECT_SPECIAL_VALUES,
   VARIABLE_REFERENCE_BLOCKS,
 } from '@/lib/blocklyReferenceMaps';
-import { normalizeVariableDefinition } from '@/lib/variableUtils';
+import { cloneVariableDefinitions, normalizeVariableDefinition } from '@/lib/variableUtils';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 import {
   cloneCostumeDocument,
@@ -4955,7 +4955,7 @@ export async function importProject(jsonString: string): Promise<Project> {
       if (obj.componentId && obj.localVariables.length === 0) {
         const componentLocalVariables = project.components.find((component) => component.id === obj.componentId)?.localVariables || [];
         if (componentLocalVariables.length > 0) {
-          obj.localVariables = componentLocalVariables.map((variable) => ({ ...variable }));
+          obj.localVariables = cloneVariableDefinitions(componentLocalVariables);
         }
       }
 

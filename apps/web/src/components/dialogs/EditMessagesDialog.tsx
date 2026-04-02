@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Type } from '@/components/ui/icons';
+import { Modal } from '@/components/ui/modal';
 import { useProjectStore } from '@/store/projectStore';
 import { useModal } from '@/components/ui/modal-provider';
 import {
@@ -35,11 +36,15 @@ export function EditMessagesDialog({
 
   const messages = useMemo(() => project?.messages || [], [project?.messages]);
 
+  const resetAddDialog = () => {
+    setName('');
+    setError(null);
+  };
+
   useEffect(() => {
     if (!open) return;
     setIsAdding(startInAddMode);
-    setName('');
-    setError(null);
+    resetAddDialog();
     setEditingId(null);
     setEditName('');
   }, [open, startInAddMode]);
@@ -61,9 +66,8 @@ export function EditMessagesDialog({
       return;
     }
 
-    setName('');
-    setError(null);
     setIsAdding(false);
+    resetAddDialog();
     emitMessagesChanged();
 
     if (onSelectMessage) {
@@ -106,19 +110,95 @@ export function EditMessagesDialog({
   };
 
   return (
-    <ProjectPropertyManagerDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Edit Messages"
-      description="Manage broadcast messages across the whole project."
-      addButtonLabel="+ Add Message"
-      isAdding={isAdding}
-      onToggleAdd={() => {
-        setIsAdding((current) => !current);
-        setError(null);
-      }}
-      addForm={(
-        <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
+    <>
+      <ProjectPropertyManagerDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        title="Edit Messages"
+        description="Manage broadcast messages across the whole project."
+        addButtonLabel="+ Add Message"
+        closeAddButtonLabel="Close Add Dialog"
+        isAdding={isAdding}
+        onToggleAdd={() => {
+          if (isAdding) {
+            setIsAdding(false);
+            setError(null);
+            return;
+          }
+
+          resetAddDialog();
+          setIsAdding(true);
+        }}
+      >
+        <section className="space-y-2">
+          <div className="text-sm font-semibold text-muted-foreground">Broadcast Messages</div>
+          {messages.length > 0 ? (
+            <div className="space-y-1">
+              {messages.map((message) => {
+                const isEditing = editingId === message.id;
+                return (
+                  <ProjectPropertyManagerRow
+                    key={message.id}
+                    icon={<Type className="size-4 flex-shrink-0 text-muted-foreground" />}
+                    name={message.name}
+                    subtitle={`Stable ID: ${message.id}`}
+                    isEditing={isEditing}
+                    editValue={editName}
+                    onEditValueChange={setEditName}
+                    onEditSave={() => saveRename(message.id)}
+                    onEditCancel={() => {
+                      setEditingId(null);
+                      setEditName('');
+                    }}
+                    onEdit={() => {
+                      setEditingId(message.id);
+                      setEditName(message.name);
+                    }}
+                    onDelete={() => void handleDelete(message.id)}
+                    primaryActionLabel={onSelectMessage ? 'Use' : undefined}
+                    onPrimaryAction={onSelectMessage
+                      ? () => {
+                          onSelectMessage(message.id);
+                          onOpenChange(false);
+                        }
+                      : undefined}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
+              No broadcast messages yet.
+            </div>
+          )}
+        </section>
+      </ProjectPropertyManagerDialog>
+      <Modal
+        open={isAdding}
+        onOpenChange={(nextOpen) => {
+          setIsAdding(nextOpen);
+          if (!nextOpen) {
+            setError(null);
+          }
+        }}
+        title="Add Message"
+        contentClassName="sm:max-w-lg"
+        footer={(
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsAdding(false);
+                setError(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleAdd}>Add Message</Button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="message-name">Message Name</Label>
             <Input
@@ -139,64 +219,8 @@ export function EditMessagesDialog({
           </div>
 
           {error ? <p className="text-xs text-red-500">{error}</p> : null}
-
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsAdding(false);
-                setError(null);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleAdd}>Add Message</Button>
-          </div>
         </div>
-      )}
-    >
-      <section className="space-y-2">
-        <div className="text-sm font-semibold text-muted-foreground">Broadcast Messages</div>
-        {messages.length > 0 ? (
-          <div className="space-y-1">
-            {messages.map((message) => {
-              const isEditing = editingId === message.id;
-              return (
-                <ProjectPropertyManagerRow
-                  key={message.id}
-                  icon={<Type className="size-4 flex-shrink-0 text-muted-foreground" />}
-                  name={message.name}
-                  subtitle={`Stable ID: ${message.id}`}
-                  isEditing={isEditing}
-                  editValue={editName}
-                  onEditValueChange={setEditName}
-                  onEditSave={() => saveRename(message.id)}
-                  onEditCancel={() => {
-                    setEditingId(null);
-                    setEditName('');
-                  }}
-                  onEdit={() => {
-                    setEditingId(message.id);
-                    setEditName(message.name);
-                  }}
-                  onDelete={() => void handleDelete(message.id)}
-                  primaryActionLabel={onSelectMessage ? 'Use' : undefined}
-                  onPrimaryAction={onSelectMessage
-                    ? () => {
-                        onSelectMessage(message.id);
-                        onOpenChange(false);
-                      }
-                    : undefined}
-                />
-              );
-            })}
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-            No broadcast messages yet.
-          </div>
-        )}
-      </section>
-    </ProjectPropertyManagerDialog>
+      </Modal>
+    </>
   );
 }

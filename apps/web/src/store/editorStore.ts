@@ -1,4 +1,5 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
+import type { StageViewMode } from '@/lib/stageViewport';
 import type { PlayValidationIssue } from '@/lib/playValidation';
 import type { Project } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
@@ -12,6 +13,8 @@ import {
   undoHistory,
 } from '@/store/universalHistory';
 
+export type { StageViewMode };
+
 export type ObjectEditorTab = 'code' | 'costumes' | 'sounds';
 export type HierarchyTab = 'scene' | 'object' | 'component';
 export type InspectorTab = HierarchyTab;
@@ -19,12 +22,6 @@ export interface CostumeColliderEditorRequest {
   sceneId: string;
   objectId: string;
 }
-
-// View mode for the stage canvas
-// 'camera-masked': Shows game area with black bars outside camera bounds
-// 'camera-viewport': Shows only the camera viewport (fits to container)
-// 'editor': Free panning editor mode (infinite canvas)
-export type StageViewMode = 'camera-masked' | 'camera-viewport' | 'editor';
 
 // Callback type for object picker
 export type ObjectPickerCallback = (objectId: string) => void;
@@ -136,9 +133,6 @@ interface EditorStore {
   showAdvancedBlocks: boolean;
 
   // View state
-  zoom: number;
-  panX: number;
-  panY: number;
   viewMode: StageViewMode;
 
   // UI state
@@ -189,9 +183,6 @@ interface EditorStore {
   startPlaying: () => void;
   stopPlaying: () => void;
 
-  setZoom: (zoom: number) => void;
-  setPan: (x: number, y: number) => void;
-  resetView: () => void;
   setViewMode: (mode: StageViewMode) => void;
   cycleViewMode: () => void;
 
@@ -301,9 +292,6 @@ function createEditorStore(): EditorStoreHook {
   })(),
 
   // View state
-  zoom: 1,
-  panX: 0,
-  panY: 0,
   viewMode: 'editor' as StageViewMode,
 
   // UI state
@@ -904,18 +892,6 @@ function createEditorStore(): EditorStoreHook {
 
   stopPlaying: () => {
     set({ isPlaying: false });
-  },
-
-  setZoom: (zoom) => {
-    set({ zoom: Math.max(0.1, Math.min(10, zoom)) });
-  },
-
-  setPan: (x, y) => {
-    set({ panX: x, panY: y });
-  },
-
-  resetView: () => {
-    set({ zoom: 1, panX: 0, panY: 0 });
   },
 
   setViewMode: (mode) => {

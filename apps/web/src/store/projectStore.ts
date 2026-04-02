@@ -33,6 +33,7 @@ import {
   normalizeFolderedHierarchy,
 } from '@/utils/hierarchyTree';
 import {
+  cloneVariableDefinitions as cloneVariableDefinitionsWithValues,
   hasVariableNameConflict,
   isValidVariableName,
   normalizeVariableName,
@@ -245,7 +246,7 @@ function normalizePhysicsCollider<TEntity extends PhysicsColliderEntity>(entity:
 }
 
 function cloneVariableDefinitions(variables: GameObject['localVariables']): GameObject['localVariables'] {
-  return (variables || []).map((variable) => ({ ...variable }));
+  return cloneVariableDefinitionsWithValues(variables || []);
 }
 
 function normalizeComponentName(name: string): string {

@@ -96,6 +96,46 @@ test.describe('assistant block catalog', () => {
     expect(targetsCategory).toBeUndefined();
   });
 
+  test('toolbox groups message blocks under Events and places forever in Control', async () => {
+    installToolboxTestGlobals();
+    const { getToolboxConfig } = await import('../src/components/blockly/toolbox');
+
+    const toolbox = getToolboxConfig({ includeAdvancedBlocks: true });
+    const eventsCategory = toolbox.contents.find((category) => category.name === 'Events');
+    const controlCategory = toolbox.contents.find((category) => category.name === 'Control');
+    const actionsCategory = toolbox.contents.find((category) => category.name === 'Actions');
+    const eventContents = eventsCategory?.contents ?? [];
+    const messagesLabelIndex = eventContents.findIndex(
+      (content) => content.kind === 'label' && content.text === 'Messages',
+    );
+    const messagesHeadingSlice = messagesLabelIndex >= 0
+      ? eventContents.slice(messagesLabelIndex, messagesLabelIndex + 6)
+      : [];
+    const repeatIndex = controlCategory?.contents.findIndex(
+      (content) => content.kind === 'block' && content.type === 'control_repeat',
+    ) ?? -1;
+    const foreverIndex = controlCategory?.contents.findIndex(
+      (content) => content.kind === 'block' && content.type === 'event_forever',
+    ) ?? -1;
+
+    expect(actionsCategory).toBeUndefined();
+    expect(controlCategory).toBeDefined();
+    expect(messagesLabelIndex).toBeGreaterThanOrEqual(0);
+    expect(eventContents[eventContents.length - 1]).toEqual(
+      expect.objectContaining({ kind: 'block', type: 'control_broadcast_wait' }),
+    );
+    expect(messagesHeadingSlice).toEqual([
+      expect.objectContaining({ kind: 'label', text: 'Messages' }),
+      expect.objectContaining({ kind: 'button', text: 'Edit Messages', callbackKey: 'EDIT_MESSAGES' }),
+      expect.objectContaining({ kind: 'sep', gap: '16' }),
+      expect.objectContaining({ kind: 'block', type: 'event_when_receive' }),
+      expect.objectContaining({ kind: 'block', type: 'control_broadcast' }),
+      expect.objectContaining({ kind: 'block', type: 'control_broadcast_wait' }),
+    ]);
+    expect(repeatIndex).toBeGreaterThanOrEqual(0);
+    expect(foreverIndex).toBe(repeatIndex + 1);
+  });
+
   test('searches blocks by behavior keywords without full toolbox dump in the tool result', () => {
     const results = searchAssistantBlocks({ query: 'size' }).map((entry) => entry.type);
 

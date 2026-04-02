@@ -1081,7 +1081,7 @@ export function BlocklyEditor() {
       setTypedVariableLoading(false);
       const allBlocks = workspaceRef.current.getAllBlocks(false);
       for (const block of allBlocks) {
-        if (block.type === 'typed_variable_get') {
+        if (block.type === 'typed_variable_get' || block.type === 'typed_array_item_at') {
           updateVariableBlockAppearance(block, true);
         }
       }

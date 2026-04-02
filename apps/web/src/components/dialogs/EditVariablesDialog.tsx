@@ -15,9 +15,15 @@ import {
 import { AppIcon, type AppIconName } from '@/components/ui/icons';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
-import { hasVariableNameConflict, normalizeVariableName } from '@/lib/variableUtils';
-import type { Variable, VariableType } from '@/types';
+import {
+  getDefaultVariableValue,
+  hasVariableNameConflict,
+  normalizeVariableCardinality,
+  normalizeVariableName,
+} from '@/lib/variableUtils';
+import type { Variable, VariableCardinality, VariableType } from '@/types';
 import { useModal } from '@/components/ui/modal-provider';
+import { Modal } from '@/components/ui/modal';
 import {
   ProjectPropertyManagerDialog,
   ProjectPropertyManagerRow,
@@ -54,15 +60,10 @@ const VARIABLE_TYPES: { value: VariableType; label: string; description: string 
   { value: 'float', label: 'Decimal', description: 'Numbers with decimals (1.5, 3.14...)' },
   { value: 'boolean', label: 'Boolean', description: 'True or False' },
 ];
-
-function getDefaultValue(type: VariableType): number | string | boolean {
-  switch (type) {
-    case 'string': return '';
-    case 'integer': return 0;
-    case 'float': return 0;
-    case 'boolean': return false;
-  }
-}
+const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string; description: string }[] = [
+  { value: 'single', label: 'Single', description: 'One value' },
+  { value: 'array', label: 'Multiple', description: 'An ordered list of values' },
+];
 
 function getTypeIconName(type: VariableType): AppIconName {
   switch (type) {
@@ -82,6 +83,11 @@ function getTypeLabel(type: VariableType): string {
   }
 }
 
+function getVariableKindLabel(variable: Variable): string {
+  const cardinality = normalizeVariableCardinality(variable.cardinality);
+  return cardinality === 'array' ? `${getTypeLabel(variable.type)} Array` : getTypeLabel(variable.type);
+}
+
 export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: EditVariablesDialogProps) {
   const {
     project,
@@ -99,6 +105,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [isAdding, setIsAdding] = useState(false);
   const [name, setName] = useState('');
   const [type, setType] = useState<VariableType>('integer');
+  const [cardinality, setCardinality] = useState<VariableCardinality>('single');
   const [targetValue, setTargetValue] = useState('global');
   const [error, setError] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -128,7 +135,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     const options: AddTargetOption[] = [
       {
         value: 'global',
-        label: 'Project / Global variables',
+        label: 'Project / Global',
         target: { kind: 'global' },
         group: 'project',
       },
@@ -137,7 +144,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     for (const component of components) {
       options.push({
         value: `component:${component.id}`,
-        label: `Component / ${component.name}`,
+        label: `Reusable Component / ${component.name}`,
         target: { kind: 'component', componentId: component.id },
         group: 'components',
       });
@@ -149,8 +156,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         options.push({
           value: `scene:${scene.id}:object:${object.id}`,
           label: component
-            ? `Scene / ${scene.name} / ${object.name} (via ${component.name})`
-            : `Scene / ${scene.name} / ${object.name}`,
+            ? `Object / ${scene.name} / ${object.name} (stored on ${component.name} component)`
+            : `Object / ${scene.name} / ${object.name}`,
           target: component
             ? { kind: 'component', componentId: component.id }
             : { kind: 'object', sceneId: scene.id, objectId: object.id },
@@ -181,15 +188,20 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     return 'global';
   }, [scenes, selectedComponentId, selectedObjectId, selectedSceneId]);
 
+  const resetAddDialog = (nextTargetValue: string) => {
+    setName('');
+    setType('integer');
+    setCardinality('single');
+    setError(null);
+    setTargetValue(nextTargetValue);
+  };
+
   useEffect(() => {
     if (!open) return;
     setIsAdding(false);
-    setName('');
-    setType('integer');
-    setError(null);
     setEditingKey(null);
     setEditName('');
-    setTargetValue(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
+    resetAddDialog(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
   }, [addTargetByValue, open, preferredTargetValue]);
 
   useEffect(() => {
@@ -232,7 +244,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
               target: usesComponentVariables && component
                 ? { kind: 'component', componentId: component.id }
                 : { kind: 'object', sceneId: scene.id, objectId: object.id },
-              note: usesComponentVariables && component ? `Via component ${component.name}` : undefined,
+              note: usesComponentVariables && component ? `Stored on component ${component.name}` : undefined,
             }));
 
             if (entries.length === 0) {
@@ -242,7 +254,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             return {
               key: `scene:${scene.id}:object:${object.id}`,
               title: object.name,
-              subtitle: usesComponentVariables && component ? `Using ${component.name} component variables` : null,
+              subtitle: usesComponentVariables && component ? `Uses variables from component ${component.name}` : null,
               entries,
             };
           })
@@ -387,7 +399,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       id: crypto.randomUUID(),
       name: trimmedName,
       type,
-      defaultValue: getDefaultValue(type),
+      cardinality,
+      defaultValue: getDefaultVariableValue(type, cardinality),
       scope: option.target.kind === 'global' ? 'global' : 'local',
     };
 
@@ -411,10 +424,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         break;
     }
 
-    setName('');
-    setType('integer');
-    setError(null);
     setIsAdding(false);
+    resetAddDialog(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
     emitVariablesChanged();
   };
 
@@ -432,7 +443,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           />
         )}
         name={entry.variable.name}
-        subtitle={`${getTypeLabel(entry.variable.type)}${entry.note ? ` · ${entry.note}` : ''}`}
+        subtitle={`${getVariableKindLabel(entry.variable)}${entry.note ? ` · ${entry.note}` : ''}`}
         isEditing={isEditing}
         editValue={editName}
         onEditValueChange={setEditName}
@@ -451,110 +462,25 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   };
 
   return (
-    <ProjectPropertyManagerDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Edit Variables"
-      description="Manage variables across the whole project."
-      addButtonLabel="+ Add Variable"
-      isAdding={isAdding}
-      onToggleAdd={() => {
-        setIsAdding((current) => !current);
-        setError(null);
-      }}
-      addForm={(
-        <div className="space-y-4 rounded-lg border bg-muted/20 p-4">
-            <div className="space-y-2">
-              <Label htmlFor="variable-name">Variable Name</Label>
-              <Input
-                id="variable-name"
-                value={name}
-                onChange={(event) => {
-                  setName(event.target.value);
-                  setError(null);
-                }}
-                placeholder="Player score"
-                autoFocus
-              />
-            </div>
+    <>
+      <ProjectPropertyManagerDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        title="Edit Variables"
+        addButtonLabel="+ Add Variable"
+        closeAddButtonLabel="Close Add Dialog"
+        isAdding={isAdding}
+        onToggleAdd={() => {
+          if (isAdding) {
+            setIsAdding(false);
+            setError(null);
+            return;
+          }
 
-            <div className="space-y-2">
-              <Label>Where</Label>
-              <Select value={targetValue} onValueChange={setTargetValue}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose where this variable belongs" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel>Project</SelectLabel>
-                    {addTargetOptions
-                      .filter((option) => option.group === 'project')
-                      .map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                  </SelectGroup>
-                  <SelectSeparator />
-                  <SelectGroup>
-                    <SelectLabel>Components</SelectLabel>
-                    {addTargetOptions
-                      .filter((option) => option.group === 'components')
-                      .map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                  </SelectGroup>
-                  <SelectSeparator />
-                  <SelectGroup>
-                    <SelectLabel>Scene Objects</SelectLabel>
-                    {addTargetOptions
-                      .filter((option) => option.group === 'scenes')
-                      .map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Type</Label>
-              <div className="flex flex-col gap-2">
-                {VARIABLE_TYPES.map((option) => (
-                  <Button
-                    key={option.value}
-                    variant={type === option.value ? 'default' : 'outline'}
-                    className="h-auto w-full flex-col items-start py-2"
-                    onClick={() => setType(option.value)}
-                  >
-                    <span className="font-medium">{option.label}</span>
-                    <span className="text-xs opacity-70">{option.description}</span>
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            {error ? <p className="text-xs text-red-500">{error}</p> : null}
-
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setIsAdding(false);
-                  setError(null);
-                }}
-              >
-                Cancel
-              </Button>
-              <Button onClick={handleAdd}>Add Variable</Button>
-            </div>
-          </div>
-      )}
-    >
+          resetAddDialog(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
+          setIsAdding(true);
+        }}
+      >
           <section className="space-y-2">
             <div className="text-sm font-semibold text-muted-foreground">Global Variables</div>
             {globalEntries.length > 0 ? (
@@ -571,7 +497,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           </section>
 
       <section className="space-y-3">
-            <div className="text-sm font-semibold text-muted-foreground">Scenes</div>
+            <div className="text-sm font-semibold text-muted-foreground">Scene Objects</div>
             {sceneGroups.length > 0 ? (
               sceneGroups.map((scene) => (
                 <div key={scene.key} className="space-y-3 rounded-lg border p-3">
@@ -597,13 +523,13 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
               ))
             ) : (
               <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                No scene-level or object-level variables yet.
+                No scene-grouped object variables yet.
               </div>
             )}
           </section>
 
       <section className="space-y-3">
-            <div className="text-sm font-semibold text-muted-foreground">Standalone Components</div>
+            <div className="text-sm font-semibold text-muted-foreground">Reusable Components</div>
             {standaloneComponentGroups.length > 0 ? (
               standaloneComponentGroups.map((component) => (
                 <div key={component.key} className="space-y-1 rounded-lg border p-3">
@@ -617,10 +543,136 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
               ))
             ) : (
               <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                No standalone component variables yet.
+                No reusable component variables outside scene objects yet.
               </div>
             )}
       </section>
-    </ProjectPropertyManagerDialog>
+      </ProjectPropertyManagerDialog>
+      <Modal
+        open={isAdding}
+        onOpenChange={(nextOpen) => {
+          setIsAdding(nextOpen);
+          if (!nextOpen) {
+            setError(null);
+          }
+        }}
+        title="Add Variable"
+        contentClassName="sm:max-w-lg"
+        footer={(
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsAdding(false);
+                setError(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleAdd}>Add Variable</Button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="variable-name">Variable Name</Label>
+            <Input
+              id="variable-name"
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setError(null);
+              }}
+              placeholder="Player score"
+              autoFocus
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  handleAdd();
+                }
+              }}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Where</Label>
+            <Select value={targetValue} onValueChange={setTargetValue}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose where this variable belongs" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Project</SelectLabel>
+                  {addTargetOptions
+                    .filter((option) => option.group === 'project')
+                    .map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                </SelectGroup>
+                <SelectSeparator />
+                <SelectGroup>
+                  <SelectLabel>Reusable Components</SelectLabel>
+                  {addTargetOptions
+                    .filter((option) => option.group === 'components')
+                    .map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                </SelectGroup>
+                <SelectSeparator />
+                <SelectGroup>
+                  <SelectLabel>Scene Objects</SelectLabel>
+                  {addTargetOptions
+                    .filter((option) => option.group === 'scenes')
+                    .map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Type</Label>
+            <div className="flex flex-col gap-2">
+              {VARIABLE_TYPES.map((option) => (
+                <Button
+                  key={option.value}
+                  variant={type === option.value ? 'default' : 'outline'}
+                  className="h-auto w-full flex-col items-start py-2"
+                  onClick={() => setType(option.value)}
+                >
+                  <span className="font-medium">{option.label}</span>
+                  <span className="text-xs opacity-70">{option.description}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Values</Label>
+            <div className="flex flex-col gap-2">
+              {VARIABLE_CARDINALITIES.map((option) => (
+                <Button
+                  key={option.value}
+                  variant={cardinality === option.value ? 'default' : 'outline'}
+                  className="h-auto w-full flex-col items-start py-2"
+                  onClick={() => setCardinality(option.value)}
+                >
+                  <span className="font-medium">{option.label}</span>
+                  <span className="text-xs opacity-70">{option.description}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {error ? <p className="text-xs text-red-500">{error}</p> : null}
+        </div>
+      </Modal>
+    </>
   );
 }

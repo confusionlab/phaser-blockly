@@ -127,4 +127,40 @@ test.describe('Project store variables', () => {
       objectId: createdObject.id,
     });
   });
+
+  test('normalizes array variable defaults and preserves cardinality metadata', async () => {
+    const { useProjectStore } = await loadStores();
+    const project = createDefaultProject('Array Variable Defaults');
+
+    useProjectStore.getState().openProject(project);
+
+    const variableId = crypto.randomUUID();
+    const sourceDefaultValue = ['1', 2.9, 'bad'];
+
+    useProjectStore.getState().addGlobalVariable({
+      id: variableId,
+      name: 'Level scores',
+      type: 'integer',
+      cardinality: 'array',
+      defaultValue: sourceDefaultValue,
+      scope: 'global',
+    });
+
+    sourceDefaultValue.push('99');
+
+    useProjectStore.getState().updateGlobalVariable(variableId, {
+      name: 'Level scores (best runs)',
+    });
+
+    const variables = useProjectStore.getState().project?.globalVariables ?? [];
+    expect(variables).toHaveLength(1);
+    expect(variables[0]).toMatchObject({
+      id: variableId,
+      name: 'Level scores (best runs)',
+      type: 'integer',
+      cardinality: 'array',
+      defaultValue: [1, 2, 0],
+      scope: 'global',
+    });
+  });
 });

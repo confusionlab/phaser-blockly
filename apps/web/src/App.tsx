@@ -10,6 +10,7 @@ import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
 import { shouldWarmStartProjectExplorer } from '@/lib/authWarmStart';
 import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls';
+import { useClerkAppearance } from '@/lib/useClerkAppearance';
 import { ModalProvider } from '@/components/ui/modal-provider';
 
 const E2E_AUTH_BYPASS = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
@@ -37,6 +38,7 @@ function resetSessionStateForAccountBoundary() {
 }
 
 function SignedOutScreen() {
+  const clerkAppearance = useClerkAppearance();
   const isDesktopRuntime = typeof window !== 'undefined' && !!window.desktopAssistant;
   const shouldForceDesktopAuthUrls =
     isDesktopRuntime
@@ -50,6 +52,7 @@ function SignedOutScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <SignIn
+        appearance={clerkAppearance}
         routing={shouldForceDesktopAuthUrls ? 'virtual' : undefined}
         signUpUrl={shouldForceDesktopAuthUrls ? DESKTOP_AUTH_URLS.signUpUrl : undefined}
         signUpForceRedirectUrl={shouldForceDesktopAuthUrls ? DESKTOP_AUTH_URLS.redirectUrl : undefined}

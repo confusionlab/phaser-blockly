@@ -24,9 +24,18 @@ import {
 } from '@/lib/background/chunkMath';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import {
-  getScrollCameraForViewportCenter,
-  getViewportCenterFromScrollCamera,
-} from '@/lib/viewportNavigation';
+  normalizeStageEditorViewport,
+  panStageEditorViewport,
+  scrollStageEditorViewport,
+  zoomStageEditorViewportAtScreenPoint,
+  type StageEditorViewport,
+  type StageSize,
+  type StageViewMode,
+} from '@/lib/stageViewport';
+import {
+  createStageViewportController,
+  getStageViewportController,
+} from '@/lib/phaserStageViewport';
 import { focusKeyboardSurface } from '@/utils/keyboard';
 import { getDraggedComponentId, setDraggedComponentId } from './shelfDrag';
 import {
@@ -48,6 +57,8 @@ import {
   getTransformGizmoCornerHitRadius,
   getTransformGizmoEdgeCornerPreferenceInset,
   computeCornerScaleResult,
+  DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL,
+  getTransformCornerDiagonal,
   getTransformGizmoRotateRingRadii,
   getTransformGizmoCornerCursor,
   getTransformGizmoEdgeCursor,
@@ -55,13 +66,13 @@ import {
   getTransformGizmoHandleFrame,
   getOppositeTransformGizmoSide,
   getTransformGizmoRotateCursor,
+  getTransformDiagonal,
   isPointInsideTransformRotateRing,
   rotateTransformPoint,
+  TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH,
+  TRANSFORM_GIZMO_STROKE_WIDTH,
 } from '@/lib/editor/unifiedTransformGizmo';
 import type { TransformGizmoCorner, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
-import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
-import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
-import { projectPhaserCameraWorldPointToScreen } from '@/lib/phaserCameraProjection';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -91,7 +102,6 @@ const GIZMO_EDGE_HIT_THICKNESS_PX = 16;
 const GIZMO_CORNER_HIT_RADIUS_PX = getTransformGizmoCornerHitRadius(TRANSFORM_GIZMO_HANDLE_RADIUS);
 const GIZMO_EDGE_CORNER_PREFERENCE_INSET_PX = getTransformGizmoEdgeCornerPreferenceInset(TRANSFORM_GIZMO_HANDLE_RADIUS);
 const GIZMO_ROTATE_RING_RADIUS_PX = getTransformGizmoRotateRingRadii(TRANSFORM_GIZMO_HANDLE_RADIUS).outerRadius;
-const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
 const GROUND_LAYER_DEPTH = -1000;
 const TILED_BACKGROUND_LAYER_DEPTH = -950;
@@ -115,19 +125,6 @@ type FrozenStageFrame = {
   src: string;
   width: number;
   height: number;
-};
-
-type StageSelectionOverlayFrame = {
-  centerX: number;
-  centerY: number;
-  width: number;
-  height: number;
-  rotation?: number;
-};
-
-type StageSelectionOverlayGuide = {
-  proportional: boolean;
-  corner: TransformGizmoCorner | null;
 };
 
 type PendingCostumeVisualTarget = {
@@ -155,6 +152,43 @@ type CostumeVisualMetrics = {
   interactionWidth: number;
   interactionHeight: number;
   interactionOffset: { x: number; y: number };
+};
+
+type SelectionFrame = {
+  centerX: number;
+  centerY: number;
+  width: number;
+  height: number;
+  rotation?: number;
+};
+
+type SelectionGuide = {
+  proportional: boolean;
+  corner: TransformGizmoCorner | null;
+};
+
+type StageDebugSnapshot = {
+  mode: StageViewMode;
+  editorViewport: StageEditorViewport | null;
+  hostSize: StageSize;
+  cameraViewportCenter: { x: number; y: number } | null;
+  cameraState: {
+    scrollX: number;
+    scrollY: number;
+    zoomX: number;
+    zoomY: number;
+    viewportX: number;
+    viewportY: number;
+    width: number;
+    height: number;
+  } | null;
+};
+
+type StageDebugApi = {
+  getEditorSceneSnapshot: () => StageDebugSnapshot | null;
+  setEditorViewport: (viewport: StageEditorViewport) => void;
+  setViewMode: (mode: StageViewMode) => void;
+  getWorldPointAtClientPosition: (clientX: number, clientY: number) => { x: number; y: number } | null;
 };
 
 function getCostumeVisualMetrics({
@@ -347,6 +381,48 @@ function getStageGizmoPaletteForSelection(scene: Phaser.Scene, selectedIds: stri
   };
 }
 
+function getStageShellBackgroundColor(
+  mode: StageViewMode,
+  background: BackgroundConfig | null | undefined,
+): string {
+  return mode === 'editor' ? getSceneBackgroundBaseColor(background) : '#000000';
+}
+
+function drawDashedWorldLine(
+  graphics: Phaser.GameObjects.Graphics,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  dashLength: number,
+  gapLength: number,
+): void {
+  const totalLength = Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y);
+  if (totalLength <= 0) {
+    return;
+  }
+
+  const safeDashLength = Math.max(0.0001, dashLength);
+  const safeGapLength = Math.max(0, gapLength);
+  let distance = 0;
+
+  while (distance < totalLength) {
+    const dashStart = distance;
+    const dashEnd = Math.min(totalLength, dashStart + safeDashLength);
+    const startT = dashStart / totalLength;
+    const endT = dashEnd / totalLength;
+    graphics.beginPath();
+    graphics.moveTo(
+      Phaser.Math.Linear(start.x, end.x, startT),
+      Phaser.Math.Linear(start.y, end.y, startT),
+    );
+    graphics.lineTo(
+      Phaser.Math.Linear(start.x, end.x, endT),
+      Phaser.Math.Linear(start.y, end.y, endT),
+    );
+    graphics.strokePath();
+    distance += safeDashLength + safeGapLength;
+  }
+}
+
 // Coordinate transformation utilities
 // User space: (0,0) at center, +Y is up
 // Phaser space: (0,0) at top-left, +Y is down
@@ -384,6 +460,22 @@ function getElementRenderSize(element: HTMLElement): { width: number; height: nu
   return {
     width: Math.max(1, Math.round(rect.width || element.clientWidth || 1)),
     height: Math.max(1, Math.round(rect.height || element.clientHeight || 1)),
+  };
+}
+
+function getElementLocalPoint(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  const renderSize = getElementRenderSize(element);
+  const width = Math.max(rect.width, 1);
+  const height = Math.max(rect.height, 1);
+
+  return {
+    x: ((clientX - rect.left) / width) * renderSize.width,
+    y: ((clientY - rect.top) / height) * renderSize.height,
   };
 }
 
@@ -746,7 +838,6 @@ interface PhaserCanvasProps {
 
 export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const transformOverlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
   const inventoryUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -761,6 +852,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   const creationIdRef = useRef(0); // Track which creation attempt is current
   // Track the initial scene when play mode starts - don't recreate game when scene changes during play
   const playModeInitialSceneRef = useRef<string | null>(null);
+  const editorViewportBySceneIdRef = useRef<Map<string, StageEditorViewport>>(new Map());
   const [activeRuntime, setActiveRuntime] = useState<RuntimeEngine | null>(null);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemEntry[]>([]);
   const [isInventoryVisible, setIsInventoryVisible] = useState(true);
@@ -798,6 +890,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
 
+  useEffect(() => {
+    editorViewportBySceneIdRef.current.clear();
+  }, [project?.id]);
+
   const captureFrozenStageFrame = useCallback((): FrozenStageFrame | null => {
     const canvas = gameRef.current?.canvas;
     if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
@@ -814,105 +910,190 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     };
   }, []);
 
-  const clearStageTransformOverlay = useCallback(() => {
-    const overlayCanvas = transformOverlayCanvasRef.current;
-    const container = containerRef.current;
-    if (!overlayCanvas || !container) {
-      return;
-    }
-
-    const width = Math.max(1, Math.round(container.clientWidth || 1));
-    const height = Math.max(1, Math.round(container.clientHeight || 1));
-    const dpr = syncCanvasViewportSize(overlayCanvas, width, height);
-    const ctx = overlayCanvas.getContext('2d');
-    if (!ctx) {
-      return;
-    }
-
-    clearCanvasInCssPixels(ctx, width, height, dpr);
+  const getStoredEditorViewport = useCallback((
+    sceneId: string | null | undefined,
+    canvasSize: StageSize,
+  ): StageEditorViewport => {
+    const key = sceneId ?? '__default__';
+    const stored = editorViewportBySceneIdRef.current.get(key);
+    return normalizeStageEditorViewport(stored, canvasSize);
   }, []);
 
-  const syncStageTransformOverlay = useCallback((scene: Phaser.Scene | null | undefined) => {
-    const overlayCanvas = transformOverlayCanvasRef.current;
-    const container = containerRef.current;
-    if (!overlayCanvas || !container || !scene || isPlaying) {
-      clearStageTransformOverlay();
-      return;
-    }
-
-    const width = Math.max(1, Math.round(container.clientWidth || scene.scale.width || 1));
-    const height = Math.max(1, Math.round(container.clientHeight || scene.scale.height || 1));
-    const dpr = syncCanvasViewportSize(overlayCanvas, width, height);
-    const ctx = overlayCanvas.getContext('2d');
-    if (!ctx) {
-      return;
-    }
-
-    clearCanvasInCssPixels(ctx, width, height, dpr);
-
-    const frame = scene.data.get('stageTransformOverlayFrame') as StageSelectionOverlayFrame | null | undefined;
-    if (!frame) {
-      return;
-    }
-
-    const camera = scene.cameras.main;
-    const rotation = frame.rotation ?? 0;
-    const worldFrame = getTransformGizmoHandleFrame(
-      { x: frame.centerX, y: frame.centerY },
-      frame.width,
-      frame.height,
-      rotation,
-    );
-    const worldToScreen = (point: { x: number; y: number }) => projectPhaserCameraWorldPointToScreen({
-      x: camera.x,
-      y: camera.y,
-      width: camera.width,
-      height: camera.height,
-      scrollX: camera.scrollX,
-      scrollY: camera.scrollY,
-      zoomX: camera.zoomX,
-      zoomY: camera.zoomY,
-      rotation: (camera as { rotation?: number }).rotation ?? 0,
-    }, point);
-
-    const guide = scene.data.get('stageTransformOverlayGuide') as StageSelectionOverlayGuide | null | undefined;
-    const storeState = useEditorStore.getState();
-    const selectedIds = storeState.selectedObjectIds.length > 0
-      ? storeState.selectedObjectIds
-      : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
-    const palette = getStageGizmoPaletteForSelection(scene, selectedIds);
-
-    renderScreenSpaceTransformOverlay(ctx, {
-      nw: worldToScreen(worldFrame.corners.nw),
-      ne: worldToScreen(worldFrame.corners.ne),
-      se: worldToScreen(worldFrame.corners.se),
-      sw: worldToScreen(worldFrame.corners.sw),
-    }, {
-      proportionalGuide: guide?.proportional ?? false,
-      corner: guide?.corner ?? null,
-      strokeColor: palette.strokeCss,
-      fillColor: palette.fillCss,
-      handleStroke: palette.handleStrokeCss,
-    });
-  }, [clearStageTransformOverlay, isPlaying]);
+  const storeEditorViewport = useCallback((
+    sceneId: string | null | undefined,
+    viewport: StageEditorViewport,
+  ) => {
+    const key = sceneId ?? '__default__';
+    editorViewportBySceneIdRef.current.set(key, viewport);
+  }, []);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || isPlaying) {
-      clearStageTransformOverlay();
+    if (!import.meta.env.DEV || typeof window === 'undefined' || isPlaying) {
       return;
     }
 
-    const syncOverlay = () => {
-      const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
-      syncStageTransformOverlay(editorScene);
+    const debugApi: StageDebugApi = {
+      getEditorSceneSnapshot: () => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const host = containerRef.current;
+        if (!editorScene || !host) {
+          return null;
+        }
+
+        const controller = getStageViewportController(editorScene);
+        const camera = editorScene.cameras.main;
+        const hostSize = getElementRenderSize(host);
+        const cameraViewportCenter = {
+          x: camera.scrollX + camera.width / 2,
+          y: camera.scrollY + camera.height / 2,
+        };
+
+        return {
+          mode: controller?.getMode() ?? 'editor',
+          editorViewport: controller?.getEditorViewport() ?? null,
+          hostSize,
+          cameraViewportCenter,
+          cameraState: {
+            scrollX: camera.scrollX,
+            scrollY: camera.scrollY,
+            zoomX: camera.zoomX,
+            zoomY: camera.zoomY,
+            viewportX: camera.x,
+            viewportY: camera.y,
+            width: camera.width,
+            height: camera.height,
+          },
+        };
+      },
+      setEditorViewport: (viewport) => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const controller = editorScene ? getStageViewportController(editorScene) : null;
+        if (!controller) {
+          return;
+        }
+        controller.setMode('editor');
+        controller.setEditorViewport(viewport);
+      },
+      setViewMode: (mode) => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const controller = editorScene ? getStageViewportController(editorScene) : null;
+        controller?.setMode(mode);
+      },
+      getWorldPointAtClientPosition: (clientX, clientY) => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const host = containerRef.current;
+        const controller = editorScene ? getStageViewportController(editorScene) : null;
+        if (!editorScene || !controller || !host) {
+          return null;
+        }
+        const inputSurface = gameRef.current?.canvas ?? host;
+        const { x, y } = getElementLocalPoint(inputSurface, clientX, clientY);
+        const worldPoint = editorScene.cameras.main.getWorldPoint(x, y);
+        return worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
+      },
     };
 
-    syncOverlay();
-    const observer = new ResizeObserver(syncOverlay);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [clearStageTransformOverlay, isPlaying, syncStageTransformOverlay]);
+    const stageWindow = window as typeof window & { __pochaStageDebug?: StageDebugApi };
+    stageWindow.__pochaStageDebug = debugApi;
+    return () => {
+      if (stageWindow.__pochaStageDebug === debugApi) {
+        delete stageWindow.__pochaStageDebug;
+      }
+    };
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (isPlaying || !containerRef.current) {
+      return;
+    }
+
+    const host = containerRef.current;
+
+    const getEditorViewportController = () => {
+      const game = gameRef.current;
+      if (!game) {
+        return null;
+      }
+
+      const editorScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+      if (!editorScene) {
+        return null;
+      }
+
+      return getStageViewportController(editorScene);
+    };
+
+    const getInputSurface = (): HTMLElement => {
+      const canvas = gameRef.current?.canvas;
+      if (canvas) {
+        return canvas;
+      }
+      return host;
+    };
+
+    const handleHostContextMenu = (event: MouseEvent) => {
+      const controller = getEditorViewportController();
+      if (controller?.getMode() === 'editor') {
+        event.preventDefault();
+      }
+    };
+
+    const handleHostWheel = (event: WheelEvent) => {
+      if (isResizeFrozen || immediateResizeFreezeRef.current) {
+        return;
+      }
+
+      const controller = getEditorViewportController();
+      if (!controller || controller.getMode() !== 'editor') {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.ctrlKey || event.metaKey) {
+        const editorViewport = controller.getEditorViewport();
+        const screenPoint = getElementLocalPoint(getInputSurface(), event.clientX, event.clientY);
+        const hostSize = controller.getProjection().hostSize;
+        const zoomDelta = -event.deltaY * 0.01;
+        const zoomFactor = 1 + zoomDelta;
+        const newZoom = Phaser.Math.Clamp(
+          editorViewport.zoom * zoomFactor,
+          0.1,
+          10,
+        );
+
+        controller.setEditorViewport(
+          zoomStageEditorViewportAtScreenPoint(
+            editorViewport,
+            hostSize,
+            screenPoint,
+            newZoom,
+          ),
+        );
+        return;
+      }
+
+      controller.setEditorViewport(
+        scrollStageEditorViewport(
+          controller.getEditorViewport(),
+          event.deltaX,
+          event.deltaY,
+        ),
+      );
+    };
+
+    host.addEventListener('contextmenu', handleHostContextMenu);
+    host.addEventListener('wheel', handleHostWheel, {
+      passive: false,
+      capture: true,
+    });
+
+    return () => {
+      host.removeEventListener('contextmenu', handleHostContextMenu);
+      host.removeEventListener('wheel', handleHostWheel, true);
+    };
+  }, [isPlaying, isResizeFrozen]);
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -1196,8 +1377,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }
 
     const { canvasWidth, canvasHeight, backgroundColor } = project.settings;
-    const editorBackgroundColor = getSceneBackgroundBaseColor(selectedScene?.background);
-    const editorShellBackgroundColor = viewMode === 'camera-viewport' ? '#000000' : editorBackgroundColor;
+    const editorShellBackgroundColor = getStageShellBackgroundColor(viewMode, selectedScene?.background);
     const container = containerRef.current;
 
     // Function to create the game
@@ -1284,6 +1464,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                 canvasHeight,
                 project.components || [],
                 currentViewMode,
+                getStoredEditorViewport(selectedScene?.id ?? null, { width: canvasWidth, height: canvasHeight }),
+                (nextViewport) => {
+                  storeEditorViewport(selectedScene?.id ?? null, nextViewport);
+                },
               );
             }
           },
@@ -1291,10 +1475,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             const tiledBackgroundLayer = this.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
             if (tiledBackgroundLayer) {
               updateTiledBackgroundLayer(this, tiledBackgroundLayer);
-            }
-
-            if (!isPlaying) {
-              syncStageTransformOverlay(this);
             }
 
             if (isPlaying && runtimeRef.current) {
@@ -1389,7 +1569,16 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }
 
     return () => cleanupPhaserInstance('effect-dispose');
-  }, [project?.id, selectedSceneId, isPlaying, handleObjectDragEnd]);
+  }, [
+    getStoredEditorViewport,
+    handleObjectDragEnd,
+    isPlaying,
+    project?.id,
+    project?.settings.canvasHeight,
+    project?.settings.canvasWidth,
+    selectedSceneId,
+    storeEditorViewport,
+  ]);
 
   useEffect(() => {
     if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
@@ -1529,51 +1718,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene) return;
 
-    const camera = phaserScene.cameras.main;
-    const canvasW = phaserScene.data.get('canvasWidth') as number || 800;
-    const canvasH = phaserScene.data.get('canvasHeight') as number || 600;
-    const shellBgColorValue = viewMode === 'camera-viewport' ? '#000000' : getSceneBackgroundBaseColor(selectedScene?.background);
+    const controller = getStageViewportController(phaserScene);
+    controller?.setMode(viewMode);
 
-    phaserScene.data.set('viewMode', viewMode);
-
-    const containerWidth = phaserScene.scale.width;
-    const containerHeight = phaserScene.scale.height;
-
-    if (viewMode === 'camera-viewport') {
-      // Camera mode: use viewport to letterbox
-      const scaleX = containerWidth / canvasW;
-      const scaleY = containerHeight / canvasH;
-      const scale = Math.min(scaleX, scaleY);
-
-      const viewportWidth = Math.floor(canvasW * scale);
-      const viewportHeight = Math.floor(canvasH * scale);
-      const viewportX = Math.floor((containerWidth - viewportWidth) / 2);
-      const viewportY = Math.floor((containerHeight - viewportHeight) / 2);
-
-      camera.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
-      camera.setZoom(scale);
-      camera.centerOn(canvasW / 2, canvasH / 2);
-    } else {
-      // Editor mode - full viewport
-      const previousCenter = getViewportCenterFromScrollCamera(
-        {
-          scrollX: camera.scrollX,
-          scrollY: camera.scrollY,
-          zoom: camera.zoom || DEFAULT_EDITOR_CAMERA_ZOOM,
-        },
-        { width: camera.width, height: camera.height },
-      );
-      const nextZoom = camera.zoom || DEFAULT_EDITOR_CAMERA_ZOOM;
-      camera.setViewport(0, 0, containerWidth, containerHeight);
-      camera.setZoom(nextZoom);
-      const nextScroll = getScrollCameraForViewportCenter(
-        previousCenter,
-        { width: containerWidth, height: containerHeight },
-        nextZoom,
-      );
-      camera.scrollX = nextScroll.scrollX;
-      camera.scrollY = nextScroll.scrollY;
-    }
+    const shellBgColorValue = getStageShellBackgroundColor(viewMode, selectedScene?.background);
 
     const renderer = phaserScene.game.renderer as { config?: { backgroundColor?: Phaser.Display.Color } };
     if (renderer.config) {
@@ -1953,7 +2101,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     if (!phaserScene || !selectedScene) return;
 
     const bgColorValue = getSceneBackgroundBaseColor(selectedScene.background);
-    const shellBgColorValue = viewMode === 'camera-viewport' ? '#000000' : bgColorValue;
+    const shellBgColorValue = getStageShellBackgroundColor(viewMode, selectedScene.background);
 
     phaserScene.cameras.main.setBackgroundColor(bgColorValue);
 
@@ -2026,8 +2174,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   );
   const canGoToPreviousInventoryPage = totalInventoryPages > 1 && inventoryPage > 0;
   const canGoToNextInventoryPage = totalInventoryPages > 1 && inventoryPage < totalInventoryPages - 1;
-  const editorStageBaseColor = getSceneBackgroundBaseColor(selectedScene?.background);
-  const editorStageShellColor = viewMode === 'camera-viewport' ? '#000000' : editorStageBaseColor;
+  const editorStageShellColor = getStageShellBackgroundColor(viewMode, selectedScene?.background);
   const handleShortcutSurfacePointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (isPlaying) {
       return;
@@ -2178,7 +2325,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     };
   }, []);
 
-  const previewBounds = componentDragPreview?.bounds;
   const previewZoom = componentDragPreview?.zoom ?? 1;
   const previewMetrics = componentDragPreview
     ? getCostumeVisualMetrics({
@@ -2220,13 +2366,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         className="w-full h-full"
         style={isPlaying ? undefined : { backgroundColor: editorStageShellColor }}
       />
-      {!isPlaying ? (
-        <canvas
-          ref={transformOverlayCanvasRef}
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-[11]"
-        />
-      ) : null}
       {!isPlaying && componentDragPreview ? (
         componentDragPreview.assetId ? (
           <div
@@ -2413,6 +2552,8 @@ function createEditorScene(
   canvasHeight: number,
   components: ComponentDefinition[] = [],
   viewMode: 'camera-masked' | 'camera-viewport' | 'editor' = 'editor',
+  initialEditorViewport: StageEditorViewport,
+  onEditorViewportChange: (viewport: StageEditorViewport) => void,
 ) {
   if (!sceneData) return;
   const getOrderedSceneObjectIds = () => getOrderedObjectIdsForActiveScene(
@@ -2468,76 +2609,22 @@ function createEditorScene(
   scene.data.set('canvasWidth', canvasWidth);
   scene.data.set('canvasHeight', canvasHeight);
   scene.data.set('tiledBackgroundLayer', tiledBackgroundLayer);
-  scene.data.set('stageTransformOverlayFrame', null);
-  scene.data.set('stageTransformOverlayGuide', null);
   scene.events.once('shutdown', () => {
     destroyTiledBackgroundLayer(scene, tiledBackgroundLayer);
   });
 
-  // Function to update the view based on current mode
-  const updateViewMode = (
-    mode: 'camera-masked' | 'camera-viewport' | 'editor',
-    options: { preserveEditorCamera?: boolean } = {},
-  ) => {
-    scene.data.set('viewMode', mode);
-
-    const containerWidth = scene.scale.width;
-    const containerHeight = scene.scale.height;
-
-    if (mode === 'camera-viewport') {
-      // Camera mode: use viewport to letterbox and maintain aspect ratio
-      const scaleX = containerWidth / canvasWidth;
-      const scaleY = containerHeight / canvasHeight;
-      const scale = Math.min(scaleX, scaleY);
-
-      const viewportWidth = Math.floor(canvasWidth * scale);
-      const viewportHeight = Math.floor(canvasHeight * scale);
-      const viewportX = Math.floor((containerWidth - viewportWidth) / 2);
-      const viewportY = Math.floor((containerHeight - viewportHeight) / 2);
-
-      camera.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
-      camera.setZoom(scale);
-      camera.centerOn(canvasWidth / 2, canvasHeight / 2);
-    } else {
-      // Editor mode - full viewport, free pan
-      const previousZoom = camera.zoom;
-      const previousCenter = getViewportCenterFromScrollCamera(
-        {
-          scrollX: camera.scrollX,
-          scrollY: camera.scrollY,
-          zoom: previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM,
-        },
-        { width: camera.width, height: camera.height },
-      );
-      camera.setViewport(0, 0, containerWidth, containerHeight);
-      if (options.preserveEditorCamera) {
-        const nextZoom = previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM;
-        camera.setZoom(nextZoom);
-        const nextScroll = getScrollCameraForViewportCenter(
-          previousCenter,
-          { width: containerWidth, height: containerHeight },
-          nextZoom,
-        );
-        camera.scrollX = nextScroll.scrollX;
-        camera.scrollY = nextScroll.scrollY;
-      } else {
-        camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
-        camera.centerOn(canvasWidth / 2, canvasHeight / 2);
-      }
-    }
-
-  };
-
-  // Initialize view mode
-  scene.data.set('viewMode', viewMode);
-  updateViewMode(viewMode);
+  const stageViewportController = createStageViewportController({
+    scene,
+    canvasSize: { width: canvasWidth, height: canvasHeight },
+    initialMode: viewMode,
+    initialEditorViewport,
+    onEditorViewportChange,
+  });
+  onEditorViewportChange(stageViewportController.getEditorViewport());
 
   // Keep camera viewport in sync with stage panel resizes.
   const handleScaleResize = () => {
-    const currentMode = scene.data.get('viewMode') as 'camera-masked' | 'camera-viewport' | 'editor' | undefined;
-    updateViewMode(currentMode ?? 'editor', {
-      preserveEditorCamera: (currentMode ?? 'editor') === 'editor',
-    });
+    stageViewportController.syncProjection();
     refreshTiledBackgroundLayer(scene);
   };
   scene.scale.on('resize', handleScaleResize);
@@ -2549,40 +2636,42 @@ function createEditorScene(
   let isPanning = false;
   let panStartX = 0;
   let panStartY = 0;
-  let cameraStartX = 0;
-  let cameraStartY = 0;
+  let panStartViewport: StageEditorViewport | null = null;
 
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     // Middle mouse (button 1) or right mouse (button 2) starts panning (only in editor mode)
-    const currentMode = scene.data.get('viewMode');
+    const currentMode = stageViewportController.getMode();
     if (currentMode === 'editor' && (pointer.middleButtonDown() || pointer.rightButtonDown())) {
       isPanning = true;
       panStartX = pointer.x;
       panStartY = pointer.y;
-      cameraStartX = camera.scrollX;
-      cameraStartY = camera.scrollY;
+      panStartViewport = stageViewportController.getEditorViewport();
     }
   });
 
   scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-    if (isPanning) {
-      // Divide by zoom to make panning match mouse movement 1:1
-      const dx = (pointer.x - panStartX) / camera.zoom;
-      const dy = (pointer.y - panStartY) / camera.zoom;
-      camera.scrollX = cameraStartX - dx;
-      camera.scrollY = cameraStartY - dy;
+    if (isPanning && panStartViewport) {
+      stageViewportController.setEditorViewport(
+        panStageEditorViewport(
+          panStartViewport,
+          pointer.x - panStartX,
+          pointer.y - panStartY,
+        ),
+      );
     }
   });
 
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
     if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
       isPanning = false;
+      panStartViewport = null;
     }
   });
 
   scene.input.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => {
     if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
       isPanning = false;
+      panStartViewport = null;
     }
     setLockedStageCursor(null);
     endTranslateDrag(pointer);
@@ -2590,52 +2679,6 @@ function createEditorScene(
       endMarqueeSelection(pointer);
     }
   });
-
-  // Prevent context menu on right click
-  scene.game.canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-  });
-
-  // Natural trackpad/mouse wheel controls (like Figma) - only in editor mode
-  // - Two-finger pan (no modifier) = pan
-  // - Pinch to zoom (ctrl/meta key on trackpad) = zoom with cursor as pivot
-  const zoomCameraAtPointer = (screenX: number, screenY: number, newZoom: number) => {
-    const worldBefore = camera.getWorldPoint(screenX, screenY);
-    camera.setZoom(newZoom);
-    camera.preRender();
-    const worldAfter = camera.getWorldPoint(screenX, screenY);
-    camera.scrollX += worldBefore.x - worldAfter.x;
-    camera.scrollY += worldBefore.y - worldAfter.y;
-  };
-
-  scene.game.canvas.addEventListener('wheel', (e: WheelEvent) => {
-    const currentMode = scene.data.get('viewMode');
-
-    // Only allow pan/zoom in editor mode
-    if (currentMode !== 'editor') {
-      return;
-    }
-
-    e.preventDefault();
-
-    // Check if this is a pinch-to-zoom gesture (trackpad sends ctrlKey=true for pinch)
-    if (e.ctrlKey || e.metaKey) {
-      // Pinch to zoom with cursor as pivot point
-      const pointerX = scene.scale.transformX(e.pageX);
-      const pointerY = scene.scale.transformY(e.pageY);
-
-      // Calculate new zoom (deltaY is inverted for natural feel)
-      const zoomDelta = -e.deltaY * 0.01;
-      const zoomFactor = 1 + zoomDelta;
-      const newZoom = Phaser.Math.Clamp(camera.zoom * zoomFactor, 0.1, 10);
-      zoomCameraAtPointer(pointerX, pointerY, newZoom);
-    } else {
-      // Two-finger pan (natural trackpad scrolling)
-      // Divide by zoom to make pan speed consistent at any zoom level
-      camera.scrollX += e.deltaX / camera.zoom;
-      camera.scrollY += e.deltaY / camera.zoom;
-    }
-  }, { passive: false });
 
   scene.input.setTopOnly(true);
 
@@ -2657,11 +2700,9 @@ function createEditorScene(
     startPositions: Map<string, { x: number; y: number }>;
     hasMoved: boolean;
   } | null = null;
-  const groupSelectionRect = scene.add.rectangle(0, 0, 10, 10);
-  groupSelectionRect.setStrokeStyle(0, STAGE_GIZMO_COLOR, 0);
-  groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.001);
-  groupSelectionRect.setVisible(false);
-  groupSelectionRect.setDepth(10_002);
+  const groupOverlayGraphics = scene.add.graphics();
+  groupOverlayGraphics.setVisible(false);
+  groupOverlayGraphics.setDepth(10_003);
 
   const groupHandles = new Map<string, Phaser.GameObjects.Shape | Phaser.GameObjects.Arc>();
   const createGroupHandle = (
@@ -2778,7 +2819,7 @@ function createEditorScene(
     selectedIds: string[];
     startPointerX: number;
     startPointerY: number;
-    frame: { centerX: number; centerY: number; width: number; height: number; rotation?: number };
+    frame: SelectionFrame;
     corner: TransformGizmoCorner | null;
     proportional: boolean;
     startObjects: Map<string, { x: number; y: number; scaleX: number; scaleY: number; rotation: number }>;
@@ -2853,10 +2894,9 @@ function createEditorScene(
   };
 
   const setGroupGizmoVisible = (visible: boolean) => {
-    groupSelectionRect.setVisible(visible);
+    groupOverlayGraphics.setVisible(visible);
     if (!visible) {
-      scene.data.set('stageTransformOverlayFrame', null);
-      scene.data.set('stageTransformOverlayGuide', null);
+      groupOverlayGraphics.clear();
     }
     groupHandles.forEach((handle) => handle.setVisible(visible));
   };
@@ -2928,7 +2968,7 @@ function createEditorScene(
     };
   };
 
-  const updateGroupGizmo = (frame: { centerX: number; centerY: number; width: number; height: number; rotation?: number }) => {
+  const updateGroupGizmo = (frame: SelectionFrame) => {
     const cameraZoom = scene.cameras.main.zoom || 1;
     const uiScale = 1 / cameraZoom;
     const rotation = frame.rotation ?? 0;
@@ -2939,13 +2979,54 @@ function createEditorScene(
       rotation,
     );
     const edgeSegments = getTransformGizmoEdgeSegments(frameGeometry);
-
-    groupSelectionRect.setPosition(frame.centerX, frame.centerY);
-    groupSelectionRect.setSize(frame.width, frame.height);
-    groupSelectionRect.setRotation(rotation);
     const palette = getStageGizmoPaletteForSelection(scene, selectedIdsCache);
-    groupSelectionRect.setStrokeStyle(0, palette.phaserColor, 0);
-    groupSelectionRect.setFillStyle(palette.phaserColor, 0.001);
+    const guide: SelectionGuide | null = groupTransformContext?.proportional
+      ? {
+          proportional: true,
+          corner: groupTransformContext.corner,
+        }
+      : null;
+
+    groupOverlayGraphics.clear();
+    groupOverlayGraphics.lineStyle(TRANSFORM_GIZMO_STROKE_WIDTH * uiScale, palette.phaserColor, 1);
+    groupOverlayGraphics.fillStyle(palette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
+    groupOverlayGraphics.beginPath();
+    groupOverlayGraphics.moveTo(frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
+    groupOverlayGraphics.lineTo(frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
+    groupOverlayGraphics.lineTo(frameGeometry.corners.se.x, frameGeometry.corners.se.y);
+    groupOverlayGraphics.lineTo(frameGeometry.corners.sw.x, frameGeometry.corners.sw.y);
+    groupOverlayGraphics.closePath();
+    groupOverlayGraphics.fillPath();
+    groupOverlayGraphics.strokePath();
+
+    if (guide?.proportional) {
+      const diagonal = guide.corner
+        ? getTransformCornerDiagonal(frameGeometry.corners, guide.corner)
+        : getTransformDiagonal(frameGeometry.corners, DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL);
+      if (diagonal) {
+        groupOverlayGraphics.lineStyle(TRANSFORM_GIZMO_STROKE_WIDTH * uiScale, palette.phaserColor, 1);
+        drawDashedWorldLine(
+          groupOverlayGraphics,
+          diagonal.start,
+          diagonal.end,
+          TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH[0] * uiScale,
+          TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH[1] * uiScale,
+        );
+      }
+    }
+
+    const handleRadius = TRANSFORM_GIZMO_HANDLE_RADIUS * uiScale;
+    groupOverlayGraphics.lineStyle(GIZMO_STROKE_PX * uiScale, palette.phaserColor, 1);
+    groupOverlayGraphics.fillStyle(0xffffff, 1);
+    for (const point of [
+      frameGeometry.corners.nw,
+      frameGeometry.corners.ne,
+      frameGeometry.corners.sw,
+      frameGeometry.corners.se,
+    ]) {
+      groupOverlayGraphics.fillCircle(point.x, point.y, handleRadius);
+      groupOverlayGraphics.strokeCircle(point.x, point.y, handleRadius);
+    }
 
     const setHandle = (name: string, x: number, y: number, corner?: TransformGizmoCorner) => {
       const handle = groupHandles.get(name);
@@ -3014,14 +3095,6 @@ function createEditorScene(
     setHandle('handle_rotate_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y, 'ne');
     setHandle('handle_rotate_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y, 'sw');
     setHandle('handle_rotate_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y, 'se');
-
-    scene.data.set('stageTransformOverlayFrame', frame);
-    scene.data.set('stageTransformOverlayGuide', groupTransformContext?.proportional
-      ? {
-          proportional: true,
-          corner: groupTransformContext.corner,
-        } satisfies StageSelectionOverlayGuide
-      : null);
   };
 
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
@@ -3041,7 +3114,7 @@ function createEditorScene(
     marqueeGraphics.clear();
     marqueeGraphics.setVisible(false);
 
-    const currentMode = scene.data.get('viewMode');
+    const currentMode = stageViewportController.getMode();
     if (currentMode !== 'editor') {
       isMarqueeSelecting = false;
       marqueePointerId = null;
@@ -3405,7 +3478,7 @@ function createEditorScene(
       return;
     }
 
-    const currentMode = scene.data.get('viewMode');
+    const currentMode = stageViewportController.getMode();
     if (currentMode !== 'editor') {
       const event = pointer.event as MouseEvent | PointerEvent | undefined;
       if (!(event?.metaKey || event?.ctrlKey || event?.shiftKey)) {

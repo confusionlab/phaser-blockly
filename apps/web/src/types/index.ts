@@ -312,12 +312,16 @@ export interface ReusableObject {
 // Variable Types
 
 export type VariableType = 'string' | 'integer' | 'float' | 'boolean';
+export type VariableCardinality = 'single' | 'array';
+export type VariableScalarValue = number | string | boolean;
+export type VariableValue = VariableScalarValue | VariableScalarValue[];
 
 export interface Variable {
   id: string;
   name: string;
   type: VariableType;
-  defaultValue: number | string | boolean;
+  cardinality?: VariableCardinality;
+  defaultValue: VariableValue;
   scope: 'global' | 'local';
   // For local variables, which object they belong to (optional, for filtering)
   objectId?: string;
@@ -334,9 +338,6 @@ export interface EditorState {
   selectedObjectId: string | null;
   selectedSceneId: string | null;
   isPlaying: boolean;
-  zoom: number;
-  panX: number;
-  panY: number;
 }
 
 // Helper function to create default objects

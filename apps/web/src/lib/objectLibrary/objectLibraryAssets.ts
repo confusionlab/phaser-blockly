@@ -34,6 +34,7 @@ import {
   normalizeTemplateLibraryScope,
   type TemplateLibraryScope,
 } from '@/lib/templateLibrary/templateSchema';
+import { cloneVariableDefinitions } from '@/lib/variableUtils';
 
 export interface ObjectLibraryAssetRef {
   assetId: string;
@@ -425,5 +426,5 @@ function cloneSoundsForMigration(sounds: ObjectLibraryStoredSound[]): Sound[] {
 }
 
 function cloneVariablesForMigration(variables: Variable[]): Variable[] {
-  return variables.map((variable) => ({ ...variable }));
+  return cloneVariableDefinitions(variables);
 }

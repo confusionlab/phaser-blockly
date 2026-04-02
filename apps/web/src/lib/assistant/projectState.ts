@@ -26,6 +26,7 @@ import {
   createDefaultScene,
 } from '@/types';
 import {
+  cloneVariableDefinitions,
   normalizeVariableDefinition,
   remapVariableIdsInBlocklyXml,
 } from '@/lib/variableUtils';
@@ -135,7 +136,7 @@ function moveObjects(
 }
 
 function cloneLocalVariables(object: GameObject): GameObject['localVariables'] {
-  return (object.localVariables || []).map((variable) => ({ ...variable }));
+  return cloneVariableDefinitions(object.localVariables || []);
 }
 
 function toComponentBackedFieldsFromObject(object: GameObject): Omit<ComponentDefinition, 'id'> {
@@ -239,7 +240,7 @@ function toAssistantObject(object: GameObject): AssistantObject {
       trimEnd: sound.trimEnd,
       duration: sound.duration,
     })),
-    localVariables: (normalizedObject.localVariables || []).map((variable) => ({ ...variable })),
+    localVariables: cloneVariableDefinitions(normalizedObject.localVariables || []),
   };
 }
 
@@ -265,7 +266,7 @@ function toAssistantComponent(component: ComponentDefinition): AssistantComponen
       trimEnd: sound.trimEnd,
       duration: sound.duration,
     })),
-    localVariables: (normalizedComponent.localVariables || []).map((variable) => ({ ...variable })),
+    localVariables: cloneVariableDefinitions(normalizedComponent.localVariables || []),
   };
 }
 
@@ -316,7 +317,7 @@ export function createAssistantProjectSnapshot(
     settings: { ...normalizedProject.settings },
     scenes: normalizedProject.scenes.map(toAssistantScene),
     components: (normalizedProject.components || []).map(toAssistantComponent),
-    globalVariables: (normalizedProject.globalVariables || []).map((variable) => ({ ...variable })),
+    globalVariables: cloneVariableDefinitions(normalizedProject.globalVariables || []),
     messages: (normalizedProject.messages || []).map((message) => ({ ...message })),
   };
 

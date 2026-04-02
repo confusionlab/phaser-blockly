@@ -38,6 +38,7 @@ import { useProjectExplorerCatalog } from '@/hooks/useProjectExplorerCatalog';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { compareProjectsByLastEdited, type ProjectExplorerCatalogFolderSummary } from '@/lib/projectExplorerCatalog';
 import { PROJECT_EXPLORER_ROOT_FOLDER_ID } from '@/lib/projectExplorer';
+import { useClerkAppearance } from '@/lib/useClerkAppearance';
 import { useEditorStore } from '@/store/editorStore';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -178,6 +179,7 @@ export function ProjectExplorerPage({
   authBootstrapState = 'steady',
   onProjectOpen,
 }: ProjectExplorerPageProps) {
+  const clerkAppearance = useClerkAppearance();
   const isDarkMode = useEditorStore((state) => state.isDarkMode);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const updateMySettings = useMutation(api.userSettings.updateMySettings);
@@ -1311,7 +1313,7 @@ export function ProjectExplorerPage({
           className="w-[calc(100vw-2rem)] max-w-none sm:max-w-none border-none bg-transparent p-0 shadow-none"
         >
           <div className="pocha-account-profile max-h-[84vh] overflow-y-auto overflow-x-hidden">
-            <UserProfile routing="hash" />
+            <UserProfile appearance={clerkAppearance} routing="hash" />
           </div>
         </DialogContent>
       </Dialog>

@@ -8,8 +8,9 @@ interface ProjectPropertyManagerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  description: string;
+  description?: string;
   addButtonLabel: string;
+  closeAddButtonLabel?: string;
   isAdding: boolean;
   onToggleAdd: () => void;
   addForm?: ReactNode;
@@ -37,6 +38,7 @@ export function ProjectPropertyManagerDialog({
   title,
   description,
   addButtonLabel,
+  closeAddButtonLabel,
   isAdding,
   onToggleAdd,
   addForm,
@@ -50,9 +52,13 @@ export function ProjectPropertyManagerDialog({
       contentClassName="sm:max-w-[760px]"
     >
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">{description}</p>
+        {description ? (
+          <p className="text-sm text-muted-foreground">{description}</p>
+        ) : (
+          <div />
+        )}
         <Button onClick={onToggleAdd}>
-          {isAdding ? 'Close Add Form' : addButtonLabel}
+          {isAdding ? (closeAddButtonLabel ?? 'Close Add Form') : addButtonLabel}
         </Button>
       </div>
 

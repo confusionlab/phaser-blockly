@@ -941,6 +941,82 @@ export function registerCodeGenerators(): void {
     return `runtime.changeTypedVariable('${varId}', ${delta}, sprite.id);\n`;
   };
 
+  javascriptGenerator.forBlock['typed_array_length'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return ['0 /* no array variable selected */', Order.ATOMIC];
+    }
+    return [`runtime.getTypedArrayLength('${varId}', sprite.id)`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['typed_array_item_at'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return ['undefined /* no array variable selected */', Order.ATOMIC];
+    }
+    const index = javascriptGenerator.valueToCode(block, 'INDEX', Order.ASSIGNMENT) || '1';
+    return [`runtime.getTypedArrayItem('${varId}', ${index}, sprite.id)`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['typed_array_contains'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return ['false /* no array variable selected */', Order.ATOMIC];
+    }
+    const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ASSIGNMENT) || 'null';
+    return [`runtime.typedArrayContains('${varId}', ${value}, sprite.id)`, Order.FUNCTION_CALL];
+  };
+
+  javascriptGenerator.forBlock['typed_array_add'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return '/* no array variable selected */\n';
+    }
+    const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ASSIGNMENT) || 'null';
+    return `runtime.pushTypedArrayItem('${varId}', ${value}, sprite.id);\n`;
+  };
+
+  javascriptGenerator.forBlock['typed_array_insert_at'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return '/* no array variable selected */\n';
+    }
+    const index = javascriptGenerator.valueToCode(block, 'INDEX', Order.ASSIGNMENT) || '1';
+    const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ASSIGNMENT) || 'null';
+    return `runtime.insertTypedArrayItem('${varId}', ${index}, ${value}, sprite.id);\n`;
+  };
+
+  javascriptGenerator.forBlock['typed_array_set_at'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return '/* no array variable selected */\n';
+    }
+    const index = javascriptGenerator.valueToCode(block, 'INDEX', Order.ASSIGNMENT) || '1';
+    const value = javascriptGenerator.valueToCode(block, 'VALUE', Order.ASSIGNMENT) || 'null';
+    return `runtime.setTypedArrayItem('${varId}', ${index}, ${value}, sprite.id);\n`;
+  };
+
+  javascriptGenerator.forBlock['typed_array_remove_at'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return '/* no array variable selected */\n';
+    }
+    const index = javascriptGenerator.valueToCode(block, 'INDEX', Order.ASSIGNMENT) || '1';
+    return `runtime.removeTypedArrayItem('${varId}', ${index}, sprite.id);\n`;
+  };
+
+  javascriptGenerator.forBlock['typed_array_clear'] = function(block) {
+    const varId = block.getFieldValue('VAR') || '';
+    if (!varId) {
+      return '/* no array variable selected */\n';
+    }
+    return `runtime.clearTypedArray('${varId}', sprite.id);\n`;
+  };
+
+  javascriptGenerator.forBlock['array_empty'] = function() {
+    return ['[]', Order.ATOMIC];
+  };
+
   // Boolean literal
   javascriptGenerator.forBlock['logic_boolean'] = function(block) {
     const value = block.getFieldValue('BOOL') === 'TRUE';

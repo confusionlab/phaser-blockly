@@ -28,6 +28,14 @@ export const VARIABLE_REFERENCE_BLOCKS: Readonly<Record<string, string>> = {
   typed_variable_get: 'VAR',
   typed_variable_set: 'VAR',
   typed_variable_change: 'VAR',
+  typed_array_length: 'VAR',
+  typed_array_item_at: 'VAR',
+  typed_array_contains: 'VAR',
+  typed_array_add: 'VAR',
+  typed_array_insert_at: 'VAR',
+  typed_array_set_at: 'VAR',
+  typed_array_remove_at: 'VAR',
+  typed_array_clear: 'VAR',
 };
 
 export const INVENTORY_REFERENCE_BLOCKS: Readonly<Record<string, string>> = {
