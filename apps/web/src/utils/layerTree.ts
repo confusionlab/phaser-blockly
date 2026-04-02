@@ -564,6 +564,25 @@ export function moveSceneLayerNodes(
   return applySiblingOrdering(nextScene);
 }
 
+export function insertSceneFolder(
+  scene: Scene,
+  folder: SceneFolder,
+  target: LayerDropTarget,
+): Scene {
+  const normalizedScene = normalizeSceneLayering(scene);
+  const nextScene: Scene = {
+    ...normalizedScene,
+    objectFolders: [...normalizedScene.objectFolders, folder],
+  };
+  const nextTarget = normalizeSceneLayerDropTarget(nextScene, target);
+
+  return moveSceneLayerNodes(
+    nextScene,
+    [getFolderNodeKey(folder.id)],
+    nextTarget,
+  );
+}
+
 export function normalizeSceneLayerDropTarget(
   scene: Scene,
   target: LayerDropTarget,

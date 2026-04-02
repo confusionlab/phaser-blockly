@@ -58,10 +58,10 @@ import {
 } from '@/lib/objectLibrary/objectLibraryAssets';
 import {
   getFolderNodeKey,
-  getNextSiblingOrder,
   getObjectNodeKey,
   getSceneObjectsInLayerOrder,
   getSceneTree,
+  insertSceneFolder,
   moveSceneLayerNodes,
   normalizeSceneLayerDropTarget,
   type LayerTreeNode,
@@ -973,43 +973,24 @@ export function SpriteShelf({
     handleAddObject();
   };
 
-  const handleAddFolder = (parentId: string | null = null, assignObjectIds?: string[]) => {
+  const handleAddFolder = () => {
     runInHistoryTransaction('sprite-shelf:add-folder', () => {
       const newFolder: SceneFolder = {
         id: crypto.randomUUID(),
         name: `Folder ${folders.length + 1}`,
-        parentId,
-        order: getNextSiblingOrder(selectedScene, parentId),
+        parentId: null,
+        order: 0,
       };
-      const candidateIds = Array.isArray(assignObjectIds) ? assignObjectIds : [];
-      const assignSet = new Set(candidateIds);
-      const orderedAssignIds = orderedSceneObjectIds.filter((id) => assignSet.has(id));
-
-      if (orderedAssignIds.length === 0) {
-        updateScene(selectedSceneId, { objectFolders: [...folders, newFolder] });
-        return;
-      }
-
-      const assignedOrderById = new Map(
-        orderedAssignIds.map((id, index) => [id, index]),
-      );
-
-      const nextObjects = selectedScene.objects.map((obj) => {
-        const nextOrder = assignedOrderById.get(obj.id);
-        if (nextOrder === undefined) {
-          return obj;
-        }
-        return {
-          ...obj,
-          parentId: newFolder.id,
-          order: nextOrder,
-          folderId: undefined,
-        };
-      });
+      const target = selectedFolderId
+        ? { key: getFolderNodeKey(selectedFolderId), dropPosition: 'after' as const }
+        : selectedObjectId
+          ? { key: getObjectNodeKey(selectedObjectId), dropPosition: 'after' as const }
+          : { key: null, dropPosition: null };
+      const nextScene = insertSceneFolder(selectedScene, newFolder, target);
 
       updateScene(selectedSceneId, {
-        objectFolders: [...folders, newFolder],
-        objects: nextObjects,
+        objectFolders: nextScene.objectFolders,
+        objects: nextScene.objects,
       });
     });
   };
@@ -1706,7 +1687,7 @@ export function SpriteShelf({
           <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
             <Plus className="size-4" />
           </Button>
-          <Button size="icon-xs" variant="ghost" onClick={() => handleAddFolder(null)} title="Add Folder">
+          <Button size="icon-xs" variant="ghost" onClick={handleAddFolder} title="Add Folder">
             <FolderPlus className="size-4" />
           </Button>
           {showObjectLibraryButton ? (
@@ -1913,7 +1894,7 @@ export function SpriteShelf({
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    handleAddFolder(null);
+                    handleAddFolder();
                     handleCloseContextMenu();
                   }}
                   className="w-full justify-start rounded-none h-8"

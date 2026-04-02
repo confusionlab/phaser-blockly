@@ -5,6 +5,7 @@ import {
   ContinuousToolbox,
   registerContinuousToolbox,
 } from '@blockly/continuous-toolbox';
+import { PochaToolboxCategory } from './PochaToolboxCategory';
 
 const FLYOUT_WIDTH_CSS_VAR = '--blockly-flyout-width';
 const PINNABLE_FLYOUT_REGISTRATION = 'PochaContinuousFlyout';
@@ -247,6 +248,13 @@ export function registerPinnableContinuousToolbox(): void {
   if (registered) return;
 
   registerContinuousToolbox();
+
+  Blockly.registry.register(
+    Blockly.registry.Type.TOOLBOX_ITEM,
+    Blockly.ToolboxCategory.registrationName,
+    PochaToolboxCategory,
+    true,
+  );
 
   Blockly.registry.register(
     Blockly.registry.Type.FLYOUTS_VERTICAL_TOOLBOX,

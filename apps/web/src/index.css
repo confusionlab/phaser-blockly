@@ -89,54 +89,96 @@ body {
   min-width: unset !important;
 }
 
-.blocklyToolboxCategory {
-  
-}
-
-.blocklyToolboxCategoryLabel {
-  font-size: 10px !important;
-  color: var(--blockly-toolbox-fg) !important;
+.blocklyToolbox {
+  width: 68px !important;
+  min-width: 68px !important;
+  padding: 8px 6px !important;
 }
 
 .blocklyTreeLabel {
   color: var(--blockly-toolbox-fg) !important;
 }
 
-.blocklyToolboxCategory {
-  background-color: transparent !important;
+.pochaBlocklyCategory {
+  padding: 2px 0 !important;
+  display: flex !important;
+  width: 100%;
+  justify-content: center !important;
 }
 
-.blocklyToolboxCategory:not(.blocklyToolboxSelected):hover {
+.pochaBlocklyCategoryButton {
+  display: flex !important;
+  min-height: 56px;
+  width: 56px;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 18px;
+  background: transparent;
+  margin: 0 auto !important;
+  padding: 6px 4px;
+  overflow: hidden;
+  transition:
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+
+.pochaBlocklyCategoryButton:hover {
   background-color: var(--blockly-toolbox-hover-bg) !important;
 }
 
-.blocklyToolboxSelected,
-.blocklyToolboxSelected:hover {
+.pochaBlocklyCategoryButton[data-selected='true'],
+.pochaBlocklyCategoryButtonSelected {
   background-color: var(--blockly-toolbox-active-bg) !important;
 }
 
-.blocklyToolboxSelected .blocklyToolboxCategoryLabel {
-  color: var(--blockly-toolbox-selected-fg) !important;
-}
-
-.categoryBubble {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  min-height: 24px !important;
-  margin: 0 auto 4px auto !important;
-}
-
-.blocklyTreeRowContentContainer {
+.pochaBlocklyCategoryContent {
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
+  gap: 5px;
+  width: 100%;
+  pointer-events: none;
 }
 
-.blocklyToolboxCategoryLabel {
-  font-size: 10px !important;
+.pochaBlocklyCategoryIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pochaBlocklyCategoryAccent {
+  display: flex;
+  height: auto;
+  width: auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.pochaBlocklyCategoryAccentCore {
+  height: 22px;
+  width: 22px;
+  border-radius: 999px;
+  background: var(--pocha-blockly-category-color);
+  box-shadow: none;
+}
+
+.pochaBlocklyCategoryLabel {
+  max-width: 100%;
+  color: var(--blockly-toolbox-fg) !important;
+  font-size: 9px !important;
+  font-weight: 600;
+  line-height: 1.1;
   text-align: center !important;
+  text-wrap: balance;
+}
+
+.pochaBlocklyCategoryButton[data-selected='true'] .pochaBlocklyCategoryLabel,
+.pochaBlocklyCategoryButtonSelected .pochaBlocklyCategoryLabel {
+  color: var(--blockly-toolbox-selected-fg) !important;
 }
 
 /* Cap flyout/toolbox content width */

@@ -419,6 +419,26 @@ export function moveFolderedHierarchyNodes<TItem extends FolderedItemShape>(
   return applySiblingOrdering(nextFolders, nextItems, config);
 }
 
+export function insertFolderedHierarchyFolder<TItem extends FolderedItemShape>(
+  folders: HierarchyFolder[],
+  items: TItem[],
+  folder: HierarchyFolder,
+  target: HierarchyDropTarget,
+  config: FolderedHierarchyConfig<TItem>,
+): { folders: HierarchyFolder[]; items: TItem[] } {
+  const normalized = normalizeFolderedHierarchy(folders, items, config);
+  const nextFolders = [...normalized.folders, folder];
+  const nextTarget = normalizeFolderedHierarchyDropTarget(nextFolders, normalized.items, target, config);
+
+  return moveFolderedHierarchyNodes(
+    nextFolders,
+    normalized.items,
+    [getHierarchyFolderNodeKey(folder.id)],
+    nextTarget,
+    config,
+  );
+}
+
 export function normalizeFolderedHierarchyDropTarget<TItem extends FolderedItemShape>(
   folders: HierarchyFolder[],
   items: TItem[],

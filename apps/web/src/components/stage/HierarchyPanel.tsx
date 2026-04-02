@@ -43,7 +43,7 @@ import {
   getFolderedHierarchyTree,
   getHierarchyFolderNodeKey,
   getHierarchyItemNodeKey,
-  getNextFolderedSiblingOrder,
+  insertFolderedHierarchyFolder,
   moveFolderedHierarchyNodes,
   normalizeFolderedHierarchyDropTarget,
   type FolderedItemShape,
@@ -1178,13 +1178,22 @@ function SceneHierarchyTab() {
             id: crypto.randomUUID(),
             name: `Folder ${sceneFolders.length + 1}`,
             parentId: null,
-            order: getNextFolderedSiblingOrder(sceneFolders, scenes, null, {
+            order: 0,
+          };
+          const nextHierarchy = insertFolderedHierarchyFolder(
+            sceneFolders,
+            scenes,
+            newFolder,
+            selectedSceneId
+              ? { key: getHierarchyItemNodeKey('scene', selectedSceneId), dropPosition: 'after' }
+              : { key: null, dropPosition: null },
+            {
               itemKeyPrefix: 'scene',
               setItemFolderId: (scene, folderId) => ({ ...scene, folderId }),
               setItemOrder: (scene, order) => ({ ...scene, order }),
-            }),
-          };
-          updateSceneOrganization(scenes, [...sceneFolders, newFolder]);
+            },
+          );
+          updateSceneOrganization(nextHierarchy.items, nextHierarchy.folders);
         }}
         onRenameItem={(sceneId, name) => updateScene(sceneId, { name })}
         onRenameFolder={(folderId, name) => {
@@ -1478,13 +1487,22 @@ function ComponentHierarchyTab() {
             id: crypto.randomUUID(),
             name: `Folder ${componentFolders.length + 1}`,
             parentId: null,
-            order: getNextFolderedSiblingOrder(componentFolders, components, null, {
+            order: 0,
+          };
+          const nextHierarchy = insertFolderedHierarchyFolder(
+            componentFolders,
+            components,
+            newFolder,
+            selectedComponentId
+              ? { key: getHierarchyItemNodeKey('component', selectedComponentId), dropPosition: 'after' }
+              : { key: null, dropPosition: null },
+            {
               itemKeyPrefix: 'component',
               setItemFolderId: (component, folderId) => ({ ...component, folderId }),
               setItemOrder: (component, order) => ({ ...component, order }),
-            }),
-          };
-          updateComponentOrganization(components, [...componentFolders, newFolder]);
+            },
+          );
+          updateComponentOrganization(nextHierarchy.items, nextHierarchy.folders);
         }}
         onRenameItem={(componentId, name) => updateComponent(componentId, { name })}
         onRenameFolder={(folderId, name) => {

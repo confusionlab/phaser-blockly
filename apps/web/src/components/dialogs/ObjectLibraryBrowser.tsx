@@ -1,7 +1,6 @@
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
 import type { Id } from '@convex-generated/dataModel';
-import { Image, Music } from '@/components/ui/icons';
 import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog';
 import type {
   ColliderConfig,
@@ -115,20 +114,6 @@ export function ObjectLibraryBrowser({
               <p className="truncate text-base font-semibold text-foreground">
                 {item.name}
               </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Ready to insert into the current scene
-              </p>
-            </div>
-
-            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span className="flex items-center gap-2">
-                <Image className="size-4" />
-                {item.costumes.length}
-              </span>
-              <span className="flex items-center gap-2">
-                <Music className="size-4" />
-                {item.sounds.length}
-              </span>
             </div>
           </div>
         </>
@@ -146,16 +131,6 @@ export function ObjectLibraryBrowser({
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-foreground">
               {item.name}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <Image className="size-3.5" />
-                {item.costumes.length} costumes
-              </span>
-              <span className="flex items-center gap-1.5">
-                <Music className="size-3.5" />
-                {item.sounds.length} sounds
-              </span>
             </div>
           </div>
         </>
