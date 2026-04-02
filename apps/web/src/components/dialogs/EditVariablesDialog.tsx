@@ -22,6 +22,8 @@ import {
   ProjectPropertyManagerDialog,
   ProjectPropertyManagerRow,
 } from '@/components/dialogs/ProjectPropertyManagerDialog';
+import { ReferenceUsageDialog } from '@/components/dialogs/ReferenceUsageDialog';
+import type { ProjectReferenceImpact, ProjectReferenceOwnerTarget } from '@/lib/projectReferenceUsage';
 
 interface EditVariablesDialogProps {
   open: boolean;
@@ -98,6 +100,9 @@ const VARIABLE_FIELD_HELP = {
   values: 'Single stores one value. Multiple stores a list of values in order.',
 } as const;
 
+const LOCAL_HIERARCHY_INDENT_PX = 20;
+const LOCAL_HIERARCHY_ENTRY_INDENT_PX = LOCAL_HIERARCHY_INDENT_PX * 3;
+
 function getTypeIconName(type: VariableType): AppIconName {
   switch (type) {
     case 'string': return 'variableString';
@@ -164,17 +169,33 @@ function LocalHierarchyBranch({
   onToggle: () => void;
   children: React.ReactNode;
 }) {
+  const toggleLabel = `Toggle ${title}`;
+
   return (
     <div className="space-y-1">
       <div
-        className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent/40"
-        style={{ paddingLeft: level * 16 }}
+        aria-expanded={isExpanded}
+        aria-label={toggleLabel}
+        className="flex cursor-pointer select-none items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
+        role="button"
+        style={level > 0 ? { marginLeft: level * LOCAL_HIERARCHY_INDENT_PX } : undefined}
+        tabIndex={0}
       >
         <DisclosureButton
           aria-expanded={isExpanded}
-          aria-label={`Toggle ${title}`}
+          aria-label={toggleLabel}
           className="opacity-100"
-          onClick={onToggle}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
         >
           {isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </DisclosureButton>
@@ -197,14 +218,16 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const {
     project,
     addGlobalVariable,
+    getVariableDeletionImpact,
     removeGlobalVariable,
+    removeComponentLocalVariable,
     updateGlobalVariable,
     addLocalVariable,
     removeLocalVariable,
     updateLocalVariable,
     updateComponent,
   } = useProjectStore();
-  const { selectedSceneId, selectedObjectId, selectedComponentId } = useEditorStore();
+  const { selectedSceneId, selectedObjectId, selectedComponentId, focusCodeOwner } = useEditorStore();
   const { showAlert, showConfirm } = useModal();
 
   const [isAdding, setIsAdding] = useState(false);
@@ -217,6 +240,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [expandedLocalKeys, setExpandedLocalKeys] = useState<Set<string>>(new Set());
+  const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
 
   const components = useMemo(() => project?.components || [], [project?.components]);
   const scenes = useMemo(() => project?.scenes || [], [project?.scenes]);
@@ -268,6 +292,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     setEditingKey(null);
     setEditName('');
     setActiveTab(preferredScope);
+    setBlockedDelete(null);
     resetAddDialog(preferredScope);
   }, [open, preferredScope]);
 
@@ -308,6 +333,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const emitVariablesChanged = () => {
     onVariablesChanged?.();
   };
+
+  const canCreateVariable = normalizeVariableName(name).length > 0;
 
   const componentHierarchy = useMemo<LocalHierarchyComponentNode[]>(() => {
     const groups: LocalHierarchyComponentNode[] = [];
@@ -437,29 +464,39 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   );
 
   const handleDelete = async (entry: VariableEntry) => {
+    const impact = getVariableDeletionImpact(entry.variable.id);
+    if (impact && impact.referenceCount > 0) {
+      setBlockedDelete({ entityLabel: entry.variable.name, impact });
+      return;
+    }
+
     const confirmed = await showConfirm({
       title: 'Delete Variable',
-      description: 'Delete this variable? Any blocks using it will stop working.',
+      description: 'Delete this variable?',
       confirmLabel: 'Delete',
       tone: 'destructive',
     });
     if (!confirmed) return;
 
+    let deleted = false;
+    let deleteImpact: ProjectReferenceImpact | null = null;
     switch (entry.target.kind) {
       case 'global':
-        removeGlobalVariable(entry.variable.id);
+        ({ deleted, impact: deleteImpact } = removeGlobalVariable(entry.variable.id));
         break;
-      case 'component': {
-        const component = componentById.get(entry.target.componentId);
-        if (!component) return;
-        updateComponent(entry.target.componentId, {
-          localVariables: (component.localVariables || []).filter((variable) => variable.id !== entry.variable.id),
-        });
+      case 'component':
+        ({ deleted, impact: deleteImpact } = removeComponentLocalVariable(entry.target.componentId, entry.variable.id));
         break;
-      }
       case 'object':
-        removeLocalVariable(entry.target.sceneId, entry.target.objectId, entry.variable.id);
+        ({ deleted, impact: deleteImpact } = removeLocalVariable(entry.target.sceneId, entry.target.objectId, entry.variable.id));
         break;
+    }
+
+    if (!deleted) {
+      if (deleteImpact && deleteImpact.referenceCount > 0) {
+        setBlockedDelete({ entityLabel: entry.variable.name, impact: deleteImpact });
+      }
+      return;
     }
 
     if (editingKey === entry.key) {
@@ -528,7 +565,6 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       return;
     }
     if (!trimmedName) {
-      setError('Please enter a variable name');
       return;
     }
     if (scope === 'global') {
@@ -620,6 +656,12 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     });
   };
 
+  const handleNavigateToUsage = (owner: ProjectReferenceOwnerTarget) => {
+    focusCodeOwner(owner);
+    setBlockedDelete(null);
+    onOpenChange(false);
+  };
+
   return (
     <>
       <ProjectPropertyManagerDialog
@@ -686,7 +728,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                           subtitle={object.subtitle}
                           title={object.title}
                         >
-                          <div className="space-y-1" style={{ paddingLeft: 32 }}>
+                          <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
                             {object.entries.map((entry) => (
                               <VariableRow key={entry.key} entry={entry} />
                             ))}
@@ -694,7 +736,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                         </LocalHierarchyBranch>
                       ))}
                       {component.entries.length > 0 ? (
-                        <div className="space-y-1" style={{ paddingLeft: 32 }}>
+                        <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
                           {component.entries.map((entry) => (
                             <VariableRow key={entry.key} entry={entry} />
                           ))}
@@ -730,7 +772,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                           subtitle={object.subtitle}
                           title={object.title}
                         >
-                          <div className="space-y-1" style={{ paddingLeft: 32 }}>
+                          <div className="space-y-1" style={{ paddingLeft: LOCAL_HIERARCHY_ENTRY_INDENT_PX }}>
                             {object.entries.map((entry) => (
                               <VariableRow key={entry.key} entry={entry} />
                             ))}
@@ -760,7 +802,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         title="Create Variable"
         contentClassName="sm:max-w-lg"
         footer={(
-          <Button onClick={handleAdd}>Create Variable</Button>
+          <Button disabled={!canCreateVariable} onClick={handleAdd}>Create</Button>
         )}
       >
         <div className="space-y-4">
@@ -841,6 +883,17 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           {error ? <p className="text-xs text-red-500">{error}</p> : null}
         </div>
       </Modal>
+      <ReferenceUsageDialog
+        open={!!blockedDelete}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setBlockedDelete(null);
+          }
+        }}
+        entityLabel={blockedDelete?.entityLabel ?? ''}
+        impact={blockedDelete?.impact ?? null}
+        onNavigate={handleNavigateToUsage}
+      />
     </>
   );
 }

@@ -4,35 +4,36 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Type } from '@/components/ui/icons';
 import { Modal } from '@/components/ui/modal';
+import { ReferenceUsageDialog } from '@/components/dialogs/ReferenceUsageDialog';
 import { useProjectStore } from '@/store/projectStore';
+import { useEditorStore } from '@/store/editorStore';
 import { useModal } from '@/components/ui/modal-provider';
 import {
   ProjectPropertyManagerDialog,
   ProjectPropertyManagerRow,
 } from '@/components/dialogs/ProjectPropertyManagerDialog';
+import type { ProjectReferenceImpact, ProjectReferenceOwnerTarget } from '@/lib/projectReferenceUsage';
 
 interface EditMessagesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onMessagesChanged?: () => void;
-  onSelectMessage?: (messageId: string) => void;
-  startInAddMode?: boolean;
 }
 
 export function EditMessagesDialog({
   open,
   onOpenChange,
   onMessagesChanged,
-  onSelectMessage,
-  startInAddMode = false,
 }: EditMessagesDialogProps) {
-  const { project, addMessage, removeMessage, updateMessage } = useProjectStore();
+  const { project, addMessage, getMessageDeletionImpact, removeMessage, updateMessage } = useProjectStore();
+  const focusCodeOwner = useEditorStore((state) => state.focusCodeOwner);
   const { showAlert, showConfirm } = useModal();
   const [isAdding, setIsAdding] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [blockedDelete, setBlockedDelete] = useState<{ entityLabel: string; impact: ProjectReferenceImpact } | null>(null);
 
   const messages = useMemo(() => project?.messages || [], [project?.messages]);
 
@@ -43,20 +44,22 @@ export function EditMessagesDialog({
 
   useEffect(() => {
     if (!open) return;
-    setIsAdding(startInAddMode);
+    setIsAdding(false);
     resetAddDialog();
     setEditingId(null);
     setEditName('');
-  }, [open, startInAddMode]);
+    setBlockedDelete(null);
+  }, [open]);
 
   const emitMessagesChanged = () => {
     onMessagesChanged?.();
   };
 
+  const canCreateMessage = name.trim().length > 0;
+
   const handleAdd = () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError('Please enter a message name');
       return;
     }
 
@@ -69,19 +72,14 @@ export function EditMessagesDialog({
     setIsAdding(false);
     resetAddDialog();
     emitMessagesChanged();
-
-    if (onSelectMessage) {
-      onSelectMessage(created.id);
-      onOpenChange(false);
-    }
   };
 
   const saveRename = (messageId: string) => {
     const trimmedName = editName.trim();
     if (!trimmedName) {
       void showAlert({
-        title: 'Missing Message Name',
-        description: 'Please enter a message name.',
+        title: 'Missing Name',
+        description: 'Please enter a name.',
       });
       return;
     }
@@ -93,20 +91,40 @@ export function EditMessagesDialog({
   };
 
   const handleDelete = async (messageId: string) => {
+    const message = messages.find((entry) => entry.id === messageId);
+    const impact = getMessageDeletionImpact(messageId);
+    if (message && impact && impact.referenceCount > 0) {
+      setBlockedDelete({ entityLabel: message.name, impact });
+      return;
+    }
+
     const confirmed = await showConfirm({
       title: 'Delete Message',
-      description: 'Delete this message? Broadcast and receive blocks using it will stop working.',
+      description: 'Delete this message?',
       confirmLabel: 'Delete',
       tone: 'destructive',
     });
     if (!confirmed) return;
 
-    removeMessage(messageId);
+    const result = removeMessage(messageId);
+    if (!result.deleted) {
+      if (message && result.impact?.referenceCount) {
+        setBlockedDelete({ entityLabel: message.name, impact: result.impact });
+      }
+      return;
+    }
+
     if (editingId === messageId) {
       setEditingId(null);
       setEditName('');
     }
     emitMessagesChanged();
+  };
+
+  const handleNavigateToUsage = (owner: ProjectReferenceOwnerTarget) => {
+    focusCodeOwner(owner);
+    setBlockedDelete(null);
+    onOpenChange(false);
   };
 
   return (
@@ -115,7 +133,7 @@ export function EditMessagesDialog({
         open={open}
         onOpenChange={onOpenChange}
         title="Messages"
-        addButtonLabel="Add message"
+        addButtonLabel="Create"
         onAdd={() => {
           resetAddDialog();
           setIsAdding(true);
@@ -131,7 +149,6 @@ export function EditMessagesDialog({
                     key={message.id}
                     icon={<Type className="size-4 flex-shrink-0 text-muted-foreground" />}
                     name={message.name}
-                    subtitle={`Stable ID: ${message.id}`}
                     isEditing={isEditing}
                     editValue={editName}
                     onEditValueChange={setEditName}
@@ -145,13 +162,6 @@ export function EditMessagesDialog({
                       setEditName(message.name);
                     }}
                     onDelete={() => void handleDelete(message.id)}
-                    primaryActionLabel={onSelectMessage ? 'Use' : undefined}
-                    onPrimaryAction={onSelectMessage
-                      ? () => {
-                          onSelectMessage(message.id);
-                          onOpenChange(false);
-                        }
-                      : undefined}
                   />
                 );
               })}
@@ -171,15 +181,15 @@ export function EditMessagesDialog({
             setError(null);
           }
         }}
-        title="Add Message"
+        title="Create Message"
         contentClassName="sm:max-w-lg"
         footer={(
-          <Button onClick={handleAdd}>Add Message</Button>
+          <Button disabled={!canCreateMessage} onClick={handleAdd}>Create</Button>
         )}
       >
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="message-name">Message Name</Label>
+            <Label htmlFor="message-name">Name</Label>
             <Input
               id="message-name"
               value={name}
@@ -200,6 +210,17 @@ export function EditMessagesDialog({
           {error ? <p className="text-xs text-red-500">{error}</p> : null}
         </div>
       </Modal>
+      <ReferenceUsageDialog
+        open={!!blockedDelete}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setBlockedDelete(null);
+          }
+        }}
+        entityLabel={blockedDelete?.entityLabel ?? ''}
+        impact={blockedDelete?.impact ?? null}
+        onNavigate={handleNavigateToUsage}
+      />
     </>
   );
 }

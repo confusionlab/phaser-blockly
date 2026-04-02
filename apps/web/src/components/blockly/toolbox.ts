@@ -10,8 +10,6 @@ import {
   normalizeVariableName,
 } from '@/lib/variableUtils';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
-
-const EDIT_MESSAGES_OPTION = '__EDIT_MESSAGES_OPTION__';
 const TOOLBOX_CATEGORY_ORDER = [
   'Events',
   'Control',
@@ -75,15 +73,7 @@ const ADVANCED_BLOCK_TYPES = new Set<string>([
 const BLOCKLY_INLINE_ICON_DEFAULT_SIZE = 16;
 const BLOCKLY_INLINE_ICON_DEFAULT_TEXT = '#ffffff';
 
-type EditMessagesCallback = (
-  options?: {
-    selectedMessageId?: string | null;
-    applySelectedMessageId?: (messageId: string) => void;
-    startInAddMode?: boolean;
-  },
-) => void;
-
-let editMessagesCallback: EditMessagesCallback | null = null;
+let editMessagesToolbarCallback: (() => void) | null = null;
 
 export type ToolboxShadowConfig = {
   type: string;
@@ -107,6 +97,7 @@ export type ToolboxButtonConfig = {
   kind: 'button';
   text: string;
   callbackKey: string;
+  'web-class'?: string;
 };
 
 export type ToolboxSeparatorConfig = {
@@ -697,7 +688,7 @@ function getSceneDropdownOptions(): Array<[string, string]> {
   });
 }
 
-function getMessageDropdownOptions(_selectedMessageId?: string | null): Array<[string, string]> {
+function getMessageDropdownOptions(): Array<[string, string]> {
   const project = useProjectStore.getState().project;
   const messages = (project?.messages || []).filter((message): message is MessageDefinition => {
     return (
@@ -729,8 +720,6 @@ function getMessageDropdownOptions(_selectedMessageId?: string | null): Array<[s
       options.push([`${message.name} (${nextIndex})`, message.id]);
     }
   }
-
-  options.push(['Edit messages...', EDIT_MESSAGES_OPTION]);
   return options;
 }
 
@@ -789,31 +778,6 @@ function createObjectPickerValidator(excludeCurrentObject: boolean = true) {
       return null;
     }
     return newValue;
-  };
-}
-
-function createMessageDropdownValidator() {
-  return function(this: Blockly.FieldDropdown, newValue: string): string | null {
-    if (newValue !== EDIT_MESSAGES_OPTION) {
-      return newValue;
-    }
-    if (!editMessagesCallback) {
-      return null;
-    }
-
-    const selectedMessageId = this.getValue();
-    editMessagesCallback({
-      selectedMessageId: selectedMessageId || null,
-      startInAddMode: !selectedMessageId,
-      applySelectedMessageId: (messageId: string) => {
-        if (!isLiveDropdownField(this)) {
-          return;
-        }
-        this.setValue(messageId);
-      },
-    });
-
-    return null;
   };
 }
 
@@ -912,14 +876,15 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             },
           },
-          { kind: 'sep', gap: '24' },
+          { kind: 'sep', gap: '28' },
           { kind: 'label', text: 'Messages' },
           {
             kind: 'button',
             text: 'Edit Messages',
             callbackKey: 'EDIT_MESSAGES',
+            'web-class': 'pochaBlocklyRoomyEditButton',
           },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: '28' },
           { kind: 'block', type: 'event_when_receive' },
           { kind: 'block', type: 'control_broadcast' },
           { kind: 'block', type: 'control_broadcast_wait' },
@@ -1097,7 +1062,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: '28' },
           { kind: 'block', type: 'motion_my_x' },
           { kind: 'block', type: 'motion_my_y' },
           { kind: 'block', type: 'motion_is_moving' },
@@ -1428,7 +1393,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             },
           },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: '28' },
           { kind: 'label', text: 'Targets' },
           { kind: 'block', type: 'object_from_dropdown' },
           { kind: 'block', type: 'target_camera' },
@@ -1470,11 +1435,12 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             kind: 'button',
             text: 'Edit Variables',
             callbackKey: 'EDIT_VARIABLES',
+            'web-class': 'pochaBlocklyRoomyEditButton',
           },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: '28' },
           { kind: 'label', text: 'Get Variable' },
           { kind: 'block', type: 'typed_variable_get' },
-          { kind: 'sep', gap: '8' },
+          { kind: 'sep', gap: '28' },
           { kind: 'label', text: 'Set Variable' },
           { kind: 'block', type: 'typed_variable_set' },
           {
@@ -1484,7 +1450,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          { kind: 'sep', gap: '8' },
+          { kind: 'sep', gap: '28' },
           { kind: 'label', text: 'Arrays' },
           { kind: 'block', type: 'typed_array_length' },
           {
@@ -3222,18 +3188,12 @@ function registerCustomBlocks() {
   // Advanced events
   Blockly.Blocks['event_when_receive'] = {
     init: function() {
-      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
-      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
-      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
-
       this.appendDummyInput()
         .appendField('when I receive')
-        .appendField(messageFieldRef, 'MESSAGE');
+        .appendField(new PreservingMessageFieldDropdown(getMessageDropdownOptions), 'MESSAGE');
       this.setNextStatement(true, null);
       this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when message is received');
-      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
-      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
@@ -3390,38 +3350,26 @@ function registerCustomBlocks() {
 
   Blockly.Blocks['control_broadcast'] = {
     init: function() {
-      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
-      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
-      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
-
       this.appendDummyInput()
         .appendField('broadcast')
-        .appendField(messageFieldRef, 'MESSAGE');
+        .appendField(new PreservingMessageFieldDropdown(getMessageDropdownOptions), 'MESSAGE');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Send a message to all objects');
-      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
-      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
   Blockly.Blocks['control_broadcast_wait'] = {
     init: function() {
-      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
-      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
-      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
-
       this.appendDummyInput()
         .appendField('broadcast')
-        .appendField(messageFieldRef, 'MESSAGE')
+        .appendField(new PreservingMessageFieldDropdown(getMessageDropdownOptions), 'MESSAGE')
         .appendField('and wait');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Send a message and wait');
-      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
-      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
@@ -4303,14 +4251,8 @@ function validateNumericInput(block: Blockly.Block) {
 
 // Callbacks for variable category actions - set externally by BlocklyEditor
 let editVariablesCallback: (() => void) | null = null;
-let editMessagesToolbarCallback: (() => void) | null = null;
-
 export function setEditVariablesCallback(callback: (() => void) | null) {
   editVariablesCallback = callback;
-}
-
-export function setEditMessagesCallback(callback: EditMessagesCallback | null) {
-  editMessagesCallback = callback;
 }
 
 export function setEditMessagesToolbarCallback(callback: (() => void) | null) {

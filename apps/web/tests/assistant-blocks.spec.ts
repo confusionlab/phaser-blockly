@@ -6,6 +6,7 @@ import {
   searchAssistantBlocks,
   validateAssistantBlockProgram,
 } from '../../../packages/ui-shared/src/assistantBlocks';
+import { createDefaultProject } from '../src/types';
 
 function installToolboxTestGlobals(): void {
   const globals = globalThis as {
@@ -134,6 +135,34 @@ test.describe('assistant block catalog', () => {
     ]);
     expect(repeatIndex).toBeGreaterThanOrEqual(0);
     expect(foreverIndex).toBe(repeatIndex + 1);
+  });
+
+  test('message block dropdowns only list existing messages', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    await import('../src/components/blockly/toolbox');
+    const { useProjectStore } = await import('../src/store/projectStore');
+
+    Blockly.utils.xml.injectDependencies({
+      document: new DOMParser().parseFromString('<xml></xml>', 'text/xml') as unknown as Document,
+      DOMParser,
+      XMLSerializer,
+    });
+
+    const project = createDefaultProject('Message Dropdown Fixture');
+    useProjectStore.getState().openProject(project);
+    useProjectStore.getState().addMessage('game over');
+    useProjectStore.getState().addMessage('game over');
+
+    const workspace = new Blockly.Workspace();
+    const broadcast = workspace.newBlock('control_broadcast');
+    const messageField = broadcast.getField('MESSAGE') as Blockly.FieldDropdown;
+    const optionLabels = messageField.getOptions(false).map(([label]) => label);
+
+    expect(optionLabels).toEqual(['game over (1)', 'game over (2)']);
+
+    workspace.dispose();
+    useProjectStore.getState().closeProject();
   });
 
   test('searches blocks by behavior keywords without full toolbox dump in the tool result', () => {

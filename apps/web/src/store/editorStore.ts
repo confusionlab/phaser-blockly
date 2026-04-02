@@ -1,5 +1,6 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import type { StageViewMode } from '@/lib/stageViewport';
+import type { ProjectReferenceOwnerTarget } from '@/lib/projectReferenceUsage';
 import type { PlayValidationIssue } from '@/lib/playValidation';
 import type { Project } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
@@ -192,6 +193,7 @@ interface EditorStore {
   setPlayValidationIssues: (issues: PlayValidationIssue[]) => void;
   setAssistantLock: (runId: string | null, message?: string | null) => void;
   focusPlayValidationIssue: (issue: PlayValidationIssue) => void;
+  focusCodeOwner: (target: ProjectReferenceOwnerTarget, options?: SelectionHistoryOptions) => void;
   toggleFolderCollapsed: (sceneId: string, folderId: string) => void;
   setFolderCollapsed: (sceneId: string, folderId: string, collapsed: boolean) => void;
   setCollapsedFoldersForScene: (sceneId: string, folderIds: string[]) => void;
@@ -946,6 +948,55 @@ function createEditorStore(): EditorStoreHook {
         costumeColliderEditorRequest: null,
         showPlayValidationDialog: false,
       });
+    });
+  },
+
+  focusCodeOwner: (target, options) => {
+    const state = get();
+    const beforeSelectionChange = getBeforeSelectionChangeHandler(state);
+    const recordHistory = options?.recordHistory !== false;
+
+    const applyFocus = () => {
+      if (target.kind === 'component') {
+        set({
+          selectedFolderId: null,
+          selectedObjectId: null,
+          selectedObjectIds: [],
+          selectedComponentId: target.componentId,
+          selectedComponentIds: [target.componentId],
+          activeInspectorTab: 'component',
+          activeHierarchyTab: 'component',
+          activeObjectTab: 'code',
+          costumeColliderEditorRequest: null,
+        });
+        return;
+      }
+
+      set({
+        selectedSceneId: target.sceneId,
+        selectedSceneIds: [target.sceneId],
+        selectedFolderId: null,
+        selectedObjectId: target.objectId,
+        selectedObjectIds: [target.objectId],
+        selectedComponentId: null,
+        selectedComponentIds: [],
+        activeInspectorTab: 'object',
+        activeHierarchyTab: 'object',
+        activeObjectTab: 'code',
+        costumeColliderEditorRequest: null,
+      });
+    };
+
+    if (!recordHistory) {
+      beforeSelectionChange?.({ source: 'selection:reference-owner', recordHistory: false });
+      applyFocus();
+      syncHistorySnapshot();
+      return;
+    }
+
+    runInHistoryTransaction('selection:reference-owner', () => {
+      beforeSelectionChange?.({ source: 'selection:reference-owner', recordHistory: true });
+      applyFocus();
     });
   },
 

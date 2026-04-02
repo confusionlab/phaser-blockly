@@ -49,9 +49,10 @@ export function ProjectPropertyManagerDialog({
       onOpenChange={onOpenChange}
       title={title}
       description={description}
+      contentClassName="left-1/2 right-auto w-[760px] max-w-[calc(100vw-4rem)] translate-x-[-50%]"
       bodyClassName="flex min-h-0 flex-1 flex-col px-6 py-5"
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 select-none">
         <div className="flex items-center justify-between gap-3">
           <IconButton
             className="shrink-0"
@@ -97,7 +98,7 @@ export function ProjectPropertyManagerRow({
   onPrimaryAction,
 }: ProjectPropertyManagerRowProps) {
   return (
-    <div className="group flex items-center justify-between rounded-lg px-3 py-2 hover:bg-accent">
+    <div className="group flex items-center justify-between rounded-lg px-3 py-2 select-none hover:bg-accent">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {icon}
         {isEditing ? (

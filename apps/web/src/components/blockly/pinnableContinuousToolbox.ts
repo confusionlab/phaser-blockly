@@ -11,6 +11,7 @@ const FLYOUT_WIDTH_CSS_VAR = '--blockly-flyout-width';
 const PINNABLE_FLYOUT_REGISTRATION = 'PochaContinuousFlyout';
 const PINNABLE_METRICS_REGISTRATION = 'PochaContinuousMetrics';
 const PINNABLE_TOOLBOX_REGISTRATION = 'PochaContinuousToolbox';
+const FLYOUT_ITEM_GAP_Y = 12;
 
 export const PINNED_TOOLBOX_FLYOUT_WIDTH = 250;
 export const UNPINNED_TOOLBOX_FLYOUT_WIDTH = 350;
@@ -37,6 +38,11 @@ function getConfiguredFlyoutWidth(
 }
 
 export class PinnableContinuousFlyout extends ContinuousFlyout {
+  constructor(workspaceOptions: Blockly.Options) {
+    super(workspaceOptions);
+    (this as unknown as { GAP_Y: number }).GAP_Y = FLYOUT_ITEM_GAP_Y;
+  }
+
   override getFlyoutScale(): number {
     return FIXED_TOOLBOX_UI_SCALE;
   }

@@ -236,6 +236,13 @@ body {
 
 .blocklyFlyoutLabelText {
   fill: var(--blockly-flyout-fg) !important;
+  font-size: 24px !important;
+  font-weight: 700;
+}
+
+.blocklyFlyoutButton.pochaBlocklyRoomyEditButton .blocklyText {
+  font-size: 15px !important;
+  font-weight: 700;
 }
 
 /* Keep Blockly chrome below the shared modal/dialog layer. */
@@ -537,6 +544,7 @@ body {
   --surface-canvas: oklch(0.985 0.001 106.423);
   --surface-panel: oklch(1 0 0);
   --surface-elevated: oklch(0.992 0.001 106.423);
+  --surface-dialog-workspace: oklch(0.978 0.001 106.423);
   --surface-floating: oklch(1 0 0 / 0.88);
   --surface-subtle: oklch(0.97 0.001 106.424);
   --surface-control-active: var(--surface-panel);
@@ -609,6 +617,7 @@ body {
   --surface-canvas: oklch(0.11 0.004 49.25);
   --surface-panel: oklch(0.168 0.006 56.043);
   --surface-elevated: oklch(0.216 0.006 56.043);
+  --surface-dialog-workspace: oklch(0.204 0.006 56.043);
   --surface-floating: oklch(0.216 0.006 56.043 / 0.9);
   --surface-subtle: oklch(0.268 0.007 34.298);
   --surface-control-active: oklch(0.4 0.009 56.043);

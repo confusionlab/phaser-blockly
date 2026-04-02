@@ -13,7 +13,6 @@ import { useEditorStore } from '@/store/editorStore';
 import {
   getToolboxConfig,
   registerTypedVariablesCategory,
-  setEditMessagesCallback,
   setEditMessagesToolbarCallback,
   setEditVariablesCallback,
   setTypedVariableLoading,
@@ -51,6 +50,14 @@ registerPinnableContinuousToolbox();
 
 const DEFAULT_SCROLLBAR_SIZE = 4;
 const BLOCKLY_SCROLLBAR_THICKNESS_OFFSET = 5;
+const BLOCKLY_ROOMY_EDIT_BUTTON_SELECTOR = '.blocklyFlyoutButton.pochaBlocklyRoomyEditButton';
+const BLOCKLY_FLYOUT_LABEL_SELECTOR = '.blocklyFlyoutLabel';
+const BLOCKLY_FLYOUT_LABEL_LEFT_PADDING = 2;
+const BLOCKLY_FLYOUT_LABEL_TEXT_Y = '28';
+const BLOCKLY_ROOMY_EDIT_BUTTON_HORIZONTAL_PADDING = 16;
+const BLOCKLY_ROOMY_EDIT_BUTTON_HEIGHT = 30;
+const BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS = 8;
+const BLOCKLY_ROOMY_EDIT_BUTTON_TEXT_Y = '20';
 
 function getBlocklyScrollbarThickness(): number {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -61,6 +68,56 @@ function getBlocklyScrollbarThickness(): number {
   const parsedValue = Number.parseFloat(rawValue);
   const visualSize = Number.isFinite(parsedValue) ? parsedValue : DEFAULT_SCROLLBAR_SIZE;
   return visualSize + BLOCKLY_SCROLLBAR_THICKNESS_OFFSET;
+}
+
+function syncBlocklyRoomyEditButtons(container: HTMLElement): void {
+  const buttons = container.querySelectorAll<SVGGElement>(BLOCKLY_ROOMY_EDIT_BUTTON_SELECTOR);
+
+  for (const button of buttons) {
+    const background = button.querySelector<SVGRectElement>('.blocklyFlyoutButtonBackground');
+    const shadow = button.querySelector<SVGRectElement>('.blocklyFlyoutButtonShadow');
+    const label = button.querySelector<SVGTextElement>('text.blocklyText');
+    if (!background || !label) {
+      continue;
+    }
+
+    const labelWidth = label.getComputedTextLength();
+    const width = Math.max(
+      Math.ceil(labelWidth + BLOCKLY_ROOMY_EDIT_BUTTON_HORIZONTAL_PADDING * 2),
+      Number.parseFloat(background.getAttribute('width') ?? '0'),
+    );
+    const textY = BLOCKLY_ROOMY_EDIT_BUTTON_TEXT_Y;
+
+    if (shadow) {
+      shadow.setAttribute('width', String(width));
+      shadow.setAttribute('height', String(BLOCKLY_ROOMY_EDIT_BUTTON_HEIGHT));
+      shadow.setAttribute('rx', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+      shadow.setAttribute('ry', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+    }
+
+    background.setAttribute('width', String(width));
+    background.setAttribute('height', String(BLOCKLY_ROOMY_EDIT_BUTTON_HEIGHT));
+    background.setAttribute('rx', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+    background.setAttribute('ry', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+
+    label.setAttribute('x', String(width / 2));
+    label.setAttribute('y', textY);
+  }
+}
+
+function syncBlocklyFlyoutLabels(container: HTMLElement): void {
+  const labels = container.querySelectorAll<SVGGElement>(BLOCKLY_FLYOUT_LABEL_SELECTOR);
+
+  for (const labelGroup of labels) {
+    const label = labelGroup.querySelector<SVGTextElement>('.blocklyFlyoutLabelText');
+    if (!label) {
+      continue;
+    }
+
+    label.setAttribute('text-anchor', 'start');
+    label.setAttribute('x', String(BLOCKLY_FLYOUT_LABEL_LEFT_PADDING));
+    label.setAttribute('y', BLOCKLY_FLYOUT_LABEL_TEXT_Y);
+  }
 }
 
 // Global clipboard for cross-object block copying
@@ -436,12 +493,10 @@ export function BlocklyEditor() {
     componentId: string | null;
     timeoutId: number;
   } | null>(null);
-  const pendingMessageFieldApplyRef = useRef<((messageId: string) => void) | null>(null);
   const [toolboxPinned, setToolboxPinned] = useState(loadToolboxPinnedPreference);
   const [pinButtonPosition, setPinButtonPosition] = useState<{ top: number; left: number } | null>(null);
   const [showEditVariablesDialog, setShowEditVariablesDialog] = useState(false);
   const [showEditMessagesDialog, setShowEditMessagesDialog] = useState(false);
-  const [startMessageManagerInAddMode, setStartMessageManagerInAddMode] = useState(false);
   const [showBlockSearch, setShowBlockSearch] = useState(false);
   const [dragSyncNonce, setDragSyncNonce] = useState(0);
 
@@ -529,6 +584,8 @@ export function BlocklyEditor() {
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
         updatePinButtonPosition();
+        syncBlocklyRoomyEditButtons(container);
+        syncBlocklyFlyoutLabels(container);
       });
     };
 
@@ -695,25 +752,15 @@ export function BlocklyEditor() {
   }, [selectedSceneId, selectedObjectId, selectedComponentId, flushPendingWorkspacePersist]);
 
   const closeMessageManager = useCallback(() => {
-    pendingMessageFieldApplyRef.current = null;
     setShowEditMessagesDialog(false);
-    setStartMessageManagerInAddMode(false);
   }, []);
 
   useEffect(() => {
-    setEditMessagesCallback((options) => {
-      pendingMessageFieldApplyRef.current = options?.applySelectedMessageId ?? null;
-      setStartMessageManagerInAddMode(Boolean(options?.startInAddMode));
-      setShowEditMessagesDialog(true);
-    });
     setEditMessagesToolbarCallback(() => {
-      pendingMessageFieldApplyRef.current = null;
-      setStartMessageManagerInAddMode(false);
       setShowEditMessagesDialog(true);
     });
 
     return () => {
-      setEditMessagesCallback(null);
       setEditMessagesToolbarCallback(null);
     };
   }, []);
@@ -1213,7 +1260,6 @@ export function BlocklyEditor() {
       />
       <EditMessagesDialog
         open={showEditMessagesDialog}
-        startInAddMode={startMessageManagerInAddMode}
         onOpenChange={(open) => {
           if (!open) {
             closeMessageManager();
@@ -1226,23 +1272,13 @@ export function BlocklyEditor() {
             workspaceRef.current.refreshToolboxSelection();
           }
         }}
-        onSelectMessage={pendingMessageFieldApplyRef.current
-          ? (messageId) => {
-              pendingMessageFieldApplyRef.current?.(messageId);
-              closeMessageManager();
-            }
-          : undefined}
       />
       <BlockSearchModal
         isOpen={showBlockSearch}
         onClose={() => setShowBlockSearch(false)}
         workspace={workspaceRef.current}
         onEditVariables={() => setShowEditVariablesDialog(true)}
-        onEditMessages={() => {
-          pendingMessageFieldApplyRef.current = null;
-          setStartMessageManagerInAddMode(false);
-          setShowEditMessagesDialog(true);
-        }}
+        onEditMessages={() => setShowEditMessagesDialog(true)}
       />
     </>
   );

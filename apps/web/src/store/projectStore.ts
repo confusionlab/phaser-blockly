@@ -41,6 +41,11 @@ import {
   normalizeVariableDefinitions,
   remapVariableIdsInBlocklyXml,
 } from '@/lib/variableUtils';
+import {
+  getMessageReferenceImpact,
+  getVariableReferenceImpact,
+  type ProjectReferenceImpact,
+} from '@/lib/projectReferenceUsage';
 import { validateProjectName } from '@/lib/projectName';
 import { applyAssistantChangeSetToProject } from '@/lib/assistant/projectState';
 import {
@@ -88,7 +93,8 @@ interface ProjectStore {
   updateProjectSettings: (settings: Partial<Project['settings']>) => void;
   applyAssistantChangeSet: (changeSet: AssistantChangeSet) => Project | null;
   addMessage: (name: string) => MessageDefinition | null;
-  removeMessage: (messageId: string) => void;
+  getMessageDeletionImpact: (messageId: string) => ProjectReferenceImpact | null;
+  removeMessage: (messageId: string) => DeleteGuardResult;
   updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => void;
 
   // Scene actions
@@ -129,17 +135,19 @@ interface ProjectStore {
 
   // Variable actions (global)
   addGlobalVariable: (variable: Variable) => void;
-  removeGlobalVariable: (variableId: string) => void;
+  getVariableDeletionImpact: (variableId: string) => ProjectReferenceImpact | null;
+  removeGlobalVariable: (variableId: string) => DeleteGuardResult;
   updateGlobalVariable: (variableId: string, updates: Partial<Variable>) => void;
 
   // Variable actions (local - per object)
   addLocalVariable: (sceneId: string, objectId: string, variable: Variable) => void;
-  removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => void;
+  removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => DeleteGuardResult;
+  removeComponentLocalVariable: (componentId: string, variableId: string) => DeleteGuardResult;
   updateLocalVariable: (sceneId: string, objectId: string, variableId: string, updates: Partial<Variable>) => void;
 
   // Legacy aliases
   addVariable: (variable: Variable) => void;
-  removeVariable: (variableId: string) => void;
+  removeVariable: (variableId: string) => DeleteGuardResult;
   updateVariable: (variableId: string, updates: Partial<Variable>) => void;
 
   // Component actions
@@ -166,6 +174,11 @@ interface ProjectStore {
   getObject: (sceneId: string, objectId: string) => GameObject | undefined;
   getComponent: (componentId: string) => ComponentDefinition | undefined;
 }
+
+export type DeleteGuardResult = {
+  deleted: boolean;
+  impact: ProjectReferenceImpact | null;
+};
 
 type ProjectStoreHook = UseBoundStore<StoreApi<ProjectStore>>;
 type ProjectStoreGlobal = typeof globalThis & {
@@ -412,6 +425,28 @@ function normalizeComponentHierarchy(
   };
 }
 
+function getRemovedVariableIds(
+  previousVariables: readonly Variable[] | undefined,
+  nextVariables: readonly Variable[] | undefined,
+): string[] {
+  const nextIds = new Set((nextVariables || []).map((variable) => variable.id));
+  return (previousVariables || [])
+    .map((variable) => variable.id)
+    .filter((variableId) => !nextIds.has(variableId));
+}
+
+function canRemoveVariableDefinitions(
+  project: Project,
+  removedVariableIds: readonly string[],
+): boolean {
+  for (const variableId of removedVariableIds) {
+    if (getVariableReferenceImpact(project, variableId).referenceCount > 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function applyObjectUpdatesToProject(
   project: Project,
   sceneId: string,
@@ -469,6 +504,20 @@ function applyObjectUpdatesToProject(
         ...component,
         ...syncedUpdates,
       });
+      if (syncedUpdates.localVariables !== undefined) {
+        const removedVariableIds = getRemovedVariableIds(component.localVariables || [], nextComponent.localVariables || []);
+        if (removedVariableIds.length > 0) {
+          const nextProjectForValidation: Project = {
+            ...project,
+            components: (project.components || []).map((candidate) =>
+              candidate.id === componentId ? nextComponent : candidate,
+            ),
+          };
+          if (!canRemoveVariableDefinitions(nextProjectForValidation, removedVariableIds)) {
+            return null;
+          }
+        }
+      }
       const nextSyncedObjectFields = toComponentBackedObjectFields(nextComponent);
       const syncedKeysToApply = new Set<keyof ComponentBackedObjectFields>(
         Object.keys(syncedUpdates) as (keyof ComponentBackedObjectFields)[],
@@ -535,6 +584,29 @@ function applyObjectUpdatesToProject(
     }
 
     return null;
+  }
+
+  if (normalizedUpdates.localVariables !== undefined) {
+    const nextObject = normalizePhysicsCollider({ ...obj, ...normalizedUpdates });
+    const removedVariableIds = getRemovedVariableIds(obj.localVariables || [], nextObject.localVariables || []);
+    if (removedVariableIds.length > 0) {
+      const nextProjectForValidation: Project = {
+        ...project,
+        scenes: project.scenes.map((candidateScene) =>
+          candidateScene.id === sceneId
+            ? normalizeSceneLayering({
+                ...candidateScene,
+                objects: candidateScene.objects.map((candidateObject) =>
+                  candidateObject.id === objectId ? nextObject : candidateObject
+                ),
+              })
+            : candidateScene,
+        ),
+      };
+      if (!canRemoveVariableDefinitions(nextProjectForValidation, removedVariableIds)) {
+        return null;
+      }
+    }
   }
 
   return {
@@ -919,18 +991,47 @@ function createProjectStore(): ProjectStoreHook {
     return newMessage;
   },
 
-  removeMessage: (messageId: string) => {
-    set(state => ({
-      project: state.project
-        ? {
-            ...state.project,
-            messages: (state.project.messages || []).filter((message) => message.id !== messageId),
-            updatedAt: createUpdatedAt(),
-          }
-        : null,
-      isDirty: true,
-    }));
-    recordHistoryChange({ source: 'project:remove-message' });
+  getMessageDeletionImpact: (messageId) => {
+    const project = get().project;
+    if (!project) {
+      return null;
+    }
+    return getMessageReferenceImpact(project, messageId);
+  },
+
+  removeMessage: (messageId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
+      if (!state.project) return state;
+
+      const currentMessage = (state.project.messages || []).find((message) => message.id === messageId);
+      if (!currentMessage) {
+        return state;
+      }
+
+      const impact = getMessageReferenceImpact(state.project, messageId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
+
+      result = { deleted: true, impact: null };
+      return {
+        project: {
+          ...state.project,
+          messages: (state.project.messages || []).filter((message) => message.id !== messageId),
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-message' });
+    }
+
+    return result;
   },
 
   updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => {
@@ -1565,18 +1666,47 @@ function createProjectStore(): ProjectStoreHook {
     recordHistoryChange({ source: 'project:add-global-variable' });
   },
 
-  removeGlobalVariable: (variableId: string) => {
-    set(state => ({
-      project: state.project
-        ? {
-            ...state.project,
-            globalVariables: state.project.globalVariables.filter(v => v.id !== variableId),
-            updatedAt: createUpdatedAt(),
-          }
-        : null,
-      isDirty: true,
-    }));
-    recordHistoryChange({ source: 'project:remove-global-variable' });
+  getVariableDeletionImpact: (variableId) => {
+    const project = get().project;
+    if (!project) {
+      return null;
+    }
+    return getVariableReferenceImpact(project, variableId);
+  },
+
+  removeGlobalVariable: (variableId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
+      if (!state.project) return state;
+
+      const currentVariable = state.project.globalVariables.find((variable) => variable.id === variableId);
+      if (!currentVariable) {
+        return state;
+      }
+
+      const impact = getVariableReferenceImpact(state.project, variableId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
+
+      result = { deleted: true, impact: null };
+      return {
+        project: {
+          ...state.project,
+          globalVariables: state.project.globalVariables.filter((variable) => variable.id !== variableId),
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-global-variable' });
+    }
+
+    return result;
   },
 
   updateGlobalVariable: (variableId: string, updates: Partial<Variable>) => {
@@ -1692,17 +1822,25 @@ function createProjectStore(): ProjectStoreHook {
     recordHistoryChange({ source: 'project:add-local-variable' });
   },
 
-  removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => {
-    set(state => {
+  removeLocalVariable: (sceneId, objectId, variableId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
       if (!state.project) return state;
 
-      const scene = state.project.scenes.find((s) => s.id === sceneId);
-      const targetObject = scene?.objects.find((o) => o.id === objectId);
+      const scene = state.project.scenes.find((candidate) => candidate.id === sceneId);
+      const targetObject = scene?.objects.find((candidate) => candidate.id === objectId);
       if (!targetObject) return state;
+
+      const impact = getVariableReferenceImpact(state.project, variableId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
 
       if (targetObject.componentId) {
         const componentId = targetObject.componentId;
-        const component = (state.project.components || []).find((c) => c.id === componentId);
+        const component = (state.project.components || []).find((candidate) => candidate.id === componentId);
         if (!component) return state;
 
         const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
@@ -1711,6 +1849,7 @@ function createProjectStore(): ProjectStoreHook {
         }
         const nextLocalVariables: Variable[] = currentLocalVariables.filter((existing) => existing.id !== variableId);
 
+        result = { deleted: true, impact: null };
         return {
           project: {
             ...state.project,
@@ -1733,27 +1872,92 @@ function createProjectStore(): ProjectStoreHook {
         };
       }
 
+      const currentLocalVariables = targetObject.localVariables || [];
+      if (!currentLocalVariables.some((existing) => existing.id === variableId)) {
+        return state;
+      }
+
+      result = { deleted: true, impact: null };
       return {
         project: {
           ...state.project,
-          scenes: state.project.scenes.map(s =>
-            s.id === sceneId
+          scenes: state.project.scenes.map((candidateScene) =>
+            candidateScene.id === sceneId
               ? {
-                  ...s,
-                  objects: s.objects.map(o =>
-                    o.id === objectId
-                      ? { ...o, localVariables: (o.localVariables || []).filter(v => v.id !== variableId) }
-                      : o
+                  ...candidateScene,
+                  objects: candidateScene.objects.map((candidateObject) =>
+                    candidateObject.id === objectId
+                      ? {
+                          ...candidateObject,
+                          localVariables: (candidateObject.localVariables || []).filter((variable) => variable.id !== variableId),
+                        }
+                      : candidateObject
                   ),
                 }
-              : s
+              : candidateScene
           ),
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
-    recordHistoryChange({ source: 'project:remove-local-variable' });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-local-variable' });
+    }
+
+    return result;
+  },
+
+  removeComponentLocalVariable: (componentId, variableId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
+      if (!state.project) return state;
+
+      const component = (state.project.components || []).find((candidate) => candidate.id === componentId);
+      if (!component) return state;
+
+      const currentLocalVariables = component.localVariables || [];
+      if (!currentLocalVariables.some((existing) => existing.id === variableId)) {
+        return state;
+      }
+
+      const impact = getVariableReferenceImpact(state.project, variableId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
+
+      const nextLocalVariables = currentLocalVariables.filter((existing) => existing.id !== variableId);
+      result = { deleted: true, impact: null };
+      return {
+        project: {
+          ...state.project,
+          components: (state.project.components || []).map((componentItem) =>
+            componentItem.id === componentId
+              ? { ...componentItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+              : componentItem
+          ),
+          scenes: state.project.scenes.map((scene) => ({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === componentId
+                ? { ...object, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                : object
+            ),
+          })),
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-local-variable' });
+    }
+
+    return result;
   },
 
   updateLocalVariable: (sceneId: string, objectId: string, variableId: string, updates: Partial<Variable>) => {
@@ -1852,7 +2056,7 @@ function createProjectStore(): ProjectStoreHook {
   },
 
   removeVariable: (variableId: string) => {
-    get().removeGlobalVariable(variableId);
+    return get().removeGlobalVariable(variableId);
   },
 
   updateVariable: (variableId: string, updates: Partial<Variable>) => {
@@ -2045,6 +2249,20 @@ function createProjectStore(): ProjectStoreHook {
         ...currentComponent,
         ...normalizedUpdates,
       });
+      if (normalizedUpdates.localVariables !== undefined) {
+        const removedVariableIds = getRemovedVariableIds(currentComponent.localVariables || [], nextComponent.localVariables || []);
+        if (removedVariableIds.length > 0) {
+          const nextProjectForValidation: Project = {
+            ...state.project,
+            components: (state.project.components || []).map((component) =>
+              component.id === componentId ? nextComponent : component,
+            ),
+          };
+          if (!canRemoveVariableDefinitions(nextProjectForValidation, removedVariableIds)) {
+            return state;
+          }
+        }
+      }
       const nextSyncedObjectFields = toComponentBackedObjectFields(nextComponent);
       const syncedKeysToApply = new Set<keyof ComponentBackedObjectFields>(
         Object.keys(syncedInstanceUpdates) as (keyof ComponentBackedObjectFields)[],
