@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import * as Slider from '@radix-ui/react-slider';
 import { Button } from '@/components/ui/button';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
@@ -10,6 +9,7 @@ import {
   floatingToolbarControlBaseClass,
 } from '@/components/editors/shared/FloatingBottomToolbar';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { FloatingToolbarSlider } from '@/components/editors/shared/FloatingToolbarSlider';
 import {
   MousePointer2,
   PenTool,
@@ -231,10 +231,6 @@ const FloatingToolButton = memo(({
 
 FloatingToolButton.displayName = 'FloatingToolButton';
 
-const toolbarSliderThumbClassName =
-  'block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
-const toolbarSliderTrackClassName = 'relative h-1.5 w-full grow rounded-full bg-secondary';
-const toolbarSliderRangeClassName = 'absolute h-full rounded-full bg-primary';
 const toolbarSliderPreviewSurfaceClassName =
   'pointer-events-none overflow-visible border-0 bg-transparent p-0 shadow-none';
 
@@ -293,10 +289,10 @@ const ToolbarPreviewSlider = memo(({
         <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
       ) : null}
       <div ref={anchorRef} className="relative flex min-w-0 grow items-center">
-        <Slider.Root
-          className={cn('relative flex h-4 w-full touch-none items-center', sliderClassName)}
-          value={[value]}
-          onValueChange={([nextValue]) => onValueChange(nextValue)}
+        <FloatingToolbarSlider
+          className={sliderClassName}
+          value={value}
+          onValueChange={onValueChange}
           onValueCommit={() => setIsPreviewVisible(false)}
           onPointerDownCapture={() => setIsPreviewVisible(true)}
           onFocusCapture={() => setIsPreviewVisible(true)}
@@ -304,12 +300,8 @@ const ToolbarPreviewSlider = memo(({
           min={min}
           max={max}
           step={step}
-        >
-          <Slider.Track className={toolbarSliderTrackClassName}>
-            <Slider.Range className={toolbarSliderRangeClassName} />
-          </Slider.Track>
-          <Slider.Thumb className={cn(toolbarSliderThumbClassName, thumbClassName)} />
-        </Slider.Root>
+          thumbClassName={thumbClassName}
+        />
       </div>
       <span className={cn('w-8 text-right text-xs text-muted-foreground', valueClassName)}>{value}</span>
       <AnchoredPopupSurface

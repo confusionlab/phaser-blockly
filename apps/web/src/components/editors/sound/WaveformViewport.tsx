@@ -6,6 +6,8 @@ const MIN_TRIM_SECONDS = 0.1;
 const WAVEFORM_BASE_FILL = '#b8b8b8';
 const WAVEFORM_PLAYED_FILL = '#5f5f5f';
 const TRIM_ACCENT = '#6b6b6b';
+const WAVEFORM_BAR_WIDTH_PX = 3;
+const WAVEFORM_BAR_MIN_GAP_PX = 1;
 
 interface WaveformViewportProps {
   waveform: WaveformData | null;
@@ -22,36 +24,82 @@ interface WaveformViewportProps {
 
 type InteractionMode = 'trim-start' | 'trim-end' | 'seek' | null;
 
+interface WaveformBarGeometry {
+  count: number;
+  widthPx: number;
+  gapPx: number;
+}
+
+function resolveWaveformBarGeometry(viewportWidth: number): WaveformBarGeometry {
+  if (viewportWidth <= 0) {
+    return {
+      count: 0,
+      widthPx: WAVEFORM_BAR_WIDTH_PX,
+      gapPx: WAVEFORM_BAR_MIN_GAP_PX,
+    };
+  }
+
+  const count = Math.max(
+    1,
+    Math.floor((viewportWidth + WAVEFORM_BAR_MIN_GAP_PX) / (WAVEFORM_BAR_WIDTH_PX + WAVEFORM_BAR_MIN_GAP_PX)),
+  );
+  const gapPx = count > 1
+    ? Math.max(WAVEFORM_BAR_MIN_GAP_PX, (viewportWidth - (count * WAVEFORM_BAR_WIDTH_PX)) / (count - 1))
+    : 0;
+
+  return {
+    count,
+    widthPx: WAVEFORM_BAR_WIDTH_PX,
+    gapPx,
+  };
+}
+
 const StaticWaveformBars = memo(function StaticWaveformBars({
   bars,
   fill,
   amplitudeScale,
+  geometry,
+  viewportWidth,
+  viewportHeight,
 }: {
   bars: number[];
   fill: string;
   amplitudeScale: number;
+  geometry: WaveformBarGeometry;
+  viewportWidth: number;
+  viewportHeight: number;
 }) {
+  const contentWidth = Math.max(viewportWidth, 1);
+  const contentHeight = Math.max(viewportHeight, 1);
+  const leftInset = bars.length > 0
+    ? Math.max(0, (contentWidth - ((bars.length * geometry.widthPx) + ((bars.length - 1) * geometry.gapPx))) / 2)
+    : 0;
+
   return (
-    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+    <div className="pointer-events-none absolute inset-0" aria-hidden="true">
       {bars.map((peak, index) => {
-        const x = (index / bars.length) * 100;
-        const width = 100 / bars.length;
-        const minBarHeight = amplitudeScale > 0 ? Math.max(0.5, amplitudeScale * 3) : 0;
-        const height = Math.max(peak * 76 * amplitudeScale, minBarHeight);
+        const x = leftInset + (index * (geometry.widthPx + geometry.gapPx));
+        const minBarHeight = amplitudeScale > 0 ? Math.max(1, amplitudeScale * 3) : 0;
+        const height = Math.max(peak * contentHeight * 0.76 * amplitudeScale, minBarHeight);
+        const top = (contentHeight - height) / 2;
+        const radius = Math.min(geometry.widthPx / 2, height / 2);
 
         return (
-          <rect
+          <div
             key={index}
-            x={x}
-            y={50 - height / 2}
-            width={Math.max(width * 0.72, 0.32)}
-            height={height}
-            rx={0.28}
-            fill={fill}
+            className="absolute"
+            style={{
+              left: x,
+              top,
+              width: geometry.widthPx,
+              height,
+              borderRadius: radius,
+              backgroundColor: fill,
+            }}
           />
         );
       })}
-    </svg>
+    </div>
   );
 });
 
@@ -79,8 +127,11 @@ export function WaveformViewport({
   const onSeekRef = useRef(onSeek);
   const onTrimCommitRef = useRef(onTrimCommit);
 
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [draftTrim, setDraftTrim] = useState({ trimStart, trimEnd });
+
+  const containerWidth = containerSize.width;
+  const containerHeight = containerSize.height;
 
   durationRef.current = duration;
   onSeekRef.current = onSeek;
@@ -112,23 +163,31 @@ export function WaveformViewport({
     }
 
     const observer = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width);
+      setContainerSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
     });
 
     observer.observe(element);
-    setContainerWidth(element.getBoundingClientRect().width);
+    const rect = element.getBoundingClientRect();
+    setContainerSize({
+      width: rect.width,
+      height: rect.height,
+    });
 
     return () => observer.disconnect();
   }, []);
 
+  const barGeometry = useMemo(() => resolveWaveformBarGeometry(containerWidth), [containerWidth]);
+
   const bars = useMemo(() => {
-    if (!waveform || visibleDuration <= 0) {
+    if (!waveform || visibleDuration <= 0 || barGeometry.count <= 0) {
       return [];
     }
 
-    const barCount = Math.max(72, Math.floor(containerWidth / 4));
-    return getVisiblePeaks(waveform, visibleStart, visibleDuration, barCount);
-  }, [containerWidth, visibleDuration, visibleStart, waveform]);
+    return getVisiblePeaks(waveform, visibleStart, visibleDuration, barGeometry.count);
+  }, [barGeometry.count, visibleDuration, visibleStart, waveform]);
 
   useEffect(() => {
     return () => {
@@ -278,7 +337,14 @@ export function WaveformViewport({
       <div className="absolute inset-0 overflow-hidden rounded-[24px]">
         {bars.length > 0 ? (
           <>
-            <StaticWaveformBars bars={bars} fill={WAVEFORM_BASE_FILL} amplitudeScale={amplitudeScale} />
+            <StaticWaveformBars
+              bars={bars}
+              fill={WAVEFORM_BASE_FILL}
+              amplitudeScale={amplitudeScale}
+              geometry={barGeometry}
+              viewportWidth={containerWidth}
+              viewportHeight={containerHeight}
+            />
 
             <div
               className="pointer-events-none absolute inset-0"
@@ -286,7 +352,14 @@ export function WaveformViewport({
                 clipPath: `inset(0 ${Math.max(0, 100 - (playedOverlayStartPercent + playedSelectedPercent))}% 0 ${playedOverlayStartPercent}%)`,
               }}
             >
-              <StaticWaveformBars bars={bars} fill={WAVEFORM_PLAYED_FILL} amplitudeScale={amplitudeScale} />
+              <StaticWaveformBars
+                bars={bars}
+                fill={WAVEFORM_PLAYED_FILL}
+                amplitudeScale={amplitudeScale}
+                geometry={barGeometry}
+                viewportWidth={containerWidth}
+                viewportHeight={containerHeight}
+              />
             </div>
 
             {showTrimControls ? (

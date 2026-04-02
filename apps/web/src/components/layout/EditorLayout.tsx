@@ -36,7 +36,10 @@ import {
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
 import { assistantFeatureFlags } from '@/lib/assistant/config';
-import { shouldTreatOpenedProjectAsCloudSaved } from '@/lib/cloudProjectState';
+import {
+  deriveEditorSaveControlState,
+  shouldTreatOpenedProjectAsCloudSaved,
+} from '@/lib/cloudProjectState';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { isBlocklyShortcutTarget, isSceneObjectShortcutSurfaceTarget, isTextEntryTarget } from '@/utils/keyboard';
@@ -199,6 +202,7 @@ export function EditorLayout() {
     progress: 8,
     detail: 'Opening project page…',
   });
+  const [isManualSaveInProgress, setIsManualSaveInProgress] = useState(false);
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [cloudSaveState, setCloudSaveState] = useState<CloudSaveState>({
@@ -683,7 +687,11 @@ export function EditorLayout() {
 
   const syncCurrentProjectToCloud = useCallback(async (
     projectSnapshot: Project,
-    options: { showBlockingOverlay?: boolean; allowPullIntoEditor?: boolean } = {},
+    options: {
+      showBlockingOverlay?: boolean;
+      allowPullIntoEditor?: boolean;
+      uiMode?: 'visible' | 'silent';
+    } = {},
   ): Promise<boolean> => {
     if (!isCloudWriteEnabled) {
       setCloudSaveState((current) => ({
@@ -699,11 +707,13 @@ export function EditorLayout() {
       projectId: projectSnapshot.id,
       updatedAtMs: projectUpdatedAtMs,
     };
-    setCloudSaveState({
-      status: 'saving',
-      lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
-      errorMessage: null,
-    });
+    if (options.uiMode !== 'silent') {
+      setCloudSaveState({
+        status: 'saving',
+        lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
+        errorMessage: null,
+      });
+    }
     if (isMountedRef.current) {
       setIsSyncingCloud(true);
       if (options.showBlockingOverlay) {
@@ -755,7 +765,7 @@ export function EditorLayout() {
 
     const projectSnapshot = project;
     const timeoutId = window.setTimeout(() => {
-      void syncCurrentProjectToCloud(projectSnapshot);
+      void syncCurrentProjectToCloud(projectSnapshot, { uiMode: 'silent' });
     }, 1_000);
 
     return () => window.clearTimeout(timeoutId);
@@ -824,6 +834,7 @@ export function EditorLayout() {
       return;
     }
 
+    setIsManualSaveInProgress(true);
     manualSaveMetricsRef.current = {
       projectId: project.id,
       updatedAtMs: project.updatedAt.getTime(),
@@ -831,13 +842,19 @@ export function EditorLayout() {
       uploadSizeBytes: null,
       phaseDurationsMs: null,
     };
-    const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
-    if (!synced) {
-      await showAlert({
-        title: 'Cloud Save Failed',
-        description: 'Cloud save failed. Please try Save Now again.',
-        tone: 'destructive',
-      });
+    try {
+      const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
+      if (!synced) {
+        await showAlert({
+          title: 'Cloud Save Failed',
+          description: 'Cloud save failed. Please try Save Now again.',
+          tone: 'destructive',
+        });
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsManualSaveInProgress(false);
+      }
     }
   }, [isSyncingCloud, project, showAlert, syncCurrentProjectToCloud]);
 
@@ -851,13 +868,12 @@ export function EditorLayout() {
     }
   }, [isDarkMode, updateMySettings]);
 
-  const saveControlState = !project
-    ? 'saved'
-    : cloudSaveState.status === 'saving'
-      ? 'saving'
-      : isCurrentVersionCloudSaved
-        ? 'saved'
-        : 'save';
+  const saveControlState = deriveEditorSaveControlState({
+    hasProject: !!project,
+    isDirty,
+    hasActionableCloudError: cloudSaveState.status === 'error',
+    isManualSaveInProgress,
+  });
 
   useEffect(() => {
     if (!isProjectLeaseBlocking || !isPlaying) {

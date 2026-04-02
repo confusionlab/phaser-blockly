@@ -338,6 +338,11 @@ test.describe('Fullscreen editor overlays', () => {
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ hasText: 'Sound Library' });
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Multi-select' })).toBeVisible();
+    await expect(dialog.getByRole('radio', { name: 'Rows' })).toBeVisible();
+    await expect(dialog.getByRole('radio', { name: 'Grid' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /^cancel$/i })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: /^insert/i })).toHaveCount(0);
     await expectLocatorToBeTopmost(dialog);
 
     const dialogZIndex = await dialog.evaluate(

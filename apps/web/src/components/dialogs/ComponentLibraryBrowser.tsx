@@ -1,15 +1,7 @@
-import { useState } from 'react';
 import { Component } from '@/components/ui/icons';
 import { useProjectStore } from '@/store/projectStore';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog';
 
 interface ComponentLibraryBrowserProps {
   open: boolean;
@@ -28,92 +20,99 @@ export function ComponentLibraryBrowser({
 }: ComponentLibraryBrowserProps) {
   const project = useProjectStore((state) => state.project);
   const components = project?.components || [];
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  const selectedComponent = components.find((component) => component.id === selectedId) || null;
-
-  const handleInsert = () => {
-    if (!selectedComponent) return;
-    onSelect?.(selectedComponent.id);
-    onOpenChange(false);
-  };
-
-  const handleEditCode = () => {
-    if (!selectedComponent) return;
-    onEditCode?.(selectedComponent.id);
-    onOpenChange(false);
-  };
-
-  const handleDelete = () => {
-    if (!selectedComponent) return;
-    onDelete?.(selectedComponent.id);
-    setSelectedId((current) => (current === selectedComponent.id ? null : current));
-  };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl h-[550px] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Component Library</DialogTitle>
-        </DialogHeader>
-
-        <ScrollArea className="flex-1 mt-4">
-          {components.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p className="mb-2">No components yet</p>
-              <p className="text-sm">Right-click an object and select "Make Component" to add one</p>
+    <LibraryBrowserDialog
+      emptyDescription='Right-click an object and select "Make Component" to add one here.'
+      emptyTitle="No components yet"
+      getItemId={(item) => item.id}
+      getItemName={(item) => item.name}
+      itemLabelPlural="components"
+      itemLabelSingular="component"
+      items={components}
+      onDeleteSelected={onDelete ? async (selectedItems) => {
+        selectedItems.forEach((item) => onDelete(item.id));
+      } : undefined}
+      onItemOpen={async (item) => {
+        onSelect?.(item.id);
+      }}
+      onOpenChange={onOpenChange}
+      open={open}
+      renderCard={(item) => {
+        const thumbnail = item.costumes[0]?.assetId || null;
+        return (
+          <>
+            <div className="checkerboard-bg checkerboard-bg-sm flex aspect-square w-full items-center justify-center border-b border-border/60 bg-muted">
+              {thumbnail ? (
+                <img
+                  src={thumbnail}
+                  alt={item.name}
+                  className="h-full w-full object-contain p-4"
+                />
+              ) : (
+                <Component className="size-12 text-muted-foreground" />
+              )}
             </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-4 pr-4">
-              {components.map((component) => {
-                const thumbnail = component.costumes[0]?.assetId || null;
-                return (
-                  <Card
-                    key={component.id}
-                    onClick={() => setSelectedId(component.id)}
-                    className={`relative group p-3 cursor-pointer transition-all ${
-                      selectedId === component.id
-                        ? 'ring-2 ring-primary bg-primary/5'
-                        : 'hover:bg-accent'
-                    }`}
-                  >
-                    <div className="w-full aspect-square rounded-lg overflow-hidden mb-2 checkerboard-bg checkerboard-bg-sm flex items-center justify-center bg-muted/30">
-                      {thumbnail ? (
-                        <img
-                          src={thumbnail}
-                          alt={component.name}
-                          className="w-full h-full object-contain"
-                        />
-                      ) : (
-                        <Component className="size-10 text-muted-foreground" />
-                      )}
-                    </div>
 
-                    <p className="text-sm text-center truncate font-medium">
-                      {component.name}
-                    </p>
-                  </Card>
-                );
-              })}
+            <div className="flex flex-1 flex-col justify-between gap-3 p-4">
+              <div className="min-w-0">
+                <p className="truncate text-base font-semibold text-foreground">
+                  {item.name}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Shared component definition
+                </p>
+              </div>
             </div>
-          )}
-        </ScrollArea>
+          </>
+        );
+      }}
+      renderRow={(item) => {
+        const thumbnail = item.costumes[0]?.assetId || null;
+        return (
+          <>
+            <div className="checkerboard-bg checkerboard-bg-sm flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border/70 bg-muted">
+              {thumbnail ? (
+                <img
+                  src={thumbnail}
+                  alt={item.name}
+                  className="h-full w-full object-contain p-2"
+                />
+              ) : (
+                <Component className="size-7 text-muted-foreground" />
+              )}
+            </div>
 
-        <div className="flex justify-end gap-3 pt-4 border-t">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button variant="outline" onClick={handleEditCode} disabled={!selectedComponent}>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-foreground">
+                {item.name}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Click to add this component to the scene
+              </div>
+            </div>
+          </>
+        );
+      }}
+      title="Component Library"
+      toolbarActions={onEditCode ? ({ selectedItems }) => {
+        if (selectedItems.length !== 1) {
+          return null;
+        }
+
+        return (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              onEditCode(selectedItems[0]!.id);
+              onOpenChange(false);
+            }}
+          >
             Edit Code
           </Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={!selectedComponent}>
-            Delete
-          </Button>
-          <Button onClick={handleInsert} disabled={!selectedComponent}>
-            Add to Scene
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        );
+      } : undefined}
+    />
   );
 }

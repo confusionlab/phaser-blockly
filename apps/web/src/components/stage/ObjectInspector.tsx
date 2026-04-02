@@ -17,7 +17,7 @@ import {
   CompactColorPicker,
 } from '@/components/ui/color-picker';
 import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
-import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Component, Paintbrush } from '@/components/ui/icons';
+import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Paintbrush } from '@/components/ui/icons';
 import type { ComponentDefinition, GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
 import {
@@ -28,6 +28,7 @@ import {
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
+import { ComponentSharedDisclaimer } from '@/components/stage/ComponentSharedDisclaimer';
 
 type PhysicsBodyType = PhysicsConfig['bodyType'];
 type ColliderType = NonNullable<GameObject['collider']>['type'];
@@ -341,10 +342,7 @@ function ComponentProperties({ component, updateComponent }: ComponentProperties
 
   return (
     <div className="w-full min-w-0 space-y-4">
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
-        <Component className="size-4 text-purple-600" />
-        <span className="min-w-0 text-xs text-muted-foreground">Shared component properties sync across all instances</span>
-      </div>
+      <ComponentSharedDisclaimer />
 
       <ComponentPhysicsToggle
         component={component}
@@ -575,14 +573,6 @@ function ObjectProperties({
 
   return (
     <div className="w-full min-w-0 space-y-4">
-      {/* Component indicator */}
-      {anyComponentInstance && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/50">
-          <Component className="size-4 text-purple-600" />
-          <span className="min-w-0 text-xs text-muted-foreground">Component - code and physics sync across all instances</span>
-        </div>
-      )}
-
       {/* Visibility */}
       <div className="flex items-center gap-2">
         <Checkbox
@@ -715,6 +705,13 @@ function ObjectProperties({
           </Button>
         </div>
       </div>
+
+      {/* Shared component properties */}
+      {anyComponentInstance ? (
+        <div className="border-t border-border pt-3">
+          <ComponentSharedDisclaimer />
+        </div>
+      ) : null}
 
       {/* Physics is single-object only */}
       {!isMultiSelection && (
@@ -922,7 +919,7 @@ function PhysicsToggle({
   };
 
   return (
-    <div className="flex items-center gap-2 pt-2 border-t">
+    <div className="flex items-center gap-2 pt-2">
       <Checkbox
         id="physics-toggle"
         checked={hasPhysics}
@@ -972,7 +969,7 @@ function ComponentPhysicsToggle({
   };
 
   return (
-    <div className="flex items-center gap-2 pt-2 border-t">
+    <div className="flex items-center gap-2 pt-2">
       <Checkbox
         id="component-physics-toggle"
         checked={hasPhysics}

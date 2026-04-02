@@ -1,4 +1,4 @@
-import { type ChangeEvent, memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { generateWaveform, getCachedWaveform, type WaveformData } from '@/lib/audioWaveform';
 import {
@@ -7,10 +7,11 @@ import {
   floatingToolbarControlActiveClass,
   floatingToolbarControlBaseClass,
 } from '@/components/editors/shared/FloatingBottomToolbar';
+import { FloatingToolbarSlider } from '@/components/editors/shared/FloatingToolbarSlider';
 import type { Sound } from '@/types';
 import { cn } from '@/lib/utils';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
-import { Play, RotateCcw, Scissors, Square } from '@/components/ui/icons';
+import { Play, RotateCcw, Scissors, Square, Volume2 } from '@/components/ui/icons';
 import { WaveformViewport } from './WaveformViewport';
 
 interface SoundClipEditorProps {
@@ -270,14 +271,6 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
     }
   };
 
-  const handleVolumeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const nextVolume = Number.parseFloat(event.target.value);
-    setVolume(nextVolume);
-    if (audioRef.current) {
-      audioRef.current.volume = nextVolume;
-    }
-  };
-
   const handleTrimAction = () => {
     if (!isTrimming) {
       setIsTrimming(true);
@@ -376,15 +369,21 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
             <div className="app-divider-x app-divider-fill h-8 shrink-0" />
 
             <div className="flex items-center gap-2">
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
+              <Volume2 className="size-4 text-foreground" aria-hidden="true" />
+              <div className="w-32">
+                <FloatingToolbarSlider
                 value={volume}
-                onChange={handleVolumeChange}
-                className="h-2 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
-              />
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onValueChange={(nextVolume) => {
+                    setVolume(nextVolume);
+                    if (audioRef.current) {
+                      audioRef.current.volume = nextVolume;
+                    }
+                  }}
+                />
+              </div>
             </div>
           </div>
         </FloatingToolToolbar>

@@ -1,26 +1,15 @@
-import { useState } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { api } from "@convex-generated/api";
-import type { Id } from "@convex-generated/dataModel";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Trash2, Loader2, Image, Music } from "@/components/ui/icons";
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
+import { api } from '@convex-generated/api';
+import type { Id } from '@convex-generated/dataModel';
+import { Image, Music } from '@/components/ui/icons';
+import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog';
 import type {
-  Costume,
-  Sound,
-  PhysicsConfig,
   ColliderConfig,
+  Costume,
+  PhysicsConfig,
+  Sound,
   Variable,
-  CostumeBounds,
-  CostumeDocument,
-} from "@/types";
+} from '@/types';
 import {
   hydrateObjectLibraryItemForInsertion,
   type ObjectLibraryListItemData,
@@ -28,7 +17,7 @@ import {
 import { useModal } from '@/components/ui/modal-provider';
 
 interface ObjectLibraryItem extends ObjectLibraryListItemData {
-  _id: Id<"objectLibrary">;
+  _id: Id<'objectLibrary'>;
   createdAt: number;
 }
 
@@ -52,27 +41,28 @@ export function ObjectLibraryBrowser({
   onOpenChange,
   onSelect,
 }: ObjectLibraryBrowserProps) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loadingSelect, setLoadingSelect] = useState(false);
   const { isAuthenticated } = useConvexAuth();
   const { showAlert, showConfirm } = useModal();
-
-  const items = useQuery(api.objectLibrary.list, open ? {} : "skip") as ObjectLibraryItem[] | undefined;
+  const items = useQuery(api.objectLibrary.list, open ? {} : 'skip') as ObjectLibraryItem[] | undefined;
   const removeItem = useMutation(api.objectLibrary.remove);
 
-  const handleDelete = async (id: Id<"objectLibrary">) => {
+  const handleDeleteSelected = async (selectedItems: ObjectLibraryItem[]) => {
     const confirmed = await showConfirm({
-      title: 'Delete Object',
-      description: 'Delete this object from library?',
-      confirmLabel: 'Delete',
+      title: selectedItems.length === 1 ? 'Delete Object' : 'Delete Objects',
+      description: selectedItems.length === 1
+        ? 'Delete this object from library?'
+        : `Delete ${selectedItems.length} objects from library?`,
+      confirmLabel: selectedItems.length === 1 ? 'Delete Object' : `Delete ${selectedItems.length} Objects`,
       tone: 'destructive',
     });
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
+
     try {
-      await removeItem({ id });
-      if (selectedId === id) setSelectedId(null);
+      await Promise.all(selectedItems.map((item) => removeItem({ id: item._id })));
     } catch (error) {
-      console.error("Failed to delete object:", error);
+      console.error('Failed to delete objects:', error);
       await showAlert({
         title: 'Delete Failed',
         description: 'Failed to delete object',
@@ -81,121 +71,96 @@ export function ObjectLibraryBrowser({
     }
   };
 
-  const handleSelect = async () => {
-    if (!selectedId || !items) return;
-
-    const item = items.find((i) => i._id === selectedId);
-    if (!item) return;
-
-    setLoadingSelect(true);
+  const handleOpenItem = async (item: ObjectLibraryItem) => {
     try {
       const runtimeObject = await hydrateObjectLibraryItemForInsertion(item);
       onSelect?.(runtimeObject);
-      onOpenChange(false);
     } catch (error) {
-      console.error("Failed to load object:", error);
+      console.error('Failed to load object:', error);
       await showAlert({
         title: 'Load Failed',
         description: 'Failed to load object from library',
         tone: 'destructive',
       });
-    } finally {
-      setLoadingSelect(false);
+      throw error;
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl h-[550px] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Object Library</DialogTitle>
-        </DialogHeader>
+    <LibraryBrowserDialog
+      canDeleteItem={(item) => item.scope === 'user'}
+      emptyDescription={isAuthenticated ? 'Save objects to build your collection.' : 'Sign in to add your own objects.'}
+      emptyTitle="No objects in library"
+      getItemId={(item) => item._id}
+      getItemName={(item) => item.name}
+      itemLabelPlural="objects"
+      itemLabelSingular="object"
+      items={items}
+      onDeleteSelected={handleDeleteSelected}
+      onItemOpen={handleOpenItem}
+      onOpenChange={onOpenChange}
+      open={open}
+      renderCard={(item) => (
+        <>
+          <div className="checkerboard-bg checkerboard-bg-sm aspect-square w-full overflow-hidden border-b border-border/60 bg-muted">
+            <img
+              src={item.thumbnail}
+              alt={item.name}
+              className="h-full w-full object-contain p-4"
+            />
+          </div>
 
-        <ScrollArea className="flex-1 mt-4">
-          {!items ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <Loader2 className="size-6 animate-spin" />
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>No objects in library</p>
-              <p className="text-sm">
-                {isAuthenticated ? "Save objects to build your collection" : "Sign in to add your own objects"}
+          <div className="flex flex-1 flex-col justify-between gap-3 p-4">
+            <div className="min-w-0">
+              <p className="truncate text-base font-semibold text-foreground">
+                {item.name}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Ready to insert into the current scene
               </p>
             </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-4 pr-4">
-              {items.map((item) => (
-                <Card
-                  key={item._id}
-                  onClick={() => setSelectedId(item._id)}
-                  className={`relative group p-3 cursor-pointer transition-all ${
-                    selectedId === item._id
-                      ? "ring-2 ring-primary bg-primary/5"
-                      : "hover:bg-accent"
-                  }`}
-                >
-                  {/* Thumbnail */}
-                  <div
-                    className="w-full aspect-square rounded-lg overflow-hidden mb-2 checkerboard-bg checkerboard-bg-sm"
-                  >
-                    <img
-                      src={item.thumbnail}
-                      alt={item.name}
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
 
-                  {/* Name */}
-                  <p className="text-sm text-center truncate font-medium">
-                    {item.name}
-                  </p>
-
-                  {/* Asset counts */}
-                  <div className="flex justify-center gap-3 mt-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Image className="size-3" />
-                      {item.costumes.length}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Music className="size-3" />
-                      {item.sounds.length}
-                    </span>
-                  </div>
-
-                  {/* Delete button */}
-                  {item.scope === 'user' ? (
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(item._id);
-                      }}
-                    >
-                      <Trash2 className="size-3" />
-                    </Button>
-                  ) : null}
-                </Card>
-              ))}
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <span className="flex items-center gap-2">
+                <Image className="size-4" />
+                {item.costumes.length}
+              </span>
+              <span className="flex items-center gap-2">
+                <Music className="size-4" />
+                {item.sounds.length}
+              </span>
             </div>
-          )}
-        </ScrollArea>
+          </div>
+        </>
+      )}
+      renderRow={(item) => (
+        <>
+          <div className="checkerboard-bg checkerboard-bg-sm h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-border/70 bg-muted">
+            <img
+              src={item.thumbnail}
+              alt={item.name}
+              className="h-full w-full object-contain p-2"
+            />
+          </div>
 
-        <div className="flex justify-end gap-3 pt-4 border-t">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSelect}
-            disabled={!selectedId || loadingSelect}
-          >
-            {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
-            Insert Object
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-foreground">
+              {item.name}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <Image className="size-3.5" />
+                {item.costumes.length} costumes
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Music className="size-3.5" />
+                {item.sounds.length} sounds
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+      title="Object Library"
+    />
   );
 }

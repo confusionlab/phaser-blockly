@@ -3,20 +3,16 @@ import { useConvexAuth } from 'convex/react';
 import { UserProfile } from '@clerk/clerk-react';
 import {
   ArrowLeft,
-  Check,
   ChevronRight,
   FileCode2,
   Folder,
   FolderOpen,
   ImageOff,
-  LayoutGrid,
   Loader2,
   MoreHorizontal,
   Plus,
   RotateCcw,
-  Rows3,
   Settings2,
-  SquareCheck,
   Trash2,
   Upload,
   User,
@@ -51,8 +47,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { NameInputDialog } from '@/components/dialogs/NameInputDialog';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
+import {
+  CollectionSelectionCheckbox,
+  CollectionViewControls,
+  collectionCardClassName,
+  collectionRowClassName,
+} from '@/components/shared/CollectionBrowserChrome';
 import { createDefaultProject } from '@/types';
 
 type ExplorerKey = `folder:${string}` | `project:${string}`;
@@ -117,20 +118,6 @@ function formatExplorerTimestamp(date: Date): string {
   return isSameDay ? timeFormatter.format(date) : dateFormatter.format(date);
 }
 
-function SelectionCheckbox({ checked, className }: { checked: boolean; className?: string }) {
-  return (
-    <div
-      className={cn(
-        'inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors',
-        checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background',
-        className,
-      )}
-    >
-      {checked ? <Check className="size-3" /> : null}
-    </div>
-  );
-}
-
 function getSelectionRange(orderedKeys: ExplorerKey[], fromKey: ExplorerKey, toKey: ExplorerKey): ExplorerKey[] {
   const fromIndex = orderedKeys.indexOf(fromKey);
   const toIndex = orderedKeys.indexOf(toKey);
@@ -141,20 +128,6 @@ function getSelectionRange(orderedKeys: ExplorerKey[], fromKey: ExplorerKey, toK
 
   const [start, end] = fromIndex <= toIndex ? [fromIndex, toIndex] : [toIndex, fromIndex];
   return orderedKeys.slice(start, end + 1);
-}
-
-function fileRowClassName(options: {
-  dragging?: boolean;
-  selected?: boolean;
-  dropTarget?: boolean;
-}) {
-  return cn(
-    'group flex w-full items-center gap-4 border-b border-border/70 bg-background/95 px-4 py-3 text-left transition',
-    options.selected && 'bg-primary/6',
-    options.dropTarget && 'bg-primary/10 ring-1 ring-inset ring-primary/30',
-    options.dragging && 'opacity-45',
-    'hover:bg-accent/50',
-  );
 }
 
 function ExplorerLoadingRows() {
@@ -194,20 +167,6 @@ function ExplorerLoadingCards() {
         </div>
       ))}
     </div>
-  );
-}
-
-function fileCardClassName(options: {
-  dragging?: boolean;
-  selected?: boolean;
-  dropTarget?: boolean;
-}) {
-  return cn(
-    'group relative flex h-full min-h-[240px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-background/88 text-left transition',
-    options.selected && 'border-primary/45 bg-primary/5 shadow-[0_16px_40px_-28px_rgba(37,99,235,0.55)]',
-    options.dropTarget && 'border-primary bg-primary/10 ring-2 ring-primary/18',
-    options.dragging && 'opacity-45',
-    'hover:-translate-y-0.5 hover:border-foreground/10 hover:shadow-[0_22px_50px_-36px_rgba(15,23,42,0.48)]',
   );
 }
 
@@ -1124,23 +1083,11 @@ export function ProjectExplorerPage({
             </div>
             <div className="flex items-center gap-3">
               {importError ? <div className="text-sm text-destructive">{importError}</div> : null}
-              {selectionMode && selectedKeys.length > 0 ? (
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  className="rounded-full"
-                  disabled={isExplorerReadOnly}
-                  onClick={() => void requestTrashForSelection()}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              ) : null}
-              <Button
-                size="icon-sm"
-                variant={selectionMode ? 'default' : 'ghost'}
-                className="rounded-full"
+              <CollectionViewControls
+                ariaLabel="Project explorer view"
                 disabled={isExplorerReadOnly}
-                onClick={() => {
+                onDeleteSelected={() => void requestTrashForSelection()}
+                onToggleSelectionMode={() => {
                   if (isExplorerReadOnly) {
                     return;
                   }
@@ -1150,20 +1097,10 @@ export function ProjectExplorerPage({
                   }
                   setSelectionMode(true);
                 }}
-              >
-                <SquareCheck className="size-4" />
-              </Button>
-              <SegmentedControl
-                ariaLabel="Project explorer view"
-                className="bg-muted/80"
-                layout="content"
-                optionClassName="min-w-9 px-2"
-                options={[
-                  { value: 'row', label: 'Rows', icon: <Rows3 className="size-3.5" />, iconOnly: true },
-                  { value: 'card', label: 'Cards', icon: <LayoutGrid className="size-3.5" />, iconOnly: true },
-                ] as const}
-                value={viewMode}
-                onValueChange={(nextValue) => setViewMode(nextValue)}
+                onViewModeChange={setViewMode}
+                selectionCount={selectedKeys.length}
+                selectionMode={selectionMode}
+                viewMode={viewMode}
               />
             </div>
           </div>
@@ -1202,7 +1139,7 @@ export function ProjectExplorerPage({
                   return (
                     <div
                       key={item.key}
-                      className={fileCardClassName({
+                      className={collectionCardClassName({
                         dragging: isDragging,
                         dropTarget: isDropTarget,
                         selected: isSelected,
@@ -1216,7 +1153,7 @@ export function ProjectExplorerPage({
                       onClick={(event) => handleItemClick(item, event)}
                       {...(item.kind === 'folder' ? dropTargetProps(item.id) : {})}
                     >
-                      {selectionMode ? <SelectionCheckbox checked={isSelected} className="absolute left-3 top-3 z-10 shadow-sm" /> : null}
+                      {selectionMode ? <CollectionSelectionCheckbox checked={isSelected} className="absolute left-3 top-3 z-10 shadow-sm" /> : null}
 
                       <div className="absolute right-3 top-3 z-10">
                         {renderItemActions(item, 'rounded-full bg-background/88 shadow-sm backdrop-blur')}
@@ -1276,7 +1213,7 @@ export function ProjectExplorerPage({
                 return (
                   <div
                     key={item.key}
-                    className={fileRowClassName({
+                    className={collectionRowClassName({
                       dragging: isDragging,
                       dropTarget: isDropTarget,
                       selected: isSelected,
@@ -1291,7 +1228,7 @@ export function ProjectExplorerPage({
                     {...(item.kind === 'folder' ? dropTargetProps(item.id) : {})}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-4">
-                      {selectionMode ? <SelectionCheckbox checked={isSelected} /> : null}
+                      {selectionMode ? <CollectionSelectionCheckbox checked={isSelected} /> : null}
 
                       {item.kind === 'folder' ? (
                         <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-muted-foreground">
