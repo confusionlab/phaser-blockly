@@ -10,7 +10,7 @@ import {
 import type { Sound } from '@/types';
 import { cn } from '@/lib/utils';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
-import { Play, RotateCcw, Scissors, Square, Volume2, VolumeX } from '@/components/ui/icons';
+import { Play, RotateCcw, Scissors, Square } from '@/components/ui/icons';
 import { WaveformViewport } from './WaveformViewport';
 
 interface SoundClipEditorProps {
@@ -20,6 +20,7 @@ interface SoundClipEditorProps {
 }
 
 export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipEditorProps) => {
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playheadRafRef = useRef<number | null>(null);
   const waveformLoadIdRef = useRef(0);
@@ -33,7 +34,6 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
   const [isTrimming, setIsTrimming] = useState(false);
 
   trimStartRef.current = trimStart;
@@ -175,8 +175,8 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
       return;
     }
 
-    audioRef.current.volume = isMuted ? 0 : volume;
-  }, [isMuted, volume]);
+    audioRef.current.volume = volume;
+  }, [volume]);
 
   const handleSeek = (nextTime: number) => {
     if (!audioRef.current) {
@@ -209,8 +209,37 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
     });
   }, [isPlaying, trimEnd, trimStart]);
 
+  const focusEditorSurface = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+
+    try {
+      editor.focus({ preventScroll: true });
+    } catch {
+      editor.focus();
+    }
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const editor = editorRef.current;
+      const target = event.target instanceof Node ? event.target : null;
+      const isWithinEditor = !!editor && !!target && editor.contains(target);
+      const isEditorFocused = !!editor && !!document.activeElement && editor.contains(document.activeElement);
+
+      if (isWithinEditor || isEditorFocused) {
+        if (event.code !== 'Space' || event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+          return;
+        }
+
+        event.preventDefault();
+        focusEditorSurface();
+        handleTogglePlay();
+        return;
+      }
+
       if (shouldIgnoreGlobalKeyboardEvent(event)) {
         return;
       }
@@ -247,17 +276,6 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
     if (audioRef.current) {
       audioRef.current.volume = nextVolume;
     }
-    if (nextVolume > 0 && isMuted) {
-      setIsMuted(false);
-    }
-  };
-
-  const toggleMute = () => {
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    if (audioRef.current) {
-      audioRef.current.volume = nextMuted ? 0 : volume;
-    }
   };
 
   const handleTrimAction = () => {
@@ -270,8 +288,24 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
     setIsTrimming(false);
   };
 
+  const waveformAmplitudeScale = 0.015 + (volume * 0.985);
+
   return (
-    <div className="relative flex flex-1 min-h-0 flex-col">
+    <div
+      ref={editorRef}
+      className="relative flex flex-1 min-h-0 flex-col outline-none focus:outline-none focus-visible:outline-none"
+      onKeyDownCapture={(event) => {
+        if (event.code !== 'Space' || event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+          return;
+        }
+
+      event.preventDefault();
+      event.stopPropagation();
+      focusEditorSurface();
+      handleTogglePlay();
+    }}
+      tabIndex={-1}
+    >
       <div className="flex-1 min-h-0 px-4 pb-28 pt-4 md:px-5 md:pb-32 md:pt-5">
         <div className="flex h-full min-h-0 flex-col">
           <WaveformViewport
@@ -280,6 +314,7 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
             currentTime={currentTime}
             trimStart={trimStart}
             trimEnd={trimEnd}
+            amplitudeScale={waveformAmplitudeScale}
             showTrimControls={isTrimming}
             onSeek={handleSeek}
             onTrimCommit={(nextStart, nextEnd) => {
@@ -341,21 +376,12 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
             <div className="app-divider-x app-divider-fill h-8 shrink-0" />
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon-lg"
-                className={cn(floatingToolbarControlBaseClass, isMuted && floatingToolbarControlActiveClass)}
-                onClick={toggleMute}
-                title={isMuted ? 'Unmute' : 'Mute'}
-              >
-                {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-              </Button>
               <input
                 type="range"
                 min={0}
                 max={1}
                 step={0.01}
-                value={isMuted ? 0 : volume}
+                value={volume}
                 onChange={handleVolumeChange}
                 className="h-2 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
               />

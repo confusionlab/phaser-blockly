@@ -36,7 +36,8 @@ const StaticWaveformBars = memo(function StaticWaveformBars({
       {bars.map((peak, index) => {
         const x = (index / bars.length) * 100;
         const width = 100 / bars.length;
-        const height = Math.max(peak * 76 * amplitudeScale, amplitudeScale > 0 ? 3 : 0);
+        const minBarHeight = amplitudeScale > 0 ? Math.max(0.5, amplitudeScale * 3) : 0;
+        const height = Math.max(peak * 76 * amplitudeScale, minBarHeight);
 
         return (
           <rect
