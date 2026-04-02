@@ -47,7 +47,7 @@ export function WindowDialogChrome({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          'h-[min(calc(100vh-2.5rem),960px)] max-h-[min(calc(100vh-2.5rem),960px)] w-[calc(100vw-2.5rem)] max-w-none border-none bg-transparent p-4 shadow-none sm:p-6',
+          'top-8 right-8 bottom-8 left-8 h-auto w-auto max-w-none translate-x-0 translate-y-0 rounded-none border-none bg-transparent p-0 shadow-none sm:max-w-none',
           contentClassName,
         )}
         showCloseButton={false}

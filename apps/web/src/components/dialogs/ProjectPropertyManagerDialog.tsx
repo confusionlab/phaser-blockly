@@ -49,7 +49,6 @@ export function ProjectPropertyManagerDialog({
       onOpenChange={onOpenChange}
       title={title}
       description={description}
-      contentClassName="h-[80vh] max-h-[80vh] sm:max-w-[760px]"
       bodyClassName="flex min-h-0 flex-1 flex-col px-6 py-5"
     >
       <div className="flex min-h-0 flex-1 flex-col gap-4">
