@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useLayoutEffect, useState } from 'react';
 import Phaser from 'phaser';
 import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
@@ -834,9 +834,10 @@ function isClientPointInsideInventoryUI(clientX: number, clientY: number): boole
 interface PhaserCanvasProps {
   isPlaying: boolean;
   deferEditorResize?: boolean;
+  layoutMode?: 'panel' | 'fullscreen';
 }
 
-export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCanvasProps) {
+export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode = 'panel' }: PhaserCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
@@ -889,6 +890,37 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
+
+  const syncEditorCanvasToHost = useCallback((force = false) => {
+    if (isPlaying || isResizeFrozen || immediateResizeFreezeRef.current) {
+      return;
+    }
+
+    const host = containerRef.current;
+    const game = gameRef.current;
+    if (!host || !game) {
+      return;
+    }
+
+    const { width: nextWidth, height: nextHeight } = getElementRenderSize(host);
+    const canvasWidth = game.canvas?.width ?? 0;
+    const canvasHeight = game.canvas?.height ?? 0;
+    const scaleMatches = game.scale.width === nextWidth && game.scale.height === nextHeight;
+    const canvasMatches = canvasWidth === nextWidth && canvasHeight === nextHeight;
+
+    if (!force && scaleMatches && canvasMatches) {
+      return;
+    }
+
+    game.scale.resize(nextWidth, nextHeight);
+    game.scale.refresh();
+
+    const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+    if (phaserScene) {
+      getStageViewportController(phaserScene)?.syncProjection();
+      refreshTiledBackgroundLayer(phaserScene);
+    }
+  }, [isPlaying, isResizeFrozen]);
 
   useEffect(() => {
     editorViewportBySceneIdRef.current.clear();
@@ -1583,35 +1615,53 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   useEffect(() => {
     if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
 
-    const syncEditorCanvasSize = () => {
-      if (isResizeFrozen || immediateResizeFreezeRef.current) return;
-      const host = containerRef.current;
-      const game = gameRef.current;
-      if (!host || !game) return;
-
-      const { width: nextWidth, height: nextHeight } = getElementRenderSize(host);
-      if (game.scale.width === nextWidth && game.scale.height === nextHeight) {
-        return;
-      }
-
-      game.scale.resize(nextWidth, nextHeight);
-
-      const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
-      if (phaserScene) {
-        refreshTiledBackgroundLayer(phaserScene);
-      }
-    };
-
     const observer = new ResizeObserver(() => {
-      syncEditorCanvasSize();
+      syncEditorCanvasToHost();
     });
     observer.observe(containerRef.current);
-    syncEditorCanvasSize();
+    syncEditorCanvasToHost();
 
     return () => {
       observer.disconnect();
     };
-  }, [isPlaying, project?.id, selectedSceneId, isResizeFrozen]);
+  }, [isPlaying, project?.id, selectedSceneId, syncEditorCanvasToHost]);
+
+  useLayoutEffect(() => {
+    if (isPlaying) {
+      return;
+    }
+
+    let cancelled = false;
+    let raf1 = 0;
+    let raf2 = 0;
+    let timeoutId: ReturnType<typeof window.setTimeout> | null = null;
+
+    const syncNow = (force = false) => {
+      if (!cancelled) {
+        syncEditorCanvasToHost(force);
+      }
+    };
+
+    syncNow(true);
+    raf1 = window.requestAnimationFrame(() => {
+      syncNow(true);
+      raf2 = window.requestAnimationFrame(() => {
+        syncNow(true);
+      });
+    });
+    timeoutId = window.setTimeout(() => {
+      syncNow(true);
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [isPlaying, layoutMode, syncEditorCanvasToHost]);
 
   useEffect(() => {
     if (isPlaying) {

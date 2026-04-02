@@ -250,7 +250,11 @@ export function StagePanel({
           <div className={cn('absolute right-2 top-2', isCanvasFullscreen ? 'z-10' : 'z-20')}>
             {stageOverlayControls}
           </div>
-          <PhaserCanvas isPlaying={false} deferEditorResize={deferEditorResize || isPanelResizeDragging} />
+          <PhaserCanvas
+            isPlaying={false}
+            deferEditorResize={deferEditorResize || isPanelResizeDragging}
+            layoutMode={isCanvasFullscreen ? 'fullscreen' : 'panel'}
+          />
         </div>
       </div>
 

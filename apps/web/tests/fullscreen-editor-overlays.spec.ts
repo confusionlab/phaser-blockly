@@ -192,6 +192,14 @@ test.describe('Fullscreen editor overlays', () => {
       await page.getByRole('button', { name: 'Fullscreen stage' }).click();
       await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible();
       await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+      await expect.poll(async () => {
+        return page.evaluate(() => {
+          const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+          return canvas instanceof HTMLCanvasElement
+            ? { width: canvas.width, height: canvas.height }
+            : null;
+        });
+      }).toEqual({ width: 1440, height: 960 });
 
       await page.getByRole('button', { name: 'Exit fullscreen' }).click();
       await expect(page.getByRole('button', { name: 'Fullscreen stage' })).toBeVisible();
