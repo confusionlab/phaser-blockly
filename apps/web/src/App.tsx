@@ -10,6 +10,7 @@ import { useProjectStore } from './store/projectStore';
 import { useEditorStore } from './store/editorStore';
 import { shouldWarmStartProjectExplorer } from '@/lib/authWarmStart';
 import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls';
+import { ModalProvider } from '@/components/ui/modal-provider';
 
 const E2E_AUTH_BYPASS = import.meta.env.VITE_E2E_AUTH_BYPASS === '1';
 const DESKTOP_AUTH_URLS = resolveDesktopAuthUrls();
@@ -90,13 +91,15 @@ function AppShell({
   }, [setDarkMode, userSettings]);
 
   return (
-    <div className="app-shell h-full">
-      <Routes>
-        <Route path="/" element={<ProjectExplorerLayout authBootstrapState={authBootstrapState} />} />
-        <Route path="/project/:projectId" element={<EditorLayout />} />
-      </Routes>
-      {(location.pathname === '/' || location.pathname.startsWith('/project/')) ? <DebugPanel /> : null}
-    </div>
+    <ModalProvider>
+      <div className="app-shell h-full">
+        <Routes>
+          <Route path="/" element={<ProjectExplorerLayout authBootstrapState={authBootstrapState} />} />
+          <Route path="/project/:projectId" element={<EditorLayout />} />
+        </Routes>
+        {(location.pathname === '/' || location.pathname.startsWith('/project/')) ? <DebugPanel /> : null}
+      </div>
+    </ModalProvider>
   );
 }
 

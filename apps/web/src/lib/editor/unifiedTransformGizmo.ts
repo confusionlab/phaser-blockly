@@ -63,6 +63,8 @@ export const DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL: TransformGizmoDiagon
 const TRANSFORM_CURSOR_SIZE = 24;
 const TRANSFORM_CURSOR_HOTSPOT = 12;
 const TRANSFORM_ROTATE_CURSOR_QUANTIZATION_DEGREES = 1;
+const TRANSFORM_GIZMO_CORNER_HIT_RADIUS_GAP = 0.75;
+const TRANSFORM_GIZMO_CORNER_EDGE_PRIORITY_PADDING = 2;
 const transformCursorCache = new Map<string, string>();
 const TRANSFORM_GIZMO_CORNER_ORDER: readonly TransformGizmoCorner[] = ['nw', 'ne', 'se', 'sw'] as const;
 
@@ -262,7 +264,16 @@ export function getTransformCornerDiagonal<TPoint extends TransformGizmoPoint>(
   corners: TransformGizmoCorners<TPoint>,
   corner: TransformGizmoCorner,
 ) {
-  return getTransformDiagonal(corners, getTransformDiagonalFromCorner(corner));
+  switch (corner) {
+    case 'nw':
+      return { start: corners.se, end: corners.nw };
+    case 'ne':
+      return { start: corners.sw, end: corners.ne };
+    case 'se':
+      return { start: corners.nw, end: corners.se };
+    case 'sw':
+      return { start: corners.ne, end: corners.sw };
+  }
 }
 
 export function drawTransformProportionalGuide(
@@ -307,6 +318,15 @@ export function getTransformGizmoRotateRingRadii(handleRadius: number) {
   return { innerRadius, outerRadius };
 }
 
+export function getTransformGizmoCornerHitRadius(handleRadius: number) {
+  const { innerRadius } = getTransformGizmoRotateRingRadii(handleRadius);
+  return Math.max(handleRadius, innerRadius - TRANSFORM_GIZMO_CORNER_HIT_RADIUS_GAP);
+}
+
+export function getTransformGizmoEdgeCornerPreferenceInset(handleRadius: number) {
+  return getTransformGizmoCornerHitRadius(handleRadius) + TRANSFORM_GIZMO_CORNER_EDGE_PRIORITY_PADDING;
+}
+
 export function isPointInsideTransformRotateRing(
   point: TransformGizmoPoint,
   center: TransformGizmoPoint,
@@ -348,9 +368,10 @@ export function hitTransformGizmoCornerTarget<TPoint extends TransformGizmoPoint
   rotateHandleRadius: number = handleRadius,
   rotationRadians: number = 0,
 ): TransformGizmoCornerTarget | null {
+  const cornerHitRadius = getTransformGizmoCornerHitRadius(handleRadius);
   for (const corner of TRANSFORM_GIZMO_CORNER_ORDER) {
     const cornerPoint = corners[corner];
-    if (isPointInsideTransformHandle(point, cornerPoint, handleRadius)) {
+    if (isPointInsideTransformHandle(point, cornerPoint, cornerHitRadius)) {
       return getTransformGizmoCornerScaleTarget(corner);
     }
     if (isPointInsideTransformRotateRing(point, cornerPoint, rotateHandleRadius, corner, rotationRadians)) {

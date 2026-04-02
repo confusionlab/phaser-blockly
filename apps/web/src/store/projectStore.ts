@@ -53,8 +53,11 @@ import {
   type CostumeEditorObjectTarget,
   type CostumeEditorOperation,
   type CostumeEditorPersistedSession,
+  reorderCostumesInList,
   removeCostumeFromList,
+  removeCostumesFromList,
   renameCostumeInList,
+  resolveNextActiveCostumeIdAfterRemoval,
   resolveCostumeEditorObject,
   resolveCostumeEditorTarget,
   type CostumeEditorPersistedState,
@@ -138,6 +141,7 @@ interface ProjectStore {
   updateVariable: (variableId: string, updates: Partial<Variable>) => void;
 
   // Component actions
+  addComponent: (name?: string) => ComponentDefinition | null;
   addComponentFromLibrary: (data: {
     name: string;
     costumes: Costume[];
@@ -297,14 +301,15 @@ function hasDuplicateVariableNames(variables: Variable[]): boolean {
   return false;
 }
 
-function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
+function toComponentBackedFieldsFromObject(
+  obj: GameObject,
+): Omit<ComponentDefinition, 'id' | 'name' | 'folderId' | 'order'> {
   const normalizedPhysicsCollider = normalizePhysicsCollider({
     physics: clonePhysicsConfig(obj.physics),
     collider: cloneColliderConfig(obj.collider),
   });
 
   return {
-    name: obj.name,
     blocklyXml: normalizeBlocklyXml(obj.blocklyXml),
     costumes: cloneCostumes(obj.costumes),
     currentCostumeIndex: obj.currentCostumeIndex,
@@ -312,6 +317,21 @@ function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefin
     collider: normalizedPhysicsCollider.collider,
     sounds: cloneSounds(obj.sounds),
     localVariables: cloneVariableDefinitions(obj.localVariables),
+  };
+}
+
+function createComponentDefinition(data: {
+  requestedName: string;
+  usedNames: Set<string>;
+  order: number;
+  fields: Omit<ComponentDefinition, 'id' | 'name' | 'folderId' | 'order'>;
+}): ComponentDefinition {
+  return {
+    id: crypto.randomUUID(),
+    name: getUniqueComponentName(data.requestedName, data.usedNames),
+    folderId: null,
+    order: data.order,
+    ...data.fields,
   };
 }
 
@@ -621,6 +641,55 @@ function buildCostumeEditorOperationUpdates(
         : Math.min(resolvedObject.currentCostumeIndex, removal.costumes.length - 1);
       break;
     }
+    case 'removeMany': {
+      const uniqueCostumeIds = Array.from(new Set(operation.costumeIds));
+      if (uniqueCostumeIds.length === 0 || uniqueCostumeIds.length >= nextCostumes.length) {
+        return null;
+      }
+
+      const nextActiveCostumeId = resolveNextActiveCostumeIdAfterRemoval(
+        nextCostumes,
+        nextCostumes[nextCostumeIndex]?.id ?? null,
+        uniqueCostumeIds,
+      );
+      const removedCostumes = removeCostumesFromList(nextCostumes, uniqueCostumeIds);
+      if (!removedCostumes || removedCostumes.length === 0) {
+        return null;
+      }
+
+      nextCostumes = removedCostumes;
+      costumesChanged = true;
+      if (!nextActiveCostumeId) {
+        return null;
+      }
+      nextCostumeIndex = nextCostumes.findIndex((costume) => costume.id === nextActiveCostumeId);
+      if (nextCostumeIndex < 0) {
+        return null;
+      }
+      break;
+    }
+    case 'reorder': {
+      const reorderedCostumes = reorderCostumesInList(
+        nextCostumes,
+        operation.costumeIds,
+        operation.targetIndex,
+      );
+      if (!reorderedCostumes) {
+        return null;
+      }
+
+      nextCostumes = reorderedCostumes;
+      costumesChanged = true;
+      const currentActiveCostumeId = resolvedObject.costumes[resolvedObject.currentCostumeIndex]?.id ?? null;
+      if (currentActiveCostumeId) {
+        const reorderedCostumeIndex = nextCostumes.findIndex((costume) => costume.id === currentActiveCostumeId);
+        if (reorderedCostumeIndex < 0) {
+          return null;
+        }
+        nextCostumeIndex = reorderedCostumeIndex;
+      }
+      break;
+    }
   }
 
   const updates: Partial<ComponentBackedObjectFields> = {};
@@ -644,6 +713,10 @@ function getCostumeEditorOperationHistoryOptions(operation: CostumeEditorOperati
       return { source: 'project:add-object-costume' };
     case 'remove':
       return { source: 'project:remove-object-costume' };
+    case 'removeMany':
+      return { source: 'project:remove-object-costumes' };
+    case 'reorder':
+      return { source: 'project:reorder-object-costumes' };
   }
 }
 
@@ -1753,6 +1826,46 @@ function createProjectStore(): ProjectStoreHook {
   },
 
   // Component actions
+  addComponent: (name) => {
+    const state = get();
+    if (!state.project) return null;
+
+    const normalizedComponentHierarchy = normalizeComponentHierarchy(
+      state.project.components || [],
+      state.project.componentFolders || [],
+    );
+    const componentNameSet = new Set(
+      (state.project.components || []).map((component) => normalizeComponentName(component.name)),
+    );
+    const requestedName = name?.trim() || `Component ${normalizedComponentHierarchy.components.length + 1}`;
+    const defaultObject = createDefaultGameObject(requestedName);
+    const component = createComponentDefinition({
+      requestedName,
+      usedNames: componentNameSet,
+      order: normalizedComponentHierarchy.components.length,
+      fields: toComponentBackedFieldsFromObject(defaultObject),
+    });
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...normalizedComponentHierarchy.components, component],
+      normalizedComponentHierarchy.componentFolders,
+    );
+
+    set((currentState) => ({
+      project: currentState.project
+        ? {
+            ...currentState.project,
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:add-component' });
+
+    return component;
+  },
+
   addComponentFromLibrary: (data) => {
     const state = get();
     if (!state.project) return null;
@@ -1771,19 +1884,20 @@ function createProjectStore(): ProjectStoreHook {
       physics: clonePhysicsConfig(data.physics),
       collider: cloneColliderConfig(data.collider),
     });
-    const component: ComponentDefinition = {
-      id: crypto.randomUUID(),
-      name: getUniqueComponentName(data.name, componentNameSet),
-      folderId: null,
+    const component = createComponentDefinition({
+      requestedName: data.name,
+      usedNames: componentNameSet,
       order: normalizedComponentHierarchy.components.length,
-      blocklyXml: normalizeBlocklyXml(data.blocklyXml),
-      costumes: cloneCostumes(data.costumes),
-      currentCostumeIndex: safeCostumeIndex,
-      physics: normalizedPhysicsCollider.physics,
-      collider: normalizedPhysicsCollider.collider,
-      sounds: cloneSounds(data.sounds),
-      localVariables: normalizeVariableDefinitions(data.localVariables, { scope: 'local' }),
-    };
+      fields: {
+        blocklyXml: normalizeBlocklyXml(data.blocklyXml),
+        costumes: cloneCostumes(data.costumes),
+        currentCostumeIndex: safeCostumeIndex,
+        physics: normalizedPhysicsCollider.physics,
+        collider: normalizedPhysicsCollider.collider,
+        sounds: cloneSounds(data.sounds),
+        localVariables: normalizeVariableDefinitions(data.localVariables, { scope: 'local' }),
+      },
+    });
     const nextComponentHierarchy = normalizeComponentHierarchy(
       [...normalizedComponentHierarchy.components, component],
       normalizedComponentHierarchy.componentFolders,
@@ -1829,13 +1943,12 @@ function createProjectStore(): ProjectStoreHook {
       state.project.components || [],
       state.project.componentFolders || [],
     );
-    const componentId = crypto.randomUUID();
-    const component: ComponentDefinition = {
-      id: componentId,
-      folderId: null,
+    const component = createComponentDefinition({
+      requestedName: obj.name,
+      usedNames: new Set((state.project.components || []).map((component) => normalizeComponentName(component.name))),
       order: normalizedComponentHierarchy.components.length,
-      ...toComponentBackedFieldsFromObject(obj),
-    };
+      fields: toComponentBackedFieldsFromObject(obj),
+    });
     const nextComponentHierarchy = normalizeComponentHierarchy(
       [...normalizedComponentHierarchy.components, component],
       normalizedComponentHierarchy.componentFolders,
@@ -1853,7 +1966,7 @@ function createProjectStore(): ProjectStoreHook {
                     ...s,
                     objects: s.objects.map(o =>
                       o.id === objectId
-                        ? { ...o, componentId }
+                        ? { ...o, componentId: component.id }
                         : o
                     ),
                   }

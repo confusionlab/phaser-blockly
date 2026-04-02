@@ -19,6 +19,10 @@ import {
   areCostumeAssetFramesEqual,
   cloneCostumeAssetFrame,
 } from '@/lib/costume/costumeAssetFrame';
+import {
+  reorderAssetList,
+  resolveNextActiveAssetIdAfterRemoval,
+} from '@/lib/editor/assetSidebarList';
 
 export interface ObjectCostumeEditorTarget {
   sceneId: string;
@@ -72,7 +76,9 @@ export type CostumeEditorOperation =
   | { type: 'rename'; costumeId: string; name: string }
   | { type: 'select'; costumeId: string }
   | { type: 'add'; costume: Costume }
-  | { type: 'remove'; costumeId: string };
+  | { type: 'remove'; costumeId: string }
+  | { type: 'removeMany'; costumeIds: string[] }
+  | { type: 'reorder'; costumeIds: string[]; targetIndex: number };
 
 export interface ResolvedObjectCostumeEditorObjectTarget extends ObjectCostumeEditorObjectTarget {
   object: GameObject;
@@ -296,6 +302,43 @@ export function removeCostumeFromList(
     costumes: costumes.filter((costume) => costume.id !== targetCostumeId),
     removedIndex,
   };
+}
+
+export function removeCostumesFromList(
+  costumes: Costume[],
+  targetCostumeIds: readonly string[],
+): Costume[] | null {
+  const targetCostumeIdSet = new Set(targetCostumeIds);
+  if (targetCostumeIdSet.size === 0) {
+    return null;
+  }
+
+  const nextCostumes = costumes.filter((costume) => !targetCostumeIdSet.has(costume.id));
+  if (nextCostumes.length === costumes.length) {
+    return null;
+  }
+
+  return nextCostumes;
+}
+
+export function reorderCostumesInList(
+  costumes: Costume[],
+  targetCostumeIds: readonly string[],
+  targetIndex: number,
+): Costume[] | null {
+  return reorderAssetList(costumes, targetCostumeIds, targetIndex);
+}
+
+export function resolveNextActiveCostumeIdAfterRemoval(
+  costumes: readonly Costume[],
+  activeCostumeId: string | null,
+  removedCostumeIds: readonly string[],
+): string | null {
+  return resolveNextActiveAssetIdAfterRemoval(
+    costumes.map((costume) => costume.id),
+    activeCostumeId,
+    removedCostumeIds,
+  );
 }
 
 export function resolveCostumeEditorObject(

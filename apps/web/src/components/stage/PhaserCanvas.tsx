@@ -16,7 +16,7 @@ import type {
   CostumeAssetFrame,
   CostumeBounds,
 } from '@/types';
-import { getEffectiveObjectProps } from '@/types';
+import { COMPONENT_COLOR, getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import {
@@ -45,6 +45,8 @@ import {
 import {
   computeEdgeScaleResult,
   TRANSFORM_GIZMO_HANDLE_RADIUS,
+  getTransformGizmoCornerHitRadius,
+  getTransformGizmoEdgeCornerPreferenceInset,
   computeCornerScaleResult,
   getTransformGizmoRotateRingRadii,
   getTransformGizmoCornerCursor,
@@ -86,6 +88,8 @@ const GIZMO_HANDLE_NAMES = [
 const PIXEL_HIT_ALPHA_TOLERANCE = 1;
 const GIZMO_STROKE_PX = 2;
 const GIZMO_EDGE_HIT_THICKNESS_PX = 16;
+const GIZMO_CORNER_HIT_RADIUS_PX = getTransformGizmoCornerHitRadius(TRANSFORM_GIZMO_HANDLE_RADIUS);
+const GIZMO_EDGE_CORNER_PREFERENCE_INSET_PX = getTransformGizmoEdgeCornerPreferenceInset(TRANSFORM_GIZMO_HANDLE_RADIUS);
 const GIZMO_ROTATE_RING_RADIUS_PX = getTransformGizmoRotateRingRadii(TRANSFORM_GIZMO_HANDLE_RADIUS).outerRadius;
 const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
@@ -96,6 +100,16 @@ const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
 const EDITOR_RESIZE_FREEZE_EVENT = 'pocha-editor-resize-freeze';
 const STAGE_GIZMO_COLOR = 0x0ea5e9;
+const STAGE_GIZMO_COLOR_CSS = 'rgb(14, 165, 233)';
+const STAGE_GIZMO_FILL_CSS = 'rgba(14, 165, 233, 0.08)';
+const STAGE_SELECTION_FILL_ALPHA = 0.06;
+
+type StageGizmoPalette = {
+  phaserColor: number;
+  strokeCss: string;
+  fillCss: string;
+  handleStrokeCss: string;
+};
 
 type FrozenStageFrame = {
   src: string;
@@ -133,6 +147,59 @@ type ComponentDragPreview = {
   zoom: number;
 };
 
+type CostumeVisualMetrics = {
+  imageWidth: number;
+  imageHeight: number;
+  assetOffset: { x: number; y: number };
+  localBounds: CostumeBounds | null;
+  interactionWidth: number;
+  interactionHeight: number;
+  interactionOffset: { x: number; y: number };
+};
+
+function getCostumeVisualMetrics({
+  bounds,
+  assetFrame,
+  imageWidth,
+  imageHeight,
+}: {
+  bounds: CostumeBounds | null | undefined;
+  assetFrame?: CostumeAssetFrame | null;
+  imageWidth: number;
+  imageHeight: number;
+}): CostumeVisualMetrics {
+  const resolvedImageWidth = Math.max(1, Math.round(imageWidth || assetFrame?.width || COSTUME_CANVAS_SIZE));
+  const resolvedImageHeight = Math.max(1, Math.round(imageHeight || assetFrame?.height || COSTUME_CANVAS_SIZE));
+  const assetOffset = getCostumeAssetCenterOffset(assetFrame);
+  const localBounds = getCostumeBoundsInAssetSpace(bounds, assetFrame);
+
+  if (bounds && bounds.width > 0 && bounds.height > 0) {
+    return {
+      imageWidth: resolvedImageWidth,
+      imageHeight: resolvedImageHeight,
+      assetOffset,
+      localBounds,
+      interactionWidth: Math.max(bounds.width, 32),
+      interactionHeight: Math.max(bounds.height, 32),
+      interactionOffset: getCostumeVisibleCenterOffset(bounds, {
+        assetFrame,
+        assetWidth: resolvedImageWidth,
+        assetHeight: resolvedImageHeight,
+      }),
+    };
+  }
+
+  return {
+    imageWidth: resolvedImageWidth,
+    imageHeight: resolvedImageHeight,
+    assetOffset,
+    localBounds,
+    interactionWidth: Math.max(resolvedImageWidth, 32),
+    interactionHeight: Math.max(resolvedImageHeight, 32),
+    interactionOffset: assetOffset,
+  };
+}
+
 function areCostumeBoundsEqual(
   a: CostumeBounds | null | undefined,
   b: CostumeBounds | null | undefined,
@@ -140,6 +207,144 @@ function areCostumeBoundsEqual(
   if (!a && !b) return true;
   if (!a || !b) return false;
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+let cssColorParsingContext: CanvasRenderingContext2D | null | undefined;
+
+function getCssColorParsingContext(): CanvasRenderingContext2D | null {
+  if (cssColorParsingContext !== undefined) {
+    return cssColorParsingContext;
+  }
+
+  if (typeof document === 'undefined') {
+    cssColorParsingContext = null;
+    return cssColorParsingContext;
+  }
+
+  cssColorParsingContext = document.createElement('canvas').getContext('2d');
+  return cssColorParsingContext;
+}
+
+function parseResolvedCssColorToRgb(color: string): { r: number; g: number; b: number } | null {
+  const normalized = color.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith('#')) {
+    const hex = normalized.slice(1);
+    const expandedHex = hex.length === 3
+      ? hex.split('').map((char) => `${char}${char}`).join('')
+      : hex.length === 6
+        ? hex
+        : null;
+    if (!expandedHex) {
+      return null;
+    }
+    const value = Number.parseInt(expandedHex, 16);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return {
+      r: (value >> 16) & 0xff,
+      g: (value >> 8) & 0xff,
+      b: value & 0xff,
+    };
+  }
+
+  const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (!rgbMatch) {
+    return null;
+  }
+
+  const channels = rgbMatch[1]
+    .split(',')
+    .map((segment) => Number.parseFloat(segment.trim()))
+    .filter((channel) => Number.isFinite(channel));
+  if (channels.length < 3) {
+    return null;
+  }
+
+  return {
+    r: Math.max(0, Math.min(255, Math.round(channels[0]!))),
+    g: Math.max(0, Math.min(255, Math.round(channels[1]!))),
+    b: Math.max(0, Math.min(255, Math.round(channels[2]!))),
+  };
+}
+
+function resolveCssColorToRgb(color: string): { r: number; g: number; b: number } | null {
+  const context = getCssColorParsingContext();
+  if (context) {
+    context.fillStyle = '#000000';
+    context.fillStyle = color;
+    const parsed = parseResolvedCssColorToRgb(context.fillStyle);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return parseResolvedCssColorToRgb(color);
+}
+
+function getResolvedComponentStageColor(): string {
+  if (typeof document === 'undefined') {
+    return COMPONENT_COLOR;
+  }
+
+  const color = window.getComputedStyle(document.documentElement).getPropertyValue('--component-color').trim();
+  return color || COMPONENT_COLOR;
+}
+
+function createStageGizmoPaletteFromCssColor(cssColor: string, fallbackPhaserColor: number): StageGizmoPalette {
+  const rgb = resolveCssColorToRgb(cssColor);
+  if (!rgb) {
+    return {
+      phaserColor: fallbackPhaserColor,
+      strokeCss: cssColor,
+      fillCss: STAGE_GIZMO_FILL_CSS,
+      handleStrokeCss: cssColor,
+    };
+  }
+
+  return {
+    phaserColor: (rgb.r << 16) | (rgb.g << 8) | rgb.b,
+    strokeCss: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+    fillCss: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`,
+    handleStrokeCss: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+  };
+}
+
+function getStageGizmoPaletteForObject(object: GameObject | null | undefined): StageGizmoPalette {
+  if (!object?.componentId) {
+    return {
+      phaserColor: STAGE_GIZMO_COLOR,
+      strokeCss: STAGE_GIZMO_COLOR_CSS,
+      fillCss: STAGE_GIZMO_FILL_CSS,
+      handleStrokeCss: STAGE_GIZMO_COLOR_CSS,
+    };
+  }
+
+  return createStageGizmoPaletteFromCssColor(getResolvedComponentStageColor(), STAGE_GIZMO_COLOR);
+}
+
+function getStageGizmoPaletteForSelection(scene: Phaser.Scene, selectedIds: string[]): StageGizmoPalette {
+  if (
+    selectedIds.length > 0
+    && selectedIds.every((selectedId) => {
+      const container = scene.children.getByName(selectedId) as Phaser.GameObjects.Container | null;
+      const objectData = container?.getData('objectData') as GameObject | undefined;
+      return !!objectData?.componentId;
+    })
+  ) {
+    return createStageGizmoPaletteFromCssColor(getResolvedComponentStageColor(), STAGE_GIZMO_COLOR);
+  }
+
+  return {
+    phaserColor: STAGE_GIZMO_COLOR,
+    strokeCss: STAGE_GIZMO_COLOR_CSS,
+    fillCss: STAGE_GIZMO_FILL_CSS,
+    handleStrokeCss: STAGE_GIZMO_COLOR_CSS,
+  };
 }
 
 // Coordinate transformation utilities
@@ -671,6 +876,11 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }, point);
 
     const guide = scene.data.get('stageTransformOverlayGuide') as StageSelectionOverlayGuide | null | undefined;
+    const storeState = useEditorStore.getState();
+    const selectedIds = storeState.selectedObjectIds.length > 0
+      ? storeState.selectedObjectIds
+      : (storeState.selectedObjectId ? [storeState.selectedObjectId] : []);
+    const palette = getStageGizmoPaletteForSelection(scene, selectedIds);
 
     renderScreenSpaceTransformOverlay(ctx, {
       nw: worldToScreen(worldFrame.corners.nw),
@@ -680,6 +890,9 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }, {
       proportionalGuide: guide?.proportional ?? false,
       corner: guide?.corner ?? null,
+      strokeColor: palette.strokeCss,
+      fillColor: palette.fillCss,
+      handleStroke: palette.handleStrokeCss,
     });
   }, [clearStageTransformOverlay, isPlaying]);
 
@@ -1505,6 +1718,12 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       } else {
         const targetContainer = container;
         targetContainer.setData('objectData', obj);
+        const selectionRect = targetContainer.getByName('selection') as Phaser.GameObjects.Rectangle | null;
+        if (selectionRect) {
+          const selectionPalette = getStageGizmoPaletteForObject(obj);
+          selectionRect.setStrokeStyle(GIZMO_STROKE_PX, selectionPalette.phaserColor);
+          selectionRect.setFillStyle(selectionPalette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
+        }
         // Update existing object - convert user coords to Phaser coords
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
         const ch = phaserScene.data.get('canvasHeight') as number || 600;
@@ -1559,52 +1778,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             cont.add(sprite);
             const hitRect = cont.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
             const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
-            const assetOffset = getCostumeAssetCenterOffset(assetFrame);
-            const imgWidth = sprite.width;
-            const imgHeight = sprite.height;
+            const metrics = getCostumeVisualMetrics({
+              bounds,
+              assetFrame,
+              imageWidth: sprite.width,
+              imageHeight: sprite.height,
+            });
 
-            sprite.setPosition(assetOffset.x, assetOffset.y);
-
-            if (bounds && bounds.width > 0 && bounds.height > 0) {
-              const width = Math.max(bounds.width, 32);
-              const height = Math.max(bounds.height, 32);
-              const visibleCenterOffset = getCostumeVisibleCenterOffset(bounds, {
-                assetFrame,
-                assetWidth: imgWidth,
-                assetHeight: imgHeight,
-              });
-
-              cont.setSize(width, height);
-
-              if (hitRect) {
-                hitRect.setSize(width, height);
-                hitRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-                hitRect.removeInteractive();
-                hitRect.setInteractive({ useHandCursor: true });
-              }
-
-              if (selRect) {
-                selRect.setSize(width + 8, height + 8);
-                selRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-                cont.sendToBack(selRect);
-              }
-              return;
-            }
-
-            const width = Math.max(imgWidth, 32);
-            const height = Math.max(imgHeight, 32);
-            cont.setSize(width, height);
+            sprite.setPosition(metrics.assetOffset.x, metrics.assetOffset.y);
+            cont.setSize(metrics.interactionWidth, metrics.interactionHeight);
 
             if (hitRect) {
-              hitRect.setSize(width, height);
-              hitRect.setPosition(assetOffset.x, assetOffset.y);
+              hitRect.setSize(metrics.interactionWidth, metrics.interactionHeight);
+              hitRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
               hitRect.removeInteractive();
               hitRect.setInteractive({ useHandCursor: true });
             }
 
             if (selRect) {
-              selRect.setSize(width + 8, height + 8);
-              selRect.setPosition(assetOffset.x, assetOffset.y);
+              selRect.setSize(metrics.interactionWidth + 8, metrics.interactionHeight + 8);
+              selRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
               cont.sendToBack(selRect);
             }
           };
@@ -1987,14 +2180,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
 
   const previewBounds = componentDragPreview?.bounds;
   const previewZoom = componentDragPreview?.zoom ?? 1;
-  const previewWidth = previewBounds ? Math.max(1, previewBounds.width * previewZoom) : Math.max(24, 64 * previewZoom);
-  const previewHeight = previewBounds ? Math.max(1, previewBounds.height * previewZoom) : Math.max(24, 64 * previewZoom);
-  const previewBackgroundSize = componentDragPreview?.assetFrame
-    ? `${componentDragPreview.assetFrame.width * previewZoom}px ${componentDragPreview.assetFrame.height * previewZoom}px`
-    : undefined;
-  const previewBackgroundPosition = previewBounds
-    ? `${-previewBounds.x * previewZoom}px ${-previewBounds.y * previewZoom}px`
-    : 'center';
+  const previewMetrics = componentDragPreview
+    ? getCostumeVisualMetrics({
+        bounds: componentDragPreview.bounds,
+        assetFrame: componentDragPreview.assetFrame,
+        imageWidth: componentDragPreview.assetFrame?.width ?? COSTUME_CANVAS_SIZE,
+        imageHeight: componentDragPreview.assetFrame?.height ?? COSTUME_CANVAS_SIZE,
+      })
+    : null;
+  const previewWidth = previewMetrics
+    ? Math.max(1, (previewMetrics.localBounds?.width ?? previewMetrics.imageWidth) * previewZoom)
+    : Math.max(24, 64 * previewZoom);
+  const previewHeight = previewMetrics
+    ? Math.max(1, (previewMetrics.localBounds?.height ?? previewMetrics.imageHeight) * previewZoom)
+    : Math.max(24, 64 * previewZoom);
+  const previewCenterX = componentDragPreview
+    ? componentDragPreview.localX + ((previewMetrics?.interactionOffset.x ?? 0) * previewZoom)
+    : 0;
+  const previewCenterY = componentDragPreview
+    ? componentDragPreview.localY + ((previewMetrics?.interactionOffset.y ?? 0) * previewZoom)
+    : 0;
   const previewComponentName = componentDragPreview
     ? ((project?.components || []).find((candidate) => candidate.id === componentDragPreview.componentId)?.name ?? 'Component')
     : 'Component';
@@ -2026,26 +2231,28 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         componentDragPreview.assetId ? (
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute z-[12] overflow-hidden rounded-md opacity-70 shadow-[0_0_0_1px_rgba(14,165,233,0.35)]"
+            className="pointer-events-none absolute z-[12] overflow-hidden opacity-70 shadow-[0_0_0_1px_rgba(14,165,233,0.35)]"
             style={{
-              left: componentDragPreview.localX,
-              top: componentDragPreview.localY,
+              left: previewCenterX,
+              top: previewCenterY,
               width: previewWidth,
               height: previewHeight,
               transform: 'translate(-50%, -50%)',
               backgroundImage: `url(${componentDragPreview.assetId})`,
-              backgroundPosition: previewBackgroundPosition,
-              backgroundSize: previewBackgroundSize,
+              backgroundPosition: previewMetrics?.localBounds
+                ? `${-previewMetrics.localBounds.x * previewZoom}px ${-previewMetrics.localBounds.y * previewZoom}px`
+                : '0 0',
+              backgroundSize: `${(previewMetrics?.imageWidth ?? 64) * previewZoom}px ${(previewMetrics?.imageHeight ?? 64) * previewZoom}px`,
               backgroundRepeat: 'no-repeat',
             }}
           />
         ) : (
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute z-[12] flex items-center justify-center rounded-md border border-sky-500/50 bg-sky-500/10 px-2 text-xs font-medium text-sky-700 opacity-80 dark:text-sky-200"
+            className="pointer-events-none absolute z-[12] flex items-center justify-center border border-sky-500/50 bg-sky-500/10 px-2 text-xs font-medium text-sky-700 opacity-80 dark:text-sky-200"
             style={{
-              left: componentDragPreview.localX,
-              top: componentDragPreview.localY,
+              left: previewCenterX,
+              top: previewCenterY,
               width: previewWidth,
               height: previewHeight,
               transform: 'translate(-50%, -50%)',
@@ -2464,8 +2671,9 @@ function createEditorScene(
     options?: {
       interactiveAlpha?: number;
       showStroke?: boolean;
-      hitArea?: Phaser.Geom.Circle;
+      hitArea?: Phaser.Geom.Circle | Phaser.Geom.Rectangle;
       hitAreaCallback?: Phaser.Types.Input.HitAreaCallback;
+      depth?: number;
     },
   ) => {
     shape.setFillStyle(0xffffff, options?.interactiveAlpha ?? 0.001);
@@ -2474,7 +2682,7 @@ function createEditorScene(
     }
     shape.setName(name);
     shape.setVisible(false);
-    shape.setDepth(10_004);
+    shape.setDepth(options?.depth ?? 10_004);
     if (options?.hitArea && options.hitAreaCallback) {
       shape.setInteractive(options.hitArea, options.hitAreaCallback as any);
       if (shape.input) {
@@ -2489,27 +2697,27 @@ function createEditorScene(
 
   createGroupHandle(
     'handle_nw',
-    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
     getTransformGizmoCornerCursor('nw'),
-    { interactiveAlpha: 0.001, showStroke: false },
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
   );
   createGroupHandle(
     'handle_ne',
-    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
     getTransformGizmoCornerCursor('ne'),
-    { interactiveAlpha: 0.001, showStroke: false },
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
   );
   createGroupHandle(
     'handle_sw',
-    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
     getTransformGizmoCornerCursor('sw'),
-    { interactiveAlpha: 0.001, showStroke: false },
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
   );
   createGroupHandle(
     'handle_se',
-    scene.add.circle(0, 0, TRANSFORM_GIZMO_HANDLE_RADIUS, 0xffffff),
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
     getTransformGizmoCornerCursor('se'),
-    { interactiveAlpha: 0.001, showStroke: false },
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
   );
   createGroupHandle(
     'handle_n',
@@ -2542,6 +2750,7 @@ function createEditorScene(
     {
       interactiveAlpha: 0.001,
       showStroke: false,
+      depth: 10_006,
       hitArea: new Phaser.Geom.Circle(
         GIZMO_ROTATE_RING_RADIUS_PX,
         GIZMO_ROTATE_RING_RADIUS_PX,
@@ -2734,8 +2943,9 @@ function createEditorScene(
     groupSelectionRect.setPosition(frame.centerX, frame.centerY);
     groupSelectionRect.setSize(frame.width, frame.height);
     groupSelectionRect.setRotation(rotation);
-    groupSelectionRect.setStrokeStyle(0, STAGE_GIZMO_COLOR, 0);
-    groupSelectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.001);
+    const palette = getStageGizmoPaletteForSelection(scene, selectedIdsCache);
+    groupSelectionRect.setStrokeStyle(0, palette.phaserColor, 0);
+    groupSelectionRect.setFillStyle(palette.phaserColor, 0.001);
 
     const setHandle = (name: string, x: number, y: number, corner?: TransformGizmoCorner) => {
       const handle = groupHandles.get(name);
@@ -2744,8 +2954,13 @@ function createEditorScene(
       const isEdgeHandle = name === 'handle_n' || name === 'handle_e' || name === 'handle_s' || name === 'handle_w';
       if (isEdgeHandle && handle instanceof Phaser.GameObjects.Rectangle) {
         const isHorizontalEdge = name === 'handle_n' || name === 'handle_s';
-        const displayWidth = isHorizontalEdge ? frame.width : GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom;
-        const displayHeight = isHorizontalEdge ? GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom : frame.height;
+        const cornerInsetWorld = GIZMO_EDGE_CORNER_PREFERENCE_INSET_PX / Math.max(cameraZoom, 0.0001);
+        const displayWidth = isHorizontalEdge
+          ? Math.max(1, frame.width - (cornerInsetWorld * 2))
+          : GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom;
+        const displayHeight = isHorizontalEdge
+          ? GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom
+          : Math.max(1, frame.height - (cornerInsetWorld * 2));
         handle.setSize(displayWidth, displayHeight);
         handle.setDisplaySize(displayWidth, displayHeight);
         handle.setRotation(rotation);
@@ -3852,9 +4067,10 @@ function createObjectVisual(
   let hitRect: Phaser.GameObjects.Rectangle | null = null;
   if (isEditorMode) {
     // Selection visual
+    const selectionPalette = getStageGizmoPaletteForObject(obj);
     selectionRect = scene.add.rectangle(0, 0, defaultSize + 8, defaultSize + 8);
-    selectionRect.setStrokeStyle(GIZMO_STROKE_PX, STAGE_GIZMO_COLOR);
-    selectionRect.setFillStyle(STAGE_GIZMO_COLOR, 0.06);
+    selectionRect.setStrokeStyle(GIZMO_STROKE_PX, selectionPalette.phaserColor);
+    selectionRect.setFillStyle(selectionPalette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
     selectionRect.setVisible(false);
     selectionRect.setName('selection');
     container.add(selectionRect);
@@ -3872,54 +4088,26 @@ function createObjectVisual(
     bounds: { x: number; y: number; width: number; height: number } | null | undefined,
     assetFrame?: CostumeAssetFrame | null,
   ) => {
-    const imgWidth = sprite.width;
-    const imgHeight = sprite.height;
-    const assetOffset = getCostumeAssetCenterOffset(assetFrame);
-    sprite.setPosition(assetOffset.x, assetOffset.y);
+    const metrics = getCostumeVisualMetrics({
+      bounds,
+      assetFrame,
+      imageWidth: sprite.width,
+      imageHeight: sprite.height,
+    });
+    sprite.setPosition(metrics.assetOffset.x, metrics.assetOffset.y);
 
-    // If we have bounds, offset the hit area and selection to cover visible content
-    if (bounds && bounds.width > 0 && bounds.height > 0) {
-      const w = Math.max(bounds.width, 32);
-      const h = Math.max(bounds.height, 32);
-      const visibleCenterOffset = getCostumeVisibleCenterOffset(bounds, {
-        assetFrame,
-        assetWidth: imgWidth,
-        assetHeight: imgHeight,
-      });
+    container.setSize(metrics.interactionWidth, metrics.interactionHeight);
 
-      container.setSize(w, h);
+    if (hitRect) {
+      hitRect.setSize(metrics.interactionWidth, metrics.interactionHeight);
+      hitRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
+      hitRect.removeInteractive();
+      hitRect.setInteractive({ useHandCursor: true });
+    }
 
-      // Update hit area rectangle - position it over the visible bounds
-      if (hitRect) {
-        hitRect.setSize(w, h);
-        hitRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-        hitRect.removeInteractive();
-        hitRect.setInteractive({ useHandCursor: true });
-      }
-
-      // Update selection rectangle
-      if (selectionRect) {
-        selectionRect.setSize(w + 8, h + 8);
-        selectionRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-      }
-    } else {
-      // No bounds - use full image size (fallback)
-      const w = Math.max(imgWidth, 32);
-      const h = Math.max(imgHeight, 32);
-
-      container.setSize(w, h);
-
-      if (hitRect) {
-        hitRect.setSize(w, h);
-        hitRect.setPosition(0, 0);
-        hitRect.removeInteractive();
-        hitRect.setInteractive({ useHandCursor: true });
-      }
-
-      if (selectionRect) {
-        selectionRect.setSize(w + 8, h + 8);
-        selectionRect.setPosition(0, 0);
-      }
+    if (selectionRect) {
+      selectionRect.setSize(metrics.interactionWidth + 8, metrics.interactionHeight + 8);
+      selectionRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
     }
   };
 

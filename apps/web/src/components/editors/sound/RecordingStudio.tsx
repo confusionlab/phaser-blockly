@@ -29,7 +29,6 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
 
   const [mode, setMode] = useState<RecordingMode>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,12 +45,8 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
       }
 
       streamRef.current?.getTracks().forEach((track) => track.stop());
-
-      if (recordedUrl) {
-        URL.revokeObjectURL(recordedUrl);
-      }
     };
-  }, [recordedUrl]);
+  }, []);
 
   const stopRecordingTimer = () => {
     if (timerRef.current !== null) {
@@ -100,8 +95,6 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
           streamRef.current = null;
           return;
         }
-
-        setRecordedUrl(nextUrl);
 
         let nextDuration: number | undefined;
         try {

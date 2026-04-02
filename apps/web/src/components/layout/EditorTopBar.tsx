@@ -62,35 +62,6 @@ export function EditorTopBar({
     }
   }, [hasProject]);
 
-  const placeProjectNameCaretAtEnd = useCallback((input: HTMLInputElement | null) => {
-    if (!input) {
-      return;
-    }
-
-    input.focus({ preventScroll: true });
-    const caretIndex = input.value.length;
-    input.setSelectionRange(caretIndex, caretIndex);
-  }, []);
-
-  const focusProjectNameInput = useCallback(() => {
-    if (projectNameDisabled) {
-      return;
-    }
-
-    if (!isProjectNameEditing) {
-      setIsProjectNameEditing(true);
-      return;
-    }
-
-    const input = inputRef.current;
-    if (!input) {
-      return;
-    }
-
-    placeProjectNameCaretAtEnd(input);
-    queueMicrotask(() => placeProjectNameCaretAtEnd(input));
-  }, [isProjectNameEditing, placeProjectNameCaretAtEnd, projectNameDisabled]);
-
   const projectNameValidation = validateProjectName(draftName);
 
   useLayoutEffect(() => {
@@ -166,7 +137,6 @@ export function EditorTopBar({
             onExportProject={onExportProject}
             onGoToDashboard={onGoToDashboard}
             onOpenHistory={onOpenHistory}
-            onRenameProject={focusProjectNameInput}
             onToggleAdvancedBlocks={onToggleAdvancedBlocks}
             onToggleTheme={onToggleTheme}
           />

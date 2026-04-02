@@ -41,7 +41,6 @@ import {
   FolderPlus,
   GripVertical,
   Library,
-  Save,
 } from '@/components/ui/icons';
 import type {
   GameObject,
@@ -53,8 +52,7 @@ import type {
 } from '@/types';
 import { getEffectiveObjectProps } from '@/types';
 import {
-  ensureObjectLibraryAssetRefsInCloud,
-  prepareObjectLibraryCreatePayload,
+  saveRuntimeObjectToLibrary,
 } from '@/lib/objectLibrary/objectLibraryAssets';
 import {
   getFolderNodeKey,
@@ -84,7 +82,9 @@ import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { ShelfTreeRow } from './ShelfTreeRow';
 import { ShelfObjectThumbnail } from './ShelfObjectThumbnail';
-import { getShelfRowDropPosition, getTransparentShelfDragImage } from './shelfDrag';
+import { ObjectComponentLabel, getObjectComponentLabelTextClassName } from './ObjectComponentLabel';
+import { getShelfRowDropPosition, getTransparentShelfDragImage, useShelfDropTargetBoundaryGuard } from './shelfDrag';
+import { useModal } from '@/components/ui/modal-provider';
 
 function remapLocalVariablesForInsertion(
   localVariables: GameObject['localVariables'],
@@ -259,6 +259,7 @@ export function SpriteShelf({
   } = useEditorStore();
   const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
+  const { showAlert, showConfirm } = useModal();
   const createObjectLibraryItem = useMutation(api.objectLibrary.create);
   const generateProjectAssetUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
   const upsertProjectAsset = useMutation(api.projectAssets.upsert);
@@ -658,6 +659,12 @@ export function SpriteShelf({
     setLayerDropTarget(null);
   };
 
+  useShelfDropTargetBoundaryGuard({
+    active: draggedLayerKeys.length > 0,
+    boundaryRef: shortcutSurfaceRef,
+    onExit: () => setLayerDropTarget(null),
+  });
+
   const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
     flushSync(() => {
       const dragKeys = syncSelectionForLayerDrag(item);
@@ -755,6 +762,17 @@ export function SpriteShelf({
     });
     updateScene(selectedSceneId, nextScene);
     clearLayerDragState();
+  };
+
+  const handleBlankAreaDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedLayerKeys.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    setLayerDropTarget(null);
   };
 
   const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -1023,35 +1041,6 @@ export function SpriteShelf({
       return selectedIdsInScene;
     }
     return [contextMenu.object.id];
-  };
-
-  const handleMoveObjectToFolder = (folderId: string | null) => {
-    const objectIds = getContextMenuObjectActionIds();
-    if (objectIds.length === 0) return;
-
-    const movingIdSet = new Set(objectIds);
-    const orderedMovingIds = orderedSceneObjectIds.filter((id) => movingIdSet.has(id));
-    const baseOrder = getNextSiblingOrder(selectedScene, folderId);
-    const nextOrderById = new Map(
-      orderedMovingIds.map((id, index) => [id, baseOrder + index]),
-    );
-
-    updateScene(selectedSceneId, {
-      objects: selectedScene.objects.map((obj) => {
-        const nextOrder = nextOrderById.get(obj.id);
-        if (nextOrder === undefined) {
-          return obj;
-        }
-        return {
-          ...obj,
-          parentId: folderId,
-          order: nextOrder,
-          folderId: undefined,
-        };
-      }),
-    });
-
-    handleCloseContextMenu();
   };
 
   const handleDuplicate = () => {
@@ -1325,13 +1314,20 @@ export function SpriteShelf({
       (component) => component.name.trim().toLowerCase() === normalizedRequestedName
     );
     if (hasDuplicateName) {
-      window.alert(`A component named "${requestedName}" already exists. Rename the object first.`);
+      void showAlert({
+        title: 'Component Name Already Exists',
+        description: `A component named "${requestedName}" already exists. Rename the object first.`,
+      });
       return;
     }
 
     const created = makeComponent(selectedSceneId, contextMenu.object.id);
     if (!created) {
-      window.alert('Could not create component. Check that the name is unique.');
+      void showAlert({
+        title: 'Could Not Create Component',
+        description: 'Could not create component. Check that the name is unique.',
+        tone: 'destructive',
+      });
       return;
     }
 
@@ -1349,14 +1345,17 @@ export function SpriteShelf({
       return;
     }
     if (!isAuthenticated) {
-      window.alert('Sign in to save objects to the cloud library.');
+      await showAlert({
+        title: 'Sign In Required',
+        description: 'Sign in to save objects to the cloud library.',
+      });
       return;
     }
 
     const effectiveProps = getEffectiveObjectProps(contextMenu.object, project.components || []);
     setSavingObjectLibrary(contextMenu.object.id);
     try {
-      const prepared = await prepareObjectLibraryCreatePayload({
+      await saveRuntimeObjectToLibrary({
         name: contextMenu.object.name,
         costumes: effectiveProps.costumes,
         sounds: effectiveProps.sounds,
@@ -1365,9 +1364,7 @@ export function SpriteShelf({
         physics: effectiveProps.physics,
         collider: effectiveProps.collider,
         localVariables: effectiveProps.localVariables,
-      });
-
-      await ensureObjectLibraryAssetRefsInCloud(prepared.assetRefs, {
+      }, {
         listMissingAssetIds: async (assetIds) => {
           return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
         },
@@ -1381,24 +1378,24 @@ export function SpriteShelf({
             storageId: args.storageId,
           });
         },
-      });
-
-      await createObjectLibraryItem({
-        ...prepared.payload,
-        physics: prepared.payload.physics ?? undefined,
-        collider: prepared.payload.collider ?? undefined,
-        localVariables: prepared.payload.localVariables,
+        createItem: async (payload) => {
+          return await createObjectLibraryItem(payload);
+        },
       });
       handleCloseContextMenu();
     } catch (error) {
       console.error('Failed to save object to library:', error);
-      window.alert('Failed to save object to library');
+      await showAlert({
+        title: 'Save Failed',
+        description: 'Failed to save object to library',
+        tone: 'destructive',
+      });
     } finally {
       setSavingObjectLibrary(null);
     }
   };
 
-  const handleDeleteComponentById = (componentId: string) => {
+  const handleDeleteComponentById = async (componentId: string) => {
     if (!project) return;
     if (!componentId) return;
 
@@ -1408,10 +1405,12 @@ export function SpriteShelf({
       return count + scene.objects.filter((obj) => obj.componentId === componentId).length;
     }, 0);
 
-    const confirmed = window.confirm(
-      `Delete component "${componentName}"?\n\n` +
-      `This will detach ${instanceCount} instance${instanceCount === 1 ? '' : 's'} and keep them as standalone objects.`
-    );
+    const confirmed = await showConfirm({
+      title: `Delete component "${componentName}"?`,
+      description: `This will detach ${instanceCount} instance${instanceCount === 1 ? '' : 's'} and keep them as standalone objects.`,
+      confirmLabel: 'Delete Component',
+      tone: 'destructive',
+    });
     if (!confirmed) return;
 
     deleteComponentWithHistory({
@@ -1601,7 +1600,7 @@ export function SpriteShelf({
             onPointerDown={(e) => e.stopPropagation()}
             className="flex-1 min-w-0"
             outlineClassName="left-[-3px] right-0"
-            textClassName={`text-xs leading-5 ${isComponentInstance ? 'text-purple-700 dark:text-purple-300' : 'text-foreground'}`}
+            textClassName={`text-xs leading-5 ${getObjectComponentLabelTextClassName(isComponentInstance)}`}
             autoFocus={isInlineEditing}
             focusBehavior="caret-end"
             displayAs="div"
@@ -1610,10 +1609,7 @@ export function SpriteShelf({
               title: item.name,
             }}
             displayValue={
-              <>
-                <span className="block min-w-0 flex-1 truncate">{item.name}</span>
-                {isComponentInstance && <Component className="size-3 shrink-0 opacity-60" />}
-              </>
+              <ObjectComponentLabel name={item.name} isComponent={isComponentInstance} className="overflow-visible" />
             }
           />
         )}
@@ -1704,7 +1700,7 @@ export function SpriteShelf({
           onContextMenu={handleEmptyShelfContextMenu}
           data-testid="sprite-shelf-scroll-area"
         >
-          <div className="min-h-full w-0 min-w-full">
+          <div className="min-h-full w-0 min-w-full" onDragOver={handleBlankAreaDragOver}>
             {selectedScene.objects.length === 0 && folders.length === 0 ? (
               <div className="flex h-full items-center justify-center p-4">
                 <Button
@@ -1723,6 +1719,7 @@ export function SpriteShelf({
                 aria-label="Scene hierarchy"
                 className="relative min-h-full w-0 min-w-full overflow-x-hidden pb-2 outline-none"
                 onClick={handleEmptyShelfClick}
+                onDragOver={handleBlankAreaDragOver}
               >
                 {treeItems.map((item) => renderTreeItem(item))}
                 <div
@@ -1762,16 +1759,17 @@ export function SpriteShelf({
                   <Copy className="size-4" />
                   Cut
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handlePaste}
-                  disabled={!hasSceneObjectClipboardContents()}
-                  className="w-full justify-start rounded-none h-8"
-                >
-                  <Clipboard className="size-4" />
-                  Paste
-                </Button>
+                {hasSceneObjectClipboardContents() ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handlePaste}
+                    className="w-full justify-start rounded-none h-8"
+                  >
+                    <Clipboard className="size-4" />
+                    Paste
+                  </Button>
+                ) : null}
                 <Button variant="ghost" size="sm" onClick={handleDuplicate} className="w-full justify-start rounded-none h-8">
                   <Copy className="size-4" />
                   Duplicate
@@ -1790,18 +1788,6 @@ export function SpriteShelf({
                   <FolderPlus className="size-4" />
                   New Folder with Object
                 </Button>
-                {folders.map((folder) => (
-                  <Button
-                    key={folder.id}
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleMoveObjectToFolder(folder.id)}
-                    className="w-full justify-start rounded-none h-8"
-                  >
-                    <Folder className="size-4" />
-                    Move to {folder.name}
-                  </Button>
-                ))}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1811,7 +1797,7 @@ export function SpriteShelf({
                   disabled={savingObjectLibrary === contextMenu.object.id}
                   className="w-full justify-start rounded-none h-8"
                 >
-                  <Save className="size-4" />
+                  <Library className="size-4" />
                   Save to Library
                 </Button>
                 {!contextMenu.object.componentId ? (
@@ -1876,16 +1862,17 @@ export function SpriteShelf({
               </>
             ) : (
               <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handlePaste}
-                  disabled={!hasSceneObjectClipboardContents()}
-                  className="w-full justify-start rounded-none h-8"
-                >
-                  <Clipboard className="size-4" />
-                  Paste
-                </Button>
+                {hasSceneObjectClipboardContents() ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handlePaste}
+                    className="w-full justify-start rounded-none h-8"
+                  >
+                    <Clipboard className="size-4" />
+                    Paste
+                  </Button>
+                ) : null}
                 <Button
                   variant="ghost"
                   size="sm"

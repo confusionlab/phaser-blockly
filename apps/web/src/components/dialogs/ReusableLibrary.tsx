@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card';
 import { X } from '@/components/ui/icons';
 import type { ReusableObject } from '@/types';
 import { runInHistoryTransaction } from '@/store/universalHistory';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface ReusableLibraryProps {
   onClose: () => void;
@@ -24,6 +25,7 @@ export function ReusableLibrary({ onClose }: ReusableLibraryProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { addObject } = useProjectStore();
   const { selectedSceneId, selectObject } = useEditorStore();
+  const { showConfirm } = useModal();
 
   const fetchReusables = useCallback(async () => {
     setLoading(true);
@@ -70,7 +72,13 @@ export function ReusableLibrary({ onClose }: ReusableLibraryProps) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this reusable object?')) return;
+    const confirmed = await showConfirm({
+      title: 'Delete Reusable Object',
+      description: 'Delete this reusable object?',
+      confirmLabel: 'Delete',
+      tone: 'destructive',
+    });
+    if (!confirmed) return;
 
     try {
       await deleteReusable(id);

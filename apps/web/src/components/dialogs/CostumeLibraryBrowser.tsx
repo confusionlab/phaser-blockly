@@ -20,6 +20,7 @@ import {
   type CostumeLibraryListItemData,
 } from "@/lib/costumeLibrary/costumeLibraryAssets";
 import { ensureLibraryAssetRefsInCloud } from "@/lib/templateLibrary/libraryAssetRefs";
+import { useModal } from "@/components/ui/modal-provider";
 
 interface CostumeLibraryBrowserProps {
   open: boolean;
@@ -48,6 +49,7 @@ export function CostumeLibraryBrowser({
   const [uploading, setUploading] = useState(false);
   const [loadingSelect, setLoadingSelect] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { showAlert, showConfirm } = useModal();
 
   const items = useQuery(api.costumeLibrary.list, open ? {} : "skip") as CostumeLibraryItem[] | undefined;
   const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
@@ -95,7 +97,11 @@ export function CostumeLibraryBrowser({
       }
     } catch (error) {
       console.error("Failed to upload costume:", error);
-      alert("Failed to upload costume");
+      await showAlert({
+        title: "Upload Failed",
+        description: "Failed to upload costume",
+        tone: "destructive",
+      });
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -103,13 +109,23 @@ export function CostumeLibraryBrowser({
   };
 
   const handleDelete = async (id: Id<"costumeLibrary">) => {
-    if (!confirm("Delete this costume from library?")) return;
+    const confirmed = await showConfirm({
+      title: "Delete Costume",
+      description: "Delete this costume from library?",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
     try {
       await removeItem({ id });
       if (selectedId === id) setSelectedId(null);
     } catch (error) {
       console.error("Failed to delete costume:", error);
-      alert("Failed to delete costume");
+      await showAlert({
+        title: "Delete Failed",
+        description: "Failed to delete costume",
+        tone: "destructive",
+      });
     }
   };
 
@@ -125,7 +141,11 @@ export function CostumeLibraryBrowser({
       onOpenChange(false);
     } catch (error) {
       console.error("Failed to load costume:", error);
-      alert("Failed to load costume");
+      await showAlert({
+        title: "Load Failed",
+        description: "Failed to load costume",
+        tone: "destructive",
+      });
     } finally {
       setLoadingSelect(false);
     }

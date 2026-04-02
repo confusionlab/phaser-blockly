@@ -27,12 +27,12 @@ import {
   Layers3,
   Pencil,
   Plus,
-  Save,
   Trash2,
 } from '@/components/ui/icons';
 import { ShelfTreeRow } from './ShelfTreeRow';
 import { ShelfObjectThumbnail } from './ShelfObjectThumbnail';
-import { getShelfRowDropPosition, getTransparentShelfDragImage, setDraggedComponentId } from './shelfDrag';
+import { ObjectComponentLabel } from './ObjectComponentLabel';
+import { getShelfRowDropPosition, getTransparentShelfDragImage, setDraggedComponentId, useShelfDropTargetBoundaryGuard } from './shelfDrag';
 import type { ComponentDefinition, ComponentFolder, HierarchyFolder, Scene, SceneFolder } from '@/types';
 import {
   getFolderedHierarchyTree,
@@ -47,6 +47,9 @@ import {
 } from '@/utils/hierarchyTree';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { cn } from '@/lib/utils';
+import { deleteComponentWithHistory } from '@/lib/editor/objectCommands';
+import { useModal } from '@/components/ui/modal-provider';
+import { saveRuntimeObjectToLibrary } from '@/lib/objectLibrary/objectLibraryAssets';
 import {
   ensureSceneLibraryAssetRefsInCloud,
   prepareSceneLibraryCreatePayload,
@@ -89,10 +92,12 @@ interface FolderedHierarchyPaneProps<TItem extends FolderedItemShape> {
   onDeleteFolder: (folderId: string) => void;
   onMove: (items: TItem[], folders: HierarchyFolder[]) => void;
   renderItemIcon?: (item: TItem) => React.ReactNode;
+  renderItemLabel?: (item: TItem) => React.ReactNode;
   renderHeaderActions?: React.ReactNode;
   onItemDragStart?: (event: React.DragEvent<HTMLDivElement>, item: TItem) => void;
   onItemDragEnd?: (item: TItem) => void;
   renderItemContextMenuActions?: (item: TItem, closeMenu: () => void) => React.ReactNode;
+  showRenameItemContextMenuAction?: boolean;
 }
 
 function FolderedHierarchyPane<TItem extends FolderedItemShape>({
@@ -114,10 +119,12 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   onDeleteFolder,
   onMove,
   renderItemIcon,
+  renderItemLabel,
   renderHeaderActions,
   onItemDragStart,
   onItemDragEnd,
   renderItemContextMenuActions,
+  showRenameItemContextMenuAction = true,
 }: FolderedHierarchyPaneProps<TItem>) {
   const [isPaneHovered, setIsPaneHovered] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
@@ -125,7 +132,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [draggedKeys, setDraggedKeys] = useState<string[]>([]);
-  const [dropTarget, setDropTarget] = useState<HierarchyDropTarget>({ key: null, dropPosition: null });
+  const [dropTarget, setDropTarget] = useState<HierarchyDropTarget | null>(null);
   const [contextMenu, setContextMenu] = useState<
     | { x: number; y: number; kind: 'item'; item: TItem }
     | { x: number; y: number; kind: 'folder'; folder: HierarchyFolder }
@@ -137,6 +144,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   const inputRef = useRef<HTMLInputElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorItemIdRef = useRef<string | null>(null);
+  const dropSurfaceRef = useRef<HTMLDivElement>(null);
 
   const tree = useMemo(
     () => getFolderedHierarchyTree(folders, items, {
@@ -195,6 +203,12 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     };
   }, [draggedKeys.length]);
 
+  useShelfDropTargetBoundaryGuard({
+    active: draggedKeys.length > 0,
+    boundaryRef: dropSurfaceRef,
+    onExit: () => setDropTarget(null),
+  });
+
   const commitRename = () => {
     const nextName = draftName.trim();
     if (!nextName) {
@@ -240,7 +254,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     );
     onMove(nextHierarchy.items, nextHierarchy.folders);
     setDraggedKeys([]);
-    setDropTarget({ key: null, dropPosition: null });
+    setDropTarget(null);
   };
 
   useLayoutEffect(() => {
@@ -288,20 +302,6 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     setFolderDeleteTarget(null);
   };
 
-  const handleRootDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (draggedKeys.length === 0 || tree.length === 0) {
-      return;
-    }
-
-    if (event.target !== event.currentTarget) {
-      return;
-    }
-
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setDropTarget({ key: null, dropPosition: null });
-  };
-
   const handleRootDrop = (event: React.DragEvent<HTMLDivElement>) => {
     if (draggedKeys.length === 0) {
       return;
@@ -334,6 +334,17 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     event.preventDefault();
     event.stopPropagation();
     handleDrop({ key: null, dropPosition: null });
+  };
+
+  const handleBlankAreaDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (draggedKeys.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTarget(null);
   };
 
   const handleEmptyPaneContextMenu = (event: React.MouseEvent<HTMLElement>) => {
@@ -450,9 +461,9 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           hasChildren={node.children.length > 0}
           isExpanded={isExpanded}
           isSelected={isSelected}
-          isDropOn={dropTarget.key === key && dropTarget.dropPosition === 'on'}
-          isDropBefore={dropTarget.key === key && dropTarget.dropPosition === 'before'}
-          isDropAfter={dropTarget.key === key && dropTarget.dropPosition === 'after'}
+          isDropOn={dropTarget?.key === key && dropTarget.dropPosition === 'on'}
+          isDropBefore={dropTarget?.key === key && dropTarget.dropPosition === 'before'}
+          isDropAfter={dropTarget?.key === key && dropTarget.dropPosition === 'after'}
           connectsToPrevious={connectsToPrevious}
           connectsToNext={connectsToNext}
           isEditing={isEditing}
@@ -476,7 +487,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
               onItemDragEnd(item);
             }
             setDraggedKeys([]);
-            setDropTarget({ key: null, dropPosition: null });
+            setDropTarget(null);
           }}
           onDragOver={(event) => {
             event.preventDefault();
@@ -494,7 +505,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           onDrop={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            handleDrop(dropTarget.key === key ? dropTarget : { key, dropPosition: 'after' });
+            handleDrop(dropTarget?.key === key ? dropTarget : { key, dropPosition: 'after' });
           }}
           onToggleChildren={isFolder && folder ? ((event) => {
             event.stopPropagation();
@@ -564,11 +575,21 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
               focusBehavior="caret-end"
             />
           ) : (
-            <div className="flex w-full min-w-0 items-center overflow-hidden" title={folder?.name ?? (item as { name?: string } | undefined)?.name ?? itemLabel}>
-              <span className="block min-w-0 flex-1 truncate text-xs leading-5 text-foreground">
-                {folder?.name ?? (item as { name?: string } | undefined)?.name ?? itemLabel}
-              </span>
-            </div>
+            folder ? (
+              <div className="flex w-full min-w-0 items-center overflow-hidden" title={folder.name}>
+                <span className="block min-w-0 flex-1 truncate text-xs leading-5 text-foreground">
+                  {folder.name}
+                </span>
+              </div>
+            ) : item ? (
+              renderItemLabel ? renderItemLabel(item) : (
+                <div className="flex w-full min-w-0 items-center overflow-hidden" title={(item as { name?: string } | undefined)?.name ?? itemLabel}>
+                  <span className="block min-w-0 flex-1 truncate text-xs leading-5 text-foreground">
+                    {(item as { name?: string } | undefined)?.name ?? itemLabel}
+                  </span>
+                </div>
+              )
+            ) : null
           )}
         />
         {isFolder && folder && isExpanded ? renderNodes(node.children, level + 1) : null}
@@ -593,10 +614,11 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           {renderHeaderActions}
         </div>
       </div>
+      <div ref={dropSurfaceRef} className="min-h-0 flex-1">
       <ScrollArea className="min-h-0 flex-1" onContextMenu={handleEmptyPaneContextMenu}>
         <div
           className="min-h-full w-0 min-w-full"
-          onDragOver={handleRootDragOver}
+          onDragOver={handleBlankAreaDragOver}
           onDrop={handleRootDrop}
         >
           {tree.length === 0 ? (
@@ -609,6 +631,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
               aria-label={title}
               className="relative min-h-full w-0 min-w-full overflow-x-hidden pb-2 outline-none"
               onContextMenu={handleEmptyPaneContextMenu}
+              onDragOver={handleBlankAreaDragOver}
             >
               {renderNodes(tree)}
               <div
@@ -617,7 +640,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
                 onDrop={handleRootDropZoneDrop}
                 onContextMenu={handleEmptyPaneContextMenu}
               >
-                {draggedKeys.length > 0 && dropTarget.key === null ? (
+                {draggedKeys.length > 0 && dropTarget?.key === null ? (
                   <div className="absolute inset-x-0 top-1/2 h-0 -translate-y-1/2 rounded border-t-2 border-primary/80" />
                 ) : null}
               </div>
@@ -625,6 +648,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           )}
         </div>
       </ScrollArea>
+      </div>
 
       {contextMenu ? (
         <>
@@ -639,21 +663,23 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           >
             {contextMenu.kind === 'item' ? (
               <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    onSelectItem(contextMenu.item);
-                    setEditingItemId(contextMenu.item.id);
-                    setEditingFolderId(null);
-                    setDraftName((contextMenu.item as { name?: string }).name ?? itemLabel);
-                    closeContextMenu();
-                  }}
-                  className="h-8 w-full justify-start rounded-none"
-                >
-                  <Pencil className="size-4" />
-                  Rename {itemLabel}
-                </Button>
+                {showRenameItemContextMenuAction ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      onSelectItem(contextMenu.item);
+                      setEditingItemId(contextMenu.item.id);
+                      setEditingFolderId(null);
+                      setDraftName((contextMenu.item as { name?: string }).name ?? itemLabel);
+                      closeContextMenu();
+                    }}
+                    className="h-8 w-full justify-start rounded-none"
+                  >
+                    <Pencil className="size-4" />
+                    Rename {itemLabel}
+                  </Button>
+                ) : null}
                 {renderItemContextMenuActions ? renderItemContextMenuActions(contextMenu.item, closeContextMenu) : null}
                 <Button
                   variant="ghost"
@@ -762,6 +788,7 @@ function SceneHierarchyTab() {
   const [savingSceneId, setSavingSceneId] = useState<string | null>(null);
   const scenes = project?.scenes ?? [];
   const sceneFolders = project?.sceneFolders ?? [];
+  const { showAlert } = useModal();
 
   const handleInsertSceneTemplate = (data: {
     name: string;
@@ -781,7 +808,10 @@ function SceneHierarchyTab() {
       return;
     }
     if (!isAuthenticated) {
-      window.alert('Sign in to save scenes to the cloud library.');
+      await showAlert({
+        title: 'Sign In Required',
+        description: 'Sign in to save scenes to the cloud library.',
+      });
       return;
     }
 
@@ -816,7 +846,11 @@ function SceneHierarchyTab() {
       await createSceneLibraryItem(payload);
     } catch (error) {
       console.error('Failed to save scene to library:', error);
-      window.alert('Failed to save scene to library');
+      await showAlert({
+        title: 'Save Failed',
+        description: 'Failed to save scene to library',
+        tone: 'destructive',
+      });
     } finally {
       setSavingSceneId(null);
     }
@@ -894,20 +928,8 @@ function SceneHierarchyTab() {
               disabled={savingSceneId === scene.id}
               className="h-8 w-full justify-start rounded-none"
             >
-              <Save className="size-4" />
+              <Library className="size-4" />
               Save to Library
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                selectScene(scene.id);
-                closeMenu();
-              }}
-              className="h-8 w-full justify-start rounded-none"
-            >
-              <Earth className="size-4" />
-              Switch to Scene
             </Button>
           </>
         )}
@@ -924,6 +946,7 @@ function SceneHierarchyTab() {
 function ComponentHierarchyTab() {
   const {
     project,
+    addComponent,
     addComponentFromLibrary,
     addComponentInstance,
     deleteComponent,
@@ -940,12 +963,21 @@ function ComponentHierarchyTab() {
     setActiveHierarchyTab,
   } = useEditorStore();
   const [showLibrary, setShowLibrary] = useState(false);
+  const [savingComponentLibraryId, setSavingComponentLibraryId] = useState<string | null>(null);
   const components = project?.components ?? [];
   const componentFolders = project?.componentFolders ?? [];
+  const convex = useConvex();
+  const { isAuthenticated } = useConvexAuth();
+  const createObjectLibraryItem = useMutation(api.objectLibrary.create);
+  const generateProjectAssetUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
+  const upsertProjectAsset = useMutation(api.projectAssets.upsert);
+  const { showAlert, showConfirm } = useModal();
 
-  const handleAddInstance = () => {
-    if (!selectedSceneId || !selectedComponentId) return;
-    addComponentInstance(selectedSceneId, selectedComponentId);
+  const handleCreateComponent = () => {
+    const created = addComponent();
+    if (!created) return;
+    selectComponent(created.id);
+    setActiveHierarchyTab('component');
   };
 
   const handleLibrarySelect = (data: {
@@ -960,11 +992,91 @@ function ComponentHierarchyTab() {
   }) => {
     const created = addComponentFromLibrary(data);
     if (!created) {
-      window.alert('Failed to add component from library');
+      void showAlert({
+        title: 'Add Failed',
+        description: 'Failed to add component from library',
+        tone: 'destructive',
+      });
       return;
     }
     selectComponent(created.id);
     setActiveHierarchyTab('component');
+  };
+
+  const handleDeleteComponent = async (componentId: string) => {
+    if (!project || !componentId) return;
+
+    const component = components.find((item) => item.id === componentId);
+    const componentName = component?.name || 'Component';
+    const instanceCount = project.scenes.reduce((count, scene) => {
+      return count + scene.objects.filter((obj) => obj.componentId === componentId).length;
+    }, 0);
+
+    const confirmed = await showConfirm({
+      title: `Delete component "${componentName}"?`,
+      description: `This will detach ${instanceCount} instance${instanceCount === 1 ? '' : 's'} and keep them as standalone objects.`,
+      confirmLabel: 'Delete Component',
+      tone: 'destructive',
+    });
+    if (!confirmed) return;
+
+    deleteComponentWithHistory({
+      source: 'hierarchy-panel:delete-component',
+      componentId,
+      selectedComponentId,
+      deleteComponent,
+      selectComponent,
+    });
+  };
+
+  const handleSaveComponentToLibrary = async (component: ComponentDefinition) => {
+    if (!isAuthenticated) {
+      await showAlert({
+        title: 'Sign In Required',
+        description: 'Sign in to save objects to the cloud library.',
+      });
+      return;
+    }
+
+    setSavingComponentLibraryId(component.id);
+    try {
+      await saveRuntimeObjectToLibrary({
+        name: component.name,
+        costumes: component.costumes,
+        sounds: component.sounds,
+        blocklyXml: component.blocklyXml,
+        currentCostumeIndex: component.currentCostumeIndex,
+        physics: component.physics,
+        collider: component.collider,
+        localVariables: component.localVariables ?? [],
+      }, {
+        listMissingAssetIds: async (assetIds) => {
+          return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
+        },
+        generateUploadUrl: generateProjectAssetUploadUrl,
+        upsertAsset: async (args) => {
+          return await upsertProjectAsset({
+            assetId: args.assetId,
+            kind: args.kind,
+            mimeType: args.mimeType,
+            size: args.size,
+            storageId: args.storageId,
+          });
+        },
+        createItem: async (payload) => {
+          return await createObjectLibraryItem(payload);
+        },
+      });
+    } catch (error) {
+      console.error('Failed to save component to library:', error);
+      await showAlert({
+        title: 'Save Failed',
+        description: 'Failed to save component to library',
+        tone: 'destructive',
+      });
+    } finally {
+      setSavingComponentLibraryId(null);
+    }
   };
 
   return (
@@ -985,7 +1097,7 @@ function ComponentHierarchyTab() {
         onSelectItems={(componentIds, primaryComponentId) => {
           selectComponents(componentIds, primaryComponentId, { recordHistory: false });
         }}
-        onAddItem={handleAddInstance}
+        onAddItem={handleCreateComponent}
         onAddFolder={() => {
           const newFolder: ComponentFolder = {
             id: crypto.randomUUID(),
@@ -1006,7 +1118,8 @@ function ComponentHierarchyTab() {
             componentFolders.map((folder) => (folder.id === folderId ? { ...folder, name } : folder)),
           );
         }}
-        onDeleteItem={(componentId) => deleteComponent(componentId)}
+        onDeleteItem={handleDeleteComponent}
+        showRenameItemContextMenuAction={false}
         onDeleteFolder={(folderId) => {
           const descendants = collectFolderDescendants(folderId, componentFolders);
           updateComponentOrganization(
@@ -1033,6 +1146,9 @@ function ComponentHierarchyTab() {
             currentCostumeIndex={component.currentCostumeIndex}
           />
         )}
+        renderItemLabel={(component) => (
+          <ObjectComponentLabel name={component.name} isComponent />
+        )}
         onItemDragStart={(event, component) => {
           setDraggedComponentId(component.id);
           event.dataTransfer.effectAllowed = 'copyMove';
@@ -1042,22 +1158,37 @@ function ComponentHierarchyTab() {
           setDraggedComponentId(null);
         }}
         renderItemContextMenuActions={(component, closeMenu) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              selectComponent(component.id);
-              if (selectedSceneId) {
-                addComponentInstance(selectedSceneId, component.id);
-              }
-              closeMenu();
-            }}
-            disabled={!selectedSceneId}
-            className="h-8 w-full justify-start rounded-none"
-          >
-            <Plus className="size-4" />
-            Add to Scene
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void handleSaveComponentToLibrary(component);
+                closeMenu();
+              }}
+              disabled={savingComponentLibraryId === component.id}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <Library className="size-4" />
+              Save to Library
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                selectComponent(component.id);
+                if (selectedSceneId) {
+                  addComponentInstance(selectedSceneId, component.id);
+                }
+                closeMenu();
+              }}
+              disabled={!selectedSceneId}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <Plus className="size-4" />
+              Add to Scene
+            </Button>
+          </>
         )}
       />
       <ObjectLibraryBrowser

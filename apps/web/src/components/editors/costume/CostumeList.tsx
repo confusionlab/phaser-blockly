@@ -1,4 +1,11 @@
-import { useRef, useState, memo, useEffect, useMemo } from 'react';
+import {
+  useRef,
+  useState,
+  memo,
+  useEffect,
+  useMemo,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { Button } from '@/components/ui/button';
@@ -9,6 +16,7 @@ import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
+import { useAssetSidebarDrag } from '@/components/editors/shared/useAssetSidebarDrag';
 import type { Costume, CostumeAssetFrame, CostumeBounds, CostumeDocument } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { getCostumeBoundsInAssetSpace } from '@/lib/costume/costumeAssetFrame';
@@ -25,14 +33,21 @@ import {
 } from '@/lib/costume/costumeDocumentRender';
 import { prepareCostumeLibraryCreatePayload } from '@/lib/costumeLibrary/costumeLibraryAssets';
 import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface CostumeListProps {
   costumes: Costume[];
-  selectedIndex: number;
-  onSelectCostume: (index: number) => void;
+  activeCostumeId: string | null;
+  selectedCostumeIds: string[];
+  onSelectCostume: (
+    costumeId: string,
+    event: Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'shiftKey'>,
+  ) => void;
   onAddCostume: (costume: Costume) => void;
-  onDeleteCostume: (index: number) => void;
-  onRenameCostume: (index: number, name: string) => void;
+  onDeleteCostumes: (costumeIds: string[]) => void;
+  onRenameCostume: (costumeId: string, name: string) => void;
+  onPrepareCostumeDrag: (costumeId: string) => string[];
+  onReorderCostumes: (costumeIds: string[], targetIndex: number) => void;
 }
 
 const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costume: Costume }) {
@@ -161,19 +176,24 @@ const CostumeListPreview = memo(function CostumeListPreview({ costume }: { costu
 
 export const CostumeList = memo(({
   costumes,
-  selectedIndex,
+  activeCostumeId,
+  selectedCostumeIds,
   onSelectCostume,
   onAddCostume,
-  onDeleteCostume,
+  onDeleteCostumes,
   onRenameCostume,
+  onPrepareCostumeDrag,
+  onReorderCostumes,
 }: CostumeListProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState<number | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ index: number; x: number; y: number } | null>(null);
+  const { showAlert } = useModal();
+  const [contextMenu, setContextMenu] = useState<{ costumeId: string; x: number; y: number } | null>(null);
   const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
+  const selectedCostumeIdSet = new Set(selectedCostumeIds);
 
   const handleCloseContextMenu = () => setContextMenu(null);
 
@@ -194,6 +214,38 @@ export const CostumeList = memo(({
   const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
   const upsertProjectAsset = useMutation(api.projectAssets.upsert);
   const createLibraryItem = useMutation(api.costumeLibrary.create);
+  const contextMenuCostume = contextMenu
+    ? costumes.find((costume) => costume.id === contextMenu.costumeId) ?? null
+    : null;
+  const contextMenuCostumeIndex = contextMenuCostume
+    ? costumes.findIndex((costume) => costume.id === contextMenuCostume.id)
+    : -1;
+  const contextMenuDeleteIds = contextMenuCostume
+    ? (selectedCostumeIds.length > 1 && selectedCostumeIdSet.has(contextMenuCostume.id)
+        ? selectedCostumeIds
+        : [contextMenuCostume.id])
+    : [];
+  const canDeleteContextMenuCostumes = contextMenuDeleteIds.length > 0
+    && costumes.length - contextMenuDeleteIds.length >= 1;
+  const contextMenuDeleteLabel = contextMenuDeleteIds.length > 1
+    ? `Delete Selected (${contextMenuDeleteIds.length})`
+    : 'Delete';
+  const {
+    dropBoundaryRef,
+    draggedItemIds: draggedCostumeIds,
+    dropTarget,
+    clearDragState,
+    handleDragStart: handleCostumeDragStart,
+    handleDragOver: handleCostumeDragOver,
+    handleTailDragOver: handleTailCostumeDragOver,
+    handleDrop: handleCostumeDrop,
+    handleTailDrop: handleTailCostumeDrop,
+  } = useAssetSidebarDrag({
+    itemIds: costumes.map((costume) => costume.id),
+    dataTransferType: 'application/x-pocha-costume-ids',
+    onPrepareDrag: onPrepareCostumeDrag,
+    onReorder: onReorderCostumes,
+  });
 
   const handleAddBlank = () => {
     // Create a blank 1024x1024 transparent canvas as initial costume
@@ -267,7 +319,11 @@ export const CostumeList = memo(({
       onAddCostume(newCostume);
     } catch (error) {
       console.error('Failed to add costume from library:', error);
-      alert('Failed to add costume from library');
+      void showAlert({
+        title: 'Add Failed',
+        description: 'Failed to add costume from library',
+        tone: 'destructive',
+      });
     }
   };
 
@@ -275,7 +331,10 @@ export const CostumeList = memo(({
     const costume = costumes[index];
     if (!costume) return;
     if (!isAuthenticated) {
-      alert('Sign in to save costumes to the cloud library.');
+      await showAlert({
+        title: 'Sign In Required',
+        description: 'Sign in to save costumes to the cloud library.',
+      });
       return;
     }
 
@@ -301,7 +360,11 @@ export const CostumeList = memo(({
       await createLibraryItem(prepared.payload);
     } catch (error) {
       console.error('Failed to save costume to library:', error);
-      alert('Failed to save costume to library');
+      await showAlert({
+        title: 'Save Failed',
+        description: 'Failed to save costume to library',
+        tone: 'destructive',
+      });
     } finally {
       setSavingToLibrary(null);
     }
@@ -364,36 +427,68 @@ export const CostumeList = memo(({
             />
           </>
         }
-        contentClassName="space-y-2"
       >
-        {costumes.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center px-2 text-center text-muted-foreground">
-            <p className="text-xs">No costumes</p>
-            <p className="mt-1 text-xs">Click + to add</p>
-          </div>
-        ) : (
-          costumes.map((costume, index) => (
-            <AssetSidebarTile
-              key={costume.id}
-              index={index}
-              name={costume.name}
-              selected={index === selectedIndex}
-              onClick={() => onSelectCostume(index)}
-              onNameCommit={(name) => onRenameCostume(index, name)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setContextMenu({
-                  index,
-                  x: e.clientX,
-                  y: e.clientY,
-                });
-              }}
-              media={
-                <CostumeListPreview costume={costume} />
-              }
-            />
-          ))
-        )}
+        <div ref={dropBoundaryRef}>
+          {costumes.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center px-2 text-center text-muted-foreground">
+              <p className="text-xs">No costumes</p>
+              <p className="mt-1 text-xs">Click + to add</p>
+            </div>
+          ) : (
+            <>
+              {costumes.map((costume, index) => (
+                <div
+                  key={costume.id}
+                  className="relative py-1 first:pt-0"
+                  onDragOver={(event) => handleCostumeDragOver(event, index)}
+                  onDrop={(event) => handleCostumeDrop(event, index)}
+                >
+                  {dropTarget?.key === costume.id && dropTarget.dropPosition === 'before' ? (
+                    <div className="pointer-events-none absolute inset-x-1 top-0 z-10 h-0 border-t-2 border-primary" />
+                  ) : null}
+                  <AssetSidebarTile
+                    itemId={costume.id}
+                    index={index}
+                    name={costume.name}
+                    selected={selectedCostumeIdSet.has(costume.id)}
+                    active={costume.id === activeCostumeId}
+                    testId="costume-list-tile"
+                    dragging={draggedCostumeIds.includes(costume.id)}
+                    draggable
+                    onClick={(event) => onSelectCostume(costume.id, event)}
+                    onActivate={() => onSelectCostume(costume.id, { metaKey: false, ctrlKey: false, shiftKey: false })}
+                    onNameCommit={(name) => onRenameCostume(costume.id, name)}
+                    onContextMenu={(e: ReactMouseEvent<HTMLDivElement>) => {
+                      e.preventDefault();
+                      setContextMenu({
+                        costumeId: costume.id,
+                        x: e.clientX,
+                        y: e.clientY,
+                      });
+                    }}
+                    onDragStart={(event) => handleCostumeDragStart(event, costume.id)}
+                    onDragEnd={clearDragState}
+                    media={
+                      <CostumeListPreview costume={costume} />
+                    }
+                  />
+                  {dropTarget?.key === costume.id && dropTarget.dropPosition === 'after' ? (
+                    <div className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                  ) : null}
+                </div>
+              ))}
+              <div
+                className="relative h-3"
+                onDragOver={handleTailCostumeDragOver}
+                onDrop={handleTailCostumeDrop}
+              >
+                {dropTarget?.key === null && dropTarget.dropPosition === null ? (
+                  <div className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
       </AssetSidebar>
 
       {contextMenu && (
@@ -407,13 +502,15 @@ export const CostumeList = memo(({
               variant="ghost"
               size="sm"
               onClick={() => {
-                handleSaveToLibrary(contextMenu.index);
+                if (contextMenuCostume) {
+                  void handleSaveToLibrary(contextMenuCostumeIndex);
+                }
                 handleCloseContextMenu();
               }}
-              disabled={savingToLibrary === contextMenu.index}
+              disabled={!contextMenuCostume || contextMenuCostumeIndex < 0 || savingToLibrary === contextMenuCostumeIndex}
               className="w-full justify-start rounded-none h-8"
             >
-              {savingToLibrary === contextMenu.index ? (
+              {contextMenuCostume && savingToLibrary === contextMenuCostumeIndex ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Library className="size-4" />
@@ -424,7 +521,9 @@ export const CostumeList = memo(({
               variant="ghost"
               size="sm"
               onClick={() => {
-                handleDuplicateCostume(contextMenu.index);
+                if (contextMenuCostume) {
+                  handleDuplicateCostume(contextMenuCostumeIndex);
+                }
                 handleCloseContextMenu();
               }}
               className="w-full justify-start rounded-none h-8"
@@ -436,16 +535,16 @@ export const CostumeList = memo(({
               variant="ghost"
               size="sm"
               onClick={() => {
-                if (costumes.length > 1) {
-                  onDeleteCostume(contextMenu.index);
+                if (canDeleteContextMenuCostumes) {
+                  onDeleteCostumes(contextMenuDeleteIds);
                 }
                 handleCloseContextMenu();
               }}
-              disabled={costumes.length <= 1}
+              disabled={!canDeleteContextMenuCostumes}
               className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
             >
               <Trash2 className="size-4" />
-              Delete
+              {contextMenuDeleteLabel}
             </Button>
           </Card>
         </>

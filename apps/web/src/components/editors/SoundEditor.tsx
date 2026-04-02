@@ -4,11 +4,16 @@ import { useEditorStore } from '@/store/editorStore';
 import { SoundList } from './sound/SoundList';
 import { WaveformEditor } from './sound/WaveformEditor';
 import { RecordingStudio } from './sound/RecordingStudio';
+import { useBulkAssetSelection } from './shared/useBulkAssetSelection';
 import { getEffectiveObjectProps } from '@/types';
 import type { Sound } from '@/types';
 import { blobToDataUrl } from '@/utils/convexHelpers';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import { Button } from '@/components/ui/button';
+import {
+  reorderAssetList,
+  resolveNextActiveAssetIdAfterRemoval,
+} from '@/lib/editor/assetSidebarList';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { Check, Loader2, RotateCcw } from '@/components/ui/icons';
 
@@ -22,7 +27,7 @@ interface DraftRecording {
 }
 
 export function SoundEditor() {
-  const [selectedSoundIndex, setSelectedSoundIndex] = useState(0);
+  const [activeSoundId, setActiveSoundId] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<'edit' | 'record' | 'review'>('edit');
   const [draftRecording, setDraftRecording] = useState<DraftRecording | null>(null);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
@@ -52,10 +57,18 @@ export function SoundEditor() {
   }, [component, object, project]);
 
   const sounds = useMemo(() => effectiveProps?.sounds || [], [effectiveProps]);
-
-  // Keep selected index in bounds
-  const validSelectedIndex = Math.min(selectedSoundIndex, Math.max(0, sounds.length - 1));
-  const selectedSound = sounds[validSelectedIndex] ?? null;
+  const hasSounds = sounds.length > 0;
+  const orderedSoundIds = useMemo(() => sounds.map((sound) => sound.id), [sounds]);
+  const resolvedActiveSoundId = useMemo(() => {
+    if (activeSoundId && orderedSoundIds.includes(activeSoundId)) {
+      return activeSoundId;
+    }
+    return orderedSoundIds[0] ?? null;
+  }, [activeSoundId, orderedSoundIds]);
+  const activeSoundIndex = resolvedActiveSoundId
+    ? sounds.findIndex((sound) => sound.id === resolvedActiveSoundId)
+    : -1;
+  const selectedSound = activeSoundIndex >= 0 ? sounds[activeSoundIndex] ?? null : null;
   const reviewSound = useMemo<Sound | null>(() => {
     if (!draftRecording) {
       return null;
@@ -72,6 +85,27 @@ export function SoundEditor() {
   }, [draftRecording]);
 
   useEffect(() => {
+    if (resolvedActiveSoundId !== activeSoundId) {
+      setActiveSoundId(resolvedActiveSoundId);
+    }
+  }, [activeSoundId, resolvedActiveSoundId]);
+
+  const {
+    selectedIds: selectedSoundIds,
+    replaceSelection: replaceSelectedSoundIds,
+    handleItemClick: handleSoundListClick,
+    prepareDragSelection: prepareSoundDragSelection,
+  } = useBulkAssetSelection({
+    orderedIds: orderedSoundIds,
+    activeId: resolvedActiveSoundId,
+    onActivate: (soundId) => {
+      setDraftError(null);
+      setActiveSoundId(soundId);
+      setWorkspaceMode('edit');
+    },
+  });
+
+  useEffect(() => {
     const draftUrl = draftRecording?.url;
     return () => {
       if (draftUrl) {
@@ -80,18 +114,13 @@ export function SoundEditor() {
     };
   }, [draftRecording?.url]);
 
-  const handleSelectSound = useCallback((index: number) => {
-    setDraftError(null);
-    setSelectedSoundIndex(index);
-    setWorkspaceMode('edit');
-  }, []);
-
   const handleAddSound = useCallback(
     (sound: Sound) => {
       if (selectedComponentId) {
         const updatedSounds = [...sounds, sound];
         updateComponent(selectedComponentId, { sounds: updatedSounds });
-        setSelectedSoundIndex(updatedSounds.length - 1);
+        setActiveSoundId(sound.id);
+        replaceSelectedSoundIds([sound.id], { anchorId: sound.id });
         setDraftRecording(null);
         setDraftError(null);
         setWorkspaceMode('edit');
@@ -100,73 +129,87 @@ export function SoundEditor() {
       if (!selectedSceneId || !selectedObjectId) return;
       const updatedSounds = [...sounds, sound];
       updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
-      // Select the newly added sound
-      setSelectedSoundIndex(updatedSounds.length - 1);
+      setActiveSoundId(sound.id);
+      replaceSelectedSoundIds([sound.id], { anchorId: sound.id });
       setDraftRecording(null);
       setDraftError(null);
       setWorkspaceMode('edit');
     },
-    [selectedComponentId, selectedObjectId, selectedSceneId, sounds, updateComponent, updateObject]
+    [
+      replaceSelectedSoundIds,
+      selectedComponentId,
+      selectedObjectId,
+      selectedSceneId,
+      sounds,
+      updateComponent,
+      updateObject,
+    ],
   );
 
-  const handleDeleteSound = useCallback(
-    (index: number) => {
-      if (selectedComponentId) {
-        const updatedSounds = sounds.filter((_, i) => i !== index);
-        updateComponent(selectedComponentId, { sounds: updatedSounds });
-        if (index <= validSelectedIndex && validSelectedIndex > 0) {
-          setSelectedSoundIndex(validSelectedIndex - 1);
-        }
-        return;
-      }
-      if (!selectedSceneId || !selectedObjectId) return;
+  const updateSounds = useCallback((nextSounds: Sound[]) => {
+    if (selectedComponentId) {
+      updateComponent(selectedComponentId, { sounds: nextSounds });
+      return;
+    }
+    if (!selectedSceneId || !selectedObjectId) {
+      return;
+    }
+    updateObject(selectedSceneId, selectedObjectId, { sounds: nextSounds });
+  }, [selectedComponentId, selectedObjectId, selectedSceneId, updateComponent, updateObject]);
 
-      const updatedSounds = sounds.filter((_, i) => i !== index);
-      updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
+  const handleDeleteSounds = useCallback((soundIds: string[]) => {
+    const uniqueSoundIds = Array.from(new Set(soundIds));
+    if (uniqueSoundIds.length === 0) {
+      return;
+    }
 
-      // Adjust selected index if needed
-      if (index <= validSelectedIndex && validSelectedIndex > 0) {
-        setSelectedSoundIndex(validSelectedIndex - 1);
-      }
-    },
-    [selectedComponentId, selectedObjectId, selectedSceneId, sounds, updateComponent, updateObject, validSelectedIndex]
-  );
+    const updatedSounds = sounds.filter((sound) => !uniqueSoundIds.includes(sound.id));
+    if (updatedSounds.length === sounds.length) {
+      return;
+    }
+
+    const nextActiveSoundId = resolveNextActiveAssetIdAfterRemoval(
+      orderedSoundIds,
+      resolvedActiveSoundId,
+      uniqueSoundIds,
+    );
+    setActiveSoundId(nextActiveSoundId);
+    updateSounds(updatedSounds);
+    setDraftError(null);
+    setWorkspaceMode(updatedSounds.length === 0 ? 'record' : 'edit');
+  }, [orderedSoundIds, resolvedActiveSoundId, sounds, updateSounds]);
 
   const handleRenameSound = useCallback(
-    (index: number, newName: string) => {
-      if (selectedComponentId) {
-        const updatedSounds = sounds.map((s, i) =>
-          i === index ? { ...s, name: newName } : s
-        );
-        updateComponent(selectedComponentId, { sounds: updatedSounds });
-        return;
-      }
-      if (!selectedSceneId || !selectedObjectId) return;
-      const updatedSounds = sounds.map((s, i) =>
-        i === index ? { ...s, name: newName } : s
+    (soundId: string, newName: string) => {
+      const updatedSounds = sounds.map((sound) =>
+        sound.id === soundId ? { ...sound, name: newName } : sound
       );
-      updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
+      updateSounds(updatedSounds);
     },
-    [selectedComponentId, selectedObjectId, selectedSceneId, sounds, updateComponent, updateObject]
+    [sounds, updateSounds],
   );
 
   const handleTrimChange = useCallback(
     (trimStart: number, trimEnd: number) => {
-      if (selectedComponentId && selectedSound) {
-        const updatedSounds = sounds.map((s, i) =>
-          i === validSelectedIndex ? { ...s, trimStart, trimEnd } : s
-        );
-        updateComponent(selectedComponentId, { sounds: updatedSounds });
+      if (!selectedSound || !resolvedActiveSoundId) {
         return;
       }
-      if (!selectedSceneId || !selectedObjectId || !selectedSound) return;
-      const updatedSounds = sounds.map((s, i) =>
-        i === validSelectedIndex ? { ...s, trimStart, trimEnd } : s
+
+      const updatedSounds = sounds.map((sound) =>
+        sound.id === resolvedActiveSoundId ? { ...sound, trimStart, trimEnd } : sound
       );
-      updateObject(selectedSceneId, selectedObjectId, { sounds: updatedSounds });
+      updateSounds(updatedSounds);
     },
-    [selectedComponentId, selectedObjectId, selectedSceneId, selectedSound, sounds, updateComponent, updateObject, validSelectedIndex]
+    [resolvedActiveSoundId, selectedSound, sounds, updateSounds]
   );
+
+  const handleReorderSounds = useCallback((soundIds: string[], targetIndex: number) => {
+    const updatedSounds = reorderAssetList(sounds, soundIds, targetIndex);
+    if (!updatedSounds) {
+      return;
+    }
+    updateSounds(updatedSounds);
+  }, [sounds, updateSounds]);
 
   const handleReviewTrimChange = useCallback((trimStart: number, trimEnd: number) => {
     setDraftRecording((currentDraft) => currentDraft ? { ...currentDraft, trimStart, trimEnd } : currentDraft);
@@ -258,31 +301,32 @@ export function SoundEditor() {
     );
   }
 
+  const showRecorder = workspaceMode === 'record' || (workspaceMode === 'edit' && !hasSounds);
+
   return (
     <div className="flex flex-1 h-full min-h-0 overflow-hidden">
       <SoundList
         sounds={sounds}
-        selectedIndex={validSelectedIndex}
+        activeSoundId={resolvedActiveSoundId}
+        selectedSoundIds={selectedSoundIds}
         onOpenRecorder={() => {
           setDraftError(null);
           setWorkspaceMode('record');
         }}
-        onSelectSound={handleSelectSound}
+        onSelectSound={handleSoundListClick}
         onAddSound={handleAddSound}
-        onDeleteSound={handleDeleteSound}
+        onDeleteSounds={handleDeleteSounds}
         onRenameSound={handleRenameSound}
+        onPrepareSoundDrag={prepareSoundDragSelection}
+        onReorderSounds={handleReorderSounds}
       />
 
-      {workspaceMode === 'record' ? (
+      {showRecorder ? (
         <RecordingStudio onReviewRecording={handleReviewRecording} />
       ) : (
         <WaveformEditor
           sound={workspaceMode === 'review' ? reviewSound : selectedSound}
           onTrimChange={workspaceMode === 'review' ? handleReviewTrimChange : handleTrimChange}
-          onCreateRecording={() => {
-            setDraftError(null);
-            setWorkspaceMode('record');
-          }}
           footer={editorFooter}
         />
       )}

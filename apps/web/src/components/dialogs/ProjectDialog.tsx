@@ -25,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Download, Trash2, Upload, Plus, FolderOpen } from '@/components/ui/icons';
 import { createDefaultProject } from '@/types';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface ProjectDialogProps {
   onClose?: () => void;
@@ -52,6 +53,7 @@ export function ProjectDialog({
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const { showAlert, showConfirm } = useModal();
 
   // Cloud sync hook
   const { syncAllFromCloud, deleteProjectFromCloud } = useCloudSync({
@@ -120,20 +122,33 @@ export function ProjectDialog({
 
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this project?')) {
+    const confirmed = await showConfirm({
+      title: 'Delete Project',
+      description: 'Are you sure you want to delete this project?',
+      confirmLabel: 'Delete',
+      tone: 'destructive',
+    });
+    if (!confirmed) {
       return;
     }
 
     const cloudProjectExists = !!cloudProjectSummaries?.some((project) => project.localId === projectId);
     if (isConvexAuthenticated && cloudProjectSummaries === undefined) {
-      alert('Cloud project list is still loading. Please try deleting again in a moment.');
+      await showAlert({
+        title: 'Projects Still Loading',
+        description: 'Cloud project list is still loading. Please try deleting again in a moment.',
+      });
       return;
     }
 
     if (cloudProjectExists) {
       const deletedInCloud = await deleteProjectFromCloud(projectId);
       if (!deletedInCloud) {
-        alert('Could not delete the cloud project. Please try again.');
+        await showAlert({
+          title: 'Delete Failed',
+          description: 'Could not delete the cloud project. Please try again.',
+          tone: 'destructive',
+        });
         return;
       }
     }

@@ -448,7 +448,7 @@ function resolveBlockReference(root: Element, path: string): BlockReference {
 
     const blockType = currentRef.block.getAttribute('type') || '';
     const usesNextConnection = assistantStatementUsesNextConnection(blockType, step.name);
-    const container = usesNextConnection
+    const container: Element | null = usesNextConnection
       ? getDirectChildByTagName(currentRef.block, 'next')
       : getDirectChildByTagName(currentRef.block, 'statement', step.name);
     let statementBlock = getFirstChildBlock(container);

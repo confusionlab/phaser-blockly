@@ -17,6 +17,7 @@ import {
   type SceneLibraryListItemData,
 } from '@/lib/sceneLibrary/sceneLibraryAssets';
 import type { ComponentDefinition, ComponentFolder, Scene } from '@/types';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface SceneLibraryItem extends SceneLibraryListItemData {
   _id: Id<'sceneLibrary'>;
@@ -42,12 +43,19 @@ export function SceneLibraryBrowser({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loadingSelect, setLoadingSelect] = useState(false);
   const { isAuthenticated } = useConvexAuth();
+  const { showAlert, showConfirm } = useModal();
 
   const items = useQuery(api.sceneLibrary.list, open ? {} : 'skip') as SceneLibraryItem[] | undefined;
   const removeItem = useMutation(api.sceneLibrary.remove);
 
   const handleDelete = async (id: Id<'sceneLibrary'>) => {
-    if (!confirm('Delete this scene from library?')) return;
+    const confirmed = await showConfirm({
+      title: 'Delete Scene',
+      description: 'Delete this scene from library?',
+      confirmLabel: 'Delete',
+      tone: 'destructive',
+    });
+    if (!confirmed) return;
     try {
       await removeItem({ id });
       if (selectedId === id) {
@@ -55,7 +63,11 @@ export function SceneLibraryBrowser({
       }
     } catch (error) {
       console.error('Failed to delete scene:', error);
-      alert('Failed to delete scene');
+      await showAlert({
+        title: 'Delete Failed',
+        description: 'Failed to delete scene',
+        tone: 'destructive',
+      });
     }
   };
 
@@ -72,7 +84,11 @@ export function SceneLibraryBrowser({
       onOpenChange(false);
     } catch (error) {
       console.error('Failed to load scene:', error);
-      alert('Failed to load scene from library');
+      await showAlert({
+        title: 'Load Failed',
+        description: 'Failed to load scene from library',
+        tone: 'destructive',
+      });
     } finally {
       setLoadingSelect(false);
     }

@@ -25,6 +25,7 @@ import {
   hydrateObjectLibraryItemForInsertion,
   type ObjectLibraryListItemData,
 } from '@/lib/objectLibrary/objectLibraryAssets';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface ObjectLibraryItem extends ObjectLibraryListItemData {
   _id: Id<"objectLibrary">;
@@ -54,18 +55,29 @@ export function ObjectLibraryBrowser({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loadingSelect, setLoadingSelect] = useState(false);
   const { isAuthenticated } = useConvexAuth();
+  const { showAlert, showConfirm } = useModal();
 
   const items = useQuery(api.objectLibrary.list, open ? {} : "skip") as ObjectLibraryItem[] | undefined;
   const removeItem = useMutation(api.objectLibrary.remove);
 
   const handleDelete = async (id: Id<"objectLibrary">) => {
-    if (!confirm("Delete this object from library?")) return;
+    const confirmed = await showConfirm({
+      title: 'Delete Object',
+      description: 'Delete this object from library?',
+      confirmLabel: 'Delete',
+      tone: 'destructive',
+    });
+    if (!confirmed) return;
     try {
       await removeItem({ id });
       if (selectedId === id) setSelectedId(null);
     } catch (error) {
       console.error("Failed to delete object:", error);
-      alert("Failed to delete object");
+      await showAlert({
+        title: 'Delete Failed',
+        description: 'Failed to delete object',
+        tone: 'destructive',
+      });
     }
   };
 
@@ -82,7 +94,11 @@ export function ObjectLibraryBrowser({
       onOpenChange(false);
     } catch (error) {
       console.error("Failed to load object:", error);
-      alert("Failed to load object from library");
+      await showAlert({
+        title: 'Load Failed',
+        description: 'Failed to load object from library',
+        tone: 'destructive',
+      });
     } finally {
       setLoadingSelect(false);
     }

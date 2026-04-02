@@ -19,6 +19,7 @@ import {
   type SoundLibraryListItemData,
 } from "@/lib/soundLibrary/soundLibraryAssets";
 import { ensureLibraryAssetRefsInCloud } from "@/lib/templateLibrary/libraryAssetRefs";
+import { useModal } from "@/components/ui/modal-provider";
 
 interface SoundLibraryBrowserProps {
   open: boolean;
@@ -51,6 +52,7 @@ export function SoundLibraryBrowser({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const { isAuthenticated } = useConvexAuth();
+  const { showAlert, showConfirm } = useModal();
 
   const items = useQuery(api.soundLibrary.list, open ? {} : "skip") as Array<SoundLibraryListItemData & {
     _id: Id<"soundLibrary">;
@@ -102,7 +104,11 @@ export function SoundLibraryBrowser({
       }
     } catch (error) {
       console.error("Failed to upload sound:", error);
-      alert("Failed to upload sound");
+      await showAlert({
+        title: "Upload Failed",
+        description: "Failed to upload sound",
+        tone: "destructive",
+      });
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -110,7 +116,13 @@ export function SoundLibraryBrowser({
   };
 
   const handleDelete = async (id: Id<"soundLibrary">) => {
-    if (!confirm("Delete this sound from library?")) return;
+    const confirmed = await showConfirm({
+      title: "Delete Sound",
+      description: "Delete this sound from library?",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
 
     // Stop if this sound is playing
     if (playingId === id) {
@@ -123,7 +135,11 @@ export function SoundLibraryBrowser({
       if (selectedId === id) setSelectedId(null);
     } catch (error) {
       console.error("Failed to delete sound:", error);
-      alert("Failed to delete sound");
+      await showAlert({
+        title: "Delete Failed",
+        description: "Failed to delete sound",
+        tone: "destructive",
+      });
     }
   };
 
@@ -159,7 +175,11 @@ export function SoundLibraryBrowser({
       onOpenChange(false);
     } catch (error) {
       console.error("Failed to load sound:", error);
-      alert("Failed to load sound");
+      await showAlert({
+        title: "Load Failed",
+        description: "Failed to load sound",
+        tone: "destructive",
+      });
     } finally {
       setLoadingSelect(false);
     }

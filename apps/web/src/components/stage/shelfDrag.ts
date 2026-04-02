@@ -1,3 +1,5 @@
+import { useEffect, type RefObject } from 'react';
+
 let transparentDragImage: HTMLImageElement | null = null;
 let draggedComponentId: string | null = null;
 
@@ -50,6 +52,58 @@ export function getShelfRowDropPosition(options: {
     return 'after';
   }
   return 'on';
+}
+
+export function isClientPointInsideRect(
+  clientX: number,
+  clientY: number,
+  rect: DOMRect,
+): boolean {
+  return clientX >= rect.left
+    && clientX <= rect.right
+    && clientY >= rect.top
+    && clientY <= rect.bottom;
+}
+
+export function useShelfDropTargetBoundaryGuard(options: {
+  active: boolean;
+  boundaryRef: RefObject<HTMLElement | null>;
+  onExit: () => void;
+}): void {
+  const { active, boundaryRef, onExit } = options;
+
+  useEffect(() => {
+    if (!active || typeof window === 'undefined') {
+      return;
+    }
+
+    const handleWindowDragOver = (event: DragEvent) => {
+      const boundary = boundaryRef.current;
+      if (!boundary) {
+        onExit();
+        return;
+      }
+
+      const rect = boundary.getBoundingClientRect();
+      if (!isClientPointInsideRect(event.clientX, event.clientY, rect)) {
+        onExit();
+      }
+    };
+
+    const handleWindowDragEnd = () => {
+      onExit();
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    window.addEventListener('dragend', handleWindowDragEnd);
+    window.addEventListener('drop', handleWindowDragEnd);
+
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver);
+      window.removeEventListener('dragend', handleWindowDragEnd);
+      window.removeEventListener('drop', handleWindowDragEnd);
+    };
+  }, [active, boundaryRef, onExit]);
 }
 
 export function setDraggedComponentId(componentId: string | null): void {

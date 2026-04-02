@@ -1,4 +1,11 @@
-import { type ChangeEvent, memo, useEffect, useRef, useState } from 'react';
+import {
+  type ChangeEvent,
+  type MouseEvent as ReactMouseEvent,
+  memo,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { Button } from '@/components/ui/button';
@@ -6,39 +13,52 @@ import { Card } from '@/components/ui/card';
 import { SoundLibraryBrowser } from '@/components/dialogs/SoundLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
+import { useAssetSidebarDrag } from '@/components/editors/shared/useAssetSidebarDrag';
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import type { Sound } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { Library, Loader2, Mic, Save, Trash2, Upload, Volume2 } from '@/components/ui/icons';
 import { prepareSoundLibraryCreatePayload } from '@/lib/soundLibrary/soundLibraryAssets';
 import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface SoundListProps {
   sounds: Sound[];
-  selectedIndex: number;
+  activeSoundId: string | null;
+  selectedSoundIds: string[];
   onOpenRecorder: () => void;
-  onSelectSound: (index: number) => void;
+  onSelectSound: (
+    soundId: string,
+    event: Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'shiftKey'>,
+  ) => void;
   onAddSound: (sound: Sound) => void;
-  onDeleteSound: (index: number) => void;
-  onRenameSound: (index: number, name: string) => void;
+  onDeleteSounds: (soundIds: string[]) => void;
+  onRenameSound: (soundId: string, name: string) => void;
+  onPrepareSoundDrag: (soundId: string) => string[];
+  onReorderSounds: (soundIds: string[], targetIndex: number) => void;
 }
 
 export const SoundList = memo(({
   sounds,
-  selectedIndex,
+  activeSoundId,
+  selectedSoundIds,
   onOpenRecorder,
   onSelectSound,
   onAddSound,
-  onDeleteSound,
+  onDeleteSounds,
   onRenameSound,
+  onPrepareSoundDrag,
+  onReorderSounds,
 }: SoundListProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState<number | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ index: number; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ soundId: string; x: number; y: number } | null>(null);
   const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
+  const selectedSoundIdSet = new Set(selectedSoundIds);
+  const { showAlert } = useModal();
 
   const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
   const upsertProjectAsset = useMutation(api.projectAssets.upsert);
@@ -111,13 +131,20 @@ export const SoundList = memo(({
       });
     } catch (error) {
       console.error('Failed to add sound from library:', error);
-      alert('Failed to add sound from library');
+      await showAlert({
+        title: 'Add Failed',
+        description: 'Failed to add sound from library',
+        tone: 'destructive',
+      });
     }
   };
 
   const handleSaveToLibrary = async (index: number) => {
     if (!isAuthenticated) {
-      alert('Sign in to save sounds to the cloud library.');
+      await showAlert({
+        title: 'Sign In Required',
+        description: 'Sign in to save sounds to the cloud library.',
+      });
       return;
     }
 
@@ -148,13 +175,47 @@ export const SoundList = memo(({
       await createLibraryItem(prepared.payload);
     } catch (error) {
       console.error('Failed to save sound to library:', error);
-      alert('Failed to save sound to library');
+      await showAlert({
+        title: 'Save Failed',
+        description: 'Failed to save sound to library',
+        tone: 'destructive',
+      });
     } finally {
       setSavingToLibrary(null);
     }
   };
 
   const handleCloseContextMenu = () => setContextMenu(null);
+  const contextMenuSound = contextMenu
+    ? sounds.find((sound) => sound.id === contextMenu.soundId) ?? null
+    : null;
+  const contextMenuSoundIndex = contextMenuSound
+    ? sounds.findIndex((sound) => sound.id === contextMenuSound.id)
+    : -1;
+  const contextMenuDeleteIds = contextMenuSound
+    ? (selectedSoundIds.length > 1 && selectedSoundIdSet.has(contextMenuSound.id)
+        ? selectedSoundIds
+        : [contextMenuSound.id])
+    : [];
+  const contextMenuDeleteLabel = contextMenuDeleteIds.length > 1
+    ? `Delete Selected (${contextMenuDeleteIds.length})`
+    : 'Delete';
+  const {
+    dropBoundaryRef,
+    draggedItemIds: draggedSoundIds,
+    dropTarget,
+    clearDragState,
+    handleDragStart: handleSoundDragStart,
+    handleDragOver: handleSoundDragOver,
+    handleTailDragOver: handleTailSoundDragOver,
+    handleDrop: handleSoundDrop,
+    handleTailDrop: handleTailSoundDrop,
+  } = useAssetSidebarDrag({
+    itemIds: sounds.map((sound) => sound.id),
+    dataTransferType: 'application/x-pocha-sound-ids',
+    onPrepareDrag: onPrepareSoundDrag,
+    onReorder: onReorderSounds,
+  });
 
   return (
     <>
@@ -198,45 +259,75 @@ export const SoundList = memo(({
             />
           </>
         }
-        contentClassName="space-y-2"
       >
-        {sounds.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center px-2 text-center text-muted-foreground">
-            <Volume2 className="size-8" />
-            <p className="mt-2 text-xs">No sounds</p>
-            <p className="mt-1 text-xs">Use the toolbar to add one</p>
-          </div>
-        ) : (
-          <>
-            {sounds.map((sound, index) => {
-              const isSelected = index === selectedIndex;
+        <div ref={dropBoundaryRef}>
+          {sounds.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center px-2 text-center text-muted-foreground">
+              <Volume2 className="size-8" />
+              <p className="mt-2 text-xs">No sounds</p>
+            </div>
+          ) : (
+            <>
+              {sounds.map((sound, index) => {
+                const isSelected = selectedSoundIdSet.has(sound.id);
+                const isActive = sound.id === activeSoundId;
 
-              return (
-                <AssetSidebarTile
-                  key={sound.id}
-                  index={index}
-                  name={sound.name}
-                  selected={isSelected}
-                  onClick={() => onSelectSound(index)}
-                  onNameCommit={(name) => onRenameSound(index, name)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setContextMenu({
-                      index,
-                      x: event.clientX,
-                      y: event.clientY,
-                    });
-                  }}
-                  media={
-                    <div className="flex h-full items-center justify-center">
-                      <Volume2 className="size-8 text-muted-foreground" />
-                    </div>
-                  }
-                />
-              );
-            })}
-          </>
-        )}
+                return (
+                  <div
+                    key={sound.id}
+                    className="relative py-1 first:pt-0"
+                    onDragOver={(event) => handleSoundDragOver(event, index)}
+                    onDrop={(event) => handleSoundDrop(event, index)}
+                  >
+                    {dropTarget?.key === sound.id && dropTarget.dropPosition === 'before' ? (
+                      <div className="pointer-events-none absolute inset-x-1 top-0 z-10 h-0 border-t-2 border-primary" />
+                    ) : null}
+                    <AssetSidebarTile
+                      itemId={sound.id}
+                      index={index}
+                      name={sound.name}
+                      selected={isSelected}
+                      active={isActive}
+                      testId="sound-list-tile"
+                      dragging={draggedSoundIds.includes(sound.id)}
+                      draggable
+                      onClick={(event) => onSelectSound(sound.id, event)}
+                      onActivate={() => onSelectSound(sound.id, { metaKey: false, ctrlKey: false, shiftKey: false })}
+                      onNameCommit={(name) => onRenameSound(sound.id, name)}
+                      onContextMenu={(event: ReactMouseEvent<HTMLDivElement>) => {
+                        event.preventDefault();
+                        setContextMenu({
+                          soundId: sound.id,
+                          x: event.clientX,
+                          y: event.clientY,
+                        });
+                      }}
+                      onDragStart={(event) => handleSoundDragStart(event, sound.id)}
+                      onDragEnd={clearDragState}
+                      media={
+                        <div className="flex h-full items-center justify-center">
+                          <Volume2 className="size-8 text-muted-foreground" />
+                        </div>
+                      }
+                    />
+                    {dropTarget?.key === sound.id && dropTarget.dropPosition === 'after' ? (
+                      <div className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                    ) : null}
+                  </div>
+                );
+              })}
+              <div
+                className="relative h-3"
+                onDragOver={handleTailSoundDragOver}
+                onDrop={handleTailSoundDrop}
+              >
+                {dropTarget?.key === null && dropTarget.dropPosition === null ? (
+                  <div className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0 border-t-2 border-primary" />
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
       </AssetSidebar>
 
       {contextMenu ? (
@@ -250,13 +341,15 @@ export const SoundList = memo(({
               variant="ghost"
               size="sm"
               onClick={() => {
-                void handleSaveToLibrary(contextMenu.index);
+                if (contextMenuSound) {
+                  void handleSaveToLibrary(contextMenuSoundIndex);
+                }
                 handleCloseContextMenu();
               }}
-              disabled={!isAuthenticated || savingToLibrary === contextMenu.index}
+              disabled={!isAuthenticated || !contextMenuSound || contextMenuSoundIndex < 0 || savingToLibrary === contextMenuSoundIndex}
               className="h-8 w-full justify-start rounded-none"
             >
-              {savingToLibrary === contextMenu.index ? (
+              {contextMenuSound && savingToLibrary === contextMenuSoundIndex ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Save className="size-4" />
@@ -267,13 +360,13 @@ export const SoundList = memo(({
               variant="ghost"
               size="sm"
               onClick={() => {
-                onDeleteSound(contextMenu.index);
+                onDeleteSounds(contextMenuDeleteIds);
                 handleCloseContextMenu();
               }}
               className="h-8 w-full justify-start rounded-none text-destructive hover:text-destructive"
             >
               <Trash2 className="size-4" />
-              Delete
+              {contextMenuDeleteLabel}
             </Button>
           </Card>
         </>

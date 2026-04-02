@@ -120,6 +120,32 @@ interface CloudAssetApi {
   }) => Promise<unknown>;
 }
 
+interface SaveObjectLibraryItemApi extends CloudAssetApi {
+  createItem: (payload: {
+    name: string;
+    thumbnail: string;
+    costumes: Array<{
+      id: string;
+      name: string;
+      bounds?: CostumeBounds;
+      document: CostumeDocument;
+    }>;
+    sounds: Array<{
+      id: string;
+      name: string;
+      assetId: string;
+      duration?: number;
+      trimStart?: number;
+      trimEnd?: number;
+    }>;
+    blocklyXml: string;
+    currentCostumeIndex: number;
+    physics?: PhysicsConfig;
+    collider?: ColliderConfig;
+    localVariables: Variable[];
+  }) => Promise<unknown>;
+}
+
 function createTransparentThumbnailDataUrl(): string {
   const canvas = document.createElement('canvas');
   canvas.width = 8;
@@ -211,6 +237,22 @@ export async function prepareObjectLibraryCreatePayload(data: {
     },
     assetRefs: collectUniqueLibraryAssetRefs(assetRefs),
   };
+}
+
+export async function saveRuntimeObjectToLibrary(
+  data: RuntimeLibraryObjectData,
+  api: SaveObjectLibraryItemApi,
+): Promise<void> {
+  const prepared = await prepareObjectLibraryCreatePayload(data);
+
+  await ensureObjectLibraryAssetRefsInCloud(prepared.assetRefs, api);
+
+  await api.createItem({
+    ...prepared.payload,
+    physics: prepared.payload.physics ?? undefined,
+    collider: prepared.payload.collider ?? undefined,
+    localVariables: prepared.payload.localVariables,
+  });
 }
 
 export async function hydrateObjectLibraryItemForInsertion(

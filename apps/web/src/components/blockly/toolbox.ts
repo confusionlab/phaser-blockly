@@ -1448,13 +1448,8 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             },
           },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Targets',
-        colour: '#5CB1D6',
-        contents: [
+          { kind: 'sep', gap: '16' },
+          { kind: 'label', text: 'Targets' },
           { kind: 'block', type: 'object_from_dropdown' },
           { kind: 'block', type: 'target_camera' },
           { kind: 'block', type: 'target_myself' },

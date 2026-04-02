@@ -40,6 +40,7 @@ import { shouldTreatOpenedProjectAsCloudSaved } from '@/lib/cloudProjectState';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { isBlocklyShortcutTarget, isSceneObjectShortcutSurfaceTarget, isTextEntryTarget } from '@/utils/keyboard';
+import { useModal } from '@/components/ui/modal-provider';
 import {
   copySceneObjectsToClipboard,
   cutSceneObjectsWithHistory,
@@ -144,6 +145,7 @@ function ProjectRouteLoadingScreen({ detail, progress }: ProjectLoadState) {
 }
 
 export function EditorLayout() {
+  const { showAlert } = useModal();
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const {
@@ -790,7 +792,11 @@ export function EditorLayout() {
         allowPullIntoEditor: true,
       });
       if (!synced) {
-        alert('Cloud save failed. Please try Save Now again before leaving.');
+        await showAlert({
+          title: 'Cloud Save Failed',
+          description: 'Cloud save failed. Please try Save Now again before leaving.',
+          tone: 'destructive',
+        });
         return;
       }
     }
@@ -808,6 +814,7 @@ export function EditorLayout() {
     isSyncingCloud,
     navigate,
     project,
+    showAlert,
     syncCurrentProjectToCloud,
     syncProjectToCloud,
   ]);
@@ -826,9 +833,13 @@ export function EditorLayout() {
     };
     const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
     if (!synced) {
-      alert('Cloud save failed. Please try Save Now again.');
+      await showAlert({
+        title: 'Cloud Save Failed',
+        description: 'Cloud save failed. Please try Save Now again.',
+        tone: 'destructive',
+      });
     }
-  }, [isSyncingCloud, project, syncCurrentProjectToCloud]);
+  }, [isSyncingCloud, project, showAlert, syncCurrentProjectToCloud]);
 
   const handleToggleDarkMode = useCallback(async () => {
     const nextIsDarkMode = !isDarkMode;

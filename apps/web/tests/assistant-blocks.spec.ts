@@ -52,7 +52,9 @@ test.describe('assistant block catalog', () => {
 
     const allToolboxTypes = getToolboxRegisteredBlockTypes();
     const basicToolboxTypes = getToolboxRegisteredBlockTypes({ includeAdvancedBlocks: false });
+    const advancedToolbox = getToolboxConfig({ includeAdvancedBlocks: true });
     const basicToolbox = getToolboxConfig({ includeAdvancedBlocks: false });
+    const sensingCategory = advancedToolbox.contents.find((category) => category.name === 'Sensing');
     const debugCategory = basicToolbox.contents.find((category) => category.name === 'Debug');
     const targetsCategory = basicToolbox.contents.find((category) => category.name === 'Targets');
 
@@ -80,6 +82,16 @@ test.describe('assistant block catalog', () => {
     expect(basicToolboxTypes).not.toContain('sensing_all_touching_objects');
     expect(basicToolboxTypes).not.toContain('sensing_touching_direction_value');
     expect(basicToolboxTypes).not.toContain('event_when_touching_direction_value');
+    expect(sensingCategory?.contents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'label', text: 'Targets' }),
+        expect.objectContaining({ kind: 'block', type: 'object_from_dropdown' }),
+        expect.objectContaining({ kind: 'block', type: 'target_camera' }),
+        expect.objectContaining({ kind: 'block', type: 'target_myself' }),
+        expect.objectContaining({ kind: 'block', type: 'target_mouse' }),
+        expect.objectContaining({ kind: 'block', type: 'target_ground' }),
+      ]),
+    );
     expect(debugCategory).toBeUndefined();
     expect(targetsCategory).toBeUndefined();
   });

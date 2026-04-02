@@ -70,8 +70,9 @@ export function renderScreenSpaceTransformOverlay(
     if (proportionalGuide || proportionalGuideDiagonal || corner) {
       const diagonal = proportionalGuideDiagonal
         ?? (corner ? getTransformDiagonalFromCorner(corner) : DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL);
-      const diagonalLine = getTransformDiagonal(corners, diagonal)
-        ?? (corner ? getTransformCornerDiagonal(corners, corner) : null);
+      const diagonalLine = corner
+        ? getTransformCornerDiagonal(corners, corner)
+        : getTransformDiagonal(corners, diagonal);
       if (diagonalLine) {
         drawTransformProportionalGuide(ctx, diagonalLine.start, diagonalLine.end, strokeColor);
       }

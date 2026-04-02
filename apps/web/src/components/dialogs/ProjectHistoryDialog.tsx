@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { NameInputDialog } from '@/components/dialogs/NameInputDialog';
 import { useCloudSync } from '@/hooks/useCloudSync';
+import { useModal } from '@/components/ui/modal-provider';
 
 type HistoryFilter = 'all' | 'manual';
 type CheckpointDialogState =
@@ -68,6 +69,7 @@ export function ProjectHistoryDialog({
   const [checkpointDialogState, setCheckpointDialogState] = useState<CheckpointDialogState | null>(null);
   const [checkpointNameDraft, setCheckpointNameDraft] = useState('');
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
+  const { showAlert, showConfirm } = useModal();
 
   const reload = useCallback(async () => {
     if (!project) {
@@ -135,7 +137,10 @@ export function ProjectHistoryDialog({
       if (checkpointDialogState.mode === 'create') {
         const created = await createManualCheckpoint(project, normalized);
         if (!created) {
-          alert('No content changes since the latest revision, but your project is still safe with autosave.');
+          await showAlert({
+            title: 'Nothing New To Save',
+            description: 'No content changes since the latest revision, but your project is still safe with autosave.',
+          });
         } else {
           void syncProjectToCloud(project.id);
         }
@@ -163,9 +168,11 @@ export function ProjectHistoryDialog({
     if (!project) return;
 
     const label = revision.checkpointName || formatRevisionDate(revision.createdAt);
-    const confirmed = window.confirm(
-      `Restore as new project from "${label}"? This creates a new copy and keeps your current project unchanged.`,
-    );
+    const confirmed = await showConfirm({
+      title: 'Restore As New Project',
+      description: `Restore as new project from "${label}"? This creates a new copy and keeps your current project unchanged.`,
+      confirmLabel: 'Restore Copy',
+    });
     if (!confirmed) return;
 
     setLoading(true);
@@ -179,7 +186,7 @@ export function ProjectHistoryDialog({
     } finally {
       setLoading(false);
     }
-  }, [onOpenChange, onRestoredProject, project]);
+  }, [onOpenChange, onRestoredProject, project, showConfirm]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

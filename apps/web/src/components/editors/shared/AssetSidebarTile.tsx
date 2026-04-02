@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useState, type MouseEventHandler, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type DragEventHandler,
+  type KeyboardEventHandler,
+  type MouseEventHandler,
+  type ReactNode,
+} from 'react';
 import { Card } from '@/components/ui/card';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
@@ -8,10 +16,20 @@ interface AssetSidebarTileProps {
   index: number;
   name: string;
   selected: boolean;
+  active?: boolean;
   media: ReactNode;
-  onClick: () => void;
+  itemId?: string;
+  testId?: string;
+  dragging?: boolean;
+  draggable?: boolean;
+  onClick: MouseEventHandler<HTMLDivElement>;
+  onActivate?: () => void;
   onNameCommit: (name: string) => void;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
+  onDragStart?: DragEventHandler<HTMLDivElement>;
+  onDragOver?: DragEventHandler<HTMLDivElement>;
+  onDrop?: DragEventHandler<HTMLDivElement>;
+  onDragEnd?: DragEventHandler<HTMLDivElement>;
   cardClassName?: string;
   mediaClassName?: string;
   inputClassName?: string;
@@ -21,10 +39,20 @@ export function AssetSidebarTile({
   index,
   name,
   selected,
+  active = false,
   media,
+  itemId,
+  testId,
+  dragging = false,
+  draggable = false,
   onClick,
+  onActivate,
   onNameCommit,
   onContextMenu,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
   cardClassName,
   mediaClassName,
   inputClassName,
@@ -59,11 +87,37 @@ export function AssetSidebarTile({
     <Card
       onClick={onClick}
       onContextMenu={onContextMenu}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      draggable={draggable && !isEditing}
+      role="button"
+      tabIndex={0}
+      aria-label={name}
+      aria-pressed={active}
+      data-testid={testId}
+      data-sidebar-tile-id={itemId}
+      data-selected={selected ? 'true' : 'false'}
+      data-active={active ? 'true' : 'false'}
       className={cn(
-        'group relative h-fit cursor-pointer gap-0 border-transparent p-1.5 shadow-none transition-colors',
+        'group relative h-fit gap-0 border-transparent p-1.5 shadow-none transition-[background-color,box-shadow,opacity] focus-visible:outline-none',
+        draggable && !isEditing ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
         selected ? selectionSurfaceClassNames.selected : selectionSurfaceClassNames.interactiveHover,
+        active && 'ring-1 ring-inset ring-primary/35 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.28)]',
+        dragging && 'opacity-60',
         cardClassName,
       )}
+      onKeyDown={((event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          if (onActivate) {
+            onActivate();
+            return;
+          }
+          onClick(event as unknown as Parameters<typeof onClick>[0]);
+        }
+      }) as KeyboardEventHandler<HTMLDivElement>}
     >
       <div className={cn('relative aspect-square overflow-hidden rounded', mediaClassName)}>
         {media}
@@ -86,11 +140,12 @@ export function AssetSidebarTile({
         displayProps={{
           className: cn(
             'flex min-h-4 items-center justify-center truncate text-foreground',
-            selected ? 'opacity-100' : 'opacity-80',
+            active || selected ? 'opacity-100' : 'opacity-80',
           ),
           onDoubleClick: (event) => {
             event.preventDefault();
             event.stopPropagation();
+            onActivate?.();
             beginRename();
           },
           title: name,

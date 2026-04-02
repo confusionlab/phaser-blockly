@@ -11,6 +11,7 @@ import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { Variable, VariableType } from '@/types';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface VariableManagerDialogProps {
   open: boolean;
@@ -48,6 +49,7 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
   const { selectedSceneId, selectedObjectId, selectedComponentId } = useEditorStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const { showAlert, showConfirm } = useModal();
 
   // Get all variables
   const globalVariables = project?.globalVariables || [];
@@ -94,22 +96,40 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     updateComponent(componentIdForLocal, { localVariables: nextLocalVariables });
   };
 
-  const handleDeleteGlobal = (varId: string) => {
-    if (confirm('Delete this variable? Any blocks using it will stop working.')) {
+  const handleDeleteGlobal = async (varId: string) => {
+    const confirmed = await showConfirm({
+      title: 'Delete Variable',
+      description: 'Delete this variable? Any blocks using it will stop working.',
+      confirmLabel: 'Delete',
+      tone: 'destructive',
+    });
+    if (confirmed) {
       removeGlobalVariable(varId);
     }
   };
 
-  const handleDeleteLocal = (varId: string) => {
+  const handleDeleteLocal = async (varId: string) => {
     if (editingComponentOnly) {
-      if (confirm('Delete this variable? Any blocks using it will stop working.')) {
+      const confirmed = await showConfirm({
+        title: 'Delete Variable',
+        description: 'Delete this variable? Any blocks using it will stop working.',
+        confirmLabel: 'Delete',
+        tone: 'destructive',
+      });
+      if (confirmed) {
         updateComponentLocalVariables(localVariables.filter((v) => v.id !== varId));
       }
       return;
     }
 
     if (selectedSceneId && selectedObjectId) {
-      if (confirm('Delete this variable? Any blocks using it will stop working.')) {
+      const confirmed = await showConfirm({
+        title: 'Delete Variable',
+        description: 'Delete this variable? Any blocks using it will stop working.',
+        confirmLabel: 'Delete',
+        tone: 'destructive',
+      });
+      if (confirmed) {
         removeLocalVariable(selectedSceneId, selectedObjectId, varId);
       }
     }
@@ -129,7 +149,10 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     const trimmed = editName.trim();
     if (trimmed && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
       if (hasDuplicateGlobalName(trimmed, varId)) {
-        alert('A global variable with this name already exists.');
+        void showAlert({
+          title: 'Duplicate Variable Name',
+          description: 'A global variable with this name already exists.',
+        });
         return;
       }
       updateGlobalVariable(varId, { name: trimmed });
@@ -147,7 +170,10 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     }
 
     if (hasDuplicateLocalName(trimmed, varId)) {
-      alert('A local variable with this name already exists.');
+      void showAlert({
+        title: 'Duplicate Variable Name',
+        description: 'A local variable with this name already exists.',
+      });
       return;
     }
 

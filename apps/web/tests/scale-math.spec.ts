@@ -3,6 +3,10 @@ import { toggleScaleDirection } from '../src/phaser/scaleMath';
 import {
   DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL,
   computeCornerScaleResult,
+  getTransformCornerDiagonal,
+  getTransformGizmoCornerHitRadius,
+  getTransformGizmoRotateRingRadii,
+  hitTransformGizmoCornerTarget,
   resolveTransformProportionalGuideDiagonal,
 } from '../src/lib/editor/unifiedTransformGizmo';
 
@@ -80,5 +84,74 @@ test.describe('scale math', () => {
     expect(resolveTransformProportionalGuideDiagonal('se')).toBe('nw-se');
     expect(resolveTransformProportionalGuideDiagonal('ne')).toBe('ne-sw');
     expect(resolveTransformProportionalGuideDiagonal('sw')).toBe('ne-sw');
+  });
+
+  test('corner proportional guide starts from the stationary opposite corner', () => {
+    const corners = {
+      nw: { x: 0, y: 0 },
+      ne: { x: 10, y: 0 },
+      se: { x: 10, y: 10 },
+      sw: { x: 0, y: 10 },
+    };
+
+    expect(getTransformCornerDiagonal(corners, 'nw')).toEqual({
+      start: corners.se,
+      end: corners.nw,
+    });
+    expect(getTransformCornerDiagonal(corners, 'ne')).toEqual({
+      start: corners.sw,
+      end: corners.ne,
+    });
+    expect(getTransformCornerDiagonal(corners, 'se')).toEqual({
+      start: corners.nw,
+      end: corners.se,
+    });
+    expect(getTransformCornerDiagonal(corners, 'sw')).toEqual({
+      start: corners.ne,
+      end: corners.sw,
+    });
+  });
+
+  test('corner scale hit radius expands slightly without stealing the rotate ring', () => {
+    const handleRadius = 7;
+    const cornerHitRadius = getTransformGizmoCornerHitRadius(handleRadius);
+    const rotateRing = getTransformGizmoRotateRingRadii(handleRadius);
+
+    expect(cornerHitRadius).toBeGreaterThan(handleRadius);
+    expect(cornerHitRadius).toBeLessThan(rotateRing.innerRadius);
+  });
+
+  test('near-corner hover prefers corner scale before edge-like positions', () => {
+    const target = hitTransformGizmoCornerTarget(
+      { x: 8.2, y: 0 },
+      {
+        nw: { x: 0, y: 0 },
+        ne: { x: 100, y: 0 },
+        se: { x: 100, y: 100 },
+        sw: { x: 0, y: 100 },
+      },
+      7,
+      7,
+      0,
+    );
+
+    expect(target).toBe('scale-nw');
+  });
+
+  test('rotate ring still wins outside the expanded corner scale radius', () => {
+    const target = hitTransformGizmoCornerTarget(
+      { x: -9.2, y: -1 },
+      {
+        nw: { x: 0, y: 0 },
+        ne: { x: 100, y: 0 },
+        se: { x: 100, y: 100 },
+        sw: { x: 0, y: 100 },
+      },
+      7,
+      7,
+      0,
+    );
+
+    expect(target).toBe('rotate-nw');
   });
 });

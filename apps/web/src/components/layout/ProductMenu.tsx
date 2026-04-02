@@ -66,7 +66,6 @@ interface ProductMenuProps {
   onExportProject: () => void;
   onGoToDashboard: () => void;
   onOpenHistory: () => void;
-  onRenameProject: () => void;
   onToggleAdvancedBlocks: () => void;
   onToggleTheme: () => void;
 }
@@ -180,7 +179,7 @@ function renderHierarchicalItems(items: readonly ProductMenuItem[]): React.React
           key={item.id}
           checked={item.checked}
           onCheckedChange={() => item.onToggle()}
-          className="rounded-xl px-3 py-2 text-[13px]"
+          className="rounded-xl py-2 pr-3 pl-9 text-[13px]"
         >
           <span className="truncate">{item.label}</span>
           {item.shortcut ? <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut> : null}
@@ -213,7 +212,6 @@ export function ProductMenu({
   onExportProject,
   onGoToDashboard,
   onOpenHistory,
-  onRenameProject,
   onToggleAdvancedBlocks,
   onToggleTheme,
 }: ProductMenuProps) {
@@ -240,14 +238,6 @@ export function ProductMenu({
         label: 'Project',
         keywords: ['export', 'history', 'version'],
         children: [
-          {
-            kind: 'action',
-            id: 'rename-project',
-            label: 'Rename Project',
-            keywords: ['project', 'rename', 'title', 'name'],
-            onSelect: onRenameProject,
-          },
-          { kind: 'separator', id: 'project-actions-separator' },
           {
             kind: 'action',
             id: 'export-project',
@@ -307,7 +297,6 @@ export function ProductMenu({
     onExportProject,
     onGoToDashboard,
     onOpenHistory,
-    onRenameProject,
     showAdvancedBlocks,
     onToggleTheme,
   ]);

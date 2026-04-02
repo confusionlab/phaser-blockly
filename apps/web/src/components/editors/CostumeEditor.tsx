@@ -72,6 +72,7 @@ import {
   mergeCostumeLayers,
   rasterizeCostumeLayer,
 } from '@/lib/costume/costumeLayerOperations';
+import { useBulkAssetSelection } from './shared/useBulkAssetSelection';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
@@ -247,9 +248,11 @@ export function CostumeEditor() {
   }, [component, object, project]);
 
   const costumes = useMemo(() => effectiveProps?.costumes || [], [effectiveProps]);
+  const orderedCostumeIds = useMemo(() => costumes.map((costume) => costume.id), [costumes]);
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
   const currentCostume = costumes[currentCostumeIndex];
+  const activeCostumeId = currentCostume?.id ?? null;
   const currentSession = useMemo(() => {
     const target = createCostumeTarget(selectedSceneId, selectedObjectId, selectedComponentId, currentCostume?.id ?? null);
     return target ? createCostumeEditorSession(target) : null;
@@ -281,6 +284,25 @@ export function CostumeEditor() {
     () => createCostumeObjectTarget(selectedSceneId, selectedObjectId, selectedComponentId),
     [selectedComponentId, selectedObjectId, selectedSceneId],
   );
+  const {
+    selectedIds: selectedCostumeIds,
+    replaceSelection: replaceSelectedCostumeIds,
+    handleItemClick: handleCostumeListClick,
+    prepareDragSelection: prepareCostumeDragSelection,
+  } = useBulkAssetSelection({
+    orderedIds: orderedCostumeIds,
+    activeId: activeCostumeId,
+    onActivate: (costumeId) => {
+      if (!currentObjectTarget) {
+        return;
+      }
+
+      applyOperationToCurrentObject({
+        type: 'select',
+        costumeId,
+      });
+    },
+  });
   currentSessionRef.current = currentSession;
   const initialEditorMode: CostumeEditorMode = editorCostume
     ? getInitialCostumeEditorMode(editorCostume)
@@ -1112,51 +1134,46 @@ export function CostumeEditor() {
     resolvePersistedStateWithCanvasState,
   ]);
 
-  const handleSelectCostume = useCallback((index: number) => {
-    if (!currentObjectTarget) return;
-
-    const nextCostume = costumes[index];
-    if (!nextCostume) return;
-
-    applyOperationToCurrentObject({
-      type: 'select',
-      costumeId: nextCostume.id,
-    });
-  }, [applyOperationToCurrentObject, costumes, currentObjectTarget]);
-
   const handleAddCostume = useCallback((costume: Costume) => {
     if (!currentObjectTarget) return;
 
+    replaceSelectedCostumeIds([costume.id], { anchorId: costume.id });
     applyOperationToCurrentObject({
       type: 'add',
       costume,
     });
-  }, [applyOperationToCurrentObject, currentObjectTarget]);
+  }, [applyOperationToCurrentObject, currentObjectTarget, replaceSelectedCostumeIds]);
 
-  const handleDeleteCostume = useCallback((index: number) => {
+  const handleDeleteCostumes = useCallback((costumeIds: string[]) => {
     if (!currentObjectTarget) return;
-
-    const costume = costumes[index];
-    if (!costume) return;
+    if (costumeIds.length === 0) return;
 
     applyOperationToCurrentObject({
-      type: 'remove',
-      costumeId: costume.id,
+      type: 'removeMany',
+      costumeIds,
     });
-  }, [applyOperationToCurrentObject, costumes, currentObjectTarget]);
+  }, [applyOperationToCurrentObject, currentObjectTarget]);
 
-  const handleRenameCostume = useCallback((index: number, name: string) => {
+  const handleRenameCostume = useCallback((costumeId: string, name: string) => {
     if (!currentObjectTarget) return;
-
-    const costume = costumes[index];
-    if (!costume) return;
 
     applyOperationToCurrentObject({
       type: 'rename',
-      costumeId: costume.id,
+      costumeId,
       name,
     });
-  }, [applyOperationToCurrentObject, costumes, currentObjectTarget]);
+  }, [applyOperationToCurrentObject, currentObjectTarget]);
+
+  const handleReorderCostumes = useCallback((costumeIds: string[], targetIndex: number) => {
+    if (!currentObjectTarget) return;
+    if (costumeIds.length === 0) return;
+
+    applyOperationToCurrentObject({
+      type: 'reorder',
+      costumeIds,
+      targetIndex,
+    });
+  }, [applyOperationToCurrentObject, currentObjectTarget]);
 
   const handleSelectLayer = useCallback((layerId: string) => {
     if (isLoadingRef.current) {
@@ -1548,11 +1565,14 @@ export function CostumeEditor() {
     <div className="relative flex h-full overflow-hidden">
       <CostumeList
         costumes={costumes}
-        selectedIndex={currentCostumeIndex}
-        onSelectCostume={handleSelectCostume}
+        activeCostumeId={activeCostumeId}
+        selectedCostumeIds={selectedCostumeIds}
+        onSelectCostume={handleCostumeListClick}
         onAddCostume={handleAddCostume}
-        onDeleteCostume={handleDeleteCostume}
+        onDeleteCostumes={handleDeleteCostumes}
         onRenameCostume={handleRenameCostume}
+        onPrepareCostumeDrag={prepareCostumeDragSelection}
+        onReorderCostumes={handleReorderCostumes}
       />
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">

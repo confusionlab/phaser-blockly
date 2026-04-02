@@ -471,6 +471,7 @@ body {
   --editor-selection-surface-selected: #C6E2FF;
   --editor-selection-surface-drop-target: #EEF7FF;
   --editor-selection-surface-hover: #E7EAEE;
+  --component-color: hsl(270 70% 75%);
 
   --scrollbar-size: 4px;
   --scrollbar-padding: 2px;

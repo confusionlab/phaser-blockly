@@ -5,6 +5,7 @@ import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewpor
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import { OverlayPill } from '@/components/ui/overlay-pill';
+import { useModal } from '@/components/ui/modal-provider';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import type {
@@ -552,6 +553,7 @@ function areRenderedLayerChunkEntriesEqual(
 }
 
 export function BackgroundCanvasEditor() {
+  const { showAlert, showConfirm } = useModal();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -2146,7 +2148,10 @@ export function BackgroundCanvasEditor() {
       bounds.height > MAX_RASTER_OPERATION_DIMENSION ||
       bounds.width * bounds.height > MAX_RASTER_OPERATION_PIXELS
     ) {
-      window.alert('This fill region is too large to rasterize safely in one pass. Zoom in or reduce the edited area.');
+      await showAlert({
+        title: 'Region Too Large',
+        description: 'This fill region is too large to rasterize safely in one pass. Zoom in or reduce the edited area.',
+      });
       return null;
     }
 
@@ -2182,7 +2187,7 @@ export function BackgroundCanvasEditor() {
     }
 
     return { canvas, ctx };
-  }, [chunkSize, ensureChunkCanvasLoaded]);
+  }, [chunkSize, ensureChunkCanvasLoaded, showAlert]);
 
   const applyRasterCanvasToChunks = useCallback((
     rasterCanvas: HTMLCanvasElement,
@@ -2380,7 +2385,10 @@ export function BackgroundCanvasEditor() {
       bounds.height > MAX_RASTER_OPERATION_DIMENSION ||
       bounds.width * bounds.height > MAX_RASTER_OPERATION_PIXELS
     ) {
-      window.alert('This selection is too large to rasterize safely in one pass.');
+      void showAlert({
+        title: 'Selection Too Large',
+        description: 'This selection is too large to rasterize safely in one pass.',
+      });
       return false;
     }
 
@@ -2436,7 +2444,7 @@ export function BackgroundCanvasEditor() {
     }
     setRevision((value) => value + 1);
     return true;
-  }, [chunkSize, commitRasterCanvasToChunks]);
+  }, [chunkSize, commitRasterCanvasToChunks, showAlert]);
 
   const deleteFloatingSelection = useCallback(() => {
     const selection = floatingSelectionRef.current;
@@ -2818,7 +2826,11 @@ export function BackgroundCanvasEditor() {
       return sum + estimateSerializedChunkBytes(layer.bitmap.chunks);
     }, 0);
     if (payloadSize > LARGE_PAYLOAD_WARNING_BYTES) {
-      const proceed = window.confirm('Background payload is large and may affect project size. Save anyway?');
+      const proceed = await showConfirm({
+        title: 'Large Background Payload',
+        description: 'Background payload is large and may affect project size. Save anyway?',
+        confirmLabel: 'Save Anyway',
+      });
       if (!proceed) {
         return;
       }
@@ -2831,19 +2843,30 @@ export function BackgroundCanvasEditor() {
     });
 
     closeBackgroundEditor();
-  }, [backgroundColor, closeBackgroundEditor, flushActiveInteraction, persistActiveLayerIntoDocument, scene, updateScene]);
+  }, [backgroundColor, closeBackgroundEditor, flushActiveInteraction, persistActiveLayerIntoDocument, scene, showConfirm, updateScene]);
 
   const handleCancel = useCallback(() => {
-    if (rasterOperationBusyRef.current) {
-      window.alert('Please wait for the current bitmap operation to finish.');
-      return;
-    }
-    if (hasUnsavedBackgroundChanges()) {
-      const confirmed = window.confirm('Discard unsaved background edits?');
-      if (!confirmed) return;
-    }
-    closeBackgroundEditor();
-  }, [closeBackgroundEditor, hasUnsavedBackgroundChanges]);
+    const run = async () => {
+      if (rasterOperationBusyRef.current) {
+        await showAlert({
+          title: 'Operation In Progress',
+          description: 'Please wait for the current bitmap operation to finish.',
+        });
+        return;
+      }
+      if (hasUnsavedBackgroundChanges()) {
+        const confirmed = await showConfirm({
+          title: 'Discard Changes',
+          description: 'Discard unsaved background edits?',
+          confirmLabel: 'Discard',
+          tone: 'destructive',
+        });
+        if (!confirmed) return;
+      }
+      closeBackgroundEditor();
+    };
+    void run();
+  }, [closeBackgroundEditor, hasUnsavedBackgroundChanges, showAlert, showConfirm]);
 
   useEffect(() => {
     const handler: UndoRedoHandler = {
@@ -2977,13 +3000,21 @@ export function BackgroundCanvasEditor() {
     if (!backgroundEditorOpen) return;
     if (!scene || !selectedSceneId) return;
     if (scene.id === selectedSceneId) return;
-    const save = window.confirm('Save background changes before switching scenes?');
-    if (save) {
-      void handleDone();
-    } else {
-      handleCancel();
-    }
-  }, [backgroundEditorOpen, handleCancel, handleDone, scene, selectedSceneId]);
+    const run = async () => {
+      const save = await showConfirm({
+        title: 'Save Background Changes',
+        description: 'Save background changes before switching scenes?',
+        confirmLabel: 'Save Changes',
+        cancelLabel: 'Discard',
+      });
+      if (save) {
+        await handleDone();
+      } else {
+        handleCancel();
+      }
+    };
+    void run();
+  }, [backgroundEditorOpen, handleCancel, handleDone, scene, selectedSceneId, showConfirm]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (rasterOperationBusyRef.current) {
