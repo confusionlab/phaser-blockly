@@ -6,6 +6,7 @@ import {
   type CSSProperties,
 } from 'react';
 import * as Blockly from 'blockly';
+import { IconButton } from '@/components/ui/icon-button';
 import { Pin } from '@/components/ui/icons';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -1187,18 +1188,18 @@ export function BlocklyEditor() {
           style={blocklyContainerStyle}
         />
         {hasCodeTarget && pinButtonPosition && (
-          <button
-            type="button"
+          <IconButton
             className="absolute z-40 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
+            label={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
+            pressed={toolboxPinned}
+            shape="default"
+            size="xs"
             style={pinButtonPosition}
-            title={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
-            aria-label={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
-            aria-pressed={toolboxPinned}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => setToolboxPinned((current) => !current)}
           >
             <Pin className={`size-4 ${toolboxPinned ? 'fill-current text-foreground' : ''}`} />
-          </button>
+          </IconButton>
         )}
       </div>
       <EditVariablesDialog

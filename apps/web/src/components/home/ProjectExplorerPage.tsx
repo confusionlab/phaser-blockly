@@ -42,6 +42,7 @@ import { useClerkAppearance } from '@/lib/useClerkAppearance';
 import { useEditorStore } from '@/store/editorStore';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -852,16 +853,17 @@ export function ProjectExplorerPage({
   const renderItemActions = (item: VisibleItem, triggerClassName: string) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          size="icon-sm"
-          variant="ghost"
+        <IconButton
           className={triggerClassName}
           disabled={isExplorerReadOnly}
+          label="Open item actions"
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
+          shape="pill"
+          size="sm"
         >
           <MoreHorizontal className="size-4" />
-        </Button>
+        </IconButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem
@@ -907,14 +909,15 @@ export function ProjectExplorerPage({
       <div className="fixed right-4 top-3 z-[100300]">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              size="icon-sm"
-              variant="outline"
+            <IconButton
               className="rounded-full border-border/70 bg-background/82 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/72 dark:shadow-[0_28px_70px_-42px_rgba(0,0,0,0.82)]"
-              aria-label="Home settings"
+              label="Home settings"
+              shape="pill"
+              size="sm"
+              variant="outline"
             >
               <Settings2 className="size-4" />
-            </Button>
+            </IconButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuCheckboxItem
@@ -988,20 +991,22 @@ export function ProjectExplorerPage({
               <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                 {breadcrumbFolders.map((folder, index) => (
                   <div className="flex items-center gap-2" key={folder.id}>
-                    <button
-                      type="button"
+                    <Button
                       className={cn(
-                        'rounded-full px-2 py-1 transition-colors',
+                        'px-2 py-1 transition-colors',
                         folder.id === currentFolderSafeId
                           ? 'bg-foreground text-background shadow-sm'
                           : 'text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/8',
                         dropFolderId === folder.id && 'bg-primary/15 text-primary',
                       )}
                       onClick={() => setCurrentFolderId(folder.id)}
+                      shape="pill"
+                      size="xs"
+                      variant="ghost"
                       {...dropTargetProps(folder.id)}
                     >
                       {folder.id === PROJECT_EXPLORER_ROOT_FOLDER_ID ? 'Home' : folder.name}
-                    </button>
+                    </Button>
                     {index < breadcrumbFolders.length - 1 ? <ChevronRight className="size-3" /> : null}
                   </div>
                 ))}
@@ -1031,10 +1036,9 @@ export function ProjectExplorerPage({
                     value={currentFolderNameDraft}
                   />
                 ) : (
-                  <button
+                  <Button
                     className="text-left text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl"
                     disabled={isExplorerReadOnly}
-                    type="button"
                     onClick={() => {
                       if (isExplorerReadOnly) {
                         return;
@@ -1042,9 +1046,12 @@ export function ProjectExplorerPage({
                       setIsEditingCurrentFolder(true);
                       setCurrentFolderNameDraft(currentFolder.name);
                     }}
+                    shape="none"
+                    size="xs"
+                    variant="link"
                   >
                     {currentFolder.name}
-                  </button>
+                  </Button>
                 )}
               </div>
             ) : (
@@ -1061,9 +1068,9 @@ export function ProjectExplorerPage({
               <div className="flex shrink-0 items-center gap-1.5">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button size="icon-sm" variant="ghost" className="rounded-full" disabled={isExplorerReadOnly}>
+                    <IconButton label="Create or import" disabled={isExplorerReadOnly} shape="pill" size="sm">
                       <Plus className="size-4" />
-                    </Button>
+                    </IconButton>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-52">
                     <DropdownMenuItem onClick={() => void handleCreateProject()}>
@@ -1083,16 +1090,17 @@ export function ProjectExplorerPage({
                 </DropdownMenu>
 
                 {parentFolder ? (
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    className={cn('rounded-full', dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
+                  <IconButton
+                    className={cn(dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
                     disabled={isExplorerInteractionBlocked}
+                    label="Back to parent folder"
                     onClick={() => setCurrentFolderId(parentFolder.id)}
+                    shape="pill"
+                    size="sm"
                     {...dropTargetProps(parentFolder.id)}
                   >
                     <ArrowLeft className="size-4" />
-                    </Button>
+                  </IconButton>
                 ) : null}
               </div>
 
@@ -1329,9 +1337,9 @@ export function ProjectExplorerPage({
                 <div className="text-2xl font-semibold tracking-[-0.03em] text-foreground">Trash</div>
                 <div className="mt-2 text-sm text-muted-foreground">Restore projects and folders whenever you’re ready.</div>
               </div>
-              <Button variant="ghost" size="icon-sm" className="rounded-full" onClick={() => setTrashOpen(false)}>
+              <IconButton label="Close trash" onClick={() => setTrashOpen(false)} shape="pill" size="sm">
                 <ArrowLeft className="size-4" />
-              </Button>
+              </IconButton>
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
               {[...trashedFolders, ...trashedProjects].length === 0 ? (

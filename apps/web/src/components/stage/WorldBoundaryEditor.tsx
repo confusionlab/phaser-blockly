@@ -6,6 +6,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
@@ -25,13 +26,6 @@ const WORLD_BOUNDARY_EDITOR_MIN_ZOOM = 0.15;
 const WORLD_BOUNDARY_EDITOR_MAX_ZOOM = 4;
 const POINT_DRAG_ACTIVATION_DISTANCE_PX = 4;
 const WORLD_BOUNDARY_HELP_TEXT = 'Click to place the first points. Hover a segment to insert a midpoint. Drag points to move them. Wheel to pan. Ctrl or Cmd plus wheel to zoom. Right or middle drag to pan.';
-
-const overlayPillActionToneClasses = {
-  dark:
-    'inline-flex h-8 w-8 items-center justify-center rounded-full text-white/78 transition-[background-color,color,transform] duration-150 hover:bg-white/14 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:cursor-not-allowed disabled:opacity-45',
-  light:
-    'inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-white/22 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18 disabled:cursor-not-allowed disabled:opacity-45',
-} as const;
 
 interface WorldBoundaryEditorView {
   centerX: number;
@@ -226,7 +220,6 @@ export function WorldBoundaryEditor() {
   }, [project, selectedSceneId, worldBoundaryEditorSceneId]);
   const editorSurfaceColor = getSceneBackgroundBaseColor(scene?.background);
   const overlayPillTone = isDarkMode ? 'dark' : 'light';
-  const overlayPillActionClassName = overlayPillActionToneClasses[overlayPillTone];
 
   const canvasWidth = project?.settings.canvasWidth ?? 800;
   const canvasHeight = project?.settings.canvasHeight ?? 600;
@@ -690,24 +683,20 @@ export function WorldBoundaryEditor() {
 
           <div className="pointer-events-auto flex items-center justify-end">
             <OverlayPill tone={overlayPillTone} size="compact">
-              <button
-                type="button"
+              <OverlayActionButton
+                label="Cancel"
                 onClick={closeWorldBoundaryEditor}
-                title="Cancel"
-                aria-label="Cancel"
-                className={overlayPillActionClassName}
+                tone={overlayPillTone}
               >
                 <X className="size-3.5" />
-              </button>
-              <button
-                type="button"
+              </OverlayActionButton>
+              <OverlayActionButton
+                label="Done"
                 onClick={handleSave}
-                title="Done"
-                aria-label="Done"
-                className={overlayPillActionClassName}
+                tone={overlayPillTone}
               >
                 <Check className="size-3.5" />
-              </button>
+              </OverlayActionButton>
             </OverlayPill>
           </div>
         </div>

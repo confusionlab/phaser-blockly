@@ -3,7 +3,9 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { IconButton } from '@/components/ui/icon-button';
 import { isTextEntryTarget } from '@/utils/keyboard';
 import { getEffectiveObjectProps } from '@/types';
 import type { Project } from '@/types';
@@ -132,12 +134,13 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
             Console {userLogs.length > 0 && <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-600 rounded-full">{userLogs.length}</span>}
           </TabButton>
         </div>
-        <button
-          onClick={onClose}
+        <IconButton
           className="text-gray-400 hover:text-white"
+          label="Close debug panel"
+          onClick={onClose}
         >
-          ×
-        </button>
+          <span className="text-base leading-none">×</span>
+        </IconButton>
       </div>
 
       {/* Object selector info */}
@@ -164,12 +167,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
         {activeTab === 'code' && (
           <div className="space-y-2">
             <div className="flex justify-end mb-2">
-              <button
+              <Button
+                className="bg-gray-700 text-xs text-gray-100 hover:bg-gray-600"
                 onClick={copyAllCode}
-                className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600"
+                size="xs"
+                variant="ghost"
               >
                 Copy All Code
-              </button>
+              </Button>
             </div>
             <pre className="whitespace-pre-wrap text-green-300">{generatedCode}</pre>
           </div>
@@ -210,12 +215,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
           <div className="space-y-2">
             <div className="flex justify-between items-center mb-2">
               <span className="text-yellow-400 font-bold">Runtime Log</span>
-              <button
+              <Button
+                className="bg-gray-700 text-xs text-gray-100 hover:bg-gray-600"
                 onClick={() => { clearDebugLog(); setLogRefresh(r => r + 1); }}
-                className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600"
+                size="xs"
+                variant="ghost"
               >
                 Clear
-              </button>
+              </Button>
             </div>
             {runtimeLogs.length === 0 ? (
               <div className="text-gray-500">No logs yet. Press Play to start.</div>
@@ -234,12 +241,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
           <div className="space-y-2">
             <div className="flex justify-between items-center mb-2">
               <span className="text-purple-400 font-bold">Console Output</span>
-              <button
+              <Button
+                className="bg-gray-700 text-xs text-gray-100 hover:bg-gray-600"
                 onClick={() => { clearDebugLog(); setLogRefresh(r => r + 1); }}
-                className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600"
+                size="xs"
+                variant="ghost"
               >
                 Clear
-              </button>
+              </Button>
             </div>
             {userLogs.length === 0 ? (
               <div className="text-gray-500">No console output yet. Use the "console log" block to print messages.</div>
@@ -261,14 +270,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button
+    <Button
+      className={active ? 'bg-gray-600 text-white hover:bg-gray-600' : 'text-gray-400 hover:text-white'}
       onClick={onClick}
-      className={`px-3 py-1 text-sm rounded ${
-        active ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white'
-      }`}
+      size="xs"
+      variant="ghost"
     >
       {children}
-    </button>
+    </Button>
   );
 }
 

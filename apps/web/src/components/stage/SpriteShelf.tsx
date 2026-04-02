@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react
 import { flushSync } from 'react-dom';
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
-import type { Id } from '@convex-generated/dataModel';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -10,6 +9,8 @@ import { ObjectLibraryBrowser } from '../dialogs/ObjectLibraryBrowser';
 import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
+import { IconButton } from '@/components/ui/icon-button';
+import { MenuItemButton } from '@/components/ui/menu-item-button';
 import {
   Dialog,
   DialogContent,
@@ -32,7 +33,6 @@ import {
   Clipboard,
   Trash2,
   ChevronRight,
-  ChevronDown,
   Component,
   CopyPlus,
   Scissors,
@@ -41,7 +41,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  GripVertical,
   Library,
 } from '@/components/ui/icons';
 import type {
@@ -70,10 +69,8 @@ import { runInHistoryTransaction } from '@/store/universalHistory';
 import { normalizeVariableDefinition, remapVariableIdsInBlocklyXml } from '@/lib/variableUtils';
 import { acquireGlobalKeyboardCapture, focusKeyboardSurface, isTextEntryTarget } from '@/utils/keyboard';
 import {
-  addComponentInstanceWithHistory,
   copySceneObjectsToClipboard,
   cutSceneObjectsWithHistory,
-  deleteComponentWithHistory,
   deleteSceneObjectsWithHistory,
   duplicateSceneObjectsWithHistory,
   hasSceneObjectClipboardContents,
@@ -234,13 +231,8 @@ export function SpriteShelf({
     duplicateObject,
     updateObject,
     updateScene,
-    addScene,
-    removeScene,
-    reorderScenes,
     makeComponent,
-    deleteComponent,
     detachFromComponent,
-    addComponentInstance,
   } = useProjectStore();
   const {
     selectedSceneId,
@@ -251,17 +243,14 @@ export function SpriteShelf({
     selectObject,
     selectObjects,
     selectFolder,
-    selectComponent,
     selectScene,
     clearSelection,
-    setActiveObjectTab,
     collapsedFolderIdsByScene,
     setCollapsedFoldersForScene,
-    clearSceneUiState,
   } = useEditorStore();
   const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
-  const { showAlert, showConfirm } = useModal();
+  const { showAlert } = useModal();
   const createObjectLibraryItem = useMutation(api.objectLibrary.create);
   const generateProjectAssetUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
   const upsertProjectAsset = useMutation(api.projectAssets.upsert);
@@ -273,39 +262,24 @@ export function SpriteShelf({
     | null
   >(null);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
-  const [sceneContextMenu, setSceneContextMenu] = useState<{
-    x: number;
-    y: number;
-    sceneId: string;
-  } | null>(null);
-  const [sceneContextMenuPosition, setSceneContextMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [sceneDropdownOpen, setSceneDropdownOpen] = useState(false);
   const [isShelfHovered, setIsShelfHovered] = useState(false);
-  const [draggedSceneId, setDraggedSceneId] = useState<string | null>(null);
-  const [sceneDropTarget, setSceneDropTarget] = useState<{ sceneId: string; position: 'before' | 'after' } | null>(null);
   const [draggedLayerKeys, setDraggedLayerKeys] = useState<string[]>([]);
   const [layerDropTarget, setLayerDropTarget] = useState<{ key: string | null; dropPosition: 'before' | 'after' | 'on' | null } | null>(null);
   const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
-  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [inlineRenameSessionId, setInlineRenameSessionId] = useState(0);
   const [editName, setEditName] = useState('');
-  const [sceneEditError, setSceneEditError] = useState<string | null>(null);
   const [folderEditName, setFolderEditName] = useState('');
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingObjectLibrary, setSavingObjectLibrary] = useState<string | null>(null);
   const [folderDeleteTarget, setFolderDeleteTarget] = useState<SceneFolder | null>(null);
-  const [sceneDeleteTarget, setSceneDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const cancelInlineRenameOnBlurRef = useRef(false);
-  const cancelSceneRenameOnBlurRef = useRef(false);
-  const sceneRenamePointerDownTargetRef = useRef<EventTarget | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const sceneInputRef = useRef<HTMLInputElement>(null);
   const shortcutSurfaceRef = useRef<HTMLDivElement>(null);
   const inlineRenameSessionRef = useRef(0);
   const contextMenuRef = useRef<HTMLDivElement>(null);
-  const sceneContextMenuRef = useRef<HTMLDivElement>(null);
   const selectionAnchorObjectIdRef = useRef<string | null>(null);
   const ignoreNextEmptyShelfClickRef = useRef(false);
 
@@ -334,34 +308,9 @@ export function SpriteShelf({
     stabilizeInlineRenameFocus(inputRef.current);
   }, [editingObjectId, editingFolderId, stabilizeInlineRenameFocus]);
 
-  useLayoutEffect(() => {
-    if (!editingSceneId) {
-      return;
-    }
-
-    stabilizeInlineRenameFocus(sceneInputRef.current);
-  }, [editingSceneId, stabilizeInlineRenameFocus]);
-
-  useEffect(() => {
-    if (!editingSceneId || typeof document === 'undefined') {
-      sceneRenamePointerDownTargetRef.current = null;
-      return;
-    }
-
-    const handlePointerDownCapture = (event: PointerEvent) => {
-      sceneRenamePointerDownTargetRef.current = event.target;
-    };
-
-    document.addEventListener('pointerdown', handlePointerDownCapture, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDownCapture, true);
-      sceneRenamePointerDownTargetRef.current = null;
-    };
-  }, [editingSceneId]);
-
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
   const folders = selectedScene?.objectFolders ?? [];
-  const isInlineRenaming = !!editingObjectId || !!editingFolderId || !!editingSceneId;
+  const isInlineRenaming = !!editingObjectId || !!editingFolderId;
 
   useLayoutEffect(() => {
     if (!isInlineRenaming) {
@@ -412,29 +361,6 @@ export function SpriteShelf({
     }
   }, [contextMenu, contextMenuPosition]);
 
-  useLayoutEffect(() => {
-    if (!sceneContextMenu || !sceneContextMenuRef.current || !sceneContextMenuPosition) return;
-
-    const margin = 8;
-    const menuRect = sceneContextMenuRef.current.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    let nextLeft = sceneContextMenuPosition.left;
-    let nextTop = sceneContextMenuPosition.top;
-
-    if (nextLeft + menuRect.width + margin > viewportWidth) {
-      nextLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
-    }
-    if (nextTop + menuRect.height + margin > viewportHeight) {
-      nextTop = Math.max(margin, viewportHeight - menuRect.height - margin);
-    }
-
-    if (nextLeft !== sceneContextMenuPosition.left || nextTop !== sceneContextMenuPosition.top) {
-      setSceneContextMenuPosition({ left: nextLeft, top: nextTop });
-    }
-  }, [sceneContextMenu, sceneContextMenuPosition]);
-
   useEffect(() => {
     if (!contextMenu || typeof document === 'undefined') {
       return;
@@ -453,24 +379,6 @@ export function SpriteShelf({
     };
   }, [contextMenu]);
 
-  useEffect(() => {
-    if (!sceneContextMenu || typeof document === 'undefined') {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (sceneContextMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      handleCloseSceneContextMenu();
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-    };
-  }, [sceneContextMenu]);
-
   const focusShortcutSurface = useCallback(() => {
     focusKeyboardSurface(shortcutSurfaceRef.current);
   }, []);
@@ -481,6 +389,12 @@ export function SpriteShelf({
     }
     focusShortcutSurface();
   }, [focusShortcutSurface]);
+
+  useShelfDropTargetBoundaryGuard({
+    active: draggedLayerKeys.length > 0,
+    boundaryRef: shortcutSurfaceRef,
+    onExit: () => setLayerDropTarget(null),
+  });
 
   if (!selectedScene || !selectedSceneId) return null;
 
@@ -696,12 +610,6 @@ export function SpriteShelf({
     setDraggedLayerKeys([]);
     setLayerDropTarget(null);
   };
-
-  useShelfDropTargetBoundaryGuard({
-    active: draggedLayerKeys.length > 0,
-    boundaryRef: shortcutSurfaceRef,
-    onExit: () => setLayerDropTarget(null),
-  });
 
   const handleLayerDragStart = (event: React.DragEvent<HTMLDivElement>, item: ShelfTreeItem) => {
     flushSync(() => {
@@ -995,46 +903,6 @@ export function SpriteShelf({
     });
   };
 
-  const handleAddScene = () => {
-    if (!project) return;
-    runInHistoryTransaction('sprite-shelf:add-scene', () => {
-      const newName = `Scene ${project.scenes.length + 1}`;
-      addScene(newName);
-      const nextScene = useProjectStore.getState().project?.scenes.at(-1);
-      if (nextScene) {
-        selectScene(nextScene.id);
-      }
-    });
-  };
-
-  const handleSceneDrop = (targetSceneId: string) => {
-    if (!project || !draggedSceneId) return;
-
-    const sourceIndex = project.scenes.findIndex((scene) => scene.id === draggedSceneId);
-    const targetIndex = project.scenes.findIndex((scene) => scene.id === targetSceneId);
-    if (sourceIndex === -1 || targetIndex === -1) {
-      setDraggedSceneId(null);
-      setSceneDropTarget(null);
-      return;
-    }
-
-    const dropPosition = sceneDropTarget?.sceneId === targetSceneId ? sceneDropTarget.position : 'after';
-    let insertIndex = targetIndex + (dropPosition === 'after' ? 1 : 0);
-    if (sourceIndex < insertIndex) {
-      insertIndex -= 1;
-    }
-
-    if (sourceIndex !== insertIndex) {
-      const nextSceneIds = project.scenes.map((scene) => scene.id);
-      const [movedSceneId] = nextSceneIds.splice(sourceIndex, 1);
-      nextSceneIds.splice(insertIndex, 0, movedSceneId);
-      reorderScenes(nextSceneIds);
-    }
-
-    setDraggedSceneId(null);
-    setSceneDropTarget(null);
-  };
-
   const handleObjectContextMenu = (e: React.MouseEvent, object: GameObject) => {
     e.preventDefault();
     setContextMenuPosition({ left: e.clientX, top: e.clientY });
@@ -1227,103 +1095,6 @@ export function SpriteShelf({
     stabilizeInlineRenameFocus(inputRef.current);
   };
 
-  const handleStartSceneEdit = (sceneId: string, currentName: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    flushSync(() => {
-      setEditingSceneId(sceneId);
-      setEditName(currentName);
-      setSceneEditError(null);
-    });
-    stabilizeInlineRenameFocus(sceneInputRef.current);
-  };
-
-  const handleSaveSceneRename = () => {
-    if (cancelSceneRenameOnBlurRef.current) {
-      cancelSceneRenameOnBlurRef.current = false;
-      return;
-    }
-
-    if (!editingSceneId) return;
-
-    const nextName = editName.trim();
-    if (!nextName) {
-      setSceneEditError('Scene name is required.');
-      return;
-    }
-
-    const normalizedNextName = nextName.toLowerCase();
-    const duplicateExists = !!project?.scenes.some(
-      (scene) => scene.id !== editingSceneId && scene.name.trim().toLowerCase() === normalizedNextName,
-    );
-    if (duplicateExists) {
-      setSceneEditError('Scene name must be unique.');
-      return;
-    }
-
-    updateScene(editingSceneId, { name: nextName });
-    setEditingSceneId(null);
-    setEditName('');
-    setSceneEditError(null);
-  };
-
-  const handleSceneRenameBlur = (event: React.FocusEvent<HTMLInputElement>) => {
-    const pointerTarget = sceneRenamePointerDownTargetRef.current;
-    sceneRenamePointerDownTargetRef.current = null;
-
-    const clickedOutside = pointerTarget instanceof Node && pointerTarget !== event.currentTarget;
-    if (!clickedOutside) {
-      queueMicrotask(() => {
-        stabilizeInlineRenameFocus(sceneInputRef.current);
-      });
-      return;
-    }
-
-    handleSaveSceneRename();
-  };
-
-  const handleCloseSceneContextMenu = () => {
-    setSceneContextMenu(null);
-    setSceneContextMenuPosition(null);
-  };
-
-  const preventSceneMenuHoverFocus = editingSceneId
-    ? (event: React.PointerEvent) => {
-      event.preventDefault();
-    }
-    : undefined;
-
-  const handleDeleteScene = (sceneId: string) => {
-    if (!project || project.scenes.length <= 1) return;
-
-    runInHistoryTransaction('sprite-shelf:delete-scene', () => {
-      removeScene(sceneId);
-      clearSceneUiState(sceneId);
-
-      if (selectedSceneId === sceneId) {
-        const remainingScenes = useProjectStore.getState().project?.scenes ?? [];
-        selectScene(remainingScenes[0]?.id ?? null);
-      }
-    });
-  };
-
-  const handleRequestDeleteScene = (sceneId: string) => {
-    if (!project || project.scenes.length <= 1) return;
-    const scene = project.scenes.find((candidate) => candidate.id === sceneId);
-    if (!scene) return;
-    setSceneDeleteTarget({ id: scene.id, name: scene.name });
-  };
-
-  const handleCancelDeleteScene = () => {
-    setSceneDeleteTarget(null);
-  };
-
-  const handleConfirmDeleteScene = () => {
-    if (!sceneDeleteTarget) return;
-    handleDeleteScene(sceneDeleteTarget.id);
-    setSceneDeleteTarget(null);
-  };
-
   const handleMakeComponent = () => {
     if (!contextMenu || contextMenu.kind !== 'object' || !project) return;
 
@@ -1414,33 +1185,6 @@ export function SpriteShelf({
     }
   };
 
-  const handleDeleteComponentById = async (componentId: string) => {
-    if (!project) return;
-    if (!componentId) return;
-
-    const component = (project.components || []).find((item) => item.id === componentId);
-    const componentName = component?.name || 'Component';
-    const instanceCount = project.scenes.reduce((count, scene) => {
-      return count + scene.objects.filter((obj) => obj.componentId === componentId).length;
-    }, 0);
-
-    const confirmed = await showConfirm({
-      title: `Delete component "${componentName}"?`,
-      description: `This will detach ${instanceCount} instance${instanceCount === 1 ? '' : 's'} and keep them as standalone objects.`,
-      confirmLabel: 'Delete Component',
-      tone: 'destructive',
-    });
-    if (!confirmed) return;
-
-    deleteComponentWithHistory({
-      source: 'sprite-shelf:delete-component',
-      componentId,
-      selectedComponentId,
-      deleteComponent,
-      selectComponent,
-    });
-  };
-
   const handleLibrarySelect = (data: {
     name: string;
     costumes: Costume[];
@@ -1521,23 +1265,6 @@ export function SpriteShelf({
     const connectsToNext = isSelected
       && nextVisibleItem?.type === 'object'
       && selectedIdsInScene.includes(nextVisibleItem.id);
-    const rowHighlightClass = isSelected
-      ? selectionSurfaceClassNames.selected
-      : isDropOn
-        ? selectionSurfaceClassNames.dropTarget
-        : '';
-    const rowShapeClass = isSelected || isDropOn
-      ? connectsToPrevious
-        ? connectsToNext
-          ? 'rounded-none'
-          : 'rounded-t-none rounded-b-lg'
-        : connectsToNext
-          ? 'rounded-t-lg rounded-b-none'
-          : 'rounded-lg'
-      : 'rounded-lg';
-    const rowOverflowClass = (isInlineEditing || (isSelected && connectsToNext))
-      ? 'overflow-visible'
-      : 'overflow-hidden';
 
     return (
       <ShelfTreeRow
@@ -1659,14 +1386,16 @@ export function SpriteShelf({
             <div className="absolute left-0 flex min-w-0 items-center justify-start">
               <DropdownMenu open={sceneDropdownOpen} onOpenChange={setSceneDropdownOpen}>
                 <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex h-6 min-w-0 max-w-32 items-center gap-1 rounded-md px-1 text-left text-xs font-medium transition-colors hover:text-primary"
+                  <Button
+                    className="h-6 min-w-0 max-w-32 gap-1 px-1 text-left text-xs hover:text-primary"
+                    shape="default"
+                    size="xs"
+                    variant="ghost"
                   >
                     <Earth className="size-3.5 shrink-0" />
                     <span className="truncate">{selectedScene.name}</span>
                     <ChevronRight className="size-3" />
-                  </button>
+                  </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="min-w-48">
                   {project?.scenes.map((scene) => (
@@ -1684,21 +1413,20 @@ export function SpriteShelf({
             </div>
           ) : null}
 
-          <Button size="icon-xs" variant="ghost" onClick={handleAddObject} title="Add Object">
+          <IconButton label="Add Object" onClick={handleAddObject} size="xs">
             <Plus className="size-4" />
-          </Button>
-          <Button size="icon-xs" variant="ghost" onClick={handleAddFolder} title="Add Folder">
+          </IconButton>
+          <IconButton label="Add Folder" onClick={handleAddFolder} size="xs">
             <FolderPlus className="size-4" />
-          </Button>
+          </IconButton>
           {showObjectLibraryButton ? (
-            <Button
-              size="icon-xs"
-              variant="ghost"
+            <IconButton
+              label="Object Library"
               onClick={() => setShowLibrary(true)}
-              title="Object Library"
+              size="xs"
             >
               <Library className="size-4" />
-            </Button>
+            </IconButton>
           ) : null}
         </div>
       </div>
@@ -1726,7 +1454,8 @@ export function SpriteShelf({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-auto rounded-full px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                  className="h-auto px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                  shape="pill"
                   onClick={handleEmptyShelfCreateObjectClick}
                 >
                   + Create an object
@@ -1769,168 +1498,108 @@ export function SpriteShelf({
           >
             {contextMenu.kind === 'object' ? (
               <>
-                <Button variant="ghost" size="sm" onClick={handleCopy} className="w-full justify-start rounded-none h-8">
-                  <Copy className="size-4" />
+                <MenuItemButton icon={<Copy className="size-4" />} onClick={handleCopy}>
                   Copy
-                </Button>
-                <Button variant="ghost" size="sm" onClick={handleCut} className="w-full justify-start rounded-none h-8">
-                  <Scissors className="size-4" />
+                </MenuItemButton>
+                <MenuItemButton icon={<Scissors className="size-4" />} onClick={handleCut}>
                   Cut
-                </Button>
+                </MenuItemButton>
                 {hasSceneObjectClipboardContents() ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handlePaste}
-                    className="w-full justify-start rounded-none h-8"
-                  >
-                    <Clipboard className="size-4" />
+                  <MenuItemButton icon={<Clipboard className="size-4" />} onClick={handlePaste}>
                     Paste
-                  </Button>
+                  </MenuItemButton>
                 ) : null}
-                <Button variant="ghost" size="sm" onClick={handleDuplicate} className="w-full justify-start rounded-none h-8">
-                  <CopyPlus className="size-4" />
+                <MenuItemButton icon={<CopyPlus className="size-4" />} onClick={handleDuplicate}>
                   Duplicate
-                </Button>
+                </MenuItemButton>
                 <DropdownMenuSeparator />
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<Pencil className="size-4" />}
                   onClick={() => {
                     handleStartObjectEdit(contextMenu.object.id, contextMenu.object.name);
                     handleCloseContextMenu();
                   }}
-                  className="w-full justify-start rounded-none h-8"
                 >
-                  <Pencil className="size-4" />
                   Rename Object
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
+                </MenuItemButton>
+                <MenuItemButton
+                  icon={<Library className="size-4" />}
                   onClick={() => {
                     void handleSaveObjectToLibrary();
                   }}
                   disabled={savingObjectLibrary === contextMenu.object.id}
-                  className="w-full justify-start rounded-none h-8"
                 >
-                  <Library className="size-4" />
                   Save to Library
-                </Button>
+                </MenuItemButton>
                 {!contextMenu.object.componentId ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  <MenuItemButton
+                    icon={<Component className="size-4" />}
+                    intent="accent"
                     onClick={handleMakeComponent}
-                    className="w-full justify-start rounded-none h-8 text-purple-600"
                   >
-                    <Component className="size-4" />
                     Make Component
-                  </Button>
+                  </MenuItemButton>
                 ) : (
                   <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                    <MenuItemButton
+                      icon={<Unlink className="size-4" />}
                       onClick={handleDetachFromComponent}
-                      className="w-full justify-start rounded-none h-8"
                     >
-                      <Unlink className="size-4" />
                       Detach from Component
-                    </Button>
+                    </MenuItemButton>
                   </>
                 )}
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<Trash2 className="size-4" />}
+                  intent="destructive"
                   onClick={handleDelete}
-                  className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
                 >
-                  <Trash2 className="size-4" />
                   {deleteLabel}
-                </Button>
+                </MenuItemButton>
               </>
             ) : contextMenu.kind === 'folder' ? (
               <>
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<Pencil className="size-4" />}
                   onClick={() => {
                     handleStartFolderEdit(contextMenu.folder);
                     handleCloseContextMenu();
                   }}
-                  className="w-full justify-start rounded-none h-8"
                 >
-                  <Pencil className="size-4" />
                   Rename Folder
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
+                </MenuItemButton>
+                <MenuItemButton
+                  icon={<Trash2 className="size-4" />}
+                  intent="destructive"
                   onClick={() => {
                     handleRequestDeleteFolder(contextMenu.folder);
                     handleCloseContextMenu();
                   }}
-                  className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
                 >
-                  <Trash2 className="size-4" />
                   Delete Folder
-                </Button>
+                </MenuItemButton>
               </>
             ) : (
               <>
                 {hasSceneObjectClipboardContents() ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  <MenuItemButton
+                    icon={<Clipboard className="size-4" />}
                     onClick={handlePaste}
-                    className="w-full justify-start rounded-none h-8"
                   >
-                    <Clipboard className="size-4" />
                     Paste
-                  </Button>
+                  </MenuItemButton>
                 ) : null}
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<FolderPlus className="size-4" />}
                   onClick={() => {
                     handleAddFolder();
                     handleCloseContextMenu();
                   }}
-                  className="w-full justify-start rounded-none h-8"
                 >
-                  <FolderPlus className="size-4" />
                   New Folder
-                </Button>
+                </MenuItemButton>
               </>
             )}
-          </Card>
-        </>
-      )}
-
-      {sceneContextMenu && (
-        <>
-          <Card
-            ref={sceneContextMenuRef}
-            className="fixed z-[10000] py-1 min-w-40 gap-0 pointer-events-auto"
-            style={{
-              left: sceneContextMenuPosition?.left ?? sceneContextMenu.x,
-              top: sceneContextMenuPosition?.top ?? sceneContextMenu.y,
-            }}
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                handleRequestDeleteScene(sceneContextMenu.sceneId);
-                handleCloseSceneContextMenu();
-              }}
-              className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
-              disabled={!project || project.scenes.length <= 1}
-            >
-              <Trash2 className="size-4" />
-              Delete Scene
-            </Button>
           </Card>
         </>
       )}
@@ -1954,25 +1623,6 @@ export function SpriteShelf({
               Cancel
             </Button>
             <Button variant="destructive" onClick={handleConfirmDeleteFolder}>
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!sceneDeleteTarget} onOpenChange={(open) => !open && handleCancelDeleteScene()}>
-        <DialogContent showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>Delete Scene</DialogTitle>
-            <DialogDescription>
-              Are you sure? everything inside the scene will be deleted.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={handleCancelDeleteScene}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleConfirmDeleteScene}>
               Delete
             </Button>
           </DialogFooter>

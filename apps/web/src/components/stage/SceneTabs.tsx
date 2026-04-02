@@ -3,6 +3,7 @@ import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import {
   CompactColorPicker,
@@ -146,28 +147,29 @@ export function SceneTabs() {
             onPointerDown={e => e.stopPropagation()}
           />
           {editingId !== scene.id && project.scenes.length > 1 && (
-            <button
+            <IconButton
+              className={selectedSceneId === scene.id
+                ? 'opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary-foreground/20'
+                : 'opacity-0 group-hover:opacity-100 transition-opacity hover:bg-secondary-foreground/20'}
+              label={`Delete ${scene.name}`}
               onClick={(e) => handleDeleteScene(scene.id, e)}
-              className={`opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center ${
-                selectedSceneId === scene.id
-                  ? 'hover:bg-primary-foreground/20'
-                  : 'hover:bg-secondary-foreground/20'
-              }`}
+              shape="pill"
+              size="xs"
             >
               <X className="size-3" />
-            </button>
+            </IconButton>
           )}
         </div>
       ))}
 
-      <Button
-        variant="secondary"
-        size="icon-sm"
+      <IconButton
+        label="Add Scene"
         onClick={handleAddScene}
-        title="Add Scene"
+        size="sm"
+        variant="secondary"
       >
         <Plus className="size-4" />
-      </Button>
+      </IconButton>
 
       {/* Spacer */}
       <div className="flex-1" />

@@ -3,6 +3,7 @@ import { Check, X } from '@/components/ui/icons';
 import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useModal } from '@/components/ui/modal-provider';
@@ -139,13 +140,6 @@ const INITIAL_SHAPE_STROKE_WIDTH = 6;
 const MAX_RASTER_OPERATION_DIMENSION = 8192;
 const MAX_RASTER_OPERATION_PIXELS = 36 * 1024 * 1024;
 const ZOOM_STEP = 0.1;
-
-const overlayPillActionToneClasses = {
-  dark:
-    'inline-flex h-8 w-8 items-center justify-center rounded-full text-white/78 transition-[background-color,color,transform] duration-150 hover:bg-white/14 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:cursor-not-allowed disabled:opacity-45',
-  light:
-    'inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-white/22 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18 disabled:cursor-not-allowed disabled:opacity-45',
-} as const;
 
 type ChunkDelta = {
   before: Record<string, string | null>;
@@ -740,7 +734,6 @@ export function BackgroundCanvasEditor() {
     height: cameraBounds.top - cameraBounds.bottom,
   }), [cameraBounds.bottom, cameraBounds.left, cameraBounds.right, cameraBounds.top]);
   const overlayPillTone = isDarkMode ? 'dark' : 'light';
-  const overlayPillActionClassName = overlayPillActionToneClasses[overlayPillTone];
 
   const screenToWorld = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const host = hostRef.current;
@@ -3574,26 +3567,22 @@ export function BackgroundCanvasEditor() {
             canZoomToSelection={editorMode === 'bitmap' ? hasFloatingSelection : canZoomToVectorSelection}
             rightAccessory={(
               <OverlayPill tone={overlayPillTone} size="compact">
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  title="Cancel"
-                  aria-label="Cancel"
-                  className={overlayPillActionClassName}
+                <OverlayActionButton
                   disabled={busy}
+                  label="Cancel"
+                  onClick={handleCancel}
+                  tone={overlayPillTone}
                 >
                   <X className="size-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDone}
-                  title="Done"
-                  aria-label="Done"
-                  className={overlayPillActionClassName}
+                </OverlayActionButton>
+                <OverlayActionButton
                   disabled={busy}
+                  label="Done"
+                  onClick={handleDone}
+                  tone={overlayPillTone}
                 >
                   <Check className="size-3.5" />
-                </button>
+                </OverlayActionButton>
               </OverlayPill>
             )}
           />

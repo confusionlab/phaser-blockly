@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search } from '@/components/ui/icons';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -347,17 +348,19 @@ export function ProductMenu({
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
+        <Button
           className={cn(
-            'flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors',
+            'gap-1.5 px-3 py-1.5 font-medium',
             open ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/70',
           )}
+          shape="pill"
+          size="xs"
+          variant="ghost"
           aria-label="Open workspace menu"
         >
           <span className="font-semibold text-primary">PochaCoding</span>
           <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
 
       <DropdownMenuContent

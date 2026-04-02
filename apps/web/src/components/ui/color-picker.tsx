@@ -17,6 +17,7 @@ import {
   useState,
 } from "react"
 import { Button } from "@/components/ui/button"
+import { IconButton } from "@/components/ui/icon-button"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -471,18 +472,16 @@ export const ColorPickerEyeDropper = ({ className, ...props }: ColorPickerEyeDro
   }
 
   return (
-    <Button
-      aria-label="Pick color from screen"
+    <IconButton
       className={cn("shrink-0 text-muted-foreground", className)}
+      label="Pick color from screen"
       onClick={handleEyeDropper}
-      size="icon"
-      title="Pick color from screen"
-      type="button"
+      size="md"
       variant="outline"
       {...(props as any)}
     >
       <PipetteIcon size={16} />
-    </Button>
+    </IconButton>
   )
 }
 

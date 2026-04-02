@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { ChevronDown, Redo2, Undo2 } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,28 +54,24 @@ export function CanvasViewportOverlay({
   return (
     <div className={cn('pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-3 py-3', className)}>
       <div className="pointer-events-auto flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="icon-xs"
+        <IconButton
           className={overlayButtonClassName}
+          label="Undo"
           onClick={onUndo}
           disabled={!canUndo}
-          title="Undo"
-          aria-label="Undo"
+          size="xs"
         >
           <Undo2 className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
+        </IconButton>
+        <IconButton
           className={overlayButtonClassName}
+          label="Redo"
           onClick={onRedo}
           disabled={!canRedo}
-          title="Redo"
-          aria-label="Redo"
+          size="xs"
         >
           <Redo2 className="size-3.5" />
-        </Button>
+        </IconButton>
       </div>
 
       <div className="pointer-events-auto ml-auto flex items-center justify-end gap-2">

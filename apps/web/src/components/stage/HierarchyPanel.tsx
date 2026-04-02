@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
 import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { IconButton } from '@/components/ui/icon-button';
+import { MenuItemButton } from '@/components/ui/menu-item-button';
 import {
   Dialog,
   DialogContent,
@@ -53,6 +55,7 @@ import {
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { cn } from '@/lib/utils';
 import { deleteComponentWithHistory } from '@/lib/editor/objectCommands';
+import { runInHistoryTransaction } from '@/store/universalHistory';
 import {
   getFolderedHierarchyClipboard,
   hasFolderedHierarchyClipboardContents,
@@ -756,12 +759,12 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     >
       <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.row, 'h-auto border-b-0 py-1')}>
         <div className="flex min-w-0 flex-1 items-center justify-center gap-1">
-          <Button type="button" size="icon-xs" variant="ghost" onClick={onAddItem} title={`Add ${itemLabel}`}>
+          <IconButton label={`Add ${itemLabel}`} onClick={onAddItem} size="xs">
             <Plus className="size-4" />
-          </Button>
-          <Button type="button" size="icon-xs" variant="ghost" onClick={onAddFolder} title="Add Folder">
+          </IconButton>
+          <IconButton label="Add Folder" onClick={onAddFolder} size="xs">
             <FolderPlus className="size-4" />
-          </Button>
+          </IconButton>
           {renderHeaderActions}
         </div>
       </div>
@@ -815,54 +818,41 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
               <>
                 {clipboard ? (
                   <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                    <MenuItemButton
+                      icon={<Copy className="size-4" />}
                       onClick={() => {
                         handleCopyItems('copy');
                         closeContextMenu();
                       }}
-                      className="h-8 w-full justify-start rounded-none"
                     >
-                      <Copy className="size-4" />
                       Copy
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                    </MenuItemButton>
+                    <MenuItemButton
+                      icon={<Scissors className="size-4" />}
                       onClick={handleCutItems}
                       disabled={clipboard.canCutItems ? !clipboard.canCutItems(getContextMenuItemActionIds()) : false}
-                      className="h-8 w-full justify-start rounded-none"
                     >
-                      <Scissors className="size-4" />
                       Cut
-                    </Button>
+                    </MenuItemButton>
                     {hasFolderedHierarchyClipboardContents(clipboard.kind) ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
+                      <MenuItemButton
+                        icon={<Clipboard className="size-4" />}
                         onClick={() => handlePasteItems()}
-                        className="h-8 w-full justify-start rounded-none"
                       >
-                        <Clipboard className="size-4" />
                         Paste
-                      </Button>
+                      </MenuItemButton>
                     ) : null}
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                    <MenuItemButton
+                      icon={<CopyPlus className="size-4" />}
                       onClick={handleDuplicateItems}
-                      className="h-8 w-full justify-start rounded-none"
                     >
-                      <CopyPlus className="size-4" />
                       Duplicate
-                    </Button>
+                    </MenuItemButton>
                     <DropdownMenuSeparator />
                   </>
                 ) : null}
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<Pencil className="size-4" />}
                   onClick={() => {
                     onSelectItem(contextMenu.item);
                     setEditingItemId(contextMenu.item.id);
@@ -870,96 +860,78 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
                     setDraftName((contextMenu.item as { name?: string }).name ?? itemLabel);
                     closeContextMenu();
                   }}
-                  className="h-8 w-full justify-start rounded-none"
                 >
-                  <Pencil className="size-4" />
                   Rename {itemLabel}
-                </Button>
+                </MenuItemButton>
                 {renderItemContextMenuActions ? renderItemContextMenuActions(contextMenu.item, closeContextMenu) : null}
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<Trash2 className="size-4" />}
+                  intent="destructive"
                   onClick={() => {
                     onDeleteItem(contextMenu.item.id);
                     closeContextMenu();
                   }}
-                  className="h-8 w-full justify-start rounded-none text-destructive hover:text-destructive"
                 >
-                  <Trash2 className="size-4" />
                   Delete {itemLabel}
-                </Button>
+                </MenuItemButton>
               </>
             ) : contextMenu.kind === 'folder' ? (
               <>
                 {clipboard && hasFolderedHierarchyClipboardContents(clipboard.kind) ? (
                   <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                    <MenuItemButton
+                      icon={<Clipboard className="size-4" />}
                       onClick={() => handlePasteItems()}
-                      className="h-8 w-full justify-start rounded-none"
                     >
-                      <Clipboard className="size-4" />
                       Paste
-                    </Button>
+                    </MenuItemButton>
                     <DropdownMenuSeparator />
                   </>
                 ) : null}
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<Pencil className="size-4" />}
                   onClick={() => {
                     setEditingFolderId(contextMenu.folder.id);
                     setEditingItemId(null);
                     setDraftName(contextMenu.folder.name);
                     closeContextMenu();
                   }}
-                  className="h-8 w-full justify-start rounded-none"
                 >
-                  <Pencil className="size-4" />
                   Rename Folder
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
+                </MenuItemButton>
+                <MenuItemButton
+                  icon={<Trash2 className="size-4" />}
+                  intent="destructive"
                   onClick={() => {
                     handleRequestDeleteFolder(contextMenu.folder);
                     closeContextMenu();
                   }}
-                  className="h-8 w-full justify-start rounded-none text-destructive hover:text-destructive"
                 >
-                  <Trash2 className="size-4" />
                   Delete Folder
-                </Button>
+                </MenuItemButton>
               </>
             ) : (
               <>
                 {clipboard && hasFolderedHierarchyClipboardContents(clipboard.kind) ? (
                   <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                    <MenuItemButton
+                      icon={<Clipboard className="size-4" />}
                       onClick={() => handlePasteItems()}
-                      className="h-8 w-full justify-start rounded-none"
                     >
-                      <Clipboard className="size-4" />
                       Paste
-                    </Button>
+                    </MenuItemButton>
                     <DropdownMenuSeparator />
                   </>
                 ) : null}
-                <Button
-                  variant="ghost"
-                  size="sm"
+                <MenuItemButton
+                  icon={<FolderPlus className="size-4" />}
                   onClick={() => {
                     onAddFolder();
                     closeContextMenu();
                   }}
-                  className="h-8 w-full justify-start rounded-none"
                 >
-                  <FolderPlus className="size-4" />
                   New Folder
-                </Button>
+                </MenuItemButton>
               </>
             )}
           </Card>
@@ -1213,31 +1185,26 @@ function SceneHierarchyTab() {
         onMove={(nextScenes, nextFolders) => updateSceneOrganization(nextScenes, nextFolders)}
         renderItemIcon={() => <Earth className="size-4 shrink-0 text-muted-foreground" />}
         renderHeaderActions={(
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
+          <IconButton
+            label="Scene Library"
             onClick={() => setShowLibrary(true)}
-            title="Scene Library"
+            size="xs"
           >
             <Library className="size-4" />
-          </Button>
+          </IconButton>
         )}
         renderItemContextMenuActions={(scene, closeMenu) => (
           <>
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<Library className="size-4" />}
               onClick={() => {
                 void handleSaveSceneToLibrary(scene);
                 closeMenu();
               }}
               disabled={savingSceneId === scene.id}
-              className="h-8 w-full justify-start rounded-none"
             >
-              <Library className="size-4" />
               Save to Library
-            </Button>
+            </MenuItemButton>
           </>
         )}
         clipboard={{
@@ -1269,7 +1236,6 @@ function ComponentHierarchyTab() {
   } = useProjectStore();
   const {
     selectedSceneId,
-    selectedSceneIds,
     selectedComponentId,
     selectedComponentIds,
     selectComponent,
@@ -1521,15 +1487,13 @@ function ComponentHierarchyTab() {
         }}
         onMove={(nextComponents, nextFolders) => updateComponentOrganization(nextComponents, nextFolders)}
         renderHeaderActions={(
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
+          <IconButton
+            label="Object Library"
             onClick={() => setShowLibrary(true)}
-            title="Object Library"
+            size="xs"
           >
             <Library className="size-4" />
-          </Button>
+          </IconButton>
         )}
         renderItemIcon={(component) => (
           <ShelfObjectThumbnail
@@ -1551,9 +1515,8 @@ function ComponentHierarchyTab() {
         }}
         renderItemContextMenuActions={(component, closeMenu) => (
           <>
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<Plus className="size-4" />}
               onClick={() => {
                 selectComponent(component.id);
                 if (selectedSceneId) {
@@ -1562,24 +1525,19 @@ function ComponentHierarchyTab() {
                 closeMenu();
               }}
               disabled={!selectedSceneId}
-              className="h-8 w-full justify-start rounded-none"
             >
-              <Plus className="size-4" />
               Add to Scene
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
+            </MenuItemButton>
+            <MenuItemButton
+              icon={<Library className="size-4" />}
               onClick={() => {
                 void handleSaveComponentToLibrary(component);
                 closeMenu();
               }}
               disabled={savingComponentLibraryId === component.id}
-              className="h-8 w-full justify-start rounded-none"
             >
-              <Library className="size-4" />
               Save to Library
-            </Button>
+            </MenuItemButton>
           </>
         )}
         clipboard={{

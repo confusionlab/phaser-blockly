@@ -24,15 +24,18 @@ import {
 } from '@/lib/background/chunkMath';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import {
+  buildStageProjection,
   normalizeStageEditorViewport,
   panStageEditorViewport,
   scrollStageEditorViewport,
   zoomStageEditorViewportAtScreenPoint,
   type StageEditorViewport,
+  type StageProjection,
   type StageSize,
   type StageViewMode,
 } from '@/lib/stageViewport';
 import {
+  applyStageProjectionToCamera,
   createStageViewportController,
   getStageViewportController,
 } from '@/lib/phaserStageViewport';
@@ -626,6 +629,18 @@ function getUserViewportFromPhaserWorldView(
   };
 }
 
+function projectStageWorldPointToScreen(
+  projection: StageProjection,
+  worldView: Phaser.Geom.Rectangle,
+  worldX: number,
+  worldY: number,
+): { x: number; y: number } {
+  return {
+    x: projection.cameraViewport.x + (((worldX - worldView.left) / worldView.width) * projection.cameraViewport.width),
+    y: projection.cameraViewport.y + (((worldY - worldView.top) / worldView.height) * projection.cameraViewport.height),
+  };
+}
+
 function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundLayerState): void {
   const background = layer.background;
   if (layer.lastBackgroundRef !== background) {
@@ -883,6 +898,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   const frozenStageFrameRevisionRef = useRef(0);
   const resizeFreezeSessionRef = useRef(0);
   const resizeFreezeOverscanCleanupRef = useRef<(() => void) | null>(null);
+  const resizeFreezeRenderTextureRef = useRef<Phaser.GameObjects.RenderTexture | null>(null);
 
   const { project, updateObject, addComponentInstance } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -955,48 +971,63 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     editorViewportBySceneIdRef.current.clear();
   }, [project?.id]);
 
+  const writeFrozenStageFrameBuffer = useCallback((
+    source: CanvasImageSource,
+    pixelWidth: number,
+    pixelHeight: number,
+  ): boolean => {
+    if (pixelWidth <= 0 || pixelHeight <= 0) {
+      return false;
+    }
+
+    const bufferCanvas = frozenStageFrameBufferRef.current ?? document.createElement('canvas');
+    frozenStageFrameBufferRef.current = bufferCanvas;
+    bufferCanvas.width = pixelWidth;
+    bufferCanvas.height = pixelHeight;
+
+    const bufferContext = bufferCanvas.getContext('2d');
+    if (!bufferContext) {
+      return false;
+    }
+
+    bufferContext.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
+    bufferContext.drawImage(source, 0, 0, bufferCanvas.width, bufferCanvas.height);
+    return true;
+  }, []);
+
+  const createFrozenStageFrameFromSource = useCallback((
+    source: CanvasImageSource,
+    pixelSize: StageSize,
+    displaySize: StageSize,
+  ): FrozenStageFrame | null => {
+    const pixelWidth = Math.max(1, Math.round(pixelSize.width));
+    const pixelHeight = Math.max(1, Math.round(pixelSize.height));
+    if (!writeFrozenStageFrameBuffer(source, pixelWidth, pixelHeight)) {
+      return null;
+    }
+
+    return {
+      pixelWidth,
+      pixelHeight,
+      width: Math.max(1, Math.round(displaySize.width)),
+      height: Math.max(1, Math.round(displaySize.height)),
+      revision: ++frozenStageFrameRevisionRef.current,
+    };
+  }, [writeFrozenStageFrameBuffer]);
+
   const captureFrozenStageFrame = useCallback((): FrozenStageFrame | null => {
     const canvas = gameRef.current?.canvas;
     if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
       return null;
     }
 
-    const bufferCanvas = frozenStageFrameBufferRef.current ?? document.createElement('canvas');
-    frozenStageFrameBufferRef.current = bufferCanvas;
-    bufferCanvas.width = canvas.width;
-    bufferCanvas.height = canvas.height;
-
-    const bufferContext = bufferCanvas.getContext('2d');
-    if (!bufferContext) {
-      return null;
-    }
-
-    bufferContext.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
-    bufferContext.drawImage(canvas, 0, 0);
-
     const canvasRect = canvas.getBoundingClientRect();
-
-    return {
-      pixelWidth: canvas.width,
-      pixelHeight: canvas.height,
-      width: canvasRect.width,
-      height: canvasRect.height,
-      revision: ++frozenStageFrameRevisionRef.current,
-    };
-  }, []);
-
-  const captureFrozenStageFrameWithDisplaySize = useCallback((displaySize: StageSize): FrozenStageFrame | null => {
-    const frame = captureFrozenStageFrame();
-    if (!frame) {
-      return null;
-    }
-
-    return {
-      ...frame,
-      width: Math.max(1, Math.round(displaySize.width)),
-      height: Math.max(1, Math.round(displaySize.height)),
-    };
-  }, [captureFrozenStageFrame]);
+    return createFrozenStageFrameFromSource(
+      canvas,
+      { width: canvas.width, height: canvas.height },
+      { width: canvasRect.width, height: canvasRect.height },
+    );
+  }, [createFrozenStageFrameFromSource]);
 
   const getResizeFreezeOverscanSize = useCallback((host: HTMLElement): StageSize => {
     const hostSize = getElementRenderSize(host);
@@ -1047,6 +1078,260 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     return true;
   }, []);
 
+  const getEditorSceneCanvasSize = useCallback((scene: Phaser.Scene): StageSize => {
+    const sceneCanvasWidth = scene.data.get('canvasWidth');
+    const sceneCanvasHeight = scene.data.get('canvasHeight');
+
+    return {
+      width: Math.max(
+        1,
+        Math.round(
+          typeof sceneCanvasWidth === 'number' && Number.isFinite(sceneCanvasWidth)
+            ? sceneCanvasWidth
+            : canvasDimensionsRef.current.width,
+        ),
+      ),
+      height: Math.max(
+        1,
+        Math.round(
+          typeof sceneCanvasHeight === 'number' && Number.isFinite(sceneCanvasHeight)
+            ? sceneCanvasHeight
+            : canvasDimensionsRef.current.height,
+        ),
+      ),
+    };
+  }, []);
+
+  const getResizeFreezeRenderTexture = useCallback((
+    scene: Phaser.Scene,
+    size: StageSize,
+  ): Phaser.GameObjects.RenderTexture => {
+    const safeWidth = Math.max(1, Math.round(size.width));
+    const safeHeight = Math.max(1, Math.round(size.height));
+    let renderTexture = resizeFreezeRenderTextureRef.current;
+
+    if (!renderTexture || renderTexture.scene !== scene) {
+      renderTexture?.destroy();
+      renderTexture = new Phaser.GameObjects.RenderTexture(scene, 0, 0, safeWidth, safeHeight, false);
+      resizeFreezeRenderTextureRef.current = renderTexture;
+
+      scene.events.once('shutdown', () => {
+        if (resizeFreezeRenderTextureRef.current === renderTexture) {
+          resizeFreezeRenderTextureRef.current = null;
+        }
+        renderTexture?.destroy();
+      });
+    } else {
+      renderTexture.resize(safeWidth, safeHeight, false);
+    }
+
+    return renderTexture;
+  }, []);
+
+  const composeOverscanBackdropFrame = useCallback((
+    scene: Phaser.Scene,
+    projection: StageProjection,
+    worldView: Phaser.Geom.Rectangle,
+    displaySize: StageSize,
+  ): boolean => {
+    const pixelWidth = Math.max(1, Math.round(displaySize.width));
+    const pixelHeight = Math.max(1, Math.round(displaySize.height));
+    const bufferCanvas = frozenStageFrameBufferRef.current ?? document.createElement('canvas');
+    frozenStageFrameBufferRef.current = bufferCanvas;
+    bufferCanvas.width = pixelWidth;
+    bufferCanvas.height = pixelHeight;
+
+    const context = bufferCanvas.getContext('2d');
+    if (!context) {
+      return false;
+    }
+
+    const canvasSize = getEditorSceneCanvasSize(scene);
+    const background = selectedScene?.background ?? null;
+    const sceneBackgroundCss = getSceneBackgroundBaseColor(background);
+    const shellBackgroundCss = getStageShellBackgroundColor(projection.mode, background);
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, pixelWidth, pixelHeight);
+    context.fillStyle = shellBackgroundCss;
+    context.fillRect(0, 0, pixelWidth, pixelHeight);
+    context.fillStyle = sceneBackgroundCss;
+    context.fillRect(
+      projection.cameraViewport.x,
+      projection.cameraViewport.y,
+      projection.cameraViewport.width,
+      projection.cameraViewport.height,
+    );
+
+    if (selectedScene?.ground?.enabled) {
+      const groundColor = selectedScene.ground.color || '#8B4513';
+      const userGroundY = selectedScene.ground.y ?? -200;
+      const phaserGroundY = canvasSize.height / 2 - userGroundY;
+      const groundTopLeft = projectStageWorldPointToScreen(projection, worldView, -5000, phaserGroundY);
+      const groundBottomRight = projectStageWorldPointToScreen(projection, worldView, 5000, phaserGroundY + 2000);
+      context.fillStyle = groundColor;
+      context.fillRect(
+        groundTopLeft.x,
+        groundTopLeft.y,
+        groundBottomRight.x - groundTopLeft.x,
+        groundBottomRight.y - groundTopLeft.y,
+      );
+    }
+
+    const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+    if (tiledBackgroundLayer?.background && isTiledBackground(tiledBackgroundLayer.background)) {
+      const tiledCanvas = document.createElement('canvas');
+      const viewport = getUserViewportFromPhaserWorldView(
+        worldView,
+        canvasSize.width,
+        canvasSize.height,
+      );
+      tiledBackgroundLayer.compositor.render({
+        canvas: tiledCanvas,
+        background: tiledBackgroundLayer.background,
+        viewport,
+        pixelWidth: projection.cameraViewport.width,
+        pixelHeight: projection.cameraViewport.height,
+      });
+      context.drawImage(
+        tiledCanvas,
+        projection.cameraViewport.x,
+        projection.cameraViewport.y,
+        projection.cameraViewport.width,
+        projection.cameraViewport.height,
+      );
+    }
+
+    if (selectedScene?.worldBoundary?.enabled && selectedScene.worldBoundary.points.length >= 2) {
+      context.save();
+      context.lineWidth = 3;
+      context.strokeStyle = 'rgba(96,165,250,0.8)';
+      context.beginPath();
+      selectedScene.worldBoundary.points.forEach((point, index) => {
+        const phaserPoint = userToPhaser(point.x, point.y, canvasSize.width, canvasSize.height);
+        const screenPoint = projectStageWorldPointToScreen(projection, worldView, phaserPoint.x, phaserPoint.y);
+        if (index === 0) {
+          context.moveTo(screenPoint.x, screenPoint.y);
+        } else {
+          context.lineTo(screenPoint.x, screenPoint.y);
+        }
+      });
+      context.closePath();
+      context.stroke();
+      context.restore();
+    }
+
+    const backgroundColor = Phaser.Display.Color.HexStringToColor(sceneBackgroundCss);
+    const luminance = (0.299 * backgroundColor.red + 0.587 * backgroundColor.green + 0.114 * backgroundColor.blue) / 255;
+    const boundsTopLeft = projectStageWorldPointToScreen(projection, worldView, 0, 0);
+    const boundsBottomRight = projectStageWorldPointToScreen(projection, worldView, canvasSize.width, canvasSize.height);
+    context.save();
+    context.lineWidth = 1;
+    context.strokeStyle = luminance < 0.5 ? 'rgba(255,255,255,0.5)' : 'rgba(51,51,51,0.5)';
+    context.strokeRect(
+      boundsTopLeft.x,
+      boundsTopLeft.y,
+      boundsBottomRight.x - boundsTopLeft.x,
+      boundsBottomRight.y - boundsTopLeft.y,
+    );
+    context.restore();
+
+    return true;
+  }, [getEditorSceneCanvasSize, selectedScene]);
+
+  const captureOverscanFrozenStageFrame = useCallback(async (
+    scene: Phaser.Scene,
+    displaySize: StageSize,
+  ): Promise<FrozenStageFrame | null> => {
+    const controller = getStageViewportController(scene);
+    if (!controller) {
+      return null;
+    }
+
+    const safeDisplaySize = {
+      width: Math.max(1, Math.round(displaySize.width)),
+      height: Math.max(1, Math.round(displaySize.height)),
+    };
+    const canvasSize = getEditorSceneCanvasSize(scene);
+    const mode = controller.getMode();
+    const projection = buildStageProjection({
+      mode,
+      hostSize: safeDisplaySize,
+      canvasSize,
+      editorViewport: controller.getEditorViewport(),
+    });
+    const renderTexture = getResizeFreezeRenderTexture(scene, safeDisplaySize);
+    const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+    const boundsGraphics = scene.data.get('boundsGraphics') as Phaser.GameObjects.Graphics | undefined;
+    const groundGraphics = scene.data.get('groundGraphics') as Phaser.GameObjects.Graphics | undefined;
+    const worldBoundaryGraphics = scene.data.get('worldBoundaryGraphics') as Phaser.GameObjects.Graphics | undefined;
+    const excludedEntries = new Set<Phaser.GameObjects.GameObject>([
+      renderTexture,
+      ...(tiledBackgroundLayer?.image ? [tiledBackgroundLayer.image] : []),
+      ...(boundsGraphics ? [boundsGraphics] : []),
+      ...(groundGraphics ? [groundGraphics] : []),
+      ...(worldBoundaryGraphics ? [worldBoundaryGraphics] : []),
+    ]);
+    const renderEntries = scene.children.list.filter((entry) => !excludedEntries.has(entry));
+
+    applyStageProjectionToCamera(scene.cameras.main, projection);
+    refreshTiledBackgroundLayer(scene);
+    const worldView = scene.cameras.main.worldView;
+
+    const backdropReady = composeOverscanBackdropFrame(scene, projection, worldView, safeDisplaySize);
+    if (!backdropReady) {
+      controller.syncProjection();
+      refreshTiledBackgroundLayer(scene);
+      return null;
+    }
+
+    renderTexture.clear();
+    renderTexture.camera.setViewport(
+      projection.cameraViewport.x,
+      projection.cameraViewport.y,
+      projection.cameraViewport.width,
+      projection.cameraViewport.height,
+    );
+    renderTexture.camera.setZoom(projection.cameraZoom);
+    renderTexture.camera.scrollX = projection.scrollX;
+    renderTexture.camera.scrollY = projection.scrollY;
+    renderTexture.camera.preRender();
+    renderTexture.draw(renderEntries);
+
+    const framePromise = new Promise<FrozenStageFrame | null>((resolve) => {
+      renderTexture.snapshot((snapshot) => {
+        if (!(snapshot instanceof HTMLImageElement) && !(snapshot instanceof HTMLCanvasElement)) {
+          resolve(null);
+          return;
+        }
+        const bufferCanvas = frozenStageFrameBufferRef.current;
+        const bufferContext = bufferCanvas?.getContext('2d');
+        if (!bufferCanvas || !bufferContext) {
+          resolve(null);
+          return;
+        }
+
+        bufferContext.drawImage(snapshot, 0, 0, safeDisplaySize.width, safeDisplaySize.height);
+        resolve({
+          pixelWidth: safeDisplaySize.width,
+          pixelHeight: safeDisplaySize.height,
+          width: safeDisplaySize.width,
+          height: safeDisplaySize.height,
+          revision: ++frozenStageFrameRevisionRef.current,
+        });
+      });
+    });
+
+    controller.syncProjection();
+    refreshTiledBackgroundLayer(scene);
+
+    return framePromise;
+  }, [
+    composeOverscanBackdropFrame,
+    getEditorSceneCanvasSize,
+    getResizeFreezeRenderTexture,
+  ]);
+
   const prepareOverscanFrozenStageFrame = useCallback((sessionId: number) => {
     if (isPlaying) {
       return;
@@ -1054,7 +1339,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
     const host = containerRef.current;
     const game = gameRef.current;
-    if (!host || !game) {
+    const editorScene = game?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+    if (!host || !game || !editorScene) {
       return;
     }
 
@@ -1065,72 +1351,32 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return;
     }
 
-    const startingFrame = game.loop?.frame ?? 0;
-    resizeEditorCanvasToSize(overscanSize, true);
-
-    let attempts = 0;
     let cancelled = false;
-    let rafId = 0;
-
-    const finalizeOverscanSnapshot = () => {
-      const latestHost = containerRef.current;
-      if (latestHost) {
-        resizeEditorCanvasToSize(getElementRenderSize(latestHost), true);
-      }
-    };
-
-    const step = () => {
+    void captureOverscanFrozenStageFrame(editorScene, overscanSize).then((overscanFrame) => {
       if (cancelled) {
         return;
       }
-
       if (resizeFreezeSessionRef.current !== sessionId || !immediateResizeFreezeRef.current) {
-        finalizeOverscanSnapshot();
+        return;
+      }
+      if (!overscanFrame) {
         return;
       }
 
-      const nextGame = gameRef.current;
-      const nextCanvas = nextGame?.canvas;
-      if (!nextGame || !nextCanvas) {
-        finalizeOverscanSnapshot();
-        return;
-      }
-
-      const sizeReady = nextCanvas.width === overscanSize.width && nextCanvas.height === overscanSize.height;
-      const frameAdvanced = (nextGame.loop?.frame ?? 0) > startingFrame;
-
-      if ((sizeReady && frameAdvanced) || attempts >= 8) {
-        const overscanFrame = sizeReady
-          ? captureFrozenStageFrameWithDisplaySize(overscanSize)
-          : null;
-
-        if (overscanFrame && resizeFreezeSessionRef.current === sessionId && immediateResizeFreezeRef.current) {
-          flushSync(() => {
-            setFrozenStageFrame(overscanFrame);
-          });
-          drawFrozenStageFrameToOverlay(overscanFrame);
-        }
-
-        finalizeOverscanSnapshot();
-        return;
-      }
-
-      attempts += 1;
-      rafId = requestAnimationFrame(step);
-    };
-
-    rafId = requestAnimationFrame(step);
+      flushSync(() => {
+        setFrozenStageFrame(overscanFrame);
+      });
+      drawFrozenStageFrameToOverlay(overscanFrame);
+    });
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafId);
     };
   }, [
-    captureFrozenStageFrameWithDisplaySize,
+    captureOverscanFrozenStageFrame,
     drawFrozenStageFrameToOverlay,
     getResizeFreezeOverscanSize,
     isPlaying,
-    resizeEditorCanvasToSize,
   ]);
 
   useLayoutEffect(() => {
@@ -1145,6 +1391,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     return () => {
       resizeFreezeOverscanCleanupRef.current?.();
       resizeFreezeOverscanCleanupRef.current = null;
+      resizeFreezeRenderTextureRef.current?.destroy();
+      resizeFreezeRenderTextureRef.current = null;
     };
   }, []);
 
@@ -2765,9 +3013,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
                 ) : null}
                 <div className="flex-1 grid grid-cols-4 md:grid-cols-8 gap-2">
                   {visibleInventoryItems.map((item) => (
-                    <button
+                    <Button
                       key={item.entryId}
-                      type="button"
                       disabled={item.isPendingUse}
                       aria-disabled={item.isPendingUse}
                       className={`group flex h-16 w-16 items-center justify-center rounded-xl border bg-background transition-opacity ${
@@ -2775,6 +3022,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
                           ? 'cursor-not-allowed opacity-50'
                           : 'hover:border-primary/60 hover:bg-muted/70'
                       }`}
+                      size="icon-lg"
+                      variant="outline"
                       onPointerDown={(event) => {
                         if (item.isPendingUse) {
                           event.preventDefault();
@@ -2810,7 +3059,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
                           {item.label}
                         </span>
                       )}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 {canGoToNextInventoryPage ? (

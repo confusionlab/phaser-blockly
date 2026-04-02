@@ -337,4 +337,196 @@ test.describe('Stage resize', () => {
 
     await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
   });
+
+  test('horizontal resize drag overscan reveals newly exposed object content', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Resize Overscan ${Date.now()}`,
+      addObject: true,
+    });
+
+    await waitForStageDebug(page);
+
+    const initialHostBox = await page.getByTestId('stage-phaser-host').boundingBox();
+    expect(initialHostBox).not.toBeNull();
+    if (!initialHostBox) {
+      return;
+    }
+
+    const centerX = 400;
+    const centerY = 300;
+    const objectX = (initialHostBox.width / 2) + 120;
+    const objectY = 0;
+
+    await page.evaluate(async ({ objectX, objectY, centerX, centerY }) => {
+      const { useProjectStore } = await import('/src/store/projectStore.ts');
+      const projectState = useProjectStore.getState();
+      const project = projectState.project;
+      const sceneId = project?.scenes[0]?.id;
+      const objectId = project?.scenes[0]?.objects[0]?.id;
+      if (!sceneId || !objectId) {
+        throw new Error('Resize overscan object is unavailable.');
+      }
+
+      projectState.updateObject(sceneId, objectId, { x: objectX, y: objectY });
+      window.__pochaStageDebug.setEditorViewport({ centerX, centerY, zoom: 1 });
+    }, { objectX, objectY, centerX, centerY });
+
+    await page.evaluate(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+    });
+
+    const divider = page.getByTestId('editor-layout-divider');
+    const dividerBox = await divider.boundingBox();
+    expect(dividerBox).not.toBeNull();
+    if (!dividerBox) {
+      return;
+    }
+
+    const pointerX = dividerBox.x + dividerBox.width / 2;
+    const pointerY = dividerBox.y + dividerBox.height / 2;
+    await page.mouse.move(pointerX, pointerY);
+    await page.mouse.down();
+    await page.mouse.move(pointerX + 220, pointerY, { steps: 10 });
+    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+
+    await expect.poll(async () => {
+      return page.evaluate(({ objectX, objectY }) => {
+        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+        if (!(frozen instanceof HTMLCanvasElement)) {
+          return null;
+        }
+
+        const ctx = frozen.getContext('2d');
+        if (!ctx) {
+          return null;
+        }
+
+        const frozenRect = frozen.getBoundingClientRect();
+        const frozenCenterX = frozenRect.left + frozenRect.width / 2;
+        const frozenCenterY = frozenRect.top + frozenRect.height / 2;
+        const objectClientX = frozenCenterX + objectX;
+        const objectClientY = frozenCenterY - objectY;
+        const localX = ((objectClientX - frozenRect.left) / frozenRect.width) * frozen.width;
+        const localY = ((objectClientY - frozenRect.top) / frozenRect.height) * frozen.height;
+        const sampleOffsets = [-6, 0, 6];
+        const backgroundPixel = '135,206,235,255';
+
+        for (const offsetY of sampleOffsets) {
+          for (const offsetX of sampleOffsets) {
+            const pixel = ctx.getImageData(
+              Math.max(0, Math.min(frozen.width - 1, Math.floor(localX + offsetX))),
+              Math.max(0, Math.min(frozen.height - 1, Math.floor(localY + offsetY))),
+              1,
+              1,
+            ).data;
+
+            if (Array.from(pixel).join(',') !== backgroundPixel) {
+              return true;
+            }
+          }
+        }
+
+        return false;
+      }, { objectX, objectY });
+    }).toBe(true);
+
+    await page.mouse.up();
+  });
+
+  test('horizontal resize drag keeps tiled background visible in the frozen frame', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Resize Background ${Date.now()}`,
+    });
+
+    await waitForStageDebug(page);
+
+    await page.evaluate(async () => {
+      const [
+        { useProjectStore },
+        { buildTiledBackgroundConfig },
+        { decodeBackgroundChunkImage },
+      ] = await Promise.all([
+        import('/src/store/projectStore.ts'),
+        import('/src/lib/background/chunkStore.ts'),
+        import('/src/lib/background/chunkImageCache.ts'),
+      ]);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Failed to create a background chunk canvas.');
+      }
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const chunkSource = canvas.toDataURL('image/png');
+      await decodeBackgroundChunkImage(chunkSource);
+
+      const projectState = useProjectStore.getState();
+      const project = projectState.project;
+      const sceneId = project?.scenes[0]?.id;
+      if (!sceneId) {
+        throw new Error('Resize background scene is unavailable.');
+      }
+
+      const background = buildTiledBackgroundConfig(
+        { '0,0': chunkSource },
+        { chunkSize: 64, baseColor: '#000000' },
+      );
+      projectState.updateScene(sceneId, { background });
+      window.__pochaStageDebug.setEditorViewport({ centerX: 432, centerY: 268, zoom: 0.5 });
+    });
+
+    await page.evaluate(async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+    });
+
+    const divider = page.getByTestId('editor-layout-divider');
+    const dividerBox = await divider.boundingBox();
+    expect(dividerBox).not.toBeNull();
+    if (!dividerBox) {
+      return;
+    }
+
+    const pointerX = dividerBox.x + dividerBox.width / 2;
+    const pointerY = dividerBox.y + dividerBox.height / 2;
+    await page.mouse.move(pointerX, pointerY);
+    await page.mouse.down();
+    await page.mouse.move(pointerX + 220, pointerY, { steps: 10 });
+    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+        if (!(frozen instanceof HTMLCanvasElement)) {
+          return null;
+        }
+
+        const ctx = frozen.getContext('2d');
+        if (!ctx) {
+          return null;
+        }
+
+        const centerX = Math.floor(frozen.width / 2);
+        const centerY = Math.floor(frozen.height / 2);
+        const pixel = ctx.getImageData(centerX, centerY, 1, 1).data;
+        return {
+          r: pixel[0],
+          g: pixel[1],
+          b: pixel[2],
+        };
+      });
+    }).toMatchObject({
+      r: 255,
+      g: 0,
+      b: 0,
+    });
+
+    await page.mouse.up();
+  });
 });

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Download, Trash2, Upload, Plus, FolderOpen } from '@/components/ui/icons';
@@ -242,23 +243,21 @@ export function ProjectDialog({
               </p>
             </div>
             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button
-                variant="ghost"
-                size="icon-sm"
+              <IconButton
+                label="Download to computer"
                 onClick={(e) => handleExportProject(proj.id, e)}
-                title="Download to computer"
+                size="sm"
               >
                 <Download className="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={(e) => handleDeleteProject(proj.id, e)}
-                title="Delete project"
+              </IconButton>
+              <IconButton
                 className="hover:text-destructive"
+                label="Delete project"
+                onClick={(e) => handleDeleteProject(proj.id, e)}
+                size="sm"
               >
                 <Trash2 className="size-4" />
-              </Button>
+              </IconButton>
             </div>
           </Card>
         ))

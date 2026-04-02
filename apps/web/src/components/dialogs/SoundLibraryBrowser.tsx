@@ -3,6 +3,7 @@ import { useConvex, useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { api } from '@convex-generated/api';
 import type { Id } from '@convex-generated/dataModel';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog';
 import {
   Loader2,
@@ -207,10 +208,10 @@ export function SoundLibraryBrowser({
       renderCard={(item) => (
         <>
           <div className="flex aspect-[16/10] items-center justify-center border-b border-border/60 bg-gradient-to-br from-muted via-muted/80 to-background">
-            <Button
+            <IconButton
               variant={playingId === item._id ? 'default' : 'outline'}
-              size="icon"
-              className="rounded-full shadow-sm"
+              className="shadow-sm"
+              label={playingId === item._id ? `Stop previewing ${item.name}` : `Preview ${item.name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 if (item.url) {
@@ -218,9 +219,11 @@ export function SoundLibraryBrowser({
                 }
               }}
               onPointerDown={(event) => event.stopPropagation()}
+              shape="pill"
+              size="md"
             >
               {playingId === item._id ? <Square className="size-4" /> : <Play className="size-4" />}
-            </Button>
+            </IconButton>
           </div>
 
           <div className="flex flex-1 flex-col justify-between gap-3 p-4">
@@ -242,10 +245,9 @@ export function SoundLibraryBrowser({
       )}
       renderRow={(item) => (
         <>
-          <Button
+          <IconButton
             variant={playingId === item._id ? 'default' : 'outline'}
-            size="icon-sm"
-            className="rounded-full"
+            label={playingId === item._id ? `Stop previewing ${item.name}` : `Preview ${item.name}`}
             onClick={(event) => {
               event.stopPropagation();
               if (item.url) {
@@ -253,9 +255,11 @@ export function SoundLibraryBrowser({
               }
             }}
             onPointerDown={(event) => event.stopPropagation()}
+            shape="pill"
+            size="sm"
           >
             {playingId === item._id ? <Square className="size-4" /> : <Play className="size-4" />}
-          </Button>
+          </IconButton>
 
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-foreground">

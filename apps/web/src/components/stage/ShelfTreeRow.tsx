@@ -1,4 +1,5 @@
 import type { DragEventHandler, MouseEventHandler, ReactNode } from 'react';
+import { DisclosureButton } from '@/components/ui/disclosure-button';
 import { ChevronDown, ChevronRight } from '@/components/ui/icons';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 
@@ -118,8 +119,7 @@ export function ShelfTreeRow({
                 ))}
               </div>
             ) : null}
-            <button
-              type="button"
+            <DisclosureButton
               disabled={!hasChildren}
               aria-label={hasChildren ? `Toggle ${name}` : undefined}
               className={`-mx-1 flex self-stretch shrink-0 items-center justify-center rounded px-1 transition-opacity disabled:pointer-events-none ${
@@ -132,7 +132,7 @@ export function ShelfTreeRow({
               ) : (
                 <span className="block h-2.5 w-2.5" />
               )}
-            </button>
+            </DisclosureButton>
 
             <div className="relative flex h-6 w-6 self-center shrink-0 items-center justify-center overflow-hidden rounded-md">
               {leadingIcon}

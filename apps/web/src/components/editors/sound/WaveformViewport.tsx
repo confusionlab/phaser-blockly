@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DragHandleButton } from '@/components/ui/drag-handle-button';
 import { cn } from '@/lib/utils';
 import { getVisiblePeaks, type WaveformData } from '@/lib/audioWaveform';
 
@@ -390,9 +391,7 @@ export function WaveformViewport({
 
       {showTrimControls ? (
         <>
-          <button
-            type="button"
-            className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 shadow-sm"
+          <DragHandleButton
             style={{ left: `${startPercent}%`, backgroundColor: TRIM_ACCENT }}
             onPointerDown={(event) => {
               event.preventDefault();
@@ -406,11 +405,9 @@ export function WaveformViewport({
           >
             <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
             <span className="sr-only">Adjust start trim</span>
-          </button>
+          </DragHandleButton>
 
-          <button
-            type="button"
-            className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 shadow-sm"
+          <DragHandleButton
             style={{ left: `${endPercent}%`, backgroundColor: TRIM_ACCENT }}
             onPointerDown={(event) => {
               event.preventDefault();
@@ -424,7 +421,7 @@ export function WaveformViewport({
           >
             <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
             <span className="sr-only">Adjust end trim</span>
-          </button>
+          </DragHandleButton>
         </>
       ) : null}
     </div>

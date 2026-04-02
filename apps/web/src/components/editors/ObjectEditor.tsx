@@ -6,7 +6,7 @@ import { BlocklyEditor } from '../blockly/BlocklyEditor';
 import { CostumeEditor } from './CostumeEditor';
 import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Code, Maximize2, Minimize2, Palette, Volume2 } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
@@ -113,19 +113,17 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
                 />
               </div>
               <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-6 rounded-full"
+                <IconButton
+                  className="size-6"
                   data-testid="object-editor-fullscreen-toggle"
-                  title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                  aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                  aria-pressed={isFullscreen}
+                  label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                  pressed={isFullscreen}
                   onClick={toggleFullscreen}
+                  shape="pill"
+                  size="xs"
                 >
                   {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-                </Button>
+                </IconButton>
               </div>
             </div>
           </div>

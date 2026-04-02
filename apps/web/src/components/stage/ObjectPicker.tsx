@@ -4,7 +4,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { getEffectiveObjectProps } from '@/types';
 import type { GameObject, ComponentDefinition } from '@/types';
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { X, Crosshair } from '@/components/ui/icons';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
@@ -132,9 +132,9 @@ export function ObjectPicker() {
           <Crosshair className="size-4 text-primary" />
           <span>Click on an object to select it</span>
         </div>
-        <Button variant="ghost" size="icon" onClick={closeObjectPicker}>
+        <IconButton label="Close object picker" onClick={closeObjectPicker}>
           <X className="size-5" />
-        </Button>
+        </IconButton>
       </div>
 
       {/* Phaser canvas */}

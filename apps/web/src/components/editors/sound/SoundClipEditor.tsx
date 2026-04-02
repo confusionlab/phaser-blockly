@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { generateWaveform, getCachedWaveform, type WaveformData } from '@/lib/audioWaveform';
 import {
   FloatingBottomToolbarDock,
@@ -342,28 +343,27 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
             <div className="app-divider-x app-divider-fill h-8 shrink-0" />
 
             <div className="flex items-center justify-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon-lg"
+              <IconButton
                 className={cn(
                   floatingToolbarControlBaseClass,
                   'w-11 text-foreground hover:text-foreground',
                   isPlaying && floatingToolbarControlActiveClass,
                 )}
+                label={isPlaying ? 'Stop' : 'Play'}
                 onClick={handleTogglePlay}
-                title={isPlaying ? 'Stop' : 'Play'}
+                pressed={isPlaying}
+                size="lg"
               >
                 {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-lg"
+              </IconButton>
+              <IconButton
                 className={cn(floatingToolbarControlBaseClass, 'text-foreground hover:text-foreground')}
+                label="Restart"
                 onClick={handleRestart}
-                title="Restart"
+                size="lg"
               >
                 <RotateCcw className="size-4" />
-              </Button>
+              </IconButton>
             </div>
 
             <div className="app-divider-x app-divider-fill h-8 shrink-0" />

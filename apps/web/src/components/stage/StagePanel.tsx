@@ -5,6 +5,7 @@ import { ObjectInspector } from './ObjectInspector';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { useEditorStore, type HierarchyTab } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
+import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
 import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw, Earth, Shapes, Component } from '@/components/ui/icons';
@@ -28,29 +29,6 @@ const hierarchyTabs: SegmentedControlOption<HierarchyTab>[] = [
 function dispatchEditorResizeFreeze(active: boolean): void {
   window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
 }
-
-const stageOverlayToneClasses = {
-  dark: {
-    button:
-      'inline-flex h-6 w-6 items-center justify-center rounded-full text-white/78 transition-[background-color,color,transform] duration-150 hover:bg-white/14 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55',
-    active:
-      'bg-white/16 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]',
-    play:
-      'text-emerald-300 hover:bg-emerald-400/14 hover:text-emerald-200',
-    stop:
-      'inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white transition-colors duration-150 hover:bg-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55',
-  },
-  light: {
-    button:
-      'inline-flex h-6 w-6 items-center justify-center rounded-full text-slate-700/88 transition-[background-color,color,transform] duration-150 hover:bg-white/22 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18',
-    active:
-      'bg-white/42 text-slate-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_8px_18px_-14px_rgba(15,23,42,0.22)]',
-    play:
-      'text-emerald-700 hover:bg-emerald-500/12 hover:text-emerald-800',
-    stop:
-      'inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white transition-colors duration-150 hover:bg-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950/18',
-  },
-} as const;
 
 export function StagePanel({
   fullscreen = false,
@@ -142,30 +120,29 @@ export function StagePanel({
   const selectedScene = project?.scenes.find((scene) => scene.id === selectedSceneId) ?? null;
   const editorStageSurfaceColor = getSceneBackgroundBaseColor(selectedScene?.background);
   const stageOverlayTone = isDarkMode ? 'dark' : 'light';
-  const stageOverlayClasses = stageOverlayToneClasses[stageOverlayTone];
   const stageShellStyle = viewMode === 'editor'
     ? { backgroundColor: editorStageSurfaceColor }
     : { backgroundColor: '#000000' };
   const playModeControls = (
     <OverlayPill tone={stageOverlayTone} size="compact">
-      <button
-        type="button"
+      <OverlayActionButton
+        label="Restart"
         onClick={handleRestartPlaying}
-        title="Restart"
-        aria-label="Restart"
-        className={cn(stageOverlayClasses.button, stageOverlayClasses.active)}
+        selected
+        size="compact"
+        tone={stageOverlayTone}
       >
         <RotateCcw className="size-3.5" />
-      </button>
-      <button
-        type="button"
+      </OverlayActionButton>
+      <OverlayActionButton
+        emphasis="danger"
+        label="Stop"
         onClick={stopPlaying}
-        title="Stop"
-        aria-label="Stop"
-        className={stageOverlayClasses.stop}
+        size="compact"
+        tone={stageOverlayTone}
       >
         <Square className="size-3.5 fill-current" />
-      </button>
+      </OverlayActionButton>
     </OverlayPill>
   );
 
@@ -186,45 +163,39 @@ export function StagePanel({
 
   const stageOverlayControls = (
     <OverlayPill tone={stageOverlayTone} size="compact">
-      <button
-        type="button"
-        className={cn(
-          stageOverlayClasses.button,
-          isCameraView && stageOverlayClasses.active,
-          isCameraView && 'hover:bg-inherit hover:text-inherit',
-        )}
+      <OverlayActionButton
         onClick={cycleViewMode}
+        label={isCameraView ? 'Camera View' : 'World View'}
+        pressed={isCameraView}
+        selected={isCameraView}
+        size="compact"
         title={isCameraView ? 'Camera View (C to toggle)' : 'World View (C to toggle)'}
-        aria-label={isCameraView ? 'Camera View' : 'World View'}
-        aria-pressed={isCameraView}
+        tone={stageOverlayTone}
       >
         <Camera className="size-3.5" />
-      </button>
-      <button
-        type="button"
-        className={cn(
-          stageOverlayClasses.button,
-          isCanvasFullscreen && stageOverlayClasses.active,
-          isCanvasFullscreen && 'hover:bg-inherit hover:text-inherit',
-        )}
+      </OverlayActionButton>
+      <OverlayActionButton
         onClick={toggleCanvasFullscreen}
+        label={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
+        pressed={isCanvasFullscreen}
+        selected={isCanvasFullscreen}
+        size="compact"
         title={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
-        aria-label={isCanvasFullscreen ? 'Exit fullscreen' : 'Fullscreen stage'}
-        aria-pressed={isCanvasFullscreen}
+        tone={stageOverlayTone}
       >
         {isCanvasFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-      </button>
-      <button
-        type="button"
-        className={cn(stageOverlayClasses.button, stageOverlayClasses.play)}
+      </OverlayActionButton>
+      <OverlayActionButton
+        emphasis="positive"
+        label="Play"
         onClick={() => {
           void tryStartPlaying();
         }}
-        title="Play"
-        aria-label="Play"
+        size="compact"
+        tone={stageOverlayTone}
       >
         <Play className="size-3.5 fill-current" />
-      </button>
+      </OverlayActionButton>
     </OverlayPill>
   );
 

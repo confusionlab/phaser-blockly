@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import {
   Check,
@@ -99,30 +99,27 @@ export function CollectionViewControls({
   return (
     <div className={cn('flex items-center gap-3', className)}>
       {selectionMode && selectionCount > 0 && onDeleteSelected ? (
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          className="rounded-full"
-          aria-label={resolvedDeleteLabel}
-          title={resolvedDeleteLabel}
+        <IconButton
           disabled={disabled || deleteDisabled}
+          label={resolvedDeleteLabel}
           onClick={onDeleteSelected}
+          shape="pill"
+          size="sm"
         >
           <Trash2 className="size-4" />
-        </Button>
+        </IconButton>
       ) : null}
 
-      <Button
-        size="icon-sm"
+      <IconButton
         variant={selectionMode ? 'default' : 'ghost'}
-        className="rounded-full"
-        aria-label={selectionMode ? 'Done selecting' : 'Multi-select'}
-        title={selectionMode ? 'Done selecting' : 'Multi-select'}
         disabled={disabled}
+        label={selectionMode ? 'Done selecting' : 'Multi-select'}
         onClick={onToggleSelectionMode}
+        shape="pill"
+        size="sm"
       >
         <SquareCheck className="size-4" />
-      </Button>
+      </IconButton>
 
       <SegmentedControl
         ariaLabel={ariaLabel}

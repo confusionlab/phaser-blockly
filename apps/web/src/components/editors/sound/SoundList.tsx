@@ -9,9 +9,10 @@ import {
 } from 'react';
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { IconButton } from '@/components/ui/icon-button';
+import { MenuItemButton } from '@/components/ui/menu-item-button';
 import { SoundLibraryBrowser } from '@/components/dialogs/SoundLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
@@ -333,33 +334,30 @@ export const SoundList = memo(({
       <AssetSidebar
         actions={
           <>
-            <Button
-              variant="ghost"
-              size="icon-xs"
+            <IconButton
+              label="Record sound"
               onClick={onOpenRecorder}
-              title="Record sound"
               disabled={isProcessing}
+              size="xs"
             >
               <Mic className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
+            </IconButton>
+            <IconButton
+              label="Import sound"
               onClick={() => fileInputRef.current?.click()}
-              title="Import sound"
               disabled={isProcessing}
+              size="xs"
             >
               {isProcessing ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
+            </IconButton>
+            <IconButton
+              label="Browse library"
               onClick={() => setShowLibrary(true)}
-              title="Browse library"
               disabled={isProcessing}
+              size="xs"
             >
               <Library className="size-3.5" />
-            </Button>
+            </IconButton>
             <input
               ref={fileInputRef}
               type="file"
@@ -448,51 +446,42 @@ export const SoundList = memo(({
             className="fixed z-50 min-w-44 gap-0 py-1"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<Copy className="size-4" />}
               onClick={() => {
                 handleCopySounds('copy');
                 handleCloseContextMenu();
               }}
-              className="h-8 w-full justify-start rounded-none"
             >
-              <Copy className="size-4" />
               Copy
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
+            </MenuItemButton>
+            <MenuItemButton
+              icon={<Scissors className="size-4" />}
               onClick={handleCutSounds}
-              className="h-8 w-full justify-start rounded-none"
             >
-              <Scissors className="size-4" />
               Cut
-            </Button>
+            </MenuItemButton>
             {hasAssetCardClipboardContents('sound') ? (
-              <Button
-                variant="ghost"
-                size="sm"
+              <MenuItemButton
+                icon={<Clipboard className="size-4" />}
                 onClick={() => handlePasteSounds()}
-                className="h-8 w-full justify-start rounded-none"
               >
-                <Clipboard className="size-4" />
                 Paste
-              </Button>
+              </MenuItemButton>
             ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<CopyPlus className="size-4" />}
               onClick={handleDuplicateSounds}
-              className="h-8 w-full justify-start rounded-none"
             >
-              <CopyPlus className="size-4" />
               Duplicate
-            </Button>
+            </MenuItemButton>
             <DropdownMenuSeparator />
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={contextMenuSound && savingToLibrary === contextMenuSoundIndex ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Library className="size-4" />
+              )}
               onClick={() => {
                 if (contextMenuSound) {
                   void handleSaveToLibrary(contextMenuSoundIndex);
@@ -500,27 +489,19 @@ export const SoundList = memo(({
                 handleCloseContextMenu();
               }}
               disabled={!isAuthenticated || !contextMenuSound || contextMenuSoundIndex < 0 || savingToLibrary === contextMenuSoundIndex}
-              className="h-8 w-full justify-start rounded-none"
             >
-              {contextMenuSound && savingToLibrary === contextMenuSoundIndex ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Library className="size-4" />
-              )}
               Add to Library
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
+            </MenuItemButton>
+            <MenuItemButton
+              icon={<Trash2 className="size-4" />}
+              intent="destructive"
               onClick={() => {
                 onDeleteSounds(contextMenuDeleteIds);
                 handleCloseContextMenu();
               }}
-              className="h-8 w-full justify-start rounded-none text-destructive hover:text-destructive"
             >
-              <Trash2 className="size-4" />
               {contextMenuDeleteLabel}
-            </Button>
+            </MenuItemButton>
           </Card>
         </>
       ) : null}

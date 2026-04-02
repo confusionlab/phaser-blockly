@@ -4,8 +4,8 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { IconButton } from '@/components/ui/icon-button';
 import {
   Select,
   SelectContent,
@@ -17,6 +17,7 @@ import {
   CompactColorPicker,
 } from '@/components/ui/color-picker';
 import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
+import { InlineActionButton } from '@/components/ui/inline-action-button';
 import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Paintbrush, Pencil } from '@/components/ui/icons';
 import type { ComponentDefinition, GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
@@ -640,18 +641,17 @@ function ObjectProperties({
             onDragStart={() => saveDragStart('scaleY', (selectedObj) => Math.abs(selectedObj.scaleY))}
             onDragEnd={() => clearDragStart('scaleY')}
           />
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <IconButton
+            label={scaleLockField.value && !scaleLockField.mixed ? 'Unlock proportions' : 'Lock proportions'}
             onClick={() => applyToSelected(() => ({ lockScaleProportions: !scaleLockField.value || scaleLockField.mixed }))}
             className={cn(
               'inspector-inline-icon-action',
               scaleLockField.value && !scaleLockField.mixed ? 'text-primary' : 'text-muted-foreground',
             )}
-            title={scaleLockField.value && !scaleLockField.mixed ? 'Unlock proportions' : 'Lock proportions'}
+            size="sm"
           >
             {scaleLockField.value && !scaleLockField.mixed ? <Link className="size-4" /> : <Unlink className="size-4" />}
-          </Button>
+          </IconButton>
         </div>
       </div>
 
@@ -670,39 +670,36 @@ function ObjectProperties({
             onDragStart={() => saveDragStart('rotation', (selectedObj) => selectedObj.rotation)}
             onDragEnd={() => clearDragStart('rotation')}
           />
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <IconButton
+            label="Rotate 90°"
             className="inspector-inline-icon-action"
             onClick={handleRotate90}
-            title="Rotate 90°"
+            size="sm"
           >
             <RotateCw className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          </IconButton>
+          <IconButton
+            label="Flip horizontal"
             onClick={handleFlipH}
-            title="Flip horizontal"
             className={cn(
               'inspector-inline-icon-action',
               allFlippedH && 'text-primary',
             )}
+            size="sm"
           >
             <FlipHorizontal2 className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          </IconButton>
+          <IconButton
+            label="Flip vertical"
             onClick={handleFlipV}
-            title="Flip vertical"
             className={cn(
               'inspector-inline-icon-action',
               allFlippedV && 'text-primary',
             )}
+            size="sm"
           >
             <FlipVertical2 className="size-4" />
-          </Button>
+          </IconButton>
         </div>
       </div>
 
@@ -788,16 +785,13 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
       <div className="inspector-split-row">
         <span className="text-xs text-muted-foreground">Background</span>
         <div className="inspector-inline-controls">
-          <Button
-            variant="outline"
-            size="sm"
-            className="inspector-inline-button h-8 px-2 text-xs"
+          <InlineActionButton
+            icon={<Paintbrush className="size-3.5" />}
             onClick={() => onOpenBackgroundEditor(scene.id)}
             title="Draw background"
           >
-            <Paintbrush className="size-3.5" />
             Draw
-          </Button>
+          </InlineActionButton>
           <ColorSwatch
             value={!scene.background || scene.background.type === 'image'
               ? '#87CEEB'
@@ -860,15 +854,12 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
               World Boundary
             </Label>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="inspector-inline-button h-8 gap-1.5 px-2 text-xs"
+          <InlineActionButton
+            icon={<Pencil className="size-3.5" />}
             onClick={() => onOpenWorldBoundaryEditor(scene.id)}
           >
-            <Pencil className="size-3.5" />
             Edit
-          </Button>
+          </InlineActionButton>
         </div>
       </div>
     </div>
@@ -1156,15 +1147,13 @@ function PhysicsProperties({
               </SelectContent>
             </Select>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="inspector-inline-button h-10 px-3 text-xs"
+          <InlineActionButton
             onClick={onEditCollider}
             disabled={colliderType === 'none'}
+            size="md"
           >
             Edit
-          </Button>
+          </InlineActionButton>
         </div>
       </div>
     </div>

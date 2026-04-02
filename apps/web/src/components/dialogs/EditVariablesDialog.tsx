@@ -5,10 +5,7 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -40,12 +37,11 @@ type VariableTarget =
   | { kind: 'component'; componentId: string }
   | { kind: 'object'; sceneId: string; objectId: string };
 
-type AddTargetOption = {
-  value: string;
-  label: string;
-  target: VariableTarget;
-  group: 'project' | 'components' | 'scenes';
-};
+type AddVariableScope = 'global' | 'local';
+
+type LocalSelectionTarget =
+  | { kind: 'component'; componentId: string }
+  | { kind: 'object'; sceneId: string; objectId: string; backingComponentId?: string };
 
 type VariableEntry = {
   key: string;
@@ -53,6 +49,11 @@ type VariableEntry = {
   target: VariableTarget;
   note?: string;
 };
+
+const VARIABLE_SCOPE_OPTIONS: { value: AddVariableScope; label: string; description: string }[] = [
+  { value: 'global', label: 'Global', description: 'Available everywhere in the project.' },
+  { value: 'local', label: 'Local', description: 'Uses the currently selected object or reusable component.' },
+];
 
 const VARIABLE_TYPES: { value: VariableType; label: string; description: string }[] = [
   { value: 'string', label: 'Text', description: 'Letters and words' },
@@ -106,7 +107,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [name, setName] = useState('');
   const [type, setType] = useState<VariableType>('integer');
   const [cardinality, setCardinality] = useState<VariableCardinality>('single');
-  const [targetValue, setTargetValue] = useState('global');
+  const [scope, setScope] = useState<AddVariableScope>('global');
   const [error, setError] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -131,69 +132,40 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     return ids;
   }, [scenes]);
 
-  const addTargetOptions = useMemo<AddTargetOption[]>(() => {
-    const options: AddTargetOption[] = [
-      {
-        value: 'global',
-        label: 'Project / Global',
-        target: { kind: 'global' },
-        group: 'project',
-      },
-    ];
-
-    for (const component of components) {
-      options.push({
-        value: `component:${component.id}`,
-        label: `Reusable Component / ${component.name}`,
-        target: { kind: 'component', componentId: component.id },
-        group: 'components',
-      });
-    }
-
-    for (const scene of scenes) {
-      for (const object of scene.objects) {
-        const component = object.componentId ? componentById.get(object.componentId) : null;
-        options.push({
-          value: `scene:${scene.id}:object:${object.id}`,
-          label: component
-            ? `Object / ${scene.name} / ${object.name} (stored on ${component.name} component)`
-            : `Object / ${scene.name} / ${object.name}`,
-          target: component
-            ? { kind: 'component', componentId: component.id }
-            : { kind: 'object', sceneId: scene.id, objectId: object.id },
-          group: 'scenes',
-        });
-      }
-    }
-
-    return options;
-  }, [componentById, components, scenes]);
-
-  const addTargetByValue = useMemo(
-    () => new Map(addTargetOptions.map((option) => [option.value, option])),
-    [addTargetOptions],
-  );
-
-  const preferredTargetValue = useMemo(() => {
+  const localSelectionTarget = useMemo<LocalSelectionTarget | null>(() => {
     if (selectedSceneId && selectedObjectId) {
       const scene = scenes.find((sceneItem) => sceneItem.id === selectedSceneId);
       const object = scene?.objects.find((objectItem) => objectItem.id === selectedObjectId);
       if (object) {
-        return `scene:${selectedSceneId}:object:${selectedObjectId}`;
+        const component = object.componentId ? componentById.get(object.componentId) : null;
+        return {
+          kind: 'object',
+          sceneId: selectedSceneId,
+          objectId: selectedObjectId,
+          backingComponentId: component?.id,
+        };
       }
     }
     if (selectedComponentId) {
-      return `component:${selectedComponentId}`;
+      const component = componentById.get(selectedComponentId);
+      if (component) {
+        return {
+          kind: 'component',
+          componentId: selectedComponentId,
+        };
+      }
     }
-    return 'global';
-  }, [scenes, selectedComponentId, selectedObjectId, selectedSceneId]);
+    return null;
+  }, [componentById, scenes, selectedComponentId, selectedObjectId, selectedSceneId]);
 
-  const resetAddDialog = (nextTargetValue: string) => {
+  const preferredScope = localSelectionTarget ? 'local' : 'global';
+
+  const resetAddDialog = (nextScope: AddVariableScope) => {
     setName('');
     setType('integer');
     setCardinality('single');
     setError(null);
-    setTargetValue(nextTargetValue);
+    setScope(nextScope);
   };
 
   useEffect(() => {
@@ -201,14 +173,14 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     setIsAdding(false);
     setEditingKey(null);
     setEditName('');
-    resetAddDialog(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
-  }, [addTargetByValue, open, preferredTargetValue]);
+    resetAddDialog(preferredScope);
+  }, [open, preferredScope]);
 
   useEffect(() => {
-    if (!addTargetByValue.has(targetValue)) {
-      setTargetValue(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
+    if (scope === 'local' && !localSelectionTarget) {
+      setScope('global');
     }
-  }, [addTargetByValue, preferredTargetValue, targetValue]);
+  }, [localSelectionTarget, scope]);
 
   const getVariablesForTarget = (target: VariableTarget): Variable[] => {
     switch (target.kind) {
@@ -222,6 +194,20 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         return object?.localVariables || [];
       }
     }
+  };
+
+  const getVariablesForLocalSelectionTarget = (target: LocalSelectionTarget): Variable[] => {
+    if (target.kind === 'component') {
+      return componentById.get(target.componentId)?.localVariables || [];
+    }
+
+    if (target.backingComponentId) {
+      return componentById.get(target.backingComponentId)?.localVariables || [];
+    }
+
+    const scene = scenes.find((sceneItem) => sceneItem.id === target.sceneId);
+    const object = scene?.objects.find((objectItem) => objectItem.id === target.objectId);
+    return object?.localVariables || [];
   };
 
   const emitVariablesChanged = () => {
@@ -379,19 +365,32 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   };
 
   const handleAdd = () => {
-    const option = addTargetByValue.get(targetValue);
     const trimmedName = normalizeVariableName(name);
+    const target: VariableTarget | null = scope === 'global'
+      ? { kind: 'global' }
+      : localSelectionTarget
+        ? (
+            localSelectionTarget.kind === 'component'
+              ? { kind: 'component', componentId: localSelectionTarget.componentId }
+              : { kind: 'object', sceneId: localSelectionTarget.sceneId, objectId: localSelectionTarget.objectId }
+          )
+        : null;
 
-    if (!option) {
-      setError('Please choose where to add the variable');
+    if (!target) {
+      setError('Select an object or reusable component to add a local variable');
       return;
     }
     if (!trimmedName) {
       setError('Please enter a variable name');
       return;
     }
-    if (hasVariableNameConflict(getVariablesForTarget(option.target), trimmedName)) {
-      setError('A variable with this name already exists in that location');
+    if (scope === 'global') {
+      if (hasVariableNameConflict(getVariablesForTarget(target), trimmedName)) {
+        setError('A global variable with this name already exists');
+        return;
+      }
+    } else if (localSelectionTarget && hasVariableNameConflict(getVariablesForLocalSelectionTarget(localSelectionTarget), trimmedName)) {
+      setError('A local variable with this name already exists for the current selection');
       return;
     }
 
@@ -401,31 +400,31 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       type,
       cardinality,
       defaultValue: getDefaultVariableValue(type, cardinality),
-      scope: option.target.kind === 'global' ? 'global' : 'local',
+      scope: target.kind === 'global' ? 'global' : 'local',
     };
 
-    switch (option.target.kind) {
+    switch (target.kind) {
       case 'global':
         addGlobalVariable(variable);
         break;
       case 'component': {
-        const component = componentById.get(option.target.componentId);
+        const component = componentById.get(target.componentId);
         if (!component) {
           setError('Could not find that component');
           return;
         }
-        updateComponent(option.target.componentId, {
+        updateComponent(target.componentId, {
           localVariables: [...(component.localVariables || []), { ...variable, scope: 'local' }],
         });
         break;
       }
       case 'object':
-        addLocalVariable(option.target.sceneId, option.target.objectId, variable);
+        addLocalVariable(target.sceneId, target.objectId, variable);
         break;
     }
 
     setIsAdding(false);
-    resetAddDialog(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
+    resetAddDialog(preferredScope);
     emitVariablesChanged();
   };
 
@@ -477,7 +476,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             return;
           }
 
-          resetAddDialog(addTargetByValue.has(preferredTargetValue) ? preferredTargetValue : 'global');
+          resetAddDialog(preferredScope);
           setIsAdding(true);
         }}
       >
@@ -594,80 +593,74 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           </div>
 
           <div className="space-y-2">
-            <Label>Where</Label>
-            <Select value={targetValue} onValueChange={setTargetValue}>
+            <Label>Scope</Label>
+            <Select
+              value={scope}
+              onValueChange={(nextValue) => {
+                setScope(nextValue as AddVariableScope);
+                setError(null);
+              }}
+            >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Choose where this variable belongs" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>Project</SelectLabel>
-                  {addTargetOptions
-                    .filter((option) => option.group === 'project')
-                    .map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                </SelectGroup>
-                <SelectSeparator />
-                <SelectGroup>
-                  <SelectLabel>Reusable Components</SelectLabel>
-                  {addTargetOptions
-                    .filter((option) => option.group === 'components')
-                    .map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                </SelectGroup>
-                <SelectSeparator />
-                <SelectGroup>
-                  <SelectLabel>Scene Objects</SelectLabel>
-                  {addTargetOptions
-                    .filter((option) => option.group === 'scenes')
-                    .map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                </SelectGroup>
+                {VARIABLE_SCOPE_OPTIONS.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    description={option.description}
+                    disabled={option.value === 'local' && !localSelectionTarget}
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2">
             <Label>Type</Label>
-            <div className="flex flex-col gap-2">
-              {VARIABLE_TYPES.map((option) => (
-                <Button
-                  key={option.value}
-                  variant={type === option.value ? 'default' : 'outline'}
-                  className="h-auto w-full flex-col items-start py-2"
-                  onClick={() => setType(option.value)}
-                >
-                  <span className="font-medium">{option.label}</span>
-                  <span className="text-xs opacity-70">{option.description}</span>
-                </Button>
-              ))}
-            </div>
+            <Select
+              value={type}
+              onValueChange={(nextValue) => {
+                setType(nextValue as VariableType);
+                setError(null);
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {VARIABLE_TYPES.map((option) => (
+                  <SelectItem key={option.value} value={option.value} description={option.description}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-2">
             <Label>Values</Label>
-            <div className="flex flex-col gap-2">
-              {VARIABLE_CARDINALITIES.map((option) => (
-                <Button
-                  key={option.value}
-                  variant={cardinality === option.value ? 'default' : 'outline'}
-                  className="h-auto w-full flex-col items-start py-2"
-                  onClick={() => setCardinality(option.value)}
-                >
-                  <span className="font-medium">{option.label}</span>
-                  <span className="text-xs opacity-70">{option.description}</span>
-                </Button>
-              ))}
-            </div>
+            <Select
+              value={cardinality}
+              onValueChange={(nextValue) => {
+                setCardinality(nextValue as VariableCardinality);
+                setError(null);
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {VARIABLE_CARDINALITIES.map((option) => (
+                  <SelectItem key={option.value} value={option.value} description={option.description}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {error ? <p className="text-xs text-red-500">{error}</p> : null}

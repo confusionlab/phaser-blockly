@@ -9,9 +9,10 @@ import {
 } from 'react';
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { IconButton } from '@/components/ui/icon-button';
+import { MenuItemButton } from '@/components/ui/menu-item-button';
 import { Plus, Upload, Loader2, Library, Copy, CopyPlus, Trash2, Clipboard, Scissors } from '@/components/ui/icons';
 import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
@@ -401,17 +402,6 @@ export const CostumeList = memo(({
     }
   };
 
-  const handleDuplicateCostume = (index: number) => {
-    const costume = costumes[index];
-    if (!costume) return;
-
-    onAddCostume(cloneCostume({
-      ...costume,
-      id: crypto.randomUUID(),
-      name: `${costume.name} copy`,
-    }));
-  };
-
   const getContextMenuActionIds = useCallback(() => {
     return getAssetCardActionIds(
       costumes.map((costume) => costume.id),
@@ -501,37 +491,34 @@ export const CostumeList = memo(({
       <AssetSidebar
         actions={
           <>
-            <Button
-              variant="ghost"
-              size="icon-xs"
+            <IconButton
+              label="New blank costume"
               onClick={handleAddBlank}
-              title="New blank costume"
               disabled={isProcessing}
+              size="xs"
             >
               <Plus className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
+            </IconButton>
+            <IconButton
+              label="Import image"
               onClick={handleUploadClick}
-              title="Import image"
               disabled={isProcessing}
+              size="xs"
             >
               {isProcessing ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
                 <Upload className="size-3.5" />
               )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
+            </IconButton>
+            <IconButton
+              label="Browse library"
               onClick={() => setShowLibrary(true)}
-              title="Browse library"
               disabled={isProcessing}
+              size="xs"
             >
               <Library className="size-3.5" />
-            </Button>
+            </IconButton>
             <input
               ref={fileInputRef}
               type="file"
@@ -613,52 +600,43 @@ export const CostumeList = memo(({
             className="fixed z-50 py-1 min-w-44 gap-0"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<Copy className="size-4" />}
               onClick={() => {
                 handleCopyCostumes('copy');
                 handleCloseContextMenu();
               }}
-              className="w-full justify-start rounded-none h-8"
             >
-              <Copy className="size-4" />
               Copy
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
+            </MenuItemButton>
+            <MenuItemButton
+              icon={<Scissors className="size-4" />}
               onClick={handleCutCostumes}
               disabled={!canDeleteContextMenuCostumes}
-              className="w-full justify-start rounded-none h-8"
             >
-              <Scissors className="size-4" />
               Cut
-            </Button>
+            </MenuItemButton>
             {hasAssetCardClipboardContents('costume') ? (
-              <Button
-                variant="ghost"
-                size="sm"
+              <MenuItemButton
+                icon={<Clipboard className="size-4" />}
                 onClick={() => handlePasteCostumes()}
-                className="w-full justify-start rounded-none h-8"
               >
-                <Clipboard className="size-4" />
                 Paste
-              </Button>
+              </MenuItemButton>
             ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<CopyPlus className="size-4" />}
               onClick={handleDuplicateCostumes}
-              className="w-full justify-start rounded-none h-8"
             >
-              <CopyPlus className="size-4" />
               Duplicate
-            </Button>
+            </MenuItemButton>
             <DropdownMenuSeparator />
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={contextMenuCostume && savingToLibrary === contextMenuCostumeIndex ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Library className="size-4" />
+              )}
               onClick={() => {
                 if (contextMenuCostume) {
                   void handleSaveToLibrary(contextMenuCostumeIndex);
@@ -666,18 +644,12 @@ export const CostumeList = memo(({
                 handleCloseContextMenu();
               }}
               disabled={!contextMenuCostume || contextMenuCostumeIndex < 0 || savingToLibrary === contextMenuCostumeIndex}
-              className="w-full justify-start rounded-none h-8"
             >
-              {contextMenuCostume && savingToLibrary === contextMenuCostumeIndex ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Library className="size-4" />
-              )}
               Add to Library
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
+            </MenuItemButton>
+            <MenuItemButton
+              icon={<Trash2 className="size-4" />}
+              intent="destructive"
               onClick={() => {
                 if (canDeleteContextMenuCostumes) {
                   onDeleteCostumes(contextMenuDeleteIds);
@@ -685,11 +657,9 @@ export const CostumeList = memo(({
                 handleCloseContextMenu();
               }}
               disabled={!canDeleteContextMenuCostumes}
-              className="w-full justify-start rounded-none h-8 text-destructive hover:text-destructive"
             >
-              <Trash2 className="size-4" />
               {contextMenuDeleteLabel}
-            </Button>
+            </MenuItemButton>
           </Card>
         </>
       )}

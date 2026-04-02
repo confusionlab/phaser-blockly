@@ -30,6 +30,8 @@ import {
   type AssistantModelMode,
 } from '../../../../../packages/ui-shared/src/assistantModels';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
+import { ScrimButton } from '@/components/ui/scrim-button';
 import {
   Select,
   SelectContent,
@@ -660,16 +662,17 @@ export function AiAssistantPanel() {
   return (
     <>
       {!isOpen ? (
-        <Button
+        <IconButton
           className={cn(
-            'fixed bottom-5 right-5 z-[100320] size-14 rounded-full p-0',
+            'fixed bottom-5 right-5 z-[100320] size-14',
             'border border-slate-950/10 bg-slate-950 text-white shadow-[0_24px_60px_-24px_rgba(15,23,42,0.8)]',
             'hover:bg-slate-900 dark:border-white/10 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100',
           )}
+          label="Open AI assistant"
           onClick={() => setIsOpen(true)}
-          title="Open AI assistant"
-          aria-label="Open AI assistant"
           aria-expanded={isOpen}
+          shape="pill"
+          size="lg"
         >
           <span className="flex size-full items-center justify-center">
             <span className="flex size-9 items-center justify-center rounded-full bg-white/12 dark:bg-slate-900/8">
@@ -680,7 +683,7 @@ export function AiAssistantPanel() {
               )}
             </span>
           </span>
-        </Button>
+        </IconButton>
       ) : null}
 
       <div
@@ -693,9 +696,7 @@ export function AiAssistantPanel() {
           className="absolute inset-0"
           style={{ display: isOpen ? 'block' : 'none' }}
         >
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-950/20 backdrop-blur-[3px]"
+          <ScrimButton
             onClick={() => setIsOpen(false)}
             aria-label="Close AI assistant"
           />
@@ -761,24 +762,26 @@ export function AiAssistantPanel() {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="rounded-full bg-white/60 dark:bg-white/6"
+                          className="bg-white/60 dark:bg-white/6"
                           onClick={handleClearChat}
                           disabled={!!assistantLockRunId}
+                          shape="pill"
                           title={assistantLockRunId ? 'Wait for the current run to finish' : 'Clear chat'}
                         >
                           <Trash2 className="size-4" />
                           Clear chat
                         </Button>
 
-                        <Button
+                        <IconButton
                           variant="outline"
-                          size="icon-sm"
                           className="shrink-0 rounded-full bg-white/60 dark:bg-white/6"
                           onClick={() => setIsOpen(false)}
-                          aria-label="Close AI assistant"
+                          label="Close AI assistant"
+                          shape="pill"
+                          size="sm"
                         >
                           <X className="size-4" />
-                        </Button>
+                        </IconButton>
                       </div>
                     </div>
                   </div>

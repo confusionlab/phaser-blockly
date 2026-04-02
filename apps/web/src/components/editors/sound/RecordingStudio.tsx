@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { formatAudioTime, generateWaveformFromBlob } from '@/lib/audioWaveform';
 import { Square } from '@/components/ui/icons';
 
@@ -148,14 +148,14 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
 
       {mode === 'idle' ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
-          <Button
-            size="icon"
+          <IconButton
             className={RECORD_BUTTON_CLASS_NAME}
+            label="Record"
             onClick={startRecording}
-            title="Record"
+            size="md"
           >
             <span className="size-5 rounded-full bg-current" />
-          </Button>
+          </IconButton>
           <div className="text-2xl font-medium text-foreground">
             Press to record
           </div>
@@ -164,15 +164,14 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
 
       {mode === 'recording' ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
-          <Button
-            type="button"
-            size="icon"
-            onClick={stopRecording}
+          <IconButton
             className={RECORD_BUTTON_CLASS_NAME}
-            title="Stop recording"
+            label="Stop recording"
+            onClick={stopRecording}
+            size="md"
           >
             <Square className="size-6 fill-current" />
-          </Button>
+          </IconButton>
           <div className="text-2xl font-medium text-foreground">
             {formatAudioTime(recordingDuration, true)}
           </div>

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
   FloatingBottomToolbarDock,
@@ -211,21 +212,20 @@ const FloatingToolButton = memo(({
   const isActive = activeTool === tool;
 
   return (
-    <Button
-      variant="ghost"
-      size="icon-lg"
+    <IconButton
       className={cn(
         floatingToolbarControlBaseClass,
         'w-11',
         isActive && floatingToolbarControlActiveClass,
       )}
+      label={label}
       onClick={() => onClick(tool)}
-      title={label}
-      aria-pressed={isActive}
+      pressed={isActive}
+      size="lg"
       data-tool={tool}
     >
       {icon}
-    </Button>
+    </IconButton>
   );
 });
 
@@ -756,15 +756,14 @@ export const CostumeToolbar = memo(({
                           onOpenChange={(open) => handleMenuOpenChange('move-order', open)}
                         >
                           <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="icon"
+                            <IconButton
                               className="h-8 w-8"
-                              title="Move Order"
-                              aria-label="Move Order"
+                              label="Move Order"
+                              size="md"
+                              variant="outline"
                             >
                               <MoveOrderMenuIcon />
-                            </Button>
+                            </IconButton>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">
                             <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
@@ -787,16 +786,15 @@ export const CostumeToolbar = memo(({
                         onOpenChange={(open) => handleMenuOpenChange('align', open)}
                       >
                         <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="icon"
+                          <IconButton
                             className="h-8 w-8"
                             disabled={alignDisabled}
-                            title="Align"
-                            aria-label="Align"
+                            label="Align"
+                            size="md"
+                            variant="outline"
                           >
                             <AlignMenuIcon />
-                          </Button>
+                          </IconButton>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="w-auto p-2">
                           <div className="flex items-center gap-1">
@@ -814,36 +812,33 @@ export const CostumeToolbar = memo(({
                           </div>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                      <Button
-                        variant="outline"
-                        size="icon"
+                      <IconButton
                         className="h-8 w-8"
-                        title="Flip Horizontal"
-                        aria-label="Flip Horizontal"
+                        label="Flip Horizontal"
                         onClick={() => onFlipSelection('horizontal')}
+                        size="md"
+                        variant="outline"
                       >
                         <FlipHorizontal2 className="size-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
+                      </IconButton>
+                      <IconButton
                         className="h-8 w-8"
-                        title="Flip Vertical"
-                        aria-label="Flip Vertical"
+                        label="Flip Vertical"
                         onClick={() => onFlipSelection('vertical')}
+                        size="md"
+                        variant="outline"
                       >
                         <FlipVertical2 className="size-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
+                      </IconButton>
+                      <IconButton
                         className="h-8 w-8"
-                        title="Rotate 90 Degrees"
-                        aria-label="Rotate 90 Degrees"
+                        label="Rotate 90 Degrees"
                         onClick={onRotateSelection}
+                        size="md"
+                        variant="outline"
                       >
                         <RotateCw className="size-4" />
-                      </Button>
+                      </IconButton>
                     </div>
                   )}
 

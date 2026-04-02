@@ -296,11 +296,11 @@ export function SoundEditor() {
       ) : null}
 
       <div className="pointer-events-auto flex items-center justify-center gap-2 rounded-full border border-border/70 bg-background/95 p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl">
-        <Button variant="outline" className="rounded-full" onClick={handleRerecord}>
+        <Button shape="pill" variant="outline" onClick={handleRerecord}>
           <RotateCcw className="size-4" />
           Re-record
         </Button>
-        <Button className="rounded-full px-5" onClick={handleSaveDraft} disabled={isSavingDraft}>
+        <Button className="px-5" shape="pill" onClick={handleSaveDraft} disabled={isSavingDraft}>
           {isSavingDraft ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
           Save
         </Button>
