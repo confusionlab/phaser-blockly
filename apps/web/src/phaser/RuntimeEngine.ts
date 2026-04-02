@@ -222,6 +222,12 @@ interface ComponentSpawnTemplate {
   sounds: import('../types').Sound[];
 }
 
+interface SpriteRegistrationOptions {
+  componentId?: string | null;
+  typeToken?: string;
+  initialLocalVariables?: ReadonlyMap<string, VariableValue> | null;
+}
+
 // Template for cloning - stores original object state
 interface ObjectTemplate {
   id: string;
@@ -378,16 +384,35 @@ export class RuntimeEngine {
 
   // --- Sprite Management ---
 
+  private createLocalVariableStore(
+    initialLocalVariables?: ReadonlyMap<string, VariableValue> | null,
+  ): Map<string, VariableValue> {
+    const store = new Map<string, VariableValue>();
+    if (!initialLocalVariables) {
+      return store;
+    }
+
+    for (const [varId, value] of initialLocalVariables) {
+      store.set(varId, cloneVariableValue(value));
+    }
+
+    return store;
+  }
+
   registerSprite(
     id: string,
     name: string,
     container: Phaser.GameObjects.Container,
-    componentId?: string | null,
-    typeToken?: string
+    options: SpriteRegistrationOptions = {},
   ): RuntimeSprite {
+    const {
+      componentId = null,
+      typeToken,
+      initialLocalVariables = null,
+    } = options;
     const sprite = new RuntimeSprite(this.scene, container, id, name);
     sprite.setRuntime(this);
-    sprite.componentId = componentId || null;
+    sprite.componentId = componentId;
     sprite.typeToken = typeToken ?? (componentId ? `component:${componentId}` : '');
     this.sprites.set(id, sprite);
     this.handlers.set(id, {
@@ -402,7 +427,7 @@ export class RuntimeEngine {
       onInventoryDropped: new Map(),
       forever: [],
     });
-    this.localVariables.set(id, new Map());
+    this.localVariables.set(id, this.createLocalVariableStore(initialLocalVariables));
     this._worldBoundaryLimitedSprites.set(id, true);
     this.enforceWorldBoundaryForSprite(id, 'register');
     return sprite;
@@ -2315,8 +2340,10 @@ export class RuntimeEngine {
       spawnedId,
       `${template.name} (spawned)`,
       container,
-      template.componentId,
-      typeToken
+      {
+        componentId: template.componentId,
+        typeToken,
+      },
     );
 
     if (template.costumes.length > 0) {
@@ -2400,19 +2427,21 @@ export class RuntimeEngine {
       return null;
     }
 
-    // Get live sprite if it exists (for current position/state)
+    // Get the live root original if it exists. This is still the clone root for
+    // template lookup and MY_TYPE checks, even when the source sprite is itself a clone.
     const liveOriginal = this.sprites.get(originalId);
+    const sourceStateSprite = sourceSprite ?? liveOriginal ?? null;
 
     this.cloneCounter++;
     const cloneId = `${originalId}_clone_${this.cloneCounter}`;
 
-    // Use live sprite's position if available, otherwise use template
-    const x = liveOriginal?.container.x ?? template.x;
-    const y = liveOriginal?.container.y ?? template.y;
-    const scaleX = liveOriginal?.container.scaleX ?? template.scaleX;
-    const scaleY = liveOriginal?.container.scaleY ?? template.scaleY;
-    const rotation = liveOriginal?.container.rotation ?? template.rotation;
-    const depth = liveOriginal?.container.depth ?? template.depth;
+    // Use the source sprite's current transform when available, otherwise fall back to the template.
+    const x = sourceStateSprite?.container.x ?? template.x;
+    const y = sourceStateSprite?.container.y ?? template.y;
+    const scaleX = sourceStateSprite?.container.scaleX ?? template.scaleX;
+    const scaleY = sourceStateSprite?.container.scaleY ?? template.scaleY;
+    const rotation = sourceStateSprite?.container.rotation ?? template.rotation;
+    const depth = sourceStateSprite?.container.depth ?? template.depth;
 
     // Create a placeholder graphics (will be replaced by costume if available)
     const graphics = this.scene.add.graphics();
@@ -2429,13 +2458,16 @@ export class RuntimeEngine {
     container.setDepth(depth);
 
     // Register the clone
-    const clone = this.registerSprite(cloneId, `${template.name} (clone)`, container, template.componentId);
+    const clone = this.registerSprite(cloneId, `${template.name} (clone)`, container, {
+      componentId: template.componentId,
+      initialLocalVariables: sourceStateSprite ? this.localVariables.get(sourceStateSprite.id) ?? null : null,
+    });
     clone.isClone = true;
     clone.cloneParentId = originalId;
 
-    // Copy state from template or live sprite
-    if (liveOriginal) {
-      clone.copyStateFrom(liveOriginal);
+    // Copy state from the live source sprite when possible, otherwise fall back to the template.
+    if (sourceStateSprite) {
+      clone.copyStateFrom(sourceStateSprite);
     } else {
       // Copy from template - don't use setSize as it overrides scale
       clone.setCostumes([...template.costumes], 0);

@@ -155,7 +155,7 @@ test.describe('Stage resize', () => {
     }).toBe(true);
   });
 
-  test('growing the stage keeps the frozen frame visible until the resized live canvas is ready', async ({ page }) => {
+  test('growing the stage keeps the frozen frame centered until the resized live canvas is ready', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
@@ -177,10 +177,14 @@ test.describe('Stage resize', () => {
     await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
 
     const frozenFrameSnapshot = await page.evaluate(() => {
+      const host = document.querySelector('[data-testid="stage-phaser-host"]');
       const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-      if (!(frozen instanceof HTMLCanvasElement)) {
+      if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
         return null;
       }
+
+      const hostRect = host.getBoundingClientRect();
+      const frozenRect = frozen.getBoundingClientRect();
 
       return {
         tagName: frozen.tagName,
@@ -189,6 +193,10 @@ test.describe('Stage resize', () => {
         visibility: window.getComputedStyle(frozen).visibility,
         position: window.getComputedStyle(frozen).position,
         transform: window.getComputedStyle(frozen).transform,
+        hostCenterX: hostRect.left + hostRect.width / 2,
+        hostCenterY: hostRect.top + hostRect.height / 2,
+        frozenCenterX: frozenRect.left + frozenRect.width / 2,
+        frozenCenterY: frozenRect.top + frozenRect.height / 2,
       };
     });
     expect(frozenFrameSnapshot).not.toBeNull();
@@ -198,6 +206,8 @@ test.describe('Stage resize', () => {
     expect(frozenFrameSnapshot?.visibility).toBe('visible');
     expect(frozenFrameSnapshot?.position).toBe('absolute');
     expect(frozenFrameSnapshot?.transform).not.toBe('none');
+    expect(Math.abs((frozenFrameSnapshot?.frozenCenterX ?? 0) - (frozenFrameSnapshot?.hostCenterX ?? 0))).toBeLessThanOrEqual(1);
+    expect(Math.abs((frozenFrameSnapshot?.frozenCenterY ?? 0) - (frozenFrameSnapshot?.hostCenterY ?? 0))).toBeLessThanOrEqual(1);
 
     const startFrame = await page.evaluate(() => {
       const debug = window['__pochaStageDebug'];

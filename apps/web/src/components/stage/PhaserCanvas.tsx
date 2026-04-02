@@ -126,8 +126,6 @@ type FrozenStageFrame = {
   pixelHeight: number;
   width: number;
   height: number;
-  left: number;
-  top: number;
   revision: number;
 };
 
@@ -958,7 +956,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     bufferContext.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
     bufferContext.drawImage(canvas, 0, 0);
 
-    const hostRect = containerRef.current?.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
 
     return {
@@ -966,8 +963,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       pixelHeight: canvas.height,
       width: canvasRect.width,
       height: canvasRect.height,
-      left: hostRect ? canvasRect.left - hostRect.left : 0,
-      top: hostRect ? canvasRect.top - hostRect.top : 0,
       revision: ++frozenStageFrameRevisionRef.current,
     };
   }, []);
@@ -2584,14 +2579,14 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           width={frozenStageFrame.pixelWidth}
           height={frozenStageFrame.pixelHeight}
           style={{
-            left: `${frozenStageFrame.left}px`,
-            top: `${frozenStageFrame.top}px`,
+            left: '50%',
+            top: '50%',
             width: `${frozenStageFrame.width}px`,
             height: `${frozenStageFrame.height}px`,
             maxWidth: 'none',
             maxHeight: 'none',
-            transform: 'translate3d(0, 0, 0)',
-            transformOrigin: 'top left',
+            transform: 'translate3d(-50%, -50%, 0)',
+            transformOrigin: 'center center',
           }}
           aria-hidden="true"
         />
@@ -4060,7 +4055,9 @@ function createPlaySceneContent(
     container.setDepth(objectCount - index);
 
     // Register with runtime
-    const runtimeSprite = runtime.registerSprite(obj.id, obj.name, container, obj.componentId);
+    const runtimeSprite = runtime.registerSprite(obj.id, obj.name, container, {
+      componentId: obj.componentId,
+    });
 
     // Set costumes if available
     const costumes = effectiveProps.costumes || [];
