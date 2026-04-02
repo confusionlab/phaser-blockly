@@ -32,6 +32,7 @@ type VariableTarget =
   | { kind: 'object'; sceneId: string; objectId: string };
 
 type AddVariableScope = 'global' | 'local';
+type VariableListTab = 'global' | 'local';
 
 type LocalSelectionTarget =
   | { kind: 'component'; componentId: string }
@@ -44,9 +45,21 @@ type VariableEntry = {
   note?: string;
 };
 
+type LocalVariableGroup = {
+  key: string;
+  title: string;
+  subtitle?: string | null;
+  entries: VariableEntry[];
+};
+
 const VARIABLE_SCOPE_OPTIONS: { value: AddVariableScope; label: string; description: string }[] = [
   { value: 'global', label: 'Global', description: 'Available everywhere in the project.' },
   { value: 'local', label: 'Local', description: 'Uses the currently selected object or reusable component.' },
+];
+
+const VARIABLE_LIST_TABS: { value: VariableListTab; label: string }[] = [
+  { value: 'global', label: 'Global' },
+  { value: 'local', label: 'Local' },
 ];
 
 const VARIABLE_TYPES: { value: VariableType; label: string; description: string }[] = [
@@ -99,6 +112,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [type, setType] = useState<VariableType>('number');
   const [cardinality, setCardinality] = useState<VariableCardinality>('single');
   const [scope, setScope] = useState<AddVariableScope>('global');
+  const [activeTab, setActiveTab] = useState<VariableListTab>('global');
   const [error, setError] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -164,6 +178,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     setIsAdding(false);
     setEditingKey(null);
     setEditName('');
+    setActiveTab(preferredScope);
     resetAddDialog(preferredScope);
   }, [open, preferredScope]);
 
@@ -205,71 +220,65 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     onVariablesChanged?.();
   };
 
-  const sceneGroups = useMemo(() => {
-    return scenes
-      .map((scene) => {
-        const objectGroups = scene.objects
-          .map((object) => {
-            const component = object.componentId ? componentById.get(object.componentId) : null;
-            const componentLocalVariables = component?.localVariables || [];
-            const usesComponentVariables = componentLocalVariables.length > 0;
-            const variables = usesComponentVariables ? componentLocalVariables : (object.localVariables || []);
+  const localGroups = useMemo<LocalVariableGroup[]>(() => {
+    const groups: LocalVariableGroup[] = [];
 
-            const entries: VariableEntry[] = variables.map((variable) => ({
-              key: `scene:${scene.id}:object:${object.id}:${usesComponentVariables ? 'component' : 'object'}:${variable.id}`,
-              variable,
-              target: usesComponentVariables && component
-                ? { kind: 'component', componentId: component.id }
-                : { kind: 'object', sceneId: scene.id, objectId: object.id },
-              note: usesComponentVariables && component ? `Stored on component ${component.name}` : undefined,
-            }));
+    for (const scene of scenes) {
+      for (const object of scene.objects) {
+        const component = object.componentId ? componentById.get(object.componentId) : null;
+        const componentLocalVariables = component?.localVariables || [];
+        const usesComponentVariables = componentLocalVariables.length > 0;
+        const variables = usesComponentVariables ? componentLocalVariables : (object.localVariables || []);
 
-            if (entries.length === 0) {
-              return null;
-            }
-
-            return {
-              key: `scene:${scene.id}:object:${object.id}`,
-              title: object.name,
-              subtitle: usesComponentVariables && component ? `Uses variables from component ${component.name}` : null,
-              entries,
-            };
-          })
-          .filter((group): group is NonNullable<typeof group> => group !== null);
-
-        return objectGroups.length > 0
-          ? {
-              key: scene.id,
-              title: scene.name,
-              objects: objectGroups,
-            }
-          : null;
-      })
-      .filter((group): group is NonNullable<typeof group> => group !== null);
-  }, [componentById, scenes]);
-
-  const standaloneComponentGroups = useMemo(() => {
-    return components
-      .filter((component) => !referencedComponentIds.has(component.id))
-      .map((component) => {
-        const entries: VariableEntry[] = (component.localVariables || []).map((variable) => ({
-          key: `component:${component.id}:${variable.id}`,
+        const entries: VariableEntry[] = variables.map((variable) => ({
+          key: `scene:${scene.id}:object:${object.id}:${usesComponentVariables ? 'component' : 'object'}:${variable.id}`,
           variable,
-          target: { kind: 'component', componentId: component.id },
+          target: usesComponentVariables && component
+            ? { kind: 'component', componentId: component.id }
+            : { kind: 'object', sceneId: scene.id, objectId: object.id },
+          note: usesComponentVariables && component ? `Stored on component ${component.name}` : undefined,
         }));
 
         if (entries.length === 0) {
-          return null;
+          continue;
         }
 
-        return {
-          key: component.id,
-          title: component.name,
+        groups.push({
+          key: `scene:${scene.id}:object:${object.id}`,
+          title: object.name,
+          subtitle: usesComponentVariables && component
+            ? `${scene.name} · Uses component ${component.name}`
+            : scene.name,
           entries,
-        };
-      })
-      .filter((group): group is NonNullable<typeof group> => group !== null);
-  }, [components, referencedComponentIds]);
+        });
+      }
+    }
+
+    for (const component of components) {
+      if (referencedComponentIds.has(component.id)) {
+        continue;
+      }
+
+      const entries: VariableEntry[] = (component.localVariables || []).map((variable) => ({
+        key: `component:${component.id}:${variable.id}`,
+        variable,
+        target: { kind: 'component', componentId: component.id },
+      }));
+
+      if (entries.length === 0) {
+        continue;
+      }
+
+      groups.push({
+        key: `component:${component.id}`,
+        title: component.name,
+        subtitle: 'Reusable component',
+        entries,
+      });
+    }
+
+    return groups;
+  }, [componentById, components, referencedComponentIds, scenes]);
 
   const globalEntries = useMemo<VariableEntry[]>(
     () => (project?.globalVariables || []).map((variable) => ({
@@ -415,7 +424,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     }
 
     setIsAdding(false);
-    resetAddDialog(preferredScope);
+    resetAddDialog(activeTab === 'local' && localSelectionTarget ? 'local' : 'global');
     emitVariablesChanged();
   };
 
@@ -457,6 +466,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         open={open}
         onOpenChange={onOpenChange}
         title="Edit Variables"
+        description="Manage project-wide variables and instance-scoped locals in one place."
         addButtonLabel="+ Add Variable"
         closeAddButtonLabel="Close Add Dialog"
         isAdding={isAdding}
@@ -467,12 +477,22 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             return;
           }
 
-          resetAddDialog(preferredScope);
+          resetAddDialog(activeTab === 'local' && localSelectionTarget ? 'local' : 'global');
           setIsAdding(true);
         }}
+        toolbar={(
+          <SegmentedControl
+            ariaLabel="Variable manager tabs"
+            className="max-w-full"
+            layout="content"
+            options={VARIABLE_LIST_TABS}
+            value={activeTab}
+            onValueChange={setActiveTab}
+          />
+        )}
       >
+        {activeTab === 'global' ? (
           <section className="space-y-2">
-            <div className="text-sm font-semibold text-muted-foreground">Global Variables</div>
             {globalEntries.length > 0 ? (
               <div className="space-y-1">
                 {globalEntries.map((entry) => (
@@ -485,47 +505,19 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
               </div>
             )}
           </section>
-
-      <section className="space-y-3">
-            <div className="text-sm font-semibold text-muted-foreground">Scene Objects</div>
-            {sceneGroups.length > 0 ? (
-              sceneGroups.map((scene) => (
-                <div key={scene.key} className="space-y-3 rounded-lg border p-3">
-                  <div className="text-sm font-semibold">{scene.title}</div>
-                  <div className="space-y-3">
-                    {scene.objects.map((objectGroup) => (
-                      <div key={objectGroup.key} className="space-y-1 rounded-lg bg-muted/20 p-2">
-                        <div className="px-1">
-                          <div className="text-sm font-medium">{objectGroup.title}</div>
-                          {objectGroup.subtitle ? (
-                            <div className="text-xs text-muted-foreground">{objectGroup.subtitle}</div>
-                          ) : null}
-                        </div>
-                        <div className="space-y-1">
-                          {objectGroup.entries.map((entry) => (
-                            <VariableRow key={entry.key} entry={entry} />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+        ) : (
+          <section className="space-y-3">
+            {localGroups.length > 0 ? (
+              localGroups.map((group) => (
+                <div key={group.key} className="space-y-1 rounded-lg border p-3">
+                  <div className="px-1 pb-1">
+                    <div className="text-sm font-semibold">{group.title}</div>
+                    {group.subtitle ? (
+                      <div className="text-xs text-muted-foreground">{group.subtitle}</div>
+                    ) : null}
                   </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                No scene-grouped object variables yet.
-              </div>
-            )}
-          </section>
-
-      <section className="space-y-3">
-            <div className="text-sm font-semibold text-muted-foreground">Reusable Components</div>
-            {standaloneComponentGroups.length > 0 ? (
-              standaloneComponentGroups.map((component) => (
-                <div key={component.key} className="space-y-1 rounded-lg border p-3">
-                  <div className="text-sm font-semibold">{component.title}</div>
                   <div className="space-y-1">
-                    {component.entries.map((entry) => (
+                    {group.entries.map((entry) => (
                       <VariableRow key={entry.key} entry={entry} />
                     ))}
                   </div>
@@ -533,10 +525,11 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
               ))
             ) : (
               <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                No reusable component variables outside scene objects yet.
+                No local variables yet.
               </div>
             )}
-      </section>
+          </section>
+        )}
       </ProjectPropertyManagerDialog>
       <Modal
         open={isAdding}

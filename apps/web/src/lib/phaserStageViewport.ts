@@ -27,14 +27,11 @@ export interface CreateStageViewportControllerOptions {
   canvasSize: StageSize;
   initialMode: StageViewMode;
   initialEditorViewport?: StageEditorViewport | null;
-  onEditorViewportChange?: (viewport: StageEditorViewport) => void;
-}
-
-function sanitizeHostSize(scene: Phaser.Scene): StageSize {
-  return {
-    width: Math.max(1, Math.round(scene.scale.width || 1)),
-    height: Math.max(1, Math.round(scene.scale.height || 1)),
+  getLayoutMetrics: () => {
+    hostSize: StageSize;
+    surfaceSize: StageSize;
   };
+  onEditorViewportChange?: (viewport: StageEditorViewport) => void;
 }
 
 function areEditorViewportsEqual(a: StageEditorViewport, b: StageEditorViewport): boolean {
@@ -60,20 +57,24 @@ export function applyStageProjectionToCamera(
 export function createStageViewportController(
   options: CreateStageViewportControllerOptions,
 ): StageViewportController {
-  const { scene, canvasSize, onEditorViewportChange } = options;
+  const { scene, canvasSize, getLayoutMetrics, onEditorViewportChange } = options;
   let mode = options.initialMode;
   let editorViewport = normalizeStageEditorViewport(options.initialEditorViewport, canvasSize);
+  const initialLayoutMetrics = getLayoutMetrics();
   let projection = buildStageProjection({
     mode,
-    hostSize: sanitizeHostSize(scene),
+    hostSize: initialLayoutMetrics.hostSize,
+    surfaceSize: initialLayoutMetrics.surfaceSize,
     canvasSize,
     editorViewport,
   });
 
   const syncProjection = () => {
+    const layoutMetrics = getLayoutMetrics();
     projection = buildStageProjection({
       mode,
-      hostSize: sanitizeHostSize(scene),
+      hostSize: layoutMetrics.hostSize,
+      surfaceSize: layoutMetrics.surfaceSize,
       canvasSize,
       editorViewport,
     });

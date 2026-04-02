@@ -11,15 +11,19 @@ export interface StageEditorViewport {
   zoom: number;
 }
 
+export interface StageRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface StageProjection {
   mode: StageViewMode;
   hostSize: StageSize;
-  cameraViewport: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
+  surfaceSize: StageSize;
+  visibleRect: StageRect;
+  cameraViewport: StageRect;
   cameraZoom: number;
   scrollX: number;
   scrollY: number;
@@ -38,6 +42,15 @@ function sanitizeStageSize(size: StageSize): StageSize {
   return {
     width: Math.max(1, Number.isFinite(size.width) ? size.width : 1),
     height: Math.max(1, Number.isFinite(size.height) ? size.height : 1),
+  };
+}
+
+function createCenteredRect(outer: StageSize, inner: StageSize): StageRect {
+  return {
+    x: Math.floor((outer.width - inner.width) / 2),
+    y: Math.floor((outer.height - inner.height) / 2),
+    width: inner.width,
+    height: inner.height,
   };
 }
 
@@ -137,23 +150,26 @@ export function zoomStageEditorViewportAtScreenPoint(
 export function buildStageProjection(params: {
   mode: StageViewMode;
   hostSize: StageSize;
+  surfaceSize: StageSize;
   canvasSize: StageSize;
   editorViewport: StageEditorViewport;
 }): StageProjection {
   const hostSize = sanitizeStageSize(params.hostSize);
+  const surfaceSize = sanitizeStageSize({
+    width: Math.max(params.surfaceSize.width, hostSize.width),
+    height: Math.max(params.surfaceSize.height, hostSize.height),
+  });
   const canvasSize = sanitizeStageSize(params.canvasSize);
   const editorViewport = normalizeStageEditorViewport(params.editorViewport, canvasSize);
+  const visibleRect = createCenteredRect(surfaceSize, hostSize);
 
   if (params.mode === 'editor') {
     return {
       mode: params.mode,
       hostSize,
-      cameraViewport: {
-        x: 0,
-        y: 0,
-        width: hostSize.width,
-        height: hostSize.height,
-      },
+      surfaceSize,
+      visibleRect,
+      cameraViewport: visibleRect,
       cameraZoom: editorViewport.zoom,
       scrollX: editorViewport.centerX - hostSize.width / 2,
       scrollY: editorViewport.centerY - hostSize.height / 2,
@@ -175,14 +191,16 @@ export function buildStageProjection(params: {
     ? Math.floor(canvasSize.height * scale)
     : hostSize.height;
   const viewportX = params.mode === 'camera-viewport'
-    ? Math.floor((hostSize.width - viewportWidth) / 2)
-    : 0;
+    ? visibleRect.x + Math.floor((hostSize.width - viewportWidth) / 2)
+    : visibleRect.x;
   const viewportY = params.mode === 'camera-viewport'
-    ? Math.floor((hostSize.height - viewportHeight) / 2)
-    : 0;
+    ? visibleRect.y + Math.floor((hostSize.height - viewportHeight) / 2)
+    : visibleRect.y;
   return {
     mode: params.mode,
     hostSize,
+    surfaceSize,
+    visibleRect,
     cameraViewport: {
       x: viewportX,
       y: viewportY,

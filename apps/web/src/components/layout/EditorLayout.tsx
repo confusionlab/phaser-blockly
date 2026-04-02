@@ -120,10 +120,6 @@ function formatSyncPhaseBreakdown(phaseDurationsMs: CloudProjectSyncPhaseDuratio
     .join(', ');
 }
 
-function dispatchEditorResizeFreeze(active: boolean): void {
-  window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
-}
-
 function ProjectRouteLoadingScreen({ detail, progress }: ProjectLoadState) {
   return (
     <div className="min-h-screen bg-background">
@@ -192,7 +188,6 @@ export function EditorLayout() {
   } = useEditorStore();
   const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const [dividerPosition, setDividerPosition] = useState(60);
-  const [isMainDividerDragging, setIsMainDividerDragging] = useState(false);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isStageCanvasFullscreen, setIsStageCanvasFullscreen] = useState(false);
@@ -1226,8 +1221,6 @@ export function EditorLayout() {
 
   const handleDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();
-    dispatchEditorResizeFreeze(true);
-    setIsMainDividerDragging(true);
     const startX = e.clientX;
     const startPos = dividerPosition;
 
@@ -1239,8 +1232,6 @@ export function EditorLayout() {
     };
 
     const handleMouseUp = () => {
-      dispatchEditorResizeFreeze(false);
-      setIsMainDividerDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -1393,7 +1384,6 @@ export function EditorLayout() {
           onMouseLeave={() => setHoveredPanel(null)}
         >
           <StagePanel
-            deferEditorResize={isMainDividerDragging}
             isCanvasFullscreen={isStageCanvasFullscreen}
             onCanvasFullscreenChange={handleStageCanvasFullscreenChange}
           />

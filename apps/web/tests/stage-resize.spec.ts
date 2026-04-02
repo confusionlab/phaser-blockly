@@ -1,107 +1,120 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
-async function openEditorFromProjectList(page: import('@playwright/test').Page): Promise<void> {
+type StageMetrics = {
+  hostWidth: number;
+  hostHeight: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  canvasCssWidth: number;
+  canvasCssHeight: number;
+  coversHostLeft: boolean;
+  coversHostTop: boolean;
+  coversHostRight: boolean;
+  coversHostBottom: boolean;
+  canvasVisibility: string;
+  surfaceResizeCount: number;
+  frozenFrameCount: number;
+};
+
+type StageWorldViewSnapshot = {
+  centerX: number;
+  centerY: number;
+  width: number;
+  height: number;
+};
+
+async function openEditorFromProjectList(page: Page): Promise<void> {
   await bootstrapEditorProject(page, { projectName: `Stage Resize Test ${Date.now()}` });
 }
 
-async function waitForStageDebug(page: import('@playwright/test').Page): Promise<void> {
+async function waitForStageDebug(page: Page): Promise<void> {
   await expect.poll(async () => page.evaluate(() => Boolean(window['__pochaStageDebug']))).toBe(true);
 }
 
-test.describe('Stage resize', () => {
-  test.describe('Frozen frame fidelity', () => {
-    test.use({
-      viewport: { width: 1440, height: 960 },
-      deviceScaleFactor: 2,
-    });
+async function waitForStageHost(page: Page): Promise<void> {
+  const host = page.getByTestId('stage-phaser-host');
+  await expect(host).toBeVisible({ timeout: 10000 });
+  await expect(host.locator('canvas').first()).toBeVisible({ timeout: 10000 });
+}
 
-    test('overscanned frozen frame uses a higher internal pixel density than its CSS size', async ({ page }) => {
-      await page.goto('/');
-      await page.waitForLoadState('networkidle');
-      await openEditorFromProjectList(page);
-
-      const divider = page.getByTestId('editor-layout-divider');
-      const dividerBox = await divider.boundingBox();
-      expect(dividerBox).not.toBeNull();
-      if (!dividerBox) {
-        return;
-      }
-
-      const pointerX = dividerBox.x + dividerBox.width / 2;
-      const pointerY = dividerBox.y + dividerBox.height / 2;
-      await page.mouse.move(pointerX, pointerY);
-      await page.mouse.down();
-      await page.mouse.move(pointerX + 180, pointerY, { steps: 12 });
-      await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
-
-      await expect.poll(async () => {
-        return page.evaluate(() => {
-          const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-          if (!(frozen instanceof HTMLCanvasElement)) {
-            return null;
-          }
-
-          const rect = frozen.getBoundingClientRect();
-          return {
-            pixelWidth: frozen.width,
-            cssWidth: rect.width,
-            pixelHeight: frozen.height,
-            cssHeight: rect.height,
-          };
-        });
-      }).toMatchObject({
-        pixelWidth: expect.any(Number),
-        cssWidth: expect.any(Number),
-        pixelHeight: expect.any(Number),
-        cssHeight: expect.any(Number),
-      });
-
-      const fidelitySnapshot = await page.evaluate(() => {
-        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-        if (!(frozen instanceof HTMLCanvasElement)) {
-          return null;
-        }
-        const rect = frozen.getBoundingClientRect();
-        return {
-          widthRatio: frozen.width / Math.max(1, rect.width),
-          heightRatio: frozen.height / Math.max(1, rect.height),
-        };
-      });
-
-      expect(fidelitySnapshot).not.toBeNull();
-      expect(fidelitySnapshot?.widthRatio ?? 0).toBeGreaterThan(1.5);
-      expect(fidelitySnapshot?.heightRatio ?? 0).toBeGreaterThan(1.5);
-
-      await page.mouse.up();
-      await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
+async function waitForStageToSettle(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
   });
+}
 
-  test('bottom panel split drag does not freeze or resize the stage', async ({ page }) => {
+async function getStageMetrics(page: Page): Promise<StageMetrics | null> {
+  return page.evaluate(() => {
+    const host = document.querySelector('[data-testid="stage-phaser-host"]');
+    const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+    const debug = window['__pochaStageDebug'];
+    if (!(host instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
+      return null;
+    }
+
+    const hostRect = host.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const snapshot = debug?.getEditorSceneSnapshot?.() ?? null;
+    return {
+      hostWidth: Math.max(1, Math.round(hostRect.width)),
+      hostHeight: Math.max(1, Math.round(hostRect.height)),
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      canvasCssWidth: Math.max(1, Math.round(canvasRect.width)),
+      canvasCssHeight: Math.max(1, Math.round(canvasRect.height)),
+      coversHostLeft: canvasRect.left <= hostRect.left + 0.5,
+      coversHostTop: canvasRect.top <= hostRect.top + 0.5,
+      coversHostRight: canvasRect.right >= hostRect.right - 0.5,
+      coversHostBottom: canvasRect.bottom >= hostRect.bottom - 0.5,
+      canvasVisibility: window.getComputedStyle(canvas).visibility,
+      surfaceResizeCount: snapshot?.surfaceResizeCount ?? -1,
+      frozenFrameCount: document.querySelectorAll('[data-testid="stage-frozen-frame"]').length,
+    };
+  });
+}
+
+async function getCameraWorldView(page: Page): Promise<StageWorldViewSnapshot> {
+  return page.evaluate(() => {
+    const debug = window['__pochaStageDebug'];
+    if (!debug) {
+      throw new Error('Stage debug bridge is unavailable.');
+    }
+
+    const snapshot = debug.getEditorSceneSnapshot();
+    if (!snapshot?.cameraWorldView) {
+      throw new Error('Camera world-view snapshot is unavailable.');
+    }
+
+    return {
+      centerX: snapshot.cameraViewportCenter?.x ?? 0,
+      centerY: snapshot.cameraViewportCenter?.y ?? 0,
+      width: snapshot.cameraWorldView.width,
+      height: snapshot.cameraWorldView.height,
+    };
+  });
+}
+
+test.describe('Stage resize', () => {
+  test('bottom panel split drag does not resize the stage', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
+    await waitForStageHost(page);
+    await waitForStageToSettle(page);
 
-    const host = page.getByTestId('stage-phaser-host');
-    await expect(host).toBeVisible({ timeout: 10000 });
-    const canvas = host.locator('canvas').first();
-    await expect(canvas).toBeVisible({ timeout: 10000 });
-
-    const initialMetrics = await canvas.evaluate((node) => {
-      const canvas = node as HTMLCanvasElement;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-        visibility: window.getComputedStyle(canvas).visibility,
-      };
-    });
+    const initialMetrics = await getStageMetrics(page);
+    expect(initialMetrics).not.toBeNull();
+    if (!initialMetrics) {
+      return;
+    }
 
     const divider = page.getByTestId('stage-panel-horizontal-divider');
     const dividerBox = await divider.boundingBox();
     expect(dividerBox).not.toBeNull();
-
-    if (!dividerBox || !initialMetrics) {
+    if (!dividerBox) {
       return;
     }
 
@@ -111,225 +124,57 @@ test.describe('Stage resize', () => {
     await page.mouse.down();
     await page.mouse.move(pointerX + 140, pointerY, { steps: 12 });
 
-    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
-
-    const dragState = await page.evaluate(() => {
-      const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
-      const divider = document.querySelector('[data-testid="stage-panel-horizontal-divider"]');
-      if (!(canvas instanceof HTMLCanvasElement) || !(divider instanceof HTMLElement)) {
-        return null;
-      }
-
-      return {
-        width: canvas.width,
-        height: canvas.height,
-        visibility: window.getComputedStyle(canvas).visibility,
-        dividerDragging: divider.getAttribute('data-dragging'),
-      };
-    });
-
-    expect(dragState).not.toBeNull();
-    expect(dragState?.width).toBe(initialMetrics.width);
-    expect(dragState?.height).toBe(initialMetrics.height);
-    expect(dragState?.visibility).toBe('visible');
-    expect(dragState?.dividerDragging).toBe('true');
+    const dragMetrics = await getStageMetrics(page);
+    expect(dragMetrics).not.toBeNull();
+    expect(dragMetrics?.hostWidth).toBe(initialMetrics.hostWidth);
+    expect(dragMetrics?.hostHeight).toBe(initialMetrics.hostHeight);
+    expect(dragMetrics?.canvasWidth).toBe(initialMetrics.canvasWidth);
+    expect(dragMetrics?.canvasHeight).toBe(initialMetrics.canvasHeight);
+    expect(dragMetrics?.canvasCssWidth).toBe(initialMetrics.canvasCssWidth);
+    expect(dragMetrics?.canvasCssHeight).toBe(initialMetrics.canvasCssHeight);
+    expect(dragMetrics?.canvasVisibility).toBe('visible');
+    expect(dragMetrics?.coversHostLeft).toBe(true);
+    expect(dragMetrics?.coversHostTop).toBe(true);
+    expect(dragMetrics?.coversHostRight).toBe(true);
+    expect(dragMetrics?.coversHostBottom).toBe(true);
+    expect(dragMetrics?.surfaceResizeCount).toBe(initialMetrics.surfaceResizeCount);
+    expect(dragMetrics?.frozenFrameCount).toBe(0);
 
     await page.mouse.up();
-    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
 
-    const finalMetrics = await canvas.evaluate((node) => {
-      const canvas = node as HTMLCanvasElement;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-        visibility: window.getComputedStyle(canvas).visibility,
-      };
-    });
-
-    expect(finalMetrics.width).toBe(initialMetrics.width);
-    expect(finalMetrics.height).toBe(initialMetrics.height);
-    expect(finalMetrics.visibility).toBe('visible');
+    const finalMetrics = await getStageMetrics(page);
+    expect(finalMetrics).not.toBeNull();
+    expect(finalMetrics?.hostWidth).toBe(initialMetrics.hostWidth);
+    expect(finalMetrics?.hostHeight).toBe(initialMetrics.hostHeight);
+    expect(finalMetrics?.canvasWidth).toBe(initialMetrics.canvasWidth);
+    expect(finalMetrics?.canvasHeight).toBe(initialMetrics.canvasHeight);
+    expect(finalMetrics?.canvasCssWidth).toBe(initialMetrics.canvasCssWidth);
+    expect(finalMetrics?.canvasCssHeight).toBe(initialMetrics.canvasCssHeight);
+    expect(finalMetrics?.canvasVisibility).toBe('visible');
+    expect(finalMetrics?.coversHostLeft).toBe(true);
+    expect(finalMetrics?.coversHostTop).toBe(true);
+    expect(finalMetrics?.coversHostRight).toBe(true);
+    expect(finalMetrics?.coversHostBottom).toBe(true);
+    expect(finalMetrics?.surfaceResizeCount).toBe(initialMetrics.surfaceResizeCount);
+    expect(finalMetrics?.frozenFrameCount).toBe(0);
   });
 
-  test('freezes Phaser resizing until vertical drag release, then commits once', async ({ page }) => {
+  test('vertical stage resize updates the live viewport continuously without reallocating the surface', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
+    await waitForStageHost(page);
+    await waitForStageToSettle(page);
 
-    const host = page.getByTestId('stage-phaser-host');
-    await expect(host).toBeVisible({ timeout: 10000 });
-    const canvas = host.locator('canvas').first();
-    await expect(canvas).toBeVisible({ timeout: 10000 });
-
-    const initialMetrics = await canvas.evaluate((node) => {
-      const canvas = node as HTMLCanvasElement;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-      };
-    });
+    const initialMetrics = await getStageMetrics(page);
     expect(initialMetrics).not.toBeNull();
+    if (!initialMetrics) {
+      return;
+    }
 
     const divider = page.getByTestId('stage-panel-vertical-divider');
     const dividerBox = await divider.boundingBox();
     expect(dividerBox).not.toBeNull();
-
-    if (!dividerBox || !initialMetrics) {
-      return;
-    }
-
-    const pointerX = dividerBox.x + dividerBox.width / 2;
-    const pointerY = dividerBox.y + dividerBox.height / 2;
-    await page.mouse.move(pointerX, pointerY);
-    await page.mouse.down();
-    await page.mouse.move(pointerX, pointerY - 120, { steps: 10 });
-    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
-
-    const dragState = await page.evaluate(() => {
-      const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
-      const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-      if (!(canvas instanceof HTMLCanvasElement)) return null;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-        visibility: window.getComputedStyle(canvas).visibility,
-        frozenVisible: frozen instanceof HTMLElement
-          ? window.getComputedStyle(frozen).visibility === 'visible'
-          : false,
-      };
-    });
-    expect(dragState).not.toBeNull();
-    expect(dragState?.visibility).toBe('hidden');
-    expect(dragState?.frozenVisible).toBe(true);
-
-    const dragMetrics = await canvas.evaluate((node) => {
-      const canvas = node as HTMLCanvasElement;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-      };
-    });
-    expect(dragMetrics.width).toBe(initialMetrics.width);
-
-    await page.mouse.up();
-    await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
-
-    await expect.poll(async () => {
-      return await canvas.evaluate((node, initial) => {
-        const canvas = node as HTMLCanvasElement;
-        const widthStable = Math.abs(canvas.width - initial.width) <= 4;
-        const heightChanged = Math.abs(canvas.height - initial.height) >= 40;
-        return widthStable && heightChanged;
-      }, initialMetrics);
-    }).toBe(true);
-  });
-
-  test('freezes Phaser resizing until editor split drag release, then commits once', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
-    await openEditorFromProjectList(page);
-
-    const host = page.getByTestId('stage-phaser-host');
-    await expect(host).toBeVisible({ timeout: 10000 });
-    const canvas = host.locator('canvas').first();
-    await expect(canvas).toBeVisible({ timeout: 10000 });
-
-    const initialMetrics = await canvas.evaluate((node) => {
-      const canvas = node as HTMLCanvasElement;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-      };
-    });
-
-    const divider = page.getByTestId('editor-layout-divider');
-    const dividerBox = await divider.boundingBox();
-    expect(dividerBox).not.toBeNull();
-
-    if (!dividerBox || !initialMetrics) {
-      return;
-    }
-
-    const pointerX = dividerBox.x + dividerBox.width / 2;
-    const pointerY = dividerBox.y + dividerBox.height / 2;
-    await page.mouse.move(pointerX, pointerY);
-    await page.mouse.down();
-    await page.mouse.move(pointerX + 160, pointerY, { steps: 10 });
-    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
-
-    const dragState = await page.evaluate(() => {
-      const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
-      const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-      if (!(canvas instanceof HTMLCanvasElement)) return null;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-        visibility: window.getComputedStyle(canvas).visibility,
-        frozenVisible: frozen instanceof HTMLElement
-          ? window.getComputedStyle(frozen).visibility === 'visible'
-          : false,
-      };
-    });
-    expect(dragState).not.toBeNull();
-    expect(dragState?.visibility).toBe('hidden');
-    expect(dragState?.frozenVisible).toBe(true);
-
-    await expect.poll(async () => {
-      return page.evaluate(() => {
-        const host = document.querySelector('[data-testid="stage-phaser-host"]');
-        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-        if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
-          return null;
-        }
-
-        const hostRect = host.getBoundingClientRect();
-        const frozenRect = frozen.getBoundingClientRect();
-        return {
-          fillsWidth: Math.abs(frozenRect.width - hostRect.width) <= 1,
-          fillsHeight: Math.abs(frozenRect.height - hostRect.height) <= 1,
-          centeredX: Math.abs((frozenRect.left + frozenRect.width / 2) - (hostRect.left + hostRect.width / 2)) <= 1,
-          centeredY: Math.abs((frozenRect.top + frozenRect.height / 2) - (hostRect.top + hostRect.height / 2)) <= 1,
-        };
-      });
-    }).toEqual({
-      fillsWidth: true,
-      fillsHeight: true,
-      centeredX: true,
-      centeredY: true,
-    });
-
-    const dragMetrics = await canvas.evaluate((node) => {
-      const canvas = node as HTMLCanvasElement;
-      return {
-        width: canvas.width,
-        height: canvas.height,
-      };
-    });
-    expect(dragMetrics.height).toBe(initialMetrics.height);
-
-    await page.mouse.up();
-    await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
-
-    await expect.poll(async () => {
-      return await canvas.evaluate((node, initial) => {
-        const canvas = node as HTMLCanvasElement;
-        const widthChanged = Math.abs(canvas.width - initial.width) >= 40;
-        const heightStable = Math.abs(canvas.height - initial.height) <= 4;
-        return widthChanged && heightStable;
-      }, initialMetrics);
-    }).toBe(true);
-  });
-
-  test('growing the stage keeps the frozen frame centered until the resized live canvas is ready', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
-    await openEditorFromProjectList(page);
-    await waitForStageDebug(page);
-
-    const divider = page.getByTestId('stage-panel-vertical-divider');
-    const dividerBox = await divider.boundingBox();
-    expect(dividerBox).not.toBeNull();
-
     if (!dividerBox) {
       return;
     }
@@ -338,213 +183,152 @@ test.describe('Stage resize', () => {
     const pointerY = dividerBox.y + dividerBox.height / 2;
     await page.mouse.move(pointerX, pointerY);
     await page.mouse.down();
-    await page.mouse.move(pointerX, pointerY - 140, { steps: 12 });
-    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+    await page.mouse.move(pointerX, pointerY + 120, { steps: 10 });
 
-    const initialFrozenFrameSnapshot = await page.evaluate(() => {
-      const host = document.querySelector('[data-testid="stage-phaser-host"]');
-      const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-      if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
+    await expect.poll(async () => getStageMetrics(page)).toMatchObject({
+      canvasVisibility: 'visible',
+      frozenFrameCount: 0,
+    });
+
+    await expect.poll(async () => {
+      const metrics = await getStageMetrics(page);
+      if (!metrics) {
         return null;
       }
 
-      const hostRect = host.getBoundingClientRect();
-      const frozenRect = frozen.getBoundingClientRect();
-
       return {
-        tagName: frozen.tagName,
-        width: frozen.width,
-        height: frozen.height,
-        visibility: window.getComputedStyle(frozen).visibility,
-        position: window.getComputedStyle(frozen).position,
-        transform: window.getComputedStyle(frozen).transform,
-        hostLeft: hostRect.left,
-        hostTop: hostRect.top,
-        hostCenterX: hostRect.left + hostRect.width / 2,
-        hostCenterY: hostRect.top + hostRect.height / 2,
-        frozenLeft: frozenRect.left,
-        frozenTop: frozenRect.top,
-        frozenCenterX: frozenRect.left + frozenRect.width / 2,
-        frozenCenterY: frozenRect.top + frozenRect.height / 2,
+        widthStable: metrics.hostWidth === initialMetrics.hostWidth,
+        heightGrew: metrics.hostHeight - initialMetrics.hostHeight >= 40,
+        surfaceStable: metrics.surfaceResizeCount === initialMetrics.surfaceResizeCount,
+        coversHost: metrics.coversHostLeft && metrics.coversHostTop && metrics.coversHostRight && metrics.coversHostBottom,
+        canvasVisibility: metrics.canvasVisibility,
+        frozenFrameCount: metrics.frozenFrameCount,
       };
-    });
-    expect(initialFrozenFrameSnapshot).not.toBeNull();
-    expect(initialFrozenFrameSnapshot?.tagName).toBe('CANVAS');
-    expect(initialFrozenFrameSnapshot?.width).toBeGreaterThan(0);
-    expect(initialFrozenFrameSnapshot?.height).toBeGreaterThan(0);
-    expect(initialFrozenFrameSnapshot?.visibility).toBe('visible');
-    expect(initialFrozenFrameSnapshot?.position).toBe('absolute');
-    expect(Math.abs((initialFrozenFrameSnapshot?.frozenLeft ?? 0) - (initialFrozenFrameSnapshot?.hostLeft ?? 0))).toBeLessThanOrEqual(1);
-    expect(Math.abs((initialFrozenFrameSnapshot?.frozenTop ?? 0) - (initialFrozenFrameSnapshot?.hostTop ?? 0))).toBeLessThanOrEqual(1);
-    expect(Math.abs((initialFrozenFrameSnapshot?.frozenCenterX ?? 0) - (initialFrozenFrameSnapshot?.hostCenterX ?? 0))).toBeLessThanOrEqual(1);
-    expect(Math.abs((initialFrozenFrameSnapshot?.frozenCenterY ?? 0) - (initialFrozenFrameSnapshot?.hostCenterY ?? 0))).toBeLessThanOrEqual(1);
-
-    await expect.poll(async () => {
-      return page.evaluate(() => {
-        const host = document.querySelector('[data-testid="stage-phaser-host"]');
-        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-        if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
-          return null;
-        }
-
-        const hostRect = host.getBoundingClientRect();
-        const frozenRect = frozen.getBoundingClientRect();
-
-        return {
-          hostWidth: hostRect.width,
-          hostHeight: hostRect.height,
-          frozenWidth: frozenRect.width,
-          frozenHeight: frozenRect.height,
-          fillsWidth: Math.abs(frozenRect.width - hostRect.width) <= 1,
-          fillsHeight: Math.abs(frozenRect.height - hostRect.height) <= 1,
-          centeredX: Math.abs((frozenRect.left + frozenRect.width / 2) - (hostRect.left + hostRect.width / 2)) <= 1,
-          centeredY: Math.abs((frozenRect.top + frozenRect.height / 2) - (hostRect.top + hostRect.height / 2)) <= 1,
-        };
-      });
-    }).toMatchObject({
-      fillsWidth: true,
-      fillsHeight: true,
-      centeredX: true,
-      centeredY: true,
-    });
-
-    await expect.poll(async () => {
-      return page.evaluate(() => {
-        const host = document.querySelector('[data-testid="stage-phaser-host"]');
-        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-        if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
-          return null;
-        }
-
-        const hostRect = host.getBoundingClientRect();
-        const frozenRect = frozen.getBoundingClientRect();
-        const hostCenterX = hostRect.left + hostRect.width / 2;
-        const hostCenterY = hostRect.top + hostRect.height / 2;
-        const frozenCenterX = frozenRect.left + frozenRect.width / 2;
-        const frozenCenterY = frozenRect.top + frozenRect.height / 2;
-
-        return {
-          fillsWidth: Math.abs(frozenRect.width - hostRect.width) <= 1,
-          fillsHeight: Math.abs(frozenRect.height - hostRect.height) <= 1,
-          centeredX: Math.abs(frozenCenterX - hostCenterX) <= 1,
-          centeredY: Math.abs(frozenCenterY - hostCenterY) <= 1,
-        };
-      });
     }).toEqual({
-      fillsWidth: true,
-      fillsHeight: true,
-      centeredX: true,
-      centeredY: true,
+      widthStable: true,
+      heightGrew: true,
+      surfaceStable: true,
+      coversHost: true,
+      canvasVisibility: 'visible',
+      frozenFrameCount: 0,
     });
 
-    const startFrame = await page.evaluate(() => {
-      const debug = window['__pochaStageDebug'];
-      const snapshot = debug?.getEditorSceneSnapshot();
-      if (!snapshot) {
-        throw new Error('Stage debug snapshot is unavailable.');
-      }
-      return snapshot.gameLoopFrame;
-    });
+    const resolvedDragMetrics = await getStageMetrics(page);
+    expect(resolvedDragMetrics).not.toBeNull();
+    expect((resolvedDragMetrics?.hostHeight ?? 0) - initialMetrics.hostHeight).toBeGreaterThanOrEqual(40);
+    expect(resolvedDragMetrics?.canvasWidth).toBe(initialMetrics.canvasWidth);
+    expect(resolvedDragMetrics?.canvasHeight).toBe(initialMetrics.canvasHeight);
+    expect(resolvedDragMetrics?.coversHostLeft).toBe(true);
+    expect(resolvedDragMetrics?.coversHostTop).toBe(true);
+    expect(resolvedDragMetrics?.coversHostRight).toBe(true);
+    expect(resolvedDragMetrics?.coversHostBottom).toBe(true);
+    expect(resolvedDragMetrics?.surfaceResizeCount).toBe(initialMetrics.surfaceResizeCount);
 
     await page.mouse.up();
+    await waitForStageToSettle(page);
 
-    const revealSamples = await page.evaluate(async () => {
-      const debug = window['__pochaStageDebug'];
-      if (!debug) {
-        throw new Error('Stage debug bridge is unavailable.');
-      }
-
-      const readSample = () => {
-        const snapshot = debug.getEditorSceneSnapshot();
-        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-        const frozenVisible = frozen instanceof HTMLElement
-          ? window.getComputedStyle(frozen).visibility !== 'hidden'
-          : false;
-
-        return {
-          hostSize: snapshot?.hostSize ?? null,
-          gameLoopFrame: snapshot?.gameLoopFrame ?? 0,
-          canvasState: snapshot?.canvasState ?? null,
-          frozenVisible,
-        };
-      };
-
-      const samples = [readSample()];
-      for (let index = 0; index < 8; index += 1) {
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve());
-        });
-        samples.push(readSample());
-      }
-      return samples;
-    });
-
-    expect(revealSamples.length).toBeGreaterThan(0);
-    for (const sample of revealSamples) {
-      const revealedLiveCanvas = !sample.frozenVisible && sample.canvasState?.visibility === 'visible';
-      if (!revealedLiveCanvas || !sample.hostSize || !sample.canvasState) {
-        continue;
-      }
-
-      expect(sample.canvasState.width).toBe(sample.hostSize.width);
-      expect(sample.canvasState.height).toBe(sample.hostSize.height);
-      expect(sample.gameLoopFrame).toBeGreaterThan(startFrame);
-    }
-
-    await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
+    const finalMetrics = await getStageMetrics(page);
+    expect(finalMetrics).not.toBeNull();
+    expect(finalMetrics?.canvasVisibility).toBe('visible');
+    expect(finalMetrics?.frozenFrameCount).toBe(0);
+    expect(finalMetrics?.canvasWidth).toBe(initialMetrics.canvasWidth);
+    expect(finalMetrics?.canvasHeight).toBe(initialMetrics.canvasHeight);
+    expect(finalMetrics?.coversHostLeft).toBe(true);
+    expect(finalMetrics?.coversHostTop).toBe(true);
+    expect(finalMetrics?.coversHostRight).toBe(true);
+    expect(finalMetrics?.coversHostBottom).toBe(true);
+    expect(finalMetrics?.surfaceResizeCount).toBe(initialMetrics.surfaceResizeCount);
   });
 
-  test('horizontal resize drag keeps tiled background visible in the frozen frame', async ({ page }) => {
-    await bootstrapEditorProject(page, {
-      projectName: `Stage Resize Background ${Date.now()}`,
+  test('horizontal editor split resize updates the live viewport continuously without reallocating the surface', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await openEditorFromProjectList(page);
+    await waitForStageHost(page);
+    await waitForStageToSettle(page);
+
+    const initialMetrics = await getStageMetrics(page);
+    expect(initialMetrics).not.toBeNull();
+    if (!initialMetrics) {
+      return;
+    }
+
+    const divider = page.getByTestId('editor-layout-divider');
+    const dividerBox = await divider.boundingBox();
+    expect(dividerBox).not.toBeNull();
+    if (!dividerBox) {
+      return;
+    }
+
+    const pointerX = dividerBox.x + dividerBox.width / 2;
+    const pointerY = dividerBox.y + dividerBox.height / 2;
+    await page.mouse.move(pointerX, pointerY);
+    await page.mouse.down();
+    await page.mouse.move(pointerX - 180, pointerY, { steps: 12 });
+
+    await expect.poll(async () => {
+      const metrics = await getStageMetrics(page);
+      if (!metrics) {
+        return null;
+      }
+
+      return {
+        heightStable: metrics.hostHeight === initialMetrics.hostHeight,
+        widthGrew: metrics.hostWidth - initialMetrics.hostWidth >= 40,
+        surfaceStable: metrics.surfaceResizeCount === initialMetrics.surfaceResizeCount,
+        coversHost: metrics.coversHostLeft && metrics.coversHostTop && metrics.coversHostRight && metrics.coversHostBottom,
+        canvasVisibility: metrics.canvasVisibility,
+        frozenFrameCount: metrics.frozenFrameCount,
+      };
+    }).toEqual({
+      heightStable: true,
+      widthGrew: true,
+      surfaceStable: true,
+      coversHost: true,
+      canvasVisibility: 'visible',
+      frozenFrameCount: 0,
     });
 
+    const resolvedDragMetrics = await getStageMetrics(page);
+    expect(resolvedDragMetrics).not.toBeNull();
+    expect((resolvedDragMetrics?.hostWidth ?? 0) - initialMetrics.hostWidth).toBeGreaterThanOrEqual(40);
+    expect(resolvedDragMetrics?.canvasWidth).toBe(initialMetrics.canvasWidth);
+    expect(resolvedDragMetrics?.canvasHeight).toBe(initialMetrics.canvasHeight);
+    expect(resolvedDragMetrics?.coversHostLeft).toBe(true);
+    expect(resolvedDragMetrics?.coversHostTop).toBe(true);
+    expect(resolvedDragMetrics?.coversHostRight).toBe(true);
+    expect(resolvedDragMetrics?.coversHostBottom).toBe(true);
+    expect(resolvedDragMetrics?.surfaceResizeCount).toBe(initialMetrics.surfaceResizeCount);
+
+    await page.mouse.up();
+    await waitForStageToSettle(page);
+
+    const finalMetrics = await getStageMetrics(page);
+    expect(finalMetrics).not.toBeNull();
+    expect(finalMetrics?.canvasVisibility).toBe('visible');
+    expect(finalMetrics?.frozenFrameCount).toBe(0);
+    expect(finalMetrics?.canvasWidth).toBe(initialMetrics.canvasWidth);
+    expect(finalMetrics?.canvasHeight).toBe(initialMetrics.canvasHeight);
+    expect(finalMetrics?.coversHostLeft).toBe(true);
+    expect(finalMetrics?.coversHostTop).toBe(true);
+    expect(finalMetrics?.coversHostRight).toBe(true);
+    expect(finalMetrics?.coversHostBottom).toBe(true);
+    expect(finalMetrics?.surfaceResizeCount).toBe(initialMetrics.surfaceResizeCount);
+  });
+
+  test('growing the stage reveals more live world area while keeping the center fixed', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Live Growth ${Date.now()}`,
+    });
+
+    await waitForStageHost(page);
     await waitForStageDebug(page);
-
-    await page.evaluate(async () => {
-      const [
-        { useProjectStore },
-        { buildTiledBackgroundConfig },
-        { decodeBackgroundChunkImage },
-      ] = await Promise.all([
-        import('/src/store/projectStore.ts'),
-        import('/src/lib/background/chunkStore.ts'),
-        import('/src/lib/background/chunkImageCache.ts'),
-      ]);
-
-      const canvas = document.createElement('canvas');
-      canvas.width = 64;
-      canvas.height = 64;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        throw new Error('Failed to create a background chunk canvas.');
-      }
-      ctx.fillStyle = '#ff0000';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      const chunkSource = canvas.toDataURL('image/png');
-      await decodeBackgroundChunkImage(chunkSource);
-
-      const projectState = useProjectStore.getState();
-      const project = projectState.project;
-      const sceneId = project?.scenes[0]?.id;
-      if (!sceneId) {
-        throw new Error('Resize background scene is unavailable.');
-      }
-
-      const background = buildTiledBackgroundConfig(
-        { '0,0': chunkSource },
-        { chunkSize: 64, baseColor: '#000000' },
-      );
-      projectState.updateScene(sceneId, { background });
+    await page.evaluate(() => {
       window.__pochaStageDebug.setEditorViewport({ centerX: 432, centerY: 268, zoom: 0.5 });
     });
+    await waitForStageToSettle(page);
 
-    await page.evaluate(async () => {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
-    });
-
+    const before = await getCameraWorldView(page);
     const divider = page.getByTestId('editor-layout-divider');
     const dividerBox = await divider.boundingBox();
     expect(dividerBox).not.toBeNull();
@@ -556,39 +340,40 @@ test.describe('Stage resize', () => {
     const pointerY = dividerBox.y + dividerBox.height / 2;
     await page.mouse.move(pointerX, pointerY);
     await page.mouse.down();
-    await page.mouse.move(pointerX + 220, pointerY, { steps: 10 });
-    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+    await page.mouse.move(pointerX - 220, pointerY, { steps: 12 });
+
+    await expect.poll(async () => getStageMetrics(page)).toMatchObject({
+      canvasVisibility: 'visible',
+      frozenFrameCount: 0,
+    });
 
     await expect.poll(async () => {
-      return page.evaluate(() => {
-        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-        if (!(frozen instanceof HTMLCanvasElement)) {
-          return null;
-        }
+      const during = await getCameraWorldView(page);
+      return {
+        centerXStable: Math.abs(during.centerX - before.centerX) <= 1e-6,
+        centerYStable: Math.abs(during.centerY - before.centerY) <= 1e-6,
+        widthGrew: during.width > before.width + 150,
+        heightStable: Math.abs(during.height - before.height) <= 0.01,
+      };
+    }).toEqual({
+      centerXStable: true,
+      centerYStable: true,
+      widthGrew: true,
+      heightStable: true,
+    });
 
-        const ctx = frozen.getContext('2d');
-        if (!ctx) {
-          return null;
-        }
-
-        const centerX = Math.floor(frozen.width / 2);
-        const centerY = Math.floor(frozen.height / 2);
-        const searchRadius = 48;
-        for (let offsetY = -searchRadius; offsetY <= searchRadius; offsetY += 4) {
-          for (let offsetX = -searchRadius; offsetX <= searchRadius; offsetX += 4) {
-            const sampleX = Math.max(0, Math.min(frozen.width - 1, centerX + offsetX));
-            const sampleY = Math.max(0, Math.min(frozen.height - 1, centerY + offsetY));
-            const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
-            if (pixel[0] >= 200 && pixel[1] <= 30 && pixel[2] <= 30) {
-              return { visible: true };
-            }
-          }
-        }
-
-        return { visible: false };
-      });
-    }).toEqual({ visible: true });
+    const during = await getCameraWorldView(page);
+    expect(during.centerX).toBeCloseTo(before.centerX, 6);
+    expect(during.centerY).toBeCloseTo(before.centerY, 6);
+    expect(during.width).toBeGreaterThan(before.width + 150);
+    expect(during.height).toBeCloseTo(before.height, 2);
 
     await page.mouse.up();
+    await waitForStageToSettle(page);
+
+    const after = await getCameraWorldView(page);
+    expect(after.centerX).toBeCloseTo(before.centerX, 6);
+    expect(after.centerY).toBeCloseTo(before.centerY, 6);
+    expect(after.width).toBeGreaterThan(before.width + 150);
   });
 });

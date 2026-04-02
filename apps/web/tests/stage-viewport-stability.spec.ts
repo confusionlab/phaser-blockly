@@ -12,9 +12,27 @@ type EditorViewportSnapshot = {
     width: number;
     height: number;
   };
+  surfaceSize: {
+    width: number;
+    height: number;
+  } | null;
+  visibleRect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
   cameraViewportCenter: {
     x: number;
     y: number;
+  } | null;
+  cameraWorldView: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
   } | null;
 };
 
@@ -85,8 +103,9 @@ function expectCentersToMatch(before: EditorViewportSnapshot, after: EditorViewp
   expect(after.editorViewport?.centerX).toBeCloseTo(before.editorViewport?.centerX ?? 0, 8);
   expect(after.editorViewport?.centerY).toBeCloseTo(before.editorViewport?.centerY ?? 0, 8);
   expect(after.editorViewport?.zoom).toBeCloseTo(before.editorViewport?.zoom ?? 0, 8);
-  expect(after.cameraViewportCenter?.x).toBeCloseTo(before.cameraViewportCenter?.x ?? 0, 6);
-  expect(after.cameraViewportCenter?.y).toBeCloseTo(before.cameraViewportCenter?.y ?? 0, 6);
+  const zoom = after.editorViewport?.zoom ?? before.editorViewport?.zoom ?? 1;
+  expect(Math.abs((after.cameraViewportCenter?.x ?? 0) - (before.cameraViewportCenter?.x ?? 0)) * zoom).toBeLessThan(1.2);
+  expect(Math.abs((after.cameraViewportCenter?.y ?? 0) - (before.cameraViewportCenter?.y ?? 0)) * zoom).toBeLessThan(1.2);
 }
 
 function expectWorldPointsToStayWithinScreenPixels(
@@ -100,7 +119,7 @@ function expectWorldPointsToStayWithinScreenPixels(
 }
 
 test.describe('stage viewport stability', () => {
-  test('live editor canvas fills the host without right or bottom seams', async ({ page }) => {
+  test('live editor surface stays centered and fully covers the host without seams', async ({ page }) => {
     await page.setViewportSize({ width: 1377, height: 913 });
     await bootstrapEditorProject(page, {
       projectName: `Stage Host Fill ${Date.now()}`,
@@ -118,18 +137,34 @@ test.describe('stage viewport stability', () => {
       const hostRect = host.getBoundingClientRect();
       const canvasRect = canvas.getBoundingClientRect();
       return {
-        left: Math.abs(canvasRect.left - hostRect.left),
-        top: Math.abs(canvasRect.top - hostRect.top),
-        right: Math.abs(hostRect.right - canvasRect.right),
-        bottom: Math.abs(hostRect.bottom - canvasRect.bottom),
+        coversLeft: canvasRect.left <= hostRect.left + 0.5,
+        coversTop: canvasRect.top <= hostRect.top + 0.5,
+        coversRight: canvasRect.right >= hostRect.right - 0.5,
+        coversBottom: canvasRect.bottom >= hostRect.bottom - 0.5,
+        centerXDelta: Math.abs(
+          (canvasRect.left + canvasRect.right) / 2 - (hostRect.left + hostRect.right) / 2,
+        ),
+        centerYDelta: Math.abs(
+          (canvasRect.top + canvasRect.bottom) / 2 - (hostRect.top + hostRect.bottom) / 2,
+        ),
       };
     });
 
     expect(edgeDiffs).not.toBeNull();
-    expect(edgeDiffs?.left ?? 0).toBeLessThanOrEqual(0.5);
-    expect(edgeDiffs?.top ?? 0).toBeLessThanOrEqual(0.5);
-    expect(edgeDiffs?.right ?? 0).toBeLessThanOrEqual(0.5);
-    expect(edgeDiffs?.bottom ?? 0).toBeLessThanOrEqual(0.5);
+    expect(edgeDiffs?.coversLeft).toBe(true);
+    expect(edgeDiffs?.coversTop).toBe(true);
+    expect(edgeDiffs?.coversRight).toBe(true);
+    expect(edgeDiffs?.coversBottom).toBe(true);
+    expect(edgeDiffs?.centerXDelta ?? 0).toBeLessThanOrEqual(0.5);
+    expect(edgeDiffs?.centerYDelta ?? 0).toBeLessThanOrEqual(0.5);
+
+    const snapshot = await getEditorSceneSnapshot(page);
+    expect(snapshot.visibleRect).toEqual({
+      x: Math.floor(((snapshot.surfaceSize?.width ?? 0) - snapshot.hostSize.width) / 2),
+      y: Math.floor(((snapshot.surfaceSize?.height ?? 0) - snapshot.hostSize.height) / 2),
+      width: snapshot.hostSize.width,
+      height: snapshot.hostSize.height,
+    });
   });
 
   test('fullscreen preserves the world point at the stage center', async ({ page }) => {
@@ -171,7 +206,7 @@ test.describe('stage viewport stability', () => {
     );
   });
 
-  test('vertical stage resize commit preserves the editor center', async ({ page }) => {
+  test('vertical stage resize preserves the editor center during drag and after commit', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Stage Vertical Resize Stability ${Date.now()}`,
     });
@@ -180,6 +215,7 @@ test.describe('stage viewport stability', () => {
     await waitForStageToSettle(page);
 
     const before = await getEditorSceneSnapshot(page);
+    const beforeWorldCenter = await getWorldPointAtStageCenter(page);
     const divider = page.getByTestId('stage-panel-vertical-divider');
     const dividerBox = await divider.boundingBox();
     expect(dividerBox).not.toBeNull();
@@ -191,17 +227,45 @@ test.describe('stage viewport stability', () => {
     const pointerY = dividerBox.y + dividerBox.height / 2;
     await page.mouse.move(pointerX, pointerY);
     await page.mouse.down();
-    await page.mouse.move(pointerX, pointerY - 140, { steps: 12 });
-    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+    await page.mouse.move(pointerX, pointerY + 140, { steps: 12 });
+    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+
+    await expect.poll(async () => {
+      const snapshot = await getEditorSceneSnapshot(page);
+      return {
+        hostHeightGrew: snapshot.hostSize.height - before.hostSize.height >= 40,
+        worldHeightGrew: (snapshot.cameraWorldView?.height ?? 0) - (before.cameraWorldView?.height ?? 0) > 20,
+      };
+    }).toEqual({
+      hostHeightGrew: true,
+      worldHeightGrew: true,
+    });
+
+    const during = await getEditorSceneSnapshot(page);
+    const duringWorldCenter = await getWorldPointAtStageCenter(page);
+    expectCentersToMatch(before, during);
+    expectWorldPointsToStayWithinScreenPixels(
+      beforeWorldCenter,
+      duringWorldCenter,
+      during.editorViewport?.zoom ?? 1,
+    );
+    expect((during.hostSize.height ?? 0) - before.hostSize.height).toBeGreaterThanOrEqual(40);
+    expect((during.cameraWorldView?.height ?? 0) - (before.cameraWorldView?.height ?? 0)).toBeGreaterThan(20);
+
     await page.mouse.up();
-    await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
     await waitForStageToSettle(page);
 
     const after = await getEditorSceneSnapshot(page);
+    const afterWorldCenter = await getWorldPointAtStageCenter(page);
     expectCentersToMatch(before, after);
+    expectWorldPointsToStayWithinScreenPixels(
+      beforeWorldCenter,
+      afterWorldCenter,
+      after.editorViewport?.zoom ?? 1,
+    );
   });
 
-  test('horizontal editor split resize commit preserves the editor center', async ({ page }) => {
+  test('horizontal editor split resize preserves the editor center during drag and after commit', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Stage Horizontal Resize Stability ${Date.now()}`,
     });
@@ -210,6 +274,7 @@ test.describe('stage viewport stability', () => {
     await waitForStageToSettle(page);
 
     const before = await getEditorSceneSnapshot(page);
+    const beforeWorldCenter = await getWorldPointAtStageCenter(page);
     const divider = page.getByTestId('editor-layout-divider');
     const dividerBox = await divider.boundingBox();
     expect(dividerBox).not.toBeNull();
@@ -221,13 +286,41 @@ test.describe('stage viewport stability', () => {
     const pointerY = dividerBox.y + dividerBox.height / 2;
     await page.mouse.move(pointerX, pointerY);
     await page.mouse.down();
-    await page.mouse.move(pointerX + 180, pointerY, { steps: 12 });
-    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+    await page.mouse.move(pointerX - 180, pointerY, { steps: 12 });
+    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+
+    await expect.poll(async () => {
+      const snapshot = await getEditorSceneSnapshot(page);
+      return {
+        hostWidthGrew: snapshot.hostSize.width - before.hostSize.width >= 40,
+        worldWidthGrew: (snapshot.cameraWorldView?.width ?? 0) - (before.cameraWorldView?.width ?? 0) > 20,
+      };
+    }).toEqual({
+      hostWidthGrew: true,
+      worldWidthGrew: true,
+    });
+
+    const during = await getEditorSceneSnapshot(page);
+    const duringWorldCenter = await getWorldPointAtStageCenter(page);
+    expectCentersToMatch(before, during);
+    expectWorldPointsToStayWithinScreenPixels(
+      beforeWorldCenter,
+      duringWorldCenter,
+      during.editorViewport?.zoom ?? 1,
+    );
+    expect((during.hostSize.width ?? 0) - before.hostSize.width).toBeGreaterThanOrEqual(40);
+    expect((during.cameraWorldView?.width ?? 0) - (before.cameraWorldView?.width ?? 0)).toBeGreaterThan(20);
+
     await page.mouse.up();
-    await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
     await waitForStageToSettle(page);
 
     const after = await getEditorSceneSnapshot(page);
+    const afterWorldCenter = await getWorldPointAtStageCenter(page);
     expectCentersToMatch(before, after);
+    expectWorldPointsToStayWithinScreenPixels(
+      beforeWorldCenter,
+      afterWorldCenter,
+      after.editorViewport?.zoom ?? 1,
+    );
   });
 });

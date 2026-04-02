@@ -6,13 +6,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Library, Loader2 } from '@/components/ui/icons';
 import {
   CollectionSelectionCheckbox,
@@ -21,6 +14,7 @@ import {
   collectionRowClassName,
   type CollectionViewMode,
 } from '@/components/shared/CollectionBrowserChrome';
+import { WindowDialogChrome } from '@/components/shared/WindowDialogChrome';
 import { orderAssetIdsByListOrder } from '@/lib/editor/assetSidebarList';
 import { cn } from '@/lib/utils';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
@@ -297,195 +291,182 @@ export function LibraryBrowserDialog<T>({
   ), [clearSelection, exitSelectionMode, selectedItems, selectionMode, toolbarActions, viewMode]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[min(calc(100vh-2.5rem),960px)] max-h-[min(calc(100vh-2.5rem),960px)] w-[calc(100vw-2.5rem)] max-w-none border-none bg-transparent p-4 shadow-none [&>[data-slot='dialog-close']]:top-7 [&>[data-slot='dialog-close']]:right-7 sm:max-w-none sm:p-6 sm:[&>[data-slot='dialog-close']]:top-10 sm:[&>[data-slot='dialog-close']]:right-10">
-        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[32px] border border-border/70 bg-card shadow-[0_40px_120px_-52px_rgba(15,23,42,0.58)]">
-          <div className="shrink-0 border-b border-border/70 px-6 py-6 pr-16">
-            <DialogHeader className="gap-2 text-left">
-              <DialogTitle className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">
-                {title}
-              </DialogTitle>
-              {description ? (
-                <DialogDescription className="max-w-3xl text-sm leading-6 text-muted-foreground">
-                  {description}
-                </DialogDescription>
-              ) : null}
-            </DialogHeader>
+    <WindowDialogChrome
+      open={open}
+      onOpenChange={onOpenChange}
+      title={title}
+      description={description}
+      bodyClassName="relative flex min-h-0 flex-1 flex-col bg-card"
+    >
+      <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          {resolvedToolbarActions}
+          <div className="text-sm font-medium text-foreground/80">
+            {statusLabel}
           </div>
-
-          <section className="relative flex min-h-0 flex-1 flex-col bg-card">
-            <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
-              <div className="flex min-w-0 flex-wrap items-center gap-3">
-                {resolvedToolbarActions}
-                <div className="text-sm font-medium text-foreground/80">
-                  {statusLabel}
-                </div>
-              </div>
-
-              <CollectionViewControls
-                ariaLabel={`${title} view`}
-                deleteDisabled={isBusy}
-                deleteLabel={
-                  deletableSelectedItems.length === 1
-                    ? `Delete selected ${itemLabelSingular}`
-                    : `Delete ${deletableSelectedItems.length} selected ${itemLabelPlural ?? `${itemLabelSingular}s`}`
-                }
-                disabled={isBusy}
-                onDeleteSelected={onDeleteSelected ? () => void handleDeleteSelected() : undefined}
-                onToggleSelectionMode={() => {
-                  if (isBusy) {
-                    return;
-                  }
-                  if (selectionMode) {
-                    exitSelectionMode();
-                    return;
-                  }
-                  setSelectionMode(true);
-                }}
-                onViewModeChange={setViewMode}
-                selectionCount={deletableSelectedItems.length}
-                selectionMode={selectionMode}
-                viewMode={viewMode}
-              />
-            </div>
-
-            <div
-              className="min-h-0 flex-1 overflow-auto"
-              onClick={() => {
-                if (selectionMode) {
-                  clearSelection();
-                }
-              }}
-            >
-              {loading || !items ? (
-                <div className="flex h-full min-h-[320px] items-center justify-center text-muted-foreground">
-                  <Loader2 className="size-7 animate-spin" />
-                </div>
-              ) : resolvedItems.length === 0 ? (
-                <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground">
-                  <div className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                    {emptyIcon ?? <Library className="size-8" />}
-                  </div>
-                  <div>
-                    <div className="text-lg font-semibold text-foreground">{emptyTitle}</div>
-                    {emptyDescription ? (
-                      <div className="mt-2 text-sm leading-6">
-                        {emptyDescription}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : viewMode === 'card' ? (
-                <div className="grid auto-rows-fr gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                  {resolvedItems.map((item) => {
-                    const itemId = getItemId(item);
-                    const isSelected = selectedIds.includes(itemId);
-                    const isOpening = openingItemId === itemId;
-
-                    return (
-                      <div
-                        key={itemId}
-                        aria-label={resolvedGetItemName(item)}
-                        aria-selected={isSelected}
-                        className={collectionCardClassName({ selected: isSelected })}
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (isBusy && !isOpening) {
-                            return;
-                          }
-                          void handleItemActivate(item, event.nativeEvent);
-                        }}
-                        onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
-                          if (event.target !== event.currentTarget) {
-                            return;
-                          }
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            void handleItemActivate(item);
-                          }
-                        }}
-                      >
-                        {selectionMode ? (
-                          <CollectionSelectionCheckbox checked={isSelected} className="absolute left-3 top-3 z-10 shadow-sm" />
-                        ) : null}
-
-                        {renderCard(item, {
-                          opening: isOpening,
-                          selected: isSelected,
-                          selectionMode,
-                          viewMode,
-                        })}
-
-                        {isOpening ? (
-                          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/55 backdrop-blur-[2px]">
-                            <Loader2 className="size-6 animate-spin text-foreground/80" />
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex flex-col">
-                  {resolvedItems.map((item) => {
-                    const itemId = getItemId(item);
-                    const isSelected = selectedIds.includes(itemId);
-                    const isOpening = openingItemId === itemId;
-
-                    return (
-                      <div
-                        key={itemId}
-                        aria-label={resolvedGetItemName(item)}
-                        aria-selected={isSelected}
-                        className={collectionRowClassName({ selected: isSelected })}
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (isBusy && !isOpening) {
-                            return;
-                          }
-                          void handleItemActivate(item, event.nativeEvent);
-                        }}
-                        onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
-                          if (event.target !== event.currentTarget) {
-                            return;
-                          }
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            void handleItemActivate(item);
-                          }
-                        }}
-                      >
-                        {selectionMode ? (
-                          <CollectionSelectionCheckbox checked={isSelected} className="absolute left-4 top-4 z-10 shadow-sm" />
-                        ) : null}
-
-                        <div className={cn('flex min-w-0 flex-1 items-center gap-4', selectionMode && 'pl-7')}>
-                          {renderRow(item, {
-                            opening: isOpening,
-                            selected: isSelected,
-                            selectionMode,
-                            viewMode,
-                          })}
-                        </div>
-
-                        {isOpening ? (
-                          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/50 backdrop-blur-[2px]">
-                            <Loader2 className="size-6 animate-spin text-foreground/80" />
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </section>
         </div>
-      </DialogContent>
-    </Dialog>
+
+        <CollectionViewControls
+          ariaLabel={`${title} view`}
+          deleteDisabled={isBusy}
+          deleteLabel={
+            deletableSelectedItems.length === 1
+              ? `Delete selected ${itemLabelSingular}`
+              : `Delete ${deletableSelectedItems.length} selected ${itemLabelPlural ?? `${itemLabelSingular}s`}`
+          }
+          disabled={isBusy}
+          onDeleteSelected={onDeleteSelected ? () => void handleDeleteSelected() : undefined}
+          onToggleSelectionMode={() => {
+            if (isBusy) {
+              return;
+            }
+            if (selectionMode) {
+              exitSelectionMode();
+              return;
+            }
+            setSelectionMode(true);
+          }}
+          onViewModeChange={setViewMode}
+          selectionCount={deletableSelectedItems.length}
+          selectionMode={selectionMode}
+          viewMode={viewMode}
+        />
+      </div>
+
+      <div
+        className="min-h-0 flex-1 overflow-auto"
+        onClick={() => {
+          if (selectionMode) {
+            clearSelection();
+          }
+        }}
+      >
+        {loading || !items ? (
+          <div className="flex h-full min-h-[320px] items-center justify-center text-muted-foreground">
+            <Loader2 className="size-7 animate-spin" />
+          </div>
+        ) : resolvedItems.length === 0 ? (
+          <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground">
+            <div className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              {emptyIcon ?? <Library className="size-8" />}
+            </div>
+            <div>
+              <div className="text-lg font-semibold text-foreground">{emptyTitle}</div>
+              {emptyDescription ? (
+                <div className="mt-2 text-sm leading-6">
+                  {emptyDescription}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : viewMode === 'card' ? (
+          <div className="grid auto-rows-fr gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {resolvedItems.map((item) => {
+              const itemId = getItemId(item);
+              const isSelected = selectedIds.includes(itemId);
+              const isOpening = openingItemId === itemId;
+
+              return (
+                <div
+                  key={itemId}
+                  aria-label={resolvedGetItemName(item)}
+                  aria-selected={isSelected}
+                  className={collectionCardClassName({ selected: isSelected })}
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (isBusy && !isOpening) {
+                      return;
+                    }
+                    void handleItemActivate(item, event.nativeEvent);
+                  }}
+                  onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+                    if (event.target !== event.currentTarget) {
+                      return;
+                    }
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      void handleItemActivate(item);
+                    }
+                  }}
+                >
+                  {selectionMode ? (
+                    <CollectionSelectionCheckbox checked={isSelected} className="absolute left-3 top-3 z-10 shadow-sm" />
+                  ) : null}
+
+                  {renderCard(item, {
+                    opening: isOpening,
+                    selected: isSelected,
+                    selectionMode,
+                    viewMode,
+                  })}
+
+                  {isOpening ? (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/55 backdrop-blur-[2px]">
+                      <Loader2 className="size-6 animate-spin text-foreground/80" />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex flex-col">
+            {resolvedItems.map((item) => {
+              const itemId = getItemId(item);
+              const isSelected = selectedIds.includes(itemId);
+              const isOpening = openingItemId === itemId;
+
+              return (
+                <div
+                  key={itemId}
+                  aria-label={resolvedGetItemName(item)}
+                  aria-selected={isSelected}
+                  className={collectionRowClassName({ selected: isSelected })}
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (isBusy && !isOpening) {
+                      return;
+                    }
+                    void handleItemActivate(item, event.nativeEvent);
+                  }}
+                  onKeyDown={(event: ReactKeyboardEvent<HTMLDivElement>) => {
+                    if (event.target !== event.currentTarget) {
+                      return;
+                    }
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      void handleItemActivate(item);
+                    }
+                  }}
+                >
+                  {selectionMode ? (
+                    <CollectionSelectionCheckbox checked={isSelected} className="absolute left-4 top-4 z-10 shadow-sm" />
+                  ) : null}
+
+                  <div className={cn('flex min-w-0 flex-1 items-center gap-4', selectionMode && 'pl-7')}>
+                    {renderRow(item, {
+                      opening: isOpening,
+                      selected: isSelected,
+                      selectionMode,
+                      viewMode,
+                    })}
+                  </div>
+
+                  {isOpening ? (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/50 backdrop-blur-[2px]">
+                      <Loader2 className="size-6 animate-spin text-foreground/80" />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </WindowDialogChrome>
   );
 }

@@ -25,15 +25,15 @@ test.describe('stage zoom anchoring', () => {
       });
     });
 
-    const canvas = page.locator('[data-testid="stage-phaser-host"] canvas');
-    const canvasBox = await canvas.boundingBox();
-    expect(canvasBox).not.toBeNull();
-    if (!canvasBox) {
+    const host = page.locator('[data-testid="stage-phaser-host"]');
+    const hostBox = await host.boundingBox();
+    expect(hostBox).not.toBeNull();
+    if (!hostBox) {
       return;
     }
 
-    const clientX = canvasBox.x + canvasBox.width * 0.35;
-    const clientY = canvasBox.y + canvasBox.height * 0.4;
+    const clientX = hostBox.x + hostBox.width * 0.35;
+    const clientY = hostBox.y + hostBox.height * 0.4;
     const before = await page.evaluate(({ clientX, clientY }) => {
       const snapshot = window.__pochaStageDebug.getEditorSceneSnapshot();
       const world = window.__pochaStageDebug.getWorldPointAtClientPosition(clientX, clientY);

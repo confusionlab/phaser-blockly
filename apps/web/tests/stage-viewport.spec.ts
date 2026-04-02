@@ -18,12 +18,14 @@ test.describe('stage viewport projection', () => {
     const before = buildStageProjection({
       mode: 'editor',
       hostSize: { width: 920, height: 540 },
+      surfaceSize: { width: 1440, height: 960 },
       canvasSize: { width: 800, height: 600 },
       editorViewport,
     });
     const after = buildStageProjection({
       mode: 'editor',
       hostSize: { width: 1320, height: 860 },
+      surfaceSize: { width: 1440, height: 960 },
       canvasSize: { width: 800, height: 600 },
       editorViewport,
     });
@@ -45,20 +47,39 @@ test.describe('stage viewport projection', () => {
       x: editorViewport.centerX,
       y: editorViewport.centerY,
     });
+    expect(before.visibleRect).toEqual({
+      x: 260,
+      y: 210,
+      width: 920,
+      height: 540,
+    });
+    expect(after.visibleRect).toEqual({
+      x: 60,
+      y: 50,
+      width: 1320,
+      height: 860,
+    });
   });
 
   test('camera viewport mode letterboxes around the stage', () => {
     const projection = buildStageProjection({
       mode: 'camera-viewport',
       hostSize: { width: 1280, height: 900 },
+      surfaceSize: { width: 1600, height: 1200 },
       canvasSize: { width: 800, height: 600 },
       editorViewport: createDefaultStageEditorViewport({ width: 800, height: 600 }),
     });
 
     expect(projection.cameraZoom).toBeCloseTo(1.5);
+    expect(projection.visibleRect).toEqual({
+      x: 160,
+      y: 150,
+      width: 1280,
+      height: 900,
+    });
     expect(projection.cameraViewport).toEqual({
-      x: 40,
-      y: 0,
+      x: 200,
+      y: 150,
       width: 1200,
       height: 900,
     });
@@ -68,13 +89,14 @@ test.describe('stage viewport projection', () => {
     const projection = buildStageProjection({
       mode: 'camera-masked',
       hostSize: { width: 1280, height: 900 },
+      surfaceSize: { width: 1600, height: 1200 },
       canvasSize: { width: 800, height: 600 },
       editorViewport: createDefaultStageEditorViewport({ width: 800, height: 600 }),
     });
 
     expect(projection.cameraViewport).toEqual({
-      x: 0,
-      y: 0,
+      x: 160,
+      y: 150,
       width: 1280,
       height: 900,
     });

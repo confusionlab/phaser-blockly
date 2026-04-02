@@ -1,6 +1,5 @@
 import { useEffect, useRef, useCallback, useLayoutEffect, useState } from 'react';
 import Phaser from 'phaser';
-import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
@@ -108,25 +107,17 @@ const TILED_BACKGROUND_LAYER_DEPTH = -950;
 const INVENTORY_PAGE_SIZE = 8;
 const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
-const EDITOR_RESIZE_FREEZE_EVENT = 'pocha-editor-resize-freeze';
 const STAGE_GIZMO_COLOR = 0x0ea5e9;
 const STAGE_GIZMO_COLOR_CSS = 'rgb(14, 165, 233)';
 const STAGE_GIZMO_FILL_CSS = 'rgba(14, 165, 233, 0.08)';
 const STAGE_SELECTION_FILL_ALPHA = 0.06;
+const MIN_STAGE_SURFACE_SIZE = 64;
 
 type StageGizmoPalette = {
   phaserColor: number;
   strokeCss: string;
   fillCss: string;
   handleStrokeCss: string;
-};
-
-type FrozenStageFrame = {
-  pixelWidth: number;
-  pixelHeight: number;
-  width: number;
-  height: number;
-  revision: number;
 };
 
 type PendingCostumeVisualTarget = {
@@ -173,6 +164,14 @@ type StageDebugSnapshot = {
   mode: StageViewMode;
   editorViewport: StageEditorViewport | null;
   hostSize: StageSize;
+  surfaceSize: StageSize | null;
+  surfaceResizeCount: number;
+  visibleRect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
   gameLoopFrame: number;
   canvasState: {
     width: number;
@@ -180,6 +179,14 @@ type StageDebugSnapshot = {
     visibility: string;
   } | null;
   cameraViewportCenter: { x: number; y: number } | null;
+  cameraWorldView: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  } | null;
   cameraState: {
     scrollX: number;
     scrollY: number;
@@ -198,8 +205,6 @@ type StageDebugApi = {
   setViewMode: (mode: StageViewMode) => void;
   getWorldPointAtClientPosition: (clientX: number, clientY: number) => { x: number; y: number } | null;
 };
-
-const MAX_FROZEN_FRAME_PIXEL_RATIO = 2;
 
 function getCostumeVisualMetrics({
   bounds,
@@ -473,6 +478,22 @@ function getElementRenderSize(element: HTMLElement): { width: number; height: nu
   };
 }
 
+function getViewportSurfaceSize(minimumSize?: StageSize): StageSize {
+  const minimumWidth = minimumSize ? Math.max(MIN_STAGE_SURFACE_SIZE, Math.round(minimumSize.width)) : MIN_STAGE_SURFACE_SIZE;
+  const minimumHeight = minimumSize ? Math.max(MIN_STAGE_SURFACE_SIZE, Math.round(minimumSize.height)) : MIN_STAGE_SURFACE_SIZE;
+  if (typeof window === 'undefined') {
+    return {
+      width: minimumWidth,
+      height: minimumHeight,
+    };
+  }
+
+  return {
+    width: Math.max(minimumWidth, Math.round(window.innerWidth || minimumWidth)),
+    height: Math.max(minimumHeight, Math.round(window.innerHeight || minimumHeight)),
+  };
+}
+
 function getElementLocalPoint(
   element: HTMLElement,
   clientX: number,
@@ -626,44 +647,6 @@ function getUserViewportFromPhaserWorldView(
     bottom: Math.min(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y),
     top: Math.max(cornerTopLeft.y, cornerTopRight.y, cornerBottomLeft.y, cornerBottomRight.y),
   };
-}
-
-function getFrozenStageFramePixelRatio(): number {
-  if (typeof window === 'undefined') {
-    return 1;
-  }
-  const dpr = window.devicePixelRatio || 1;
-  return Math.max(1, Math.min(MAX_FROZEN_FRAME_PIXEL_RATIO, dpr));
-}
-
-function hasMeaningfulFrozenFrameContent(source: HTMLCanvasElement): boolean {
-  const context = source.getContext('2d', { willReadFrequently: true });
-  if (!context || source.width <= 0 || source.height <= 0) {
-    return false;
-  }
-
-  const uniqueColors = new Set<string>();
-  const sampleColumns = 10;
-  const sampleRows = 10;
-  for (let row = 0; row < sampleRows; row += 1) {
-    for (let column = 0; column < sampleColumns; column += 1) {
-      const sampleX = Math.max(0, Math.min(
-        source.width - 1,
-        Math.floor(((column + 0.5) / sampleColumns) * source.width),
-      ));
-      const sampleY = Math.max(0, Math.min(
-        source.height - 1,
-        Math.floor(((row + 0.5) / sampleRows) * source.height),
-      ));
-      const pixel = context.getImageData(sampleX, sampleY, 1, 1).data;
-      uniqueColors.add(`${pixel[0]},${pixel[1]},${pixel[2]},${pixel[3]}`);
-      if (uniqueColors.size >= 2) {
-        return true;
-      }
-    }
-  }
-
-  return false;
 }
 
 function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundLayerState): void {
@@ -881,11 +864,10 @@ function isClientPointInsideInventoryUI(clientX: number, clientY: number): boole
 
 interface PhaserCanvasProps {
   isPlaying: boolean;
-  deferEditorResize?: boolean;
   layoutMode?: 'panel' | 'fullscreen';
 }
 
-export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode = 'panel' }: PhaserCanvasProps) {
+export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
@@ -914,15 +896,13 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     height: number;
   } | null>(null);
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
-  const [frozenStageFrame, setFrozenStageFrame] = useState<FrozenStageFrame | null>(null);
   const [componentDragPreview, setComponentDragPreview] = useState<ComponentDragPreview | null>(null);
-  const immediateResizeFreezeRef = useRef(false);
-  const [manualResizeFreezeActive, setManualResizeFreezeActive] = useState(false);
-  const frozenStageFrameBufferRef = useRef<HTMLCanvasElement | null>(null);
-  const frozenStageFrameOverlayRef = useRef<HTMLCanvasElement | null>(null);
-  const frozenStageFrameRevisionRef = useRef(0);
-  const resizeFreezeSessionRef = useRef(0);
-  const resizeFreezeOverscanCleanupRef = useRef<(() => void) | null>(null);
+  const scheduledEditorResizeRef = useRef<number | null>(null);
+  const scheduledEditorResizeForceRef = useRef(false);
+  const scheduledEditorResizeSizeRef = useRef<StageSize | null>(null);
+  const editorHostSizeRef = useRef<StageSize>({ width: 1, height: 1 });
+  const editorSurfaceSizeRef = useRef<StageSize | null>(null);
+  const editorSurfaceResizeCountRef = useRef(0);
 
   const { project, updateObject, addComponentInstance } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -942,9 +922,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   }
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
-  const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
 
-  const syncEditorCanvasElementBox = useCallback(() => {
+  const syncEditorCanvasElementBox = useCallback((hostSize?: StageSize, surfaceSize?: StageSize) => {
     if (isPlaying) {
       return;
     }
@@ -954,431 +933,140 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return;
     }
 
+    const resolvedHostSize = hostSize ?? editorHostSizeRef.current;
+    const resolvedSurfaceSize = surfaceSize ?? editorSurfaceSizeRef.current ?? {
+      width: Math.max(1, canvas.width || 1),
+      height: Math.max(1, canvas.height || 1),
+    };
+    const offsetX = Math.round((resolvedHostSize.width - resolvedSurfaceSize.width) / 2);
+    const offsetY = Math.round((resolvedHostSize.height - resolvedSurfaceSize.height) / 2);
+
     canvas.style.display = 'block';
     canvas.style.position = 'absolute';
-    canvas.style.left = '0';
-    canvas.style.top = '0';
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
+    canvas.style.left = `${offsetX}px`;
+    canvas.style.top = `${offsetY}px`;
+    canvas.style.width = `${resolvedSurfaceSize.width}px`;
+    canvas.style.height = `${resolvedSurfaceSize.height}px`;
     canvas.style.maxWidth = 'none';
     canvas.style.maxHeight = 'none';
   }, [isPlaying]);
 
-  const resizeEditorCanvasToSize = useCallback((nextSize: StageSize, force = false) => {
+  const ensureEditorSurfaceSize = useCallback((hostSize: StageSize, force = false): StageSize => {
+    const currentSurfaceSize = editorSurfaceSizeRef.current;
+    const viewportSurfaceSize = getViewportSurfaceSize(hostSize);
+
+    if (!force && currentSurfaceSize) {
+      return {
+        width: Math.max(currentSurfaceSize.width, hostSize.width, viewportSurfaceSize.width),
+        height: Math.max(currentSurfaceSize.height, hostSize.height, viewportSurfaceSize.height),
+      };
+    }
+
+    return {
+      width: Math.max(hostSize.width, viewportSurfaceSize.width, currentSurfaceSize?.width ?? 0),
+      height: Math.max(hostSize.height, viewportSurfaceSize.height, currentSurfaceSize?.height ?? 0),
+    };
+  }, []);
+
+  const syncEditorCanvasToHost = useCallback((hostSize: StageSize, force = false) => {
     if (isPlaying) {
-      return false;
+      return;
     }
 
     const game = gameRef.current;
     if (!game) {
-      return false;
+      return;
     }
 
-    const safeWidth = Math.max(1, Math.round(nextSize.width));
-    const safeHeight = Math.max(1, Math.round(nextSize.height));
+    const resolvedHostSize = {
+      width: Math.max(1, Math.round(hostSize.width)),
+      height: Math.max(1, Math.round(hostSize.height)),
+    };
+    const previousSurfaceSize = editorSurfaceSizeRef.current;
+    const nextSurfaceSize = ensureEditorSurfaceSize(resolvedHostSize, force);
+    const surfaceRefMatches = previousSurfaceSize?.width === nextSurfaceSize.width
+      && previousSurfaceSize?.height === nextSurfaceSize.height;
     const canvasWidth = game.canvas?.width ?? 0;
     const canvasHeight = game.canvas?.height ?? 0;
-    const scaleMatches = game.scale.width === safeWidth && game.scale.height === safeHeight;
-    const canvasMatches = canvasWidth === safeWidth && canvasHeight === safeHeight;
+    const canvasMatches = canvasWidth === nextSurfaceSize.width && canvasHeight === nextSurfaceSize.height;
 
-    if (!force && scaleMatches && canvasMatches) {
-      return true;
+    editorHostSizeRef.current = resolvedHostSize;
+    editorSurfaceSizeRef.current = nextSurfaceSize;
+
+    if (!surfaceRefMatches || !canvasMatches) {
+      editorSurfaceResizeCountRef.current += 1;
+      game.scale.resize(nextSurfaceSize.width, nextSurfaceSize.height);
+      game.scale.refresh();
     }
 
-    game.scale.resize(safeWidth, safeHeight);
-    game.scale.refresh();
-    syncEditorCanvasElementBox();
+    syncEditorCanvasElementBox(resolvedHostSize, nextSurfaceSize);
 
     const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
     if (phaserScene) {
       getStageViewportController(phaserScene)?.syncProjection();
       refreshTiledBackgroundLayer(phaserScene);
     }
+  }, [ensureEditorSurfaceSize, isPlaying, syncEditorCanvasElementBox]);
 
-    return true;
-  }, [isPlaying, syncEditorCanvasElementBox]);
+  const flushScheduledEditorCanvasResize = useCallback(() => {
+    scheduledEditorResizeRef.current = null;
+    const force = scheduledEditorResizeForceRef.current;
+    const nextSize = scheduledEditorResizeSizeRef.current;
+    scheduledEditorResizeForceRef.current = false;
+    scheduledEditorResizeSizeRef.current = null;
 
-  const syncEditorCanvasToHost = useCallback((force = false) => {
-    if (isPlaying || isResizeFrozen || immediateResizeFreezeRef.current) {
+    if (nextSize) {
+      syncEditorCanvasToHost(nextSize, force);
       return;
     }
 
     const host = containerRef.current;
-    const game = gameRef.current;
-    if (!host || !game) {
+    if (!host) {
       return;
     }
 
-    resizeEditorCanvasToSize(getElementRenderSize(host), force);
-  }, [isPlaying, isResizeFrozen, resizeEditorCanvasToSize]);
+    syncEditorCanvasToHost(getElementRenderSize(host), force);
+  }, [syncEditorCanvasToHost]);
 
-  useEffect(() => {
-    editorViewportBySceneIdRef.current.clear();
-  }, [project?.id]);
-
-  const writeFrozenStageFrameBuffer = useCallback((
-    source: CanvasImageSource,
-    pixelWidth: number,
-    pixelHeight: number,
-  ): boolean => {
-    if (pixelWidth <= 0 || pixelHeight <= 0) {
-      return false;
+  const cancelScheduledEditorCanvasResize = useCallback(() => {
+    if (scheduledEditorResizeRef.current !== null) {
+      window.cancelAnimationFrame(scheduledEditorResizeRef.current);
+      scheduledEditorResizeRef.current = null;
     }
-
-    const bufferCanvas = frozenStageFrameBufferRef.current ?? document.createElement('canvas');
-    frozenStageFrameBufferRef.current = bufferCanvas;
-    bufferCanvas.width = pixelWidth;
-    bufferCanvas.height = pixelHeight;
-
-    const bufferContext = bufferCanvas.getContext('2d');
-    if (!bufferContext) {
-      return false;
-    }
-
-    bufferContext.imageSmoothingEnabled = false;
-    bufferContext.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
-    bufferContext.drawImage(source, 0, 0, bufferCanvas.width, bufferCanvas.height);
-    return true;
+    scheduledEditorResizeForceRef.current = false;
+    scheduledEditorResizeSizeRef.current = null;
   }, []);
 
-  const createFrozenStageFrameFromSource = useCallback((
-    source: CanvasImageSource,
-    pixelSize: StageSize,
-    displaySize: StageSize,
-  ): FrozenStageFrame | null => {
-    const pixelWidth = Math.max(1, Math.round(pixelSize.width));
-    const pixelHeight = Math.max(1, Math.round(pixelSize.height));
-    if (!writeFrozenStageFrameBuffer(source, pixelWidth, pixelHeight)) {
-      return null;
-    }
-
-    return {
-      pixelWidth,
-      pixelHeight,
-      width: Math.max(1, Math.round(displaySize.width)),
-      height: Math.max(1, Math.round(displaySize.height)),
-      revision: ++frozenStageFrameRevisionRef.current,
-    };
-  }, [writeFrozenStageFrameBuffer]);
-
-  const captureFrozenStageFrame = useCallback((): FrozenStageFrame | null => {
-    const canvas = gameRef.current?.canvas;
-    if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
-      return null;
-    }
-
-    const canvasRect = canvas.getBoundingClientRect();
-    return createFrozenStageFrameFromSource(
-      canvas,
-      { width: canvas.width, height: canvas.height },
-      { width: canvasRect.width, height: canvasRect.height },
-    );
-  }, [createFrozenStageFrameFromSource]);
-
-  const getResizeFreezeOverscanSize = useCallback((host: HTMLElement): StageSize => {
-    const hostSize = getElementRenderSize(host);
-    const viewportWidth = typeof window === 'undefined'
-      ? hostSize.width
-      : Math.max(
-          hostSize.width,
-          Math.round(document.documentElement.clientWidth || window.innerWidth || hostSize.width),
-        );
-    const viewportHeight = typeof window === 'undefined'
-      ? hostSize.height
-      : Math.max(
-          hostSize.height,
-          Math.round(document.documentElement.clientHeight || window.innerHeight || hostSize.height),
-        );
-
-    return {
-      width: viewportWidth,
-      height: viewportHeight,
-    };
-  }, []);
-
-  const getResizeFreezeCaptureDisplaySize = useCallback((
-    baseHostSize: StageSize,
-    overscanLimitSize: StageSize,
-    mode: StageViewMode,
-  ): StageSize => {
-    const safeBaseWidth = Math.max(1, Math.round(baseHostSize.width));
-    const safeBaseHeight = Math.max(1, Math.round(baseHostSize.height));
-    const safeLimitWidth = Math.max(safeBaseWidth, Math.round(overscanLimitSize.width));
-    const safeLimitHeight = Math.max(safeBaseHeight, Math.round(overscanLimitSize.height));
-
-    if (mode !== 'editor') {
-      return {
-        width: safeBaseWidth,
-        height: safeBaseHeight,
-      };
-    }
-
-    const uniformScale = Math.max(
-      1,
-      safeLimitWidth / safeBaseWidth,
-      safeLimitHeight / safeBaseHeight,
-    );
-
-    return {
-      width: Math.max(safeBaseWidth, Math.round(safeBaseWidth * uniformScale)),
-      height: Math.max(safeBaseHeight, Math.round(safeBaseHeight * uniformScale)),
-    };
-  }, []);
-
-  const drawFrozenStageFrameToOverlay = useCallback((frame: FrozenStageFrame | null): boolean => {
-    if (!frame) {
-      return false;
-    }
-
-    const host = containerRef.current;
-    const overlayCanvas = frozenStageFrameOverlayRef.current;
-    const bufferCanvas = frozenStageFrameBufferRef.current;
-    if (!host || !overlayCanvas || !bufferCanvas) {
-      return false;
-    }
-
-    const hostWidth = Math.max(1, Math.round(host.clientWidth || host.getBoundingClientRect().width || 1));
-    const hostHeight = Math.max(1, Math.round(host.clientHeight || host.getBoundingClientRect().height || 1));
-    const sourceWidth = Math.max(1, frame.width);
-    const sourceHeight = Math.max(1, frame.height);
-    const scaleX = frame.pixelWidth / sourceWidth;
-    const scaleY = frame.pixelHeight / sourceHeight;
-    const overlayPixelWidth = Math.max(1, Math.round(hostWidth * scaleX));
-    const overlayPixelHeight = Math.max(1, Math.round(hostHeight * scaleY));
-
-    if (overlayCanvas.width !== overlayPixelWidth) {
-      overlayCanvas.width = overlayPixelWidth;
-    }
-    if (overlayCanvas.height !== overlayPixelHeight) {
-      overlayCanvas.height = overlayPixelHeight;
-    }
-
-    const overlayContext = overlayCanvas.getContext('2d');
-    if (!overlayContext) {
-      return false;
-    }
-
-    overlayContext.imageSmoothingEnabled = false;
-    overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-    const cropDisplayWidth = Math.min(sourceWidth, hostWidth);
-    const cropDisplayHeight = Math.min(sourceHeight, hostHeight);
-    const sourceDisplayX = Math.max(0, (sourceWidth - cropDisplayWidth) / 2);
-    const sourceDisplayY = Math.max(0, (sourceHeight - cropDisplayHeight) / 2);
-    const sourcePixelX = Math.max(0, Math.round(sourceDisplayX * scaleX));
-    const sourcePixelY = Math.max(0, Math.round(sourceDisplayY * scaleY));
-    const sourcePixelWidth = Math.max(1, Math.min(bufferCanvas.width - sourcePixelX, Math.round(cropDisplayWidth * scaleX)));
-    const sourcePixelHeight = Math.max(1, Math.min(bufferCanvas.height - sourcePixelY, Math.round(cropDisplayHeight * scaleY)));
-    const destPixelX = Math.max(0, Math.round(((hostWidth - cropDisplayWidth) * scaleX) / 2));
-    const destPixelY = Math.max(0, Math.round(((hostHeight - cropDisplayHeight) * scaleY) / 2));
-    const destPixelWidth = Math.max(1, Math.round(cropDisplayWidth * scaleX));
-    const destPixelHeight = Math.max(1, Math.round(cropDisplayHeight * scaleY));
-
-    overlayContext.drawImage(
-      bufferCanvas,
-      sourcePixelX,
-      sourcePixelY,
-      sourcePixelWidth,
-      sourcePixelHeight,
-      destPixelX,
-      destPixelY,
-      destPixelWidth,
-      destPixelHeight,
-    );
-    return true;
-  }, []);
-  const captureOverscanFrozenStageFrame = useCallback(async (
-    scene: Phaser.Scene,
-    displaySize: StageSize,
-    baseHostSize: StageSize,
-  ): Promise<FrozenStageFrame | null> => {
-    const controller = getStageViewportController(scene);
-    if (!controller) {
-      return null;
-    }
-
-    const safeDisplaySize = {
-      width: Math.max(1, Math.round(displaySize.width)),
-      height: Math.max(1, Math.round(displaySize.height)),
-    };
-    const safeBaseHostSize = {
-      width: Math.max(1, Math.round(baseHostSize.width)),
-      height: Math.max(1, Math.round(baseHostSize.height)),
-    };
-    const pixelRatio = getFrozenStageFramePixelRatio();
-    const game = scene.game;
-    const camera = scene.cameras.main;
-    camera.preRender();
-
-    const originalScaleSize = {
-      width: Math.max(1, Math.round(game.scale.width || safeDisplaySize.width)),
-      height: Math.max(1, Math.round(game.scale.height || safeDisplaySize.height)),
-    };
-    const liveWorldCenter = {
-      x: camera.worldView.centerX,
-      y: camera.worldView.centerY,
-    };
-    const liveWorldSize = {
-      width: Math.max(1e-6, camera.worldView.width),
-      height: Math.max(1e-6, camera.worldView.height),
-    };
-    const targetZoomX = (safeBaseHostSize.width / liveWorldSize.width) * pixelRatio;
-    const targetZoomY = (safeBaseHostSize.height / liveWorldSize.height) * pixelRatio;
-    const renderPixelSize = {
-      width: Math.max(1, Math.round(safeDisplaySize.width * pixelRatio)),
-      height: Math.max(1, Math.round(safeDisplaySize.height * pixelRatio)),
-    };
-
-    try {
-      game.scale.resize(renderPixelSize.width, renderPixelSize.height);
-      game.scale.refresh();
-      camera.setViewport(0, 0, renderPixelSize.width, renderPixelSize.height);
-      camera.setZoom(targetZoomX, targetZoomY);
-      camera.centerOn(liveWorldCenter.x, liveWorldCenter.y);
-      camera.preRender();
-      refreshTiledBackgroundLayer(scene);
-      const waitForNextRenderedFrame = async (): Promise<void> => {
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => resolve());
-          });
-        });
-      };
-
-      const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        await waitForNextRenderedFrame();
-        refreshTiledBackgroundLayer(scene);
-        if (!tiledBackgroundLayer?.needsRedraw) {
-          break;
-        }
-      }
-
-      const liveCanvas = game.canvas;
-      if (!(liveCanvas instanceof HTMLCanvasElement) || liveCanvas.width <= 0 || liveCanvas.height <= 0) {
-        return null;
-      }
-
-      const composedTiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
-      const composedCanvas = document.createElement('canvas');
-      composedCanvas.width = renderPixelSize.width;
-      composedCanvas.height = renderPixelSize.height;
-      const composedContext = composedCanvas.getContext('2d');
-      if (!composedContext) {
-        return createFrozenStageFrameFromSource(
-          liveCanvas,
-          renderPixelSize,
-          safeDisplaySize,
-        );
-      }
-
-      composedContext.imageSmoothingEnabled = false;
-      if (
-        composedTiledBackgroundLayer?.image.visible
-        && composedTiledBackgroundLayer.canvas.width > 0
-        && composedTiledBackgroundLayer.canvas.height > 0
-      ) {
-        composedContext.drawImage(
-          composedTiledBackgroundLayer.canvas,
-          0,
-          0,
-          composedCanvas.width,
-          composedCanvas.height,
-        );
-      }
-      composedContext.drawImage(liveCanvas, 0, 0, composedCanvas.width, composedCanvas.height);
-
-      if (!hasMeaningfulFrozenFrameContent(composedCanvas)) {
-        return null;
-      }
-
-      return createFrozenStageFrameFromSource(
-        composedCanvas,
-        renderPixelSize,
-        safeDisplaySize,
-      );
-    } finally {
-      if (gameRef.current === game) {
-        game.scale.resize(originalScaleSize.width, originalScaleSize.height);
-        game.scale.refresh();
-        controller.syncProjection();
-        refreshTiledBackgroundLayer(scene);
-        syncEditorCanvasElementBox();
-      }
-    }
-  }, [
-    createFrozenStageFrameFromSource,
-    syncEditorCanvasElementBox,
-  ]);
-
-  const prepareOverscanFrozenStageFrame = useCallback((sessionId: number) => {
+  const scheduleEditorCanvasResize = useCallback((size?: StageSize, force = false) => {
     if (isPlaying) {
       return;
     }
 
-    const host = containerRef.current;
-    const game = gameRef.current;
-    const editorScene = game?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
-    if (!host || !game || !editorScene) {
+    if (size) {
+      scheduledEditorResizeSizeRef.current = {
+        width: size.width,
+        height: size.height,
+      };
+    }
+    scheduledEditorResizeForceRef.current = scheduledEditorResizeForceRef.current || force;
+
+    if (typeof window === 'undefined') {
+      flushScheduledEditorCanvasResize();
       return;
     }
 
-    const overscanSize = getResizeFreezeOverscanSize(host);
-    const hostSizeAtStart = getElementRenderSize(host);
-    const controller = getStageViewportController(editorScene);
-    const overscanCaptureSize = getResizeFreezeCaptureDisplaySize(
-      hostSizeAtStart,
-      overscanSize,
-      controller?.getMode() ?? 'editor',
-    );
-    const needsOverscan = overscanCaptureSize.width > hostSizeAtStart.width || overscanCaptureSize.height > hostSizeAtStart.height;
-    if (!needsOverscan) {
+    if (scheduledEditorResizeRef.current !== null) {
       return;
     }
 
-    let cancelled = false;
-    void captureOverscanFrozenStageFrame(editorScene, overscanCaptureSize, hostSizeAtStart).then((overscanFrame) => {
-      if (cancelled) {
-        return;
-      }
-      if (resizeFreezeSessionRef.current !== sessionId || !immediateResizeFreezeRef.current) {
-        return;
-      }
-      if (!overscanFrame) {
-        return;
-      }
-
-      flushSync(() => {
-        setFrozenStageFrame(overscanFrame);
-      });
-      drawFrozenStageFrameToOverlay(overscanFrame);
+    scheduledEditorResizeRef.current = window.requestAnimationFrame(() => {
+      flushScheduledEditorCanvasResize();
     });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    captureOverscanFrozenStageFrame,
-    drawFrozenStageFrameToOverlay,
-    getResizeFreezeCaptureDisplaySize,
-    getResizeFreezeOverscanSize,
-    isPlaying,
-  ]);
-
-  useLayoutEffect(() => {
-    if (isPlaying || !frozenStageFrame) {
-      return;
-    }
-
-    drawFrozenStageFrameToOverlay(frozenStageFrame);
-  }, [drawFrozenStageFrameToOverlay, frozenStageFrame, isPlaying]);
+  }, [flushScheduledEditorCanvasResize, isPlaying]);
 
   useEffect(() => {
-    return () => {
-      resizeFreezeOverscanCleanupRef.current?.();
-      resizeFreezeOverscanCleanupRef.current = null;
-    };
-  }, []);
+    editorViewportBySceneIdRef.current.clear();
+  }, [project?.id]);
 
   const getStoredEditorViewport = useCallback((
     sceneId: string | null | undefined,
@@ -1413,10 +1101,12 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
         const controller = getStageViewportController(editorScene);
         const camera = editorScene.cameras.main;
+        const projection = controller?.getProjection() ?? null;
         const hostSize = getElementRenderSize(host);
+        camera.preRender();
         const cameraViewportCenter = {
-          x: camera.scrollX + camera.width / 2,
-          y: camera.scrollY + camera.height / 2,
+          x: camera.worldView.centerX,
+          y: camera.worldView.centerY,
         };
         const canvas = game?.canvas;
 
@@ -1424,6 +1114,9 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           mode: controller?.getMode() ?? 'editor',
           editorViewport: controller?.getEditorViewport() ?? null,
           hostSize,
+          surfaceSize: projection?.surfaceSize ?? null,
+          surfaceResizeCount: editorSurfaceResizeCountRef.current,
+          visibleRect: projection?.visibleRect ?? null,
           gameLoopFrame: game?.loop?.frame ?? 0,
           canvasState: canvas
             ? {
@@ -1433,6 +1126,14 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
               }
             : null,
           cameraViewportCenter,
+          cameraWorldView: {
+            left: camera.worldView.left,
+            top: camera.worldView.top,
+            right: camera.worldView.right,
+            bottom: camera.worldView.bottom,
+            width: camera.worldView.width,
+            height: camera.worldView.height,
+          },
           cameraState: {
             scrollX: camera.scrollX,
             scrollY: camera.scrollY,
@@ -1503,14 +1204,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return getStageViewportController(editorScene);
     };
 
-    const getInputSurface = (): HTMLElement => {
-      const canvas = gameRef.current?.canvas;
-      if (canvas) {
-        return canvas;
-      }
-      return host;
-    };
-
     const handleHostContextMenu = (event: MouseEvent) => {
       const controller = getEditorViewportController();
       if (controller?.getMode() === 'editor') {
@@ -1519,10 +1212,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     };
 
     const handleHostWheel = (event: WheelEvent) => {
-      if (isResizeFrozen || immediateResizeFreezeRef.current) {
-        return;
-      }
-
       const controller = getEditorViewportController();
       if (!controller || controller.getMode() !== 'editor') {
         return;
@@ -1533,7 +1222,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
       if (event.ctrlKey || event.metaKey) {
         const editorViewport = controller.getEditorViewport();
-        const screenPoint = getElementLocalPoint(getInputSurface(), event.clientX, event.clientY);
+        const screenPoint = getElementLocalPoint(host, event.clientX, event.clientY);
         const hostSize = controller.getProjection().hostSize;
         const zoomDelta = -event.deltaY * 0.01;
         const zoomFactor = 1 + zoomDelta;
@@ -1573,7 +1262,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       host.removeEventListener('contextmenu', handleHostContextMenu);
       host.removeEventListener('wheel', handleHostWheel, true);
     };
-  }, [isPlaying, isResizeFrozen]);
+  }, [isPlaying]);
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -1870,13 +1559,29 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       if (!container) return;
       console.log(`[PhaserCanvas] Creating game #${thisCreationId}`);
 
-      // Editor mode uses container size for infinite canvas, play mode uses game dimensions
+      // In editor mode we render into a persistent live surface that can be larger than the host.
       const containerSize = getElementRenderSize(container);
+      const viewportSurfaceSize = getViewportSurfaceSize(containerSize);
+      const initialSurfaceSize = isPlaying
+        ? containerSize
+        : {
+            width: Math.max(
+              editorSurfaceSizeRef.current?.width ?? 0,
+              viewportSurfaceSize.width,
+            ),
+            height: Math.max(
+              editorSurfaceSizeRef.current?.height ?? 0,
+              viewportSurfaceSize.height,
+            ),
+          };
+      editorHostSizeRef.current = containerSize;
+      editorSurfaceSizeRef.current = initialSurfaceSize;
+      editorSurfaceResizeCountRef.current = 0;
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         parent: container,
-        width: isPlaying ? canvasWidth : containerSize.width,
-        height: isPlaying ? canvasHeight : containerSize.height,
+        width: isPlaying ? canvasWidth : initialSurfaceSize.width,
+        height: isPlaying ? canvasHeight : initialSurfaceSize.height,
         render: isPlaying ? undefined : {
           preserveDrawingBuffer: true,
         },
@@ -1886,7 +1591,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
         } : {
-          mode: Phaser.Scale.RESIZE,
+          mode: Phaser.Scale.NONE,
           autoCenter: Phaser.Scale.NO_CENTER,
         },
         physics: {
@@ -1945,6 +1650,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
                 project.components || [],
                 currentViewMode,
                 getStoredEditorViewport(selectedScene?.id ?? null, { width: canvasWidth, height: canvasHeight }),
+                () => ({
+                  hostSize: editorHostSizeRef.current,
+                  surfaceSize: editorSurfaceSizeRef.current ?? getViewportSurfaceSize(editorHostSizeRef.current),
+                }),
                 (nextViewport) => {
                   storeEditorViewport(selectedScene?.id ?? null, nextViewport);
                 },
@@ -2064,25 +1773,23 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   useEffect(() => {
     if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
 
-    const observer = new ResizeObserver(() => {
-      if (frozenStageFrame) {
-        drawFrozenStageFrameToOverlay(frozenStageFrame);
-        return;
-      }
-
-      syncEditorCanvasToHost();
+    const observer = new ResizeObserver((entries) => {
+      const latestEntry = entries[entries.length - 1];
+      const contentRect = latestEntry?.contentRect;
+      scheduleEditorCanvasResize(contentRect
+        ? {
+            width: contentRect.width,
+            height: contentRect.height,
+          }
+        : undefined);
     });
     observer.observe(containerRef.current);
-    if (frozenStageFrame) {
-      drawFrozenStageFrameToOverlay(frozenStageFrame);
-    } else {
-      syncEditorCanvasToHost();
-    }
+    scheduleEditorCanvasResize(getElementRenderSize(containerRef.current), true);
 
     return () => {
       observer.disconnect();
     };
-  }, [drawFrozenStageFrameToOverlay, frozenStageFrame, isPlaying, project?.id, selectedSceneId, syncEditorCanvasToHost]);
+  }, [isPlaying, project?.id, scheduleEditorCanvasResize, selectedSceneId]);
 
   useLayoutEffect(() => {
     if (isPlaying) {
@@ -2096,7 +1803,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
     const syncNow = (force = false) => {
       if (!cancelled) {
-        syncEditorCanvasToHost(force);
+        scheduleEditorCanvasResize(undefined, force);
       }
     };
 
@@ -2119,138 +1826,13 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
         window.clearTimeout(timeoutId);
       }
     };
-  }, [isPlaying, layoutMode, syncEditorCanvasToHost]);
+  }, [isPlaying, layoutMode, scheduleEditorCanvasResize]);
 
   useEffect(() => {
-    if (isPlaying) {
-      setFrozenStageFrame(null);
-      return;
-    }
-
-    const canvas = gameRef.current?.canvas;
-    if (!canvas) return;
-
-    if (isResizeFrozen) {
-      return;
-    }
-
-    let cancelled = false;
-    let revealRaf = 0;
-    let revealTimeout: ReturnType<typeof window.setTimeout> | null = null;
-    const startFrame = gameRef.current?.loop?.frame ?? 0;
-
-    const finishReveal = () => {
-      if (cancelled) {
-        return;
-      }
-
-      const nextCanvas = gameRef.current?.canvas;
-      if (nextCanvas) {
-        nextCanvas.style.visibility = 'visible';
-      }
-      setFrozenStageFrame(null);
-    };
-
-    const revealWhenReady = (attempt = 0) => {
-      if (cancelled) {
-        return;
-      }
-
-      syncEditorCanvasToHost(true);
-
-      const host = containerRef.current;
-      const game = gameRef.current;
-      const nextCanvas = game?.canvas;
-      if (!host || !game || !nextCanvas) {
-        finishReveal();
-        return;
-      }
-
-      const hostSize = getElementRenderSize(host);
-      const canvasReady = nextCanvas.width === hostSize.width && nextCanvas.height === hostSize.height;
-      const frameAdvanced = (game.loop?.frame ?? 0) > startFrame;
-
-      if ((canvasReady && frameAdvanced) || attempt >= 6) {
-        finishReveal();
-        return;
-      }
-
-      revealRaf = requestAnimationFrame(() => {
-        revealWhenReady(attempt + 1);
-      });
-    };
-
-    if (canvas.style.visibility === 'hidden' || frozenStageFrame) {
-      revealWhenReady();
-      revealTimeout = window.setTimeout(() => {
-        finishReveal();
-      }, 250);
-    } else {
-      finishReveal();
-    }
-
     return () => {
-      cancelled = true;
-      cancelAnimationFrame(revealRaf);
-      if (revealTimeout !== null) {
-        window.clearTimeout(revealTimeout);
-      }
+      cancelScheduledEditorCanvasResize();
     };
-  }, [frozenStageFrame, isResizeFrozen, isPlaying, syncEditorCanvasToHost]);
-
-  useEffect(() => {
-    if (isPlaying) return;
-
-    const handleResizeFreeze = (event: Event) => {
-      const customEvent = event as CustomEvent<{ active?: boolean }>;
-      const active = !!customEvent.detail?.active;
-      const canvas = gameRef.current?.canvas;
-      immediateResizeFreezeRef.current = active;
-
-      if (active) {
-        resizeFreezeOverscanCleanupRef.current?.();
-        const sessionId = resizeFreezeSessionRef.current + 1;
-        resizeFreezeSessionRef.current = sessionId;
-
-        let frozenFrame: FrozenStageFrame | null = null;
-        if (canvas) {
-          try {
-            frozenFrame = captureFrozenStageFrame();
-          } catch {
-            frozenFrame = null;
-          }
-        }
-
-        flushSync(() => {
-          setFrozenStageFrame(frozenFrame);
-          setManualResizeFreezeActive(true);
-        });
-
-        if (canvas) {
-          const overlayReady = frozenFrame ? drawFrozenStageFrameToOverlay(frozenFrame) : false;
-          if (frozenFrame && !overlayReady) {
-            flushSync(() => {
-              setFrozenStageFrame(null);
-            });
-          }
-          canvas.style.visibility = frozenFrame && overlayReady ? 'hidden' : 'visible';
-        }
-
-        resizeFreezeOverscanCleanupRef.current = prepareOverscanFrozenStageFrame(sessionId) ?? null;
-        return;
-      }
-
-      resizeFreezeSessionRef.current += 1;
-      resizeFreezeOverscanCleanupRef.current?.();
-      resizeFreezeOverscanCleanupRef.current = null;
-      setManualResizeFreezeActive(false);
-    };
-
-    window.addEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
-    return () => {
-      window.removeEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
-    };
-  }, [captureFrozenStageFrame, drawFrozenStageFrameToOverlay, isPlaying, prepareOverscanFrozenStageFrame]);
+  }, [cancelScheduledEditorCanvasResize]);
 
   // Toggle collider debug rendering at runtime (without recreating game)
   useEffect(() => {
@@ -2929,7 +2511,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       <div
         ref={containerRef}
         data-testid={isPlaying ? 'play-phaser-host' : 'stage-phaser-host'}
-        className="relative w-full h-full"
+        className="relative h-full w-full overflow-hidden"
         style={isPlaying ? undefined : { backgroundColor: editorStageShellColor }}
       />
       {!isPlaying && componentDragPreview ? (
@@ -2966,24 +2548,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
             {previewComponentName}
           </div>
         )
-      ) : null}
-      {!isPlaying && frozenStageFrame ? (
-        <canvas
-          ref={frozenStageFrameOverlayRef}
-          data-testid="stage-frozen-frame"
-          className="pointer-events-none absolute z-10 select-none"
-          style={{
-            left: 0,
-            top: 0,
-            width: '100%',
-            height: '100%',
-            maxWidth: 'none',
-            maxHeight: 'none',
-            transform: 'translate3d(0, 0, 0)',
-            transformOrigin: 'top left',
-          }}
-          aria-hidden="true"
-        />
       ) : null}
       {isPlaying && isInventoryVisible && inventoryItems.length > 0 && (
         <>
@@ -3118,6 +2682,7 @@ function createEditorScene(
   components: ComponentDefinition[] = [],
   viewMode: 'camera-masked' | 'camera-viewport' | 'editor' = 'editor',
   initialEditorViewport: StageEditorViewport,
+  getLayoutMetrics: () => { hostSize: StageSize; surfaceSize: StageSize },
   onEditorViewportChange: (viewport: StageEditorViewport) => void,
 ) {
   if (!sceneData) return;
@@ -3183,6 +2748,7 @@ function createEditorScene(
     canvasSize: { width: canvasWidth, height: canvasHeight },
     initialMode: viewMode,
     initialEditorViewport,
+    getLayoutMetrics,
     onEditorViewportChange,
   });
   onEditorViewportChange(stageViewportController.getEditorViewport());

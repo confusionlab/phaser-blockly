@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
+import { WindowDialogChrome } from '@/components/shared/WindowDialogChrome';
 import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { Modal } from '@/components/ui/modal';
 import { Check, Pencil, Trash2, X } from '@/components/ui/icons';
 
 interface ProjectPropertyManagerDialogProps {
@@ -13,6 +13,7 @@ interface ProjectPropertyManagerDialogProps {
   closeAddButtonLabel?: string;
   isAdding: boolean;
   onToggleAdd: () => void;
+  toolbar?: ReactNode;
   addForm?: ReactNode;
   children: ReactNode;
 }
@@ -41,33 +42,45 @@ export function ProjectPropertyManagerDialog({
   closeAddButtonLabel,
   isAdding,
   onToggleAdd,
+  toolbar,
   addForm,
   children,
 }: ProjectPropertyManagerDialogProps) {
   return (
-    <Modal
+    <WindowDialogChrome
       open={open}
       onOpenChange={onOpenChange}
       title={title}
-      contentClassName="sm:max-w-[760px]"
+      description={description}
+      contentClassName="h-[80vh] max-h-[80vh] sm:max-w-[760px]"
+      bodyClassName="flex min-h-0 flex-1 flex-col px-6 py-5"
     >
-      <div className="flex items-center justify-between gap-3">
-        {description ? (
-          <p className="text-sm text-muted-foreground">{description}</p>
-        ) : (
-          <div />
-        )}
-        <Button onClick={onToggleAdd}>
-          {isAdding ? (closeAddButtonLabel ?? 'Close Add Form') : addButtonLabel}
-        </Button>
-      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
+        <div className="flex items-start justify-end gap-3">
+          <Button className="shrink-0" onClick={onToggleAdd}>
+            {isAdding ? (closeAddButtonLabel ?? 'Close Add Form') : addButtonLabel}
+          </Button>
+        </div>
 
-      {isAdding ? addForm : null}
+        {toolbar ? (
+          <div className="shrink-0">
+            {toolbar}
+          </div>
+        ) : null}
 
-      <div className="max-h-[460px] space-y-5 overflow-y-auto pr-1">
-        {children}
+        {isAdding ? (
+          <div className="shrink-0">
+            {addForm}
+          </div>
+        ) : null}
+
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="space-y-5">
+            {children}
+          </div>
+        </div>
       </div>
-    </Modal>
+    </WindowDialogChrome>
   );
 }
 
