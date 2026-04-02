@@ -1901,6 +1901,12 @@ export async function loadProject(id: string): Promise<Project | null> {
     await db.projects.put(await toProjectRecord(project, project.updatedAt, normalizedRecord));
   }
 
+  try {
+    await migrateStoredProjectRevisionHistoryToCurrentSchema(project.id);
+  } catch (error) {
+    console.warn(`[Revisions] Failed to migrate revision history for project ${project.id}:`, error);
+  }
+
   return project;
 }
 
@@ -2724,7 +2730,7 @@ function toPublicRevision(record: ProjectRevisionRecord): ProjectRevision {
   };
 }
 
-async function getProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
+async function getStoredProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
   if (!isNonEmptyStringKey(projectId)) {
     return [];
   }
@@ -2736,7 +2742,7 @@ async function getProjectRevisionsAscending(projectId: string): Promise<ProjectR
     .sortBy('createdAt');
 }
 
-async function getLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+async function getStoredLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
   if (!isNonEmptyStringKey(projectId)) {
     return null;
   }
@@ -2750,12 +2756,99 @@ async function getLatestRevision(projectId: string): Promise<ProjectRevisionReco
   return latest ?? null;
 }
 
+function hasLegacyProjectRevisionHistory(revisions: readonly ProjectRevisionRecord[]): boolean {
+  return revisions.some((revision) => normalizeSchemaVersion(revision.schemaVersion) < CURRENT_SCHEMA_VERSION);
+}
+
+async function migrateStoredProjectRevisionHistoryToCurrentSchema(projectId: string): Promise<number> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return 0;
+  }
+
+  const [projectRecord, revisions] = await Promise.all([
+    db.projects.get(projectId),
+    getStoredProjectRevisionsAscending(projectId),
+  ]);
+
+  if (!projectRecord || revisions.length === 0 || !hasLegacyProjectRevisionHistory(revisions)) {
+    return 0;
+  }
+
+  const revisionsById = new Map(revisions.map((revision) => [revision.id, revision]));
+  const memo = new Map<string, MaterializedRevisionData>();
+  const migratedAt = Date.now();
+  const projectMeta = {
+    id: projectRecord.id,
+    name: projectRecord.name,
+    createdAt: new Date(projectRecord.createdAt),
+    updatedAt: new Date(projectRecord.updatedAt),
+  };
+
+  const migratedRevisions = revisions.map((revision) => {
+    const materialized = materializeRevisionRecord(revision, revisionsById, memo);
+    const migrated = migrateSerializedProjectDataToCurrentSchema(
+      materialized.serializedData,
+      materialized.schemaVersion,
+      projectMeta,
+    );
+    const serializedData = migrated.serializedData;
+
+    return {
+      ...revision,
+      kind: 'snapshot' as const,
+      baseRevisionId: revision.id,
+      snapshotData: serializedData,
+      patch: undefined,
+      contentHash: computeContentHash(serializedData),
+      updatedAt: new Date(Math.max(getRevisionUpdatedAtTime(revision), migratedAt)),
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      assetIds: collectPersistedAssetRefsFromSerializedProjectData(serializedData)
+        .map((assetRef) => assetRef.assetId),
+    } satisfies ProjectRevisionRecord;
+  });
+
+  await db.transaction('rw', db.projectRevisions, db.projects, async () => {
+    await db.projectRevisions.bulkPut(migratedRevisions);
+
+    const currentProjectRecord = await db.projects.get(projectId);
+    if (currentProjectRecord) {
+      await db.projects.put(
+        applyProjectRevisionSyncStateToRecord(
+          currentProjectRecord,
+          summarizeProjectRevisionSyncState(migratedRevisions),
+        ),
+      );
+    }
+  });
+
+  return migratedRevisions.length;
+}
+
+async function getProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return [];
+  }
+
+  await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  return await getStoredProjectRevisionsAscending(projectId);
+}
+
+async function getLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return null;
+  }
+
+  await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  return await getStoredLatestRevision(projectId);
+}
+
 async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
   if (!isNonEmptyStringKey(projectId)) {
     return null;
   }
 
-  const revisions = await getProjectRevisionsAscending(projectId);
+  await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  const revisions = await getStoredProjectRevisionsAscending(projectId);
   for (let index = revisions.length - 1; index >= 0; index -= 1) {
     const revision = revisions[index];
     if (revision?.isCheckpoint) {
@@ -2805,7 +2898,7 @@ async function refreshStoredProjectRevisionSyncState(projectId: string): Promise
 
   const [projectRecord, revisions] = await Promise.all([
     db.projects.get(projectId),
-    getProjectRevisionsAscending(projectId),
+    getStoredProjectRevisionsAscending(projectId),
   ]);
   const revisionState = summarizeProjectRevisionSyncState(revisions);
   if (projectRecord) {
@@ -3722,6 +3815,12 @@ export async function getProjectRevisionSyncState(projectId: string): Promise<Pr
     return createEmptyProjectRevisionSyncState();
   }
 
+  const migrated = await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  if (migrated > 0) {
+    const refreshedRecord = await db.projects.get(projectId);
+    return getProjectRevisionSyncStateFromRecord(refreshedRecord);
+  }
+
   const projectRecord = await db.projects.get(projectId);
   const storedState = getProjectRevisionSyncStateFromRecord(projectRecord);
   const hasStoredRevisionState = projectRecord
@@ -4014,7 +4113,7 @@ export async function syncProjectRevisionsFromCloud(
   let created = 0;
   let updated = 0;
   let skipped = 0;
-  const migrated = 0;
+  let migrated = 0;
 
   for (const payload of cloudRevisions) {
     if (payload.localProjectId !== projectId) {
@@ -4092,7 +4191,10 @@ export async function syncProjectRevisionsFromCloud(
   }
 
   if (created > 0 || updated > 0) {
-    await refreshStoredProjectRevisionSyncState(projectId);
+    migrated = await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+    if (migrated === 0) {
+      await refreshStoredProjectRevisionSyncState(projectId);
+    }
   }
 
   return { created, updated, skipped, migrated };

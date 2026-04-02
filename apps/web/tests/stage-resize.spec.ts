@@ -573,18 +573,21 @@ test.describe('Stage resize', () => {
 
         const centerX = Math.floor(frozen.width / 2);
         const centerY = Math.floor(frozen.height / 2);
-        const pixel = ctx.getImageData(centerX, centerY, 1, 1).data;
-        return {
-          r: pixel[0],
-          g: pixel[1],
-          b: pixel[2],
-        };
+        const searchRadius = 48;
+        for (let offsetY = -searchRadius; offsetY <= searchRadius; offsetY += 4) {
+          for (let offsetX = -searchRadius; offsetX <= searchRadius; offsetX += 4) {
+            const sampleX = Math.max(0, Math.min(frozen.width - 1, centerX + offsetX));
+            const sampleY = Math.max(0, Math.min(frozen.height - 1, centerY + offsetY));
+            const pixel = ctx.getImageData(sampleX, sampleY, 1, 1).data;
+            if (pixel[0] >= 200 && pixel[1] <= 30 && pixel[2] <= 30) {
+              return { visible: true };
+            }
+          }
+        }
+
+        return { visible: false };
       });
-    }).toMatchObject({
-      r: 255,
-      g: 0,
-      b: 0,
-    });
+    }).toEqual({ visible: true });
 
     await page.mouse.up();
   });

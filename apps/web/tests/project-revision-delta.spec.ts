@@ -118,6 +118,164 @@ test.describe('project revision deltas', () => {
     expect(restoredProject.settings.backgroundColor).toBe('#abcdef');
   });
 
+  test('migrates legacy revision snapshots to the current number schema before reuse', async () => {
+    const [
+      { createDefaultProject },
+      { parsePersistedProjectData, stringifyPersistedProjectData },
+      {
+        CURRENT_SCHEMA_VERSION,
+        db,
+        getProjectRevisionsForSync,
+        loadProject,
+        listProjectRevisions,
+      },
+    ] = await Promise.all([
+      import('../src/types'),
+      import('../src/lib/persistence/projectDataCodec'),
+      loadDatabaseModules(),
+    ]);
+
+    const legacyProject = createDefaultProject('Legacy Revision Fixture');
+    legacyProject.globalVariables = [{
+      id: 'legacy-score',
+      name: 'Score',
+      type: 'integer',
+      defaultValue: '12.5',
+      scope: 'global',
+    } as any];
+
+    const { id, name, createdAt, updatedAt, ...projectData } = legacyProject;
+    const serializedLegacyData = stringifyPersistedProjectData(projectData as any);
+    const revisionId = 'legacy-revision-1';
+
+    await db.projects.put({
+      id,
+      name,
+      createdAt,
+      updatedAt,
+      data: serializedLegacyData,
+      schemaVersion: 10,
+    });
+
+    await db.projectRevisions.put({
+      id: revisionId,
+      projectId: id,
+      kind: 'snapshot',
+      baseRevisionId: revisionId,
+      snapshotData: serializedLegacyData,
+      contentHash: 'legacy-hash',
+      createdAt,
+      updatedAt: createdAt,
+      schemaVersion: 10,
+      reason: 'manual_checkpoint',
+      checkpointName: 'Legacy',
+      isCheckpoint: true,
+      assetIds: [],
+    });
+
+    const loadedProject = await loadProject(id);
+    expect(loadedProject?.globalVariables[0]).toMatchObject({
+      type: 'number',
+      defaultValue: 12.5,
+    });
+
+    const revisions = await listProjectRevisions(id);
+    expect(revisions[0]?.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(revisions[0]?.kind).toBe('snapshot');
+
+    const storedRevision = await db.projectRevisions.get(revisionId);
+    const storedData = parsePersistedProjectData(storedRevision?.snapshotData ?? '{}') as any;
+    expect(storedRevision?.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(storedRevision?.kind).toBe('snapshot');
+    expect(storedRevision?.patch).toBeUndefined();
+    expect(storedData.globalVariables?.[0]).toMatchObject({
+      type: 'number',
+      defaultValue: 12.5,
+    });
+
+    const syncPayloads = await getProjectRevisionsForSync(id);
+    expect(syncPayloads).toHaveLength(1);
+    expect(syncPayloads[0]).toMatchObject({
+      revisionId,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      kind: 'snapshot',
+    });
+  });
+
+  test('migrates legacy cloud revision payloads before storing them locally', async () => {
+    const [
+      { createDefaultProject },
+      { parsePersistedProjectData, stringifyPersistedProjectData },
+      {
+        CURRENT_SCHEMA_VERSION,
+        db,
+        getProjectRevisionsForSync,
+        saveProject,
+        syncProjectRevisionsFromCloud,
+      },
+    ] = await Promise.all([
+      import('../src/types'),
+      import('../src/lib/persistence/projectDataCodec'),
+      loadDatabaseModules(),
+    ]);
+
+    let project = createDefaultProject('Legacy Cloud Revision Fixture');
+    project = await saveProject(project);
+
+    const legacyProject = createDefaultProject('Legacy Cloud Payload');
+    legacyProject.globalVariables = [{
+      id: 'legacy-counter',
+      name: 'Counter',
+      type: 'float',
+      defaultValue: '7.25',
+      scope: 'global',
+    } as any];
+
+    const { id: _legacyId, name: _legacyName, createdAt: _legacyCreatedAt, updatedAt: _legacyUpdatedAt, ...legacyData } = legacyProject;
+    const serializedLegacyData = stringifyPersistedProjectData(legacyData as any);
+    const revisionId = 'legacy-cloud-revision';
+
+    const result = await syncProjectRevisionsFromCloud(project.id, [{
+      localProjectId: project.id,
+      revisionId,
+      kind: 'snapshot',
+      baseRevisionId: revisionId,
+      data: serializedLegacyData,
+      assetIds: [],
+      contentHash: 'cloud-legacy-hash',
+      createdAt: project.createdAt.getTime(),
+      updatedAt: project.updatedAt.getTime(),
+      schemaVersion: 10,
+      reason: 'manual_checkpoint',
+      checkpointName: 'Imported Legacy',
+      isCheckpoint: true,
+    }]);
+
+    expect(result).toMatchObject({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      migrated: 1,
+    });
+
+    const storedRevision = await db.projectRevisions.get(revisionId);
+    const storedData = parsePersistedProjectData(storedRevision?.snapshotData ?? '{}') as any;
+    expect(storedRevision?.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(storedRevision?.kind).toBe('snapshot');
+    expect(storedRevision?.patch).toBeUndefined();
+    expect(storedData.globalVariables?.[0]).toMatchObject({
+      type: 'number',
+      defaultValue: 7.25,
+    });
+
+    const syncPayloads = await getProjectRevisionsForSync(project.id);
+    expect(syncPayloads.find((payload) => payload.revisionId === revisionId)).toMatchObject({
+      revisionId,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      kind: 'snapshot',
+    });
+  });
+
   test('updates persisted revision sync state when an older checkpoint is renamed', async () => {
     const {
       createManualCheckpoint,

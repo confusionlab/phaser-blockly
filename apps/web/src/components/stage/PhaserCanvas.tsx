@@ -24,18 +24,15 @@ import {
 } from '@/lib/background/chunkMath';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import {
-  buildStageProjection,
   normalizeStageEditorViewport,
   panStageEditorViewport,
   scrollStageEditorViewport,
   zoomStageEditorViewportAtScreenPoint,
   type StageEditorViewport,
-  type StageProjection,
   type StageSize,
   type StageViewMode,
 } from '@/lib/stageViewport';
 import {
-  applyStageProjectionToCamera,
   createStageViewportController,
   getStageViewportController,
 } from '@/lib/phaserStageViewport';
@@ -631,18 +628,6 @@ function getUserViewportFromPhaserWorldView(
   };
 }
 
-function projectStageWorldPointToScreen(
-  projection: StageProjection,
-  worldView: Phaser.Geom.Rectangle,
-  worldX: number,
-  worldY: number,
-): { x: number; y: number } {
-  return {
-    x: projection.cameraViewport.x + (((worldX - worldView.left) / worldView.width) * projection.cameraViewport.width),
-    y: projection.cameraViewport.y + (((worldY - worldView.top) / worldView.height) * projection.cameraViewport.height),
-  };
-}
-
 function getFrozenStageFramePixelRatio(): number {
   if (typeof window === 'undefined') {
     return 1;
@@ -651,28 +636,34 @@ function getFrozenStageFramePixelRatio(): number {
   return Math.max(1, Math.min(MAX_FROZEN_FRAME_PIXEL_RATIO, dpr));
 }
 
-function scaleStageProjectionForPixelRatio(
-  projection: StageProjection,
-  pixelRatio: number,
-): StageProjection {
-  if (pixelRatio === 1) {
-    return projection;
+function hasMeaningfulFrozenFrameContent(source: HTMLCanvasElement): boolean {
+  const context = source.getContext('2d', { willReadFrequently: true });
+  if (!context || source.width <= 0 || source.height <= 0) {
+    return false;
   }
 
-  return {
-    ...projection,
-    hostSize: {
-      width: projection.hostSize.width * pixelRatio,
-      height: projection.hostSize.height * pixelRatio,
-    },
-    cameraViewport: {
-      x: projection.cameraViewport.x * pixelRatio,
-      y: projection.cameraViewport.y * pixelRatio,
-      width: projection.cameraViewport.width * pixelRatio,
-      height: projection.cameraViewport.height * pixelRatio,
-    },
-    cameraZoom: projection.cameraZoom * pixelRatio,
-  };
+  const uniqueColors = new Set<string>();
+  const sampleColumns = 10;
+  const sampleRows = 10;
+  for (let row = 0; row < sampleRows; row += 1) {
+    for (let column = 0; column < sampleColumns; column += 1) {
+      const sampleX = Math.max(0, Math.min(
+        source.width - 1,
+        Math.floor(((column + 0.5) / sampleColumns) * source.width),
+      ));
+      const sampleY = Math.max(0, Math.min(
+        source.height - 1,
+        Math.floor(((row + 0.5) / sampleRows) * source.height),
+      ));
+      const pixel = context.getImageData(sampleX, sampleY, 1, 1).data;
+      uniqueColors.add(`${pixel[0]},${pixel[1]},${pixel[2]},${pixel[3]}`);
+      if (uniqueColors.size >= 2) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundLayerState): void {
@@ -932,7 +923,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   const frozenStageFrameRevisionRef = useRef(0);
   const resizeFreezeSessionRef = useRef(0);
   const resizeFreezeOverscanCleanupRef = useRef<(() => void) | null>(null);
-  const resizeFreezeRenderTextureRef = useRef<Phaser.GameObjects.RenderTexture | null>(null);
 
   const { project, updateObject, addComponentInstance } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -1197,175 +1187,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     );
     return true;
   }, []);
-
-  const getEditorSceneCanvasSize = useCallback((scene: Phaser.Scene): StageSize => {
-    const sceneCanvasWidth = scene.data.get('canvasWidth');
-    const sceneCanvasHeight = scene.data.get('canvasHeight');
-
-    return {
-      width: Math.max(
-        1,
-        Math.round(
-          typeof sceneCanvasWidth === 'number' && Number.isFinite(sceneCanvasWidth)
-            ? sceneCanvasWidth
-            : canvasDimensionsRef.current.width,
-        ),
-      ),
-      height: Math.max(
-        1,
-        Math.round(
-          typeof sceneCanvasHeight === 'number' && Number.isFinite(sceneCanvasHeight)
-            ? sceneCanvasHeight
-            : canvasDimensionsRef.current.height,
-        ),
-      ),
-    };
-  }, []);
-
-  const getResizeFreezeRenderTexture = useCallback((
-    scene: Phaser.Scene,
-    size: StageSize,
-    pixelRatio = 1,
-  ): Phaser.GameObjects.RenderTexture => {
-    const safeWidth = Math.max(1, Math.round(size.width * pixelRatio));
-    const safeHeight = Math.max(1, Math.round(size.height * pixelRatio));
-    let renderTexture = resizeFreezeRenderTextureRef.current;
-
-    if (!renderTexture || renderTexture.scene !== scene) {
-      renderTexture?.destroy();
-      renderTexture = new Phaser.GameObjects.RenderTexture(scene, 0, 0, safeWidth, safeHeight, false);
-      resizeFreezeRenderTextureRef.current = renderTexture;
-
-      scene.events.once('shutdown', () => {
-        if (resizeFreezeRenderTextureRef.current === renderTexture) {
-          resizeFreezeRenderTextureRef.current = null;
-        }
-        renderTexture?.destroy();
-      });
-    } else {
-      renderTexture.resize(safeWidth, safeHeight, false);
-    }
-
-    return renderTexture;
-  }, []);
-
-  const composeOverscanBackdropFrame = useCallback((
-    scene: Phaser.Scene,
-    projection: StageProjection,
-    worldView: Phaser.Geom.Rectangle,
-    displaySize: StageSize,
-    pixelRatio: number,
-  ): boolean => {
-    const pixelWidth = Math.max(1, Math.round(displaySize.width * pixelRatio));
-    const pixelHeight = Math.max(1, Math.round(displaySize.height * pixelRatio));
-    const bufferCanvas = frozenStageFrameBufferRef.current ?? document.createElement('canvas');
-    frozenStageFrameBufferRef.current = bufferCanvas;
-    bufferCanvas.width = pixelWidth;
-    bufferCanvas.height = pixelHeight;
-
-    const context = bufferCanvas.getContext('2d');
-    if (!context) {
-      return false;
-    }
-
-    const canvasSize = getEditorSceneCanvasSize(scene);
-    const background = selectedScene?.background ?? null;
-    const sceneBackgroundCss = getSceneBackgroundBaseColor(background);
-    const shellBackgroundCss = getStageShellBackgroundColor(projection.mode, background);
-
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.imageSmoothingEnabled = false;
-    context.clearRect(0, 0, pixelWidth, pixelHeight);
-    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    context.fillStyle = shellBackgroundCss;
-    context.fillRect(0, 0, displaySize.width, displaySize.height);
-    context.fillStyle = sceneBackgroundCss;
-    context.fillRect(
-      projection.cameraViewport.x,
-      projection.cameraViewport.y,
-      projection.cameraViewport.width,
-      projection.cameraViewport.height,
-    );
-
-    if (selectedScene?.ground?.enabled) {
-      const groundColor = selectedScene.ground.color || '#8B4513';
-      const userGroundY = selectedScene.ground.y ?? -200;
-      const phaserGroundY = canvasSize.height / 2 - userGroundY;
-      const groundTopLeft = projectStageWorldPointToScreen(projection, worldView, -5000, phaserGroundY);
-      const groundBottomRight = projectStageWorldPointToScreen(projection, worldView, 5000, phaserGroundY + 2000);
-      context.fillStyle = groundColor;
-      context.fillRect(
-        groundTopLeft.x,
-        groundTopLeft.y,
-        groundBottomRight.x - groundTopLeft.x,
-        groundBottomRight.y - groundTopLeft.y,
-      );
-    }
-
-    const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
-    if (tiledBackgroundLayer?.background && isTiledBackground(tiledBackgroundLayer.background)) {
-      const tiledCanvas = document.createElement('canvas');
-      const viewport = getUserViewportFromPhaserWorldView(
-        worldView,
-        canvasSize.width,
-        canvasSize.height,
-      );
-      tiledBackgroundLayer.compositor.render({
-        canvas: tiledCanvas,
-        background: tiledBackgroundLayer.background,
-        viewport,
-        pixelWidth: Math.max(1, Math.round(projection.cameraViewport.width * pixelRatio)),
-        pixelHeight: Math.max(1, Math.round(projection.cameraViewport.height * pixelRatio)),
-      });
-      context.drawImage(
-        tiledCanvas,
-        projection.cameraViewport.x,
-        projection.cameraViewport.y,
-        projection.cameraViewport.width,
-        projection.cameraViewport.height,
-      );
-    }
-
-    if (selectedScene?.worldBoundary?.enabled && selectedScene.worldBoundary.points.length >= 2) {
-      context.save();
-      context.lineWidth = 3;
-      context.strokeStyle = 'rgba(96,165,250,0.8)';
-      context.beginPath();
-      selectedScene.worldBoundary.points.forEach((point, index) => {
-        const phaserPoint = userToPhaser(point.x, point.y, canvasSize.width, canvasSize.height);
-        const screenPoint = projectStageWorldPointToScreen(projection, worldView, phaserPoint.x, phaserPoint.y);
-        if (index === 0) {
-          context.moveTo(screenPoint.x, screenPoint.y);
-        } else {
-          context.lineTo(screenPoint.x, screenPoint.y);
-        }
-      });
-      context.closePath();
-      context.stroke();
-      context.restore();
-    }
-
-    const backgroundColor = Phaser.Display.Color.HexStringToColor(sceneBackgroundCss);
-    const luminance = (0.299 * backgroundColor.red + 0.587 * backgroundColor.green + 0.114 * backgroundColor.blue) / 255;
-    const boundsTopLeft = projectStageWorldPointToScreen(projection, worldView, 0, 0);
-    const boundsBottomRight = projectStageWorldPointToScreen(projection, worldView, canvasSize.width, canvasSize.height);
-    context.save();
-    context.lineWidth = 1;
-    context.strokeStyle = luminance < 0.5 ? 'rgba(255,255,255,0.5)' : 'rgba(51,51,51,0.5)';
-    context.strokeRect(
-      boundsTopLeft.x,
-      boundsTopLeft.y,
-      boundsBottomRight.x - boundsTopLeft.x,
-      boundsBottomRight.y - boundsTopLeft.y,
-    );
-    context.restore();
-
-    return true;
-  }, [getEditorSceneCanvasSize, selectedScene]);
-
   const captureOverscanFrozenStageFrame = useCallback(async (
     scene: Phaser.Scene,
     displaySize: StageSize,
+    baseHostSize: StageSize,
   ): Promise<FrozenStageFrame | null> => {
     const controller = getStageViewportController(scene);
     if (!controller) {
@@ -1376,154 +1201,113 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       width: Math.max(1, Math.round(displaySize.width)),
       height: Math.max(1, Math.round(displaySize.height)),
     };
+    const safeBaseHostSize = {
+      width: Math.max(1, Math.round(baseHostSize.width)),
+      height: Math.max(1, Math.round(baseHostSize.height)),
+    };
     const pixelRatio = getFrozenStageFramePixelRatio();
-    const canvasSize = getEditorSceneCanvasSize(scene);
-    const mode = controller.getMode();
-    const projection = buildStageProjection({
-      mode,
-      hostSize: safeDisplaySize,
-      canvasSize,
-      editorViewport: controller.getEditorViewport(),
-    });
-    const renderProjection = scaleStageProjectionForPixelRatio(projection, pixelRatio);
+    const game = scene.game;
+    const camera = scene.cameras.main;
+    camera.preRender();
 
-    if (pixelRatio > 1) {
-      const game = scene.game;
-      const originalScaleSize = {
-        width: Math.max(1, Math.round(game.scale.width || safeDisplaySize.width)),
-        height: Math.max(1, Math.round(game.scale.height || safeDisplaySize.height)),
-      };
-      const renderPixelSize = {
-        width: Math.max(1, Math.round(safeDisplaySize.width * pixelRatio)),
-        height: Math.max(1, Math.round(safeDisplaySize.height * pixelRatio)),
-      };
+    const originalScaleSize = {
+      width: Math.max(1, Math.round(game.scale.width || safeDisplaySize.width)),
+      height: Math.max(1, Math.round(game.scale.height || safeDisplaySize.height)),
+    };
+    const liveWorldCenter = {
+      x: camera.worldView.centerX,
+      y: camera.worldView.centerY,
+    };
+    const liveWorldSize = {
+      width: Math.max(1e-6, camera.worldView.width),
+      height: Math.max(1e-6, camera.worldView.height),
+    };
+    const targetZoomX = (safeBaseHostSize.width / liveWorldSize.width) * pixelRatio;
+    const targetZoomY = (safeBaseHostSize.height / liveWorldSize.height) * pixelRatio;
+    const renderPixelSize = {
+      width: Math.max(1, Math.round(safeDisplaySize.width * pixelRatio)),
+      height: Math.max(1, Math.round(safeDisplaySize.height * pixelRatio)),
+    };
 
-      try {
-        game.scale.resize(renderPixelSize.width, renderPixelSize.height);
-        game.scale.refresh();
-        applyStageProjectionToCamera(scene.cameras.main, renderProjection);
-        refreshTiledBackgroundLayer(scene);
-
+    try {
+      game.scale.resize(renderPixelSize.width, renderPixelSize.height);
+      game.scale.refresh();
+      camera.setViewport(0, 0, renderPixelSize.width, renderPixelSize.height);
+      camera.setZoom(targetZoomX, targetZoomY);
+      camera.centerOn(liveWorldCenter.x, liveWorldCenter.y);
+      camera.preRender();
+      refreshTiledBackgroundLayer(scene);
+      const waitForNextRenderedFrame = async (): Promise<void> => {
         await new Promise<void>((resolve) => {
           requestAnimationFrame(() => {
             requestAnimationFrame(() => resolve());
           });
         });
+      };
 
-        const liveCanvas = game.canvas;
-        if (!(liveCanvas instanceof HTMLCanvasElement) || liveCanvas.width <= 0 || liveCanvas.height <= 0) {
-          return null;
+      const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await waitForNextRenderedFrame();
+        refreshTiledBackgroundLayer(scene);
+        if (!tiledBackgroundLayer?.needsRedraw) {
+          break;
         }
+      }
 
+      const liveCanvas = game.canvas;
+      if (!(liveCanvas instanceof HTMLCanvasElement) || liveCanvas.width <= 0 || liveCanvas.height <= 0) {
+        return null;
+      }
+
+      const composedTiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+      const composedCanvas = document.createElement('canvas');
+      composedCanvas.width = renderPixelSize.width;
+      composedCanvas.height = renderPixelSize.height;
+      const composedContext = composedCanvas.getContext('2d');
+      if (!composedContext) {
         return createFrozenStageFrameFromSource(
           liveCanvas,
           renderPixelSize,
           safeDisplaySize,
         );
-      } finally {
-        if (gameRef.current === game) {
-          game.scale.resize(originalScaleSize.width, originalScaleSize.height);
-          game.scale.refresh();
-          controller.syncProjection();
-          refreshTiledBackgroundLayer(scene);
-          syncEditorCanvasElementBox();
-        }
+      }
+
+      composedContext.imageSmoothingEnabled = false;
+      if (
+        composedTiledBackgroundLayer?.image.visible
+        && composedTiledBackgroundLayer.canvas.width > 0
+        && composedTiledBackgroundLayer.canvas.height > 0
+      ) {
+        composedContext.drawImage(
+          composedTiledBackgroundLayer.canvas,
+          0,
+          0,
+          composedCanvas.width,
+          composedCanvas.height,
+        );
+      }
+      composedContext.drawImage(liveCanvas, 0, 0, composedCanvas.width, composedCanvas.height);
+
+      if (!hasMeaningfulFrozenFrameContent(composedCanvas)) {
+        return null;
+      }
+
+      return createFrozenStageFrameFromSource(
+        composedCanvas,
+        renderPixelSize,
+        safeDisplaySize,
+      );
+    } finally {
+      if (gameRef.current === game) {
+        game.scale.resize(originalScaleSize.width, originalScaleSize.height);
+        game.scale.refresh();
+        controller.syncProjection();
+        refreshTiledBackgroundLayer(scene);
+        syncEditorCanvasElementBox();
       }
     }
-
-    const renderTexture = getResizeFreezeRenderTexture(scene, safeDisplaySize, pixelRatio);
-    const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
-    const boundsGraphics = scene.data.get('boundsGraphics') as Phaser.GameObjects.Graphics | undefined;
-    const groundGraphics = scene.data.get('groundGraphics') as Phaser.GameObjects.Graphics | undefined;
-    const worldBoundaryGraphics = scene.data.get('worldBoundaryGraphics') as Phaser.GameObjects.Graphics | undefined;
-    const excludedEntries = new Set<Phaser.GameObjects.GameObject>([
-      renderTexture,
-      ...(tiledBackgroundLayer?.image ? [tiledBackgroundLayer.image] : []),
-      ...(boundsGraphics ? [boundsGraphics] : []),
-      ...(groundGraphics ? [groundGraphics] : []),
-      ...(worldBoundaryGraphics ? [worldBoundaryGraphics] : []),
-    ]);
-    const renderEntries = scene.children.list.filter((entry) => !excludedEntries.has(entry));
-
-    applyStageProjectionToCamera(scene.cameras.main, renderProjection);
-    refreshTiledBackgroundLayer(scene);
-    const worldView = scene.cameras.main.worldView;
-
-    const backdropReady = composeOverscanBackdropFrame(scene, projection, worldView, safeDisplaySize, pixelRatio);
-    if (!backdropReady) {
-      controller.syncProjection();
-      refreshTiledBackgroundLayer(scene);
-      return null;
-    }
-
-    renderTexture.clear();
-    const backdropCanvas = frozenStageFrameBufferRef.current;
-    const backdropTextureKey = `resize_freeze_backdrop_${scene.sys.settings.key}_${resizeFreezeSessionRef.current}`;
-    if (!backdropCanvas) {
-      controller.syncProjection();
-      refreshTiledBackgroundLayer(scene);
-      return null;
-    }
-    if (scene.textures.exists(backdropTextureKey)) {
-      scene.textures.remove(backdropTextureKey);
-    }
-    const backdropTexture = scene.textures.addCanvas(backdropTextureKey, backdropCanvas);
-    if (!backdropTexture) {
-      controller.syncProjection();
-      refreshTiledBackgroundLayer(scene);
-      return null;
-    }
-    backdropTexture.refresh();
-    renderTexture.camera.setViewport(
-      0,
-      0,
-      Math.max(1, Math.round(safeDisplaySize.width * pixelRatio)),
-      Math.max(1, Math.round(safeDisplaySize.height * pixelRatio)),
-    );
-    renderTexture.camera.setZoom(1);
-    renderTexture.camera.scrollX = 0;
-    renderTexture.camera.scrollY = 0;
-    renderTexture.camera.preRender();
-    renderTexture.drawFrame(backdropTextureKey, undefined, 0, 0);
-    renderTexture.camera.setViewport(
-      renderProjection.cameraViewport.x,
-      renderProjection.cameraViewport.y,
-      renderProjection.cameraViewport.width,
-      renderProjection.cameraViewport.height,
-    );
-    renderTexture.camera.setZoom(renderProjection.cameraZoom);
-    renderTexture.camera.scrollX = renderProjection.scrollX;
-    renderTexture.camera.scrollY = renderProjection.scrollY;
-    renderTexture.camera.preRender();
-    renderTexture.draw(renderEntries);
-    scene.textures.remove(backdropTextureKey);
-
-    const framePromise = new Promise<FrozenStageFrame | null>((resolve) => {
-      renderTexture.snapshot((snapshot) => {
-        if (!(snapshot instanceof HTMLImageElement) && !(snapshot instanceof HTMLCanvasElement)) {
-          resolve(null);
-          return;
-        }
-        resolve(createFrozenStageFrameFromSource(
-          snapshot,
-          {
-            width: safeDisplaySize.width * pixelRatio,
-            height: safeDisplaySize.height * pixelRatio,
-          },
-          safeDisplaySize,
-        ));
-      });
-    });
-
-    controller.syncProjection();
-    refreshTiledBackgroundLayer(scene);
-
-    return framePromise;
   }, [
-    composeOverscanBackdropFrame,
     createFrozenStageFrameFromSource,
-    getEditorSceneCanvasSize,
-    getResizeFreezeRenderTexture,
     syncEditorCanvasElementBox,
   ]);
 
@@ -1553,7 +1337,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     }
 
     let cancelled = false;
-    void captureOverscanFrozenStageFrame(editorScene, overscanCaptureSize).then((overscanFrame) => {
+    void captureOverscanFrozenStageFrame(editorScene, overscanCaptureSize, hostSizeAtStart).then((overscanFrame) => {
       if (cancelled) {
         return;
       }
@@ -1593,8 +1377,6 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     return () => {
       resizeFreezeOverscanCleanupRef.current?.();
       resizeFreezeOverscanCleanupRef.current = null;
-      resizeFreezeRenderTextureRef.current?.destroy();
-      resizeFreezeRenderTextureRef.current = null;
     };
   }, []);
 

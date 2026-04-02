@@ -118,6 +118,7 @@ export function SegmentedControl<T extends string>({
   const optionSizeClassName = isExpanded
     ? 'h-full min-h-[3.125rem] rounded-[10px] px-3 py-2 text-[12px]'
     : 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
+  const fillThumbInsetPx = isExpanded ? 3 : 2;
 
   const thumbStyle: React.CSSProperties = layout === 'content'
     ? {
@@ -125,7 +126,8 @@ export function SegmentedControl<T extends string>({
         width: thumbMetrics.width,
       }
     : {
-        width: `calc((100% - 0.25rem) / ${options.length})`,
+        left: fillThumbInsetPx,
+        width: `calc((100% - ${fillThumbInsetPx * 2}px) / ${options.length})`,
         transform: `translateX(calc(${activeIndex} * 100%))`,
       };
 
@@ -207,7 +209,7 @@ export function SegmentedControl<T extends string>({
           thumbClassName,
           layout === 'content'
             ? 'transition-[left,width] shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)]'
-            : 'left-[2px] shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform',
+            : 'shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform',
         )}
         style={thumbStyle}
       />
