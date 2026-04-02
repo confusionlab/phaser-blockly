@@ -108,14 +108,15 @@ body {
 
 .pochaBlocklyCategoryButton {
   display: flex !important;
-  min-height: 56px;
   width: 56px;
+  height: 56px;
+  min-height: 56px;
   align-items: center !important;
   justify-content: center !important;
   border-radius: 18px;
   background: transparent;
   margin: 0 auto !important;
-  padding: 6px 4px;
+  padding: 0;
   overflow: hidden;
   transition:
     background-color 120ms ease,
@@ -136,9 +137,11 @@ body {
   flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
-  gap: 5px;
-  width: 100%;
+  gap: 4px;
+  width: 56px;
+  height: 56px;
   pointer-events: none;
+  transform: translateY(-1px);
 }
 
 .pochaBlocklyCategoryIcon {
@@ -167,11 +170,11 @@ body {
 }
 
 .pochaBlocklyCategoryLabel {
-  max-width: 100%;
+  max-width: 48px;
   color: var(--blockly-toolbox-fg) !important;
   font-size: 9px !important;
   font-weight: 600;
-  line-height: 1.1;
+  line-height: 1;
   text-align: center !important;
   text-wrap: balance;
 }
