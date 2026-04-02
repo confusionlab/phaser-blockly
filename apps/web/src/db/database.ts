@@ -9,6 +9,7 @@ import type {
   Project,
   ReusableObject,
   Scene,
+  Variable,
 } from '../types';
 import {
   COMPONENT_ANY_PREFIX,
@@ -4292,6 +4293,77 @@ function remapLegacyMessageRefsInBlocklyXml(
   }
 }
 
+type LegacyNumericVariableType = 'integer' | 'float';
+
+type MigratableVariable = Omit<Variable, 'type' | 'defaultValue'> & {
+  type: Variable['type'] | LegacyNumericVariableType;
+  defaultValue: unknown;
+};
+
+function migrateLegacyNumericVariableValue(
+  cardinality: Variable['cardinality'],
+  value: unknown,
+): Variable['defaultValue'] {
+  const coerceScalar = (entry: unknown) => {
+    const numeric = Number(entry);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return numeric;
+  };
+
+  if (cardinality === 'array') {
+    if (Array.isArray(value)) {
+      return value.map((entry) => coerceScalar(entry));
+    }
+    if (value === null || value === undefined) {
+      return [];
+    }
+    return [coerceScalar(value)];
+  }
+
+  return coerceScalar(value);
+}
+
+function migrateLegacyNumericVariable(variable: MigratableVariable): Variable {
+  if (variable.type !== 'integer' && variable.type !== 'float') {
+    return variable as Variable;
+  }
+
+  return {
+    ...variable,
+    type: 'number',
+    defaultValue: migrateLegacyNumericVariableValue(
+      variable.cardinality,
+      variable.defaultValue,
+    ),
+  };
+}
+
+function migrateLegacyNumericVariables(variables: Variable[] | undefined): Variable[] {
+  return Array.isArray(variables)
+    ? variables.map((variable) => migrateLegacyNumericVariable(variable as MigratableVariable))
+    : [];
+}
+
+function migrateProjectVariableTypesToNumber(project: Project): Project {
+  return {
+    ...project,
+    globalVariables: migrateLegacyNumericVariables(project.globalVariables),
+    components: (project.components || []).map((component) => ({
+      ...component,
+      localVariables: migrateLegacyNumericVariables(component.localVariables),
+    })),
+    scenes: (project.scenes || []).map((scene) => ({
+      ...scene,
+      objects: (scene.objects || []).map((obj) => ({
+        ...obj,
+        localVariables: migrateLegacyNumericVariables(obj.localVariables),
+      })),
+    })),
+  };
+}
+
 const migrations: Record<number, MigrationFn> = {
   // v2: Ensure basic scene defaults for older files.
   2: (project) => {
@@ -4473,6 +4545,11 @@ const migrations: Record<number, MigrationFn> = {
   10: (project) => ({
     ...normalizeBackgroundDocumentsInProject(project),
     schemaVersion: 10,
+  }),
+  // v11: Collapse legacy integer/float variable tags into number.
+  11: (project) => ({
+    ...migrateProjectVariableTypesToNumber(project),
+    schemaVersion: 11,
   }),
 };
 
@@ -4839,12 +4916,6 @@ export async function importProject(jsonString: string): Promise<Project> {
 
   // Handle schema version (default to 1 for old files without schemaVersion)
   const schemaVersion = normalizeSchemaVersion(data.schemaVersion ?? data.version ?? 1);
-  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
-    throw new Error(
-      `This project file uses deprecated schema v${schemaVersion}. Only schema v${CURRENT_SCHEMA_VERSION} imports are supported.`,
-    );
-  }
-
   if (schemaVersion > CURRENT_SCHEMA_VERSION) {
     throw new Error(
       `This project was created with a newer version of PochaCoding (schema v${schemaVersion}). ` +
@@ -4859,6 +4930,9 @@ export async function importProject(jsonString: string): Promise<Project> {
   project.globalVariables = Array.isArray(project.globalVariables) ? project.globalVariables : [];
   project.components = Array.isArray(project.components) ? project.components : [];
   project.messages = Array.isArray(project.messages) ? project.messages : [];
+  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
+    project = migrateProject(project, schemaVersion);
+  }
   project = normalizeCostumeDocumentsInProject(project);
   project = normalizeBackgroundDocumentsInProject(project);
 

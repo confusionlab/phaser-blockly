@@ -5,6 +5,7 @@ import { boundsValidator, costumeDocumentValidator } from "./costumeValidators";
 import {
   colliderValidator,
   costumeValidator,
+  migrateLegacyTemplateVariables,
   physicsValidator,
   soundValidator,
   variableValidator,
@@ -21,29 +22,6 @@ import {
   resolveTemplateAssetUrl,
   templateScopeValidator,
 } from "./templateLibrary";
-
-const objectLibraryAssetRefValidator = v.object({
-  assetId: v.string(),
-  kind: v.union(v.literal("image"), v.literal("audio")),
-});
-
-const storedObjectLibraryCostumeValidator = v.object({
-  id: v.string(),
-  name: v.string(),
-  storageId: v.optional(v.id("_storage")),
-  bounds: v.optional(boundsValidator),
-  document: costumeDocumentValidator,
-});
-
-const storedObjectLibrarySoundValidator = v.object({
-  id: v.string(),
-  name: v.string(),
-  assetId: v.optional(v.string()),
-  storageId: v.optional(v.id("_storage")),
-  duration: v.optional(v.number()),
-  trimStart: v.optional(v.number()),
-  trimEnd: v.optional(v.number()),
-});
 
 const objectLibraryAssetWithUrlValidator = v.object({
   assetId: v.string(),
@@ -273,7 +251,9 @@ export const list = query({
           currentCostumeIndex: item.currentCostumeIndex,
           physics: item.physics,
           collider: item.collider,
-          localVariables: item.localVariables,
+          localVariables: item.localVariables
+            ? migrateLegacyTemplateVariables(item.localVariables)
+            : undefined,
           createdAt: item.createdAt,
           updatedAt: item.updatedAt ?? item.createdAt,
           assetRefs: resolvedAssetRefs,

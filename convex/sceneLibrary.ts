@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
-import { sceneTemplateValidator } from "./libraryValidators";
+import { migrateLegacySceneTemplate, sceneTemplateValidator } from "./libraryValidators";
 import {
   buildTemplateRenamePatch,
   buildUserTemplateMetadata,
@@ -66,7 +66,7 @@ export const list = query({
       thumbnail: item.thumbnail,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt ?? item.createdAt,
-      template: item.template,
+      template: migrateLegacySceneTemplate(item.template),
       assetRefs: await Promise.all(
         item.assetRefs.map(async (asset) => ({
           assetId: asset.assetId,

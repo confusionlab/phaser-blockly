@@ -10,7 +10,7 @@ import {
 import { templateScopeValidator } from "./templateLibrary";
 
 // Project data schema version. Keep aligned with src/db/database.ts.
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export default defineSchema({
   projectAssets: defineTable({

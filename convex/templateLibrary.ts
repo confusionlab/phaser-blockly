@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 
-export const TEMPLATE_SCHEMA_VERSION = 10;
+export const TEMPLATE_SCHEMA_VERSION = 11;
 
 export const templateScopeValidator = v.union(
   v.literal("system"),

@@ -285,13 +285,17 @@ test.describe('Stage resize', () => {
         const hostRect = host.getBoundingClientRect();
         const frozenRect = frozen.getBoundingClientRect();
         return {
-          wideEnough: frozenRect.width >= hostRect.width,
+          fillsWidth: Math.abs(frozenRect.width - hostRect.width) <= 1,
+          fillsHeight: Math.abs(frozenRect.height - hostRect.height) <= 1,
           centeredX: Math.abs((frozenRect.left + frozenRect.width / 2) - (hostRect.left + hostRect.width / 2)) <= 1,
+          centeredY: Math.abs((frozenRect.top + frozenRect.height / 2) - (hostRect.top + hostRect.height / 2)) <= 1,
         };
       });
     }).toEqual({
-      wideEnough: true,
+      fillsWidth: true,
+      fillsHeight: true,
       centeredX: true,
+      centeredY: true,
     });
 
     const dragMetrics = await canvas.evaluate((node) => {
@@ -354,8 +358,12 @@ test.describe('Stage resize', () => {
         visibility: window.getComputedStyle(frozen).visibility,
         position: window.getComputedStyle(frozen).position,
         transform: window.getComputedStyle(frozen).transform,
+        hostLeft: hostRect.left,
+        hostTop: hostRect.top,
         hostCenterX: hostRect.left + hostRect.width / 2,
         hostCenterY: hostRect.top + hostRect.height / 2,
+        frozenLeft: frozenRect.left,
+        frozenTop: frozenRect.top,
         frozenCenterX: frozenRect.left + frozenRect.width / 2,
         frozenCenterY: frozenRect.top + frozenRect.height / 2,
       };
@@ -366,7 +374,8 @@ test.describe('Stage resize', () => {
     expect(initialFrozenFrameSnapshot?.height).toBeGreaterThan(0);
     expect(initialFrozenFrameSnapshot?.visibility).toBe('visible');
     expect(initialFrozenFrameSnapshot?.position).toBe('absolute');
-    expect(initialFrozenFrameSnapshot?.transform).not.toBe('none');
+    expect(Math.abs((initialFrozenFrameSnapshot?.frozenLeft ?? 0) - (initialFrozenFrameSnapshot?.hostLeft ?? 0))).toBeLessThanOrEqual(1);
+    expect(Math.abs((initialFrozenFrameSnapshot?.frozenTop ?? 0) - (initialFrozenFrameSnapshot?.hostTop ?? 0))).toBeLessThanOrEqual(1);
     expect(Math.abs((initialFrozenFrameSnapshot?.frozenCenterX ?? 0) - (initialFrozenFrameSnapshot?.hostCenterX ?? 0))).toBeLessThanOrEqual(1);
     expect(Math.abs((initialFrozenFrameSnapshot?.frozenCenterY ?? 0) - (initialFrozenFrameSnapshot?.hostCenterY ?? 0))).toBeLessThanOrEqual(1);
 
@@ -386,11 +395,15 @@ test.describe('Stage resize', () => {
           hostHeight: hostRect.height,
           frozenWidth: frozenRect.width,
           frozenHeight: frozenRect.height,
+          fillsWidth: Math.abs(frozenRect.width - hostRect.width) <= 1,
+          fillsHeight: Math.abs(frozenRect.height - hostRect.height) <= 1,
           centeredX: Math.abs((frozenRect.left + frozenRect.width / 2) - (hostRect.left + hostRect.width / 2)) <= 1,
           centeredY: Math.abs((frozenRect.top + frozenRect.height / 2) - (hostRect.top + hostRect.height / 2)) <= 1,
         };
       });
     }).toMatchObject({
+      fillsWidth: true,
+      fillsHeight: true,
       centeredX: true,
       centeredY: true,
     });
@@ -411,13 +424,15 @@ test.describe('Stage resize', () => {
         const frozenCenterY = frozenRect.top + frozenRect.height / 2;
 
         return {
-          tallEnough: frozenRect.height >= hostRect.height,
+          fillsWidth: Math.abs(frozenRect.width - hostRect.width) <= 1,
+          fillsHeight: Math.abs(frozenRect.height - hostRect.height) <= 1,
           centeredX: Math.abs(frozenCenterX - hostCenterX) <= 1,
           centeredY: Math.abs(frozenCenterY - hostCenterY) <= 1,
         };
       });
     }).toEqual({
-      tallEnough: true,
+      fillsWidth: true,
+      fillsHeight: true,
       centeredX: true,
       centeredY: true,
     });
@@ -477,103 +492,6 @@ test.describe('Stage resize', () => {
     }
 
     await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
-  });
-
-  test('horizontal resize drag overscan reveals newly exposed object content', async ({ page }) => {
-    await bootstrapEditorProject(page, {
-      projectName: `Stage Resize Overscan ${Date.now()}`,
-      addObject: true,
-    });
-
-    await waitForStageDebug(page);
-
-    const initialHostBox = await page.getByTestId('stage-phaser-host').boundingBox();
-    expect(initialHostBox).not.toBeNull();
-    if (!initialHostBox) {
-      return;
-    }
-
-    const centerX = 400;
-    const centerY = 300;
-    const objectX = (initialHostBox.width / 2) + 120;
-    const objectY = 0;
-
-    await page.evaluate(async ({ objectX, objectY, centerX, centerY }) => {
-      const { useProjectStore } = await import('/src/store/projectStore.ts');
-      const projectState = useProjectStore.getState();
-      const project = projectState.project;
-      const sceneId = project?.scenes[0]?.id;
-      const objectId = project?.scenes[0]?.objects[0]?.id;
-      if (!sceneId || !objectId) {
-        throw new Error('Resize overscan object is unavailable.');
-      }
-
-      projectState.updateObject(sceneId, objectId, { x: objectX, y: objectY });
-      window.__pochaStageDebug.setEditorViewport({ centerX, centerY, zoom: 1 });
-    }, { objectX, objectY, centerX, centerY });
-
-    await page.evaluate(async () => {
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
-    });
-
-    const divider = page.getByTestId('editor-layout-divider');
-    const dividerBox = await divider.boundingBox();
-    expect(dividerBox).not.toBeNull();
-    if (!dividerBox) {
-      return;
-    }
-
-    const pointerX = dividerBox.x + dividerBox.width / 2;
-    const pointerY = dividerBox.y + dividerBox.height / 2;
-    await page.mouse.move(pointerX, pointerY);
-    await page.mouse.down();
-    await page.mouse.move(pointerX + 220, pointerY, { steps: 10 });
-    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
-
-    await expect.poll(async () => {
-      return page.evaluate(({ objectX, objectY }) => {
-        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-        if (!(frozen instanceof HTMLCanvasElement)) {
-          return null;
-        }
-
-        const ctx = frozen.getContext('2d');
-        if (!ctx) {
-          return null;
-        }
-
-        const frozenRect = frozen.getBoundingClientRect();
-        const frozenCenterX = frozenRect.left + frozenRect.width / 2;
-        const frozenCenterY = frozenRect.top + frozenRect.height / 2;
-        const objectClientX = frozenCenterX + objectX;
-        const objectClientY = frozenCenterY - objectY;
-        const localX = ((objectClientX - frozenRect.left) / frozenRect.width) * frozen.width;
-        const localY = ((objectClientY - frozenRect.top) / frozenRect.height) * frozen.height;
-        const sampleOffsets = [-6, 0, 6];
-        const backgroundPixel = '135,206,235,255';
-
-        for (const offsetY of sampleOffsets) {
-          for (const offsetX of sampleOffsets) {
-            const pixel = ctx.getImageData(
-              Math.max(0, Math.min(frozen.width - 1, Math.floor(localX + offsetX))),
-              Math.max(0, Math.min(frozen.height - 1, Math.floor(localY + offsetY))),
-              1,
-              1,
-            ).data;
-
-            if (Array.from(pixel).join(',') !== backgroundPixel) {
-              return true;
-            }
-          }
-        }
-
-        return false;
-      }, { objectX, objectY });
-    }).toBe(true);
-
-    await page.mouse.up();
   });
 
   test('horizontal resize drag keeps tiled background visible in the frozen frame', async ({ page }) => {

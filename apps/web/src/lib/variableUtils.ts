@@ -40,8 +40,6 @@ export interface VariableDefinitionIndexResult {
   conflicts: VariableDefinitionConflict[];
 }
 
-type LegacyVariableType = 'integer' | 'float';
-
 function safeVariableId(id: unknown): string {
   if (typeof id === 'string' && id.trim().length > 0) {
     return id.trim();
@@ -64,16 +62,9 @@ export function normalizeVariableType(type: unknown): VariableType {
     case 'number':
     case 'boolean':
       return type;
-    case 'integer':
-    case 'float':
-      return 'number';
     default:
       return 'number';
   }
-}
-
-function normalizeLegacyVariableType(type: unknown): LegacyVariableType | null {
-  return type === 'integer' || type === 'float' ? type : null;
 }
 
 export function normalizeVariableCardinality(cardinality: unknown): VariableCardinality {
@@ -141,43 +132,14 @@ export function cloneVariableDefinitions(variables: Variable[] | undefined): Var
   return (variables || []).map((variable) => cloneVariableDefinition(variable));
 }
 
-function coerceLegacyVariableValue(
-  legacyType: LegacyVariableType,
-  cardinality: VariableCardinality,
-  value: unknown,
-): VariableValue {
-  const coerceScalar = (entry: unknown): VariableScalarValue => {
-    const numeric = Number(entry);
-    if (!Number.isFinite(numeric)) {
-      return 0;
-    }
-    return legacyType === 'integer' ? Math.floor(numeric) : numeric;
-  };
-
-  if (cardinality === 'array') {
-    if (Array.isArray(value)) {
-      return value.map((entry) => coerceScalar(entry));
-    }
-    if (value === null || value === undefined) {
-      return [];
-    }
-    return [coerceScalar(value)];
-  }
-
-  return coerceScalar(value);
-}
-
 export function normalizeVariableDefinition(
   variable: Variable,
   { scope, objectId }: NormalizeVariableOptions,
 ): Variable {
-  const legacyType = normalizeLegacyVariableType(variable.type);
   const type = normalizeVariableType(variable.type);
   const cardinality = normalizeVariableCardinality(variable.cardinality);
   const normalizedName = normalizeVariableName(variable.name) || 'variable';
-  const defaultValue = legacyType
-    ? coerceLegacyVariableValue(legacyType, cardinality, variable.defaultValue)
-    : coerceDefaultValue(type, cardinality, variable.defaultValue);
+  const defaultValue = coerceDefaultValue(type, cardinality, variable.defaultValue);
   const normalized: Variable = {
     id: safeVariableId(variable.id),
     name: normalizedName,

@@ -39,8 +39,6 @@ export const variableValidator = v.object({
   type: v.union(
     v.literal("string"),
     v.literal("number"),
-    v.literal("integer"),
-    v.literal("float"),
     v.literal("boolean"),
   ),
   cardinality: v.optional(v.union(v.literal("single"), v.literal("array"))),
@@ -214,3 +212,71 @@ export const sceneTemplateValidator = v.object({
   components: v.array(componentDefinitionValidator),
   componentFolders: v.array(hierarchyFolderValidator),
 });
+
+type LegacyNumericVariableType = "integer" | "float";
+type TemplateVariableScalarValue = number | string | boolean;
+type TemplateVariableValue = TemplateVariableScalarValue | TemplateVariableScalarValue[];
+
+type LegacyTemplateVariable = Omit<typeof variableValidator.type, "type" | "defaultValue"> & {
+  type: typeof variableValidator.type["type"] | LegacyNumericVariableType;
+  defaultValue: unknown;
+};
+
+function coerceLegacyNumericTemplateValue(
+  cardinality: typeof variableValidator.type["cardinality"],
+  value: unknown,
+): TemplateVariableValue {
+  const coerceScalar = (entry: unknown): number => {
+    const numeric = Number(entry);
+    return Number.isFinite(numeric) ? numeric : 0;
+  };
+
+  if (cardinality === "array") {
+    if (Array.isArray(value)) {
+      return value.map((entry) => coerceScalar(entry));
+    }
+    if (value === null || value === undefined) {
+      return [];
+    }
+    return [coerceScalar(value)];
+  }
+
+  return coerceScalar(value);
+}
+
+export function migrateLegacyTemplateVariables(
+  variables: LegacyTemplateVariable[] | undefined,
+): Array<typeof variableValidator.type> {
+  return Array.isArray(variables)
+    ? variables.map((variable) => {
+        if (variable.type !== "integer" && variable.type !== "float") {
+          return variable as typeof variableValidator.type;
+        }
+
+        return {
+          ...variable,
+          type: "number",
+          defaultValue: coerceLegacyNumericTemplateValue(variable.cardinality, variable.defaultValue),
+        };
+      })
+    : [];
+}
+
+export function migrateLegacySceneTemplate(
+  template: typeof sceneTemplateValidator.type,
+): typeof sceneTemplateValidator.type {
+  return {
+    ...template,
+    scene: {
+      ...template.scene,
+      objects: template.scene.objects.map((object) => ({
+        ...object,
+        localVariables: migrateLegacyTemplateVariables(object.localVariables),
+      })),
+    },
+    components: template.components.map((component) => ({
+      ...component,
+      localVariables: migrateLegacyTemplateVariables(component.localVariables),
+    })),
+  };
+}

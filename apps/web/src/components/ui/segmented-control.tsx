@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 export type SegmentedControlOption<T extends string> = {
   value: T;
   label: string;
+  description?: string;
   disabled?: boolean;
   icon?: React.ReactNode;
   iconOnly?: boolean;
@@ -18,6 +19,7 @@ type SegmentedControlProps<T extends string> = Omit<React.HTMLAttributes<HTMLDiv
   onValueChange: (value: T) => void;
   optionClassName?: string;
   layout?: 'fill' | 'content';
+  size?: 'compact' | 'expanded';
 };
 
 export function SegmentedControl<T extends string>({
@@ -27,6 +29,7 @@ export function SegmentedControl<T extends string>({
   onValueChange,
   optionClassName,
   options,
+  size,
   style,
   value,
   ...props
@@ -49,6 +52,7 @@ export function SegmentedControl<T extends string>({
   const activeIndex = matchedIndex >= 0 && !options[matchedIndex]?.disabled
     ? matchedIndex
     : (enabledIndices[0] ?? 0);
+  const isExpanded = size === 'expanded' || (size === undefined && options.some((option) => option.description));
 
   const updateThumbMetrics = React.useCallback(() => {
     if (layout !== 'content') {
@@ -105,9 +109,15 @@ export function SegmentedControl<T extends string>({
     };
   }, [layout, options.length, updateThumbMetrics]);
 
-  const containerSizeClassName = 'h-8 rounded-[10px] p-[2px]';
-  const thumbClassName = 'inset-y-[2px] rounded-[8px]';
-  const optionSizeClassName = 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
+  const containerSizeClassName = isExpanded
+    ? 'min-h-[3.5rem] rounded-xl p-[3px]'
+    : 'h-8 rounded-[10px] p-[2px]';
+  const thumbClassName = isExpanded
+    ? 'inset-y-[3px] rounded-[10px]'
+    : 'inset-y-[2px] rounded-[8px]';
+  const optionSizeClassName = isExpanded
+    ? 'h-full min-h-[3.125rem] rounded-[10px] px-3 py-2 text-[12px]'
+    : 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
 
   const thumbStyle: React.CSSProperties = layout === 'content'
     ? {
@@ -220,15 +230,29 @@ export function SegmentedControl<T extends string>({
             tabIndex={isActive ? 0 : -1}
             title={option.iconOnly ? option.label : undefined}
             className={cn(
-              'relative z-10 flex min-w-0 items-center justify-center font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
+              'relative z-10 flex min-w-0 font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
+              isExpanded ? 'flex-col items-start justify-center gap-0.5 text-left' : 'items-center justify-center',
               optionSizeClassName,
               optionClassName,
             )}
             onClick={() => onValueChange(option.value)}
             onKeyDown={handleKeyDown}
           >
-            {option.icon}
-            <span className={cn(option.iconOnly ? 'sr-only' : 'truncate')}>{option.label}</span>
+            <span
+              className={cn(
+                'flex min-w-0 items-center gap-1.5',
+                isExpanded ? 'w-full' : '',
+                option.iconOnly && 'justify-center',
+              )}
+            >
+              {option.icon}
+              <span className={cn(option.iconOnly ? 'sr-only' : 'truncate')}>{option.label}</span>
+            </span>
+            {isExpanded && option.description ? (
+              <span className="w-full text-left text-[10px] font-normal leading-[1.25] text-zinc-500/90 dark:text-zinc-400/90">
+                {option.description}
+              </span>
+            ) : null}
           </button>
         );
       })}

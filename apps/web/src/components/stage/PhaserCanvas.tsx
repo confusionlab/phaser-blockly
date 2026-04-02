@@ -1106,22 +1106,61 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     };
   }, []);
 
+  const getResizeFreezeCaptureDisplaySize = useCallback((
+    baseHostSize: StageSize,
+    overscanLimitSize: StageSize,
+    mode: StageViewMode,
+  ): StageSize => {
+    const safeBaseWidth = Math.max(1, Math.round(baseHostSize.width));
+    const safeBaseHeight = Math.max(1, Math.round(baseHostSize.height));
+    const safeLimitWidth = Math.max(safeBaseWidth, Math.round(overscanLimitSize.width));
+    const safeLimitHeight = Math.max(safeBaseHeight, Math.round(overscanLimitSize.height));
+
+    if (mode !== 'editor') {
+      return {
+        width: safeBaseWidth,
+        height: safeBaseHeight,
+      };
+    }
+
+    const uniformScale = Math.max(
+      1,
+      safeLimitWidth / safeBaseWidth,
+      safeLimitHeight / safeBaseHeight,
+    );
+
+    return {
+      width: Math.max(safeBaseWidth, Math.round(safeBaseWidth * uniformScale)),
+      height: Math.max(safeBaseHeight, Math.round(safeBaseHeight * uniformScale)),
+    };
+  }, []);
+
   const drawFrozenStageFrameToOverlay = useCallback((frame: FrozenStageFrame | null): boolean => {
     if (!frame) {
       return false;
     }
 
+    const host = containerRef.current;
     const overlayCanvas = frozenStageFrameOverlayRef.current;
     const bufferCanvas = frozenStageFrameBufferRef.current;
-    if (!overlayCanvas || !bufferCanvas) {
+    if (!host || !overlayCanvas || !bufferCanvas) {
       return false;
     }
 
-    if (overlayCanvas.width !== frame.pixelWidth) {
-      overlayCanvas.width = frame.pixelWidth;
+    const hostWidth = Math.max(1, Math.round(host.clientWidth || host.getBoundingClientRect().width || 1));
+    const hostHeight = Math.max(1, Math.round(host.clientHeight || host.getBoundingClientRect().height || 1));
+    const sourceWidth = Math.max(1, frame.width);
+    const sourceHeight = Math.max(1, frame.height);
+    const scaleX = frame.pixelWidth / sourceWidth;
+    const scaleY = frame.pixelHeight / sourceHeight;
+    const overlayPixelWidth = Math.max(1, Math.round(hostWidth * scaleX));
+    const overlayPixelHeight = Math.max(1, Math.round(hostHeight * scaleY));
+
+    if (overlayCanvas.width !== overlayPixelWidth) {
+      overlayCanvas.width = overlayPixelWidth;
     }
-    if (overlayCanvas.height !== frame.pixelHeight) {
-      overlayCanvas.height = frame.pixelHeight;
+    if (overlayCanvas.height !== overlayPixelHeight) {
+      overlayCanvas.height = overlayPixelHeight;
     }
 
     const overlayContext = overlayCanvas.getContext('2d');
@@ -1131,7 +1170,31 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
     overlayContext.imageSmoothingEnabled = false;
     overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    overlayContext.drawImage(bufferCanvas, 0, 0);
+
+    const cropDisplayWidth = Math.min(sourceWidth, hostWidth);
+    const cropDisplayHeight = Math.min(sourceHeight, hostHeight);
+    const sourceDisplayX = Math.max(0, (sourceWidth - cropDisplayWidth) / 2);
+    const sourceDisplayY = Math.max(0, (sourceHeight - cropDisplayHeight) / 2);
+    const sourcePixelX = Math.max(0, Math.round(sourceDisplayX * scaleX));
+    const sourcePixelY = Math.max(0, Math.round(sourceDisplayY * scaleY));
+    const sourcePixelWidth = Math.max(1, Math.min(bufferCanvas.width - sourcePixelX, Math.round(cropDisplayWidth * scaleX)));
+    const sourcePixelHeight = Math.max(1, Math.min(bufferCanvas.height - sourcePixelY, Math.round(cropDisplayHeight * scaleY)));
+    const destPixelX = Math.max(0, Math.round(((hostWidth - cropDisplayWidth) * scaleX) / 2));
+    const destPixelY = Math.max(0, Math.round(((hostHeight - cropDisplayHeight) * scaleY) / 2));
+    const destPixelWidth = Math.max(1, Math.round(cropDisplayWidth * scaleX));
+    const destPixelHeight = Math.max(1, Math.round(cropDisplayHeight * scaleY));
+
+    overlayContext.drawImage(
+      bufferCanvas,
+      sourcePixelX,
+      sourcePixelY,
+      sourcePixelWidth,
+      sourcePixelHeight,
+      destPixelX,
+      destPixelY,
+      destPixelWidth,
+      destPixelHeight,
+    );
     return true;
   }, []);
 
@@ -1478,13 +1541,19 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
     const overscanSize = getResizeFreezeOverscanSize(host);
     const hostSizeAtStart = getElementRenderSize(host);
-    const needsOverscan = overscanSize.width > hostSizeAtStart.width || overscanSize.height > hostSizeAtStart.height;
+    const controller = getStageViewportController(editorScene);
+    const overscanCaptureSize = getResizeFreezeCaptureDisplaySize(
+      hostSizeAtStart,
+      overscanSize,
+      controller?.getMode() ?? 'editor',
+    );
+    const needsOverscan = overscanCaptureSize.width > hostSizeAtStart.width || overscanCaptureSize.height > hostSizeAtStart.height;
     if (!needsOverscan) {
       return;
     }
 
     let cancelled = false;
-    void captureOverscanFrozenStageFrame(editorScene, overscanSize).then((overscanFrame) => {
+    void captureOverscanFrozenStageFrame(editorScene, overscanCaptureSize).then((overscanFrame) => {
       if (cancelled) {
         return;
       }
@@ -1507,6 +1576,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   }, [
     captureOverscanFrozenStageFrame,
     drawFrozenStageFrameToOverlay,
+    getResizeFreezeCaptureDisplaySize,
     getResizeFreezeOverscanSize,
     isPlaying,
   ]);
@@ -2213,15 +2283,24 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
 
     const observer = new ResizeObserver(() => {
+      if (frozenStageFrame) {
+        drawFrozenStageFrameToOverlay(frozenStageFrame);
+        return;
+      }
+
       syncEditorCanvasToHost();
     });
     observer.observe(containerRef.current);
-    syncEditorCanvasToHost();
+    if (frozenStageFrame) {
+      drawFrozenStageFrameToOverlay(frozenStageFrame);
+    } else {
+      syncEditorCanvasToHost();
+    }
 
     return () => {
       observer.disconnect();
     };
-  }, [isPlaying, project?.id, selectedSceneId, syncEditorCanvasToHost]);
+  }, [drawFrozenStageFrameToOverlay, frozenStageFrame, isPlaying, project?.id, selectedSceneId, syncEditorCanvasToHost]);
 
   useLayoutEffect(() => {
     if (isPlaying) {
@@ -3111,17 +3190,15 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           ref={frozenStageFrameOverlayRef}
           data-testid="stage-frozen-frame"
           className="pointer-events-none absolute z-10 select-none"
-          width={frozenStageFrame.pixelWidth}
-          height={frozenStageFrame.pixelHeight}
           style={{
-            left: '50%',
-            top: '50%',
-            width: `${frozenStageFrame.width}px`,
-            height: `${frozenStageFrame.height}px`,
+            left: 0,
+            top: 0,
+            width: '100%',
+            height: '100%',
             maxWidth: 'none',
             maxHeight: 'none',
-            transform: 'translate3d(-50%, -50%, 0)',
-            transformOrigin: 'center center',
+            transform: 'translate3d(0, 0, 0)',
+            transformOrigin: 'top left',
           }}
           aria-hidden="true"
         />

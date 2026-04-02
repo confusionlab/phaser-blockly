@@ -2,14 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { AppIcon, type AppIconName } from '@/components/ui/icons';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import {
@@ -591,73 +585,53 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
 
           <div className="space-y-2">
             <Label>Scope</Label>
-            <Select
+            <SegmentedControl
+              ariaLabel="Variable scope"
+              className="w-full"
+              layout="fill"
+              size="expanded"
+              options={VARIABLE_SCOPE_OPTIONS.map((option) => ({
+                ...option,
+                disabled: option.value === 'local' && !localSelectionTarget,
+              }))}
               value={scope}
               onValueChange={(nextValue) => {
                 setScope(nextValue as AddVariableScope);
                 setError(null);
               }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {VARIABLE_SCOPE_OPTIONS.map((option) => (
-                  <SelectItem
-                    key={option.value}
-                    value={option.value}
-                    description={option.description}
-                    disabled={option.value === 'local' && !localSelectionTarget}
-                  >
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            />
           </div>
 
           <div className="space-y-2">
             <Label>Type</Label>
-            <Select
+            <SegmentedControl
+              ariaLabel="Variable type"
+              className="w-full"
+              layout="fill"
+              size="expanded"
+              options={VARIABLE_TYPES}
               value={type}
               onValueChange={(nextValue) => {
                 setType(nextValue as VariableType);
                 setError(null);
               }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {VARIABLE_TYPES.map((option) => (
-                  <SelectItem key={option.value} value={option.value} description={option.description}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            />
           </div>
 
           <div className="space-y-2">
             <Label>Values</Label>
-            <Select
+            <SegmentedControl
+              ariaLabel="Variable values"
+              className="w-full"
+              layout="fill"
+              size="expanded"
+              options={VARIABLE_CARDINALITIES}
               value={cardinality}
               onValueChange={(nextValue) => {
                 setCardinality(nextValue as VariableCardinality);
                 setError(null);
               }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {VARIABLE_CARDINALITIES.map((option) => (
-                  <SelectItem key={option.value} value={option.value} description={option.description}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            />
           </div>
 
           {error ? <p className="text-xs text-red-500">{error}</p> : null}

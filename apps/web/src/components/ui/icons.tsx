@@ -227,8 +227,6 @@ const CUSTOM_ICON_COMPONENTS = {
   blocklyStagePicker: createRegistryIconComponent('blocklyStagePicker'),
   variableBoolean: createRegistryIconComponent('variableBoolean'),
   variableNumber: createRegistryIconComponent('variableNumber'),
-  variableFloat: createRegistryIconComponent('variableFloat'),
-  variableInteger: createRegistryIconComponent('variableInteger'),
   variableString: createRegistryIconComponent('variableString'),
 } as const satisfies Record<AppIconName, React.ComponentType<CustomIconProps>>;
 
