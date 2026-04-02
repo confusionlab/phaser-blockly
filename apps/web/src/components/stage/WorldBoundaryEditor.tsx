@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, Trash2, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { HoverHelp } from '@/components/ui/hover-help';
 import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useProjectStore } from '@/store/projectStore';
@@ -649,24 +645,14 @@ export function WorldBoundaryEditor() {
       >
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-3 py-3">
           <div className="pointer-events-auto flex items-center gap-1">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="text-foreground/78 hover:!bg-transparent hover:text-foreground"
-                  title="Boundary help"
-                  aria-label="Boundary help"
-                >
-                  <span className="text-[11px] font-semibold">?</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="bottom" sideOffset={8} className="max-w-[320px]">
-                <div className="px-1 py-0.5 text-xs leading-5 text-muted-foreground">
-                  {WORLD_BOUNDARY_HELP_TEXT}
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <HoverHelp
+              align="start"
+              label="Boundary help"
+              panelClassName="max-w-[320px]"
+              triggerClassName="text-foreground/78 hover:bg-transparent hover:text-foreground"
+            >
+              {WORLD_BOUNDARY_HELP_TEXT}
+            </HoverHelp>
             <Button
               variant="ghost"
               size="xs"

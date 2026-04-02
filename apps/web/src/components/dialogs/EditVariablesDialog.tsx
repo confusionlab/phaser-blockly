@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AppIcon, type AppIconName } from '@/components/ui/icons';
+import { HoverHelp } from '@/components/ui/hover-help';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
@@ -114,16 +114,13 @@ function VariableOptionRow({
       <Label className="text-sm font-medium text-foreground">{label}</Label>
       <div className="flex items-center gap-2">
         {children}
-        <IconButton
-          className="text-muted-foreground"
+        <HoverHelp
           label={`${label} help`}
-          shape="pill"
-          size="xs"
-          title={helpText}
-          variant="ghost"
+          panelClassName="max-w-[18rem]"
+          triggerClassName="h-7 w-7 p-0"
         >
-          <span className="text-[11px] font-semibold">?</span>
-        </IconButton>
+          {helpText}
+        </HoverHelp>
       </div>
     </div>
   );
