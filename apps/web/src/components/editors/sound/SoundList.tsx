@@ -2,6 +2,7 @@ import {
   type ChangeEvent,
   type MouseEvent as ReactMouseEvent,
   memo,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { SoundLibraryBrowser } from '@/components/dialogs/SoundLibraryBrowser';
 import { AssetSidebar } from '@/components/editors/shared/AssetSidebar';
 import { AssetSidebarTile } from '@/components/editors/shared/AssetSidebarTile';
@@ -17,10 +19,18 @@ import { useAssetSidebarDrag } from '@/components/editors/shared/useAssetSidebar
 import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
 import type { Sound } from '@/types';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
-import { Library, Loader2, Mic, Save, Trash2, Upload, Volume2 } from '@/components/ui/icons';
+import { Library, Loader2, Mic, Trash2, Upload, Volume2, Copy, CopyPlus, Clipboard, Scissors } from '@/components/ui/icons';
 import { prepareSoundLibraryCreatePayload } from '@/lib/soundLibrary/soundLibraryAssets';
 import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
 import { useModal } from '@/components/ui/modal-provider';
+import {
+  getAssetCardActionIds,
+  getAssetCardClipboard,
+  hasAssetCardClipboardContents,
+  insertAssetItemsAtIndex,
+  setAssetCardClipboard,
+  type AssetCardClipboardMode,
+} from '@/lib/editor/assetCardClipboard';
 
 interface SoundListProps {
   sounds: Sound[];
@@ -34,6 +44,7 @@ interface SoundListProps {
   onAddSound: (sound: Sound) => void;
   onDeleteSounds: (soundIds: string[]) => void;
   onRenameSound: (soundId: string, name: string) => void;
+  onReplaceSounds: (nextSounds: Sound[], nextActiveSoundId: string | null, nextSelectedSoundIds: string[]) => void;
   onPrepareSoundDrag: (soundId: string) => string[];
   onReorderSounds: (soundIds: string[], targetIndex: number) => void;
 }
@@ -47,6 +58,7 @@ export const SoundList = memo(({
   onAddSound,
   onDeleteSounds,
   onRenameSound,
+  onReplaceSounds,
   onPrepareSoundDrag,
   onReorderSounds,
 }: SoundListProps) => {
@@ -55,6 +67,7 @@ export const SoundList = memo(({
   const [showLibrary, setShowLibrary] = useState(false);
   const [savingToLibrary, setSavingToLibrary] = useState<number | null>(null);
   const [contextMenu, setContextMenu] = useState<{ soundId: string; x: number; y: number } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
   const selectedSoundIdSet = new Set(selectedSoundIds);
@@ -78,6 +91,24 @@ export const SoundList = memo(({
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, []);
+
+  useEffect(() => {
+    if (!contextMenu || typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      handleCloseContextMenu();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [contextMenu]);
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -200,6 +231,86 @@ export const SoundList = memo(({
   const contextMenuDeleteLabel = contextMenuDeleteIds.length > 1
     ? `Delete Selected (${contextMenuDeleteIds.length})`
     : 'Delete';
+  const getContextMenuActionIds = useCallback(() => {
+    return getAssetCardActionIds(
+      sounds.map((sound) => sound.id),
+      selectedSoundIds,
+      contextMenuSound?.id ?? null,
+    );
+  }, [contextMenuSound?.id, selectedSoundIds, sounds]);
+
+  const cloneSoundForPaste = useCallback((sound: Sound, mode: AssetCardClipboardMode): Sound => ({
+    ...sound,
+    id: crypto.randomUUID(),
+    name: mode === 'cut' ? sound.name : `${sound.name} Copy`,
+  }), []);
+
+  const handleCopySounds = useCallback((mode: AssetCardClipboardMode = 'copy') => {
+    const actionIds = getContextMenuActionIds();
+    if (actionIds.length === 0) {
+      return false;
+    }
+
+    const soundById = new Map(sounds.map((sound) => [sound.id, sound]));
+    const entries = actionIds
+      .map((id) => soundById.get(id))
+      .filter((sound): sound is Sound => !!sound)
+      .map((sound) => ({ item: { ...sound } }));
+
+    if (entries.length === 0) {
+      return false;
+    }
+
+    setAssetCardClipboard({
+      kind: 'sound',
+      mode,
+      entries,
+    });
+    return true;
+  }, [getContextMenuActionIds, sounds]);
+
+  const handleCutSounds = useCallback(() => {
+    if (!handleCopySounds('cut')) {
+      return;
+    }
+    onDeleteSounds(contextMenuDeleteIds);
+    handleCloseContextMenu();
+  }, [contextMenuDeleteIds, handleCopySounds, onDeleteSounds]);
+
+  const handlePasteSounds = useCallback((modeOverride?: AssetCardClipboardMode) => {
+    const clipboard = getAssetCardClipboard<Sound>('sound');
+    if (!clipboard) {
+      return;
+    }
+
+    const nextMode = modeOverride ?? clipboard.mode;
+    const insertedSounds = clipboard.entries.map((entry) => cloneSoundForPaste(entry.item, nextMode));
+    if (insertedSounds.length === 0) {
+      return;
+    }
+
+    const targetIndex = contextMenuSoundIndex >= 0 ? contextMenuSoundIndex + 1 : sounds.length;
+    const nextSounds = insertAssetItemsAtIndex(sounds, insertedSounds, targetIndex);
+    const nextSelectedIds = insertedSounds.map((sound) => sound.id);
+    onReplaceSounds(nextSounds, nextSelectedIds[0] ?? null, nextSelectedIds);
+
+    if (clipboard.mode === 'cut' && !modeOverride) {
+      setAssetCardClipboard({
+        kind: 'sound',
+        mode: 'copy',
+        entries: insertedSounds.map((sound) => ({ item: { ...sound } })),
+      });
+    }
+
+    handleCloseContextMenu();
+  }, [cloneSoundForPaste, contextMenuSoundIndex, onReplaceSounds, sounds]);
+
+  const handleDuplicateSounds = useCallback(() => {
+    if (!handleCopySounds('copy')) {
+      return;
+    }
+    handlePasteSounds('copy');
+  }, [handleCopySounds, handlePasteSounds]);
   const {
     dropBoundaryRef,
     draggedItemIds: draggedSoundIds,
@@ -332,11 +443,53 @@ export const SoundList = memo(({
 
       {contextMenu ? (
         <>
-          <div className="fixed inset-0 z-40" onClick={handleCloseContextMenu} />
           <Card
+            ref={contextMenuRef}
             className="fixed z-50 min-w-44 gap-0 py-1"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                handleCopySounds('copy');
+                handleCloseContextMenu();
+              }}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <Copy className="size-4" />
+              Copy
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCutSounds}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <Scissors className="size-4" />
+              Cut
+            </Button>
+            {hasAssetCardClipboardContents('sound') ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handlePasteSounds()}
+                className="h-8 w-full justify-start rounded-none"
+              >
+                <Clipboard className="size-4" />
+                Paste
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDuplicateSounds}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <CopyPlus className="size-4" />
+              Duplicate
+            </Button>
+            <DropdownMenuSeparator />
             <Button
               variant="ghost"
               size="sm"
@@ -352,7 +505,7 @@ export const SoundList = memo(({
               {contextMenuSound && savingToLibrary === contextMenuSoundIndex ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
-                <Save className="size-4" />
+                <Library className="size-4" />
               )}
               Add to Library
             </Button>

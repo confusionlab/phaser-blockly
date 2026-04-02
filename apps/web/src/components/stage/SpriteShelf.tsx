@@ -34,6 +34,8 @@ import {
   ChevronRight,
   ChevronDown,
   Component,
+  CopyPlus,
+  Scissors,
   Earth,
   Unlink,
   Folder,
@@ -432,6 +434,42 @@ export function SpriteShelf({
       setSceneContextMenuPosition({ left: nextLeft, top: nextTop });
     }
   }, [sceneContextMenu, sceneContextMenuPosition]);
+
+  useEffect(() => {
+    if (!contextMenu || typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      handleCloseContextMenu();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!sceneContextMenu || typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (sceneContextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      handleCloseSceneContextMenu();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [sceneContextMenu]);
 
   const focusShortcutSurface = useCallback(() => {
     focusKeyboardSurface(shortcutSurfaceRef.current);
@@ -1740,7 +1778,6 @@ export function SpriteShelf({
 
       {contextMenu && (
         <>
-          <div className="fixed inset-0 z-40" onClick={handleCloseContextMenu} />
           <Card
             ref={contextMenuRef}
             className="fixed z-50 py-1 min-w-36 gap-0"
@@ -1756,7 +1793,7 @@ export function SpriteShelf({
                   Copy
                 </Button>
                 <Button variant="ghost" size="sm" onClick={handleCut} className="w-full justify-start rounded-none h-8">
-                  <Copy className="size-4" />
+                  <Scissors className="size-4" />
                   Cut
                 </Button>
                 {hasSceneObjectClipboardContents() ? (
@@ -1771,7 +1808,7 @@ export function SpriteShelf({
                   </Button>
                 ) : null}
                 <Button variant="ghost" size="sm" onClick={handleDuplicate} className="w-full justify-start rounded-none h-8">
-                  <Copy className="size-4" />
+                  <CopyPlus className="size-4" />
                   Duplicate
                 </Button>
                 <DropdownMenuSeparator />
@@ -1779,14 +1816,13 @@ export function SpriteShelf({
                   variant="ghost"
                   size="sm"
                   onClick={() => {
-                    if (!contextMenu || contextMenu.kind !== 'object') return;
-                    handleAddFolder(null, getContextMenuObjectActionIds());
+                    handleStartObjectEdit(contextMenu.object.id, contextMenu.object.name);
                     handleCloseContextMenu();
                   }}
                   className="w-full justify-start rounded-none h-8"
                 >
-                  <FolderPlus className="size-4" />
-                  New Folder with Object
+                  <Pencil className="size-4" />
+                  Rename Object
                 </Button>
                 <Button
                   variant="ghost"
@@ -1893,7 +1929,6 @@ export function SpriteShelf({
 
       {sceneContextMenu && (
         <>
-          <div className="fixed inset-0 z-[9999]" onClick={handleCloseSceneContextMenu} />
           <Card
             ref={sceneContextMenuRef}
             className="fixed z-[10000] py-1 min-w-40 gap-0 pointer-events-auto"

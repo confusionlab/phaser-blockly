@@ -4,13 +4,15 @@ import {
   memo,
   useEffect,
   useMemo,
+  useCallback,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Plus, Upload, Loader2, Library, Copy, Trash2 } from '@/components/ui/icons';
+import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { Plus, Upload, Loader2, Library, Copy, CopyPlus, Trash2, Clipboard, Scissors } from '@/components/ui/icons';
 import { processImage } from '@/utils/imageProcessor';
 import { calculateVisibleBounds } from '@/utils/imageBounds';
 import { CostumeLibraryBrowser } from '@/components/dialogs/CostumeLibraryBrowser';
@@ -34,6 +36,14 @@ import {
 import { prepareCostumeLibraryCreatePayload } from '@/lib/costumeLibrary/costumeLibraryAssets';
 import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
 import { useModal } from '@/components/ui/modal-provider';
+import {
+  getAssetCardActionIds,
+  getAssetCardClipboard,
+  hasAssetCardClipboardContents,
+  insertAssetItemsAtIndex,
+  setAssetCardClipboard,
+  type AssetCardClipboardMode,
+} from '@/lib/editor/assetCardClipboard';
 
 interface CostumeListProps {
   costumes: Costume[];
@@ -46,6 +56,7 @@ interface CostumeListProps {
   onAddCostume: (costume: Costume) => void;
   onDeleteCostumes: (costumeIds: string[]) => void;
   onRenameCostume: (costumeId: string, name: string) => void;
+  onReplaceCostumes: (nextCostumes: Costume[], nextActiveCostumeId: string | null, nextSelectedCostumeIds: string[]) => void;
   onPrepareCostumeDrag: (costumeId: string) => string[];
   onReorderCostumes: (costumeIds: string[], targetIndex: number) => void;
 }
@@ -182,6 +193,7 @@ export const CostumeList = memo(({
   onAddCostume,
   onDeleteCostumes,
   onRenameCostume,
+  onReplaceCostumes,
   onPrepareCostumeDrag,
   onReorderCostumes,
 }: CostumeListProps) => {
@@ -191,6 +203,7 @@ export const CostumeList = memo(({
   const [savingToLibrary, setSavingToLibrary] = useState<number | null>(null);
   const { showAlert } = useModal();
   const [contextMenu, setContextMenu] = useState<{ costumeId: string; x: number; y: number } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const convex = useConvex();
   const { isAuthenticated } = useConvexAuth();
   const selectedCostumeIdSet = new Set(selectedCostumeIds);
@@ -210,6 +223,24 @@ export const CostumeList = memo(({
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, []);
+
+  useEffect(() => {
+    if (!contextMenu || typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      handleCloseContextMenu();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [contextMenu]);
 
   const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
   const upsertProjectAsset = useMutation(api.projectAssets.upsert);
@@ -381,6 +412,90 @@ export const CostumeList = memo(({
     }));
   };
 
+  const getContextMenuActionIds = useCallback(() => {
+    return getAssetCardActionIds(
+      costumes.map((costume) => costume.id),
+      selectedCostumeIds,
+      contextMenuCostume?.id ?? null,
+    );
+  }, [contextMenuCostume?.id, costumes, selectedCostumeIds]);
+
+  const cloneCostumeForPaste = useCallback((costume: Costume, mode: AssetCardClipboardMode): Costume => cloneCostume({
+    ...costume,
+    id: crypto.randomUUID(),
+    name: mode === 'cut' ? costume.name : `${costume.name} Copy`,
+  }), []);
+
+  const handleCopyCostumes = useCallback((mode: AssetCardClipboardMode = 'copy') => {
+    const actionIds = getContextMenuActionIds();
+    if (actionIds.length === 0) {
+      return false;
+    }
+
+    const costumeById = new Map(costumes.map((costume) => [costume.id, costume]));
+    const entries = actionIds
+      .map((id) => costumeById.get(id))
+      .filter((costume): costume is Costume => !!costume)
+      .map((costume) => ({ item: cloneCostume(costume) }));
+
+    if (entries.length === 0) {
+      return false;
+    }
+
+    setAssetCardClipboard({
+      kind: 'costume',
+      mode,
+      entries,
+    });
+    return true;
+  }, [costumes, getContextMenuActionIds]);
+
+  const handleCutCostumes = useCallback(() => {
+    if (!canDeleteContextMenuCostumes) {
+      return;
+    }
+    if (!handleCopyCostumes('cut')) {
+      return;
+    }
+    onDeleteCostumes(contextMenuDeleteIds);
+    handleCloseContextMenu();
+  }, [canDeleteContextMenuCostumes, contextMenuDeleteIds, handleCopyCostumes, onDeleteCostumes]);
+
+  const handlePasteCostumes = useCallback((modeOverride?: AssetCardClipboardMode) => {
+    const clipboard = getAssetCardClipboard<Costume>('costume');
+    if (!clipboard) {
+      return;
+    }
+
+    const nextMode = modeOverride ?? clipboard.mode;
+    const insertedCostumes = clipboard.entries.map((entry) => cloneCostumeForPaste(entry.item, nextMode));
+    if (insertedCostumes.length === 0) {
+      return;
+    }
+
+    const targetIndex = contextMenuCostumeIndex >= 0 ? contextMenuCostumeIndex + 1 : costumes.length;
+    const nextCostumes = insertAssetItemsAtIndex(costumes, insertedCostumes, targetIndex);
+    const nextSelectedIds = insertedCostumes.map((costume) => costume.id);
+    onReplaceCostumes(nextCostumes, nextSelectedIds[0] ?? null, nextSelectedIds);
+
+    if (clipboard.mode === 'cut' && !modeOverride) {
+      setAssetCardClipboard({
+        kind: 'costume',
+        mode: 'copy',
+        entries: insertedCostumes.map((costume) => ({ item: cloneCostume(costume) })),
+      });
+    }
+
+    handleCloseContextMenu();
+  }, [cloneCostumeForPaste, contextMenuCostumeIndex, costumes, onReplaceCostumes]);
+
+  const handleDuplicateCostumes = useCallback(() => {
+    if (!handleCopyCostumes('copy')) {
+      return;
+    }
+    handlePasteCostumes('copy');
+  }, [handleCopyCostumes, handlePasteCostumes]);
+
   return (
     <>
       <AssetSidebar
@@ -493,11 +608,54 @@ export const CostumeList = memo(({
 
       {contextMenu && (
         <>
-          <div className="fixed inset-0 z-40" onClick={handleCloseContextMenu} />
           <Card
+            ref={contextMenuRef}
             className="fixed z-50 py-1 min-w-44 gap-0"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                handleCopyCostumes('copy');
+                handleCloseContextMenu();
+              }}
+              className="w-full justify-start rounded-none h-8"
+            >
+              <Copy className="size-4" />
+              Copy
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCutCostumes}
+              disabled={!canDeleteContextMenuCostumes}
+              className="w-full justify-start rounded-none h-8"
+            >
+              <Scissors className="size-4" />
+              Cut
+            </Button>
+            {hasAssetCardClipboardContents('costume') ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handlePasteCostumes()}
+                className="w-full justify-start rounded-none h-8"
+              >
+                <Clipboard className="size-4" />
+                Paste
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDuplicateCostumes}
+              className="w-full justify-start rounded-none h-8"
+            >
+              <CopyPlus className="size-4" />
+              Duplicate
+            </Button>
+            <DropdownMenuSeparator />
             <Button
               variant="ghost"
               size="sm"
@@ -516,20 +674,6 @@ export const CostumeList = memo(({
                 <Library className="size-4" />
               )}
               Add to Library
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                if (contextMenuCostume) {
-                  handleDuplicateCostume(contextMenuCostumeIndex);
-                }
-                handleCloseContextMenu();
-              }}
-              className="w-full justify-start rounded-none h-8"
-            >
-              <Copy className="size-4" />
-              Duplicate
             </Button>
             <Button
               variant="ghost"

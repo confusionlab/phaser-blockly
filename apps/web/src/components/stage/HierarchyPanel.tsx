@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useConvex, useConvexAuth, useMutation } from 'convex/react';
 import { api } from '@convex-generated/api';
 import { useProjectStore } from '@/store/projectStore';
@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Card } from '@/components/ui/card';
+import { DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,9 @@ import { SpriteShelf } from './SpriteShelf';
 import { ObjectLibraryBrowser } from '@/components/dialogs/ObjectLibraryBrowser';
 import { SceneLibraryBrowser } from '@/components/dialogs/SceneLibraryBrowser';
 import {
+  Clipboard,
+  Copy,
+  CopyPlus,
   Earth,
   Folder,
   FolderOpen,
@@ -27,6 +31,7 @@ import {
   Layers3,
   Pencil,
   Plus,
+  Scissors,
   Trash2,
 } from '@/components/ui/icons';
 import { ShelfTreeRow } from './ShelfTreeRow';
@@ -48,6 +53,13 @@ import {
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { cn } from '@/lib/utils';
 import { deleteComponentWithHistory } from '@/lib/editor/objectCommands';
+import {
+  getFolderedHierarchyClipboard,
+  hasFolderedHierarchyClipboardContents,
+  setFolderedHierarchyClipboard,
+  type FolderedHierarchyClipboardKind,
+  type FolderedHierarchyClipboardMode,
+} from '@/lib/editor/folderedHierarchyClipboard';
 import { useModal } from '@/components/ui/modal-provider';
 import { saveRuntimeObjectToLibrary } from '@/lib/objectLibrary/objectLibraryAssets';
 import {
@@ -97,7 +109,13 @@ interface FolderedHierarchyPaneProps<TItem extends FolderedItemShape> {
   onItemDragStart?: (event: React.DragEvent<HTMLDivElement>, item: TItem) => void;
   onItemDragEnd?: (item: TItem) => void;
   renderItemContextMenuActions?: (item: TItem, closeMenu: () => void) => React.ReactNode;
-  showRenameItemContextMenuAction?: boolean;
+  clipboard?: {
+    kind: FolderedHierarchyClipboardKind;
+    serializeItem: (item: TItem) => unknown;
+    pasteItems: (entries: unknown[], mode: FolderedHierarchyClipboardMode, target: HierarchyDropTarget) => string[];
+    removeItemsForCut: (itemIds: string[]) => void;
+    canCutItems?: (itemIds: string[]) => boolean;
+  };
 }
 
 function FolderedHierarchyPane<TItem extends FolderedItemShape>({
@@ -124,7 +142,7 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
   onItemDragStart,
   onItemDragEnd,
   renderItemContextMenuActions,
-  showRenameItemContextMenuAction = true,
+  clipboard,
 }: FolderedHierarchyPaneProps<TItem>) {
   const [isPaneHovered, setIsPaneHovered] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
@@ -280,10 +298,143 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
     }
   }, [contextMenu, contextMenuPosition]);
 
+  useEffect(() => {
+    if (!contextMenu || typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      closeContextMenu();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  }, [contextMenu]);
+
   const closeContextMenu = () => {
     setContextMenu(null);
     setContextMenuPosition(null);
   };
+
+  const getContextMenuItemActionIds = useCallback((): string[] => {
+    if (!contextMenu || contextMenu.kind !== 'item') {
+      return [];
+    }
+
+    if (selectedItemIds.length > 1 && selectedItemIds.includes(contextMenu.item.id)) {
+      return orderedItemIds.filter((id) => selectedItemIds.includes(id));
+    }
+
+    return [contextMenu.item.id];
+  }, [contextMenu, orderedItemIds, selectedItemIds]);
+
+  const getClipboardPasteTarget = useCallback((): HierarchyDropTarget => {
+    if (!contextMenu || contextMenu.kind === 'empty') {
+      return { key: null, dropPosition: null };
+    }
+    if (contextMenu.kind === 'folder') {
+      return {
+        key: getHierarchyFolderNodeKey(contextMenu.folder.id),
+        dropPosition: 'on',
+      };
+    }
+    return {
+      key: getHierarchyItemNodeKey(itemKeyPrefix, contextMenu.item.id),
+      dropPosition: 'after',
+    };
+  }, [contextMenu, itemKeyPrefix]);
+
+  const handleCopyItems = useCallback((mode: FolderedHierarchyClipboardMode = 'copy') => {
+    if (!clipboard) {
+      return false;
+    }
+
+    const actionIds = getContextMenuItemActionIds();
+    if (actionIds.length === 0) {
+      return false;
+    }
+
+    const itemById = new Map(items.map((item) => [item.id, item]));
+    const entries = actionIds
+      .map((id) => itemById.get(id))
+      .filter((item): item is TItem => !!item)
+      .map((item) => clipboard.serializeItem(item));
+
+    if (entries.length === 0) {
+      return false;
+    }
+
+    setFolderedHierarchyClipboard({
+      kind: clipboard.kind,
+      mode,
+      entries,
+    });
+    return true;
+  }, [clipboard, getContextMenuItemActionIds, items]);
+
+  const handleCutItems = useCallback(() => {
+    if (!clipboard) {
+      return;
+    }
+
+    const actionIds = getContextMenuItemActionIds();
+    if (actionIds.length === 0) {
+      return;
+    }
+    if (clipboard.canCutItems && !clipboard.canCutItems(actionIds)) {
+      return;
+    }
+    if (!handleCopyItems('cut')) {
+      return;
+    }
+
+    clipboard.removeItemsForCut(actionIds);
+
+    const remainingIds = selectedItemIds.filter((id) => !actionIds.includes(id));
+    if (remainingIds.length > 0) {
+      onSelectItems(remainingIds, remainingIds[0]);
+    } else {
+      onSelectItems([], null);
+    }
+    closeContextMenu();
+  }, [clipboard, getContextMenuItemActionIds, handleCopyItems, onSelectItems, selectedItemIds]);
+
+  const handlePasteItems = useCallback((modeOverride?: FolderedHierarchyClipboardMode) => {
+    if (!clipboard) {
+      return;
+    }
+
+    const clipboardState = getFolderedHierarchyClipboard(clipboard.kind);
+    if (!clipboardState) {
+      return;
+    }
+
+    const nextMode = modeOverride ?? clipboardState.mode;
+    const pastedIds = clipboard.pasteItems(clipboardState.entries, nextMode, getClipboardPasteTarget());
+    if (pastedIds.length > 0) {
+      onSelectItems(pastedIds, pastedIds[0]);
+      if (clipboardState.mode === 'cut' && !modeOverride) {
+        setFolderedHierarchyClipboard({
+          kind: clipboard.kind,
+          mode: 'copy',
+          entries: clipboardState.entries,
+        });
+      }
+    }
+    closeContextMenu();
+  }, [clipboard, getClipboardPasteTarget, onSelectItems]);
+
+  const handleDuplicateItems = useCallback(() => {
+    if (!handleCopyItems('copy')) {
+      return;
+    }
+    handlePasteItems('copy');
+  }, [handleCopyItems, handlePasteItems]);
 
   const handleRequestDeleteFolder = (folder: HierarchyFolder) => {
     const descendants = collectFolderDescendants(folder.id, folders);
@@ -652,7 +803,6 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
 
       {contextMenu ? (
         <>
-          <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
           <Card
             ref={contextMenuRef}
             className="fixed z-50 min-w-36 gap-0 py-1"
@@ -663,23 +813,68 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
           >
             {contextMenu.kind === 'item' ? (
               <>
-                {showRenameItemContextMenuAction ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      onSelectItem(contextMenu.item);
-                      setEditingItemId(contextMenu.item.id);
-                      setEditingFolderId(null);
-                      setDraftName((contextMenu.item as { name?: string }).name ?? itemLabel);
-                      closeContextMenu();
-                    }}
-                    className="h-8 w-full justify-start rounded-none"
-                  >
-                    <Pencil className="size-4" />
-                    Rename {itemLabel}
-                  </Button>
+                {clipboard ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        handleCopyItems('copy');
+                        closeContextMenu();
+                      }}
+                      className="h-8 w-full justify-start rounded-none"
+                    >
+                      <Copy className="size-4" />
+                      Copy
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleCutItems}
+                      disabled={clipboard.canCutItems ? !clipboard.canCutItems(getContextMenuItemActionIds()) : false}
+                      className="h-8 w-full justify-start rounded-none"
+                    >
+                      <Scissors className="size-4" />
+                      Cut
+                    </Button>
+                    {hasFolderedHierarchyClipboardContents(clipboard.kind) ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handlePasteItems()}
+                        className="h-8 w-full justify-start rounded-none"
+                      >
+                        <Clipboard className="size-4" />
+                        Paste
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDuplicateItems}
+                      className="h-8 w-full justify-start rounded-none"
+                    >
+                      <CopyPlus className="size-4" />
+                      Duplicate
+                    </Button>
+                    <DropdownMenuSeparator />
+                  </>
                 ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    onSelectItem(contextMenu.item);
+                    setEditingItemId(contextMenu.item.id);
+                    setEditingFolderId(null);
+                    setDraftName((contextMenu.item as { name?: string }).name ?? itemLabel);
+                    closeContextMenu();
+                  }}
+                  className="h-8 w-full justify-start rounded-none"
+                >
+                  <Pencil className="size-4" />
+                  Rename {itemLabel}
+                </Button>
                 {renderItemContextMenuActions ? renderItemContextMenuActions(contextMenu.item, closeContextMenu) : null}
                 <Button
                   variant="ghost"
@@ -696,6 +891,20 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
               </>
             ) : contextMenu.kind === 'folder' ? (
               <>
+                {clipboard && hasFolderedHierarchyClipboardContents(clipboard.kind) ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handlePasteItems()}
+                      className="h-8 w-full justify-start rounded-none"
+                    >
+                      <Clipboard className="size-4" />
+                      Paste
+                    </Button>
+                    <DropdownMenuSeparator />
+                  </>
+                ) : null}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -724,18 +933,34 @@ function FolderedHierarchyPane<TItem extends FolderedItemShape>({
                 </Button>
               </>
             ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  onAddFolder();
-                  closeContextMenu();
-                }}
-                className="h-8 w-full justify-start rounded-none"
-              >
-                <FolderPlus className="size-4" />
-                New Folder
-              </Button>
+              <>
+                {clipboard && hasFolderedHierarchyClipboardContents(clipboard.kind) ? (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handlePasteItems()}
+                      className="h-8 w-full justify-start rounded-none"
+                    >
+                      <Clipboard className="size-4" />
+                      Paste
+                    </Button>
+                    <DropdownMenuSeparator />
+                  </>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    onAddFolder();
+                    closeContextMenu();
+                  }}
+                  className="h-8 w-full justify-start rounded-none"
+                >
+                  <FolderPlus className="size-4" />
+                  New Folder
+                </Button>
+              </>
             )}
           </Card>
         </>
@@ -789,6 +1014,79 @@ function SceneHierarchyTab() {
   const scenes = project?.scenes ?? [];
   const sceneFolders = project?.sceneFolders ?? [];
   const { showAlert } = useModal();
+
+  const cloneSceneTemplate = useCallback((scene: Scene, name: string) => ({
+    name,
+    scene,
+    components: [] as ComponentDefinition[],
+    componentFolders: [] as ComponentFolder[],
+  }), []);
+
+  const pasteScenesFromClipboard = useCallback((
+    entries: unknown[],
+    mode: FolderedHierarchyClipboardMode,
+    target: HierarchyDropTarget,
+  ): string[] => {
+    const snapshots = entries as Scene[];
+    if (snapshots.length === 0) {
+      return [];
+    }
+
+    const pastedIds: string[] = [];
+
+    runInHistoryTransaction('hierarchy-panel:paste-scenes', () => {
+      snapshots.forEach((scene) => {
+        const created = addSceneFromTemplate(
+          cloneSceneTemplate(
+            scene,
+            mode === 'cut' ? scene.name : `${scene.name} Copy`,
+          ),
+        );
+        if (created) {
+          pastedIds.push(created.id);
+        }
+      });
+
+      if (pastedIds.length === 0) {
+        return;
+      }
+
+      const nextProject = useProjectStore.getState().project;
+      if (!nextProject) {
+        return;
+      }
+
+      const nextHierarchy = moveFolderedHierarchyNodes(
+        nextProject.sceneFolders || [],
+        nextProject.scenes,
+        pastedIds.map((sceneId) => getHierarchyItemNodeKey('scene', sceneId)),
+        normalizeFolderedHierarchyDropTarget(
+          nextProject.sceneFolders || [],
+          nextProject.scenes,
+          target,
+          {
+            itemKeyPrefix: 'scene',
+            setItemFolderId: (scene, folderId) => ({ ...scene, folderId }),
+            setItemOrder: (scene, order) => ({ ...scene, order }),
+          },
+        ),
+        {
+          itemKeyPrefix: 'scene',
+          setItemFolderId: (scene, folderId) => ({ ...scene, folderId }),
+          setItemOrder: (scene, order) => ({ ...scene, order }),
+        },
+      );
+      updateSceneOrganization(nextHierarchy.items, nextHierarchy.folders);
+    });
+
+    return pastedIds;
+  }, [addSceneFromTemplate, cloneSceneTemplate, updateSceneOrganization]);
+
+  const removeScenesForCut = useCallback((sceneIds: string[]) => {
+    const cutIdSet = new Set(sceneIds);
+    const nextScenes = scenes.filter((scene) => !cutIdSet.has(scene.id));
+    updateSceneOrganization(nextScenes, sceneFolders);
+  }, [sceneFolders, scenes, updateSceneOrganization]);
 
   const handleInsertSceneTemplate = (data: {
     name: string;
@@ -933,6 +1231,13 @@ function SceneHierarchyTab() {
             </Button>
           </>
         )}
+        clipboard={{
+          kind: 'scene',
+          serializeItem: (scene) => scene,
+          pasteItems: pasteScenesFromClipboard,
+          removeItemsForCut: removeScenesForCut,
+          canCutItems: (sceneIds) => scenes.length - sceneIds.length >= 1,
+        }}
       />
       <SceneLibraryBrowser
         open={showLibrary}
@@ -972,6 +1277,76 @@ function ComponentHierarchyTab() {
   const generateProjectAssetUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
   const upsertProjectAsset = useMutation(api.projectAssets.upsert);
   const { showAlert, showConfirm } = useModal();
+
+  const pasteComponentsFromClipboard = useCallback((
+    entries: unknown[],
+    mode: FolderedHierarchyClipboardMode,
+    target: HierarchyDropTarget,
+  ): string[] => {
+    const snapshots = entries as ComponentDefinition[];
+    if (snapshots.length === 0) {
+      return [];
+    }
+
+    const pastedIds: string[] = [];
+
+    runInHistoryTransaction('hierarchy-panel:paste-components', () => {
+      snapshots.forEach((component) => {
+        const created = addComponentFromLibrary({
+          name: mode === 'cut' ? component.name : `${component.name} Copy`,
+          costumes: component.costumes,
+          sounds: component.sounds,
+          blocklyXml: component.blocklyXml,
+          currentCostumeIndex: component.currentCostumeIndex,
+          physics: component.physics,
+          collider: component.collider,
+          localVariables: component.localVariables ?? [],
+        });
+        if (created) {
+          pastedIds.push(created.id);
+        }
+      });
+
+      if (pastedIds.length === 0) {
+        return;
+      }
+
+      const nextProject = useProjectStore.getState().project;
+      if (!nextProject) {
+        return;
+      }
+
+      const nextHierarchy = moveFolderedHierarchyNodes(
+        nextProject.componentFolders || [],
+        nextProject.components || [],
+        pastedIds.map((componentId) => getHierarchyItemNodeKey('component', componentId)),
+        normalizeFolderedHierarchyDropTarget(
+          nextProject.componentFolders || [],
+          nextProject.components || [],
+          target,
+          {
+            itemKeyPrefix: 'component',
+            setItemFolderId: (component, folderId) => ({ ...component, folderId }),
+            setItemOrder: (component, order) => ({ ...component, order }),
+          },
+        ),
+        {
+          itemKeyPrefix: 'component',
+          setItemFolderId: (component, folderId) => ({ ...component, folderId }),
+          setItemOrder: (component, order) => ({ ...component, order }),
+        },
+      );
+      updateComponentOrganization(nextHierarchy.items, nextHierarchy.folders);
+    });
+
+    return pastedIds;
+  }, [addComponentFromLibrary, updateComponentOrganization]);
+
+  const removeComponentsForCut = useCallback((componentIds: string[]) => {
+    const cutIdSet = new Set(componentIds);
+    const nextComponents = components.filter((component) => !cutIdSet.has(component.id));
+    updateComponentOrganization(nextComponents, componentFolders);
+  }, [componentFolders, components, updateComponentOrganization]);
 
   const handleCreateComponent = () => {
     const created = addComponent();
@@ -1119,7 +1494,6 @@ function ComponentHierarchyTab() {
           );
         }}
         onDeleteItem={handleDeleteComponent}
-        showRenameItemContextMenuAction={false}
         onDeleteFolder={(folderId) => {
           const descendants = collectFolderDescendants(folderId, componentFolders);
           updateComponentOrganization(
@@ -1163,19 +1537,6 @@ function ComponentHierarchyTab() {
               variant="ghost"
               size="sm"
               onClick={() => {
-                void handleSaveComponentToLibrary(component);
-                closeMenu();
-              }}
-              disabled={savingComponentLibraryId === component.id}
-              className="h-8 w-full justify-start rounded-none"
-            >
-              <Library className="size-4" />
-              Save to Library
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
                 selectComponent(component.id);
                 if (selectedSceneId) {
                   addComponentInstance(selectedSceneId, component.id);
@@ -1188,8 +1549,27 @@ function ComponentHierarchyTab() {
               <Plus className="size-4" />
               Add to Scene
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void handleSaveComponentToLibrary(component);
+                closeMenu();
+              }}
+              disabled={savingComponentLibraryId === component.id}
+              className="h-8 w-full justify-start rounded-none"
+            >
+              <Library className="size-4" />
+              Save to Library
+            </Button>
           </>
         )}
+        clipboard={{
+          kind: 'component',
+          serializeItem: (component) => component,
+          pasteItems: pasteComponentsFromClipboard,
+          removeItemsForCut: removeComponentsForCut,
+        }}
       />
       <ObjectLibraryBrowser
         open={showLibrary}

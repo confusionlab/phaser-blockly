@@ -3,8 +3,11 @@ import * as Slider from '@radix-ui/react-slider';
 import { Button } from '@/components/ui/button';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
-  FloatingBottomToolbar,
   FloatingBottomToolbarDock,
+  FloatingPropertyToolbar,
+  FloatingToolToolbar,
+  floatingToolbarControlActiveClass,
+  floatingToolbarControlBaseClass,
 } from '@/components/editors/shared/FloatingBottomToolbar';
 import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
 import {
@@ -196,10 +199,6 @@ type ToolbarMenuId =
   | 'text-align'
   | 'shape-tools';
 
-const floatingToolButtonBaseClass =
-  'h-11 rounded-[18px] bg-transparent text-muted-foreground shadow-none transition-colors duration-200 hover:!bg-transparent hover:text-foreground';
-const floatingToolButtonActiveClass =
-  '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
 const toolbarPopupSideOffset = 10;
 
 const FloatingToolButton = memo(({
@@ -216,9 +215,9 @@ const FloatingToolButton = memo(({
       variant="ghost"
       size="icon-lg"
       className={cn(
-        floatingToolButtonBaseClass,
+        floatingToolbarControlBaseClass,
         'w-11',
-        isActive && floatingToolButtonActiveClass,
+        isActive && floatingToolbarControlActiveClass,
       )}
       onClick={() => onClick(tool)}
       title={label}
@@ -711,7 +710,7 @@ export const CostumeToolbar = memo(({
     <>
       <FloatingBottomToolbarDock>
           {showContextualPropertyBar && (
-            <FloatingBottomToolbar variant="property" testId="costume-toolbar-properties">
+            <FloatingPropertyToolbar testId="costume-toolbar-properties">
                 <div className={cn('min-w-max', useVectorSelectionTwoRowLayout ? 'flex flex-col items-center gap-2' : 'flex items-center justify-center gap-2')}>
                   <div className="flex min-w-max items-center justify-center gap-2">
                   {showVectorHandleControl && (
@@ -1326,10 +1325,10 @@ export const CostumeToolbar = memo(({
                     </div>
                   )}
                 </div>
-            </FloatingBottomToolbar>
+            </FloatingPropertyToolbar>
           )}
 
-          <FloatingBottomToolbar variant="tool" testId="costume-toolbar-tools">
+          <FloatingToolToolbar testId="costume-toolbar-tools">
               <div className="flex min-w-max items-center gap-3">
                 <div className="flex items-center gap-1">
                   {leadingTools.map(({ tool, icon, label }) => (
@@ -1351,7 +1350,7 @@ export const CostumeToolbar = memo(({
                       <div
                         className={cn(
                           'flex items-center gap-1 rounded-[18px] bg-transparent',
-                          shapeToolIsActive && floatingToolButtonActiveClass,
+                          shapeToolIsActive && floatingToolbarControlActiveClass,
                         )}
                         onContextMenu={(event) => {
                           event.preventDefault();
@@ -1362,7 +1361,7 @@ export const CostumeToolbar = memo(({
                           variant="ghost"
                           size="sm"
                           className={cn(
-                            floatingToolButtonBaseClass,
+                            floatingToolbarControlBaseClass,
                             'h-11 rounded-[18px] !pl-3 !pr-0 text-sm',
                             shapeToolIsActive && 'bg-transparent shadow-none',
                           )}
@@ -1377,7 +1376,7 @@ export const CostumeToolbar = memo(({
                             variant="ghost"
                             size="sm"
                             className={cn(
-                              floatingToolButtonBaseClass,
+                            floatingToolbarControlBaseClass,
                               'h-11 rounded-[18px] !pl-0 !pr-3 text-sm',
                               shapeToolIsActive && 'bg-transparent shadow-none',
                             )}
@@ -1440,7 +1439,7 @@ export const CostumeToolbar = memo(({
                 ) : null}
                 {showModeSwitcher ? <div className="hidden" /> : null}
               </div>
-          </FloatingBottomToolbar>
+          </FloatingToolToolbar>
       </FloatingBottomToolbarDock>
     </>
   );

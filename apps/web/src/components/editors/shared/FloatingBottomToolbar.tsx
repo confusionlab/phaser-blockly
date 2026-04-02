@@ -17,6 +17,13 @@ interface FloatingBottomToolbarProps {
   testId?: string;
 }
 
+interface SharedFloatingToolbarProps {
+  children: ReactNode;
+  className?: string;
+  contentClassName?: string;
+  testId?: string;
+}
+
 const floatingBarChromeClass =
   'pointer-events-auto max-w-full border border-border/70 bg-background/95 backdrop-blur-xl dark:bg-background';
 
@@ -26,6 +33,12 @@ const variantClassName: Record<FloatingBottomToolbarVariant, string> = {
   tool:
     'rounded-[28px] p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] dark:shadow-[0_28px_72px_-38px_rgba(0,0,0,0.8),0_8px_24px_-18px_rgba(0,0,0,0.6)]',
 };
+
+export const floatingToolbarControlBaseClass =
+  'h-11 rounded-[18px] bg-transparent text-muted-foreground shadow-none transition-colors duration-200 hover:!bg-transparent hover:text-foreground';
+
+export const floatingToolbarControlActiveClass =
+  '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
 
 export function FloatingBottomToolbarDock({
   children,
@@ -50,9 +63,45 @@ export function FloatingBottomToolbar({
 }: FloatingBottomToolbarProps) {
   return (
     <div className={cn(floatingBarChromeClass, variantClassName[variant], className)} data-testid={testId}>
-      <div className={cn('hide-scrollbar max-w-full overflow-x-auto overflow-y-visible', contentClassName)}>
+      <div className={cn('hide-scrollbar max-w-full overflow-visible', contentClassName)}>
         {children}
       </div>
     </div>
+  );
+}
+
+export function FloatingToolToolbar({
+  children,
+  className,
+  contentClassName,
+  testId,
+}: SharedFloatingToolbarProps) {
+  return (
+    <FloatingBottomToolbar
+      variant="tool"
+      className={className}
+      contentClassName={contentClassName}
+      testId={testId}
+    >
+      {children}
+    </FloatingBottomToolbar>
+  );
+}
+
+export function FloatingPropertyToolbar({
+  children,
+  className,
+  contentClassName,
+  testId,
+}: SharedFloatingToolbarProps) {
+  return (
+    <FloatingBottomToolbar
+      variant="property"
+      className={className}
+      contentClassName={contentClassName}
+      testId={testId}
+    >
+      {children}
+    </FloatingBottomToolbar>
   );
 }

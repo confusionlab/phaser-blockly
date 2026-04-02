@@ -211,6 +211,21 @@ export function SoundEditor() {
     updateSounds(updatedSounds);
   }, [sounds, updateSounds]);
 
+  const handleReplaceSounds = useCallback((
+    nextSounds: Sound[],
+    nextActiveSoundId: string | null,
+    nextSelectedSoundIds: string[],
+  ) => {
+    updateSounds(nextSounds);
+    setActiveSoundId(nextActiveSoundId);
+    replaceSelectedSoundIds(
+      nextSelectedSoundIds,
+      { anchorId: nextSelectedSoundIds[0] ?? nextActiveSoundId },
+    );
+    setDraftError(null);
+    setWorkspaceMode(nextSounds.length === 0 ? 'record' : 'edit');
+  }, [replaceSelectedSoundIds, updateSounds]);
+
   const handleReviewTrimChange = useCallback((trimStart: number, trimEnd: number) => {
     setDraftRecording((currentDraft) => currentDraft ? { ...currentDraft, trimStart, trimEnd } : currentDraft);
   }, []);
@@ -273,14 +288,14 @@ export function SoundEditor() {
   const editorFooter = workspaceMode === 'review' ? (
     <div className="flex flex-col gap-4">
       {draftError ? (
-        <div className="rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-5 shadow-sm">
+        <div className="pointer-events-auto rounded-[24px] border border-border/70 bg-background/95 p-4 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45),0_6px_18px_-14px_rgba(15,23,42,0.24)] backdrop-blur-xl">
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             {draftError}
           </div>
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-border/70 bg-[linear-gradient(180deg,rgba(249,251,249,0.98),rgba(243,246,244,0.96))] p-4 shadow-sm">
+      <div className="pointer-events-auto flex items-center justify-center gap-2 rounded-full border border-border/70 bg-background/95 p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl">
         <Button variant="outline" className="rounded-full" onClick={handleRerecord}>
           <RotateCcw className="size-4" />
           Re-record
@@ -317,6 +332,7 @@ export function SoundEditor() {
         onAddSound={handleAddSound}
         onDeleteSounds={handleDeleteSounds}
         onRenameSound={handleRenameSound}
+        onReplaceSounds={handleReplaceSounds}
         onPrepareSoundDrag={prepareSoundDragSelection}
         onReorderSounds={handleReorderSounds}
       />

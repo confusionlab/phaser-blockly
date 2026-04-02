@@ -21,6 +21,7 @@ import {
   Code as LucideCode,
   Component as LucideComponent,
   Copy as LucideCopy,
+  CopyPlus as LucideCopyPlus,
   Crosshair as LucideCrosshair,
   Download as LucideDownload,
   Earth as LucideEarth,
@@ -119,6 +120,7 @@ const LIBRARY_ICONS = {
   Code: LucideCode,
   Component: LucideComponent,
   Copy: LucideCopy,
+  CopyPlus: LucideCopyPlus,
   Crosshair: LucideCrosshair,
   Download: LucideDownload,
   Earth: LucideEarth,
@@ -270,6 +272,7 @@ export const Clipboard = LucideClipboard;
 export const Code = LucideCode;
 export const Component = LucideComponent;
 export const Copy = LucideCopy;
+export const CopyPlus = LucideCopyPlus;
 export const Crosshair = LucideCrosshair;
 export const Download = LucideDownload;
 export const Earth = LucideEarth;

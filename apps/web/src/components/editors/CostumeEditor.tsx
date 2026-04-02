@@ -189,6 +189,7 @@ export function CostumeEditor() {
   const {
     project,
     updateObject,
+    updateComponent,
     updateCostumeFromEditor,
     applyCostumeEditorOperation,
   } = useProjectStore();
@@ -1175,6 +1176,43 @@ export function CostumeEditor() {
     });
   }, [applyOperationToCurrentObject, currentObjectTarget]);
 
+  const handleReplaceCostumes = useCallback((
+    nextCostumes: Costume[],
+    nextActiveCostumeId: string | null,
+    nextSelectedCostumeIds: string[],
+  ) => {
+    const resolvedActiveCostumeId = nextActiveCostumeId ?? nextCostumes[0]?.id ?? null;
+    const nextCostumeIndex = resolvedActiveCostumeId
+      ? Math.max(0, nextCostumes.findIndex((costume) => costume.id === resolvedActiveCostumeId))
+      : 0;
+
+    if (selectedComponentId) {
+      updateComponent(selectedComponentId, {
+        costumes: nextCostumes,
+        currentCostumeIndex: nextCostumeIndex,
+      });
+    } else if (selectedSceneId && selectedObjectId) {
+      updateObject(selectedSceneId, selectedObjectId, {
+        costumes: nextCostumes,
+        currentCostumeIndex: nextCostumeIndex,
+      });
+    } else {
+      return;
+    }
+
+    replaceSelectedCostumeIds(
+      nextSelectedCostumeIds,
+      { anchorId: nextSelectedCostumeIds[0] ?? resolvedActiveCostumeId },
+    );
+  }, [
+    replaceSelectedCostumeIds,
+    selectedComponentId,
+    selectedObjectId,
+    selectedSceneId,
+    updateComponent,
+    updateObject,
+  ]);
+
   const handleSelectLayer = useCallback((layerId: string) => {
     if (isLoadingRef.current) {
       return;
@@ -1571,6 +1609,7 @@ export function CostumeEditor() {
         onAddCostume={handleAddCostume}
         onDeleteCostumes={handleDeleteCostumes}
         onRenameCostume={handleRenameCostume}
+        onReplaceCostumes={handleReplaceCostumes}
         onPrepareCostumeDrag={prepareCostumeDragSelection}
         onReorderCostumes={handleReorderCostumes}
       />
