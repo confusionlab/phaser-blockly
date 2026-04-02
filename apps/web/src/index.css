@@ -127,10 +127,21 @@ body {
   background-color: var(--blockly-toolbox-hover-bg) !important;
 }
 
+.pochaBlocklyCategory:focus,
+.pochaBlocklyCategory:focus-visible,
+.pochaBlocklyCategory:focus-within,
+.pochaBlocklyCategory.blocklyActiveFocus,
+.blocklyToolboxCategory:focus,
+.blocklyToolboxCategory:focus-visible,
+.blocklyToolboxCategory:focus-within,
+.blocklyToolboxCategory.blocklyActiveFocus,
 .pochaBlocklyCategoryButton:focus,
-.pochaBlocklyCategoryButton:focus-visible {
+.pochaBlocklyCategoryButton:focus-visible,
+.pochaBlocklyCategoryButton:focus-within,
+.pochaBlocklyCategoryButton.blocklyActiveFocus {
   outline: none !important;
   box-shadow: none !important;
+  border-color: transparent !important;
 }
 
 .pochaBlocklyCategoryButton[data-selected='true'],
