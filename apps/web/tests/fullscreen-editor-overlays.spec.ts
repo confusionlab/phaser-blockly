@@ -178,6 +178,66 @@ test.describe('Fullscreen editor overlays', () => {
     expect(restoredIdentity.sameCanvas).toBe(true);
   });
 
+  test('Switching object editor tabs does not freeze or remount the stage', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Tab Isolation ${Date.now()}`,
+      addObject: true,
+    });
+    await selectObjectInSceneHierarchy(page);
+
+    const stageHost = page.getByTestId('stage-phaser-host');
+    const stageCanvas = stageHost.locator('canvas').first();
+    await expect(stageHost).toBeVisible();
+    await expect(stageCanvas).toBeVisible();
+    await expect(page.getByRole('radio', { name: /^costumes$/i })).toBeVisible();
+
+    await page.evaluate(() => {
+      window['__pochaStageHost'] = document.querySelector('[data-testid="stage-phaser-host"]');
+      window['__pochaStageCanvas'] = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+      window['__pochaResizeFreezeEvents'] = [];
+      window.addEventListener('pocha-editor-resize-freeze', (event) => {
+        const detail = (event as CustomEvent<{ active?: boolean }>).detail;
+        window['__pochaResizeFreezeEvents'].push(detail?.active ?? null);
+      });
+    });
+
+    await page.getByRole('radio', { name: /^costumes$/i }).click();
+    await expect(page.getByTestId('costume-toolbar-tools')).toBeVisible();
+    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+
+    const costumeTabState = await page.evaluate(() => ({
+      sameHost: document.querySelector('[data-testid="stage-phaser-host"]') === window['__pochaStageHost'],
+      sameCanvas: document.querySelector('[data-testid="stage-phaser-host"] canvas') === window['__pochaStageCanvas'],
+      canvasVisibility: (() => {
+        const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+        return canvas instanceof HTMLCanvasElement ? window.getComputedStyle(canvas).visibility : null;
+      })(),
+      freezeEvents: [...window['__pochaResizeFreezeEvents']],
+    }));
+    expect(costumeTabState.sameHost).toBe(true);
+    expect(costumeTabState.sameCanvas).toBe(true);
+    expect(costumeTabState.canvasVisibility).toBe('visible');
+    expect(costumeTabState.freezeEvents).toEqual([]);
+
+    await page.getByRole('radio', { name: /^code$/i }).click();
+    await expect(page.locator('.blocklySvg').first()).toBeVisible();
+    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+
+    const codeTabState = await page.evaluate(() => ({
+      sameHost: document.querySelector('[data-testid="stage-phaser-host"]') === window['__pochaStageHost'],
+      sameCanvas: document.querySelector('[data-testid="stage-phaser-host"] canvas') === window['__pochaStageCanvas'],
+      canvasVisibility: (() => {
+        const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+        return canvas instanceof HTMLCanvasElement ? window.getComputedStyle(canvas).visibility : null;
+      })(),
+      freezeEvents: [...window['__pochaResizeFreezeEvents']],
+    }));
+    expect(codeTabState.sameHost).toBe(true);
+    expect(codeTabState.sameCanvas).toBe(true);
+    expect(codeTabState.canvasVisibility).toBe('visible');
+    expect(codeTabState.freezeEvents).toEqual([]);
+  });
+
   test.describe('Stage fullscreen transition anchoring', () => {
     test.use({
       viewport: { width: 1440, height: 960 },

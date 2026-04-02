@@ -76,7 +76,6 @@ import {
   hasSceneObjectClipboardContents,
   pasteSceneObjectClipboardWithHistory,
 } from '@/lib/editor/objectCommands';
-import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 import { ShelfTreeRow } from './ShelfTreeRow';
@@ -570,7 +569,6 @@ export function SpriteShelf({
   };
 
   const handleToggleFolder = (folderId: string) => {
-    freezeEditorResizeForLayoutTransition();
     const isCollapsed = collapsedFolderIds.has(folderId);
     const nextCollapsed = isCollapsed
       ? Array.from(collapsedFolderIds).filter((id) => id !== folderId)
@@ -807,7 +805,6 @@ export function SpriteShelf({
     e.preventDefault();
     e.stopPropagation();
     focusShortcutSurface();
-    freezeEditorResizeForLayoutTransition();
 
     if (e.shiftKey) {
       const anchorId = selectionAnchorObjectIdRef.current ?? selectedObjectId ?? objectId;
@@ -858,7 +855,6 @@ export function SpriteShelf({
 
     e.preventDefault();
     e.stopPropagation();
-    freezeEditorResizeForLayoutTransition();
     selectionAnchorObjectIdRef.current = null;
     selectFolder(folderId);
   };

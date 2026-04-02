@@ -26,7 +26,6 @@ import {
   endHistoryTransaction,
   runInHistoryTransaction,
 } from '@/store/universalHistory';
-import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
 import { ComponentSharedDisclaimer } from '@/components/stage/ComponentSharedDisclaimer';
@@ -887,7 +886,6 @@ function PhysicsToggle({
   const hasPhysics = physics?.enabled ?? false;
 
   const togglePhysics = (checked: boolean) => {
-    freezeEditorResizeForLayoutTransition();
     if (!checked) {
       updateObject(sceneId, object.id, {
         physics: {

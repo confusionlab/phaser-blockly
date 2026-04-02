@@ -9,7 +9,6 @@ import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/s
 import { IconButton } from '@/components/ui/icon-button';
 import { Code, Maximize2, Minimize2, Palette, Volume2 } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
-import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
@@ -71,7 +70,6 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [activeObjectTab]);
 
   const handleSectionChange = useCallback((nextTab: ObjectEditorTab) => {
-    freezeEditorResizeForLayoutTransition();
     setMountedTabs((current) => (
       current[nextTab]
         ? current
@@ -81,7 +79,6 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [setActiveObjectTab]);
 
   const toggleFullscreen = useCallback(() => {
-    freezeEditorResizeForLayoutTransition();
     onFullscreenChange(!isFullscreen);
   }, [isFullscreen, onFullscreenChange]);
 

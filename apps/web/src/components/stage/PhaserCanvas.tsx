@@ -1286,6 +1286,29 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     }
 
     renderTexture.clear();
+    const backdropCanvas = frozenStageFrameBufferRef.current;
+    const backdropTextureKey = `resize_freeze_backdrop_${scene.sys.settings.key}_${resizeFreezeSessionRef.current}`;
+    if (!backdropCanvas) {
+      controller.syncProjection();
+      refreshTiledBackgroundLayer(scene);
+      return null;
+    }
+    if (scene.textures.exists(backdropTextureKey)) {
+      scene.textures.remove(backdropTextureKey);
+    }
+    const backdropTexture = scene.textures.addCanvas(backdropTextureKey, backdropCanvas);
+    if (!backdropTexture) {
+      controller.syncProjection();
+      refreshTiledBackgroundLayer(scene);
+      return null;
+    }
+    backdropTexture.refresh();
+    renderTexture.camera.setViewport(0, 0, safeDisplaySize.width, safeDisplaySize.height);
+    renderTexture.camera.setZoom(1);
+    renderTexture.camera.scrollX = 0;
+    renderTexture.camera.scrollY = 0;
+    renderTexture.camera.preRender();
+    renderTexture.drawFrame(backdropTextureKey, undefined, 0, 0);
     renderTexture.camera.setViewport(
       projection.cameraViewport.x,
       projection.cameraViewport.y,
@@ -1297,6 +1320,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     renderTexture.camera.scrollY = projection.scrollY;
     renderTexture.camera.preRender();
     renderTexture.draw(renderEntries);
+    scene.textures.remove(backdropTextureKey);
 
     const framePromise = new Promise<FrozenStageFrame | null>((resolve) => {
       renderTexture.snapshot((snapshot) => {
@@ -1304,21 +1328,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           resolve(null);
           return;
         }
-        const bufferCanvas = frozenStageFrameBufferRef.current;
-        const bufferContext = bufferCanvas?.getContext('2d');
-        if (!bufferCanvas || !bufferContext) {
-          resolve(null);
-          return;
-        }
-
-        bufferContext.drawImage(snapshot, 0, 0, safeDisplaySize.width, safeDisplaySize.height);
-        resolve({
-          pixelWidth: safeDisplaySize.width,
-          pixelHeight: safeDisplaySize.height,
-          width: safeDisplaySize.width,
-          height: safeDisplaySize.height,
-          revision: ++frozenStageFrameRevisionRef.current,
-        });
+        resolve(createFrozenStageFrameFromSource(snapshot, safeDisplaySize, safeDisplaySize));
       });
     });
 
@@ -1328,6 +1338,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     return framePromise;
   }, [
     composeOverscanBackdropFrame,
+    createFrozenStageFrameFromSource,
     getEditorSceneCanvasSize,
     getResizeFreezeRenderTexture,
   ]);
