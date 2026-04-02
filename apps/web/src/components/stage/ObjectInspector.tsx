@@ -17,7 +17,7 @@ import {
   CompactColorPicker,
 } from '@/components/ui/color-picker';
 import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
-import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Paintbrush } from '@/components/ui/icons';
+import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Paintbrush, Pencil } from '@/components/ui/icons';
 import type { ComponentDefinition, GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
 import {
@@ -863,9 +863,10 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
           <Button
             variant="outline"
             size="sm"
-            className="inspector-inline-button h-8 px-2 text-xs"
+            className="inspector-inline-button h-8 gap-1.5 px-2 text-xs"
             onClick={() => onOpenWorldBoundaryEditor(scene.id)}
           >
+            <Pencil className="size-3.5" />
             Edit
           </Button>
         </div>

@@ -155,7 +155,7 @@ test.describe('Stage resize', () => {
     }).toBe(true);
   });
 
-  test('growing the stage keeps the frozen frame up until the resized live canvas is ready', async ({ page }) => {
+  test('growing the stage keeps the frozen frame visible until the resized live canvas is ready', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await openEditorFromProjectList(page);
@@ -175,6 +175,29 @@ test.describe('Stage resize', () => {
     await page.mouse.down();
     await page.mouse.move(pointerX, pointerY - 140, { steps: 12 });
     await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+
+    const frozenFrameSnapshot = await page.evaluate(() => {
+      const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+      if (!(frozen instanceof HTMLCanvasElement)) {
+        return null;
+      }
+
+      return {
+        tagName: frozen.tagName,
+        width: frozen.width,
+        height: frozen.height,
+        visibility: window.getComputedStyle(frozen).visibility,
+        position: window.getComputedStyle(frozen).position,
+        transform: window.getComputedStyle(frozen).transform,
+      };
+    });
+    expect(frozenFrameSnapshot).not.toBeNull();
+    expect(frozenFrameSnapshot?.tagName).toBe('CANVAS');
+    expect(frozenFrameSnapshot?.width).toBeGreaterThan(0);
+    expect(frozenFrameSnapshot?.height).toBeGreaterThan(0);
+    expect(frozenFrameSnapshot?.visibility).toBe('visible');
+    expect(frozenFrameSnapshot?.position).toBe('absolute');
+    expect(frozenFrameSnapshot?.transform).not.toBe('none');
 
     const startFrame = await page.evaluate(() => {
       const debug = window['__pochaStageDebug'];
