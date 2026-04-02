@@ -5,6 +5,10 @@ async function openEditorFromProjectList(page: import('@playwright/test').Page):
   await bootstrapEditorProject(page, { projectName: `Stage Resize Test ${Date.now()}` });
 }
 
+async function waitForStageDebug(page: import('@playwright/test').Page): Promise<void> {
+  await expect.poll(async () => page.evaluate(() => Boolean(window['__pochaStageDebug']))).toBe(true);
+}
+
 test.describe('Stage resize', () => {
   test('freezes Phaser resizing until vertical drag release, then commits once', async ({ page }) => {
     await page.goto('/');
@@ -149,5 +153,83 @@ test.describe('Stage resize', () => {
         return widthChanged && heightStable;
       }, initialMetrics);
     }).toBe(true);
+  });
+
+  test('growing the stage keeps the frozen frame up until the resized live canvas is ready', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await openEditorFromProjectList(page);
+    await waitForStageDebug(page);
+
+    const divider = page.getByTestId('stage-panel-vertical-divider');
+    const dividerBox = await divider.boundingBox();
+    expect(dividerBox).not.toBeNull();
+
+    if (!dividerBox) {
+      return;
+    }
+
+    const pointerX = dividerBox.x + dividerBox.width / 2;
+    const pointerY = dividerBox.y + dividerBox.height / 2;
+    await page.mouse.move(pointerX, pointerY);
+    await page.mouse.down();
+    await page.mouse.move(pointerX, pointerY - 140, { steps: 12 });
+    await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
+
+    const startFrame = await page.evaluate(() => {
+      const debug = window['__pochaStageDebug'];
+      const snapshot = debug?.getEditorSceneSnapshot();
+      if (!snapshot) {
+        throw new Error('Stage debug snapshot is unavailable.');
+      }
+      return snapshot.gameLoopFrame;
+    });
+
+    await page.mouse.up();
+
+    const revealSamples = await page.evaluate(async () => {
+      const debug = window['__pochaStageDebug'];
+      if (!debug) {
+        throw new Error('Stage debug bridge is unavailable.');
+      }
+
+      const readSample = () => {
+        const snapshot = debug.getEditorSceneSnapshot();
+        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+        const frozenVisible = frozen instanceof HTMLElement
+          ? window.getComputedStyle(frozen).visibility !== 'hidden'
+          : false;
+
+        return {
+          hostSize: snapshot?.hostSize ?? null,
+          gameLoopFrame: snapshot?.gameLoopFrame ?? 0,
+          canvasState: snapshot?.canvasState ?? null,
+          frozenVisible,
+        };
+      };
+
+      const samples = [readSample()];
+      for (let index = 0; index < 8; index += 1) {
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
+        samples.push(readSample());
+      }
+      return samples;
+    });
+
+    expect(revealSamples.length).toBeGreaterThan(0);
+    for (const sample of revealSamples) {
+      const revealedLiveCanvas = !sample.frozenVisible && sample.canvasState?.visibility === 'visible';
+      if (!revealedLiveCanvas || !sample.hostSize || !sample.canvasState) {
+        continue;
+      }
+
+      expect(sample.canvasState.width).toBe(sample.hostSize.width);
+      expect(sample.canvasState.height).toBe(sample.hostSize.height);
+      expect(sample.gameLoopFrame).toBeGreaterThan(startFrame);
+    }
+
+    await expect(page.getByTestId('stage-frozen-frame')).toBeHidden();
   });
 });

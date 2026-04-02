@@ -171,6 +171,12 @@ type StageDebugSnapshot = {
   mode: StageViewMode;
   editorViewport: StageEditorViewport | null;
   hostSize: StageSize;
+  gameLoopFrame: number;
+  canvasState: {
+    width: number;
+    height: number;
+    visibility: string;
+  } | null;
   cameraViewportCenter: { x: number; y: number } | null;
   cameraState: {
     scrollX: number;
@@ -968,6 +974,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       getEditorSceneSnapshot: () => {
         const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
         const host = containerRef.current;
+        const game = gameRef.current;
         if (!editorScene || !host) {
           return null;
         }
@@ -979,11 +986,20 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           x: camera.scrollX + camera.width / 2,
           y: camera.scrollY + camera.height / 2,
         };
+        const canvas = game?.canvas;
 
         return {
           mode: controller?.getMode() ?? 'editor',
           editorViewport: controller?.getEditorViewport() ?? null,
           hostSize,
+          gameLoopFrame: game?.loop?.frame ?? 0,
+          canvasState: canvas
+            ? {
+                width: canvas.width,
+                height: canvas.height,
+                visibility: window.getComputedStyle(canvas).visibility,
+              }
+            : null,
           cameraViewportCenter,
           cameraState: {
             scrollX: camera.scrollX,
@@ -1689,18 +1705,69 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return;
     }
 
-    const revealCanvas = requestAnimationFrame(() => {
+    let cancelled = false;
+    let revealRaf = 0;
+    let revealTimeout: ReturnType<typeof window.setTimeout> | null = null;
+    const startFrame = gameRef.current?.loop?.frame ?? 0;
+
+    const finishReveal = () => {
+      if (cancelled) {
+        return;
+      }
+
       const nextCanvas = gameRef.current?.canvas;
       if (nextCanvas) {
         nextCanvas.style.visibility = 'visible';
       }
       setFrozenStageFrame(null);
-    });
+    };
+
+    const revealWhenReady = (attempt = 0) => {
+      if (cancelled) {
+        return;
+      }
+
+      syncEditorCanvasToHost(true);
+
+      const host = containerRef.current;
+      const game = gameRef.current;
+      const nextCanvas = game?.canvas;
+      if (!host || !game || !nextCanvas) {
+        finishReveal();
+        return;
+      }
+
+      const hostSize = getElementRenderSize(host);
+      const canvasReady = nextCanvas.width === hostSize.width && nextCanvas.height === hostSize.height;
+      const frameAdvanced = (game.loop?.frame ?? 0) > startFrame;
+
+      if ((canvasReady && frameAdvanced) || attempt >= 6) {
+        finishReveal();
+        return;
+      }
+
+      revealRaf = requestAnimationFrame(() => {
+        revealWhenReady(attempt + 1);
+      });
+    };
+
+    if (canvas.style.visibility === 'hidden' || frozenStageFrame) {
+      revealWhenReady();
+      revealTimeout = window.setTimeout(() => {
+        finishReveal();
+      }, 250);
+    } else {
+      finishReveal();
+    }
 
     return () => {
-      cancelAnimationFrame(revealCanvas);
+      cancelled = true;
+      cancelAnimationFrame(revealRaf);
+      if (revealTimeout !== null) {
+        window.clearTimeout(revealTimeout);
+      }
     };
-  }, [captureFrozenStageFrame, isResizeFrozen, isPlaying]);
+  }, [captureFrozenStageFrame, frozenStageFrame, isResizeFrozen, isPlaying, syncEditorCanvasToHost]);
 
   useEffect(() => {
     if (isPlaying) return;

@@ -20,9 +20,9 @@ interface StagePanelProps {
 }
 
 const hierarchyTabs: SegmentedControlOption<HierarchyTab>[] = [
-  { value: 'scene', label: 'Scene', icon: <Earth className="size-3.5" /> },
-  { value: 'object', label: 'Object', icon: <Shapes className="size-3.5" /> },
-  { value: 'component', label: 'Component', icon: <Component className="size-3.5" /> },
+  { value: 'scene', label: 'Scenes', icon: <Earth className="size-3.5" /> },
+  { value: 'object', label: 'Objects', icon: <Shapes className="size-3.5" /> },
+  { value: 'component', label: 'Components', icon: <Component className="size-3.5" /> },
 ];
 
 function dispatchEditorResizeFreeze(active: boolean): void {

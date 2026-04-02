@@ -15,8 +15,8 @@ import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
   { value: 'code', label: 'Code', icon: <Code className="size-3" /> },
-  { value: 'costumes', label: 'Costume', icon: <Palette className="size-3" /> },
-  { value: 'sounds', label: 'Sound', icon: <Volume2 className="size-3" /> },
+  { value: 'costumes', label: 'Costumes', icon: <Palette className="size-3" /> },
+  { value: 'sounds', label: 'Sounds', icon: <Volume2 className="size-3" /> },
 ];
 
 interface ObjectEditorProps {
