@@ -133,6 +133,26 @@ test.describe('Stage resize', () => {
     expect(dragState?.visibility).toBe('hidden');
     expect(dragState?.frozenVisible).toBe(true);
 
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        const host = document.querySelector('[data-testid="stage-phaser-host"]');
+        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+        if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
+          return null;
+        }
+
+        const hostRect = host.getBoundingClientRect();
+        const frozenRect = frozen.getBoundingClientRect();
+        return {
+          wideEnough: frozenRect.width >= hostRect.width,
+          centeredX: Math.abs((frozenRect.left + frozenRect.width / 2) - (hostRect.left + hostRect.width / 2)) <= 1,
+        };
+      });
+    }).toEqual({
+      wideEnough: true,
+      centeredX: true,
+    });
+
     const dragMetrics = await canvas.evaluate((node) => {
       const canvas = node as HTMLCanvasElement;
       return {
@@ -176,7 +196,7 @@ test.describe('Stage resize', () => {
     await page.mouse.move(pointerX, pointerY - 140, { steps: 12 });
     await expect(page.getByTestId('stage-frozen-frame')).toBeVisible();
 
-    const frozenFrameSnapshot = await page.evaluate(() => {
+    const initialFrozenFrameSnapshot = await page.evaluate(() => {
       const host = document.querySelector('[data-testid="stage-phaser-host"]');
       const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
       if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
@@ -199,15 +219,67 @@ test.describe('Stage resize', () => {
         frozenCenterY: frozenRect.top + frozenRect.height / 2,
       };
     });
-    expect(frozenFrameSnapshot).not.toBeNull();
-    expect(frozenFrameSnapshot?.tagName).toBe('CANVAS');
-    expect(frozenFrameSnapshot?.width).toBeGreaterThan(0);
-    expect(frozenFrameSnapshot?.height).toBeGreaterThan(0);
-    expect(frozenFrameSnapshot?.visibility).toBe('visible');
-    expect(frozenFrameSnapshot?.position).toBe('absolute');
-    expect(frozenFrameSnapshot?.transform).not.toBe('none');
-    expect(Math.abs((frozenFrameSnapshot?.frozenCenterX ?? 0) - (frozenFrameSnapshot?.hostCenterX ?? 0))).toBeLessThanOrEqual(1);
-    expect(Math.abs((frozenFrameSnapshot?.frozenCenterY ?? 0) - (frozenFrameSnapshot?.hostCenterY ?? 0))).toBeLessThanOrEqual(1);
+    expect(initialFrozenFrameSnapshot).not.toBeNull();
+    expect(initialFrozenFrameSnapshot?.tagName).toBe('CANVAS');
+    expect(initialFrozenFrameSnapshot?.width).toBeGreaterThan(0);
+    expect(initialFrozenFrameSnapshot?.height).toBeGreaterThan(0);
+    expect(initialFrozenFrameSnapshot?.visibility).toBe('visible');
+    expect(initialFrozenFrameSnapshot?.position).toBe('absolute');
+    expect(initialFrozenFrameSnapshot?.transform).not.toBe('none');
+    expect(Math.abs((initialFrozenFrameSnapshot?.frozenCenterX ?? 0) - (initialFrozenFrameSnapshot?.hostCenterX ?? 0))).toBeLessThanOrEqual(1);
+    expect(Math.abs((initialFrozenFrameSnapshot?.frozenCenterY ?? 0) - (initialFrozenFrameSnapshot?.hostCenterY ?? 0))).toBeLessThanOrEqual(1);
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        const host = document.querySelector('[data-testid="stage-phaser-host"]');
+        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+        if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
+          return null;
+        }
+
+        const hostRect = host.getBoundingClientRect();
+        const frozenRect = frozen.getBoundingClientRect();
+
+        return {
+          hostWidth: hostRect.width,
+          hostHeight: hostRect.height,
+          frozenWidth: frozenRect.width,
+          frozenHeight: frozenRect.height,
+          centeredX: Math.abs((frozenRect.left + frozenRect.width / 2) - (hostRect.left + hostRect.width / 2)) <= 1,
+          centeredY: Math.abs((frozenRect.top + frozenRect.height / 2) - (hostRect.top + hostRect.height / 2)) <= 1,
+        };
+      });
+    }).toMatchObject({
+      centeredX: true,
+      centeredY: true,
+    });
+
+    await expect.poll(async () => {
+      return page.evaluate(() => {
+        const host = document.querySelector('[data-testid="stage-phaser-host"]');
+        const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
+        if (!(host instanceof HTMLElement) || !(frozen instanceof HTMLCanvasElement)) {
+          return null;
+        }
+
+        const hostRect = host.getBoundingClientRect();
+        const frozenRect = frozen.getBoundingClientRect();
+        const hostCenterX = hostRect.left + hostRect.width / 2;
+        const hostCenterY = hostRect.top + hostRect.height / 2;
+        const frozenCenterX = frozenRect.left + frozenRect.width / 2;
+        const frozenCenterY = frozenRect.top + frozenRect.height / 2;
+
+        return {
+          tallEnough: frozenRect.height >= hostRect.height,
+          centeredX: Math.abs(frozenCenterX - hostCenterX) <= 1,
+          centeredY: Math.abs(frozenCenterY - hostCenterY) <= 1,
+        };
+      });
+    }).toEqual({
+      tallEnough: true,
+      centeredX: true,
+      centeredY: true,
+    });
 
     const startFrame = await page.evaluate(() => {
       const debug = window['__pochaStageDebug'];

@@ -881,6 +881,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   const frozenStageFrameBufferRef = useRef<HTMLCanvasElement | null>(null);
   const frozenStageFrameOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const frozenStageFrameRevisionRef = useRef(0);
+  const resizeFreezeSessionRef = useRef(0);
+  const resizeFreezeOverscanCleanupRef = useRef<(() => void) | null>(null);
 
   const { project, updateObject, addComponentInstance } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
@@ -902,6 +904,39 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
 
+  const resizeEditorCanvasToSize = useCallback((nextSize: StageSize, force = false) => {
+    if (isPlaying) {
+      return false;
+    }
+
+    const game = gameRef.current;
+    if (!game) {
+      return false;
+    }
+
+    const safeWidth = Math.max(1, Math.round(nextSize.width));
+    const safeHeight = Math.max(1, Math.round(nextSize.height));
+    const canvasWidth = game.canvas?.width ?? 0;
+    const canvasHeight = game.canvas?.height ?? 0;
+    const scaleMatches = game.scale.width === safeWidth && game.scale.height === safeHeight;
+    const canvasMatches = canvasWidth === safeWidth && canvasHeight === safeHeight;
+
+    if (!force && scaleMatches && canvasMatches) {
+      return true;
+    }
+
+    game.scale.resize(safeWidth, safeHeight);
+    game.scale.refresh();
+
+    const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+    if (phaserScene) {
+      getStageViewportController(phaserScene)?.syncProjection();
+      refreshTiledBackgroundLayer(phaserScene);
+    }
+
+    return true;
+  }, [isPlaying]);
+
   const syncEditorCanvasToHost = useCallback((force = false) => {
     if (isPlaying || isResizeFrozen || immediateResizeFreezeRef.current) {
       return;
@@ -913,25 +948,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return;
     }
 
-    const { width: nextWidth, height: nextHeight } = getElementRenderSize(host);
-    const canvasWidth = game.canvas?.width ?? 0;
-    const canvasHeight = game.canvas?.height ?? 0;
-    const scaleMatches = game.scale.width === nextWidth && game.scale.height === nextHeight;
-    const canvasMatches = canvasWidth === nextWidth && canvasHeight === nextHeight;
-
-    if (!force && scaleMatches && canvasMatches) {
-      return;
-    }
-
-    game.scale.resize(nextWidth, nextHeight);
-    game.scale.refresh();
-
-    const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
-    if (phaserScene) {
-      getStageViewportController(phaserScene)?.syncProjection();
-      refreshTiledBackgroundLayer(phaserScene);
-    }
-  }, [isPlaying, isResizeFrozen]);
+    resizeEditorCanvasToSize(getElementRenderSize(host), force);
+  }, [isPlaying, isResizeFrozen, resizeEditorCanvasToSize]);
 
   useEffect(() => {
     editorViewportBySceneIdRef.current.clear();
@@ -967,6 +985,40 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     };
   }, []);
 
+  const captureFrozenStageFrameWithDisplaySize = useCallback((displaySize: StageSize): FrozenStageFrame | null => {
+    const frame = captureFrozenStageFrame();
+    if (!frame) {
+      return null;
+    }
+
+    return {
+      ...frame,
+      width: Math.max(1, Math.round(displaySize.width)),
+      height: Math.max(1, Math.round(displaySize.height)),
+    };
+  }, [captureFrozenStageFrame]);
+
+  const getResizeFreezeOverscanSize = useCallback((host: HTMLElement): StageSize => {
+    const hostSize = getElementRenderSize(host);
+    const viewportWidth = typeof window === 'undefined'
+      ? hostSize.width
+      : Math.max(
+          hostSize.width,
+          Math.round(document.documentElement.clientWidth || window.innerWidth || hostSize.width),
+        );
+    const viewportHeight = typeof window === 'undefined'
+      ? hostSize.height
+      : Math.max(
+          hostSize.height,
+          Math.round(document.documentElement.clientHeight || window.innerHeight || hostSize.height),
+        );
+
+    return {
+      width: viewportWidth,
+      height: viewportHeight,
+    };
+  }, []);
+
   const drawFrozenStageFrameToOverlay = useCallback((frame: FrozenStageFrame | null): boolean => {
     if (!frame) {
       return false;
@@ -995,6 +1047,92 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     return true;
   }, []);
 
+  const prepareOverscanFrozenStageFrame = useCallback((sessionId: number) => {
+    if (isPlaying) {
+      return;
+    }
+
+    const host = containerRef.current;
+    const game = gameRef.current;
+    if (!host || !game) {
+      return;
+    }
+
+    const overscanSize = getResizeFreezeOverscanSize(host);
+    const hostSizeAtStart = getElementRenderSize(host);
+    const needsOverscan = overscanSize.width > hostSizeAtStart.width || overscanSize.height > hostSizeAtStart.height;
+    if (!needsOverscan) {
+      return;
+    }
+
+    const startingFrame = game.loop?.frame ?? 0;
+    resizeEditorCanvasToSize(overscanSize, true);
+
+    let attempts = 0;
+    let cancelled = false;
+    let rafId = 0;
+
+    const finalizeOverscanSnapshot = () => {
+      const latestHost = containerRef.current;
+      if (latestHost) {
+        resizeEditorCanvasToSize(getElementRenderSize(latestHost), true);
+      }
+    };
+
+    const step = () => {
+      if (cancelled) {
+        return;
+      }
+
+      if (resizeFreezeSessionRef.current !== sessionId || !immediateResizeFreezeRef.current) {
+        finalizeOverscanSnapshot();
+        return;
+      }
+
+      const nextGame = gameRef.current;
+      const nextCanvas = nextGame?.canvas;
+      if (!nextGame || !nextCanvas) {
+        finalizeOverscanSnapshot();
+        return;
+      }
+
+      const sizeReady = nextCanvas.width === overscanSize.width && nextCanvas.height === overscanSize.height;
+      const frameAdvanced = (nextGame.loop?.frame ?? 0) > startingFrame;
+
+      if ((sizeReady && frameAdvanced) || attempts >= 8) {
+        const overscanFrame = sizeReady
+          ? captureFrozenStageFrameWithDisplaySize(overscanSize)
+          : null;
+
+        if (overscanFrame && resizeFreezeSessionRef.current === sessionId && immediateResizeFreezeRef.current) {
+          flushSync(() => {
+            setFrozenStageFrame(overscanFrame);
+          });
+          drawFrozenStageFrameToOverlay(overscanFrame);
+        }
+
+        finalizeOverscanSnapshot();
+        return;
+      }
+
+      attempts += 1;
+      rafId = requestAnimationFrame(step);
+    };
+
+    rafId = requestAnimationFrame(step);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
+  }, [
+    captureFrozenStageFrameWithDisplaySize,
+    drawFrozenStageFrameToOverlay,
+    getResizeFreezeOverscanSize,
+    isPlaying,
+    resizeEditorCanvasToSize,
+  ]);
+
   useLayoutEffect(() => {
     if (isPlaying || !frozenStageFrame) {
       return;
@@ -1002,6 +1140,13 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
     drawFrozenStageFrameToOverlay(frozenStageFrame);
   }, [drawFrozenStageFrameToOverlay, frozenStageFrame, isPlaying]);
+
+  useEffect(() => {
+    return () => {
+      resizeFreezeOverscanCleanupRef.current?.();
+      resizeFreezeOverscanCleanupRef.current = null;
+    };
+  }, []);
 
   const getStoredEditorViewport = useCallback((
     sceneId: string | null | undefined,
@@ -1821,6 +1966,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       immediateResizeFreezeRef.current = active;
 
       if (active) {
+        resizeFreezeOverscanCleanupRef.current?.();
+        const sessionId = resizeFreezeSessionRef.current + 1;
+        resizeFreezeSessionRef.current = sessionId;
+
         let frozenFrame: FrozenStageFrame | null = null;
         if (canvas) {
           try {
@@ -1844,9 +1993,14 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           }
           canvas.style.visibility = frozenFrame && overlayReady ? 'hidden' : 'visible';
         }
+
+        resizeFreezeOverscanCleanupRef.current = prepareOverscanFrozenStageFrame(sessionId) ?? null;
         return;
       }
 
+      resizeFreezeSessionRef.current += 1;
+      resizeFreezeOverscanCleanupRef.current?.();
+      resizeFreezeOverscanCleanupRef.current = null;
       setManualResizeFreezeActive(false);
     };
 
@@ -1854,7 +2008,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     return () => {
       window.removeEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
     };
-  }, [captureFrozenStageFrame, drawFrozenStageFrameToOverlay, isPlaying]);
+  }, [captureFrozenStageFrame, drawFrozenStageFrameToOverlay, isPlaying, prepareOverscanFrozenStageFrame]);
 
   // Toggle collider debug rendering at runtime (without recreating game)
   useEffect(() => {
