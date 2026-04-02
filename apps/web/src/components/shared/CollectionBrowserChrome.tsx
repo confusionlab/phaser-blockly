@@ -56,11 +56,11 @@ export function collectionCardClassName(options: {
   dropTarget?: boolean;
 }) {
   return cn(
-    'group relative flex h-full min-h-[240px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-background/88 text-left transition outline-none',
+    'group relative flex h-full min-h-[240px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-background/88 text-left transition-[border-color,background-color,box-shadow,opacity] outline-none',
     options.selected && 'border-primary/45 bg-primary/5 shadow-[0_16px_40px_-28px_rgba(37,99,235,0.55)]',
     options.dropTarget && 'border-primary bg-primary/10 ring-2 ring-primary/18',
     options.dragging && 'opacity-45',
-    'hover:-translate-y-0.5 hover:border-foreground/10 hover:shadow-[0_22px_50px_-36px_rgba(15,23,42,0.48)] focus-visible:ring-2 focus-visible:ring-primary/35',
+    'hover:border-foreground/10 hover:shadow-[0_22px_50px_-36px_rgba(15,23,42,0.48)] focus-visible:ring-2 focus-visible:ring-primary/35',
     options.className,
   );
 }

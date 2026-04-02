@@ -21,6 +21,20 @@ const TOOLBOX_CATEGORY_ORDER = [
   'Variables',
   'Operators',
 ] as const;
+const BLOCK_COLOURS = {
+  events: '#FFBF00',
+  actions: '#FFAB19',
+  inventory: '#FF5B5B',
+  motion: '#4C97FF',
+  looks: '#9966FF',
+  physics: '#40BF4A',
+  camera: '#0fBDA8',
+  sensing: '#5CB1D6',
+  sound: '#CF63CF',
+  variables: '#FF8C1A',
+  operators: '#59C059',
+  debug: '#888888',
+} as const;
 const ADVANCED_BLOCK_TYPES = new Set<string>([
   'camera_set_follow_offset',
   'camera_set_follow_smoothness',
@@ -338,7 +352,7 @@ function buildGroupBlockToggleIcon(collapsed: boolean): string {
 
 const GROUP_BLOCK_EXPANDED_ICON = buildGroupBlockToggleIcon(false);
 const GROUP_BLOCK_COLLAPSED_ICON = buildGroupBlockToggleIcon(true);
-const GROUP_BLOCK_COLOUR = '#9AA0A6';
+const GROUP_BLOCK_COLOUR = BLOCK_COLOURS.debug;
 
 type BlocklyInlineIconOptions = {
   color?: string;
@@ -916,7 +930,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Events',
-        colour: '#FFAB19',
+        colour: BLOCK_COLOURS.events,
         contents: [
           { kind: 'block', type: 'event_game_start' },
           { kind: 'block', type: 'event_key_pressed' },
@@ -949,7 +963,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Actions',
-        colour: '#FFBF00',
+        colour: BLOCK_COLOURS.actions,
         contents: [
           {
             kind: 'block',
@@ -1001,7 +1015,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Inventory',
-        colour: '#FF8C42',
+        colour: BLOCK_COLOURS.inventory,
         contents: [
           { kind: 'block', type: 'event_any_inventory_item_dropped' },
           { kind: 'block', type: 'event_inventory_item_dropped' },
@@ -1014,7 +1028,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Motion',
-        colour: '#4C97FF',
+        colour: BLOCK_COLOURS.motion,
         contents: [
           {
             kind: 'block',
@@ -1164,7 +1178,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Looks',
-        colour: '#9966FF',
+        colour: BLOCK_COLOURS.looks,
         contents: [
           { kind: 'block', type: 'looks_show' },
           { kind: 'block', type: 'looks_hide' },
@@ -1267,7 +1281,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Physics',
-        colour: '#40BF4A',
+        colour: BLOCK_COLOURS.physics,
         contents: [
           { kind: 'block', type: 'physics_enable' },
           { kind: 'block', type: 'physics_disable' },
@@ -1322,7 +1336,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Camera',
-        colour: '#0fBDA8',
+        colour: BLOCK_COLOURS.camera,
         contents: [
           {
             kind: 'block',
@@ -1400,7 +1414,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Sensing',
-        colour: '#5CB1D6',
+        colour: BLOCK_COLOURS.sensing,
         contents: [
           { kind: 'block', type: 'sensing_key_pressed' },
           { kind: 'block', type: 'sensing_mouse_down' },
@@ -1460,7 +1474,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Sound',
-        colour: '#CF63CF',
+        colour: BLOCK_COLOURS.sound,
         contents: [
           { kind: 'block', type: 'sound_play' },
           { kind: 'block', type: 'sound_play_until_done' },
@@ -1484,7 +1498,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Variables',
-        colour: '#FF8C1A',
+        colour: BLOCK_COLOURS.variables,
         contents: [
           {
             kind: 'button',
@@ -1515,15 +1529,12 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          { kind: 'sep', gap: '8' },
-          { kind: 'label', text: 'Boolean Value' },
-          { kind: 'block', type: 'logic_boolean' },
         ],
       },
       {
         kind: 'category',
         name: 'Operators',
-        colour: '#59C059',
+        colour: BLOCK_COLOURS.operators,
         contents: [
           {
             kind: 'block',
@@ -1551,6 +1562,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           },
           { kind: 'block', type: 'logic_operation' },
           { kind: 'block', type: 'logic_negate' },
+          { kind: 'block', type: 'logic_boolean' },
           {
             kind: 'block',
             type: 'operator_join',
@@ -1610,7 +1622,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
       {
         kind: 'category',
         name: 'Debug',
-        colour: '#888888',
+        colour: BLOCK_COLOURS.debug,
         contents: [
           { kind: 'block', type: 'control_group_block' },
           { kind: 'block', type: 'debug_console_log' },
@@ -1697,7 +1709,7 @@ function registerCustomBlocks() {
       appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventStart', 'When I start')
         .appendField('When I start');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when this object starts (including spawned objects)');
     }
   };
@@ -1709,7 +1721,7 @@ function registerCustomBlocks() {
         .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
         .appendField('is pressed');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when a key is pressed');
     }
   };
@@ -1719,7 +1731,7 @@ function registerCustomBlocks() {
       appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventClick', 'when this is clicked')
         .appendField('when this is clicked');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when this object is clicked');
     }
   };
@@ -1729,7 +1741,7 @@ function registerCustomBlocks() {
       appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventWorld', 'when world is clicked')
         .appendField('when world is clicked');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when the world is clicked, including clicks on objects but not UI.');
     }
   };
@@ -1741,7 +1753,7 @@ function registerCustomBlocks() {
         .appendField(new PreservingFieldDropdown(getInventoryReferenceDropdownOptions), 'ITEM')
         .appendField('is dropped on me');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Runs when the selected inventory item is dropped on this object.');
     }
   };
@@ -1751,7 +1763,7 @@ function registerCustomBlocks() {
       appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventInventory', 'when any inventory item is dropped')
         .appendField('when any inventory item is dropped');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Runs whenever any inventory item is dropped, even if it is not over a valid target.');
     }
   };
@@ -1764,7 +1776,7 @@ function registerCustomBlocks() {
         .setCheck(null);
       this.setPreviousStatement(true, null);
       // No next statement - forever loops don't end
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs continuously');
     }
   };
@@ -2233,12 +2245,59 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('costume #');
       this.setOutput(true, 'Number');
-      this.setColour('#9966FF');
+      this.setColour(BLOCK_COLOURS.looks);
       this.setTooltip('Current costume number');
     }
   };
 
   // Control
+  const syncIfElseInput = (block: Blockly.Block, hasElse: boolean) => {
+    const elseInput = block.getInput('ELSE');
+    if (hasElse && !elseInput) {
+      block.appendStatementInput('ELSE')
+        .setCheck(null)
+        .appendField('else');
+      return;
+    }
+
+    if (!hasElse && elseInput) {
+      block.removeInput('ELSE', true);
+    }
+  };
+
+  Blockly.Blocks['controls_if'] = {
+    init: function() {
+      this.appendValueInput('IF0')
+        .setCheck('Boolean')
+        .appendField('if');
+      this.appendStatementInput('DO0')
+        .setCheck(null)
+        .appendField('do');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.actions);
+      this.setTooltip('If the condition is true, run the blocks inside.');
+      syncIfElseInput(this, false);
+    },
+    mutationToDom: function() {
+      const mutation = Blockly.utils.xml.createElement('mutation');
+      mutation.setAttribute('elseif', '0');
+      mutation.setAttribute('else', this.getInput('ELSE') ? '1' : '0');
+      return mutation;
+    },
+    domToMutation: function(xmlElement: Element) {
+      syncIfElseInput(this, xmlElement.getAttribute('else') === '1');
+    },
+    saveExtraState: function() {
+      return {
+        hasElse: !!this.getInput('ELSE'),
+      };
+    },
+    loadExtraState: function(state: { hasElse?: boolean } | null | undefined) {
+      syncIfElseInput(this, !!state?.hasElse);
+    },
+  };
+
   const clampRandomChoiceBranchCount = (rawCount: number): number => {
     if (!Number.isFinite(rawCount)) return 2;
     return Math.max(2, Math.min(10, Math.floor(rawCount)));
@@ -2279,7 +2338,7 @@ function registerCustomBlocks() {
       syncRandomChoiceInputs(this, 2);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Randomly runs one of the branches');
     },
     mutationToDom: function() {
@@ -2322,7 +2381,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Wait for some time');
     }
   };
@@ -2339,7 +2398,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Repeat some number of times');
     }
   };
@@ -2354,7 +2413,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Repeat until condition is true');
     }
   };
@@ -2369,7 +2428,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Repeat while condition is true');
     }
   };
@@ -2395,7 +2454,7 @@ function registerCustomBlocks() {
         .setCheck(null);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour(GROUP_BLOCK_COLOUR);
+      this.setColour(BLOCK_COLOURS.debug);
       this.setTooltip('Visually group blocks with a name. Does not affect behavior.');
       setTimeout(() => {
         syncGroupBlockToggleIcon(this);
@@ -2444,7 +2503,7 @@ function registerCustomBlocks() {
         .setCheck(null);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Run the code inside for each item in the list. Use "current item" block to refer to each item.');
     }
   };
@@ -2454,7 +2513,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('current item');
       this.setOutput(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Use inside "for each" loop to get the current item');
     }
   };
@@ -2467,7 +2526,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Wait until condition is true');
     }
   };
@@ -2481,7 +2540,7 @@ function registerCustomBlocks() {
           ['this script', 'THIS'],
         ]), 'STOP_OPTION');
       this.setPreviousStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Stop scripts');
     }
   };
@@ -2494,7 +2553,7 @@ function registerCustomBlocks() {
         .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
         .appendField('pressed?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is a key pressed?');
     }
   };
@@ -2504,7 +2563,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse down?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is mouse button pressed?');
     }
   };
@@ -2514,7 +2573,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse x');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Mouse x position');
     }
   };
@@ -2524,7 +2583,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse y');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Mouse y position');
     }
   };
@@ -2534,7 +2593,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('timer');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Seconds since game start (2 decimal places)');
     }
   };
@@ -2545,7 +2604,7 @@ function registerCustomBlocks() {
         .appendField('reset timer');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Reset timer to 0 seconds');
     }
   };
@@ -2557,7 +2616,7 @@ function registerCustomBlocks() {
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET')
         .appendField('?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching something?');
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
@@ -2574,7 +2633,7 @@ function registerCustomBlocks() {
         .appendField('?');
       this.setInputsInline(true);
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching the selected target?');
     }
   };
@@ -2588,7 +2647,7 @@ function registerCustomBlocks() {
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION')
         .appendField('?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching target from a specific direction?');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
@@ -2606,7 +2665,7 @@ function registerCustomBlocks() {
         .appendField('?');
       this.setInputsInline(true);
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching target from a specific direction?');
     }
   };
@@ -2617,7 +2676,7 @@ function registerCustomBlocks() {
         .appendField('distance to')
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(false, true)), 'TARGET');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Distance to target');
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
@@ -2632,7 +2691,7 @@ function registerCustomBlocks() {
         .appendField('distance to');
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Distance to target');
     }
   };
@@ -2642,7 +2701,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField("object I'm touching");
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Returns the object this sprite is touching, or null if not touching anything');
     }
   };
@@ -2653,7 +2712,7 @@ function registerCustomBlocks() {
         .appendField('object')
         .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Pick an object from a dropdown');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
@@ -2665,7 +2724,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse pointer');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Mouse pointer target');
     }
   };
@@ -2675,7 +2734,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('myself');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Current object target');
     }
   };
@@ -2685,7 +2744,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('camera');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Camera target');
     }
   };
@@ -2695,7 +2754,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('ground collider');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Ground collision target');
     }
   };
@@ -2705,7 +2764,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('my type');
       this.setOutput(true, 'String');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Get this object type token');
     }
   };
@@ -2718,7 +2777,7 @@ function registerCustomBlocks() {
         .appendField("'s type");
       this.setInputsInline(true);
       this.setOutput(true, 'String');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip("Get another object's type token");
     }
   };
@@ -2729,7 +2788,7 @@ function registerCustomBlocks() {
         .appendField('type')
         .appendField(new PreservingFieldDropdown(getComponentTypeDropdownOptions), 'TYPE');
       this.setOutput(true, 'String');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Component type literal for comparison');
     }
   };
@@ -2739,7 +2798,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField("all objects I'm touching");
       this.setOutput(true, 'Array');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Returns a list of all objects that I\'m currently touching');
     }
   };
@@ -2752,7 +2811,7 @@ function registerCustomBlocks() {
         .appendField("'s x");
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.motion);
       this.setTooltip("Get an object's x position");
     }
   };
@@ -2765,7 +2824,7 @@ function registerCustomBlocks() {
         .appendField("'s y");
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.motion);
       this.setTooltip("Get an object's y position");
     }
   };
@@ -2778,7 +2837,7 @@ function registerCustomBlocks() {
         .appendField("'s costume #");
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.looks);
       this.setTooltip("Get an object's current costume number");
     }
   };
@@ -3181,7 +3240,7 @@ function registerCustomBlocks() {
         .appendField('when I receive')
         .appendField(messageFieldRef, 'MESSAGE');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when message is received');
       const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
       if (messageField) messageField.setValidator(createMessageDropdownValidator());
@@ -3194,7 +3253,7 @@ function registerCustomBlocks() {
         .appendField('when touching')
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when touching target');
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
@@ -3209,7 +3268,7 @@ function registerCustomBlocks() {
         .appendField('when touching');
       this.setInputsInline(true);
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when touching target');
     }
   };
@@ -3222,7 +3281,7 @@ function registerCustomBlocks() {
         .appendField('from')
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when touching target from a specific direction');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
@@ -3239,7 +3298,7 @@ function registerCustomBlocks() {
         .appendField('from')
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
       this.setNextStatement(true, null);
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when touching target from a specific direction');
     }
   };
@@ -3257,7 +3316,7 @@ function registerCustomBlocks() {
           ['restart', 'RESTART'],
         ]), 'MODE');
       this.setPreviousStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Switch to another scene (resume = continue where you left off, restart = start fresh)');
     }
   };
@@ -3277,7 +3336,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Spawn a component type at the specified position');
     }
   };
@@ -3290,7 +3349,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Delete the specified object');
     }
   };
@@ -3301,7 +3360,7 @@ function registerCustomBlocks() {
         .appendField('move myself to inventory');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Remove this object from the scene and put it into the shared inventory.');
     }
   };
@@ -3312,7 +3371,7 @@ function registerCustomBlocks() {
         .appendField('show inventory');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Show the inventory UI.');
     }
   };
@@ -3323,7 +3382,7 @@ function registerCustomBlocks() {
         .appendField('hide inventory');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Hide the inventory UI.');
     }
   };
@@ -3334,7 +3393,7 @@ function registerCustomBlocks() {
         .appendField('use the dropped item');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Confirm the dropped inventory item was used and remove it from inventory.');
     }
   };
@@ -3350,7 +3409,7 @@ function registerCustomBlocks() {
         .appendField(messageFieldRef, 'MESSAGE');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Send a message to all objects');
       const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
       if (messageField) messageField.setValidator(createMessageDropdownValidator());
@@ -3369,7 +3428,7 @@ function registerCustomBlocks() {
         .appendField('and wait');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Send a message and wait');
       const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
       if (messageField) messageField.setValidator(createMessageDropdownValidator());
@@ -3680,7 +3739,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField(new VariableFieldDropdown(() => getVariableDropdownOptions()), 'VAR');
       this.setOutput(true, null); // Allow any type until we resolve variable type
-      this.setColour('#FF8C1A');
+      this.setColour(BLOCK_COLOURS.variables);
       this.setTooltip('Get the value of a variable');
     },
     onchange: function(event: Blockly.Events.Abstract) {
@@ -3701,7 +3760,7 @@ function registerCustomBlocks() {
         .appendField('to');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FF8C1A');
+      this.setColour(BLOCK_COLOURS.variables);
       this.setTooltip('Set the value of a variable');
     },
     onchange: function(event: Blockly.Events.Abstract) {
@@ -3722,7 +3781,7 @@ function registerCustomBlocks() {
         .appendField('by');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FF8C1A');
+      this.setColour(BLOCK_COLOURS.variables);
       this.setTooltip('Change a numeric variable by an amount');
     },
     onchange: function(event: Blockly.Events.Abstract) {
@@ -3744,7 +3803,7 @@ function registerCustomBlocks() {
           ['false', 'FALSE']
         ]), 'BOOL');
       this.setOutput(true, 'Boolean'); // Zelos renders Boolean as hexagonal/diamond
-      this.setColour('#59C059');
+      this.setColour(BLOCK_COLOURS.operators);
       this.setTooltip('A boolean value (true or false)');
     }
   };
@@ -3757,7 +3816,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#888888');
+      this.setColour(BLOCK_COLOURS.debug);
       this.setTooltip('Log a value to the debug console');
     }
   };
@@ -3968,7 +4027,7 @@ function validateVariableType(block: Blockly.Block) {
     block.setColour('#CC0000'); // Red for error
   } else {
     block.setWarningText(null);
-    block.setColour('#FF8C1A'); // Normal color
+    block.setColour(BLOCK_COLOURS.variables); // Normal color
   }
 }
 
@@ -3984,7 +4043,7 @@ function validateNumericInput(block: Blockly.Block) {
     block.setColour('#CC0000');
   } else {
     block.setWarningText(null);
-    block.setColour('#FF8C1A');
+    block.setColour(BLOCK_COLOURS.variables);
   }
 }
 

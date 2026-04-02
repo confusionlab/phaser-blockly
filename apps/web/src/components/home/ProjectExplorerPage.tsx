@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useConvexAuth } from 'convex/react';
+import { useConvexAuth, useMutation } from 'convex/react';
 import { UserProfile } from '@clerk/clerk-react';
+import { api } from '@convex-generated/api';
 import {
   ArrowLeft,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   ImageOff,
   Loader2,
   MoreHorizontal,
+  Palette,
   Plus,
   RotateCcw,
   Settings2,
@@ -36,10 +38,12 @@ import { useProjectExplorerCatalog } from '@/hooks/useProjectExplorerCatalog';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { compareProjectsByLastEdited, type ProjectExplorerCatalogFolderSummary } from '@/lib/projectExplorerCatalog';
 import { PROJECT_EXPLORER_ROOT_FOLDER_ID } from '@/lib/projectExplorer';
+import { useEditorStore } from '@/store/editorStore';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -174,7 +178,9 @@ export function ProjectExplorerPage({
   authBootstrapState = 'steady',
   onProjectOpen,
 }: ProjectExplorerPageProps) {
+  const isDarkMode = useEditorStore((state) => state.isDarkMode);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const {
     ensureManagedAssetsAvailableLocally,
     syncProjectExplorerToCloud,
@@ -197,6 +203,22 @@ export function ProjectExplorerPage({
     }
     void syncProjectToCloud(projectId);
   }, [isConvexAuthenticated, syncProjectToCloud]);
+
+  const handleToggleDarkMode = useCallback(async () => {
+    const nextIsDarkMode = !isDarkMode;
+    useEditorStore.getState().toggleDarkMode();
+
+    if (!isConvexAuthenticated) {
+      return;
+    }
+
+    try {
+      await updateMySettings({ isDarkMode: nextIsDarkMode });
+    } catch (error) {
+      console.error('[UserSettings] Failed to persist dark mode setting from home:', error);
+    }
+  }, [isConvexAuthenticated, isDarkMode, updateMySettings]);
+
   const {
     data: explorerCatalog,
     isInitialLoading,
@@ -893,6 +915,16 @@ export function ProjectExplorerPage({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuCheckboxItem
+              checked={isDarkMode}
+              onCheckedChange={() => {
+                void handleToggleDarkMode();
+              }}
+            >
+              <Palette className="size-4" />
+              Dark mode
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => setTrashOpen(true)}
             >

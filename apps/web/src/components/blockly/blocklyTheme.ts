@@ -12,5 +12,6 @@ export const POCHA_BLOCKLY_THEME = Blockly.Theme.defineTheme('pochacoding_zelos'
   startHats: true,
   blockStyles: {
     logic_blocks: OPERATOR_BLOCK_STYLE,
+    math_blocks: OPERATOR_BLOCK_STYLE,
   },
 });
