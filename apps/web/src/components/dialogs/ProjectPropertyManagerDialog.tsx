@@ -20,6 +20,8 @@ interface ProjectPropertyManagerRowProps {
   icon?: ReactNode;
   name: string;
   subtitle?: string;
+  nameMeta?: ReactNode;
+  trailingMeta?: ReactNode;
   isEditing?: boolean;
   editValue?: string;
   onEditValueChange?: (value: string) => void;
@@ -83,6 +85,8 @@ export function ProjectPropertyManagerRow({
   icon,
   name,
   subtitle,
+  nameMeta,
+  trailingMeta,
   isEditing = false,
   editValue = '',
   onEditValueChange,
@@ -133,7 +137,14 @@ export function ProjectPropertyManagerRow({
           </div>
         ) : (
           <div className="min-w-0">
-            <div className="truncate font-medium">{name}</div>
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate font-medium">{name}</div>
+              {nameMeta ? (
+                <div className="shrink-0 text-xs text-muted-foreground/80">
+                  {nameMeta}
+                </div>
+              ) : null}
+            </div>
             {subtitle ? (
               <div className="text-xs text-muted-foreground">{subtitle}</div>
             ) : null}
@@ -141,7 +152,13 @@ export function ProjectPropertyManagerRow({
         )}
       </div>
       {!isEditing ? (
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+        <div className="flex items-center gap-2">
+          {trailingMeta ? (
+            <div className="shrink-0 text-xs text-muted-foreground/80">
+              {trailingMeta}
+            </div>
+          ) : null}
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
           {primaryActionLabel && onPrimaryAction ? (
             <Button
               variant="ghost"
@@ -172,6 +189,7 @@ export function ProjectPropertyManagerRow({
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
           ) : null}
+          </div>
         </div>
       ) : null}
     </div>

@@ -325,7 +325,7 @@ export function WaveformViewport({
     <div
       ref={containerRef}
       className={cn(
-        'relative h-52 overflow-visible rounded-[24px] border border-border/70 bg-background shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] touch-none select-none',
+        'relative h-52 overflow-visible rounded-[24px] border border-border/70 bg-[var(--blockly-workspace-bg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] touch-none select-none',
         className,
       )}
       onPointerDown={(event) => {

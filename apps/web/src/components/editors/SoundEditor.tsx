@@ -288,14 +288,14 @@ export function SoundEditor() {
   const editorFooter = workspaceMode === 'review' ? (
     <div className="flex flex-col gap-4">
       {draftError ? (
-        <div className="pointer-events-auto rounded-[24px] border border-border/70 bg-background/95 p-4 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45),0_6px_18px_-14px_rgba(15,23,42,0.24)] backdrop-blur-xl">
+        <div className="pointer-events-auto rounded-[24px] border border-border/70 bg-surface-floating p-4 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.45),0_6px_18px_-14px_rgba(15,23,42,0.24)] backdrop-blur-xl">
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
             {draftError}
           </div>
         </div>
       ) : null}
 
-      <div className="pointer-events-auto flex items-center justify-center gap-2 rounded-full border border-border/70 bg-background/95 p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl">
+      <div className="pointer-events-auto flex items-center justify-center gap-2 rounded-full border border-border/70 bg-surface-floating p-2 shadow-[0_28px_70px_-40px_rgba(15,23,42,0.5),0_8px_20px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl">
         <Button shape="pill" variant="outline" onClick={handleRerecord}>
           <RotateCcw className="size-4" />
           Re-record

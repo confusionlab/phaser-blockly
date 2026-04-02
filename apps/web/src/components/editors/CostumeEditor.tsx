@@ -1708,7 +1708,7 @@ export function CostumeEditor() {
       </div>
 
       {isSessionLoading && (
-        <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-background/70 text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>
+        <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-surface-wash text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>
           {showSessionLoadingOverlay ? 'Switching costume editor to the selected object...' : null}
         </div>
       )}

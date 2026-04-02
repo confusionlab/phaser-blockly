@@ -25,7 +25,7 @@ interface SharedFloatingToolbarProps {
 }
 
 const floatingBarChromeClass =
-  'pointer-events-auto max-w-full border border-border/70 bg-background/95 backdrop-blur-xl dark:bg-background';
+  'pointer-events-auto max-w-full border border-border/70 bg-surface-floating backdrop-blur-xl';
 
 const variantClassName: Record<FloatingBottomToolbarVariant, string> = {
   property:
@@ -38,7 +38,7 @@ export const floatingToolbarControlBaseClass =
   'h-11 rounded-[18px] bg-transparent text-muted-foreground shadow-none transition-colors duration-200 hover:!bg-transparent hover:text-foreground';
 
 export const floatingToolbarControlActiveClass =
-  '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
+  '!bg-surface-interactive text-foreground shadow-none hover:!bg-surface-interactive-hover';
 
 export function FloatingBottomToolbarDock({
   children,

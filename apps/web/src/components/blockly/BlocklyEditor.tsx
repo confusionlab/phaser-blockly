@@ -1189,7 +1189,7 @@ export function BlocklyEditor() {
         />
         {hasCodeTarget && pinButtonPosition && (
           <IconButton
-            className="absolute z-40 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
+            className="absolute z-40 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-surface-floating text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
             label={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
             pressed={toolboxPinned}
             shape="default"

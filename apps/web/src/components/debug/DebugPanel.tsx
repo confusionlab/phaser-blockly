@@ -111,9 +111,9 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
     : '';
 
   return (
-    <div className="fixed bottom-4 right-4 w-[500px] h-[400px] bg-gray-900 text-white rounded-lg shadow-2xl z-50 flex flex-col">
+    <div className="fixed bottom-4 right-4 z-50 flex h-[400px] w-[500px] flex-col rounded-lg border border-border/70 bg-surface-elevated text-foreground shadow-2xl">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-800 rounded-t-lg">
+      <div className="flex items-center justify-between rounded-t-lg border-b border-border/70 bg-surface-panel px-4 py-2">
         <div className="flex gap-2">
           <TabButton active={activeTab === 'code'} onClick={() => setActiveTab('code')}>
             Code
@@ -144,7 +144,7 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
       </div>
 
       {/* Object selector info */}
-      <div className="px-4 py-2 bg-gray-800/50 text-xs text-gray-400 border-b border-gray-700 flex items-center justify-between">
+      <div className="flex items-center justify-between border-b border-border/70 bg-surface-subtle px-4 py-2 text-xs text-muted-foreground">
         <div>
           {selectedObject ? (
             <span>Object: <span className="text-green-400">{selectedObject.name}</span> ({selectedObject.id.slice(0, 8)}...)</span>
@@ -168,7 +168,7 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
           <div className="space-y-2">
             <div className="flex justify-end mb-2">
               <Button
-                className="bg-gray-700 text-xs text-gray-100 hover:bg-gray-600"
+                className="bg-surface-interactive text-xs text-foreground hover:bg-surface-interactive-hover"
                 onClick={copyAllCode}
                 size="xs"
                 variant="ghost"
@@ -216,7 +216,7 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
             <div className="flex justify-between items-center mb-2">
               <span className="text-yellow-400 font-bold">Runtime Log</span>
               <Button
-                className="bg-gray-700 text-xs text-gray-100 hover:bg-gray-600"
+                className="bg-surface-interactive text-xs text-foreground hover:bg-surface-interactive-hover"
                 onClick={() => { clearDebugLog(); setLogRefresh(r => r + 1); }}
                 size="xs"
                 variant="ghost"
@@ -242,7 +242,7 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
             <div className="flex justify-between items-center mb-2">
               <span className="text-purple-400 font-bold">Console Output</span>
               <Button
-                className="bg-gray-700 text-xs text-gray-100 hover:bg-gray-600"
+                className="bg-surface-interactive text-xs text-foreground hover:bg-surface-interactive-hover"
                 onClick={() => { clearDebugLog(); setLogRefresh(r => r + 1); }}
                 size="xs"
                 variant="ghost"
@@ -271,7 +271,7 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <Button
-      className={active ? 'bg-gray-600 text-white hover:bg-gray-600' : 'text-gray-400 hover:text-white'}
+      className={active ? 'bg-surface-interactive text-foreground hover:bg-surface-interactive' : 'text-muted-foreground hover:text-foreground'}
       onClick={onClick}
       size="xs"
       variant="ghost"

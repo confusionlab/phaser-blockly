@@ -366,7 +366,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onEditVariables, 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim-strong p-8"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

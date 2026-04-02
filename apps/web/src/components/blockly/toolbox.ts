@@ -4,7 +4,11 @@ import { useEditorStore } from '@/store/editorStore';
 import { getAppIconDataUri, type AppIconName } from '@/components/ui/icons';
 import type { MessageDefinition, Variable, VariableType } from '@/types';
 import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
-import { normalizeVariableCardinality } from '@/lib/variableUtils';
+import {
+  buildVariableDisplayLabelMap,
+  normalizeVariableCardinality,
+  normalizeVariableName,
+} from '@/lib/variableUtils';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
 
 const EDIT_MESSAGES_OPTION = '__EDIT_MESSAGES_OPTION__';
@@ -202,43 +206,9 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
       }
     }
 
-    // Value not in options - try to find the variable name from the project
-    const project = useProjectStore.getState().project;
-    const selectedSceneId = useEditorStore.getState().selectedSceneId;
-    const selectedObjectId = useEditorStore.getState().selectedObjectId;
-    const selectedComponentId = useEditorStore.getState().selectedComponentId;
-
-    if (project) {
-      // Check global variables
-      const globalVar = project.globalVariables?.find(v => v.id === value);
-        if (globalVar) {
-        return `${getVariableTypeToken(globalVar.type, globalVar.cardinality)} ${globalVar.name}`;
-      }
-
-      // Check local variables
-      if (selectedSceneId && selectedObjectId) {
-        const scene = project.scenes.find(s => s.id === selectedSceneId);
-        const obj = scene?.objects.find(o => o.id === selectedObjectId);
-        const component = obj?.componentId
-          ? (project.components || []).find((componentItem) => componentItem.id === obj.componentId)
-          : null;
-        const componentLocalVariables = component?.localVariables || [];
-        const localVariables = componentLocalVariables.length > 0
-          ? componentLocalVariables
-          : (obj?.localVariables || []);
-        const localVar = localVariables.find(v => v.id === value);
-        if (localVar) {
-          return `(local) ${getVariableTypeToken(localVar.type, localVar.cardinality)} ${localVar.name}`;
-        }
-      }
-
-      if (selectedComponentId) {
-        const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
-        const localVar = (component?.localVariables || []).find((variable) => variable.id === value);
-        if (localVar) {
-          return `(local) ${getVariableTypeToken(localVar.type, localVar.cardinality)} ${localVar.name}`;
-        }
-      }
+    const label = getVariableDisplayLabelById(value);
+    if (label) {
+      return label;
     }
 
     // Still not found - show placeholder
@@ -4045,6 +4015,26 @@ function getAllVariables(): Variable[] {
   return variables;
 }
 
+function getVariableDisplayLabels(variables: readonly Variable[]): Map<string, string> {
+  return buildVariableDisplayLabelMap(variables, {
+    globalContextLabel: 'project',
+    localContextLabel: 'here',
+  });
+}
+
+function getVariableDisplayLabel(variable: Variable, labels?: Map<string, string>): string {
+  return labels?.get(variable.id) ?? (normalizeVariableName(variable.name) || 'variable');
+}
+
+function getVariableDisplayLabelById(variableId: string): string | null {
+  if (!variableId) return null;
+  const variables = getAllVariables();
+  const variable = variables.find((entry) => entry.id === variableId);
+  if (!variable) return null;
+  const labels = getVariableDisplayLabels(variables);
+  return getVariableDisplayLabel(variable, labels);
+}
+
 function isArrayVariable(variable: Variable | undefined): boolean {
   return !!variable && normalizeVariableCardinality(variable.cardinality) === 'array';
 }
@@ -4065,11 +4055,6 @@ function getVariableTypeToken(type: VariableType, cardinality?: Variable['cardin
   }
 }
 
-function getVariableLabel(variable: Variable): string {
-  const scopePrefix = variable.scope === 'local' ? '(local) ' : '';
-  return `${scopePrefix}${getVariableTypeToken(variable.type, variable.cardinality)} ${variable.name}`;
-}
-
 function getFilteredVariableDropdownOptions(
   predicate: (variable: Variable) => boolean,
   emptyLabel: string,
@@ -4079,7 +4064,8 @@ function getFilteredVariableDropdownOptions(
     return [[emptyLabel, '']];
   }
 
-  return variables.map((variable) => [getVariableLabel(variable), variable.id]);
+  const labels = getVariableDisplayLabels(variables);
+  return variables.map((variable) => [getVariableDisplayLabel(variable, labels), variable.id]);
 }
 
 // Get dropdown options for all variables
@@ -4089,11 +4075,11 @@ function getVariableDropdownOptions(): Array<[string, string]> {
 
 // Get dropdown options for numeric variables only
 function getNumericVariableDropdownOptions(): Array<[string, string]> {
-  return getFilteredVariableDropdownOptions(isNumericSingleVariable, '(no numeric variables)');
+  return getFilteredVariableDropdownOptions(isNumericSingleVariable, '(no matching variables)');
 }
 
 function getArrayVariableDropdownOptions(): Array<[string, string]> {
-  return getFilteredVariableDropdownOptions(isArrayVariable, '(no array variables)');
+  return getFilteredVariableDropdownOptions(isArrayVariable, '(no matching variables)');
 }
 
 // Get variable by ID

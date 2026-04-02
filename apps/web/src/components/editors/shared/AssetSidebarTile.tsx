@@ -151,7 +151,7 @@ export function AssetSidebarTile({
           title: name,
         }}
         outlineClassName={cn(
-          'inset-x-0 inset-y-[-2px] rounded-sm border-input bg-background/90 shadow-xs',
+          'inset-x-0 inset-y-[-2px] rounded-sm border-input bg-surface-floating shadow-xs',
           'group-focus-within/rename:border-ring group-focus-within/rename:ring-[3px] group-focus-within/rename:ring-ring/40',
         )}
         onKeyDown={(event) => {

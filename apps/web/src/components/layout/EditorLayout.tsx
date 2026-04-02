@@ -1241,8 +1241,8 @@ export function EditorLayout() {
   };
 
   const projectLeaseOverlay = isProjectLeaseBlocking ? (
-    <div className="fixed inset-0 z-[100240] bg-background/72 backdrop-blur-[1px] flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-xl border bg-background px-6 py-5 shadow-2xl">
+    <div className="fixed inset-0 z-[100240] bg-surface-wash backdrop-blur-[1px] flex items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-xl border bg-surface-panel px-6 py-5 shadow-2xl">
         <h2 className="text-lg font-semibold">
           {leaseStatus === 'lost'
             ? 'Editing moved to another editor'
@@ -1418,16 +1418,16 @@ export function EditorLayout() {
       <ObjectPicker />
 
       {isBlockingCloudSync && (
-        <div className="fixed inset-0 z-[100002] bg-black/45 flex items-center justify-center">
-          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
+        <div className="fixed inset-0 z-[100002] bg-surface-scrim flex items-center justify-center">
+          <div className="rounded-lg border bg-surface-panel px-5 py-4 text-sm shadow-xl">
             Please wait, Uploading/Syncing to Cloud.
           </div>
         </div>
       )}
 
       {ASSISTANT_UI_ENABLED && assistantLockRunId && !isBlockingCloudSync ? (
-        <div className="fixed inset-0 z-[100250] bg-background/70 backdrop-blur-[1px] flex items-center justify-center">
-          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
+        <div className="fixed inset-0 z-[100250] bg-surface-wash backdrop-blur-[1px] flex items-center justify-center">
+          <div className="rounded-lg border bg-surface-panel px-5 py-4 text-sm shadow-xl">
             {assistantLockMessage ?? 'Assistant is working. The editor is temporarily locked.'}
           </div>
         </div>

@@ -66,9 +66,8 @@ type StatusTone = 'idle' | 'running' | 'success' | 'error';
 const assistantApi = (api as any).assistant;
 
 const PANEL_CARD_CLASS = [
-  'rounded-[24px] border border-white/55 bg-white/70 p-4 backdrop-blur-xl',
+  'rounded-[24px] border border-border/70 bg-surface-floating p-4 backdrop-blur-xl',
   'shadow-[0_20px_45px_-36px_rgba(15,23,42,0.45)]',
-  'dark:border-white/10 dark:bg-white/5',
 ].join(' ');
 
 const WELCOME_SUGGESTIONS = [
@@ -615,7 +614,7 @@ export function AiAssistantPanel() {
     statusTone === 'running' && 'bg-amber-100 text-amber-900 dark:bg-amber-400/15 dark:text-amber-200',
     statusTone === 'success' && 'bg-emerald-100 text-emerald-900 dark:bg-emerald-400/15 dark:text-emerald-200',
     statusTone === 'error' && 'bg-red-100 text-red-900 dark:bg-red-400/15 dark:text-red-200',
-    statusTone === 'idle' && 'bg-slate-900/6 text-slate-700 dark:bg-white/10 dark:text-slate-300',
+    statusTone === 'idle' && 'bg-surface-subtle text-slate-700 dark:text-slate-300',
   );
 
   const threadConfig = useMemo(
@@ -708,7 +707,7 @@ export function AiAssistantPanel() {
               threadConfig={threadConfig}
             >
                 <div className="flex h-full min-h-0 flex-col">
-                  <div className="border-b border-black/6 px-5 py-4 dark:border-white/10 sm:px-6">
+                  <div className="border-b border-border/70 px-5 py-4 sm:px-6">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex items-start gap-3">
                         <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-[0_18px_40px_-24px_rgba(15,23,42,0.8)] dark:bg-amber-300 dark:text-slate-950">
@@ -716,7 +715,7 @@ export function AiAssistantPanel() {
                         </div>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-full bg-white/65 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-600 dark:bg-white/6 dark:text-slate-300">
+                            <span className="rounded-full bg-surface-subtle px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-600 dark:text-slate-300">
                               AI Assistant
                             </span>
                             <span className={statusBadgeClass}>
@@ -735,7 +734,7 @@ export function AiAssistantPanel() {
                       </div>
 
                       <div className="flex shrink-0 items-start gap-2">
-                        <div className="min-w-[160px] rounded-2xl border border-black/8 bg-white/70 px-3 py-2 dark:border-white/10 dark:bg-white/6">
+                        <div className="min-w-[160px] rounded-2xl border border-border/70 bg-surface-subtle px-3 py-2">
                           <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                             Model
                           </div>
@@ -762,7 +761,7 @@ export function AiAssistantPanel() {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="bg-white/60 dark:bg-white/6"
+                          className="bg-surface-subtle"
                           onClick={handleClearChat}
                           disabled={!!assistantLockRunId}
                           shape="pill"
@@ -774,7 +773,7 @@ export function AiAssistantPanel() {
 
                         <IconButton
                           variant="outline"
-                          className="shrink-0 rounded-full bg-white/60 dark:bg-white/6"
+                          className="shrink-0 rounded-full bg-surface-subtle"
                           onClick={() => setIsOpen(false)}
                           label="Close AI assistant"
                           shape="pill"
@@ -796,7 +795,7 @@ export function AiAssistantPanel() {
                               statusTone === 'running' && 'bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-200',
                               statusTone === 'success' && 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-200',
                               statusTone === 'error' && 'bg-red-100 text-red-700 dark:bg-red-400/15 dark:text-red-200',
-                              statusTone === 'idle' && 'bg-slate-900/6 text-slate-700 dark:bg-white/10 dark:text-slate-300',
+                              statusTone === 'idle' && 'bg-surface-subtle text-slate-700 dark:text-slate-300',
                             )}
                           >
                             {statusTone === 'running' ? (
@@ -827,7 +826,7 @@ export function AiAssistantPanel() {
                         </div>
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                          <div className="rounded-2xl bg-black/5 p-3 dark:bg-white/5">
+                          <div className="rounded-2xl bg-surface-subtle p-3">
                             <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
                               Current tool
                             </div>
@@ -836,7 +835,7 @@ export function AiAssistantPanel() {
                               <span className="truncate">{currentTool ?? 'Idle'}</span>
                             </div>
                           </div>
-                          <div className="rounded-2xl bg-black/5 p-3 dark:bg-white/5">
+                          <div className="rounded-2xl bg-surface-subtle p-3">
                             <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
                               Model
                             </div>
@@ -872,15 +871,15 @@ export function AiAssistantPanel() {
 
                         {project ? (
                           <div className="mt-4 grid grid-cols-3 gap-2">
-                            <div className="rounded-2xl bg-black/5 p-3 text-center dark:bg-white/5">
+                            <div className="rounded-2xl bg-surface-subtle p-3 text-center">
                               <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Scenes</div>
                               <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{project.scenes.length}</div>
                             </div>
-                            <div className="rounded-2xl bg-black/5 p-3 text-center dark:bg-white/5">
+                            <div className="rounded-2xl bg-surface-subtle p-3 text-center">
                               <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Objects</div>
                               <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{objectCount}</div>
                             </div>
-                            <div className="rounded-2xl bg-black/5 p-3 text-center dark:bg-white/5">
+                            <div className="rounded-2xl bg-surface-subtle p-3 text-center">
                               <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Messages</div>
                               <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{project.messages.length}</div>
                             </div>
@@ -954,8 +953,8 @@ export function AiAssistantPanel() {
                       ) : null}
                     </aside>
 
-                    <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-white/60 bg-white/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_30px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/55">
-                      <div className="flex items-center justify-between gap-3 border-b border-black/5 px-4 py-3 dark:border-white/10 sm:px-5">
+                    <section className="flex min-h-0 flex-col overflow-hidden rounded-[24px] border border-border/70 bg-surface-floating shadow-[inset_0_1px_0_rgba(255,255,255,0.7),0_30px_60px_-42px_rgba(15,23,42,0.45)] backdrop-blur-xl">
+                      <div className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3 sm:px-5">
                         <div>
                           <div className="text-sm font-semibold text-slate-950 dark:text-white">Conversation</div>
                           <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -976,7 +975,7 @@ export function AiAssistantPanel() {
                         <Thread.Messages />
                         <Thread.FollowupSuggestions />
                         <Thread.ViewportFooter className="px-1 pt-6 sm:px-2">
-                          <Thread.ScrollToBottom className="border border-black/10 bg-white/90 text-slate-700 shadow-sm backdrop-blur dark:border-white/10 dark:bg-slate-900/90 dark:text-slate-200" />
+                          <Thread.ScrollToBottom className="border border-border/70 bg-surface-floating text-slate-700 shadow-sm backdrop-blur dark:text-slate-200" />
                           <Composer />
                         </Thread.ViewportFooter>
                       </Thread.Viewport>

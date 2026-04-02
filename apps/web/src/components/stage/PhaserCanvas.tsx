@@ -2592,7 +2592,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
             data-pocha-ui="inventory"
             className="absolute left-4 right-4 bottom-4 z-20 pointer-events-none"
           >
-            <div className="pointer-events-auto mx-auto max-w-4xl rounded-2xl border bg-card/92 backdrop-blur px-3 py-3 shadow-lg">
+            <div className="pointer-events-auto mx-auto max-w-4xl rounded-2xl border bg-surface-floating backdrop-blur px-3 py-3 shadow-lg">
               <div className="flex items-center gap-2">
                 {canGoToPreviousInventoryPage ? (
                   <Button
@@ -2610,10 +2610,10 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
                       key={item.entryId}
                       disabled={item.isPendingUse}
                       aria-disabled={item.isPendingUse}
-                      className={`group flex h-16 w-16 items-center justify-center rounded-xl border bg-background transition-opacity ${
+                      className={`group flex h-16 w-16 items-center justify-center rounded-xl border bg-surface-panel transition-opacity ${
                         item.isPendingUse
                           ? 'cursor-not-allowed opacity-50'
-                          : 'hover:border-primary/60 hover:bg-muted/70'
+                          : 'hover:border-primary/60 hover:bg-surface-interactive'
                       }`}
                       size="icon-lg"
                       variant="outline"
@@ -2674,7 +2674,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
               style={{ left: draggedInventoryItem.x, top: draggedInventoryItem.y }}
             >
               <div
-                className={`flex items-center justify-center rounded-xl border bg-card/95 shadow-xl transition-opacity ${
+                className={`flex items-center justify-center rounded-xl border bg-surface-floating shadow-xl transition-opacity ${
                   draggedInventoryCanDrop ? 'opacity-100' : 'opacity-50'
                 }`}
                 style={{

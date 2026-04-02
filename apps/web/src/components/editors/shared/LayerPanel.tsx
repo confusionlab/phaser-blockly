@@ -484,7 +484,7 @@ export const LayerPanel = memo(({
           className={cn(
             'pointer-events-auto rounded-[24px] px-3 py-4 transition-[width,background-color,box-shadow] duration-200 ease-out',
             isPanelExpanded
-              ? 'w-64 bg-background/88 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)]'
+              ? 'w-64 bg-surface-floating shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)]'
               : 'w-20 bg-transparent shadow-none',
           )}
         >
@@ -495,7 +495,7 @@ export const LayerPanel = memo(({
                   <DropdownMenuTrigger asChild>
                     <IconButton
                       data-testid="layer-add-button"
-                      className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-background/80 hover:text-foreground"
+                      className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-interactive hover:text-foreground"
                       label="Add layer"
                       size="sm"
                     >
@@ -518,7 +518,7 @@ export const LayerPanel = memo(({
                   <IconButton
                     data-testid="layer-add-button"
                     disabled
-                    className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/layer-add:bg-background/80"
+                    className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/layer-add:bg-surface-interactive"
                     label="Add layer"
                     size="sm"
                     title={maxLayerTooltip}
@@ -527,7 +527,7 @@ export const LayerPanel = memo(({
                   </IconButton>
                   <div
                     role="tooltip"
-                    className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-background/96 px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/layer-add:opacity-100"
+                    className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-surface-floating px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/layer-add:opacity-100"
                   >
                     {maxLayerTooltip}
                   </div>
@@ -675,7 +675,7 @@ export const LayerPanel = memo(({
           <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
           <Card
             ref={contextMenuRef}
-            className="fixed z-50 min-w-56 gap-0 rounded-2xl border-border/80 bg-background/95 px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
+            className="fixed z-50 min-w-56 gap-0 rounded-2xl border-border/80 bg-surface-floating px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
             style={{
               left: contextMenuPosition?.left ?? contextMenu?.x ?? 0,
               top: contextMenuPosition?.top ?? contextMenu?.y ?? 0,

@@ -339,6 +339,45 @@ export function hasVariableNameConflict(
   });
 }
 
+export interface VariableDisplayLabelOptions {
+  globalContextLabel?: string;
+  localContextLabel?: string;
+}
+
+export function buildVariableDisplayLabelMap<T extends Pick<Variable, 'id' | 'name' | 'scope'>>(
+  variables: readonly T[],
+  options: VariableDisplayLabelOptions = {},
+): Map<string, string> {
+  const globalContextLabel = normalizeVariableName(options.globalContextLabel) || 'project';
+  const localContextLabel = normalizeVariableName(options.localContextLabel) || 'here';
+  const nameCounts = new Map<string, number>();
+
+  for (const variable of variables) {
+    const normalizedName = normalizeVariableName(variable.name).toLowerCase();
+    if (!normalizedName) continue;
+    nameCounts.set(normalizedName, (nameCounts.get(normalizedName) || 0) + 1);
+  }
+
+  const labelCounts = new Map<string, number>();
+  const labels = new Map<string, string>();
+
+  for (const variable of variables) {
+    const baseName = normalizeVariableName(variable.name) || 'variable';
+    const normalizedName = baseName.toLowerCase();
+    const needsDisambiguation = (nameCounts.get(normalizedName) || 0) > 1;
+    const contextLabel = variable.scope === 'local' ? localContextLabel : globalContextLabel;
+    const baseLabel = needsDisambiguation ? `${baseName} (${contextLabel})` : baseName;
+    const duplicateLabelCount = (labelCounts.get(baseLabel) || 0) + 1;
+    labelCounts.set(baseLabel, duplicateLabelCount);
+    labels.set(
+      variable.id,
+      duplicateLabelCount > 1 ? `${baseLabel} ${duplicateLabelCount}` : baseLabel,
+    );
+  }
+
+  return labels;
+}
+
 export function remapVariableIdsInBlocklyXml(
   blocklyXml: string,
   variableIdMap: Map<string, string>,

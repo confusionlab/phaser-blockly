@@ -24,7 +24,7 @@ export function CollectionSelectionCheckbox({
     <div
       className={cn(
         'inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors',
-        checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background',
+        checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-surface-panel',
         className,
       )}
     >
@@ -40,11 +40,11 @@ export function collectionRowClassName(options: {
   dropTarget?: boolean;
 }) {
   return cn(
-    'group relative flex w-full items-center gap-4 border-b border-border/70 bg-background/95 px-4 py-3 text-left transition outline-none',
+    'group relative flex w-full items-center gap-4 border-b border-border/70 bg-surface-floating px-4 py-3 text-left transition outline-none',
     options.selected && 'bg-primary/6',
     options.dropTarget && 'bg-primary/10 ring-1 ring-inset ring-primary/30',
     options.dragging && 'opacity-45',
-    'hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary/35',
+    'hover:bg-surface-interactive focus-visible:ring-2 focus-visible:ring-primary/35',
     options.className,
   );
 }
@@ -56,7 +56,7 @@ export function collectionCardClassName(options: {
   dropTarget?: boolean;
 }) {
   return cn(
-    'group relative flex h-full min-h-[240px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-background/88 text-left transition-[border-color,background-color,box-shadow,opacity] outline-none',
+    'group relative flex h-full min-h-[240px] flex-col overflow-hidden rounded-[24px] border border-border/70 bg-surface-floating text-left transition-[border-color,background-color,box-shadow,opacity] outline-none',
     options.selected && 'border-primary/45 bg-primary/5 shadow-[0_16px_40px_-28px_rgba(37,99,235,0.55)]',
     options.dropTarget && 'border-primary bg-primary/10 ring-2 ring-primary/18',
     options.dragging && 'opacity-45',
@@ -123,7 +123,7 @@ export function CollectionViewControls({
 
       <SegmentedControl
         ariaLabel={ariaLabel}
-        className="bg-muted/80"
+        className="bg-surface-subtle"
         layout="content"
         optionClassName="min-w-9 px-2"
         options={[

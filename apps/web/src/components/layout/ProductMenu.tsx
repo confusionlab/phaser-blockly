@@ -378,7 +378,7 @@ export function ProductMenu({
               onChange={(event) => setSearchQuery(event.target.value)}
               onKeyDown={handleSearchKeyDown}
               placeholder="Type to search..."
-              className="h-10 rounded-xl border-border/70 bg-background/80 pr-3 pl-9 text-sm shadow-none"
+              className="h-10 rounded-xl border-border/70 bg-surface-subtle pr-3 pl-9 text-sm shadow-none"
               aria-label="Search workspace menu"
             />
           </div>

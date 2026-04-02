@@ -14,7 +14,7 @@ interface RecordingStudioProps {
 
 type RecordingMode = 'idle' | 'recording';
 
-const RECORD_BUTTON_CLASS_NAME = 'size-16 rounded-full bg-red-500 text-white shadow-[0_18px_40px_rgba(239,68,68,0.26)] hover:bg-red-500/90';
+const RECORD_BUTTON_CLASS_NAME = 'size-16 rounded-full !bg-red-500 text-white shadow-[0_18px_40px_rgba(239,68,68,0.26)] hover:!bg-red-500/90 dark:!bg-red-500 dark:hover:!bg-red-500/90';
 
 function buildDefaultRecordingName(): string {
   return `Recording ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
@@ -153,6 +153,7 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
             label="Record"
             onClick={startRecording}
             size="md"
+            variant="ghost"
           >
             <span className="size-5 rounded-full bg-current" />
           </IconButton>
@@ -169,6 +170,7 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
             label="Stop recording"
             onClick={stopRecording}
             size="md"
+            variant="ghost"
           >
             <Square className="size-6 fill-current" />
           </IconButton>

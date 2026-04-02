@@ -403,7 +403,7 @@ export function LibraryBrowserDialog<T>({
                   })}
 
                   {isOpening ? (
-                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/55 backdrop-blur-[2px]">
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-surface-wash-soft backdrop-blur-[2px]">
                       <Loader2 className="size-6 animate-spin text-foreground/80" />
                     </div>
                   ) : null}
@@ -457,7 +457,7 @@ export function LibraryBrowserDialog<T>({
                   </div>
 
                   {isOpening ? (
-                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/50 backdrop-blur-[2px]">
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-surface-wash-soft backdrop-blur-[2px]">
                       <Loader2 className="size-6 animate-spin text-foreground/80" />
                     </div>
                   ) : null}

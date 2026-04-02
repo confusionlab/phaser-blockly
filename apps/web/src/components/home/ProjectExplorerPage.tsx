@@ -162,7 +162,7 @@ function ExplorerLoadingCards() {
       {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={`loading-card:${index}`}
-          className="overflow-hidden rounded-[24px] border border-border/70 bg-background/80"
+          className="overflow-hidden rounded-[24px] border border-border/70 bg-surface-floating"
         >
           <div className="aspect-[16/10] animate-pulse bg-muted/75 dark:bg-muted/55" />
           <div className="space-y-3 p-4">
@@ -910,7 +910,7 @@ export function ProjectExplorerPage({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <IconButton
-              className="rounded-full border-border/70 bg-background/82 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/72 dark:shadow-[0_28px_70px_-42px_rgba(0,0,0,0.82)]"
+              className="rounded-full border-border/70 bg-surface-floating shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur dark:shadow-[0_28px_70px_-42px_rgba(0,0,0,0.82)]"
               label="Home settings"
               shape="pill"
               size="sm"
@@ -996,7 +996,7 @@ export function ProjectExplorerPage({
                         'px-2 py-1 transition-colors',
                         folder.id === currentFolderSafeId
                           ? 'bg-foreground text-background shadow-sm'
-                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground dark:hover:bg-white/8',
+                          : 'text-muted-foreground hover:bg-surface-interactive hover:text-foreground',
                         dropFolderId === folder.id && 'bg-primary/15 text-primary',
                       )}
                       onClick={() => setCurrentFolderId(folder.id)}
@@ -1062,7 +1062,7 @@ export function ProjectExplorerPage({
           </div>
         </div>
 
-        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card/80 shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur dark:bg-card/74 dark:shadow-[0_34px_100px_-52px_rgba(0,0,0,0.9)]">
+        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-surface-floating shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur dark:shadow-[0_34px_100px_-52px_rgba(0,0,0,0.9)]">
           <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
               <div className="flex shrink-0 items-center gap-1.5">
@@ -1116,7 +1116,7 @@ export function ProjectExplorerPage({
                     Reconnecting to cloud...
                   </div>
                 ) : isRefreshing ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-1.5 text-xs font-medium text-foreground/70 shadow-sm backdrop-blur dark:bg-card/72">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-surface-floating px-3 py-1.5 text-xs font-medium text-foreground/70 shadow-sm backdrop-blur">
                     <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
                     Refreshing workspace...
                   </div>
@@ -1198,12 +1198,12 @@ export function ProjectExplorerPage({
                       {selectionMode ? <CollectionSelectionCheckbox checked={isSelected} className="absolute left-3 top-3 z-10 shadow-sm" /> : null}
 
                       <div className="absolute right-3 top-3 z-10">
-                        {renderItemActions(item, 'rounded-full bg-background/88 shadow-sm backdrop-blur')}
+                        {renderItemActions(item, 'rounded-full bg-surface-floating shadow-sm backdrop-blur')}
                       </div>
 
                       {item.kind === 'folder' ? (
                         <div className="flex aspect-[16/10] items-center justify-center bg-muted/60 text-muted-foreground dark:bg-muted/35">
-                          <div className="flex size-[4.5rem] items-center justify-center rounded-[28px] border border-border/70 bg-background/78 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]">
+                          <div className="flex size-[4.5rem] items-center justify-center rounded-[28px] border border-border/70 bg-surface-elevated shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]">
                             <FolderOpen className="size-8" />
                           </div>
                         </div>
@@ -1327,7 +1327,7 @@ export function ProjectExplorerPage({
       </Dialog>
 
       {trashOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6" onClick={() => setTrashOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim px-4 py-6" onClick={() => setTrashOpen(false)}>
           <div
             className="flex h-full max-h-[82vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card shadow-[0_32px_120px_-48px_rgba(15,23,42,0.65)] dark:shadow-[0_36px_120px_-54px_rgba(0,0,0,0.94)]"
             onClick={(event) => event.stopPropagation()}
@@ -1400,7 +1400,7 @@ export function ProjectExplorerPage({
       ) : null}
 
       {pendingTrashConfirmation ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-4" onClick={() => setPendingTrashConfirmation(null)}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-surface-scrim px-4" onClick={() => setPendingTrashConfirmation(null)}>
           <div
             className="w-full max-w-lg rounded-[24px] border border-border/70 bg-card p-6 shadow-[0_28px_90px_-42px_rgba(15,23,42,0.65)] dark:shadow-[0_32px_100px_-48px_rgba(0,0,0,0.95)]"
             onClick={(event) => event.stopPropagation()}

@@ -189,7 +189,7 @@ export function SegmentedControl<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'relative inline-grid max-w-full items-center bg-zinc-100 dark:bg-zinc-950',
+        'relative inline-grid max-w-full items-center bg-surface-subtle',
         containerSizeClassName,
         layout === 'fill' ? 'w-full' : 'w-fit',
         className,
@@ -205,7 +205,7 @@ export function SegmentedControl<T extends string>({
       <span
         aria-hidden="true"
         className={cn(
-          'pointer-events-none absolute border border-transparent bg-white duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-white/14 dark:bg-zinc-700 dark:shadow-[0_16px_32px_-18px_rgba(0,0,0,0.92),0_2px_6px_rgba(0,0,0,0.5)]',
+          'pointer-events-none absolute border border-border/70 bg-surface-control-active duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:shadow-[0_16px_32px_-18px_rgba(0,0,0,0.92),0_2px_6px_rgba(0,0,0,0.5)]',
           thumbClassName,
           layout === 'content'
             ? 'transition-[left,width] shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)]'
@@ -232,7 +232,7 @@ export function SegmentedControl<T extends string>({
             tabIndex={isActive ? 0 : -1}
             title={option.iconOnly ? option.label : undefined}
             className={cn(
-              'relative z-10 flex min-w-0 font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
+              'relative z-10 flex min-w-0 font-medium tracking-[-0.01em] text-muted-foreground transition-[color,opacity] duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-panel data-[state=active]:text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/55',
               isExpanded ? 'flex-col items-start justify-center gap-0.5 text-left' : 'items-center justify-center',
               optionSizeClassName,
               optionClassName,

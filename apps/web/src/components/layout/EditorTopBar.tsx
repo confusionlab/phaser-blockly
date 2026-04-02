@@ -125,7 +125,7 @@ export function EditorTopBar({
       className={cn(
         panelHeaderClassNames.chrome,
         'h-[var(--editor-panel-header-height)]',
-        'bg-background',
+        'bg-card',
       )}
     >
       <div className="grid h-full w-full grid-cols-[1fr_auto_1fr] items-center gap-3">
@@ -180,7 +180,7 @@ export function EditorTopBar({
                   title: draftName,
                 }}
                 outlineClassName={cn(
-                  'inset-x-0 inset-y-0 rounded-md border-input bg-background shadow-xs',
+                  'inset-x-0 inset-y-0 rounded-md border-input bg-card shadow-xs',
                   'group-focus-within/rename:border-ring group-focus-within/rename:ring-[3px] group-focus-within/rename:ring-ring/50',
                 )}
                 inputClassName={cn('h-8 px-1.5 text-center text-sm font-medium leading-5', projectNameDisabled ? 'opacity-60' : null)}

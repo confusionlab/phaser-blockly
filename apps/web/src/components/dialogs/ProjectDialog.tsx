@@ -335,7 +335,7 @@ export function ProjectDialog({
           )}
 
           {loading && (
-            <div className="absolute inset-0 bg-background/80 flex items-center justify-center">
+            <div className="absolute inset-0 bg-surface-wash flex items-center justify-center">
               <div className="text-muted-foreground">Loading...</div>
             </div>
           )}
@@ -422,7 +422,7 @@ export function ProjectDialog({
         </Tabs>
 
         {loading && (
-          <div className="absolute inset-0 bg-background/80 flex items-center justify-center rounded-lg">
+          <div className="absolute inset-0 rounded-lg bg-surface-wash flex items-center justify-center">
             <div className="text-muted-foreground">Loading...</div>
           </div>
         )}

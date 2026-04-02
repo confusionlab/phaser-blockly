@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { DisclosureButton } from '@/components/ui/disclosure-button';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AppIcon, type AppIconName } from '@/components/ui/icons';
+import { AppIcon, ChevronDown, ChevronRight, Component as ComponentIcon, Earth, type AppIconName } from '@/components/ui/icons';
 import { HoverHelp } from '@/components/ui/hover-help';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import { ShelfObjectThumbnail } from '@/components/stage/ShelfObjectThumbnail';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import {
@@ -13,7 +15,7 @@ import {
   normalizeVariableCardinality,
   normalizeVariableName,
 } from '@/lib/variableUtils';
-import type { Variable, VariableCardinality, VariableType } from '@/types';
+import type { Costume, Variable, VariableCardinality, VariableType } from '@/types';
 import { useModal } from '@/components/ui/modal-provider';
 import { Modal } from '@/components/ui/modal';
 import {
@@ -46,11 +48,28 @@ type VariableEntry = {
   note?: string;
 };
 
-type LocalVariableGroup = {
+type LocalHierarchyObjectNode = {
+  key: string;
+  title: string;
+  subtitle?: string | null;
+  costumes: Costume[];
+  currentCostumeIndex: number;
+  entries: VariableEntry[];
+};
+
+type LocalHierarchyComponentNode = {
   key: string;
   title: string;
   subtitle?: string | null;
   entries: VariableEntry[];
+  objects: LocalHierarchyObjectNode[];
+};
+
+type LocalHierarchySceneNode = {
+  key: string;
+  title: string;
+  subtitle?: string | null;
+  objects: LocalHierarchyObjectNode[];
 };
 
 const VARIABLE_SCOPE_OPTIONS: { value: AddVariableScope; label: string }[] = [
@@ -104,15 +123,17 @@ function VariableOptionRow({
   label,
   helpText,
   children,
+  className,
 }: {
   label: string;
   helpText: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
+    <div className={`grid grid-cols-[56px_minmax(0,1fr)] items-center gap-3 px-3 py-2 ${className ?? ''}`}>
       <Label className="text-sm font-medium text-foreground">{label}</Label>
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         {children}
         <HoverHelp
           label={`${label} help`}
@@ -122,6 +143,52 @@ function VariableOptionRow({
           {helpText}
         </HoverHelp>
       </div>
+    </div>
+  );
+}
+
+function LocalHierarchyBranch({
+  title,
+  subtitle,
+  icon,
+  isExpanded,
+  level = 0,
+  onToggle,
+  children,
+}: {
+  title: string;
+  subtitle?: string | null;
+  icon: React.ReactNode;
+  isExpanded: boolean;
+  level?: number;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <div
+        className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent/40"
+        style={{ paddingLeft: level * 16 }}
+      >
+        <DisclosureButton
+          aria-expanded={isExpanded}
+          aria-label={`Toggle ${title}`}
+          className="opacity-100"
+          onClick={onToggle}
+        >
+          {isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        </DisclosureButton>
+        <div className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/40 text-muted-foreground">
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-foreground">{title}</div>
+          {subtitle ? (
+            <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
+          ) : null}
+        </div>
+      </div>
+      {isExpanded ? children : null}
     </div>
   );
 }
@@ -149,6 +216,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
   const [error, setError] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [expandedLocalKeys, setExpandedLocalKeys] = useState<Set<string>>(new Set());
 
   const components = useMemo(() => project?.components || [], [project?.components]);
   const scenes = useMemo(() => project?.scenes || [], [project?.scenes]);
@@ -157,18 +225,6 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     () => new Map(components.map((component) => [component.id, component])),
     [components],
   );
-
-  const referencedComponentIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const scene of scenes) {
-      for (const object of scene.objects) {
-        if (object.componentId) {
-          ids.add(object.componentId);
-        }
-      }
-    }
-    return ids;
-  }, [scenes]);
 
   const localSelectionTarget = useMemo<LocalSelectionTarget | null>(() => {
     if (selectedSceneId && selectedObjectId) {
@@ -253,65 +309,123 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
     onVariablesChanged?.();
   };
 
-  const localGroups = useMemo<LocalVariableGroup[]>(() => {
-    const groups: LocalVariableGroup[] = [];
-
-    for (const scene of scenes) {
-      for (const object of scene.objects) {
-        const component = object.componentId ? componentById.get(object.componentId) : null;
-        const componentLocalVariables = component?.localVariables || [];
-        const usesComponentVariables = componentLocalVariables.length > 0;
-        const variables = usesComponentVariables ? componentLocalVariables : (object.localVariables || []);
-
-        const entries: VariableEntry[] = variables.map((variable) => ({
-          key: `scene:${scene.id}:object:${object.id}:${usesComponentVariables ? 'component' : 'object'}:${variable.id}`,
-          variable,
-          target: usesComponentVariables && component
-            ? { kind: 'component', componentId: component.id }
-            : { kind: 'object', sceneId: scene.id, objectId: object.id },
-          note: usesComponentVariables && component ? `Stored on component ${component.name}` : undefined,
-        }));
-
-        if (entries.length === 0) {
-          continue;
-        }
-
-        groups.push({
-          key: `scene:${scene.id}:object:${object.id}`,
-          title: object.name,
-          subtitle: usesComponentVariables && component
-            ? `${scene.name} · Uses component ${component.name}`
-            : scene.name,
-          entries,
-        });
-      }
-    }
+  const componentHierarchy = useMemo<LocalHierarchyComponentNode[]>(() => {
+    const groups: LocalHierarchyComponentNode[] = [];
 
     for (const component of components) {
-      if (referencedComponentIds.has(component.id)) {
+      const componentVariables = component.localVariables || [];
+      if (componentVariables.length === 0) {
         continue;
       }
 
-      const entries: VariableEntry[] = (component.localVariables || []).map((variable) => ({
-        key: `component:${component.id}:${variable.id}`,
-        variable,
-        target: { kind: 'component', componentId: component.id },
-      }));
+      const instanceObjects: LocalHierarchyObjectNode[] = [];
+      for (const scene of scenes) {
+        for (const object of scene.objects) {
+          if (object.componentId !== component.id) {
+            continue;
+          }
 
-      if (entries.length === 0) {
-        continue;
+          instanceObjects.push({
+            key: `component:${component.id}:object:${scene.id}:${object.id}`,
+            title: object.name,
+            subtitle: scene.name,
+            entries: componentVariables.map((variable) => ({
+              key: `component:${component.id}:object:${scene.id}:${object.id}:variable:${variable.id}`,
+              variable,
+              target: { kind: 'component', componentId: component.id },
+            })),
+            costumes: object.costumes || [],
+            currentCostumeIndex: object.currentCostumeIndex ?? 0,
+          });
+        }
       }
 
       groups.push({
         key: `component:${component.id}`,
         title: component.name,
-        subtitle: 'Reusable component',
-        entries,
+        subtitle: instanceObjects.length > 0
+          ? `${instanceObjects.length} linked ${instanceObjects.length === 1 ? 'object' : 'objects'}`
+          : 'Reusable component',
+        entries: instanceObjects.length === 0
+          ? componentVariables.map((variable) => ({
+              key: `component:${component.id}:variable:${variable.id}`,
+              variable,
+              target: { kind: 'component', componentId: component.id },
+            }))
+          : [],
+        objects: instanceObjects,
       });
     }
 
     return groups;
-  }, [componentById, components, referencedComponentIds, scenes]);
+  }, [components, scenes]);
+
+  const sceneHierarchy = useMemo<LocalHierarchySceneNode[]>(() => {
+    const groups: LocalHierarchySceneNode[] = [];
+
+    for (const scene of scenes) {
+      const objects: LocalHierarchyObjectNode[] = [];
+
+      for (const object of scene.objects) {
+        if (object.componentId) {
+          continue;
+        }
+
+        const objectVariables = object.localVariables || [];
+        if (objectVariables.length === 0) {
+          continue;
+        }
+
+        objects.push({
+          key: `scene:${scene.id}:object:${object.id}`,
+          title: object.name,
+          costumes: object.costumes || [],
+          currentCostumeIndex: object.currentCostumeIndex ?? 0,
+          entries: objectVariables.map((variable) => ({
+            key: `scene:${scene.id}:object:${object.id}:variable:${variable.id}`,
+            variable,
+            target: { kind: 'object', sceneId: scene.id, objectId: object.id },
+          })),
+        });
+      }
+
+      if (objects.length === 0) {
+        continue;
+      }
+
+      groups.push({
+        key: `scene:${scene.id}`,
+        title: scene.name,
+        objects,
+      });
+    }
+
+    return groups;
+  }, [scenes]);
+
+  const defaultExpandedLocalKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const component of componentHierarchy) {
+      keys.add(component.key);
+      for (const object of component.objects) {
+        keys.add(object.key);
+      }
+    }
+    for (const scene of sceneHierarchy) {
+      keys.add(scene.key);
+      for (const object of scene.objects) {
+        keys.add(object.key);
+      }
+    }
+    return keys;
+  }, [componentHierarchy, sceneHierarchy]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setExpandedLocalKeys(new Set(defaultExpandedLocalKeys));
+  }, [defaultExpandedLocalKeys, open]);
 
   const globalEntries = useMemo<VariableEntry[]>(
     () => (project?.globalVariables || []).map((variable) => ({
@@ -475,7 +589,8 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           />
         )}
         name={entry.variable.name}
-        subtitle={`${getVariableKindLabel(entry.variable)}${entry.note ? ` · ${entry.note}` : ''}`}
+        nameMeta={getVariableKindLabel(entry.variable)}
+        subtitle={entry.note}
         isEditing={isEditing}
         editValue={editName}
         onEditValueChange={setEditName}
@@ -491,6 +606,18 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
         onDelete={() => void handleDelete(entry)}
       />
     );
+  };
+
+  const toggleExpandedLocalKey = (key: string) => {
+    setExpandedLocalKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   return (
@@ -531,22 +658,89 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
           </section>
         ) : (
           <section className="space-y-3">
-            {localGroups.length > 0 ? (
-              localGroups.map((group) => (
-                <div key={group.key} className="space-y-1 rounded-lg border p-3">
-                  <div className="px-1 pb-1">
-                    <div className="text-sm font-semibold">{group.title}</div>
-                    {group.subtitle ? (
-                      <div className="text-xs text-muted-foreground">{group.subtitle}</div>
-                    ) : null}
-                  </div>
-                  <div className="space-y-1">
-                    {group.entries.map((entry) => (
-                      <VariableRow key={entry.key} entry={entry} />
-                    ))}
-                  </div>
-                </div>
-              ))
+            {componentHierarchy.length > 0 || sceneHierarchy.length > 0 ? (
+              <div className="space-y-2">
+                {componentHierarchy.map((component) => (
+                  <LocalHierarchyBranch
+                    key={component.key}
+                    icon={<ComponentIcon className="size-3.5" />}
+                    isExpanded={expandedLocalKeys.has(component.key)}
+                    onToggle={() => toggleExpandedLocalKey(component.key)}
+                    subtitle={component.subtitle}
+                    title={component.title}
+                  >
+                    <div className="space-y-1">
+                      {component.objects.map((object) => (
+                        <LocalHierarchyBranch
+                          key={object.key}
+                          icon={(
+                            <ShelfObjectThumbnail
+                              currentCostumeIndex={object.currentCostumeIndex}
+                              costumes={object.costumes}
+                              name={object.title}
+                            />
+                          )}
+                          isExpanded={expandedLocalKeys.has(object.key)}
+                          level={1}
+                          onToggle={() => toggleExpandedLocalKey(object.key)}
+                          subtitle={object.subtitle}
+                          title={object.title}
+                        >
+                          <div className="space-y-1" style={{ paddingLeft: 32 }}>
+                            {object.entries.map((entry) => (
+                              <VariableRow key={entry.key} entry={entry} />
+                            ))}
+                          </div>
+                        </LocalHierarchyBranch>
+                      ))}
+                      {component.entries.length > 0 ? (
+                        <div className="space-y-1" style={{ paddingLeft: 32 }}>
+                          {component.entries.map((entry) => (
+                            <VariableRow key={entry.key} entry={entry} />
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </LocalHierarchyBranch>
+                ))}
+
+                {sceneHierarchy.map((scene) => (
+                  <LocalHierarchyBranch
+                    key={scene.key}
+                    icon={<Earth className="size-3.5" />}
+                    isExpanded={expandedLocalKeys.has(scene.key)}
+                    onToggle={() => toggleExpandedLocalKey(scene.key)}
+                    subtitle={scene.subtitle}
+                    title={scene.title}
+                  >
+                    <div className="space-y-1">
+                      {scene.objects.map((object) => (
+                        <LocalHierarchyBranch
+                          key={object.key}
+                          icon={(
+                            <ShelfObjectThumbnail
+                              currentCostumeIndex={object.currentCostumeIndex}
+                              costumes={object.costumes}
+                              name={object.title}
+                            />
+                          )}
+                          isExpanded={expandedLocalKeys.has(object.key)}
+                          level={1}
+                          onToggle={() => toggleExpandedLocalKey(object.key)}
+                          subtitle={object.subtitle}
+                          title={object.title}
+                        >
+                          <div className="space-y-1" style={{ paddingLeft: 32 }}>
+                            {object.entries.map((entry) => (
+                              <VariableRow key={entry.key} entry={entry} />
+                            ))}
+                          </div>
+                        </LocalHierarchyBranch>
+                      ))}
+                    </div>
+                  </LocalHierarchyBranch>
+                ))}
+              </div>
             ) : (
               <div className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">
                 No local variables yet.
@@ -571,7 +765,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       >
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="variable-name">Variable Name</Label>
+            <Label htmlFor="variable-name">Name</Label>
             <Input
               id="variable-name"
               value={name}
@@ -589,50 +783,60 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             />
           </div>
 
-          <VariableOptionRow label="Scope" helpText={VARIABLE_FIELD_HELP.scope}>
-            <SegmentedControl
-              ariaLabel="Variable scope"
-              className="w-[240px]"
-              layout="fill"
-              options={VARIABLE_SCOPE_OPTIONS.map((option) => ({
-                ...option,
-                disabled: option.value === 'local' && !localSelectionTarget,
-              }))}
-              value={scope}
-              onValueChange={(nextValue) => {
-                setScope(nextValue as AddVariableScope);
-                setError(null);
-              }}
-            />
-          </VariableOptionRow>
+          <div className="w-full overflow-visible rounded-lg border border-border/70 bg-muted/20">
+            <VariableOptionRow label="Type" helpText={VARIABLE_FIELD_HELP.type}>
+              <SegmentedControl
+                ariaLabel="Variable type"
+                className="min-w-0 flex-1"
+                layout="fill"
+                options={VARIABLE_TYPES}
+                value={type}
+                onValueChange={(nextValue) => {
+                  setType(nextValue as VariableType);
+                  setError(null);
+                }}
+              />
+            </VariableOptionRow>
 
-          <VariableOptionRow label="Type" helpText={VARIABLE_FIELD_HELP.type}>
-            <SegmentedControl
-              ariaLabel="Variable type"
-              className="w-[280px]"
-              layout="fill"
-              options={VARIABLE_TYPES}
-              value={type}
-              onValueChange={(nextValue) => {
-                setType(nextValue as VariableType);
-                setError(null);
-              }}
-            />
-          </VariableOptionRow>
+            <VariableOptionRow
+              label="Scope"
+              helpText={VARIABLE_FIELD_HELP.scope}
+              className="border-t border-border/70"
+            >
+              <SegmentedControl
+                ariaLabel="Variable scope"
+                className="min-w-0 flex-1"
+                layout="fill"
+                options={VARIABLE_SCOPE_OPTIONS.map((option) => ({
+                  ...option,
+                  disabled: option.value === 'local' && !localSelectionTarget,
+                }))}
+                value={scope}
+                onValueChange={(nextValue) => {
+                  setScope(nextValue as AddVariableScope);
+                  setError(null);
+                }}
+              />
+            </VariableOptionRow>
 
-          <VariableOptionRow label="Values" helpText={VARIABLE_FIELD_HELP.values}>
-            <SegmentedControl
-              ariaLabel="Variable values"
-              className="w-[240px]"
-              layout="fill"
-              options={VARIABLE_CARDINALITIES}
-              value={cardinality}
-              onValueChange={(nextValue) => {
-                setCardinality(nextValue as VariableCardinality);
-                setError(null);
-              }}
-            />
-          </VariableOptionRow>
+            <VariableOptionRow
+              label="Structure"
+              helpText={VARIABLE_FIELD_HELP.values}
+              className="border-t border-border/70"
+            >
+              <SegmentedControl
+                ariaLabel="Variable values"
+                className="min-w-0 flex-1"
+                layout="fill"
+                options={VARIABLE_CARDINALITIES}
+                value={cardinality}
+                onValueChange={(nextValue) => {
+                  setCardinality(nextValue as VariableCardinality);
+                  setError(null);
+                }}
+              />
+            </VariableOptionRow>
+          </div>
 
           {error ? <p className="text-xs text-red-500">{error}</p> : null}
         </div>

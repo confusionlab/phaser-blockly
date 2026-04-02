@@ -74,7 +74,7 @@ const InlineRenameField = React.forwardRef<HTMLInputElement, InlineRenameFieldPr
         <div
           aria-hidden="true"
           className={cn(
-            'pointer-events-none absolute inset-x-[-6px] inset-y-[-3px] rounded-md border bg-background/95 shadow-xs transition-[border-color,opacity]',
+            'pointer-events-none absolute inset-x-[-6px] inset-y-[-3px] rounded-md border bg-surface-floating shadow-xs transition-[border-color,opacity]',
             outlineClassName,
             editing
               ? (invalid ? 'border-destructive opacity-100' : 'border-border/80 opacity-100 group-focus-within/rename:border-ring')

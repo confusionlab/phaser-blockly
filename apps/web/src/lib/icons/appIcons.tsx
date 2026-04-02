@@ -182,11 +182,11 @@ const APP_ICONS = {
     source: {
       kind: 'markup',
       markup: `
-        <line x1="4" x2="16" y1="9" y2="9" />
-        <line x1="4" x2="16" y1="15" y2="15" />
-        <line x1="10" x2="8" y1="3" y2="21" />
-        <line x1="16" x2="14" y1="3" y2="21" />
-        <circle cx="20" cy="18" r="1.6" fill="currentColor" stroke="none" />
+        <line x1="5.25" x2="15.25" y1="8.5" y2="8.5" />
+        <line x1="4.75" x2="14.75" y1="14.5" y2="14.5" />
+        <line x1="9.75" x2="8" y1="4.25" y2="19.75" />
+        <line x1="15.75" x2="14" y1="4.25" y2="19.75" />
+        <circle cx="19.25" cy="18" r="1.35" fill="currentColor" stroke="none" />
       `,
     },
   }),

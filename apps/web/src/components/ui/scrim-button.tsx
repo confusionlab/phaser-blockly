@@ -15,7 +15,7 @@ export const ScrimButton = React.forwardRef<HTMLButtonElement, ScrimButtonProps>
   return (
     <button
       ref={ref}
-      className={cn("absolute inset-0 bg-slate-950/20 backdrop-blur-[3px]", className)}
+      className={cn("absolute inset-0 bg-surface-scrim backdrop-blur-[3px]", className)}
       data-slot="scrim-button"
       type={type}
       {...props}
