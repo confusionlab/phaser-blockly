@@ -72,6 +72,9 @@ const ADVANCED_BLOCK_TYPES = new Set<string>([
 ]);
 const BLOCKLY_INLINE_ICON_DEFAULT_SIZE = 16;
 const BLOCKLY_INLINE_ICON_DEFAULT_TEXT = '#ffffff';
+const FLYOUT_SUBSECTION_HEADING_GAP = '20';
+const FLYOUT_SUBSECTION_HEADING_BOTTOM_GAP = '12';
+const FLYOUT_GROUP_BREAK_GAP = '56';
 
 let editMessagesToolbarCallback: (() => void) | null = null;
 
@@ -132,6 +135,16 @@ export type ToolboxConfig = {
 export type ToolboxConfigOptions = {
   includeAdvancedBlocks?: boolean;
 };
+
+function withFlyoutHeadingBottomGap(
+  contents: ToolboxContentItem[],
+): ToolboxContentItem[] {
+  return contents.flatMap<ToolboxContentItem>((item): ToolboxContentItem[] =>
+    item.kind === 'label'
+      ? [item, { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_BOTTOM_GAP }]
+      : [item],
+  );
+}
 
 // Custom FieldDropdown that preserves unknown values (for object IDs that may not be loaded yet)
 class PreservingFieldDropdown extends Blockly.FieldDropdown {
@@ -853,7 +866,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         kind: 'category',
         name: 'Events',
         colour: BLOCK_COLOURS.events,
-        contents: [
+        contents: withFlyoutHeadingBottomGap([
           { kind: 'block', type: 'event_game_start' },
           { kind: 'block', type: 'event_key_pressed' },
           { kind: 'block', type: 'event_world_clicked' },
@@ -876,7 +889,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             },
           },
-          { kind: 'sep', gap: '28' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'label', text: 'Messages' },
           {
             kind: 'button',
@@ -884,11 +897,11 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             callbackKey: 'EDIT_MESSAGES',
             'web-class': 'pochaBlocklyRoomyEditButton',
           },
-          { kind: 'sep', gap: '28' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'block', type: 'event_when_receive' },
           { kind: 'block', type: 'control_broadcast' },
           { kind: 'block', type: 'control_broadcast_wait' },
-        ],
+        ]),
       },
       {
         kind: 'category',
@@ -915,6 +928,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           { kind: 'block', type: 'control_for_each' },
           { kind: 'block', type: 'control_current_item' },
           { kind: 'block', type: 'control_wait_until' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'controls_if' },
           {
             kind: 'block',
@@ -922,7 +936,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             extraState: { hasElse: true },
           },
           { kind: 'block', type: 'control_random_choice' },
-          { kind: 'block', type: 'control_stop' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'control_switch_scene' },
           {
             kind: 'block',
@@ -941,6 +955,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             },
           },
+          { kind: 'block', type: 'control_stop' },
         ],
       },
       {
@@ -950,8 +965,10 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         contents: [
           { kind: 'block', type: 'event_any_inventory_item_dropped' },
           { kind: 'block', type: 'event_inventory_item_dropped' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'inventory_show' },
           { kind: 'block', type: 'inventory_hide' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'inventory_move_to_inventory' },
           { kind: 'block', type: 'inventory_use_dropped_item' },
         ],
@@ -1003,8 +1020,10 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               SPEED: { shadow: { type: 'math_number', fields: { NUM: '200' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'motion_limit_world_boundary_on' },
           { kind: 'block', type: 'motion_limit_world_boundary_off' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'motion_change_x',
@@ -1038,6 +1057,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               VALUE: { shadow: { type: 'math_number', fields: { NUM: '0' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'motion_point_direction',
@@ -1062,7 +1082,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          { kind: 'sep', gap: '28' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'motion_my_x' },
           { kind: 'block', type: 'motion_my_y' },
           { kind: 'block', type: 'motion_is_moving' },
@@ -1084,7 +1104,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             },
           },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'motion_attach_to_block',
@@ -1113,6 +1133,9 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         contents: [
           { kind: 'block', type: 'looks_show' },
           { kind: 'block', type: 'looks_hide' },
+          { kind: 'block', type: 'looks_go_to_front' },
+          { kind: 'block', type: 'looks_go_to_back' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'looks_speak',
@@ -1128,6 +1151,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             }
           },
           { kind: 'block', type: 'looks_stop_speaking' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'looks_target_speak',
@@ -1157,8 +1181,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             }
           },
-          { kind: 'block', type: 'looks_go_to_front' },
-          { kind: 'block', type: 'looks_go_to_back' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'looks_set_size',
@@ -1188,6 +1211,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               OPACITY: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'looks_previous_costume' },
           { kind: 'block', type: 'looks_next_costume' },
           {
@@ -1217,6 +1241,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           { kind: 'block', type: 'physics_enable' },
           { kind: 'block', type: 'physics_disable' },
           { kind: 'block', type: 'physics_enabled' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'physics_set_velocity',
@@ -1239,6 +1264,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               VY: { shadow: { type: 'math_number', fields: { NUM: '8' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'physics_set_gravity',
@@ -1260,6 +1286,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               FRICTION: { shadow: { type: 'math_number', fields: { NUM: '0.1' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'physics_make_dynamic' },
           { kind: 'block', type: 'physics_make_static' },
         ],
@@ -1288,6 +1315,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             },
           },
           { kind: 'block', type: 'camera_stop_follow' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'camera_go_to',
@@ -1305,6 +1333,14 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           },
           {
             kind: 'block',
+            type: 'camera_set_follow_range',
+            inputs: {
+              WIDTH: { shadow: { type: 'math_number', fields: { NUM: '100' } } },
+              HEIGHT: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
+            }
+          },
+          {
+            kind: 'block',
             type: 'camera_zoom',
             inputs: {
               ZOOM: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
@@ -1317,14 +1353,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               DURATION: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          {
-            kind: 'block',
-            type: 'camera_set_follow_range',
-            inputs: {
-              WIDTH: { shadow: { type: 'math_number', fields: { NUM: '100' } } },
-              HEIGHT: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
-            }
-          },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'camera_set_follow_offset',
@@ -1346,13 +1375,14 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         kind: 'category',
         name: 'Sensing',
         colour: BLOCK_COLOURS.sensing,
-        contents: [
+        contents: withFlyoutHeadingBottomGap([
           { kind: 'block', type: 'sensing_key_pressed' },
           { kind: 'block', type: 'sensing_mouse_down' },
           { kind: 'block', type: 'sensing_mouse_x' },
           { kind: 'block', type: 'sensing_mouse_y' },
           { kind: 'block', type: 'sensing_timer' },
           { kind: 'block', type: 'sensing_reset_timer' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'sensing_touching_value',
@@ -1373,6 +1403,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           },
           { kind: 'block', type: 'sensing_touching_object' },
           { kind: 'block', type: 'sensing_all_touching_objects' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'sensing_my_type' },
           {
             kind: 'block',
@@ -1384,6 +1415,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
             },
           },
           { kind: 'block', type: 'sensing_type_literal' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'sensing_distance_to_value',
@@ -1393,14 +1425,14 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               },
             },
           },
-          { kind: 'sep', gap: '28' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'label', text: 'Targets' },
           { kind: 'block', type: 'object_from_dropdown' },
           { kind: 'block', type: 'target_camera' },
           { kind: 'block', type: 'target_myself' },
           { kind: 'block', type: 'target_mouse' },
           { kind: 'block', type: 'target_ground' },
-        ],
+        ]),
       },
       {
         kind: 'category',
@@ -1410,6 +1442,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           { kind: 'block', type: 'sound_play' },
           { kind: 'block', type: 'sound_play_until_done' },
           { kind: 'block', type: 'sound_stop_all' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'sound_set_volume',
@@ -1430,17 +1463,17 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         kind: 'category',
         name: 'Variables',
         colour: BLOCK_COLOURS.variables,
-        contents: [
+        contents: withFlyoutHeadingBottomGap([
           {
             kind: 'button',
             text: 'Edit Variables',
             callbackKey: 'EDIT_VARIABLES',
             'web-class': 'pochaBlocklyRoomyEditButton',
           },
-          { kind: 'sep', gap: '28' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'label', text: 'Get Variable' },
           { kind: 'block', type: 'typed_variable_get' },
-          { kind: 'sep', gap: '28' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'label', text: 'Set Variable' },
           { kind: 'block', type: 'typed_variable_set' },
           {
@@ -1450,7 +1483,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          { kind: 'sep', gap: '28' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'label', text: 'Arrays' },
           { kind: 'block', type: 'typed_array_length' },
           {
@@ -1485,7 +1518,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           },
           { kind: 'block', type: 'typed_array_clear' },
           { kind: 'block', type: 'array_empty' },
-        ],
+        ]),
       },
       {
         kind: 'category',
@@ -1508,6 +1541,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               TO: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'logic_compare',
@@ -1519,6 +1553,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
           { kind: 'block', type: 'logic_operation' },
           { kind: 'block', type: 'logic_negate' },
           { kind: 'block', type: 'logic_boolean' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'operator_join',
@@ -1550,6 +1585,7 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
               STRING2: { shadow: { type: 'text', fields: { TEXT: 'a' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'operator_mod',

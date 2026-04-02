@@ -499,13 +499,16 @@ function applyObjectUpdatesToProject(
       }
     }
 
-    if (Object.keys(syncedUpdates).length > 0) {
+      if (Object.keys(syncedUpdates).length > 0) {
+      const previousEffectiveLocalVariables = syncedUpdates.localVariables !== undefined
+        ? getEffectiveComponentLocalVariables(project, componentId, objectId)
+        : null;
       const nextComponent = normalizePhysicsCollider({
         ...component,
         ...syncedUpdates,
       });
       if (syncedUpdates.localVariables !== undefined) {
-        const removedVariableIds = getRemovedVariableIds(component.localVariables || [], nextComponent.localVariables || []);
+        const removedVariableIds = getRemovedVariableIds(previousEffectiveLocalVariables || [], nextComponent.localVariables || []);
         if (removedVariableIds.length > 0) {
           const nextProjectForValidation: Project = {
             ...project,
@@ -2245,12 +2248,15 @@ function createProjectStore(): ProjectStoreHook {
         }
       }
       const hasSyncedUpdates = Object.keys(syncedInstanceUpdates).length > 0;
+      const previousEffectiveLocalVariables = normalizedUpdates.localVariables !== undefined
+        ? getEffectiveComponentLocalVariables(state.project, componentId)
+        : null;
       const nextComponent = normalizePhysicsCollider({
         ...currentComponent,
         ...normalizedUpdates,
       });
       if (normalizedUpdates.localVariables !== undefined) {
-        const removedVariableIds = getRemovedVariableIds(currentComponent.localVariables || [], nextComponent.localVariables || []);
+        const removedVariableIds = getRemovedVariableIds(previousEffectiveLocalVariables || [], nextComponent.localVariables || []);
         if (removedVariableIds.length > 0) {
           const nextProjectForValidation: Project = {
             ...state.project,

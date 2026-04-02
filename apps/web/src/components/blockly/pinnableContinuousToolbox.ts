@@ -12,6 +12,8 @@ const PINNABLE_FLYOUT_REGISTRATION = 'PochaContinuousFlyout';
 const PINNABLE_METRICS_REGISTRATION = 'PochaContinuousMetrics';
 const PINNABLE_TOOLBOX_REGISTRATION = 'PochaContinuousToolbox';
 const FLYOUT_ITEM_GAP_Y = 12;
+const FLYOUT_CATEGORY_BREAK_GAP = 40;
+const FLYOUT_CATEGORY_LABEL_BOTTOM_GAP = 16;
 
 export const PINNED_TOOLBOX_FLYOUT_WIDTH = 250;
 export const UNPINNED_TOOLBOX_FLYOUT_WIDTH = 350;
@@ -280,9 +282,40 @@ export class PinnableContinuousToolbox extends ContinuousToolbox {
   }
 
   private getInitialFlyoutContents_(): Blockly.utils.toolbox.FlyoutItemInfoArray {
-    return this.getToolboxItems().flatMap((toolboxItem) =>
-      this.convertToolboxItemToFlyoutItems(toolboxItem),
-    );
+    return this.getToolboxItems().flatMap((toolboxItem, index) => {
+      const items = this.convertToolboxItemToFlyoutItems(toolboxItem);
+      if (!(toolboxItem instanceof Blockly.ToolboxCategory)) {
+        return items;
+      }
+
+      const [categoryLabel, ...categoryContents] = items;
+      const itemsWithHeadingBottomGap = categoryLabel
+        ? [
+            categoryLabel,
+            {
+              kind: 'sep',
+              gap: FLYOUT_CATEGORY_LABEL_BOTTOM_GAP,
+              id: undefined,
+              cssconfig: undefined,
+            },
+            ...categoryContents,
+          ]
+        : items;
+
+      if (index === 0) {
+        return itemsWithHeadingBottomGap;
+      }
+
+      return [
+        {
+          kind: 'sep',
+          gap: FLYOUT_CATEGORY_BREAK_GAP,
+          id: undefined,
+          cssconfig: undefined,
+        },
+        ...itemsWithHeadingBottomGap,
+      ];
+    });
   }
 }
 

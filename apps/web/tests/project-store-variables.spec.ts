@@ -353,6 +353,82 @@ test.describe('Project store variables', () => {
     expect(updatedObject?.localVariables).toHaveLength(0);
   });
 
+  test('blocks removing legacy component-instance local variables through generic updates', async () => {
+    const { useProjectStore } = await loadStores();
+    const project = createDefaultProject('Legacy Component Variable Guard');
+
+    useProjectStore.getState().openProject(project);
+
+    const component = useProjectStore.getState().addComponent('Enemy');
+    expect(component).toBeTruthy();
+    if (!component) return;
+
+    const sceneId = useProjectStore.getState().project?.scenes[0]?.id;
+    expect(sceneId).toBeTruthy();
+    if (!sceneId) return;
+
+    const instance = useProjectStore.getState().addComponentInstance(sceneId, component.id);
+    expect(instance).toBeTruthy();
+    if (!instance) return;
+
+    const variableId = crypto.randomUUID();
+    useProjectStore.setState((state) => ({
+      ...state,
+      project: state.project
+        ? {
+            ...state.project,
+            scenes: state.project.scenes.map((scene) =>
+              scene.id === sceneId
+                ? {
+                    ...scene,
+                    objects: scene.objects.map((object) =>
+                      object.id === instance.id
+                        ? {
+                            ...object,
+                            localVariables: [{
+                              id: variableId,
+                              name: 'health',
+                              type: 'number',
+                              defaultValue: 10,
+                              scope: 'local',
+                              objectId: instance.id,
+                            }],
+                          }
+                        : object
+                    ),
+                  }
+                : scene
+            ),
+          }
+        : null,
+    }));
+
+    useProjectStore.getState().updateComponent(component.id, {
+      blocklyXml: `<xml xmlns="https://developers.google.com/blockly/xml"><block type="typed_variable_get" id="block-1"><field name="VAR">${variableId}</field></block></xml>`,
+    });
+
+    useProjectStore.getState().updateComponent(component.id, {
+      localVariables: [],
+    });
+    const blockedComponent = useProjectStore.getState().project?.components.find((entry) => entry.id === component.id);
+    expect(blockedComponent?.localVariables).toHaveLength(0);
+    const blockedInstance = useProjectStore.getState().project?.scenes[0]?.objects.find((entry) => entry.id === instance.id);
+    expect(blockedInstance?.localVariables).toHaveLength(1);
+
+    useProjectStore.getState().updateObject(sceneId, instance.id, {
+      localVariables: [],
+    });
+    const stillBlockedInstance = useProjectStore.getState().project?.scenes[0]?.objects.find((entry) => entry.id === instance.id);
+    expect(stillBlockedInstance?.localVariables).toHaveLength(1);
+
+    useProjectStore.getState().updateComponent(component.id, {
+      blocklyXml: '<xml xmlns="https://developers.google.com/blockly/xml"></xml>',
+      localVariables: [],
+    });
+    const cleanedInstance = useProjectStore.getState().project?.scenes[0]?.objects.find((entry) => entry.id === instance.id);
+    expect(cleanedInstance?.localVariables).toHaveLength(0);
+  });
+
   test('finds references in components without duplicating them per instance', async () => {
     const project = createDefaultProject('Reference Impact Grouping');
     const variableId = crypto.randomUUID();
