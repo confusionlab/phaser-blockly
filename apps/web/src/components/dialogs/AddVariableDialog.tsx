@@ -9,6 +9,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { normalizeVariableName } from '@/lib/variableUtils';
 import { useEditorStore } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import type { Variable, VariableType } from '@/types';
@@ -46,11 +47,11 @@ export function AddVariableDialog({ open, onOpenChange, onAdd, objectName }: Add
 
   const hasDuplicateName = (candidateName: string): boolean => {
     if (!project) return false;
-    const normalizedCandidate = candidateName.toLowerCase();
+    const normalizedCandidate = normalizeVariableName(candidateName).toLowerCase();
 
     if (scope === 'global') {
       return (project.globalVariables || []).some(
-        (variable) => variable.name.trim().toLowerCase() === normalizedCandidate,
+        (variable) => normalizeVariableName(variable.name).toLowerCase() === normalizedCandidate,
       );
     }
 
@@ -65,13 +66,15 @@ export function AddVariableDialog({ open, onOpenChange, onAdd, objectName }: Add
       const localVariables = componentLocalVariables.length > 0
         ? componentLocalVariables
         : (object.localVariables || []);
-      return localVariables.some((variable) => variable.name.trim().toLowerCase() === normalizedCandidate);
+      return localVariables.some(
+        (variable) => normalizeVariableName(variable.name).toLowerCase() === normalizedCandidate,
+      );
     }
 
     if (selectedComponentId) {
       const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
       return (component?.localVariables || []).some(
-        (variable) => variable.name.trim().toLowerCase() === normalizedCandidate,
+        (variable) => normalizeVariableName(variable.name).toLowerCase() === normalizedCandidate,
       );
     }
 
@@ -79,15 +82,9 @@ export function AddVariableDialog({ open, onOpenChange, onAdd, objectName }: Add
   };
 
   const handleAdd = () => {
-    const trimmedName = name.trim();
+    const trimmedName = normalizeVariableName(name);
     if (!trimmedName) {
       setError('Please enter a variable name');
-      return;
-    }
-
-    // Check for invalid characters (only allow letters, numbers, underscore)
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedName)) {
-      setError('Variable name must start with a letter or underscore, and contain only letters, numbers, and underscores');
       return;
     }
 
@@ -140,7 +137,7 @@ export function AddVariableDialog({ open, onOpenChange, onAdd, objectName }: Add
                 setName(e.target.value);
                 setError(null);
               }}
-              placeholder="myVariable"
+              placeholder="Player score"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleAdd();
@@ -179,12 +176,12 @@ export function AddVariableDialog({ open, onOpenChange, onAdd, objectName }: Add
           {/* Type Selection */}
           <div className="space-y-2">
             <Label>Type</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-2">
               {VARIABLE_TYPES.map((t) => (
                 <Button
                   key={t.value}
                   variant={type === t.value ? 'default' : 'outline'}
-                  className="h-auto py-2 flex flex-col items-start"
+                  className="h-auto w-full py-2 flex flex-col items-start"
                   onClick={() => setType(t.value)}
                 >
                   <span className="font-medium">{t.label}</span>

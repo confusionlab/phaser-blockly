@@ -8,6 +8,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { AppIcon, type AppIconName, Check, Pencil, Trash2, X } from '@/components/ui/icons';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { normalizeVariableName } from '@/lib/variableUtils';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import type { Variable, VariableType } from '@/types';
@@ -74,20 +75,20 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
     : (currentObject?.localVariables || []);
 
   const hasDuplicateGlobalName = (candidateName: string, excludeId?: string): boolean => {
-    const normalized = candidateName.trim().toLowerCase();
+    const normalized = normalizeVariableName(candidateName).toLowerCase();
     if (!normalized) return false;
     return globalVariables.some((variable) => {
       if (excludeId && variable.id === excludeId) return false;
-      return variable.name.trim().toLowerCase() === normalized;
+      return normalizeVariableName(variable.name).toLowerCase() === normalized;
     });
   };
 
   const hasDuplicateLocalName = (candidateName: string, excludeId?: string): boolean => {
-    const normalized = candidateName.trim().toLowerCase();
+    const normalized = normalizeVariableName(candidateName).toLowerCase();
     if (!normalized) return false;
     return localVariables.some((variable) => {
       if (excludeId && variable.id === excludeId) return false;
-      return variable.name.trim().toLowerCase() === normalized;
+      return normalizeVariableName(variable.name).toLowerCase() === normalized;
     });
   };
 
@@ -146,26 +147,33 @@ export function VariableManagerDialog({ open, onOpenChange, onAddNew }: Variable
   };
 
   const saveRenameGlobal = (varId: string) => {
-    const trimmed = editName.trim();
-    if (trimmed && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
-      if (hasDuplicateGlobalName(trimmed, varId)) {
-        void showAlert({
-          title: 'Duplicate Variable Name',
-          description: 'A global variable with this name already exists.',
-        });
-        return;
-      }
-      updateGlobalVariable(varId, { name: trimmed });
+    const trimmed = normalizeVariableName(editName);
+    if (!trimmed) {
+      void showAlert({
+        title: 'Missing Variable Name',
+        description: 'Please enter a variable name.',
+      });
+      return;
     }
+    if (hasDuplicateGlobalName(trimmed, varId)) {
+      void showAlert({
+        title: 'Duplicate Variable Name',
+        description: 'A global variable with this name already exists.',
+      });
+      return;
+    }
+    updateGlobalVariable(varId, { name: trimmed });
     setEditingId(null);
     setEditName('');
   };
 
   const saveRenameLocal = (varId: string) => {
-    const trimmed = editName.trim();
-    if (!trimmed || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) {
-      setEditingId(null);
-      setEditName('');
+    const trimmed = normalizeVariableName(editName);
+    if (!trimmed) {
+      void showAlert({
+        title: 'Missing Variable Name',
+        description: 'Please enter a variable name.',
+      });
       return;
     }
 

@@ -36,6 +36,7 @@ import {
 import {
   hasVariableNameConflict,
   isValidVariableName,
+  normalizeVariableName,
   normalizeVariableDefinition,
   normalizeVariableDefinitions,
   remapVariableIdsInBlocklyXml,
@@ -1525,8 +1526,9 @@ function createProjectStore(): ProjectStoreHook {
     set(state => {
       if (!state.project) return state;
 
-      const nextVariable = normalizeVariableDefinition(variable, { scope: 'global' });
-      if (!isValidVariableName(nextVariable.name)) return state;
+      const nextName = normalizeVariableName(variable.name);
+      if (!isValidVariableName(nextName)) return state;
+      const nextVariable = normalizeVariableDefinition({ ...variable, name: nextName }, { scope: 'global' });
       if (state.project.globalVariables.some((existing) => existing.id === nextVariable.id)) return state;
       if (hasVariableNameConflict(state.project.globalVariables, nextVariable.name)) return state;
 
@@ -1563,11 +1565,12 @@ function createProjectStore(): ProjectStoreHook {
       const current = state.project.globalVariables.find((variable) => variable.id === variableId);
       if (!current) return state;
 
+      const nextName = normalizeVariableName(updates.name ?? current.name);
+      if (!isValidVariableName(nextName)) return state;
       const nextVariable = normalizeVariableDefinition(
-        { ...current, ...updates, id: current.id },
+        { ...current, ...updates, id: current.id, name: nextName },
         { scope: 'global' },
       );
-      if (!isValidVariableName(nextVariable.name)) return state;
       if (hasVariableNameConflict(state.project.globalVariables, nextVariable.name, variableId)) return state;
 
       return {
@@ -1599,8 +1602,12 @@ function createProjectStore(): ProjectStoreHook {
         if (!component) return state;
 
         const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
-        const normalizedVariable = normalizeVariableDefinition(variable, { scope: 'local' });
-        if (!isValidVariableName(normalizedVariable.name)) return state;
+        const nextName = normalizeVariableName(variable.name);
+        if (!isValidVariableName(nextName)) return state;
+        const normalizedVariable = normalizeVariableDefinition(
+          { ...variable, name: nextName },
+          { scope: 'local' },
+        );
         if (currentLocalVariables.some((existing) => existing.id === normalizedVariable.id)) {
           return state;
         }
@@ -1632,8 +1639,12 @@ function createProjectStore(): ProjectStoreHook {
       }
 
       const currentLocalVariables = targetObject.localVariables || [];
-      const normalizedVariable = normalizeVariableDefinition(variable, { scope: 'local', objectId });
-      if (!isValidVariableName(normalizedVariable.name)) return state;
+      const nextName = normalizeVariableName(variable.name);
+      if (!isValidVariableName(nextName)) return state;
+      const normalizedVariable = normalizeVariableDefinition(
+        { ...variable, name: nextName },
+        { scope: 'local', objectId },
+      );
       if (currentLocalVariables.some((existing) => existing.id === normalizedVariable.id)) return state;
       if (hasVariableNameConflict(currentLocalVariables, normalizedVariable.name)) return state;
 
@@ -1742,11 +1753,12 @@ function createProjectStore(): ProjectStoreHook {
         if (!currentVariable) {
           return state;
         }
+        const nextName = normalizeVariableName(updates.name ?? currentVariable.name);
+        if (!isValidVariableName(nextName)) return state;
         const nextVariable = normalizeVariableDefinition(
-          { ...currentVariable, ...updates, id: currentVariable.id },
+          { ...currentVariable, ...updates, id: currentVariable.id, name: nextName },
           { scope: 'local' },
         );
-        if (!isValidVariableName(nextVariable.name)) return state;
         if (hasVariableNameConflict(currentLocalVariables, nextVariable.name, variableId)) return state;
         const nextLocalVariables: Variable[] = currentLocalVariables.map((existing) =>
           existing.id === variableId ? nextVariable : existing
@@ -1777,11 +1789,12 @@ function createProjectStore(): ProjectStoreHook {
       const currentLocalVariables = targetObject.localVariables || [];
       const currentVariable = currentLocalVariables.find((existing) => existing.id === variableId);
       if (!currentVariable) return state;
+      const nextName = normalizeVariableName(updates.name ?? currentVariable.name);
+      if (!isValidVariableName(nextName)) return state;
       const nextVariable = normalizeVariableDefinition(
-        { ...currentVariable, ...updates, id: currentVariable.id },
+        { ...currentVariable, ...updates, id: currentVariable.id, name: nextName },
         { scope: 'local', objectId },
       );
-      if (!isValidVariableName(nextVariable.name)) return state;
       if (hasVariableNameConflict(currentLocalVariables, nextVariable.name, variableId)) return state;
 
       return {

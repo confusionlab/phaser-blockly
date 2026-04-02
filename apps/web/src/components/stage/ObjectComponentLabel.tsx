@@ -30,7 +30,11 @@ export function ObjectComponentLabel({
       >
         {name}
       </span>
-      {isComponent ? <Component className={cn('size-3 shrink-0 opacity-60', labelClassName)} /> : null}
+      {isComponent ? (
+        <span className="flex shrink-0 items-center pr-1">
+          <Component className={cn('size-3 shrink-0 opacity-60', labelClassName)} />
+        </span>
+      ) : null}
     </div>
   );
 }

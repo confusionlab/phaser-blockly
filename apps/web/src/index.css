@@ -127,6 +127,12 @@ body {
   background-color: var(--blockly-toolbox-hover-bg) !important;
 }
 
+.pochaBlocklyCategoryButton:focus,
+.pochaBlocklyCategoryButton:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 .pochaBlocklyCategoryButton[data-selected='true'],
 .pochaBlocklyCategoryButtonSelected {
   background-color: var(--blockly-toolbox-active-bg) !important;
@@ -172,7 +178,7 @@ body {
 .pochaBlocklyCategoryLabel {
   max-width: 48px;
   color: var(--blockly-toolbox-fg) !important;
-  font-size: 9px !important;
+  font-size: 10px !important;
   font-weight: 600;
   line-height: 1;
   text-align: center !important;

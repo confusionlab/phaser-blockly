@@ -1,8 +1,6 @@
 import type { ComponentDefinition, GameObject, Variable, VariableType } from '@/types';
 import { VARIABLE_REFERENCE_BLOCKS } from '@/lib/blocklyReferenceMaps';
 
-export const VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
 export interface VariableDefinitionSnapshot {
   id: string;
   name: string;
@@ -46,7 +44,7 @@ export function normalizeVariableName(name: unknown): string {
 }
 
 export function isValidVariableName(name: string): boolean {
-  return VARIABLE_NAME_PATTERN.test(name);
+  return normalizeVariableName(name).length > 0;
 }
 
 export function normalizeVariableType(type: unknown): VariableType {

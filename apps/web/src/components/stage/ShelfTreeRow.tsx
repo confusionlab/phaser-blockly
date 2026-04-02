@@ -138,7 +138,7 @@ export function ShelfTreeRow({
               {leadingIcon}
             </div>
 
-            <div className={`ml-1.5 flex flex-1 min-w-0 max-w-full items-center pr-[3px] ${isEditing ? 'overflow-visible' : 'overflow-hidden'}`}>
+            <div className={`ml-1.5 flex flex-1 min-w-0 max-w-full items-center pr-1 ${isEditing ? 'overflow-visible' : 'overflow-hidden'}`}>
               {content}
             </div>
 

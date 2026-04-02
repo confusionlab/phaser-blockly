@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { RuntimeSprite } from './RuntimeSprite';
 import { applyCustomGravityForce } from './gravity';
+import { coerceDefaultValue, normalizeVariableType } from '@/lib/variableUtils';
 import { normalizeConfiguredKey, normalizeKeyboardCode } from '@/utils/keyboard';
 import { clampPointToPolygon, getPolygonSegments, hasUsableWorldBoundary } from '@/lib/worldBoundary';
 import type { CostumeAssetFrame, CostumeBounds, WorldPoint } from '@/types';
@@ -2015,6 +2016,32 @@ export class RuntimeEngine {
   // Variable definition lookup - injected by PhaserCanvas
   private _variableLookup: ((varId: string) => { name: string; type: string; scope: string; defaultValue: unknown } | undefined) | null = null;
 
+  private coerceTypedVariableValue(
+    varDef: { type: string; defaultValue: unknown },
+    value: unknown,
+  ): number | string | boolean {
+    return coerceDefaultValue(normalizeVariableType(varDef.type), value);
+  }
+
+  private getTypedVariableDefaultValue(varDef: { type: string; defaultValue: unknown }): number | string | boolean {
+    return this.coerceTypedVariableValue(varDef, varDef.defaultValue);
+  }
+
+  private readTypedVariableValue(
+    store: Map<string, number | string | boolean>,
+    varId: string,
+    varDef: { type: string; defaultValue: unknown },
+  ): number | string | boolean {
+    const storedValue = store.get(varId);
+    const normalizedValue = this.coerceTypedVariableValue(varDef, storedValue);
+
+    if (!Object.is(storedValue, normalizedValue)) {
+      store.set(varId, normalizedValue);
+    }
+
+    return normalizedValue;
+  }
+
   setVariableLookup(lookup: ((varId: string) => { name: string; type: string; scope: string; defaultValue: unknown } | undefined) | null) {
     this._variableLookup = lookup;
   }
@@ -2029,16 +2056,16 @@ export class RuntimeEngine {
     // For local variables, check sprite's local store first
     if (varDef.scope === 'local' && spriteId) {
       const localVars = this.localVariables.get(spriteId);
-      if (localVars?.has(varId)) return localVars.get(varId)!;
+      if (localVars?.has(varId)) return this.readTypedVariableValue(localVars, varId, varDef);
       // Return default value if not set
-      return varDef.defaultValue as number | string | boolean;
+      return this.getTypedVariableDefaultValue(varDef);
     }
 
     // Global variable
     if (this.globalVariables.has(varId)) {
-      return this.globalVariables.get(varId)!;
+      return this.readTypedVariableValue(this.globalVariables, varId, varDef);
     }
-    return varDef.defaultValue as number | string | boolean;
+    return this.getTypedVariableDefaultValue(varDef);
   }
 
   setTypedVariable(varId: string, value: number | string | boolean, spriteId?: string): void {
@@ -2048,22 +2075,7 @@ export class RuntimeEngine {
       return;
     }
 
-    // Type coercion based on variable type
-    let coercedValue: number | string | boolean = value;
-    switch (varDef.type) {
-      case 'integer':
-        coercedValue = Math.floor(Number(value)) || 0;
-        break;
-      case 'float':
-        coercedValue = Number(value) || 0;
-        break;
-      case 'string':
-        coercedValue = String(value);
-        break;
-      case 'boolean':
-        coercedValue = Boolean(value);
-        break;
-    }
+    const coercedValue = this.coerceTypedVariableValue(varDef, value);
 
     if (varDef.scope === 'local' && spriteId) {
       let localVars = this.localVariables.get(spriteId);
