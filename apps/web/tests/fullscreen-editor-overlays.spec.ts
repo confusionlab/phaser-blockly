@@ -86,47 +86,6 @@ async function expectLocatorToBeTopmost(locator: Locator): Promise<void> {
   )).toBe(true);
 }
 
-async function captureStageTransitionFrame(
-  page: Page,
-  buttonLabel: 'Fullscreen stage' | 'Exit fullscreen',
-): Promise<{
-  hostCenterX: number;
-  hostCenterY: number;
-  frozenCenterX: number;
-  frozenCenterY: number;
-}> {
-  await page.waitForFunction((label) => (
-    document.querySelector(`button[aria-label="${label}"]`) instanceof HTMLButtonElement
-  ), buttonLabel);
-
-  return page.evaluate((label) => {
-    const button = document.querySelector(`button[aria-label="${label}"]`);
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error(`Stage transition button not found: ${label}`);
-    }
-
-    button.click();
-
-    const host = document.querySelector('[data-testid="stage-phaser-host"]');
-    const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-    if (!(host instanceof HTMLElement)) {
-      throw new Error('Stage host is missing during fullscreen transition.');
-    }
-    if (!(frozen instanceof HTMLImageElement)) {
-      throw new Error('Frozen stage frame is missing during fullscreen transition.');
-    }
-
-    const hostRect = host.getBoundingClientRect();
-    const frozenRect = frozen.getBoundingClientRect();
-    return {
-      hostCenterX: hostRect.left + hostRect.width / 2,
-      hostCenterY: hostRect.top + hostRect.height / 2,
-      frozenCenterX: frozenRect.left + frozenRect.width / 2,
-      frozenCenterY: frozenRect.top + frozenRect.height / 2,
-    };
-  }, buttonLabel);
-}
-
 test.describe('Fullscreen editor overlays', () => {
   test('Object editor toolbar button enters fullscreen without the legacy shell header', async ({ page }) => {
     await bootstrapEditorProject(page, {
@@ -225,22 +184,18 @@ test.describe('Fullscreen editor overlays', () => {
       deviceScaleFactor: 2,
     });
 
-    test('Frozen stage frame stays centered when entering and exiting fullscreen', async ({ page }) => {
+    test('Stage fullscreen keeps the live canvas visible without a frozen frame overlay', async ({ page }) => {
       await bootstrapEditorProject(page, {
         projectName: `Stage Center Anchor ${Date.now()}`,
       });
 
-      const enterTransition = await captureStageTransitionFrame(page, 'Fullscreen stage');
-      expect(enterTransition.frozenCenterX).toBeCloseTo(enterTransition.hostCenterX, 0);
-      expect(enterTransition.frozenCenterY).toBeCloseTo(enterTransition.hostCenterY, 0);
-
+      await page.getByRole('button', { name: 'Fullscreen stage' }).click();
       await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible();
+      await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
 
-      const exitTransition = await captureStageTransitionFrame(page, 'Exit fullscreen');
-      expect(exitTransition.frozenCenterX).toBeCloseTo(exitTransition.hostCenterX, 0);
-      expect(exitTransition.frozenCenterY).toBeCloseTo(exitTransition.hostCenterY, 0);
-
+      await page.getByRole('button', { name: 'Exit fullscreen' }).click();
       await expect(page.getByRole('button', { name: 'Fullscreen stage' })).toBeVisible();
+      await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
     });
   });
 

@@ -7,7 +7,6 @@ import { useEditorStore, type HierarchyTab } from '@/store/editorStore';
 import { useProjectStore } from '@/store/projectStore';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { getSceneBackgroundBaseColor } from '@/lib/background/compositor';
-import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { Square, Camera, Maximize2, Minimize2, Play, RotateCcw, Earth, Shapes, Component } from '@/components/ui/icons';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
@@ -72,7 +71,6 @@ export function StagePanel({
   const [isPanelResizeDragging, setIsPanelResizeDragging] = useState(false);
 
   const toggleCanvasFullscreen = useCallback(() => {
-    freezeEditorResizeForLayoutTransition();
     onCanvasFullscreenChange(!isCanvasFullscreen);
   }, [isCanvasFullscreen, onCanvasFullscreenChange]);
 
