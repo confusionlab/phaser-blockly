@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AppIcon, type AppIconName } from '@/components/ui/icons';
@@ -52,9 +53,9 @@ type LocalVariableGroup = {
   entries: VariableEntry[];
 };
 
-const VARIABLE_SCOPE_OPTIONS: { value: AddVariableScope; label: string; description: string }[] = [
-  { value: 'global', label: 'Global', description: 'Available everywhere in the project.' },
-  { value: 'local', label: 'Local', description: 'Uses the currently selected object or reusable component.' },
+const VARIABLE_SCOPE_OPTIONS: { value: AddVariableScope; label: string }[] = [
+  { value: 'global', label: 'Global' },
+  { value: 'local', label: 'Local' },
 ];
 
 const VARIABLE_LIST_TABS: { value: VariableListTab; label: string }[] = [
@@ -62,15 +63,21 @@ const VARIABLE_LIST_TABS: { value: VariableListTab; label: string }[] = [
   { value: 'local', label: 'Local' },
 ];
 
-const VARIABLE_TYPES: { value: VariableType; label: string; description: string }[] = [
-  { value: 'string', label: 'Text', description: 'Letters and words' },
-  { value: 'number', label: 'Number', description: 'Whole numbers or decimals' },
-  { value: 'boolean', label: 'Boolean', description: 'True or False' },
+const VARIABLE_TYPES: { value: VariableType; label: string }[] = [
+  { value: 'string', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'boolean', label: 'Boolean' },
 ];
-const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string; description: string }[] = [
-  { value: 'single', label: 'Single', description: 'One value' },
-  { value: 'array', label: 'Multiple', description: 'An ordered list of values' },
+const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string }[] = [
+  { value: 'single', label: 'Single' },
+  { value: 'array', label: 'Multiple' },
 ];
+
+const VARIABLE_FIELD_HELP = {
+  scope: 'Global variables are available everywhere. Local variables belong to the current object or reusable component selection.',
+  type: 'Choose what kind of data the variable stores: text, number, or true/false.',
+  values: 'Single stores one value. Multiple stores a list of values in order.',
+} as const;
 
 function getTypeIconName(type: VariableType): AppIconName {
   switch (type) {
@@ -91,6 +98,35 @@ function getTypeLabel(type: VariableType): string {
 function getVariableKindLabel(variable: Variable): string {
   const cardinality = normalizeVariableCardinality(variable.cardinality);
   return cardinality === 'array' ? `${getTypeLabel(variable.type)} Array` : getTypeLabel(variable.type);
+}
+
+function VariableOptionRow({
+  label,
+  helpText,
+  children,
+}: {
+  label: string;
+  helpText: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
+      <Label className="text-sm font-medium text-foreground">{label}</Label>
+      <div className="flex items-center gap-2">
+        {children}
+        <IconButton
+          className="text-muted-foreground"
+          label={`${label} help`}
+          shape="pill"
+          size="xs"
+          title={helpText}
+          variant="ghost"
+        >
+          <span className="text-[11px] font-semibold">?</span>
+        </IconButton>
+      </div>
+    </div>
+  );
 }
 
 export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: EditVariablesDialogProps) {
@@ -465,18 +501,9 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
       <ProjectPropertyManagerDialog
         open={open}
         onOpenChange={onOpenChange}
-        title="Edit Variables"
-        description="Manage project-wide variables and instance-scoped locals in one place."
-        addButtonLabel="+ Add Variable"
-        closeAddButtonLabel="Close Add Dialog"
-        isAdding={isAdding}
-        onToggleAdd={() => {
-          if (isAdding) {
-            setIsAdding(false);
-            setError(null);
-            return;
-          }
-
+        title="Variables"
+        addButtonLabel="Add variable"
+        onAdd={() => {
           resetAddDialog(activeTab === 'local' && localSelectionTarget ? 'local' : 'global');
           setIsAdding(true);
         }}
@@ -539,21 +566,10 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             setError(null);
           }
         }}
-        title="Add Variable"
+        title="Create Variable"
         contentClassName="sm:max-w-lg"
         footer={(
-          <>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsAdding(false);
-                setError(null);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleAdd}>Add Variable</Button>
-          </>
+          <Button onClick={handleAdd}>Create Variable</Button>
         )}
       >
         <div className="space-y-4">
@@ -576,13 +592,11 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
             />
           </div>
 
-          <div className="space-y-2">
-            <Label>Scope</Label>
+          <VariableOptionRow label="Scope" helpText={VARIABLE_FIELD_HELP.scope}>
             <SegmentedControl
               ariaLabel="Variable scope"
-              className="w-full"
+              className="w-[240px]"
               layout="fill"
-              size="expanded"
               options={VARIABLE_SCOPE_OPTIONS.map((option) => ({
                 ...option,
                 disabled: option.value === 'local' && !localSelectionTarget,
@@ -593,15 +607,13 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                 setError(null);
               }}
             />
-          </div>
+          </VariableOptionRow>
 
-          <div className="space-y-2">
-            <Label>Type</Label>
+          <VariableOptionRow label="Type" helpText={VARIABLE_FIELD_HELP.type}>
             <SegmentedControl
               ariaLabel="Variable type"
-              className="w-full"
+              className="w-[280px]"
               layout="fill"
-              size="expanded"
               options={VARIABLE_TYPES}
               value={type}
               onValueChange={(nextValue) => {
@@ -609,15 +621,13 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                 setError(null);
               }}
             />
-          </div>
+          </VariableOptionRow>
 
-          <div className="space-y-2">
-            <Label>Values</Label>
+          <VariableOptionRow label="Values" helpText={VARIABLE_FIELD_HELP.values}>
             <SegmentedControl
               ariaLabel="Variable values"
-              className="w-full"
+              className="w-[240px]"
               layout="fill"
-              size="expanded"
               options={VARIABLE_CARDINALITIES}
               value={cardinality}
               onValueChange={(nextValue) => {
@@ -625,7 +635,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
                 setError(null);
               }}
             />
-          </div>
+          </VariableOptionRow>
 
           {error ? <p className="text-xs text-red-500">{error}</p> : null}
         </div>

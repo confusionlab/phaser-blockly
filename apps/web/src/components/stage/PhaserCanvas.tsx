@@ -1836,7 +1836,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     let cancelled = false;
     let raf1 = 0;
     let raf2 = 0;
-    let timeoutId: ReturnType<typeof window.setTimeout> | null = null;
+    let timeoutId: number | null = null;
 
     const syncNow = (force = false) => {
       if (!cancelled) {

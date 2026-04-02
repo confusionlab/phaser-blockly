@@ -108,7 +108,7 @@ export async function hydrateCostumeLibraryItemForInsertion(
           name: item.name,
           assetId: '',
           bounds: item.bounds,
-          document: cloneCostumeDocument(ensureCostumeDocument(item.document)),
+          document: cloneCostumeDocument(item.document),
         }],
         currentCostumeIndex: 0,
         sounds: [],
@@ -147,7 +147,7 @@ export async function hydrateCostumeLibraryItemForInsertion(
       .map((locator) => [locator.assetId, locator.url as string]),
   );
 
-  const document = cloneCostumeDocument(ensureCostumeDocument(migratedItem.document));
+  const document = cloneCostumeDocument(migratedItem.document);
   for (const layer of document.layers) {
     if (!isBitmapCostumeLayer(layer) || !layer.bitmap.assetId) {
       continue;

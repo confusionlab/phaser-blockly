@@ -50,9 +50,9 @@ export type CostumeEditorObjectTarget =
   | ObjectCostumeEditorObjectTarget
   | ComponentCostumeEditorObjectTarget;
 
-export interface CostumeEditorSession extends CostumeEditorTarget {
+export type CostumeEditorSession = CostumeEditorTarget & {
   key: string;
-}
+};
 
 export interface CostumeEditorPersistedState {
   assetId: string;
@@ -401,7 +401,8 @@ export function resolveCostumeEditorTarget(
 
   if ('componentId' in resolvedObject) {
     return {
-      ...target,
+      componentId: resolvedObject.componentId,
+      costumeId: target.costumeId,
       component: resolvedObject.component,
       costumes,
       costume: costumes[costumeIndex],
@@ -411,7 +412,9 @@ export function resolveCostumeEditorTarget(
   }
 
   return {
-    ...target,
+    sceneId: resolvedObject.sceneId,
+    objectId: resolvedObject.objectId,
+    costumeId: target.costumeId,
     object: resolvedObject.object,
     costumes,
     costume: costumes[costumeIndex],

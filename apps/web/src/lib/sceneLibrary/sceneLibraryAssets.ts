@@ -7,7 +7,6 @@ import {
 } from '@/db/database';
 import { renderCostumeDocumentPreview } from '@/lib/costume/costumeDocumentRender';
 import type {
-  BackgroundConfig,
   ComponentDefinition,
   ComponentFolder,
   Scene,

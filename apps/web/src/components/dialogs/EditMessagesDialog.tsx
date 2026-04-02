@@ -114,24 +114,14 @@ export function EditMessagesDialog({
       <ProjectPropertyManagerDialog
         open={open}
         onOpenChange={onOpenChange}
-        title="Edit Messages"
-        description="Manage broadcast messages across the whole project."
-        addButtonLabel="+ Add Message"
-        closeAddButtonLabel="Close Add Dialog"
-        isAdding={isAdding}
-        onToggleAdd={() => {
-          if (isAdding) {
-            setIsAdding(false);
-            setError(null);
-            return;
-          }
-
+        title="Messages"
+        addButtonLabel="Add message"
+        onAdd={() => {
           resetAddDialog();
           setIsAdding(true);
         }}
       >
         <section className="space-y-2">
-          <div className="text-sm font-semibold text-muted-foreground">Broadcast Messages</div>
           {messages.length > 0 ? (
             <div className="space-y-1">
               {messages.map((message) => {
@@ -184,18 +174,7 @@ export function EditMessagesDialog({
         title="Add Message"
         contentClassName="sm:max-w-lg"
         footer={(
-          <>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsAdding(false);
-                setError(null);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleAdd}>Add Message</Button>
-          </>
+          <Button onClick={handleAdd}>Add Message</Button>
         )}
       >
         <div className="space-y-4">

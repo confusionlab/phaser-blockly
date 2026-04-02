@@ -17,7 +17,6 @@ import type {
   Costume,
   CostumeBounds,
   CostumeDocument,
-  GameObject,
   PhysicsConfig,
   Sound,
   Variable,
@@ -114,7 +113,7 @@ interface CloudAssetApi {
   generateUploadUrl: () => Promise<string>;
   upsertAsset: (args: {
     assetId: string;
-    kind: ObjectLibraryAssetRef['kind'];
+    kind: ManagedAssetKind;
     mimeType: string;
     size: number;
     storageId: Id<'_storage'>;
@@ -364,7 +363,7 @@ export async function hydrateObjectLibraryItemForInsertion(
         id: crypto.randomUUID(),
         name: costume.name,
         assetId: rendered?.dataUrl ?? fallbackPreviewUrl ?? '',
-        assetFrame: rendered?.assetFrame,
+        assetFrame: rendered?.assetFrame ?? undefined,
         bounds: rendered?.bounds ?? costume.bounds,
         document,
       } satisfies Costume;

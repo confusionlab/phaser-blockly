@@ -144,7 +144,7 @@ function applySiblingOrdering<TItem extends FolderedItemShape>(
       (folderGroups.get(parentKey) ?? []).map((folder) => ({ ...folder })),
     );
     const siblingItems = sortByOrderThenId(
-      (itemGroups.get(parentKey) ?? []).map((item) => ({ ...item })),
+      (itemGroups.get(parentKey) ?? []).map((item) => ({ ...item, order: item.order ?? 0 })),
     );
 
     const siblingNodes: Array<{ type: 'folder' | 'item'; id: string; order: number }> = [
@@ -500,12 +500,14 @@ export function getFolderedHierarchyTree<TItem extends FolderedItemShape>(
       folder: folderById.get(folder.id),
       children: build(folder.id),
     }));
-    const itemNodes = sortByOrderThenId(itemGroups.get(parentKey) ?? []).map((item) => ({
+    const itemNodes = sortByOrderThenId(
+      (itemGroups.get(parentKey) ?? []).map((item) => ({ ...item, order: item.order ?? 0 })),
+    ).map((item) => ({
       key: getHierarchyItemNodeKey(config.itemKeyPrefix, item.id),
       id: item.id,
       type: 'item' as const,
       parentId: item.folderId ?? null,
-      order: item.order ?? 0,
+      order: item.order,
       item: itemById.get(item.id),
       children: [],
     }));

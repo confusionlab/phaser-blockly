@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import { WindowDialogChrome } from '@/components/shared/WindowDialogChrome';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { Check, Pencil, Trash2, X } from '@/components/ui/icons';
+import { Check, Pencil, Plus, Trash2, X } from '@/components/ui/icons';
 
 interface ProjectPropertyManagerDialogProps {
   open: boolean;
@@ -10,11 +11,8 @@ interface ProjectPropertyManagerDialogProps {
   title: string;
   description?: string;
   addButtonLabel: string;
-  closeAddButtonLabel?: string;
-  isAdding: boolean;
-  onToggleAdd: () => void;
+  onAdd: () => void;
   toolbar?: ReactNode;
-  addForm?: ReactNode;
   children: ReactNode;
 }
 
@@ -39,11 +37,8 @@ export function ProjectPropertyManagerDialog({
   title,
   description,
   addButtonLabel,
-  closeAddButtonLabel,
-  isAdding,
-  onToggleAdd,
+  onAdd,
   toolbar,
-  addForm,
   children,
 }: ProjectPropertyManagerDialogProps) {
   return (
@@ -56,23 +51,23 @@ export function ProjectPropertyManagerDialog({
       bodyClassName="flex min-h-0 flex-1 flex-col px-6 py-5"
     >
       <div className="flex min-h-0 flex-1 flex-col gap-4">
-        <div className="flex items-start justify-end gap-3">
-          <Button className="shrink-0" onClick={onToggleAdd}>
-            {isAdding ? (closeAddButtonLabel ?? 'Close Add Form') : addButtonLabel}
-          </Button>
+        <div className="flex items-center justify-between gap-3">
+          <IconButton
+            className="shrink-0"
+            label={addButtonLabel}
+            onClick={onAdd}
+            shape="pill"
+            size="sm"
+          >
+            <Plus className="size-4" />
+          </IconButton>
+
+          {toolbar ? (
+            <div className="ml-auto flex min-w-0 items-center justify-end">
+              {toolbar}
+            </div>
+          ) : null}
         </div>
-
-        {toolbar ? (
-          <div className="shrink-0">
-            {toolbar}
-          </div>
-        ) : null}
-
-        {isAdding ? (
-          <div className="shrink-0">
-            {addForm}
-          </div>
-        ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="space-y-5">

@@ -1415,6 +1415,9 @@ function createProjectStore(): ProjectStoreHook {
   },
 
   removeObjectCostume: (target) => {
+    if ('componentId' in target) {
+      return false;
+    }
     return get().applyCostumeEditorOperation(
       { sceneId: target.sceneId, objectId: target.objectId },
       { operation: { type: 'remove', costumeId: target.costumeId } },
@@ -1422,6 +1425,9 @@ function createProjectStore(): ProjectStoreHook {
   },
 
   renameObjectCostume: (target, name) => {
+    if ('componentId' in target) {
+      return false;
+    }
     return get().applyCostumeEditorOperation(
       { sceneId: target.sceneId, objectId: target.objectId },
       { operation: { type: 'rename', costumeId: target.costumeId, name } },

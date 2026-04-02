@@ -15,11 +15,6 @@ import {
   templateScopeValidator,
 } from "./templateLibrary";
 
-const costumeLibraryAssetRefValidator = v.object({
-  assetId: v.string(),
-  kind: v.literal("image"),
-});
-
 const costumeLibraryAssetWithUrlValidator = v.object({
   assetId: v.string(),
   kind: v.literal("image"),
