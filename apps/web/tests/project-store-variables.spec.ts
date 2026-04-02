@@ -73,7 +73,7 @@ test.describe('Project store variables', () => {
     useProjectStore.getState().addGlobalVariable({
       id: variableId,
       name: ' Player score (%) ',
-      type: 'integer',
+      type: 'number',
       defaultValue: 0,
       scope: 'global',
     });
@@ -87,7 +87,7 @@ test.describe('Project store variables', () => {
     expect(variables[0]).toMatchObject({
       id: variableId,
       name: 'Player score / bonus!',
-      type: 'integer',
+      type: 'number',
       scope: 'global',
     });
   });
@@ -108,7 +108,7 @@ test.describe('Project store variables', () => {
     useProjectStore.getState().addLocalVariable(sceneId, createdObject.id, {
       id: variableId,
       name: ' Enemy HP: Phase 1 ',
-      type: 'integer',
+      type: 'number',
       defaultValue: 10,
       scope: 'local',
     });
@@ -122,7 +122,7 @@ test.describe('Project store variables', () => {
     expect(objectLocalVariables[0]).toMatchObject({
       id: variableId,
       name: 'Enemy HP: Phase 2 / Boss?',
-      type: 'integer',
+      type: 'number',
       scope: 'local',
       objectId: createdObject.id,
     });
@@ -140,7 +140,7 @@ test.describe('Project store variables', () => {
     useProjectStore.getState().addGlobalVariable({
       id: variableId,
       name: 'Level scores',
-      type: 'integer',
+      type: 'number',
       cardinality: 'array',
       defaultValue: sourceDefaultValue,
       scope: 'global',
@@ -157,9 +157,9 @@ test.describe('Project store variables', () => {
     expect(variables[0]).toMatchObject({
       id: variableId,
       name: 'Level scores (best runs)',
-      type: 'integer',
+      type: 'number',
       cardinality: 'array',
-      defaultValue: [1, 2, 0],
+      defaultValue: [1, 2.9, 0],
       scope: 'global',
     });
   });

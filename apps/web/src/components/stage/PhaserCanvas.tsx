@@ -202,6 +202,8 @@ type StageDebugApi = {
   getWorldPointAtClientPosition: (clientX: number, clientY: number) => { x: number; y: number } | null;
 };
 
+const MAX_FROZEN_FRAME_PIXEL_RATIO = 2;
+
 function getCostumeVisualMetrics({
   bounds,
   assetFrame,
@@ -641,6 +643,38 @@ function projectStageWorldPointToScreen(
   };
 }
 
+function getFrozenStageFramePixelRatio(): number {
+  if (typeof window === 'undefined') {
+    return 1;
+  }
+  const dpr = window.devicePixelRatio || 1;
+  return Math.max(1, Math.min(MAX_FROZEN_FRAME_PIXEL_RATIO, dpr));
+}
+
+function scaleStageProjectionForPixelRatio(
+  projection: StageProjection,
+  pixelRatio: number,
+): StageProjection {
+  if (pixelRatio === 1) {
+    return projection;
+  }
+
+  return {
+    ...projection,
+    hostSize: {
+      width: projection.hostSize.width * pixelRatio,
+      height: projection.hostSize.height * pixelRatio,
+    },
+    cameraViewport: {
+      x: projection.cameraViewport.x * pixelRatio,
+      y: projection.cameraViewport.y * pixelRatio,
+      width: projection.cameraViewport.width * pixelRatio,
+      height: projection.cameraViewport.height * pixelRatio,
+    },
+    cameraZoom: projection.cameraZoom * pixelRatio,
+  };
+}
+
 function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundLayerState): void {
   const background = layer.background;
   if (layer.lastBackgroundRef !== background) {
@@ -920,6 +954,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
   const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
 
+  const syncEditorCanvasElementBox = useCallback(() => {
+    if (isPlaying) {
+      return;
+    }
+
+    const canvas = gameRef.current?.canvas;
+    if (!canvas) {
+      return;
+    }
+
+    canvas.style.display = 'block';
+    canvas.style.position = 'absolute';
+    canvas.style.left = '0';
+    canvas.style.top = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.maxWidth = 'none';
+    canvas.style.maxHeight = 'none';
+  }, [isPlaying]);
+
   const resizeEditorCanvasToSize = useCallback((nextSize: StageSize, force = false) => {
     if (isPlaying) {
       return false;
@@ -943,6 +997,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
 
     game.scale.resize(safeWidth, safeHeight);
     game.scale.refresh();
+    syncEditorCanvasElementBox();
 
     const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
     if (phaserScene) {
@@ -951,7 +1006,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     }
 
     return true;
-  }, [isPlaying]);
+  }, [isPlaying, syncEditorCanvasElementBox]);
 
   const syncEditorCanvasToHost = useCallback((force = false) => {
     if (isPlaying || isResizeFrozen || immediateResizeFreezeRef.current) {
@@ -990,6 +1045,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return false;
     }
 
+    bufferContext.imageSmoothingEnabled = false;
     bufferContext.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
     bufferContext.drawImage(source, 0, 0, bufferCanvas.width, bufferCanvas.height);
     return true;
@@ -1073,6 +1129,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return false;
     }
 
+    overlayContext.imageSmoothingEnabled = false;
     overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     overlayContext.drawImage(bufferCanvas, 0, 0);
     return true;
@@ -1105,9 +1162,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
   const getResizeFreezeRenderTexture = useCallback((
     scene: Phaser.Scene,
     size: StageSize,
+    pixelRatio = 1,
   ): Phaser.GameObjects.RenderTexture => {
-    const safeWidth = Math.max(1, Math.round(size.width));
-    const safeHeight = Math.max(1, Math.round(size.height));
+    const safeWidth = Math.max(1, Math.round(size.width * pixelRatio));
+    const safeHeight = Math.max(1, Math.round(size.height * pixelRatio));
     let renderTexture = resizeFreezeRenderTextureRef.current;
 
     if (!renderTexture || renderTexture.scene !== scene) {
@@ -1133,9 +1191,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     projection: StageProjection,
     worldView: Phaser.Geom.Rectangle,
     displaySize: StageSize,
+    pixelRatio: number,
   ): boolean => {
-    const pixelWidth = Math.max(1, Math.round(displaySize.width));
-    const pixelHeight = Math.max(1, Math.round(displaySize.height));
+    const pixelWidth = Math.max(1, Math.round(displaySize.width * pixelRatio));
+    const pixelHeight = Math.max(1, Math.round(displaySize.height * pixelRatio));
     const bufferCanvas = frozenStageFrameBufferRef.current ?? document.createElement('canvas');
     frozenStageFrameBufferRef.current = bufferCanvas;
     bufferCanvas.width = pixelWidth;
@@ -1152,9 +1211,11 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     const shellBackgroundCss = getStageShellBackgroundColor(projection.mode, background);
 
     context.setTransform(1, 0, 0, 1, 0, 0);
+    context.imageSmoothingEnabled = false;
     context.clearRect(0, 0, pixelWidth, pixelHeight);
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     context.fillStyle = shellBackgroundCss;
-    context.fillRect(0, 0, pixelWidth, pixelHeight);
+    context.fillRect(0, 0, displaySize.width, displaySize.height);
     context.fillStyle = sceneBackgroundCss;
     context.fillRect(
       projection.cameraViewport.x,
@@ -1190,8 +1251,8 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
         canvas: tiledCanvas,
         background: tiledBackgroundLayer.background,
         viewport,
-        pixelWidth: projection.cameraViewport.width,
-        pixelHeight: projection.cameraViewport.height,
+        pixelWidth: Math.max(1, Math.round(projection.cameraViewport.width * pixelRatio)),
+        pixelHeight: Math.max(1, Math.round(projection.cameraViewport.height * pixelRatio)),
       });
       context.drawImage(
         tiledCanvas,
@@ -1252,6 +1313,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       width: Math.max(1, Math.round(displaySize.width)),
       height: Math.max(1, Math.round(displaySize.height)),
     };
+    const pixelRatio = getFrozenStageFramePixelRatio();
     const canvasSize = getEditorSceneCanvasSize(scene);
     const mode = controller.getMode();
     const projection = buildStageProjection({
@@ -1260,7 +1322,53 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       canvasSize,
       editorViewport: controller.getEditorViewport(),
     });
-    const renderTexture = getResizeFreezeRenderTexture(scene, safeDisplaySize);
+    const renderProjection = scaleStageProjectionForPixelRatio(projection, pixelRatio);
+
+    if (pixelRatio > 1) {
+      const game = scene.game;
+      const originalScaleSize = {
+        width: Math.max(1, Math.round(game.scale.width || safeDisplaySize.width)),
+        height: Math.max(1, Math.round(game.scale.height || safeDisplaySize.height)),
+      };
+      const renderPixelSize = {
+        width: Math.max(1, Math.round(safeDisplaySize.width * pixelRatio)),
+        height: Math.max(1, Math.round(safeDisplaySize.height * pixelRatio)),
+      };
+
+      try {
+        game.scale.resize(renderPixelSize.width, renderPixelSize.height);
+        game.scale.refresh();
+        applyStageProjectionToCamera(scene.cameras.main, renderProjection);
+        refreshTiledBackgroundLayer(scene);
+
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => resolve());
+          });
+        });
+
+        const liveCanvas = game.canvas;
+        if (!(liveCanvas instanceof HTMLCanvasElement) || liveCanvas.width <= 0 || liveCanvas.height <= 0) {
+          return null;
+        }
+
+        return createFrozenStageFrameFromSource(
+          liveCanvas,
+          renderPixelSize,
+          safeDisplaySize,
+        );
+      } finally {
+        if (gameRef.current === game) {
+          game.scale.resize(originalScaleSize.width, originalScaleSize.height);
+          game.scale.refresh();
+          controller.syncProjection();
+          refreshTiledBackgroundLayer(scene);
+          syncEditorCanvasElementBox();
+        }
+      }
+    }
+
+    const renderTexture = getResizeFreezeRenderTexture(scene, safeDisplaySize, pixelRatio);
     const tiledBackgroundLayer = scene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
     const boundsGraphics = scene.data.get('boundsGraphics') as Phaser.GameObjects.Graphics | undefined;
     const groundGraphics = scene.data.get('groundGraphics') as Phaser.GameObjects.Graphics | undefined;
@@ -1274,11 +1382,11 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     ]);
     const renderEntries = scene.children.list.filter((entry) => !excludedEntries.has(entry));
 
-    applyStageProjectionToCamera(scene.cameras.main, projection);
+    applyStageProjectionToCamera(scene.cameras.main, renderProjection);
     refreshTiledBackgroundLayer(scene);
     const worldView = scene.cameras.main.worldView;
 
-    const backdropReady = composeOverscanBackdropFrame(scene, projection, worldView, safeDisplaySize);
+    const backdropReady = composeOverscanBackdropFrame(scene, projection, worldView, safeDisplaySize, pixelRatio);
     if (!backdropReady) {
       controller.syncProjection();
       refreshTiledBackgroundLayer(scene);
@@ -1303,21 +1411,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
       return null;
     }
     backdropTexture.refresh();
-    renderTexture.camera.setViewport(0, 0, safeDisplaySize.width, safeDisplaySize.height);
+    renderTexture.camera.setViewport(
+      0,
+      0,
+      Math.max(1, Math.round(safeDisplaySize.width * pixelRatio)),
+      Math.max(1, Math.round(safeDisplaySize.height * pixelRatio)),
+    );
     renderTexture.camera.setZoom(1);
     renderTexture.camera.scrollX = 0;
     renderTexture.camera.scrollY = 0;
     renderTexture.camera.preRender();
     renderTexture.drawFrame(backdropTextureKey, undefined, 0, 0);
     renderTexture.camera.setViewport(
-      projection.cameraViewport.x,
-      projection.cameraViewport.y,
-      projection.cameraViewport.width,
-      projection.cameraViewport.height,
+      renderProjection.cameraViewport.x,
+      renderProjection.cameraViewport.y,
+      renderProjection.cameraViewport.width,
+      renderProjection.cameraViewport.height,
     );
-    renderTexture.camera.setZoom(projection.cameraZoom);
-    renderTexture.camera.scrollX = projection.scrollX;
-    renderTexture.camera.scrollY = projection.scrollY;
+    renderTexture.camera.setZoom(renderProjection.cameraZoom);
+    renderTexture.camera.scrollX = renderProjection.scrollX;
+    renderTexture.camera.scrollY = renderProjection.scrollY;
     renderTexture.camera.preRender();
     renderTexture.draw(renderEntries);
     scene.textures.remove(backdropTextureKey);
@@ -1328,7 +1441,14 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
           resolve(null);
           return;
         }
-        resolve(createFrozenStageFrameFromSource(snapshot, safeDisplaySize, safeDisplaySize));
+        resolve(createFrozenStageFrameFromSource(
+          snapshot,
+          {
+            width: safeDisplaySize.width * pixelRatio,
+            height: safeDisplaySize.height * pixelRatio,
+          },
+          safeDisplaySize,
+        ));
       });
     });
 
@@ -1341,6 +1461,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
     createFrozenStageFrameFromSource,
     getEditorSceneCanvasSize,
     getResizeFreezeRenderTexture,
+    syncEditorCanvasElementBox,
   ]);
 
   const prepareOverscanFrozenStageFrame = useCallback((sessionId: number) => {
@@ -2060,6 +2181,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false, layoutMode 
         if (gameRef.current?.scale) {
           gameRef.current.scale.refresh();
         }
+        syncEditorCanvasElementBox();
       });
     };
 

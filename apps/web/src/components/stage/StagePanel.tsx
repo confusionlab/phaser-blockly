@@ -46,7 +46,8 @@ export function StagePanel({
   const project = useProjectStore((state) => state.project);
   const [bottomHeightPercent, setBottomHeightPercent] = useState(60); // percentage
   const [objectsWidth, setObjectsWidth] = useState(40); // percentage
-  const [isPanelResizeDragging, setIsPanelResizeDragging] = useState(false);
+  const [isStageResizeDragging, setIsStageResizeDragging] = useState(false);
+  const [isBottomPanelSplitDragging, setIsBottomPanelSplitDragging] = useState(false);
 
   const toggleCanvasFullscreen = useCallback(() => {
     onCanvasFullscreenChange(!isCanvasFullscreen);
@@ -58,7 +59,6 @@ export function StagePanel({
     if (!container) return;
 
     dispatchEditorResizeFreeze(true);
-    setIsPanelResizeDragging(true);
     const startY = e.clientY;
     const startHeight = bottomHeightPercent;
     const containerHeight = container.clientHeight;
@@ -72,11 +72,12 @@ export function StagePanel({
 
     const handleMouseUp = () => {
       dispatchEditorResizeFreeze(false);
-      setIsPanelResizeDragging(false);
+      setIsStageResizeDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
 
+    setIsStageResizeDragging(true);
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
@@ -86,8 +87,6 @@ export function StagePanel({
     const container = e.currentTarget.parentElement;
     if (!container) return;
 
-    dispatchEditorResizeFreeze(true);
-    setIsPanelResizeDragging(true);
     const startX = e.clientX;
     const startWidth = objectsWidth;
     const containerWidth = container.clientWidth;
@@ -100,12 +99,12 @@ export function StagePanel({
     };
 
     const handleMouseUp = () => {
-      dispatchEditorResizeFreeze(false);
-      setIsPanelResizeDragging(false);
+      setIsBottomPanelSplitDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
 
+    setIsBottomPanelSplitDragging(true);
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   };
@@ -223,7 +222,7 @@ export function StagePanel({
           </div>
           <PhaserCanvas
             isPlaying={false}
-            deferEditorResize={deferEditorResize || isPanelResizeDragging}
+            deferEditorResize={deferEditorResize || isStageResizeDragging}
             layoutMode={isCanvasFullscreen ? 'fullscreen' : 'panel'}
           />
         </div>
@@ -276,6 +275,7 @@ export function StagePanel({
             data-testid="stage-panel-horizontal-divider"
             className="app-resize-divider-x hover:text-primary cursor-col-resize transition-colors"
             onMouseDown={handleHorizontalDividerDrag}
+            data-dragging={isBottomPanelSplitDragging ? 'true' : 'false'}
           />
 
           {/* Properties panel */}

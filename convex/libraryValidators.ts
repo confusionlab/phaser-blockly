@@ -38,11 +38,18 @@ export const variableValidator = v.object({
   name: v.string(),
   type: v.union(
     v.literal("string"),
+    v.literal("number"),
     v.literal("integer"),
     v.literal("float"),
     v.literal("boolean"),
   ),
-  defaultValue: v.union(v.number(), v.string(), v.boolean()),
+  cardinality: v.optional(v.union(v.literal("single"), v.literal("array"))),
+  defaultValue: v.union(
+    v.number(),
+    v.string(),
+    v.boolean(),
+    v.array(v.union(v.number(), v.string(), v.boolean())),
+  ),
   scope: v.union(v.literal("global"), v.literal("local")),
   objectId: v.optional(v.string()),
 });

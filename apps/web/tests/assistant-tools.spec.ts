@@ -66,7 +66,7 @@ function buildProjectFixture(): {
   const heroVariable: Variable = {
     id: heroVariableId,
     name: 'health',
-    type: 'integer',
+    type: 'number',
     defaultValue: 100,
     scope: 'local',
     objectId: heroId,

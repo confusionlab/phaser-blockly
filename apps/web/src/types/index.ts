@@ -311,7 +311,7 @@ export interface ReusableObject {
 
 // Variable Types
 
-export type VariableType = 'string' | 'integer' | 'float' | 'boolean';
+export type VariableType = 'string' | 'number' | 'boolean';
 export type VariableCardinality = 'single' | 'array';
 export type VariableScalarValue = number | string | boolean;
 export type VariableValue = VariableScalarValue | VariableScalarValue[];

@@ -4052,7 +4052,7 @@ function isArrayVariable(variable: Variable | undefined): boolean {
 function isNumericSingleVariable(variable: Variable | undefined): boolean {
   return !!variable &&
     !isArrayVariable(variable) &&
-    (variable.type === 'integer' || variable.type === 'float');
+    variable.type === 'number';
 }
 
 function getVariableTypeToken(type: VariableType, cardinality?: Variable['cardinality']): string {
@@ -4060,8 +4060,7 @@ function getVariableTypeToken(type: VariableType, cardinality?: Variable['cardin
 
   switch (type) {
     case 'string': return `Text${suffix}`;
-    case 'integer': return `Int${suffix}`;
-    case 'float': return `Float${suffix}`;
+    case 'number': return `Number${suffix}`;
     case 'boolean': return `Bool${suffix}`;
   }
 }
@@ -4123,8 +4122,7 @@ function getScalarOutputCheck(type: VariableType): string {
       return 'Boolean';
     case 'string':
       return 'String';
-    case 'integer':
-    case 'float':
+    case 'number':
       return 'Number';
   }
 }
@@ -4306,7 +4304,7 @@ function validateNumericInput(block: Blockly.Block) {
     return;
   }
 
-  const isNumeric = isBlockCompatibleWithExpectedType('float', valueBlock);
+  const isNumeric = isBlockCompatibleWithExpectedType('number', valueBlock);
 
   if (!isNumeric) {
     block.setWarningText('Expected a number');

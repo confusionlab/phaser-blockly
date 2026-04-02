@@ -13,13 +13,17 @@ import {
 } from './assistantLogic';
 import { normalizePhysicsColliderState } from './physicsCollider';
 
-export type AssistantVariableType = 'string' | 'integer' | 'float' | 'boolean';
+export type AssistantVariableType = 'string' | 'number' | 'boolean';
+export type AssistantVariableCardinality = 'single' | 'array';
+export type AssistantVariableScalarValue = number | string | boolean;
+export type AssistantVariableValue = AssistantVariableScalarValue | AssistantVariableScalarValue[];
 
 export interface AssistantVariable {
   id: string;
   name: string;
   type: AssistantVariableType;
-  defaultValue: number | string | boolean;
+  cardinality?: AssistantVariableCardinality;
+  defaultValue: AssistantVariableValue;
   scope: 'global' | 'local';
   objectId?: string;
 }
@@ -609,7 +613,10 @@ function normalizeObjectTree(
 }
 
 function cloneLocalVariables(variables: AssistantVariable[]): AssistantVariable[] {
-  return variables.map((variable) => ({ ...variable }));
+  return variables.map((variable) => ({
+    ...variable,
+    defaultValue: cloneState(variable.defaultValue),
+  }));
 }
 
 function remapVariableIdsInBlocklyXml(

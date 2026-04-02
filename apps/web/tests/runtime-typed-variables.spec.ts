@@ -30,10 +30,10 @@ test.describe('runtime typed variables', () => {
         switch (varId) {
           case 'global-bool':
             return { name: 'Flag', type: 'boolean', scope: 'global', defaultValue: 'false' };
-          case 'global-float':
-            return { name: 'Speed', type: 'float', scope: 'global', defaultValue: 'Infinity' };
-          case 'global-int':
-            return { name: 'Count', type: 'integer', scope: 'global', defaultValue: '12.9' };
+          case 'global-number-invalid':
+            return { name: 'Speed', type: 'number', scope: 'global', defaultValue: 'Infinity' };
+          case 'global-number':
+            return { name: 'Count', type: 'number', scope: 'global', defaultValue: '12.9' };
           case 'local-bool':
             return { name: 'Local flag', type: 'boolean', scope: 'local', defaultValue: 'true' };
           default:
@@ -43,20 +43,20 @@ test.describe('runtime typed variables', () => {
 
       const defaults = {
         globalBool: runtime.getTypedVariable('global-bool'),
-        globalFloat: runtime.getTypedVariable('global-float'),
-        globalInt: runtime.getTypedVariable('global-int'),
+        globalNumberInvalid: runtime.getTypedVariable('global-number-invalid'),
+        globalNumber: runtime.getTypedVariable('global-number'),
         localBool: runtime.getTypedVariable('local-bool', spriteId),
       };
 
       runtime.setTypedVariable('global-bool', 'false');
-      runtime.setTypedVariable('global-float', 'Infinity');
-      runtime.setTypedVariable('global-int', '7.9');
+      runtime.setTypedVariable('global-number-invalid', 'Infinity');
+      runtime.setTypedVariable('global-number', '7.9');
       runtime.setTypedVariable('local-bool', '0', spriteId);
 
       const stored = {
         globalBool: runtime.getTypedVariable('global-bool'),
-        globalFloat: runtime.getTypedVariable('global-float'),
-        globalInt: runtime.getTypedVariable('global-int'),
+        globalNumberInvalid: runtime.getTypedVariable('global-number-invalid'),
+        globalNumber: runtime.getTypedVariable('global-number'),
         localBool: runtime.getTypedVariable('local-bool', spriteId),
       };
 
@@ -73,15 +73,15 @@ test.describe('runtime typed variables', () => {
 
     expect(results.defaults).toEqual({
       globalBool: false,
-      globalFloat: 0,
-      globalInt: 12,
+      globalNumberInvalid: 0,
+      globalNumber: 12.9,
       localBool: true,
     });
 
     expect(results.stored).toEqual({
       globalBool: false,
-      globalFloat: 0,
-      globalInt: 7,
+      globalNumberInvalid: 0,
+      globalNumber: 7.9,
       localBool: false,
     });
 
@@ -129,7 +129,7 @@ test.describe('runtime typed variables', () => {
           case 'local-int-list':
             return {
               name: 'Scores',
-              type: 'integer',
+              type: 'number',
               cardinality: 'array',
               scope: 'local',
               defaultValue: ['1', 2.9, 'bad'],
@@ -189,24 +189,24 @@ test.describe('runtime typed variables', () => {
     expect(results.defaults).toEqual({
       globalTextList: ['ready', '2', 'false'],
       globalTextLength: 3,
-      localIntList: [1, 2, 0],
-      localIntItem2: 2,
+      localIntList: [1, 2.9, 0],
+      localIntItem2: 2.9,
       localIntItem99: 0,
-      localIntContains2: true,
+      localIntContains2: false,
       localIntContains8: false,
     });
 
     expect(results.afterMutations).toEqual({
       globalTextList: ['A', '2', ''],
-      localIntList: [1, 4, 9, 7],
+      localIntList: [1, 4.2, 9.8, 7.9],
       localIntLength: 4,
-      localIntItem3: 9,
-      localIntContains9: true,
+      localIntItem3: 9.8,
+      localIntContains9: false,
     });
 
-    expect(results.afterExternalMutationAttempt).toEqual([1, 4, 9, 7]);
+    expect(results.afterExternalMutationAttempt).toEqual([1, 4.2, 9.8, 7.9]);
     expect(results.repairedRead).toEqual([11, 0]);
-    expect(results.afterClearAndSet).toEqual([12]);
+    expect(results.afterClearAndSet).toEqual([12.8]);
   });
 
   test('runtime clones inherit source local variable values without sharing state', async ({ page }) => {
@@ -297,9 +297,9 @@ test.describe('runtime typed variables', () => {
       runtime.setVariableLookup((varId: string) => {
         switch (varId) {
           case 'local-health':
-            return { name: 'Health', type: 'integer', scope: 'local', defaultValue: 1 };
+            return { name: 'Health', type: 'number', scope: 'local', defaultValue: 1 };
           case 'local-path':
-            return { name: 'Path', type: 'integer', cardinality: 'array', scope: 'local', defaultValue: [] };
+            return { name: 'Path', type: 'number', cardinality: 'array', scope: 'local', defaultValue: [] };
           default:
             return undefined;
         }

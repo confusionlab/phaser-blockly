@@ -100,6 +100,38 @@ function expectWorldPointsToStayWithinScreenPixels(
 }
 
 test.describe('stage viewport stability', () => {
+  test('live editor canvas fills the host without right or bottom seams', async ({ page }) => {
+    await page.setViewportSize({ width: 1377, height: 913 });
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Host Fill ${Date.now()}`,
+    });
+    await waitForStageDebug(page);
+    await waitForStageToSettle(page);
+
+    const edgeDiffs = await page.evaluate(() => {
+      const host = document.querySelector('[data-testid="stage-phaser-host"]');
+      const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+      if (!(host instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
+        return null;
+      }
+
+      const hostRect = host.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      return {
+        left: Math.abs(canvasRect.left - hostRect.left),
+        top: Math.abs(canvasRect.top - hostRect.top),
+        right: Math.abs(hostRect.right - canvasRect.right),
+        bottom: Math.abs(hostRect.bottom - canvasRect.bottom),
+      };
+    });
+
+    expect(edgeDiffs).not.toBeNull();
+    expect(edgeDiffs?.left ?? 0).toBeLessThanOrEqual(0.5);
+    expect(edgeDiffs?.top ?? 0).toBeLessThanOrEqual(0.5);
+    expect(edgeDiffs?.right ?? 0).toBeLessThanOrEqual(0.5);
+    expect(edgeDiffs?.bottom ?? 0).toBeLessThanOrEqual(0.5);
+  });
+
   test('fullscreen preserves the world point at the stage center', async ({ page }) => {
     await bootstrapEditorProject(page, {
       projectName: `Stage Fullscreen Stability ${Date.now()}`,

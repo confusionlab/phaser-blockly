@@ -57,8 +57,7 @@ const VARIABLE_SCOPE_OPTIONS: { value: AddVariableScope; label: string; descript
 
 const VARIABLE_TYPES: { value: VariableType; label: string; description: string }[] = [
   { value: 'string', label: 'Text', description: 'Letters and words' },
-  { value: 'integer', label: 'Integer', description: 'Whole numbers (1, 2, 3...)' },
-  { value: 'float', label: 'Decimal', description: 'Numbers with decimals (1.5, 3.14...)' },
+  { value: 'number', label: 'Number', description: 'Whole numbers or decimals' },
   { value: 'boolean', label: 'Boolean', description: 'True or False' },
 ];
 const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string; description: string }[] = [
@@ -69,8 +68,7 @@ const VARIABLE_CARDINALITIES: { value: VariableCardinality; label: string; descr
 function getTypeIconName(type: VariableType): AppIconName {
   switch (type) {
     case 'string': return 'variableString';
-    case 'integer': return 'variableInteger';
-    case 'float': return 'variableFloat';
+    case 'number': return 'variableNumber';
     case 'boolean': return 'variableBoolean';
   }
 }
@@ -78,8 +76,7 @@ function getTypeIconName(type: VariableType): AppIconName {
 function getTypeLabel(type: VariableType): string {
   switch (type) {
     case 'string': return 'Text';
-    case 'integer': return 'Integer';
-    case 'float': return 'Decimal';
+    case 'number': return 'Number';
     case 'boolean': return 'Boolean';
   }
 }
@@ -105,7 +102,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
 
   const [isAdding, setIsAdding] = useState(false);
   const [name, setName] = useState('');
-  const [type, setType] = useState<VariableType>('integer');
+  const [type, setType] = useState<VariableType>('number');
   const [cardinality, setCardinality] = useState<VariableCardinality>('single');
   const [scope, setScope] = useState<AddVariableScope>('global');
   const [error, setError] = useState<string | null>(null);
@@ -162,7 +159,7 @@ export function EditVariablesDialog({ open, onOpenChange, onVariablesChanged }: 
 
   const resetAddDialog = (nextScope: AddVariableScope) => {
     setName('');
-    setType('integer');
+    setType('number');
     setCardinality('single');
     setError(null);
     setScope(nextScope);

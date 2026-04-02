@@ -226,6 +226,7 @@ const CUSTOM_ICON_COMPONENTS = {
   blocklyEventWorld: createRegistryIconComponent('blocklyEventWorld'),
   blocklyStagePicker: createRegistryIconComponent('blocklyStagePicker'),
   variableBoolean: createRegistryIconComponent('variableBoolean'),
+  variableNumber: createRegistryIconComponent('variableNumber'),
   variableFloat: createRegistryIconComponent('variableFloat'),
   variableInteger: createRegistryIconComponent('variableInteger'),
   variableString: createRegistryIconComponent('variableString'),
