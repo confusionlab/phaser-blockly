@@ -23,8 +23,8 @@ interface SearchItem {
 }
 
 const COMMAND_ITEMS: SearchItem[] = [
-  { id: 'cmd_new_variable', type: 'command', commandId: 'NEW_VARIABLE', label: 'New Variable', category: 'Commands', categoryColor: '#666666' },
-  { id: 'cmd_manage_variables', type: 'command', commandId: 'MANAGE_VARIABLES', label: 'Manage Variables', category: 'Commands', categoryColor: '#666666' },
+  { id: 'cmd_edit_variables', type: 'command', commandId: 'EDIT_VARIABLES', label: 'Edit Variables', category: 'Commands', categoryColor: '#666666' },
+  { id: 'cmd_edit_messages', type: 'command', commandId: 'EDIT_MESSAGES', label: 'Edit Messages', category: 'Commands', categoryColor: '#666666' },
 ];
 
 const TYPE_PREFIXES = [
@@ -187,8 +187,8 @@ interface BlockSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   workspace: Blockly.WorkspaceSvg | null;
-  onNewVariable?: () => void;
-  onManageVariables?: () => void;
+  onEditVariables?: () => void;
+  onEditMessages?: () => void;
 }
 
 // Component to render a single Blockly block preview
@@ -250,7 +250,7 @@ function BlockPreview({ blockType, scale = 0.6 }: { blockType: string; scale?: n
   );
 }
 
-export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, onManageVariables }: BlockSearchModalProps) {
+export function BlockSearchModal({ isOpen, onClose, workspace, onEditVariables, onEditMessages }: BlockSearchModalProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -297,11 +297,11 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
   const executeItem = useCallback((item: SearchItem) => {
     if (item.type === 'command') {
       // Handle commands
-      if (item.commandId === 'NEW_VARIABLE' && onNewVariable) {
-        onNewVariable();
+      if (item.commandId === 'EDIT_VARIABLES' && onEditVariables) {
+        onEditVariables();
         onClose();
-      } else if (item.commandId === 'MANAGE_VARIABLES' && onManageVariables) {
-        onManageVariables();
+      } else if (item.commandId === 'EDIT_MESSAGES' && onEditMessages) {
+        onEditMessages();
         onClose();
       }
     } else if (item.type === 'block' && item.blockType && workspace) {
@@ -324,7 +324,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
         console.error('Failed to create block:', item.blockType, e);
       }
     }
-  }, [workspace, onNewVariable, onManageVariables, onClose]);
+  }, [workspace, onClose, onEditMessages, onEditVariables]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     switch (e.key) {

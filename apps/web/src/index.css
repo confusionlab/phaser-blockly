@@ -90,9 +90,9 @@ body {
 }
 
 .blocklyToolbox {
-  width: 68px !important;
-  min-width: 68px !important;
-  padding: 8px 6px !important;
+  width: 60px !important;
+  min-width: 60px !important;
+  padding: 8px 2px !important;
 }
 
 .blocklyTreeLabel {
@@ -108,22 +108,36 @@ body {
 
 .pochaBlocklyCategoryButton {
   display: flex !important;
-  width: 56px;
+  position: relative;
+  width: 44px;
+  min-width: 44px;
   height: 56px;
   min-height: 56px;
   align-items: center !important;
   justify-content: center !important;
-  border-radius: 18px;
   background: transparent;
   margin: 0 auto !important;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
   transition:
-    background-color 120ms ease,
     transform 120ms ease;
 }
 
-.pochaBlocklyCategoryButton:hover {
+.pochaBlocklyCategoryButton::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50px;
+  height: 50px;
+  border-radius: 18px;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  transition: background-color 120ms ease;
+  z-index: 0;
+}
+
+.pochaBlocklyCategoryButton:hover::before {
   background-color: var(--blockly-toolbox-hover-bg) !important;
 }
 
@@ -146,11 +160,19 @@ body {
 
 .pochaBlocklyCategoryButton[data-selected='true'],
 .pochaBlocklyCategoryButtonSelected {
+  background-color: transparent !important;
+}
+
+.pochaBlocklyCategoryButton[data-selected='true']::before,
+.pochaBlocklyCategoryButtonSelected::before {
   background-color: var(--blockly-toolbox-active-bg) !important;
 }
 
 .pochaBlocklyCategoryContent {
   display: flex !important;
+  position: relative;
+  flex: 0 0 56px;
+  flex-shrink: 0;
   flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
@@ -159,6 +181,7 @@ body {
   height: 56px;
   pointer-events: none;
   transform: translateY(-1px);
+  z-index: 1;
 }
 
 .pochaBlocklyCategoryIcon {

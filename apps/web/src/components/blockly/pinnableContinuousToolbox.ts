@@ -14,6 +14,7 @@ const PINNABLE_TOOLBOX_REGISTRATION = 'PochaContinuousToolbox';
 
 export const PINNED_TOOLBOX_FLYOUT_WIDTH = 250;
 export const UNPINNED_TOOLBOX_FLYOUT_WIDTH = 350;
+const FIXED_TOOLBOX_UI_SCALE = 0.7;
 
 let registered = false;
 let initialPinnedState = true;
@@ -36,6 +37,16 @@ function getConfiguredFlyoutWidth(
 }
 
 export class PinnableContinuousFlyout extends ContinuousFlyout {
+  override getFlyoutScale(): number {
+    return FIXED_TOOLBOX_UI_SCALE;
+  }
+
+  override createBlock(originalBlock: Blockly.BlockSvg): Blockly.BlockSvg {
+    const newBlock = super.createBlock(originalBlock);
+    this.syncTransferredBlockScreenPosition(originalBlock, newBlock);
+    return newBlock;
+  }
+
   protected override reflowInternal_(): void {
     super.reflowInternal_();
 
@@ -77,6 +88,35 @@ export class PinnableContinuousFlyout extends ContinuousFlyout {
     this.position();
     targetWorkspace.resizeContents();
     targetWorkspace.recordDragTargets();
+  }
+
+  private syncTransferredBlockScreenPosition(
+    originalBlock: Blockly.BlockSvg,
+    newBlock: Blockly.BlockSvg,
+  ): void {
+    const targetWorkspace = this.targetWorkspace;
+    if (!targetWorkspace) {
+      return;
+    }
+
+    const flyoutOrigin = this.workspace_.getOriginOffsetInPixels();
+    const targetOrigin = targetWorkspace.getOriginOffsetInPixels();
+    const flyoutAbsoluteScale = this.workspace_.getAbsoluteScale();
+    const targetAbsoluteScale = targetWorkspace.getAbsoluteScale();
+    const safeTargetScale = Math.max(targetAbsoluteScale, 0.0001);
+    const originalLocation = originalBlock.getRelativeToSurfaceXY();
+
+    const originalScreenPosition = new Blockly.utils.Coordinate(
+      flyoutOrigin.x + originalLocation.x * flyoutAbsoluteScale,
+      flyoutOrigin.y + originalLocation.y * flyoutAbsoluteScale,
+    );
+    const nextWorkspacePosition = Blockly.utils.Coordinate.difference(
+      originalScreenPosition,
+      targetOrigin,
+    );
+    nextWorkspacePosition.scale(1 / safeTargetScale);
+
+    newBlock.moveTo(nextWorkspacePosition, ['flyoutTransfer']);
   }
 }
 

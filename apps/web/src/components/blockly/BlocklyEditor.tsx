@@ -12,15 +12,14 @@ import { useEditorStore } from '@/store/editorStore';
 import {
   getToolboxConfig,
   registerTypedVariablesCategory,
-  setAddVariableCallback,
-  setManageVariablesCallback,
-  setMessageDialogCallback,
+  setEditMessagesCallback,
+  setEditMessagesToolbarCallback,
+  setEditVariablesCallback,
   setTypedVariableLoading,
   updateVariableBlockAppearance,
 } from './toolbox';
-import { AddVariableDialog } from '@/components/dialogs/AddVariableDialog';
-import { MessageDialog } from '@/components/dialogs/MessageDialog';
-import { VariableManagerDialog } from '@/components/dialogs/VariableManagerDialog';
+import { EditMessagesDialog } from '@/components/dialogs/EditMessagesDialog';
+import { EditVariablesDialog } from '@/components/dialogs/EditVariablesDialog';
 import { BlockSearchModal } from './BlockSearchModal';
 import {
   COMPONENT_ANY_PREFIX,
@@ -45,7 +44,6 @@ import {
 } from './pinnableContinuousToolbox';
 import { POCHA_BLOCKLY_THEME } from './blocklyTheme';
 import type { UndoRedoHandler } from '@/store/editorStore';
-import type { Variable } from '@/types';
 
 // Register Blockly toolbox plugins once at module load.
 registerPinnableContinuousToolbox();
@@ -73,6 +71,9 @@ const TOOLBOX_PIN_BUTTON_SIZE = 28;
 const EMPTY_TOOLBOX_CONFIG: ReturnType<typeof getToolboxConfig> = {
   kind: 'categoryToolbox',
   contents: [],
+};
+type BlocklyEditorGlobal = typeof globalThis & {
+  __pochaBlocklyWorkspace?: Blockly.WorkspaceSvg | null;
 };
 
 type PersistedBlockClipboard = {
@@ -257,6 +258,10 @@ function registerCrossObjectCopyPaste() {
 // Register once at module load
 registerCrossObjectCopyPaste();
 
+function setDebugBlocklyWorkspace(workspace: Blockly.WorkspaceSvg | null): void {
+  (globalThis as BlocklyEditorGlobal).__pochaBlocklyWorkspace = workspace;
+}
+
 const DEPRECATED_BLOCK_MESSAGES: Record<string, string> = {};
 
 const TYPE_REFERENCE_BLOCKS: Record<string, string> = {
@@ -433,14 +438,10 @@ export function BlocklyEditor() {
   const pendingMessageFieldApplyRef = useRef<((messageId: string) => void) | null>(null);
   const [toolboxPinned, setToolboxPinned] = useState(loadToolboxPinnedPreference);
   const [pinButtonPosition, setPinButtonPosition] = useState<{ top: number; left: number } | null>(null);
-  const [showAddVariableDialog, setShowAddVariableDialog] = useState(false);
-  const [showVariableManager, setShowVariableManager] = useState(false);
+  const [showEditVariablesDialog, setShowEditVariablesDialog] = useState(false);
+  const [showEditMessagesDialog, setShowEditMessagesDialog] = useState(false);
+  const [startMessageManagerInAddMode, setStartMessageManagerInAddMode] = useState(false);
   const [showBlockSearch, setShowBlockSearch] = useState(false);
-  const [showMessageDialog, setShowMessageDialog] = useState(false);
-  const [messageDialogMode, setMessageDialogMode] = useState<'create' | 'rename'>('create');
-  const [messageDialogName, setMessageDialogName] = useState('');
-  const [messageDialogError, setMessageDialogError] = useState<string | null>(null);
-  const [messageDialogSelectedId, setMessageDialogSelectedId] = useState<string | null>(null);
   const [dragSyncNonce, setDragSyncNonce] = useState(0);
 
   const {
@@ -451,7 +452,7 @@ export function BlocklyEditor() {
     showAdvancedBlocks,
     registerCodeUndo,
   } = useEditorStore();
-  const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage, updateComponent } = useProjectStore();
+  const { project } = useProjectStore();
   const sceneDropdownStamp = project?.scenes
     .map((scene, index) => `${index}:${scene.id}:${scene.name}`)
     .join('|') ?? '';
@@ -692,67 +693,29 @@ export function BlocklyEditor() {
     };
   }, [selectedSceneId, selectedObjectId, selectedComponentId, flushPendingWorkspacePersist]);
 
+  const closeMessageManager = useCallback(() => {
+    pendingMessageFieldApplyRef.current = null;
+    setShowEditMessagesDialog(false);
+    setStartMessageManagerInAddMode(false);
+  }, []);
+
   useEffect(() => {
-    setMessageDialogCallback((mode, selectedMessageId, applySelectedMessageId) => {
-      pendingMessageFieldApplyRef.current = applySelectedMessageId;
-      setMessageDialogMode(mode);
-      setMessageDialogSelectedId(selectedMessageId);
-      const selectedMessage = (useProjectStore.getState().project?.messages || []).find(
-        (message) => message.id === selectedMessageId,
-      );
-      setMessageDialogName(mode === 'rename' ? selectedMessage?.name || '' : '');
-      setMessageDialogError(null);
-      setShowMessageDialog(true);
+    setEditMessagesCallback((options) => {
+      pendingMessageFieldApplyRef.current = options?.applySelectedMessageId ?? null;
+      setStartMessageManagerInAddMode(Boolean(options?.startInAddMode));
+      setShowEditMessagesDialog(true);
+    });
+    setEditMessagesToolbarCallback(() => {
+      pendingMessageFieldApplyRef.current = null;
+      setStartMessageManagerInAddMode(false);
+      setShowEditMessagesDialog(true);
     });
 
     return () => {
-      setMessageDialogCallback(null);
+      setEditMessagesCallback(null);
+      setEditMessagesToolbarCallback(null);
     };
   }, []);
-
-  const closeMessageDialog = useCallback(() => {
-    pendingMessageFieldApplyRef.current = null;
-    setShowMessageDialog(false);
-    setMessageDialogError(null);
-    setMessageDialogName('');
-    setMessageDialogSelectedId(null);
-    setMessageDialogMode('create');
-  }, []);
-
-  const handleSubmitMessageDialog = useCallback(() => {
-    const trimmedName = messageDialogName.trim();
-    if (!trimmedName) {
-      setMessageDialogError('Please enter a message name');
-      return;
-    }
-
-    if (messageDialogMode === 'create') {
-      const created = addMessage(trimmedName);
-      if (!created) {
-        setMessageDialogError('Failed to create message');
-        return;
-      }
-      pendingMessageFieldApplyRef.current?.(created.id);
-      closeMessageDialog();
-      return;
-    }
-
-    if (!messageDialogSelectedId) {
-      setMessageDialogError('No message selected');
-      return;
-    }
-
-    updateMessage(messageDialogSelectedId, { name: trimmedName });
-    pendingMessageFieldApplyRef.current?.(messageDialogSelectedId);
-    closeMessageDialog();
-  }, [
-    addMessage,
-    closeMessageDialog,
-    messageDialogMode,
-    messageDialogName,
-    messageDialogSelectedId,
-    updateMessage,
-  ]);
 
   // Cmd+K to open block search, Cmd+C for cross-object copy
   useEffect(() => {
@@ -845,14 +808,14 @@ export function BlocklyEditor() {
     if (isPinnableContinuousToolbox(toolbox)) {
       toolbox.setPinned(toolboxPinnedRef.current);
     }
+    setDebugBlocklyWorkspace(workspaceRef.current);
     window.requestAnimationFrame(updatePinButtonPosition);
 
     // Register typed variables category callback
     registerTypedVariablesCategory(workspaceRef.current);
 
-    // Set up callback for "Add Variable" button
-    setAddVariableCallback(() => setShowAddVariableDialog(true));
-    setManageVariablesCallback(() => setShowVariableManager(true));
+    // Set up callback for the variables editor button
+    setEditVariablesCallback(() => setShowEditVariablesDialog(true));
 
     // Save on changes and validate references
     workspaceRef.current.addChangeListener((event) => {
@@ -994,8 +957,8 @@ export function BlocklyEditor() {
         workspaceRef.current.dispose();
         workspaceRef.current = null;
       }
-      setAddVariableCallback(null);
-      setManageVariablesCallback(null);
+      setDebugBlocklyWorkspace(null);
+      setEditVariablesCallback(null);
     };
   }, [
     collapseUnpinnedFlyout,
@@ -1204,18 +1167,6 @@ export function BlocklyEditor() {
     }
   }, [messageDropdownStamp]);
 
-  // Get current object name for local variable option
-  const currentObjectName = (() => {
-    if (!project) return undefined;
-    if (selectedObject) {
-      return selectedObject.name;
-    }
-    if (explicitlySelectedComponent) {
-      return explicitlySelectedComponent.name;
-    }
-    return undefined;
-  })();
-
   const blocklyContainerStyle = {
     '--blockly-flyout-width': `${
       toolboxPinned
@@ -1223,28 +1174,6 @@ export function BlocklyEditor() {
         : UNPINNED_TOOLBOX_FLYOUT_WIDTH
     }px`,
   } as CSSProperties;
-
-  const handleAddVariable = (variable: Variable) => {
-    if (variable.scope === 'global') {
-      addGlobalVariable(variable);
-    } else if (selectedSceneId && selectedObjectId) {
-      addLocalVariable(selectedSceneId, selectedObjectId, variable);
-    } else if (selectedComponentId) {
-      const component = (project?.components || []).find((componentItem) => componentItem.id === selectedComponentId);
-      if (component) {
-        updateComponent(selectedComponentId, {
-          localVariables: [
-            ...(component.localVariables || []),
-            { ...variable, scope: 'local' },
-          ],
-        });
-      }
-    }
-    // Refresh the toolbox to show the new variable
-    if (workspaceRef.current) {
-      workspaceRef.current.refreshToolboxSelection();
-    }
-  };
 
   return (
     <>
@@ -1272,41 +1201,47 @@ export function BlocklyEditor() {
           </button>
         )}
       </div>
-      <AddVariableDialog
-        open={showAddVariableDialog}
-        onOpenChange={setShowAddVariableDialog}
-        onAdd={handleAddVariable}
-        objectName={currentObjectName}
+      <EditVariablesDialog
+        open={showEditVariablesDialog}
+        onOpenChange={setShowEditVariablesDialog}
+        onVariablesChanged={() => {
+          if (workspaceRef.current) {
+            workspaceRef.current.refreshToolboxSelection();
+          }
+        }}
       />
-      <VariableManagerDialog
-        open={showVariableManager}
-        onOpenChange={setShowVariableManager}
-        onAddNew={() => setShowAddVariableDialog(true)}
+      <EditMessagesDialog
+        open={showEditMessagesDialog}
+        startInAddMode={startMessageManagerInAddMode}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeMessageManager();
+            return;
+          }
+          setShowEditMessagesDialog(true);
+        }}
+        onMessagesChanged={() => {
+          if (workspaceRef.current) {
+            workspaceRef.current.refreshToolboxSelection();
+          }
+        }}
+        onSelectMessage={pendingMessageFieldApplyRef.current
+          ? (messageId) => {
+              pendingMessageFieldApplyRef.current?.(messageId);
+              closeMessageManager();
+            }
+          : undefined}
       />
       <BlockSearchModal
         isOpen={showBlockSearch}
         onClose={() => setShowBlockSearch(false)}
         workspace={workspaceRef.current}
-        onNewVariable={() => setShowAddVariableDialog(true)}
-        onManageVariables={() => setShowVariableManager(true)}
-      />
-      <MessageDialog
-        open={showMessageDialog}
-        mode={messageDialogMode}
-        name={messageDialogName}
-        error={messageDialogError}
-        onNameChange={(name) => {
-          setMessageDialogName(name);
-          if (messageDialogError) {
-            setMessageDialogError(null);
-          }
+        onEditVariables={() => setShowEditVariablesDialog(true)}
+        onEditMessages={() => {
+          pendingMessageFieldApplyRef.current = null;
+          setStartMessageManagerInAddMode(false);
+          setShowEditMessagesDialog(true);
         }}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeMessageDialog();
-          }
-        }}
-        onSubmit={handleSubmitMessageDialog}
       />
     </>
   );

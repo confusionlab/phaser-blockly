@@ -6,8 +6,7 @@ import type { MessageDefinition, Variable, VariableType } from '@/types';
 import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
 
-const CREATE_MESSAGE_OPTION = '__CREATE_MESSAGE_OPTION__';
-const RENAME_SELECTED_MESSAGE_OPTION = '__RENAME_SELECTED_MESSAGE_OPTION__';
+const EDIT_MESSAGES_OPTION = '__EDIT_MESSAGES_OPTION__';
 const TOOLBOX_CATEGORY_ORDER = [
   'Events',
   'Actions',
@@ -71,14 +70,15 @@ const ADVANCED_BLOCK_TYPES = new Set<string>([
 const BLOCKLY_INLINE_ICON_DEFAULT_SIZE = 16;
 const BLOCKLY_INLINE_ICON_DEFAULT_TEXT = '#ffffff';
 
-type MessageDialogMode = 'create' | 'rename';
-type MessageDialogCallback = (
-  mode: MessageDialogMode,
-  selectedMessageId: string | null,
-  applySelectedMessageId: (messageId: string) => void,
+type EditMessagesCallback = (
+  options?: {
+    selectedMessageId?: string | null;
+    applySelectedMessageId?: (messageId: string) => void;
+    startInAddMode?: boolean;
+  },
 ) => void;
 
-let messageDialogCallback: MessageDialogCallback | null = null;
+let editMessagesCallback: EditMessagesCallback | null = null;
 
 export type ToolboxShadowConfig = {
   type: string;
@@ -352,7 +352,6 @@ function buildGroupBlockToggleIcon(collapsed: boolean): string {
 
 const GROUP_BLOCK_EXPANDED_ICON = buildGroupBlockToggleIcon(false);
 const GROUP_BLOCK_COLLAPSED_ICON = buildGroupBlockToggleIcon(true);
-const GROUP_BLOCK_COLOUR = BLOCK_COLOURS.debug;
 
 type BlocklyInlineIconOptions = {
   color?: string;
@@ -727,7 +726,7 @@ function getSceneDropdownOptions(): Array<[string, string]> {
   });
 }
 
-function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[string, string]> {
+function getMessageDropdownOptions(_selectedMessageId?: string | null): Array<[string, string]> {
   const project = useProjectStore.getState().project;
   const messages = (project?.messages || []).filter((message): message is MessageDefinition => {
     return (
@@ -760,11 +759,7 @@ function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[st
     }
   }
 
-  options.push(['+ New message...', CREATE_MESSAGE_OPTION]);
-  const hasSelectedMessage = !!selectedMessageId && messages.some((message) => message.id === selectedMessageId);
-  if (hasSelectedMessage) {
-    options.push(['Rename selected message...', RENAME_SELECTED_MESSAGE_OPTION]);
-  }
+  options.push(['Edit messages...', EDIT_MESSAGES_OPTION]);
   return options;
 }
 
@@ -828,32 +823,24 @@ function createObjectPickerValidator(excludeCurrentObject: boolean = true) {
 
 function createMessageDropdownValidator() {
   return function(this: Blockly.FieldDropdown, newValue: string): string | null {
-    if (newValue !== CREATE_MESSAGE_OPTION && newValue !== RENAME_SELECTED_MESSAGE_OPTION) {
+    if (newValue !== EDIT_MESSAGES_OPTION) {
       return newValue;
     }
-    if (!messageDialogCallback) {
+    if (!editMessagesCallback) {
       return null;
     }
 
     const selectedMessageId = this.getValue();
-    if (newValue === RENAME_SELECTED_MESSAGE_OPTION) {
-      const messages = useProjectStore.getState().project?.messages || [];
-      const selectedExists = messages.some((message) => message.id === selectedMessageId);
-      if (!selectedExists) {
-        return null;
-      }
-    }
-
-    messageDialogCallback(
-      newValue === CREATE_MESSAGE_OPTION ? 'create' : 'rename',
-      selectedMessageId || null,
-      (messageId: string) => {
+    editMessagesCallback({
+      selectedMessageId: selectedMessageId || null,
+      startInAddMode: !selectedMessageId,
+      applySelectedMessageId: (messageId: string) => {
         if (!isLiveDropdownField(this)) {
           return;
         }
         this.setValue(messageId);
       },
-    );
+    });
 
     return null;
   };
@@ -932,6 +919,12 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         name: 'Events',
         colour: BLOCK_COLOURS.events,
         contents: [
+          {
+            kind: 'button',
+            text: 'Edit Messages',
+            callbackKey: 'EDIT_MESSAGES',
+          },
+          { kind: 'sep', gap: '16' },
           { kind: 'block', type: 'event_game_start' },
           { kind: 'block', type: 'event_key_pressed' },
           { kind: 'block', type: 'event_world_clicked' },
@@ -1502,13 +1495,8 @@ export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxCon
         contents: [
           {
             kind: 'button',
-            text: '+ Add Variable',
-            callbackKey: 'ADD_VARIABLE',
-          },
-          {
-            kind: 'button',
-            text: 'Manage Variables',
-            callbackKey: 'MANAGE_VARIABLES',
+            text: 'Edit Variables',
+            callbackKey: 'EDIT_VARIABLES',
           },
           { kind: 'sep', gap: '16' },
           { kind: 'label', text: 'Get Variable' },
@@ -4053,32 +4041,32 @@ function checkTypeCompatibility(expectedType: VariableType, valueBlock: Blockly.
 }
 
 // Callbacks for variable category actions - set externally by BlocklyEditor
-let addVariableCallback: (() => void) | null = null;
-let manageVariablesCallback: (() => void) | null = null;
+let editVariablesCallback: (() => void) | null = null;
+let editMessagesToolbarCallback: (() => void) | null = null;
 
-export function setAddVariableCallback(callback: (() => void) | null) {
-  addVariableCallback = callback;
+export function setEditVariablesCallback(callback: (() => void) | null) {
+  editVariablesCallback = callback;
 }
 
-export function setManageVariablesCallback(callback: (() => void) | null) {
-  manageVariablesCallback = callback;
+export function setEditMessagesCallback(callback: EditMessagesCallback | null) {
+  editMessagesCallback = callback;
 }
 
-export function setMessageDialogCallback(callback: MessageDialogCallback | null) {
-  messageDialogCallback = callback;
+export function setEditMessagesToolbarCallback(callback: (() => void) | null) {
+  editMessagesToolbarCallback = callback;
 }
 
 // Register button callbacks for the Variables category
 export function registerTypedVariablesCategory(workspace: Blockly.WorkspaceSvg) {
-  workspace.registerButtonCallback('ADD_VARIABLE', () => {
-    if (addVariableCallback) {
-      addVariableCallback();
+  workspace.registerButtonCallback('EDIT_MESSAGES', () => {
+    if (editMessagesToolbarCallback) {
+      editMessagesToolbarCallback();
     }
   });
 
-  workspace.registerButtonCallback('MANAGE_VARIABLES', () => {
-    if (manageVariablesCallback) {
-      manageVariablesCallback();
+  workspace.registerButtonCallback('EDIT_VARIABLES', () => {
+    if (editVariablesCallback) {
+      editVariablesCallback();
     }
   });
 }

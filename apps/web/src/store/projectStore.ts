@@ -31,7 +31,6 @@ import {
 } from '@/utils/layerTree';
 import {
   normalizeFolderedHierarchy,
-  type FolderedItemShape,
 } from '@/utils/hierarchyTree';
 import {
   hasVariableNameConflict,
@@ -88,6 +87,7 @@ interface ProjectStore {
   updateProjectSettings: (settings: Partial<Project['settings']>) => void;
   applyAssistantChangeSet: (changeSet: AssistantChangeSet) => Project | null;
   addMessage: (name: string) => MessageDefinition | null;
+  removeMessage: (messageId: string) => void;
   updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => void;
 
   // Scene actions
@@ -916,6 +916,20 @@ function createProjectStore(): ProjectStoreHook {
     recordHistoryChange({ source: 'project:add-message' });
 
     return newMessage;
+  },
+
+  removeMessage: (messageId: string) => {
+    set(state => ({
+      project: state.project
+        ? {
+            ...state.project,
+            messages: (state.project.messages || []).filter((message) => message.id !== messageId),
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:remove-message' });
   },
 
   updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => {
