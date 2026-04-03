@@ -3,10 +3,9 @@ import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
 import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { IconButton } from '@/components/ui/icon-button';
 import {
   Select,
   SelectContent,
@@ -15,31 +14,24 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  ColorPicker,
-  ColorPickerSelection,
-  ColorPickerHue,
+  CompactColorPicker,
 } from '@/components/ui/color-picker';
-import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Component, Paintbrush } from 'lucide-react';
-import type { GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
+import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
+import { InlineActionButton } from '@/components/ui/inline-action-button';
+import { RotateCw, FlipHorizontal2, FlipVertical2, Link, Unlink, Paintbrush, Pencil } from '@/components/ui/icons';
+import type { ComponentDefinition, GameObject, Scene, GroundConfig, PhysicsConfig } from '@/types';
 import { createDefaultColliderConfig, createDefaultPhysicsConfig, getEffectiveObjectProps } from '@/types';
 import {
   beginHistoryTransaction,
   endHistoryTransaction,
   runInHistoryTransaction,
 } from '@/store/universalHistory';
-import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { cn } from '@/lib/utils';
-import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
+import { ComponentSharedDisclaimer } from '@/components/stage/ComponentSharedDisclaimer';
 
-type InspectorTab = 'object' | 'scene';
 type PhysicsBodyType = PhysicsConfig['bodyType'];
 type ColliderType = NonNullable<GameObject['collider']>['type'];
-
-const inspectorTabs: SegmentedControlOption<InspectorTab>[] = [
-  { value: 'object', label: 'Object' },
-  { value: 'scene', label: 'Scene' },
-];
 
 const bodyTypeOptions: Array<{ value: PhysicsBodyType; label: string }> = [
   { value: 'dynamic', label: 'Dynamic' },
@@ -70,11 +62,11 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
 
   return (
     <div className="relative">
-      <button
-        type="button"
+      <ColorSwatchButton
+        value={value}
         onClick={() => setIsOpen(!isOpen)}
-        className="w-8 h-8 rounded-md border border-border cursor-pointer shadow-sm hover:scale-105 transition-transform"
-        style={{ backgroundColor: value }}
+        className="h-8 w-8 cursor-pointer rounded-md shadow-sm transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        swatchClassName="size-full rounded-[inherit]"
         title={value}
       />
       {isOpen && (
@@ -84,10 +76,7 @@ function ColorSwatch({ value, onChange }: ColorSwatchProps) {
             onClick={() => setIsOpen(false)}
           />
           <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-lg p-3 shadow-lg">
-            <ColorPicker value={value} onChange={handleColorChange} className="w-48">
-              <ColorPickerSelection className="h-32 rounded mb-2" />
-              <ColorPickerHue />
-            </ColorPicker>
+            <CompactColorPicker value={value} onChange={handleColorChange} />
           </div>
         </>
       )}
@@ -279,19 +268,20 @@ function ScrubInput({
 }
 
 export function ObjectInspector() {
-  const { project, updateObject, updateScene } = useProjectStore();
+  const { project, updateObject, updateScene, updateComponent } = useProjectStore();
   const {
+    activeHierarchyTab,
     selectedSceneId,
-    selectedFolderId,
     selectedObjectId,
     selectedObjectIds,
+    selectedComponentId,
     openBackgroundEditor,
     openWorldBoundaryEditor,
     openCostumeColliderEditor,
   } = useEditorStore();
-  const [activeTab, setActiveTab] = useState<InspectorTab>('object');
 
   const scene = project?.scenes.find(s => s.id === selectedSceneId);
+  const component = (project?.components || []).find((candidate) => candidate.id === selectedComponentId);
   const selectedObjects = scene
     ? (selectedObjectIds.length > 0
       ? selectedObjectIds
@@ -300,65 +290,73 @@ export function ObjectInspector() {
       : (selectedObjectId ? scene.objects.filter(o => o.id === selectedObjectId) : []))
     : [];
 
-  // Switch to object tab when an object is selected
-  useEffect(() => {
-    if (selectedFolderId || selectedObjectId || selectedObjectIds.length > 0) {
-      setActiveTab('object');
-    }
-  }, [selectedFolderId, selectedObjectId, selectedObjectIds.length]);
-
-  const handleSegmentedTabChange = useCallback((value: InspectorTab) => {
-    freezeEditorResizeForLayoutTransition();
-    setActiveTab(value);
-  }, []);
-
   return (
     <div className="inspector-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-card">
-      <div className={cn(panelHeaderClassNames.chrome, panelHeaderClassNames.row)}>
-        <SegmentedControl
-          ariaLabel="Inspector sections"
-          className="w-full"
-          options={inspectorTabs}
-          value={activeTab}
-          onValueChange={handleSegmentedTabChange}
-        />
-      </div>
-
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <ScrollArea
-          aria-hidden={activeTab !== 'object'}
-          className={cn(
-            'absolute inset-0 h-full min-h-0 min-w-0',
-            activeTab === 'object' ? 'z-10' : 'hidden',
-          )}
-        >
-          <div className="min-h-full min-w-0 px-3 py-3">
-            <ObjectProperties
-              objects={selectedObjects}
-              sceneId={selectedSceneId}
-              updateObject={updateObject}
-              openCostumeColliderEditor={openCostumeColliderEditor}
-            />
-          </div>
-        </ScrollArea>
-
-        <ScrollArea
-          aria-hidden={activeTab !== 'scene'}
-          className={cn(
-            'absolute inset-0 h-full min-h-0 min-w-0',
-            activeTab === 'scene' ? 'z-10' : 'hidden',
-          )}
-        >
-          <div className="min-h-full min-w-0 px-3 py-3">
+      <ScrollArea className="h-full min-h-0 min-w-0">
+        <div className="min-h-full min-w-0 px-3 py-3">
+          {activeHierarchyTab === 'scene' ? (
             <SceneProperties
               scene={scene}
               updateScene={updateScene}
               onOpenBackgroundEditor={openBackgroundEditor}
               onOpenWorldBoundaryEditor={openWorldBoundaryEditor}
             />
-          </div>
-        </ScrollArea>
+          ) : null}
+          {activeHierarchyTab === 'object' ? (
+            <ObjectProperties
+              objects={selectedObjects}
+              sceneId={selectedSceneId}
+              updateObject={updateObject}
+              updateComponent={updateComponent}
+              openCostumeColliderEditor={openCostumeColliderEditor}
+            />
+          ) : null}
+          {activeHierarchyTab === 'component' ? (
+            <ComponentProperties
+              component={component}
+              updateComponent={updateComponent}
+            />
+          ) : null}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+interface ComponentPropertiesProps {
+  component: ComponentDefinition | undefined;
+  updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
+}
+
+function ComponentProperties({ component, updateComponent }: ComponentPropertiesProps) {
+  if (!component) {
+    return (
+      <div className="text-center text-muted-foreground text-sm py-4">
+        No component selected
       </div>
+    );
+  }
+
+  const effectivePhysics = component.physics;
+  const effectiveCollider = component.collider;
+
+  return (
+    <div className="w-full min-w-0 space-y-4">
+      <ComponentSharedDisclaimer />
+
+      <ComponentPhysicsToggle
+        component={component}
+        updateComponent={updateComponent}
+        physics={effectivePhysics}
+        collider={effectiveCollider}
+      />
+      <ComponentPhysicsProperties
+        component={component}
+        updateComponent={updateComponent}
+        physics={effectivePhysics}
+        collider={effectiveCollider}
+        enabled={!!effectivePhysics?.enabled}
+      />
     </div>
   );
 }
@@ -367,11 +365,17 @@ interface ObjectPropertiesProps {
   objects: GameObject[];
   sceneId: string | null;
   updateObject: (sceneId: string, objectId: string, updates: Partial<GameObject>) => void;
+  updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
   openCostumeColliderEditor: (sceneId: string, objectId: string) => void;
 }
 
-function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderEditor }: ObjectPropertiesProps) {
-  const [linkScale, setLinkScale] = useState(true);
+function ObjectProperties({
+  objects,
+  sceneId,
+  updateObject,
+  updateComponent,
+  openCostumeColliderEditor,
+}: ObjectPropertiesProps) {
   const dragStartValuesRef = useRef<Partial<Record<'x' | 'y' | 'scaleX' | 'scaleY' | 'rotation', Map<string, number>>>>({});
   const activeDragTransactionsRef = useRef(0);
   const object = objects[0];
@@ -404,10 +408,17 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
     return { value: first, mixed };
   };
 
+  const getSharedBoolean = (picker: (obj: GameObject) => boolean) => {
+    const first = picker(objects[0]);
+    const mixed = objects.some((selectedObj) => picker(selectedObj) !== first);
+    return { value: first, mixed };
+  };
+
   const xField = getSharedNumber((selectedObj) => selectedObj.x);
   const yField = getSharedNumber((selectedObj) => selectedObj.y);
   const scaleXField = getSharedNumber((selectedObj) => Math.abs(selectedObj.scaleX));
   const scaleYField = getSharedNumber((selectedObj) => Math.abs(selectedObj.scaleY));
+  const scaleLockField = getSharedBoolean((selectedObj) => selectedObj.lockScaleProportions ?? true);
   const rotationField = getSharedNumber((selectedObj) => selectedObj.rotation);
 
   const applyToSelected = (buildUpdates: (obj: GameObject) => Partial<GameObject>) => {
@@ -470,7 +481,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
         const startAbsScaleX = startValues.get(selectedObj.id) ?? Math.abs(selectedObj.scaleX);
         const newAbsScaleX = clamp(startAbsScaleX + delta, 0.01);
         const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * newAbsScaleX;
-        if (linkScale) {
+        if (selectedObj.lockScaleProportions ?? true) {
           const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * newAbsScaleX;
           return { scaleX, scaleY };
         }
@@ -482,7 +493,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
     const clampedAbsScaleX = clamp(nextAbsScaleX, 0.01);
     applyToSelected((selectedObj) => {
       const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * clampedAbsScaleX;
-      if (linkScale) {
+      if (selectedObj.lockScaleProportions ?? true) {
         const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * clampedAbsScaleX;
         return { scaleX, scaleY };
       }
@@ -498,7 +509,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
         const startAbsScaleY = startValues.get(selectedObj.id) ?? Math.abs(selectedObj.scaleY);
         const newAbsScaleY = clamp(startAbsScaleY + delta, 0.01);
         const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * newAbsScaleY;
-        if (linkScale) {
+        if (selectedObj.lockScaleProportions ?? true) {
           const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * newAbsScaleY;
           return { scaleX, scaleY };
         }
@@ -510,7 +521,7 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
     const clampedAbsScaleY = clamp(nextAbsScaleY, 0.01);
     applyToSelected((selectedObj) => {
       const scaleY = (selectedObj.scaleY < 0 ? -1 : 1) * clampedAbsScaleY;
-      if (linkScale) {
+      if (selectedObj.lockScaleProportions ?? true) {
         const scaleX = (selectedObj.scaleX < 0 ? -1 : 1) * clampedAbsScaleY;
         return { scaleX, scaleY };
       }
@@ -548,6 +559,9 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
   };
 
   const anyComponentInstance = objects.some((selectedObj) => !!selectedObj.componentId);
+  const syncedComponent = object.componentId
+    ? components.find((component) => component.id === object.componentId) ?? null
+    : null;
   const effectiveObjectProps = getEffectiveObjectProps(object, components);
   const effectivePhysics = effectiveObjectProps.physics;
   const effectiveCollider = effectiveObjectProps.collider;
@@ -559,14 +573,6 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
 
   return (
     <div className="w-full min-w-0 space-y-4">
-      {/* Component indicator */}
-      {anyComponentInstance && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-muted/50">
-          <Component className="size-4 text-purple-600" />
-          <span className="min-w-0 text-xs text-muted-foreground">Component - code and physics sync across all instances</span>
-        </div>
-      )}
-
       {/* Visibility */}
       <div className="flex items-center gap-2">
         <Checkbox
@@ -634,18 +640,17 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             onDragStart={() => saveDragStart('scaleY', (selectedObj) => Math.abs(selectedObj.scaleY))}
             onDragEnd={() => clearDragStart('scaleY')}
           />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setLinkScale(!linkScale)}
+          <IconButton
+            label={scaleLockField.value && !scaleLockField.mixed ? 'Unlock proportions' : 'Lock proportions'}
+            onClick={() => applyToSelected(() => ({ lockScaleProportions: !scaleLockField.value || scaleLockField.mixed }))}
             className={cn(
               'inspector-inline-icon-action',
-              linkScale ? 'text-primary' : 'text-muted-foreground',
+              scaleLockField.value && !scaleLockField.mixed ? 'text-primary' : 'text-muted-foreground',
             )}
-            title={linkScale ? 'Unlink scale' : 'Link scale'}
+            size="sm"
           >
-            {linkScale ? <Link className="size-4" /> : <Unlink className="size-4" />}
-          </Button>
+            {scaleLockField.value && !scaleLockField.mixed ? <Link className="size-4" /> : <Unlink className="size-4" />}
+          </IconButton>
         </div>
       </div>
 
@@ -664,61 +669,85 @@ function ObjectProperties({ objects, sceneId, updateObject, openCostumeColliderE
             onDragStart={() => saveDragStart('rotation', (selectedObj) => selectedObj.rotation)}
             onDragEnd={() => clearDragStart('rotation')}
           />
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <IconButton
+            label="Rotate 90°"
             className="inspector-inline-icon-action"
             onClick={handleRotate90}
-            title="Rotate 90°"
+            size="sm"
           >
             <RotateCw className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          </IconButton>
+          <IconButton
+            label="Flip horizontal"
             onClick={handleFlipH}
-            title="Flip horizontal"
             className={cn(
               'inspector-inline-icon-action',
               allFlippedH && 'text-primary',
             )}
+            size="sm"
           >
             <FlipHorizontal2 className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          </IconButton>
+          <IconButton
+            label="Flip vertical"
             onClick={handleFlipV}
-            title="Flip vertical"
             className={cn(
               'inspector-inline-icon-action',
               allFlippedV && 'text-primary',
             )}
+            size="sm"
           >
             <FlipVertical2 className="size-4" />
-          </Button>
+          </IconButton>
         </div>
       </div>
+
+      {/* Shared component properties */}
+      {anyComponentInstance ? (
+        <div className="border-t border-border pt-3">
+          <ComponentSharedDisclaimer />
+        </div>
+      ) : null}
 
       {/* Physics is single-object only */}
       {!isMultiSelection && (
         <>
-          <PhysicsToggle
-            object={object}
-            sceneId={sceneId}
-            updateObject={updateObject}
-            physics={effectivePhysics}
-            collider={effectiveCollider}
-          />
-          <PhysicsProperties
-            object={object}
-            sceneId={sceneId}
-            updateObject={updateObject}
-            physics={effectivePhysics}
-            collider={effectiveCollider}
-            enabled={!!effectivePhysics?.enabled}
-            onEditCollider={() => openCostumeColliderEditor(sceneId, object.id)}
-          />
+          {syncedComponent ? (
+            <>
+              <ComponentPhysicsToggle
+                component={syncedComponent}
+                updateComponent={updateComponent}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+              />
+              <ComponentPhysicsProperties
+                component={syncedComponent}
+                updateComponent={updateComponent}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+                enabled={!!effectivePhysics?.enabled}
+              />
+            </>
+          ) : (
+            <>
+              <PhysicsToggle
+                object={object}
+                sceneId={sceneId}
+                updateObject={updateObject}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+              />
+              <PhysicsProperties
+                object={object}
+                sceneId={sceneId}
+                updateObject={updateObject}
+                physics={effectivePhysics}
+                collider={effectiveCollider}
+                enabled={!!effectivePhysics?.enabled}
+                onEditCollider={() => openCostumeColliderEditor(sceneId, object.id)}
+              />
+            </>
+          )}
         </>
       )}
     </div>
@@ -755,16 +784,13 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
       <div className="inspector-split-row">
         <span className="text-xs text-muted-foreground">Background</span>
         <div className="inspector-inline-controls">
-          <Button
-            variant="outline"
-            size="sm"
-            className="inspector-inline-button h-8 px-2 text-xs"
+          <InlineActionButton
+            icon={<Paintbrush className="size-3.5" />}
             onClick={() => onOpenBackgroundEditor(scene.id)}
             title="Draw background"
           >
-            <Paintbrush className="size-3.5" />
             Draw
-          </Button>
+          </InlineActionButton>
           <ColorSwatch
             value={!scene.background || scene.background.type === 'image'
               ? '#87CEEB'
@@ -812,7 +838,7 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
 
       <div className="border-t pt-3">
         <div className="inspector-split-row">
-          <div className="inspector-inline-controls">
+          <div className="flex min-w-0 items-center gap-2">
             <Checkbox
               id="world-boundary-toggle"
               checked={!!scene.worldBoundary?.enabled}
@@ -827,24 +853,13 @@ function SceneProperties({ scene, updateScene, onOpenBackgroundEditor, onOpenWor
               World Boundary
             </Label>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="inspector-inline-button h-8 px-2 text-xs"
+          <InlineActionButton
+            icon={<Pencil className="size-3.5" />}
             onClick={() => onOpenWorldBoundaryEditor(scene.id)}
           >
             Edit
-          </Button>
+          </InlineActionButton>
         </div>
-        {scene.worldBoundary?.points?.length ? (
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            {scene.worldBoundary.points.length} points
-          </div>
-        ) : (
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            No boundary points yet
-          </div>
-        )}
       </div>
     </div>
   );
@@ -871,7 +886,6 @@ function PhysicsToggle({
   const hasPhysics = physics?.enabled ?? false;
 
   const togglePhysics = (checked: boolean) => {
-    freezeEditorResizeForLayoutTransition();
     if (!checked) {
       updateObject(sceneId, object.id, {
         physics: {
@@ -895,7 +909,7 @@ function PhysicsToggle({
   };
 
   return (
-    <div className="flex items-center gap-2 pt-2 border-t">
+    <div className="flex items-center gap-2 pt-2">
       <Checkbox
         id="physics-toggle"
         checked={hasPhysics}
@@ -905,6 +919,53 @@ function PhysicsToggle({
         htmlFor="physics-toggle"
         className={`text-xs cursor-pointer ${object.componentId ? 'text-purple-600' : 'text-muted-foreground'}`}
       >
+        Physics
+      </Label>
+    </div>
+  );
+}
+
+function ComponentPhysicsToggle({
+  component,
+  updateComponent,
+  physics,
+  collider,
+}: {
+  component: ComponentDefinition;
+  updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
+  physics: PhysicsConfig | null;
+  collider: GameObject['collider'];
+}) {
+  const hasPhysics = physics?.enabled ?? false;
+
+  const togglePhysics = (checked: boolean) => {
+    if (checked) {
+      updateComponent(component.id, {
+        physics: {
+          ...(physics ?? createDefaultPhysicsConfig()),
+          enabled: true,
+        },
+        collider: collider ?? createDefaultColliderConfig('circle'),
+      });
+      return;
+    }
+
+    updateComponent(component.id, {
+      physics: physics
+        ? { ...physics, enabled: false }
+        : createDefaultPhysicsConfig(),
+      collider: collider ?? createDefaultColliderConfig('circle'),
+    });
+  };
+
+  return (
+    <div className="flex items-center gap-2 pt-2">
+      <Checkbox
+        id="component-physics-toggle"
+        checked={hasPhysics}
+        onCheckedChange={togglePhysics}
+      />
+      <Label htmlFor="component-physics-toggle" className="text-xs cursor-pointer text-purple-600">
         Physics
       </Label>
     </div>
@@ -1084,15 +1145,146 @@ function PhysicsProperties({
               </SelectContent>
             </Select>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="inspector-inline-button h-10 px-3 text-xs"
+          <InlineActionButton
             onClick={onEditCollider}
             disabled={colliderType === 'none'}
+            size="md"
           >
             Edit
-          </Button>
+          </InlineActionButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ComponentPhysicsProperties({
+  component,
+  updateComponent,
+  physics,
+  collider,
+  enabled,
+}: {
+  component: ComponentDefinition;
+  updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
+  physics: PhysicsConfig | null;
+  collider: GameObject['collider'];
+  enabled: boolean;
+}) {
+  const resolvedPhysics = physics ?? createDefaultPhysicsConfig();
+  const resolvedCollider = collider ?? createDefaultColliderConfig('circle');
+
+  const updatePhysics = (updates: Partial<PhysicsConfig>) => {
+    if (!enabled) {
+      return;
+    }
+    updateComponent(component.id, {
+      physics: { ...resolvedPhysics, ...updates },
+    });
+  };
+
+  const updateColliderType = (type: ColliderType) => {
+    if (!enabled) {
+      return;
+    }
+    updateComponent(component.id, {
+      collider: { ...resolvedCollider, type },
+    });
+  };
+
+  const syncedLabelClass = 'text-purple-600';
+
+  return (
+    <div
+      aria-hidden={!enabled}
+      className={cn(
+        'mt-3 w-full min-w-0 space-y-4',
+        !enabled && 'hidden',
+      )}
+    >
+      <div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Body Type</div>
+        <div className="inspector-select-row">
+          <div className="w-full min-w-0">
+            <Select
+              value={resolvedPhysics.bodyType}
+              onValueChange={(bodyType) => {
+                if (isPhysicsBodyType(bodyType)) {
+                  updatePhysics({ bodyType });
+                }
+              }}
+            >
+              <SelectTrigger className="h-10 w-full rounded-lg border-0 bg-muted/50 px-3 shadow-none focus-visible:ring-2">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {bodyTypeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Gravity</div>
+        <div className="inspector-field-grid">
+          <ScrubInput className="min-w-0" label="Y" value={resolvedPhysics.gravityY} onChange={(gravityY) => updatePhysics({ gravityY })} precision={2} />
+        </div>
+      </div>
+
+      <div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Bounce</div>
+        <div className="inspector-field-grid">
+          <ScrubInput className="min-w-0" label="B" value={resolvedPhysics.bounce ?? 0.2} onChange={(bounce) => updatePhysics({ bounce })} precision={2} />
+        </div>
+      </div>
+
+      <div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Friction</div>
+        <div className="inspector-field-grid">
+          <ScrubInput className="min-w-0" label="F" value={resolvedPhysics.friction ?? 0.1} onChange={(friction) => updatePhysics({ friction })} precision={2} />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="component-allow-rotation"
+          checked={resolvedPhysics.allowRotation ?? false}
+          onCheckedChange={(checked) => updatePhysics({ allowRotation: !!checked })}
+        />
+        <Label htmlFor="component-allow-rotation" className={`text-xs cursor-pointer ${syncedLabelClass}`}>
+          Rotate with Physics
+        </Label>
+      </div>
+
+      <div>
+        <div className={`text-xs mb-2 ${syncedLabelClass}`}>Collider</div>
+        <div className="inspector-select-row">
+          <div className="w-full min-w-0">
+            <Select
+              value={resolvedCollider.type}
+              onValueChange={(value) => {
+                if (isColliderType(value)) {
+                  updateColliderType(value);
+                }
+              }}
+            >
+              <SelectTrigger className="h-10 w-full rounded-lg border-0 bg-muted/50 px-3 shadow-none focus-visible:ring-2">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {enabledColliderTypeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
     </div>

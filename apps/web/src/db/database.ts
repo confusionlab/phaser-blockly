@@ -2,10 +2,14 @@ import Dexie, { type EntityTable } from 'dexie';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type {
   BackgroundConfig,
+  ComponentDefinition,
+  ComponentFolder,
   CostumeAssetFrame,
   MessageDefinition,
   Project,
   ReusableObject,
+  Scene,
+  Variable,
 } from '../types';
 import {
   COMPONENT_ANY_PREFIX,
@@ -18,7 +22,7 @@ import {
   VALID_OBJECT_SPECIAL_VALUES,
   VARIABLE_REFERENCE_BLOCKS,
 } from '@/lib/blocklyReferenceMaps';
-import { normalizeVariableDefinition } from '@/lib/variableUtils';
+import { cloneVariableDefinitions, normalizeVariableDefinition } from '@/lib/variableUtils';
 import { normalizeProjectLayering } from '@/utils/layerTree';
 import {
   cloneCostumeDocument,
@@ -64,17 +68,24 @@ import {
 } from '@/lib/costume/costumeDocumentRender';
 import { invalidateImageSource } from '@/lib/assets/imageSourceCache';
 import {
+  canonicalizePersistedComponentDefinition,
+  canonicalizePersistedScene,
   canonicalizePersistedProjectData,
+  inflatePersistedComponentDefinition,
+  inflatePersistedScene,
   inflatePersistedProjectData,
   parsePersistedProjectData,
   stringifyPersistedProjectData,
+  type PersistedComponentDefinition,
   type PersistedProjectData,
+  type PersistedScene,
   type RuntimeProjectData,
 } from '@/lib/persistence/projectDataCodec';
+import { CURRENT_PROJECT_SCHEMA_VERSION } from '@/lib/persistence/schemaVersion';
 import { doesLocalProjectMatchCloudHead } from '@/lib/cloudProjectState';
 
 // Current schema version - increment when project structure changes (see CLAUDE.md)
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = CURRENT_PROJECT_SCHEMA_VERSION;
 
 // App version comes from Vite define (derived from package.json)
 export const APP_VERSION = __APP_VERSION__;
@@ -165,6 +176,12 @@ interface AssetRecord {
 interface PersistedProjectAssetRef {
   assetId: string;
   kind: ManagedAssetKind;
+}
+
+export interface PersistedSceneTemplateData {
+  scene: PersistedScene;
+  components: PersistedComponentDefinition[];
+  componentFolders: ComponentFolder[];
 }
 
 interface ReusableRecord {
@@ -342,7 +359,7 @@ function cloneValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function isManagedAssetId(value: unknown): value is string {
+export function isManagedAssetId(value: unknown): value is string {
   return typeof value === 'string' && MANAGED_ASSET_ID_PATTERN.test(value.trim());
 }
 
@@ -516,6 +533,24 @@ async function storeManagedAssetBlob(
 
 export async function hasManagedAsset(assetId: string): Promise<boolean> {
   return (await db.assets.get(assetId)) !== undefined;
+}
+
+export async function ensureManagedAssetFromSource(
+  source: string,
+  kind: ManagedAssetKind,
+): Promise<{
+  assetId: string;
+  kind: ManagedAssetKind;
+  mimeType: string;
+  size: number;
+}> {
+  const record = await ensureAssetRecordFromSource(source, kind);
+  return {
+    assetId: record.id,
+    kind: record.kind,
+    mimeType: record.mimeType,
+    size: record.size,
+  };
 }
 
 export async function getManagedAssetBlob(assetId: string): Promise<Blob | null> {
@@ -1183,6 +1218,88 @@ async function normalizeProjectAssetsForStorage(
   };
 }
 
+export async function prepareSceneTemplateForStorage(
+  scene: Scene,
+  components: ComponentDefinition[],
+  componentFolders: ComponentFolder[],
+): Promise<{
+  template: PersistedSceneTemplateData;
+  assetRefs: Array<{ assetId: string; kind: ManagedAssetKind }>;
+}> {
+  const nextScene = cloneValue(scene);
+  const nextComponents = cloneValue(components);
+  const nextComponentFolders = cloneValue(componentFolders);
+  const refsById = new Map<string, PersistedProjectAssetRef>();
+
+  const normalizeSoundAsset = async (sound: { assetId: string }) => {
+    if (!isLikelyAssetSource(sound.assetId)) return;
+    const record = await ensureAssetRecordFromSource(sound.assetId, 'audio');
+    addPersistedAssetRef(refsById, record.id, 'audio');
+    sound.assetId = record.id;
+  };
+
+  const normalizeBackground = async (background: BackgroundConfig | null | undefined) => {
+    if (!background) return;
+    if (background.type === 'image' && isLikelyAssetSource(background.value)) {
+      const record = await ensureAssetRecordFromSource(background.value, 'background');
+      addPersistedAssetRef(refsById, record.id, 'background');
+      background.value = record.id;
+    }
+
+    const document = getTiledBackgroundDocument(background);
+    if (!document) {
+      delete (background as { document?: unknown }).document;
+      delete (background as { chunks?: Record<string, string> }).chunks;
+      return;
+    }
+
+    for (const layer of document.layers) {
+      if (!isBitmapBackgroundLayer(layer)) {
+        continue;
+      }
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, source] of Object.entries(layer.bitmap.chunks)) {
+        if (!isLikelyAssetSource(source)) continue;
+        const record = await ensureAssetRecordFromSource(source, 'background');
+        addPersistedAssetRef(refsById, record.id, 'background');
+        nextChunks[chunkKey] = record.id;
+      }
+      layer.bitmap.chunks = nextChunks;
+    }
+
+    background.document = document;
+    delete (background as { chunks?: Record<string, string> }).chunks;
+  };
+
+  await normalizeBackground(nextScene.background);
+  for (const object of nextScene.objects || []) {
+    for (const costume of object.costumes || []) {
+      await normalizeCostumeAssetsForStorage(costume, refsById);
+    }
+    for (const sound of object.sounds || []) {
+      await normalizeSoundAsset(sound);
+    }
+  }
+
+  for (const component of nextComponents || []) {
+    for (const costume of component.costumes || []) {
+      await normalizeCostumeAssetsForStorage(costume, refsById);
+    }
+    for (const sound of component.sounds || []) {
+      await normalizeSoundAsset(sound);
+    }
+  }
+
+  return {
+    template: {
+      scene: canonicalizePersistedScene(nextScene),
+      components: nextComponents.map((component) => canonicalizePersistedComponentDefinition(component)),
+      componentFolders: nextComponentFolders,
+    },
+    assetRefs: Array.from(refsById.values()),
+  };
+}
+
 async function hydrateProjectAssetsFromStorage(
   projectData: PersistedProjectData,
 ): Promise<RuntimeProjectData> {
@@ -1261,6 +1378,115 @@ async function hydrateProjectAssetsFromStorage(
   }
 
   return nextProject;
+}
+
+export async function hydrateSceneTemplateFromStorage(
+  template: PersistedSceneTemplateData,
+  sourceSchemaVersion: number = CURRENT_SCHEMA_VERSION,
+): Promise<{
+  scene: Scene;
+  components: ComponentDefinition[];
+  componentFolders: ComponentFolder[];
+}> {
+  const migratedRuntimeProject = migrateRuntimeProjectDataForTemplate({
+    schemaVersion: sourceSchemaVersion,
+    scenes: [inflatePersistedScene(template.scene)],
+    sceneFolders: [],
+    messages: [],
+    globalVariables: [],
+    settings: {
+      canvasWidth: 800,
+      canvasHeight: 600,
+      backgroundColor: '#87CEEB',
+    },
+    components: template.components.map((component) => inflatePersistedComponentDefinition(component)),
+    componentFolders: cloneValue(template.componentFolders),
+  }, sourceSchemaVersion);
+  const nextScene = cloneValue(migratedRuntimeProject.scenes[0] ?? inflatePersistedScene(template.scene));
+  const nextComponents = cloneValue(migratedRuntimeProject.components);
+
+  const hydrateSoundAsset = async (sound: { assetId: string }) => {
+    if (!isManagedAssetId(sound.assetId)) {
+      return;
+    }
+    const objectUrl = await resolveManagedAssetUrl(sound.assetId);
+    if (objectUrl) {
+      rememberResolvedManagedAsset(sound.assetId, objectUrl);
+      sound.assetId = objectUrl;
+    }
+  };
+
+  const hydrateBackground = async (background: BackgroundConfig | null | undefined) => {
+    if (!background) return;
+    if (background.type === 'image' && isManagedAssetId(background.value)) {
+      const objectUrl = await resolveManagedAssetUrl(background.value);
+      if (objectUrl) {
+        rememberResolvedManagedAsset(background.value, objectUrl);
+        background.value = objectUrl;
+      }
+    }
+
+    const document = getTiledBackgroundDocument(background);
+    if (!document) {
+      delete (background as { document?: unknown }).document;
+      delete (background as { chunks?: Record<string, string> }).chunks;
+      return;
+    }
+
+    for (const layer of document.layers) {
+      if (!isBitmapBackgroundLayer(layer)) {
+        continue;
+      }
+
+      const nextChunks: Record<string, string> = {};
+      for (const [chunkKey, value] of Object.entries(layer.bitmap.chunks)) {
+        if (!isManagedAssetId(value)) {
+          nextChunks[chunkKey] = value;
+          continue;
+        }
+
+        const objectUrl = await resolveManagedAssetUrl(value);
+        if (objectUrl) {
+          rememberResolvedManagedAsset(value, objectUrl);
+          nextChunks[chunkKey] = objectUrl;
+        }
+      }
+      layer.bitmap.chunks = nextChunks;
+    }
+
+    background.document = document;
+    background.chunks = document.layers.reduce<Record<string, string>>((chunks, layer) => {
+      if (!isBitmapBackgroundLayer(layer)) {
+        return chunks;
+      }
+      return { ...chunks, ...layer.bitmap.chunks };
+    }, {});
+  };
+
+  await hydrateBackground(nextScene.background);
+  for (const object of nextScene.objects || []) {
+    for (const costume of object.costumes || []) {
+      await hydrateCostumeAssetsFromStorage(costume);
+    }
+    for (const sound of object.sounds || []) {
+      await hydrateSoundAsset(sound);
+    }
+  }
+
+  for (const component of nextComponents || []) {
+    for (const costume of component.costumes || []) {
+      await hydrateCostumeAssetsFromStorage(costume);
+    }
+    for (const sound of component.sounds || []) {
+      await hydrateSoundAsset(sound);
+    }
+  }
+
+  return {
+    scene: nextScene,
+    components: nextComponents,
+    componentFolders: cloneValue(migratedRuntimeProject.componentFolders),
+  };
 }
 
 function collectPersistedAssetRefsFromProjectData(
@@ -1673,6 +1899,12 @@ export async function loadProject(id: string): Promise<Project | null> {
 
   if (migrated) {
     await db.projects.put(await toProjectRecord(project, project.updatedAt, normalizedRecord));
+  }
+
+  try {
+    await migrateStoredProjectRevisionHistoryToCurrentSchema(project.id);
+  } catch (error) {
+    console.warn(`[Revisions] Failed to migrate revision history for project ${project.id}:`, error);
   }
 
   return project;
@@ -2498,7 +2730,7 @@ function toPublicRevision(record: ProjectRevisionRecord): ProjectRevision {
   };
 }
 
-async function getProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
+async function getStoredProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
   if (!isNonEmptyStringKey(projectId)) {
     return [];
   }
@@ -2510,7 +2742,7 @@ async function getProjectRevisionsAscending(projectId: string): Promise<ProjectR
     .sortBy('createdAt');
 }
 
-async function getLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+async function getStoredLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
   if (!isNonEmptyStringKey(projectId)) {
     return null;
   }
@@ -2524,12 +2756,99 @@ async function getLatestRevision(projectId: string): Promise<ProjectRevisionReco
   return latest ?? null;
 }
 
+function hasLegacyProjectRevisionHistory(revisions: readonly ProjectRevisionRecord[]): boolean {
+  return revisions.some((revision) => normalizeSchemaVersion(revision.schemaVersion) < CURRENT_SCHEMA_VERSION);
+}
+
+async function migrateStoredProjectRevisionHistoryToCurrentSchema(projectId: string): Promise<number> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return 0;
+  }
+
+  const [projectRecord, revisions] = await Promise.all([
+    db.projects.get(projectId),
+    getStoredProjectRevisionsAscending(projectId),
+  ]);
+
+  if (!projectRecord || revisions.length === 0 || !hasLegacyProjectRevisionHistory(revisions)) {
+    return 0;
+  }
+
+  const revisionsById = new Map(revisions.map((revision) => [revision.id, revision]));
+  const memo = new Map<string, MaterializedRevisionData>();
+  const migratedAt = Date.now();
+  const projectMeta = {
+    id: projectRecord.id,
+    name: projectRecord.name,
+    createdAt: new Date(projectRecord.createdAt),
+    updatedAt: new Date(projectRecord.updatedAt),
+  };
+
+  const migratedRevisions = revisions.map((revision) => {
+    const materialized = materializeRevisionRecord(revision, revisionsById, memo);
+    const migrated = migrateSerializedProjectDataToCurrentSchema(
+      materialized.serializedData,
+      materialized.schemaVersion,
+      projectMeta,
+    );
+    const serializedData = migrated.serializedData;
+
+    return {
+      ...revision,
+      kind: 'snapshot' as const,
+      baseRevisionId: revision.id,
+      snapshotData: serializedData,
+      patch: undefined,
+      contentHash: computeContentHash(serializedData),
+      updatedAt: new Date(Math.max(getRevisionUpdatedAtTime(revision), migratedAt)),
+      schemaVersion: CURRENT_SCHEMA_VERSION,
+      assetIds: collectPersistedAssetRefsFromSerializedProjectData(serializedData)
+        .map((assetRef) => assetRef.assetId),
+    } satisfies ProjectRevisionRecord;
+  });
+
+  await db.transaction('rw', db.projectRevisions, db.projects, async () => {
+    await db.projectRevisions.bulkPut(migratedRevisions);
+
+    const currentProjectRecord = await db.projects.get(projectId);
+    if (currentProjectRecord) {
+      await db.projects.put(
+        applyProjectRevisionSyncStateToRecord(
+          currentProjectRecord,
+          summarizeProjectRevisionSyncState(migratedRevisions),
+        ),
+      );
+    }
+  });
+
+  return migratedRevisions.length;
+}
+
+async function getProjectRevisionsAscending(projectId: string): Promise<ProjectRevisionRecord[]> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return [];
+  }
+
+  await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  return await getStoredProjectRevisionsAscending(projectId);
+}
+
+async function getLatestRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
+  if (!isNonEmptyStringKey(projectId)) {
+    return null;
+  }
+
+  await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  return await getStoredLatestRevision(projectId);
+}
+
 async function getLatestCheckpointRevision(projectId: string): Promise<ProjectRevisionRecord | null> {
   if (!isNonEmptyStringKey(projectId)) {
     return null;
   }
 
-  const revisions = await getProjectRevisionsAscending(projectId);
+  await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  const revisions = await getStoredProjectRevisionsAscending(projectId);
   for (let index = revisions.length - 1; index >= 0; index -= 1) {
     const revision = revisions[index];
     if (revision?.isCheckpoint) {
@@ -2579,7 +2898,7 @@ async function refreshStoredProjectRevisionSyncState(projectId: string): Promise
 
   const [projectRecord, revisions] = await Promise.all([
     db.projects.get(projectId),
-    getProjectRevisionsAscending(projectId),
+    getStoredProjectRevisionsAscending(projectId),
   ]);
   const revisionState = summarizeProjectRevisionSyncState(revisions);
   if (projectRecord) {
@@ -3496,6 +3815,12 @@ export async function getProjectRevisionSyncState(projectId: string): Promise<Pr
     return createEmptyProjectRevisionSyncState();
   }
 
+  const migrated = await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+  if (migrated > 0) {
+    const refreshedRecord = await db.projects.get(projectId);
+    return getProjectRevisionSyncStateFromRecord(refreshedRecord);
+  }
+
   const projectRecord = await db.projects.get(projectId);
   const storedState = getProjectRevisionSyncStateFromRecord(projectRecord);
   const hasStoredRevisionState = projectRecord
@@ -3788,7 +4113,7 @@ export async function syncProjectRevisionsFromCloud(
   let created = 0;
   let updated = 0;
   let skipped = 0;
-  const migrated = 0;
+  let migrated = 0;
 
   for (const payload of cloudRevisions) {
     if (payload.localProjectId !== projectId) {
@@ -3866,7 +4191,10 @@ export async function syncProjectRevisionsFromCloud(
   }
 
   if (created > 0 || updated > 0) {
-    await refreshStoredProjectRevisionSyncState(projectId);
+    migrated = await migrateStoredProjectRevisionHistoryToCurrentSchema(projectId);
+    if (migrated === 0) {
+      await refreshStoredProjectRevisionSyncState(projectId);
+    }
   }
 
   return { created, updated, skipped, migrated };
@@ -4067,6 +4395,77 @@ function remapLegacyMessageRefsInBlocklyXml(
   }
 }
 
+type LegacyNumericVariableType = 'integer' | 'float';
+
+type MigratableVariable = Omit<Variable, 'type' | 'defaultValue'> & {
+  type: Variable['type'] | LegacyNumericVariableType;
+  defaultValue: unknown;
+};
+
+function migrateLegacyNumericVariableValue(
+  cardinality: Variable['cardinality'],
+  value: unknown,
+): Variable['defaultValue'] {
+  const coerceScalar = (entry: unknown) => {
+    const numeric = Number(entry);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return numeric;
+  };
+
+  if (cardinality === 'array') {
+    if (Array.isArray(value)) {
+      return value.map((entry) => coerceScalar(entry));
+    }
+    if (value === null || value === undefined) {
+      return [];
+    }
+    return [coerceScalar(value)];
+  }
+
+  return coerceScalar(value);
+}
+
+function migrateLegacyNumericVariable(variable: MigratableVariable): Variable {
+  if (variable.type !== 'integer' && variable.type !== 'float') {
+    return variable as Variable;
+  }
+
+  return {
+    ...variable,
+    type: 'number',
+    defaultValue: migrateLegacyNumericVariableValue(
+      variable.cardinality,
+      variable.defaultValue,
+    ),
+  };
+}
+
+function migrateLegacyNumericVariables(variables: Variable[] | undefined): Variable[] {
+  return Array.isArray(variables)
+    ? variables.map((variable) => migrateLegacyNumericVariable(variable as MigratableVariable))
+    : [];
+}
+
+function migrateProjectVariableTypesToNumber(project: Project): Project {
+  return {
+    ...project,
+    globalVariables: migrateLegacyNumericVariables(project.globalVariables),
+    components: (project.components || []).map((component) => ({
+      ...component,
+      localVariables: migrateLegacyNumericVariables(component.localVariables),
+    })),
+    scenes: (project.scenes || []).map((scene) => ({
+      ...scene,
+      objects: (scene.objects || []).map((obj) => ({
+        ...obj,
+        localVariables: migrateLegacyNumericVariables(obj.localVariables),
+      })),
+    })),
+  };
+}
+
 const migrations: Record<number, MigrationFn> = {
   // v2: Ensure basic scene defaults for older files.
   2: (project) => {
@@ -4249,6 +4648,11 @@ const migrations: Record<number, MigrationFn> = {
     ...normalizeBackgroundDocumentsInProject(project),
     schemaVersion: 10,
   }),
+  // v11: Collapse legacy integer/float variable tags into number.
+  11: (project) => ({
+    ...migrateProjectVariableTypesToNumber(project),
+    schemaVersion: 11,
+  }),
 };
 
 function migrateProject(project: Project, fromVersion: number): Project {
@@ -4263,6 +4667,67 @@ function migrateProject(project: Project, fromVersion: number): Project {
   }
 
   return currentProject;
+}
+
+function createSyntheticProjectFromRuntimeData(
+  projectData: RuntimeProjectData,
+  sourceSchemaVersion: number,
+): Project {
+  const now = new Date(0);
+  return {
+    id: 'template-migration-project',
+    name: 'Template Migration',
+    createdAt: now,
+    updatedAt: now,
+    schemaVersion: sourceSchemaVersion,
+    scenes: Array.isArray(projectData.scenes) ? cloneValue(projectData.scenes) : [],
+    sceneFolders: Array.isArray(projectData.sceneFolders) ? cloneValue(projectData.sceneFolders) : [],
+    messages: Array.isArray(projectData.messages) ? cloneValue(projectData.messages) : [],
+    globalVariables: Array.isArray(projectData.globalVariables) ? cloneValue(projectData.globalVariables) : [],
+    settings: cloneValue(projectData.settings),
+    components: Array.isArray(projectData.components) ? cloneValue(projectData.components) : [],
+    componentFolders: Array.isArray(projectData.componentFolders) ? cloneValue(projectData.componentFolders) : [],
+  };
+}
+
+function extractRuntimeProjectData(project: Project): RuntimeProjectData {
+  return {
+    schemaVersion: project.schemaVersion,
+    scenes: cloneValue(project.scenes),
+    sceneFolders: cloneValue(project.sceneFolders),
+    messages: cloneValue(project.messages),
+    globalVariables: cloneValue(project.globalVariables),
+    settings: cloneValue(project.settings),
+    components: cloneValue(project.components),
+    componentFolders: cloneValue(project.componentFolders),
+  };
+}
+
+export function migrateRuntimeProjectDataForTemplate(
+  projectData: RuntimeProjectData,
+  sourceSchemaVersion: number,
+): RuntimeProjectData {
+  if (sourceSchemaVersion > CURRENT_SCHEMA_VERSION) {
+    throw new Error(
+      `Template requires schema v${sourceSchemaVersion} but this app supports up to v${CURRENT_SCHEMA_VERSION}.`,
+    );
+  }
+
+  let migratedProject = createSyntheticProjectFromRuntimeData(projectData, sourceSchemaVersion);
+  if (sourceSchemaVersion < CURRENT_SCHEMA_VERSION) {
+    migratedProject = migrateProject(migratedProject, sourceSchemaVersion);
+  }
+
+  migratedProject = {
+    ...migratedProject,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+  };
+  migratedProject = normalizeMessagesInProject(migratedProject);
+  migratedProject = normalizeCostumeDocumentsInProject(migratedProject);
+  migratedProject = normalizeBackgroundDocumentsInProject(migratedProject);
+  migratedProject = normalizeProjectLayering(migratedProject);
+
+  return extractRuntimeProjectData(migratedProject);
 }
 
 function getAssetArchiveExtension(mimeType: string): string {
@@ -4553,12 +5018,6 @@ export async function importProject(jsonString: string): Promise<Project> {
 
   // Handle schema version (default to 1 for old files without schemaVersion)
   const schemaVersion = normalizeSchemaVersion(data.schemaVersion ?? data.version ?? 1);
-  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
-    throw new Error(
-      `This project file uses deprecated schema v${schemaVersion}. Only schema v${CURRENT_SCHEMA_VERSION} imports are supported.`,
-    );
-  }
-
   if (schemaVersion > CURRENT_SCHEMA_VERSION) {
     throw new Error(
       `This project was created with a newer version of PochaCoding (schema v${schemaVersion}). ` +
@@ -4573,6 +5032,9 @@ export async function importProject(jsonString: string): Promise<Project> {
   project.globalVariables = Array.isArray(project.globalVariables) ? project.globalVariables : [];
   project.components = Array.isArray(project.components) ? project.components : [];
   project.messages = Array.isArray(project.messages) ? project.messages : [];
+  if (schemaVersion < CURRENT_SCHEMA_VERSION) {
+    project = migrateProject(project, schemaVersion);
+  }
   project = normalizeCostumeDocumentsInProject(project);
   project = normalizeBackgroundDocumentsInProject(project);
 
@@ -4669,7 +5131,7 @@ export async function importProject(jsonString: string): Promise<Project> {
       if (obj.componentId && obj.localVariables.length === 0) {
         const componentLocalVariables = project.components.find((component) => component.id === obj.componentId)?.localVariables || [];
         if (componentLocalVariables.length > 0) {
-          obj.localVariables = componentLocalVariables.map((variable) => ({ ...variable }));
+          obj.localVariables = cloneVariableDefinitions(componentLocalVariables);
         }
       }
 

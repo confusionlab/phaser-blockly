@@ -21,7 +21,6 @@ interface CostumeActiveLayerOverlaysProps {
   editorModeState: CostumeEditorMode;
   hasBitmapFloatingSelection: boolean;
   layerZIndex: number;
-  vectorGuideCanvasRef: RefObject<HTMLCanvasElement | null>;
 }
 
 export function CostumeActiveLayerVisual({
@@ -81,27 +80,12 @@ export function CostumeActiveLayerOverlays({
   editorModeState,
   hasBitmapFloatingSelection,
   layerZIndex,
-  vectorGuideCanvasRef,
 }: CostumeActiveLayerOverlaysProps) {
   return (
     <>
       <canvas
-        ref={vectorGuideCanvasRef}
-        width={CANVAS_SIZE}
-        height={CANVAS_SIZE}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: CANVAS_SIZE,
-          height: CANVAS_SIZE,
-          pointerEvents: 'none',
-          zIndex: layerZIndex,
-        }}
-      />
-
-      <canvas
         ref={bitmapSelectionCanvasRef}
+        data-testid="costume-bitmap-selection-overlay"
         width={CANVAS_SIZE}
         height={CANVAS_SIZE}
         style={{

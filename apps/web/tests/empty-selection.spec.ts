@@ -72,6 +72,19 @@ async function clickNearBottomRight(locator: Locator, inset = 16): Promise<void>
   );
 }
 
+async function rightClickNearBottomRight(locator: Locator, inset = 16): Promise<void> {
+  const box = await locator.boundingBox();
+  if (!box) {
+    throw new Error('Target element is not visible');
+  }
+
+  await locator.page().mouse.click(
+    box.x + Math.max(inset, box.width - inset),
+    box.y + Math.max(inset, box.height - inset),
+    { button: 'right' },
+  );
+}
+
 test.describe('Empty selection interactions', () => {
   test('empty object shelf offers a create object button', async ({ page }) => {
     await bootstrapEditorProject(page, {
@@ -132,5 +145,46 @@ test.describe('Empty selection interactions', () => {
     });
     await expect(page.getByText('Select an object')).toHaveCount(2);
     await expect(page.getByTestId('object-editor-fullscreen-toggle')).toHaveCount(0);
+  });
+
+  test('right-clicking empty shelf space shows paste and new folder actions', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Empty Shelf Context ${Date.now()}`,
+      addObject: true,
+    });
+
+    await page.evaluate(async () => {
+      const [{ useProjectStore }, { useEditorStore }, { copySceneObjectsToClipboard }] = await Promise.all([
+        import('/src/store/projectStore.ts'),
+        import('/src/store/editorStore.ts'),
+        import('/src/lib/editor/objectCommands.ts'),
+      ]);
+
+      const { project } = useProjectStore.getState();
+      const { selectedSceneId, selectedObjectId } = useEditorStore.getState();
+      if (!project || !selectedSceneId || !selectedObjectId) {
+        throw new Error('Failed to seed the shared object clipboard.');
+      }
+
+      copySceneObjectsToClipboard(project, selectedSceneId, [selectedObjectId]);
+    });
+
+    const shelfScrollArea = page.getByTestId('sprite-shelf-scroll-area');
+
+    await rightClickNearBottomRight(shelfScrollArea);
+
+    const pasteButton = page.getByRole('button', { name: 'Paste' });
+    const newFolderButton = page.getByRole('button', { name: 'New Folder' });
+    await expect(pasteButton).toBeVisible();
+    await expect(pasteButton).toBeEnabled();
+    await expect(newFolderButton).toBeVisible();
+
+    await pasteButton.click();
+    await expect(page.getByText(/^Object 1 Copy$/)).toBeVisible();
+
+    await rightClickNearBottomRight(shelfScrollArea);
+    await newFolderButton.click();
+
+    await expect(page.getByText(/^Folder 1$/)).toBeVisible();
   });
 });

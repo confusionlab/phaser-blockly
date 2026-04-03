@@ -21,6 +21,10 @@ html, body, #root {
 
 body {
   font-family: var(--font-sans);
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* Shared editor chrome row height across the editor shell and side panels. */
@@ -33,7 +37,7 @@ body {
   user-select: none;
 }
 
-.app-shell :is(
+body :is(
   input,
   textarea,
   select,
@@ -44,8 +48,8 @@ body {
   user-select: text;
 }
 
-.app-shell [data-allow-text-selection="true"],
-.app-shell [data-allow-text-selection="true"] * {
+[data-allow-text-selection="true"],
+[data-allow-text-selection="true"] * {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -87,54 +91,139 @@ body {
   min-width: unset !important;
 }
 
-.blocklyToolboxCategory {
+.blocklyToolbox {
+  width: 60px !important;
+  min-width: 60px !important;
   padding: 8px 2px !important;
-}
-
-.blocklyToolboxCategoryLabel {
-  font-size: 10px !important;
-  color: var(--blockly-toolbox-fg) !important;
 }
 
 .blocklyTreeLabel {
   color: var(--blockly-toolbox-fg) !important;
 }
 
-.blocklyToolboxCategory {
-  background-color: transparent !important;
-}
-
-.blocklyToolboxCategory:not(.blocklyToolboxSelected):hover {
-  background-color: var(--blockly-toolbox-hover-bg) !important;
-}
-
-.blocklyToolboxSelected,
-.blocklyToolboxSelected:hover {
-  background-color: var(--blockly-toolbox-active-bg) !important;
-}
-
-.blocklyToolboxSelected .blocklyToolboxCategoryLabel {
-  color: var(--blockly-toolbox-selected-fg) !important;
-}
-
-.categoryBubble {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  min-height: 24px !important;
-  margin: 0 auto 4px auto !important;
-}
-
-.blocklyTreeRowContentContainer {
+.pochaBlocklyCategory {
+  padding: 2px 0 !important;
   display: flex !important;
-  flex-direction: column !important;
-  align-items: center !important;
+  width: 100%;
   justify-content: center !important;
 }
 
-.blocklyToolboxCategoryLabel {
+.pochaBlocklyCategoryButton {
+  display: flex !important;
+  position: relative;
+  width: 44px;
+  min-width: 44px;
+  height: 56px;
+  min-height: 56px;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent;
+  margin: 0 auto !important;
+  padding: 0;
+  overflow: visible;
+  transition:
+    transform 120ms ease;
+}
+
+.pochaBlocklyCategoryButton::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50px;
+  height: 50px;
+  border-radius: 18px;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  transition: background-color 120ms ease;
+  z-index: 0;
+}
+
+.pochaBlocklyCategoryButton:hover::before {
+  background-color: var(--blockly-toolbox-hover-bg) !important;
+}
+
+.pochaBlocklyCategory:focus,
+.pochaBlocklyCategory:focus-visible,
+.pochaBlocklyCategory:focus-within,
+.pochaBlocklyCategory.blocklyActiveFocus,
+.blocklyToolboxCategory:focus,
+.blocklyToolboxCategory:focus-visible,
+.blocklyToolboxCategory:focus-within,
+.blocklyToolboxCategory.blocklyActiveFocus,
+.pochaBlocklyCategoryButton:focus,
+.pochaBlocklyCategoryButton:focus-visible,
+.pochaBlocklyCategoryButton:focus-within,
+.pochaBlocklyCategoryButton.blocklyActiveFocus {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+.pochaBlocklyCategoryButton[data-selected='true'],
+.pochaBlocklyCategoryButtonSelected {
+  background-color: transparent !important;
+}
+
+.pochaBlocklyCategoryButton[data-selected='true']::before,
+.pochaBlocklyCategoryButtonSelected::before {
+  background-color: var(--blockly-toolbox-active-bg) !important;
+}
+
+.pochaBlocklyCategoryContent {
+  display: flex !important;
+  position: relative;
+  flex: 0 0 56px;
+  flex-shrink: 0;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px;
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+  transform: translateY(-1px);
+  z-index: 1;
+}
+
+.pochaBlocklyCategoryIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pochaBlocklyCategoryAccent {
+  display: flex;
+  height: auto;
+  width: auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.pochaBlocklyCategoryAccentCore {
+  height: 22px;
+  width: 22px;
+  border-radius: 999px;
+  background: var(--pocha-blockly-category-color);
+  box-shadow: none;
+}
+
+.pochaBlocklyCategoryLabel {
+  max-width: 48px;
+  color: var(--blockly-toolbox-fg) !important;
   font-size: 10px !important;
+  font-weight: 600;
+  line-height: 1;
   text-align: center !important;
+  text-wrap: balance;
+}
+
+.pochaBlocklyCategoryButton[data-selected='true'] .pochaBlocklyCategoryLabel,
+.pochaBlocklyCategoryButtonSelected .pochaBlocklyCategoryLabel {
+  color: var(--blockly-toolbox-selected-fg) !important;
 }
 
 /* Cap flyout/toolbox content width */
@@ -149,6 +238,13 @@ body {
 
 .blocklyFlyoutLabelText {
   fill: var(--blockly-flyout-fg) !important;
+  font-size: 24px !important;
+  font-weight: 700;
+}
+
+.blocklyFlyoutButton.pochaBlocklyRoomyEditButton .blocklyText {
+  font-size: 15px !important;
+  font-weight: 700;
 }
 
 /* Keep Blockly chrome below the shared modal/dialog layer. */
@@ -396,6 +492,18 @@ body {
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-floating: var(--surface-floating);
+  --color-surface-subtle: var(--surface-subtle);
+  --color-surface-control-active: var(--surface-control-active);
+  --color-surface-interactive: var(--surface-interactive);
+  --color-surface-interactive-hover: var(--surface-interactive-hover);
+  --color-surface-wash: var(--surface-wash);
+  --color-surface-wash-soft: var(--surface-wash-soft);
+  --color-surface-scrim: var(--surface-scrim);
+  --color-surface-scrim-strong: var(--surface-scrim-strong);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -430,23 +538,38 @@ body {
 }
 
 :root {
+  color-scheme: light;
   --z-editor-popup: 100120;
   --radius: 0.625rem;
   --divider-size: 2px;
   --resize-hit-size: calc(var(--divider-size) * 2.5);
-  --background: oklch(1 0 0);
+  --surface-canvas: oklch(0.985 0.001 106.423);
+  --surface-panel: oklch(1 0 0);
+  --surface-elevated: oklch(0.992 0.001 106.423);
+  --surface-dialog-workspace: oklch(0.978 0.001 106.423);
+  --surface-floating: oklch(1 0 0 / 0.88);
+  --surface-subtle: oklch(0.97 0.001 106.424);
+  --surface-control-active: var(--surface-panel);
+  --surface-interactive: oklch(0.964 0.002 56.043);
+  --surface-interactive-hover: oklch(0.952 0.003 56.043);
+  --surface-wash: oklch(0.985 0.001 106.423 / 0.72);
+  --surface-wash-soft: oklch(0.985 0.001 106.423 / 0.55);
+  --surface-scrim: oklch(0 0 0 / 0.45);
+  --surface-scrim-strong: oklch(0 0 0 / 0.58);
+  --editor-chrome-surface: var(--surface-panel);
+  --background: var(--surface-canvas);
   --foreground: oklch(0.147 0.004 49.25);
-  --card: oklch(1 0 0);
+  --card: var(--surface-panel);
   --card-foreground: oklch(0.147 0.004 49.25);
-  --popover: oklch(1 0 0);
+  --popover: var(--surface-elevated);
   --popover-foreground: oklch(0.147 0.004 49.25);
   --primary: oklch(0.216 0.006 56.043);
   --primary-foreground: oklch(0.985 0.001 106.423);
-  --secondary: oklch(0.97 0.001 106.424);
+  --secondary: var(--surface-subtle);
   --secondary-foreground: oklch(0.216 0.006 56.043);
-  --muted: oklch(0.97 0.001 106.424);
+  --muted: var(--surface-subtle);
   --muted-foreground: oklch(0.553 0.013 58.071);
-  --accent: oklch(0.97 0.001 106.424);
+  --accent: var(--surface-interactive);
   --accent-foreground: oklch(0.216 0.006 56.043);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.923 0.003 48.717);
@@ -468,6 +591,7 @@ body {
   --editor-selection-surface-selected: #C6E2FF;
   --editor-selection-surface-drop-target: #EEF7FF;
   --editor-selection-surface-hover: #E7EAEE;
+  --component-color: hsl(270 70% 75%);
 
   --scrollbar-size: 4px;
   --scrollbar-padding: 2px;
@@ -477,7 +601,7 @@ body {
   --scrollbar-thumb-hover: oklch(0.216 0.006 56.043 / 0.28);
 
   --blockly-workspace-bg: oklch(0.97 0.001 106.42);
-  --blockly-toolbox-bg: oklch(1 0 0);
+  --blockly-toolbox-bg: var(--editor-chrome-surface);
   --blockly-toolbox-fg: oklch(0.216 0.006 56.043);
   --blockly-toolbox-hover-bg: oklch(0.95 0.002 56.04);
   --blockly-toolbox-active-bg: oklch(0.89 0.003 56.04);
@@ -491,19 +615,34 @@ body {
 }
 
 .dark {
-  --background: oklch(0.11 0.004 49.25);
+  color-scheme: dark;
+  --surface-canvas: oklch(0.11 0.004 49.25);
+  --surface-panel: oklch(0.168 0.006 56.043);
+  --surface-elevated: oklch(0.216 0.006 56.043);
+  --surface-dialog-workspace: oklch(0.204 0.006 56.043);
+  --surface-floating: oklch(0.216 0.006 56.043 / 0.9);
+  --surface-subtle: oklch(0.268 0.007 34.298);
+  --surface-control-active: oklch(0.4 0.009 56.043);
+  --surface-interactive: oklch(0.296 0.008 34.298);
+  --surface-interactive-hover: oklch(0.332 0.009 34.298);
+  --surface-wash: oklch(0.11 0.004 49.25 / 0.72);
+  --surface-wash-soft: oklch(0.11 0.004 49.25 / 0.55);
+  --surface-scrim: oklch(0 0 0 / 0.55);
+  --surface-scrim-strong: oklch(0 0 0 / 0.75);
+  --editor-chrome-surface: var(--surface-panel);
+  --background: var(--surface-canvas);
   --foreground: oklch(0.985 0.001 106.423);
-  --card: oklch(0.216 0.006 56.043);
+  --card: var(--surface-panel);
   --card-foreground: oklch(0.985 0.001 106.423);
-  --popover: oklch(0.216 0.006 56.043);
+  --popover: var(--surface-elevated);
   --popover-foreground: oklch(0.985 0.001 106.423);
   --primary: oklch(0.923 0.003 48.717);
   --primary-foreground: oklch(0.216 0.006 56.043);
-  --secondary: oklch(0.268 0.007 34.298);
+  --secondary: var(--surface-subtle);
   --secondary-foreground: oklch(0.985 0.001 106.423);
-  --muted: oklch(0.268 0.007 34.298);
+  --muted: var(--surface-subtle);
   --muted-foreground: oklch(0.709 0.01 56.259);
-  --accent: oklch(0.268 0.007 34.298);
+  --accent: var(--surface-interactive);
   --accent-foreground: oklch(0.985 0.001 106.423);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
@@ -531,7 +670,7 @@ body {
   --scrollbar-thumb-hover: oklch(0.985 0.001 106.423 / 0.28);
 
   --blockly-workspace-bg: oklch(0.2 0.006 56.04);
-  --blockly-toolbox-bg: oklch(0.24 0.006 56.04);
+  --blockly-toolbox-bg: var(--editor-chrome-surface);
   --blockly-toolbox-fg: oklch(0.92 0.002 106.423);
   --blockly-toolbox-hover-bg: oklch(0.3 0.007 56.04);
   --blockly-toolbox-active-bg: oklch(0.36 0.008 56.04);
@@ -758,6 +897,17 @@ body {
   top: calc((var(--resize-hit-size) - var(--divider-size)) / 2);
   height: var(--divider-size);
   background-color: currentColor;
+}
+
+.pocha-account-profile [data-clerk-component="UserProfile"] {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.pocha-account-profile :is(.cl-rootBox, .cl-cardBox, .cl-pageScrollBox, .cl-navbar, .cl-card) {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 @layer base {

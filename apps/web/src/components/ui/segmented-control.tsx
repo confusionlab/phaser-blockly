@@ -6,8 +6,10 @@ import { cn } from '@/lib/utils';
 export type SegmentedControlOption<T extends string> = {
   value: T;
   label: string;
+  description?: string;
   disabled?: boolean;
   icon?: React.ReactNode;
+  iconOnly?: boolean;
 };
 
 type SegmentedControlProps<T extends string> = Omit<React.HTMLAttributes<HTMLDivElement>, 'onChange'> & {
@@ -17,6 +19,7 @@ type SegmentedControlProps<T extends string> = Omit<React.HTMLAttributes<HTMLDiv
   onValueChange: (value: T) => void;
   optionClassName?: string;
   layout?: 'fill' | 'content';
+  size?: 'compact' | 'expanded';
 };
 
 export function SegmentedControl<T extends string>({
@@ -26,6 +29,7 @@ export function SegmentedControl<T extends string>({
   onValueChange,
   optionClassName,
   options,
+  size,
   style,
   value,
   ...props
@@ -48,6 +52,7 @@ export function SegmentedControl<T extends string>({
   const activeIndex = matchedIndex >= 0 && !options[matchedIndex]?.disabled
     ? matchedIndex
     : (enabledIndices[0] ?? 0);
+  const isExpanded = size === 'expanded' || (size === undefined && options.some((option) => option.description));
 
   const updateThumbMetrics = React.useCallback(() => {
     if (layout !== 'content') {
@@ -104,13 +109,16 @@ export function SegmentedControl<T extends string>({
     };
   }, [layout, options.length, updateThumbMetrics]);
 
-  if (options.length === 0) {
-    return null;
-  }
-
-  const containerSizeClassName = 'h-7 rounded-[10px] p-[2px]';
-  const thumbClassName = 'inset-y-[2px] rounded-[8px]';
-  const optionSizeClassName = 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
+  const containerSizeClassName = isExpanded
+    ? 'min-h-[3.5rem] rounded-xl p-[3px]'
+    : 'h-8 rounded-[10px] p-[2px]';
+  const thumbClassName = isExpanded
+    ? 'inset-y-[3px] rounded-[10px]'
+    : 'inset-y-[2px] rounded-[8px]';
+  const optionSizeClassName = isExpanded
+    ? 'h-full min-h-[3.125rem] rounded-[10px] px-3 py-2 text-[12px]'
+    : 'h-full min-h-0 gap-1.5 rounded-[8px] px-3 py-0 text-[13px]';
+  const fillThumbInsetPx = isExpanded ? 3 : 2;
 
   const thumbStyle: React.CSSProperties = layout === 'content'
     ? {
@@ -118,7 +126,8 @@ export function SegmentedControl<T extends string>({
         width: thumbMetrics.width,
       }
     : {
-        width: `calc((100% - 0.25rem) / ${options.length})`,
+        left: fillThumbInsetPx,
+        width: `calc((100% - ${fillThumbInsetPx * 2}px) / ${options.length})`,
         transform: `translateX(calc(${activeIndex} * 100%))`,
       };
 
@@ -170,13 +179,17 @@ export function SegmentedControl<T extends string>({
     }
   }, [activeIndex, enabledIndices, moveSelection]);
 
+  if (options.length === 0) {
+    return null;
+  }
+
   return (
     <div
       ref={containerRef}
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'relative inline-grid max-w-full items-center bg-zinc-100 dark:bg-zinc-950',
+        'relative inline-grid max-w-full items-center bg-surface-subtle',
         containerSizeClassName,
         layout === 'fill' ? 'w-full' : 'w-fit',
         className,
@@ -192,11 +205,11 @@ export function SegmentedControl<T extends string>({
       <span
         aria-hidden="true"
         className={cn(
-          'pointer-events-none absolute border border-transparent bg-white duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-white/14 dark:bg-zinc-700 dark:shadow-[0_16px_32px_-18px_rgba(0,0,0,0.92),0_2px_6px_rgba(0,0,0,0.5)]',
+          'pointer-events-none absolute border border-border/70 bg-surface-control-active duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:shadow-[0_16px_32px_-18px_rgba(0,0,0,0.92),0_2px_6px_rgba(0,0,0,0.5)]',
           thumbClassName,
           layout === 'content'
             ? 'transition-[left,width] shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)]'
-            : 'left-[2px] shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform',
+            : 'shadow-[0_6px_14px_-14px_rgba(15,23,42,0.7),0_1px_3px_rgba(15,23,42,0.1)] transition-transform',
         )}
         style={thumbStyle}
       />
@@ -212,20 +225,36 @@ export function SegmentedControl<T extends string>({
             }}
             type="button"
             role="radio"
+            aria-label={option.iconOnly ? option.label : undefined}
             aria-checked={isActive}
             disabled={option.disabled}
             data-state={isActive ? 'active' : 'inactive'}
             tabIndex={isActive ? 0 : -1}
+            title={option.iconOnly ? option.label : undefined}
             className={cn(
-              'relative z-10 flex min-w-0 items-center justify-center font-medium tracking-[-0.01em] text-zinc-500 transition-[color,opacity] duration-200 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus-visible:ring-offset-zinc-950 data-[state=active]:text-zinc-950 dark:data-[state=active]:text-white disabled:cursor-not-allowed disabled:text-zinc-300 dark:disabled:text-zinc-600',
+              'relative z-10 flex min-w-0 font-medium tracking-[-0.01em] text-muted-foreground transition-[color,opacity] duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/65 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-panel data-[state=active]:text-foreground disabled:cursor-not-allowed disabled:text-muted-foreground/55',
+              isExpanded ? 'flex-col items-start justify-center gap-0.5 text-left' : 'items-center justify-center',
               optionSizeClassName,
               optionClassName,
             )}
             onClick={() => onValueChange(option.value)}
             onKeyDown={handleKeyDown}
           >
-            {option.icon}
-            <span className="truncate">{option.label}</span>
+            <span
+              className={cn(
+                'flex min-w-0 items-center gap-1.5',
+                isExpanded ? 'w-full' : '',
+                option.iconOnly && 'justify-center',
+              )}
+            >
+              {option.icon}
+              <span className={cn(option.iconOnly ? 'sr-only' : 'truncate')}>{option.label}</span>
+            </span>
+            {isExpanded && option.description ? (
+              <span className="w-full text-left text-[10px] font-normal leading-[1.25] text-zinc-500/90 dark:text-zinc-400/90">
+                {option.description}
+              </span>
+            ) : null}
           </button>
         );
       })}

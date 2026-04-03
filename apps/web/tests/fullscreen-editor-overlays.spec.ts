@@ -86,47 +86,6 @@ async function expectLocatorToBeTopmost(locator: Locator): Promise<void> {
   )).toBe(true);
 }
 
-async function captureStageTransitionFrame(
-  page: Page,
-  buttonLabel: 'Fullscreen stage' | 'Exit fullscreen',
-): Promise<{
-  hostCenterX: number;
-  hostCenterY: number;
-  frozenCenterX: number;
-  frozenCenterY: number;
-}> {
-  await page.waitForFunction((label) => (
-    document.querySelector(`button[aria-label="${label}"]`) instanceof HTMLButtonElement
-  ), buttonLabel);
-
-  return page.evaluate((label) => {
-    const button = document.querySelector(`button[aria-label="${label}"]`);
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error(`Stage transition button not found: ${label}`);
-    }
-
-    button.click();
-
-    const host = document.querySelector('[data-testid="stage-phaser-host"]');
-    const frozen = document.querySelector('[data-testid="stage-frozen-frame"]');
-    if (!(host instanceof HTMLElement)) {
-      throw new Error('Stage host is missing during fullscreen transition.');
-    }
-    if (!(frozen instanceof HTMLImageElement)) {
-      throw new Error('Frozen stage frame is missing during fullscreen transition.');
-    }
-
-    const hostRect = host.getBoundingClientRect();
-    const frozenRect = frozen.getBoundingClientRect();
-    return {
-      hostCenterX: hostRect.left + hostRect.width / 2,
-      hostCenterY: hostRect.top + hostRect.height / 2,
-      frozenCenterX: frozenRect.left + frozenRect.width / 2,
-      frozenCenterY: frozenRect.top + frozenRect.height / 2,
-    };
-  }, buttonLabel);
-}
-
 test.describe('Fullscreen editor overlays', () => {
   test('Object editor toolbar button enters fullscreen without the legacy shell header', async ({ page }) => {
     await bootstrapEditorProject(page, {
@@ -219,28 +178,92 @@ test.describe('Fullscreen editor overlays', () => {
     expect(restoredIdentity.sameCanvas).toBe(true);
   });
 
+  test('Switching object editor tabs does not freeze or remount the stage', async ({ page }) => {
+    await bootstrapEditorProject(page, {
+      projectName: `Stage Tab Isolation ${Date.now()}`,
+      addObject: true,
+    });
+    await selectObjectInSceneHierarchy(page);
+
+    const stageHost = page.getByTestId('stage-phaser-host');
+    const stageCanvas = stageHost.locator('canvas').first();
+    await expect(stageHost).toBeVisible();
+    await expect(stageCanvas).toBeVisible();
+    await expect(page.getByRole('radio', { name: /^costumes$/i })).toBeVisible();
+
+    await page.evaluate(() => {
+      window['__pochaStageHost'] = document.querySelector('[data-testid="stage-phaser-host"]');
+      window['__pochaStageCanvas'] = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+      window['__pochaResizeFreezeEvents'] = [];
+      window.addEventListener('pocha-editor-resize-freeze', (event) => {
+        const detail = (event as CustomEvent<{ active?: boolean }>).detail;
+        window['__pochaResizeFreezeEvents'].push(detail?.active ?? null);
+      });
+    });
+
+    await page.getByRole('radio', { name: /^costumes$/i }).click();
+    await expect(page.getByTestId('costume-toolbar-tools')).toBeVisible();
+    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+
+    const costumeTabState = await page.evaluate(() => ({
+      sameHost: document.querySelector('[data-testid="stage-phaser-host"]') === window['__pochaStageHost'],
+      sameCanvas: document.querySelector('[data-testid="stage-phaser-host"] canvas') === window['__pochaStageCanvas'],
+      canvasVisibility: (() => {
+        const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+        return canvas instanceof HTMLCanvasElement ? window.getComputedStyle(canvas).visibility : null;
+      })(),
+      freezeEvents: [...window['__pochaResizeFreezeEvents']],
+    }));
+    expect(costumeTabState.sameHost).toBe(true);
+    expect(costumeTabState.sameCanvas).toBe(true);
+    expect(costumeTabState.canvasVisibility).toBe('visible');
+    expect(costumeTabState.freezeEvents).toEqual([]);
+
+    await page.getByRole('radio', { name: /^code$/i }).click();
+    await expect(page.locator('.blocklySvg').first()).toBeVisible();
+    await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+
+    const codeTabState = await page.evaluate(() => ({
+      sameHost: document.querySelector('[data-testid="stage-phaser-host"]') === window['__pochaStageHost'],
+      sameCanvas: document.querySelector('[data-testid="stage-phaser-host"] canvas') === window['__pochaStageCanvas'],
+      canvasVisibility: (() => {
+        const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+        return canvas instanceof HTMLCanvasElement ? window.getComputedStyle(canvas).visibility : null;
+      })(),
+      freezeEvents: [...window['__pochaResizeFreezeEvents']],
+    }));
+    expect(codeTabState.sameHost).toBe(true);
+    expect(codeTabState.sameCanvas).toBe(true);
+    expect(codeTabState.canvasVisibility).toBe('visible');
+    expect(codeTabState.freezeEvents).toEqual([]);
+  });
+
   test.describe('Stage fullscreen transition anchoring', () => {
     test.use({
       viewport: { width: 1440, height: 960 },
       deviceScaleFactor: 2,
     });
 
-    test('Frozen stage frame stays centered when entering and exiting fullscreen', async ({ page }) => {
+    test('Stage fullscreen keeps the live canvas visible without a frozen frame overlay', async ({ page }) => {
       await bootstrapEditorProject(page, {
         projectName: `Stage Center Anchor ${Date.now()}`,
       });
 
-      const enterTransition = await captureStageTransitionFrame(page, 'Fullscreen stage');
-      expect(enterTransition.frozenCenterX).toBeCloseTo(enterTransition.hostCenterX, 0);
-      expect(enterTransition.frozenCenterY).toBeCloseTo(enterTransition.hostCenterY, 0);
-
+      await page.getByRole('button', { name: 'Fullscreen stage' }).click();
       await expect(page.getByRole('button', { name: 'Exit fullscreen' })).toBeVisible();
+      await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
+      await expect.poll(async () => {
+        return page.evaluate(() => {
+          const canvas = document.querySelector('[data-testid="stage-phaser-host"] canvas');
+          return canvas instanceof HTMLCanvasElement
+            ? { width: canvas.width, height: canvas.height }
+            : null;
+        });
+      }).toEqual({ width: 1440, height: 960 });
 
-      const exitTransition = await captureStageTransitionFrame(page, 'Exit fullscreen');
-      expect(exitTransition.frozenCenterX).toBeCloseTo(exitTransition.hostCenterX, 0);
-      expect(exitTransition.frozenCenterY).toBeCloseTo(exitTransition.hostCenterY, 0);
-
+      await page.getByRole('button', { name: 'Exit fullscreen' }).click();
       await expect(page.getByRole('button', { name: 'Fullscreen stage' })).toBeVisible();
+      await expect(page.getByTestId('stage-frozen-frame')).toHaveCount(0);
     });
   });
 
@@ -338,6 +361,11 @@ test.describe('Fullscreen editor overlays', () => {
 
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ hasText: 'Sound Library' });
     await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Multi-select' })).toBeVisible();
+    await expect(dialog.getByRole('radio', { name: 'Rows' })).toBeVisible();
+    await expect(dialog.getByRole('radio', { name: 'Grid' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /^cancel$/i })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: /^insert/i })).toHaveCount(0);
     await expectLocatorToBeTopmost(dialog);
 
     const dialogZIndex = await dialog.evaluate(

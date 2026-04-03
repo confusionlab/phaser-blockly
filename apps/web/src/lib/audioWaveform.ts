@@ -126,34 +126,29 @@ export function getVisiblePeaks(
     return [];
   }
 
-  const startIndex = Math.floor(startSec * waveform.peaksPerSecond);
-  const endIndex = Math.ceil((startSec + durationSec) * waveform.peaksPerSecond);
-  const clampedStart = Math.max(0, Math.min(startIndex, waveform.peaks.length - 1));
-  const clampedEnd = Math.max(clampedStart + 1, Math.min(endIndex, waveform.peaks.length));
-  const sourcePeaks = waveform.peaks.slice(clampedStart, clampedEnd);
-
-  if (sourcePeaks.length <= targetBars) {
-    return sourcePeaks;
-  }
-
-  const downsampled: number[] = [];
-  const step = sourcePeaks.length / targetBars;
+  const sourcePeaks = waveform.peaks;
+  const clampedStart = Math.max(0, Math.min(startSec * waveform.peaksPerSecond, sourcePeaks.length - 1));
+  const clampedEnd = Math.max(clampedStart, Math.min((startSec + durationSec) * waveform.peaksPerSecond, sourcePeaks.length));
+  const visiblePeakSpan = Math.max(clampedEnd - clampedStart, Number.EPSILON);
+  const resampled: number[] = [];
 
   for (let barIndex = 0; barIndex < targetBars; barIndex += 1) {
-    const barStart = Math.floor(barIndex * step);
-    const barEnd = Math.max(barStart + 1, Math.floor((barIndex + 1) * step));
+    const barStart = clampedStart + (barIndex / targetBars) * visiblePeakSpan;
+    const barEnd = clampedStart + ((barIndex + 1) / targetBars) * visiblePeakSpan;
+    const sampleStart = Math.max(0, Math.min(Math.floor(barStart), sourcePeaks.length - 1));
+    const sampleEnd = Math.max(sampleStart + 1, Math.min(Math.ceil(barEnd), sourcePeaks.length));
     let max = 0;
 
-    for (let sourceIndex = barStart; sourceIndex < barEnd && sourceIndex < sourcePeaks.length; sourceIndex += 1) {
+    for (let sourceIndex = sampleStart; sourceIndex < sampleEnd; sourceIndex += 1) {
       if (sourcePeaks[sourceIndex] > max) {
         max = sourcePeaks[sourceIndex];
       }
     }
 
-    downsampled.push(max);
+    resampled.push(max);
   }
 
-  return downsampled;
+  return resampled;
 }
 
 export function clearWaveformCache(): void {

@@ -1,3 +1,5 @@
+import { assistantStatementUsesNextConnection, getAssistantBlockCatalog } from './assistantBlocks';
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -16,6 +18,7 @@ const BLOCK_TYPE_ALIASES: Readonly<Record<string, string>> = {
   change_x_by: 'motion_change_x',
   change_y_by: 'motion_change_y',
   controls_if_else: 'controls_if',
+  physics_immovable: 'physics_make_static',
 };
 
 const STATEMENT_NAME_ALIASES: ReadonlyArray<{
@@ -53,6 +56,10 @@ const VALUE_NAME_ALIASES: ReadonlyArray<{
   { blockType: 'motion_change_y', from: 'NUM', to: 'VALUE' },
   { blockType: 'motion_change_y', from: 'DELTA', to: 'VALUE' },
 ];
+
+const HAT_BLOCK_TYPES_WITH_NEXT_BODY = getAssistantBlockCatalog()
+  .filter((entry) => assistantStatementUsesNextConnection(entry.type, 'NEXT'))
+  .map((entry) => entry.type);
 
 function rewriteBlockType(xml: string, from: string, to: string): string {
   const pattern = new RegExp(`type=(["'])${escapeRegExp(from)}\\1`, 'g');
@@ -359,6 +366,140 @@ function normalizeControlsIfBlocks(xml: string): string {
   return normalized;
 }
 
+function getDirectChildRange(
+  xml: string,
+  tagName: 'statement' | 'next',
+  name?: string,
+): { start: number; end: number; innerStart: number; innerEnd: number } | null {
+  const tagPattern = /<[^>]+>/g;
+  let depth = 0;
+
+  for (let match = tagPattern.exec(xml); match; match = tagPattern.exec(xml)) {
+    const tag = match[0];
+    if (tag.startsWith('<?') || tag.startsWith('<!')) {
+      continue;
+    }
+
+    const closingMatch = tag.match(/^<\/([A-Za-z_][\w:.-]*)\s*>$/);
+    if (closingMatch) {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    const openingMatch = tag.match(/^<([A-Za-z_][\w:.-]*)(?:\s[^<>]*?)?\/?>$/);
+    if (!openingMatch) {
+      continue;
+    }
+
+    const currentTagName = openingMatch[1];
+    const isSelfClosing = tag.endsWith('/>');
+    const currentName = tag.match(/\bname=(["'])([^"']+)\1/)?.[2];
+
+    if (depth === 0 && currentTagName === tagName && (name === undefined || currentName === name)) {
+      if (isSelfClosing) {
+        return {
+          start: match.index,
+          end: match.index + tag.length,
+          innerStart: match.index + tag.length,
+          innerEnd: match.index + tag.length,
+        };
+      }
+
+      const childDepth = 1;
+      let nestedDepth = childDepth;
+      const scanPattern = /<[^>]+>/g;
+      scanPattern.lastIndex = match.index + tag.length;
+      for (let childMatch = scanPattern.exec(xml); childMatch; childMatch = scanPattern.exec(xml)) {
+        const childTag = childMatch[0];
+        if (childTag.startsWith('<?') || childTag.startsWith('<!')) {
+          continue;
+        }
+        const childClosingMatch = childTag.match(/^<\/([A-Za-z_][\w:.-]*)\s*>$/);
+        if (childClosingMatch) {
+          nestedDepth -= 1;
+          if (nestedDepth === 0) {
+            return {
+              start: match.index,
+              end: childMatch.index + childTag.length,
+              innerStart: match.index + tag.length,
+              innerEnd: childMatch.index,
+            };
+          }
+          continue;
+        }
+
+        const childIsSelfClosing = childTag.endsWith('/>');
+        if (!childIsSelfClosing) {
+          nestedDepth += 1;
+        }
+      }
+      return null;
+    }
+
+    if (!isSelfClosing) {
+      depth += 1;
+    }
+  }
+
+  return null;
+}
+
+function normalizeHatBlockSnippet(snippet: string): string {
+  const openTagMatch = snippet.match(/^<(block|shadow)\b[^>]*>/);
+  if (!openTagMatch) {
+    return snippet;
+  }
+
+  const openTag = openTagMatch[0];
+  const closeTag = `</${openTagMatch[1]}>`;
+  if (!snippet.endsWith(closeTag)) {
+    return snippet;
+  }
+
+  const inner = snippet.slice(openTag.length, snippet.length - closeTag.length);
+  if (getDirectChildRange(inner, 'next')) {
+    return snippet;
+  }
+
+  const nextStatementRange = getDirectChildRange(inner, 'statement', 'NEXT');
+  if (!nextStatementRange) {
+    return snippet;
+  }
+
+  const nextStatementInner = inner.slice(nextStatementRange.innerStart, nextStatementRange.innerEnd);
+  const replacement = nextStatementInner.trim().length > 0 ? `<next>${nextStatementInner}</next>` : '';
+  const normalizedInner = inner.slice(0, nextStatementRange.start) + replacement + inner.slice(nextStatementRange.end);
+  return `${openTag}${normalizedInner}${closeTag}`;
+}
+
+function normalizeHatBlocks(xml: string): string {
+  if (HAT_BLOCK_TYPES_WITH_NEXT_BODY.length === 0) {
+    return xml;
+  }
+
+  const blockTypesPattern = HAT_BLOCK_TYPES_WITH_NEXT_BODY.map((type) => escapeRegExp(type)).join('|');
+  const blockPattern = new RegExp(`<(block|shadow)\\b[^>]*type=(["'])(${blockTypesPattern})\\2[^>]*>`, 'g');
+
+  let normalized = '';
+  let lastIndex = 0;
+
+  for (let match = blockPattern.exec(xml); match; match = blockPattern.exec(xml)) {
+    const startIndex = match.index;
+    const endIndex = findScopedBlockEnd(xml, startIndex);
+    if (endIndex === null) {
+      break;
+    }
+
+    normalized += xml.slice(lastIndex, startIndex);
+    normalized += normalizeHatBlockSnippet(xml.slice(startIndex, endIndex));
+    lastIndex = endIndex;
+    blockPattern.lastIndex = endIndex;
+  }
+
+  normalized += xml.slice(lastIndex);
+  return normalized;
+}
+
 function collectBlocklyBlockTypes(blocklyXml: string): string[] {
   const blockTypes: string[] = [];
   const seen = new Set<string>();
@@ -520,6 +661,7 @@ export function normalizeBlocklyXml(blocklyXml: string): string {
   normalized = normalizeKeyBlocks(normalized);
   normalized = normalizeControlsIfBlocks(normalized);
   normalized = normalizeMotionBlocks(normalized);
+  normalized = normalizeHatBlocks(normalized);
 
   return normalized;
 }

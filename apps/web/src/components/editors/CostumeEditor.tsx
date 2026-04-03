@@ -72,6 +72,7 @@ import {
   mergeCostumeLayers,
   rasterizeCostumeLayer,
 } from '@/lib/costume/costumeLayerOperations';
+import { useBulkAssetSelection } from './shared/useBulkAssetSelection';
 
 const VECTOR_TOOLS = new Set<DrawingTool>(['select', 'pen', 'brush', 'rectangle', 'circle', 'triangle', 'star', 'line', 'text', 'collider']);
 const BITMAP_TOOLS = new Set<DrawingTool>(['select', 'brush', 'eraser', 'fill', 'circle', 'rectangle', 'triangle', 'star', 'line', 'collider']);
@@ -135,31 +136,52 @@ function getLayerCanvasSourceSignature(layer: ReturnType<typeof getActiveCostume
 function createCostumeTarget(
   sceneId: string | null,
   objectId: string | null,
+  componentId: string | null,
   costumeId: string | null,
 ): CostumeEditorTarget | null {
-  if (!sceneId || !objectId || !costumeId) {
-    return null;
+  if (componentId && costumeId) {
+    return {
+      componentId,
+      costumeId,
+    };
   }
 
-  return {
-    sceneId,
-    objectId,
-    costumeId,
-  };
+  if (sceneId && objectId && costumeId) {
+    return {
+      sceneId,
+      objectId,
+      costumeId,
+    };
+  }
+
+  return null;
 }
 
 function createCostumeObjectTarget(
   sceneId: string | null,
   objectId: string | null,
+  componentId: string | null,
 ): CostumeEditorObjectTarget | null {
-  if (!sceneId || !objectId) {
-    return null;
+  if (componentId) {
+    return {
+      componentId,
+    };
   }
 
-  return {
-    sceneId,
-    objectId,
-  };
+  if (sceneId && objectId) {
+    return {
+      sceneId,
+      objectId,
+    };
+  }
+
+  return null;
+}
+
+function doCostumeTargetsMatch(a: CostumeEditorTarget, b: CostumeEditorTarget): boolean {
+  return 'componentId' in a || 'componentId' in b
+    ? ('componentId' in a && 'componentId' in b && a.componentId === b.componentId && a.costumeId === b.costumeId)
+    : a.sceneId === b.sceneId && a.objectId === b.objectId && a.costumeId === b.costumeId;
 }
 
 export function CostumeEditor() {
@@ -167,12 +189,14 @@ export function CostumeEditor() {
   const {
     project,
     updateObject,
+    updateComponent,
     updateCostumeFromEditor,
     applyCostumeEditorOperation,
   } = useProjectStore();
   const {
     selectedSceneId,
     selectedObjectId,
+    selectedComponentId,
     registerCostumeUndo,
     activeObjectTab,
     costumeColliderEditorRequest,
@@ -181,9 +205,10 @@ export function CostumeEditor() {
 
   const currentCostumeIdRef = useRef<string | null>(null);
   const currentCostumeRef = useRef<Costume | undefined>(undefined);
-  const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null }>({
+  const previousSelectionRef = useRef<{ sceneId: string | null; objectId: string | null; componentId: string | null }>({
     sceneId: null,
     objectId: null,
+    componentId: null,
   });
   const loadRequestIdRef = useRef(0);
   const workingPersistedStateSessionKeyRef = useRef<string | null>(null);
@@ -206,20 +231,33 @@ export function CostumeEditor() {
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const object = scene?.objects.find((candidate) => candidate.id === selectedObjectId);
+  const component = (project?.components || []).find((candidate) => candidate.id === selectedComponentId);
 
   const effectiveProps = useMemo(() => {
+    if (component) {
+      return {
+        blocklyXml: component.blocklyXml,
+        costumes: component.costumes,
+        currentCostumeIndex: component.currentCostumeIndex,
+        physics: component.physics,
+        collider: component.collider,
+        sounds: component.sounds,
+      };
+    }
     if (!object || !project) return null;
     return getEffectiveObjectProps(object, project.components || []);
-  }, [object, project]);
+  }, [component, object, project]);
 
   const costumes = useMemo(() => effectiveProps?.costumes || [], [effectiveProps]);
+  const orderedCostumeIds = useMemo(() => costumes.map((costume) => costume.id), [costumes]);
   const currentCostumeIndex = effectiveProps?.currentCostumeIndex ?? 0;
   const collider = effectiveProps?.collider ?? null;
   const currentCostume = costumes[currentCostumeIndex];
+  const activeCostumeId = currentCostume?.id ?? null;
   const currentSession = useMemo(() => {
-    const target = createCostumeTarget(selectedSceneId, selectedObjectId, currentCostume?.id ?? null);
+    const target = createCostumeTarget(selectedSceneId, selectedObjectId, selectedComponentId, currentCostume?.id ?? null);
     return target ? createCostumeEditorSession(target) : null;
-  }, [currentCostume?.id, selectedObjectId, selectedSceneId]);
+  }, [currentCostume?.id, selectedComponentId, selectedObjectId, selectedSceneId]);
   const currentWorkingPersistedState = currentSession && workingPersistedStateSessionKeyRef.current === currentSession.key
     ? workingPersistedState
     : null;
@@ -244,9 +282,28 @@ export function CostumeEditor() {
     ? `${editorCostume.id}:${editorCostume.document.activeLayerId}`
     : null;
   const currentObjectTarget = useMemo(
-    () => createCostumeObjectTarget(selectedSceneId, selectedObjectId),
-    [selectedObjectId, selectedSceneId],
+    () => createCostumeObjectTarget(selectedSceneId, selectedObjectId, selectedComponentId),
+    [selectedComponentId, selectedObjectId, selectedSceneId],
   );
+  const {
+    selectedIds: selectedCostumeIds,
+    replaceSelection: replaceSelectedCostumeIds,
+    handleItemClick: handleCostumeListClick,
+    prepareDragSelection: prepareCostumeDragSelection,
+  } = useBulkAssetSelection({
+    orderedIds: orderedCostumeIds,
+    activeId: activeCostumeId,
+    onActivate: (costumeId) => {
+      if (!currentObjectTarget) {
+        return;
+      }
+
+      applyOperationToCurrentObject({
+        type: 'select',
+        costumeId,
+      });
+    },
+  });
   currentSessionRef.current = currentSession;
   const initialEditorMode: CostumeEditorMode = editorCostume
     ? getInitialCostumeEditorMode(editorCostume)
@@ -256,6 +313,7 @@ export function CostumeEditor() {
   const [activeTool, setActiveTool] = useState<DrawingTool>('select');
   const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
   const [brushColor, setBrushColor] = useState('#000000');
+  const [brushOpacity, setBrushOpacity] = useState(1);
   const [brushSize, setBrushSize] = useState(5);
   const [bitmapFillStyle, setBitmapFillStyle] = useState<BitmapFillStyle>({
     textureId: DEFAULT_BITMAP_FILL_TEXTURE_ID,
@@ -278,7 +336,9 @@ export function CostumeEditor() {
   const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>({
     fillColor: '#000000',
     fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
+    fillOpacity: 1,
     strokeColor: '#000000',
+    strokeOpacity: 1,
     strokeWidth: 1,
     strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
   });
@@ -944,9 +1004,7 @@ export function CostumeEditor() {
       didApply &&
       loadedSession &&
       persistedSession &&
-      persistedSession.target.sceneId === loadedSession.sceneId &&
-      persistedSession.target.objectId === loadedSession.objectId &&
-      persistedSession.target.costumeId === loadedSession.costumeId
+      doCostumeTargetsMatch(persistedSession.target, loadedSession)
     ) {
       canvasRef.current?.markPersisted(loadedSession.key);
     }
@@ -957,7 +1015,8 @@ export function CostumeEditor() {
     const previousSelection = previousSelectionRef.current;
     const selectionChanged =
       previousSelection.sceneId !== selectedSceneId ||
-      previousSelection.objectId !== selectedObjectId;
+      previousSelection.objectId !== selectedObjectId ||
+      previousSelection.componentId !== selectedComponentId;
 
     if (selectionChanged) {
       if (saveTimeoutRef.current) {
@@ -967,14 +1026,15 @@ export function CostumeEditor() {
 
       loadRequestIdRef.current += 1;
       currentCostumeIdRef.current = null;
-      beginSessionLoad(!!selectedObjectId);
+      beginSessionLoad(!!currentObjectTarget);
     }
 
     previousSelectionRef.current = {
       sceneId: selectedSceneId,
       objectId: selectedObjectId,
+      componentId: selectedComponentId,
     };
-  }, [beginSessionLoad, selectedSceneId, selectedObjectId]);
+  }, [beginSessionLoad, currentObjectTarget, selectedComponentId, selectedObjectId, selectedSceneId]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -982,7 +1042,7 @@ export function CostumeEditor() {
     if (!editorCostume || !currentSession) {
       currentCostumeIdRef.current = null;
       const requestId = ++loadRequestIdRef.current;
-      beginSessionLoad(!!selectedObjectId);
+      beginSessionLoad(!!currentObjectTarget);
       const fallbackMode: CostumeEditorMode = 'bitmap';
       setCanvasEditorMode(fallbackMode);
       setActiveTool((prev) => ensureToolForMode(fallbackMode, prev));
@@ -1075,51 +1135,83 @@ export function CostumeEditor() {
     resolvePersistedStateWithCanvasState,
   ]);
 
-  const handleSelectCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId) return;
-
-    const nextCostume = costumes[index];
-    if (!nextCostume) return;
-
-    applyOperationToCurrentObject({
-      type: 'select',
-      costumeId: nextCostume.id,
-    });
-  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
-
   const handleAddCostume = useCallback((costume: Costume) => {
-    if (!selectedSceneId || !selectedObjectId) return;
+    if (!currentObjectTarget) return;
 
+    replaceSelectedCostumeIds([costume.id], { anchorId: costume.id });
     applyOperationToCurrentObject({
       type: 'add',
       costume,
     });
-  }, [applyOperationToCurrentObject, selectedObjectId, selectedSceneId]);
+  }, [applyOperationToCurrentObject, currentObjectTarget, replaceSelectedCostumeIds]);
 
-  const handleDeleteCostume = useCallback((index: number) => {
-    if (!selectedSceneId || !selectedObjectId) return;
-
-    const costume = costumes[index];
-    if (!costume) return;
+  const handleDeleteCostumes = useCallback((costumeIds: string[]) => {
+    if (!currentObjectTarget) return;
+    if (costumeIds.length === 0) return;
 
     applyOperationToCurrentObject({
-      type: 'remove',
-      costumeId: costume.id,
+      type: 'removeMany',
+      costumeIds,
     });
-  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
+  }, [applyOperationToCurrentObject, currentObjectTarget]);
 
-  const handleRenameCostume = useCallback((index: number, name: string) => {
-    if (!selectedSceneId || !selectedObjectId) return;
-
-    const costume = costumes[index];
-    if (!costume) return;
+  const handleRenameCostume = useCallback((costumeId: string, name: string) => {
+    if (!currentObjectTarget) return;
 
     applyOperationToCurrentObject({
       type: 'rename',
-      costumeId: costume.id,
+      costumeId,
       name,
     });
-  }, [applyOperationToCurrentObject, costumes, selectedObjectId, selectedSceneId]);
+  }, [applyOperationToCurrentObject, currentObjectTarget]);
+
+  const handleReorderCostumes = useCallback((costumeIds: string[], targetIndex: number) => {
+    if (!currentObjectTarget) return;
+    if (costumeIds.length === 0) return;
+
+    applyOperationToCurrentObject({
+      type: 'reorder',
+      costumeIds,
+      targetIndex,
+    });
+  }, [applyOperationToCurrentObject, currentObjectTarget]);
+
+  const handleReplaceCostumes = useCallback((
+    nextCostumes: Costume[],
+    nextActiveCostumeId: string | null,
+    nextSelectedCostumeIds: string[],
+  ) => {
+    const resolvedActiveCostumeId = nextActiveCostumeId ?? nextCostumes[0]?.id ?? null;
+    const nextCostumeIndex = resolvedActiveCostumeId
+      ? Math.max(0, nextCostumes.findIndex((costume) => costume.id === resolvedActiveCostumeId))
+      : 0;
+
+    if (selectedComponentId) {
+      updateComponent(selectedComponentId, {
+        costumes: nextCostumes,
+        currentCostumeIndex: nextCostumeIndex,
+      });
+    } else if (selectedSceneId && selectedObjectId) {
+      updateObject(selectedSceneId, selectedObjectId, {
+        costumes: nextCostumes,
+        currentCostumeIndex: nextCostumeIndex,
+      });
+    } else {
+      return;
+    }
+
+    replaceSelectedCostumeIds(
+      nextSelectedCostumeIds,
+      { anchorId: nextSelectedCostumeIds[0] ?? resolvedActiveCostumeId },
+    );
+  }, [
+    replaceSelectedCostumeIds,
+    selectedComponentId,
+    selectedObjectId,
+    selectedSceneId,
+    updateComponent,
+    updateObject,
+  ]);
 
   const handleSelectLayer = useCallback((layerId: string) => {
     if (isLoadingRef.current) {
@@ -1445,7 +1537,9 @@ export function CostumeEditor() {
       if (
         next.fillColor === prev.fillColor &&
         next.fillTextureId === prev.fillTextureId &&
+        next.fillOpacity === prev.fillOpacity &&
         next.strokeColor === prev.strokeColor &&
+        next.strokeOpacity === prev.strokeOpacity &&
         next.strokeWidth === prev.strokeWidth &&
         next.strokeBrushId === prev.strokeBrushId
       ) {
@@ -1482,6 +1576,9 @@ export function CostumeEditor() {
   const handleColliderChange = useCallback((newCollider: ColliderConfig) => {
     const loadedSession = loadedSessionRef.current;
     if (!loadedSession || isLoadingRef.current || !isCanvasReadyForSession(loadedSession)) return;
+    if ('componentId' in loadedSession) {
+      return;
+    }
 
     updateObject(loadedSession.sceneId, loadedSession.objectId, { collider: newCollider });
   }, [isCanvasReadyForSession, updateObject]);
@@ -1494,7 +1591,7 @@ export function CostumeEditor() {
     void navigateDocumentHistory('redo');
   }, [navigateDocumentHistory]);
 
-  if (!object) {
+  if (!object && !component) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
         {NO_OBJECT_SELECTED_MESSAGE}
@@ -1506,11 +1603,15 @@ export function CostumeEditor() {
     <div className="relative flex h-full overflow-hidden">
       <CostumeList
         costumes={costumes}
-        selectedIndex={currentCostumeIndex}
-        onSelectCostume={handleSelectCostume}
+        activeCostumeId={activeCostumeId}
+        selectedCostumeIds={selectedCostumeIds}
+        onSelectCostume={handleCostumeListClick}
         onAddCostume={handleAddCostume}
-        onDeleteCostume={handleDeleteCostume}
+        onDeleteCostumes={handleDeleteCostumes}
         onRenameCostume={handleRenameCostume}
+        onReplaceCostumes={handleReplaceCostumes}
+        onPrepareCostumeDrag={prepareCostumeDragSelection}
+        onReorderCostumes={handleReorderCostumes}
       />
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1524,6 +1625,7 @@ export function CostumeEditor() {
             hasSelectedVectorPoints={hasSelectedVectorPoints}
             bitmapBrushKind={bitmapBrushKind}
             brushColor={brushColor}
+            brushOpacity={brushOpacity}
             brushSize={brushSize}
             bitmapFillStyle={bitmapFillStyle}
             bitmapShapeStyle={bitmapShapeStyle}
@@ -1540,6 +1642,7 @@ export function CostumeEditor() {
             onAlign={handleAlign}
             alignDisabled={editorMode === 'bitmap' ? !hasBitmapFloatingSelection : !hasCanvasSelection}
             onColorChange={setBrushColor}
+            onBrushOpacityChange={setBrushOpacity}
             onBitmapBrushKindChange={setBitmapBrushKind}
             onBrushSizeChange={setBrushSize}
             onBitmapFillStyleChange={handleBitmapFillStyleChange}
@@ -1558,6 +1661,7 @@ export function CostumeEditor() {
             activeTool={activeTool}
             bitmapBrushKind={bitmapBrushKind}
             brushColor={brushColor}
+            brushOpacity={brushOpacity}
             brushSize={brushSize}
             bitmapFillStyle={bitmapFillStyle}
             bitmapShapeStyle={bitmapShapeStyle}
@@ -1604,7 +1708,7 @@ export function CostumeEditor() {
       </div>
 
       {isSessionLoading && (
-        <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-background/70 text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>
+        <div className={`absolute inset-0 z-20 ${showSessionLoadingOverlay ? 'flex items-center justify-center bg-surface-wash text-sm text-muted-foreground backdrop-blur-[1px]' : 'bg-transparent'}`}>
           {showSessionLoadingOverlay ? 'Switching costume editor to the selected object...' : null}
         </div>
       )}

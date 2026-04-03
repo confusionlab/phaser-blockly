@@ -102,7 +102,8 @@ function formatVariableList(
   items: readonly {
     name: string;
     type: string;
-    defaultValue: string | number | boolean;
+    cardinality?: 'single' | 'array';
+    defaultValue: string | number | boolean | Array<string | number | boolean>;
   }[],
 ): string {
   if (items.length === 0) {
@@ -110,7 +111,8 @@ function formatVariableList(
   }
 
   const preview = items.slice(0, MAX_LIST_PREVIEW_ITEMS).map((item) => {
-    return `${item.name}:${item.type}=${JSON.stringify(item.defaultValue)}`;
+    const typeLabel = item.cardinality === 'array' ? `${item.type}[]` : item.type;
+    return `${item.name}:${typeLabel}=${JSON.stringify(item.defaultValue)}`;
   });
 
   if (items.length <= MAX_LIST_PREVIEW_ITEMS) {

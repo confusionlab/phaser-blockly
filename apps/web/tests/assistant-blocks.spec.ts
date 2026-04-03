@@ -6,6 +6,7 @@ import {
   searchAssistantBlocks,
   validateAssistantBlockProgram,
 } from '../../../packages/ui-shared/src/assistantBlocks';
+import { createDefaultProject } from '../src/types';
 
 function installToolboxTestGlobals(): void {
   const globals = globalThis as {
@@ -44,6 +45,124 @@ test.describe('assistant block catalog', () => {
     const toolboxTypes = getToolboxRegisteredBlockTypes();
 
     expect(catalogTypes).toEqual(toolboxTypes);
+  });
+
+  test('toolbox visibility filtering hides advanced flyout blocks without removing supported block types', async () => {
+    installToolboxTestGlobals();
+    const { getToolboxConfig, getToolboxRegisteredBlockTypes } = await import('../src/components/blockly/toolbox');
+
+    const allToolboxTypes = getToolboxRegisteredBlockTypes();
+    const basicToolboxTypes = getToolboxRegisteredBlockTypes({ includeAdvancedBlocks: false });
+    const advancedToolbox = getToolboxConfig({ includeAdvancedBlocks: true });
+    const basicToolbox = getToolboxConfig({ includeAdvancedBlocks: false });
+    const sensingCategory = advancedToolbox.contents.find((category) => category.name === 'Sensing');
+    const debugCategory = basicToolbox.contents.find((category) => category.name === 'Debug');
+    const targetsCategory = basicToolbox.contents.find((category) => category.name === 'Targets');
+
+    expect(allToolboxTypes).toContain('debug_console_log');
+    expect(allToolboxTypes).toContain('control_group_block');
+    expect(allToolboxTypes).toContain('target_camera');
+    expect(allToolboxTypes).toContain('operator_mathop');
+    expect(allToolboxTypes).toContain('looks_speak');
+    expect(allToolboxTypes).toContain('sensing_all_touching_objects');
+    expect(allToolboxTypes).toContain('sensing_touching_direction_value');
+    expect(allToolboxTypes).toContain('event_when_touching_direction_value');
+    expect(allToolboxTypes).toContain('physics_set_bounce');
+    expect(allToolboxTypes).toContain('physics_set_friction');
+    expect(basicToolboxTypes).not.toContain('debug_console_log');
+    expect(basicToolboxTypes).not.toContain('control_group_block');
+    expect(basicToolboxTypes).not.toContain('target_camera');
+    expect(basicToolboxTypes).not.toContain('operator_mathop');
+    expect(basicToolboxTypes).not.toContain('operator_mod');
+    expect(basicToolboxTypes).not.toContain('physics_set_bounce');
+    expect(basicToolboxTypes).not.toContain('physics_set_friction');
+    expect(basicToolboxTypes).not.toContain('looks_speak');
+    expect(basicToolboxTypes).not.toContain('looks_stop_speaking');
+    expect(basicToolboxTypes).not.toContain('looks_target_speak');
+    expect(basicToolboxTypes).not.toContain('looks_target_stop_speaking');
+    expect(basicToolboxTypes).not.toContain('sensing_all_touching_objects');
+    expect(basicToolboxTypes).not.toContain('sensing_touching_direction_value');
+    expect(basicToolboxTypes).not.toContain('event_when_touching_direction_value');
+    expect(sensingCategory?.contents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'label', text: 'Targets' }),
+        expect.objectContaining({ kind: 'block', type: 'object_from_dropdown' }),
+        expect.objectContaining({ kind: 'block', type: 'target_camera' }),
+        expect.objectContaining({ kind: 'block', type: 'target_myself' }),
+        expect.objectContaining({ kind: 'block', type: 'target_mouse' }),
+        expect.objectContaining({ kind: 'block', type: 'target_ground' }),
+      ]),
+    );
+    expect(debugCategory).toBeUndefined();
+    expect(targetsCategory).toBeUndefined();
+  });
+
+  test('toolbox groups message blocks under Events and places forever in Control', async () => {
+    installToolboxTestGlobals();
+    const { getToolboxConfig } = await import('../src/components/blockly/toolbox');
+
+    const toolbox = getToolboxConfig({ includeAdvancedBlocks: true });
+    const eventsCategory = toolbox.contents.find((category) => category.name === 'Events');
+    const controlCategory = toolbox.contents.find((category) => category.name === 'Control');
+    const actionsCategory = toolbox.contents.find((category) => category.name === 'Actions');
+    const eventContents = eventsCategory?.contents ?? [];
+    const messagesLabelIndex = eventContents.findIndex(
+      (content) => content.kind === 'label' && content.text === 'Messages',
+    );
+    const messagesHeadingSlice = messagesLabelIndex >= 0
+      ? eventContents.slice(messagesLabelIndex, messagesLabelIndex + 6)
+      : [];
+    const repeatIndex = controlCategory?.contents.findIndex(
+      (content) => content.kind === 'block' && content.type === 'control_repeat',
+    ) ?? -1;
+    const foreverIndex = controlCategory?.contents.findIndex(
+      (content) => content.kind === 'block' && content.type === 'event_forever',
+    ) ?? -1;
+
+    expect(actionsCategory).toBeUndefined();
+    expect(controlCategory).toBeDefined();
+    expect(messagesLabelIndex).toBeGreaterThanOrEqual(0);
+    expect(eventContents[eventContents.length - 1]).toEqual(
+      expect.objectContaining({ kind: 'block', type: 'control_broadcast_wait' }),
+    );
+    expect(messagesHeadingSlice).toEqual([
+      expect.objectContaining({ kind: 'label', text: 'Messages' }),
+      expect.objectContaining({ kind: 'button', text: 'Edit Messages', callbackKey: 'EDIT_MESSAGES' }),
+      expect.objectContaining({ kind: 'sep', gap: '16' }),
+      expect.objectContaining({ kind: 'block', type: 'event_when_receive' }),
+      expect.objectContaining({ kind: 'block', type: 'control_broadcast' }),
+      expect.objectContaining({ kind: 'block', type: 'control_broadcast_wait' }),
+    ]);
+    expect(repeatIndex).toBeGreaterThanOrEqual(0);
+    expect(foreverIndex).toBe(repeatIndex + 1);
+  });
+
+  test('message block dropdowns only list existing messages', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    await import('../src/components/blockly/toolbox');
+    const { useProjectStore } = await import('../src/store/projectStore');
+
+    Blockly.utils.xml.injectDependencies({
+      document: new DOMParser().parseFromString('<xml></xml>', 'text/xml') as unknown as Document,
+      DOMParser,
+      XMLSerializer,
+    });
+
+    const project = createDefaultProject('Message Dropdown Fixture');
+    useProjectStore.getState().openProject(project);
+    useProjectStore.getState().addMessage('game over');
+    useProjectStore.getState().addMessage('game over');
+
+    const workspace = new Blockly.Workspace();
+    const broadcast = workspace.newBlock('control_broadcast');
+    const messageField = broadcast.getField('MESSAGE') as Blockly.FieldDropdown;
+    const optionLabels = messageField.getOptions(false).map(([label]) => label);
+
+    expect(optionLabels).toEqual(['game over (1)', 'game over (2)']);
+
+    workspace.dispose();
+    useProjectStore.getState().closeProject();
   });
 
   test('searches blocks by behavior keywords without full toolbox dump in the tool result', () => {
@@ -272,10 +391,30 @@ test.describe('assistant block catalog', () => {
     });
 
     expect(xml).toContain('<block type="event_game_start">');
-    expect(xml).toContain('<statement name="NEXT">');
+    expect(xml).toContain('<next>');
     expect(xml).toContain('<block type="looks_change_axis_scale">');
     expect(xml).toContain('<field name="AXIS">VERTICAL</field>');
     expect(xml).toContain('<block type="math_number">');
+  });
+
+  test('uses next-connections for one-shot event hats and keeps forever as a C-block', async () => {
+    installToolboxTestGlobals();
+    const Blockly = await import('blockly');
+    await import('../src/components/blockly/toolbox');
+
+    const workspace = new Blockly.Workspace();
+    const onStart = workspace.newBlock('event_game_start');
+    const forever = workspace.newBlock('event_forever');
+
+    expect(onStart.previousConnection).toBeNull();
+    expect(onStart.nextConnection).not.toBeNull();
+    expect(onStart.getInput('NEXT')).toBeNull();
+
+    expect(forever.previousConnection).not.toBeNull();
+    expect(forever.nextConnection).toBeNull();
+    expect(forever.getInput('DO')).not.toBeNull();
+
+    workspace.dispose();
   });
 
   test('rejects block programs with unsupported connection names', () => {

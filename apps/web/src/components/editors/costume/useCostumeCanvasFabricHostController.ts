@@ -9,6 +9,16 @@ import {
   Rect,
 } from 'fabric';
 import { attachTextEditingContainer, beginTextEditing, isTextEditableObject } from './costumeTextCommands';
+import { applyCanvasCursor } from './costumeCanvasBitmapRuntime';
+import {
+  applyUnifiedFabricTransformCanvasOptions,
+  clearUnifiedCanvasTransformGuide,
+  configureUnifiedObjectTransformForGesture,
+  syncUnifiedCanvasTransformGuideFromEvent,
+} from './costumeCanvasObjectTransformGizmo';
+import {
+  getTransformGizmoCursorForCornerTarget,
+} from '@/lib/editor/unifiedTransformGizmo';
 import {
   CANVAS_SIZE,
   buildStarPoints,
@@ -74,6 +84,7 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   fabricCanvasHostRef: MutableRefObject<HTMLDivElement | null>;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
   insertedPathAnchorDragSessionRef: MutableRefObject<any>;
+  mirroredPathAnchorDragSessionRef: MutableRefObject<any>;
   penAnchorPlacementSessionRef: MutableRefObject<any>;
   penDraftRef: MutableRefObject<any>;
   pointSelectionMarqueeSessionRef: MutableRefObject<any>;
@@ -94,10 +105,10 @@ interface UseCostumeCanvasFabricHostControllerOptions {
   activateVectorPointEditing: (target: any, saveConversionToHistory: boolean) => boolean;
   applyFill: (x: number, y: number) => void | Promise<void>;
   applyPointSelectionMarqueeSession: (session: any) => boolean;
-  applyPointSelectionTransformSession: (session: any, pointer: Point) => boolean;
+  applyPointSelectionTransformSession: (session: any, pointer: Point, eventData?: Record<string, any> | null) => boolean;
   applyVectorPointControls: (target: any) => boolean;
   applyVectorPointEditingAppearance: (target: any) => void;
-  beginPointSelectionTransformSession: (target: any, hit: any, pointer: Point) => boolean;
+  beginPointSelectionTransformSession: (target: any, hit: any, pointer: Point, eventData?: Record<string, any> | null) => boolean;
   clearSelectedPathAnchors: (target?: any) => void;
   commitBitmapSelection: () => Promise<boolean>;
   commitCurrentPenPlacement: () => void;
@@ -162,6 +173,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       vectorPointEditingTargetRef,
       pointSelectionTransformSessionRef,
       insertedPathAnchorDragSessionRef,
+      mirroredPathAnchorDragSessionRef,
       pointSelectionMarqueeSessionRef,
       penAnchorPlacementSessionRef,
       penDraftRef,
@@ -208,6 +220,8 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       preserveObjectStacking: true,
       selection: false,
     });
+    (fabricCanvas as any).__manageUnifiedTransformGuideTopLayer = true;
+    applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvasRef.current = fabricCanvas;
     onFabricCanvasReady();
 
@@ -225,6 +239,9 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       if (!layerInteractive) {
         return;
       }
+
+      configureUnifiedObjectTransformForGesture(fabricCanvas, opt.e);
+      syncUnifiedCanvasTransformGuideFromEvent(fabricCanvas, opt.e);
 
       if (mode === 'bitmap' && tool === 'select' && floatingBitmapObject) {
         if (!opt.target || opt.target !== floatingBitmapObject) {
@@ -258,7 +275,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         if (pointEditingTarget && pointSelectionTransformHit) {
           pointSelectionTransformSessionRef.current = null;
           insertedPathAnchorDragSessionRef.current = null;
-          if (callbacks.beginPointSelectionTransformSession(pointEditingTarget, pointSelectionTransformHit, pointer)) {
+          if (callbacks.beginPointSelectionTransformSession(pointEditingTarget, pointSelectionTransformHit, pointer, opt.e)) {
             fabricCanvas.setActiveObject(pointEditingTarget);
             fabricCanvas.requestRenderAll();
             return;
@@ -396,10 +413,18 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
         const strokeColor = activeShapeStyle.strokeColor;
         const strokeWidth = Math.max(0, activeShapeStyle.strokeWidth);
         const vectorRenderFill = isVectorMode
-          ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, fillColor)
+          ? getFabricFillValueForVectorTexture(
+              vectorStyleRef.current.fillTextureId,
+              fillColor,
+              vectorStyleRef.current.fillOpacity,
+            )
           : fillColor;
         const vectorRenderStroke = isVectorMode
-          ? getFabricStrokeValueForVectorBrush(vectorStyleRef.current.strokeBrushId, strokeColor)
+          ? getFabricStrokeValueForVectorBrush(
+              vectorStyleRef.current.strokeBrushId,
+              strokeColor,
+              vectorStyleRef.current.strokeOpacity,
+            )
           : strokeColor;
         let object: any;
         if (tool === 'rectangle') {
@@ -418,6 +443,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             width: 0,
             height: 0,
             fill: vectorRenderFill,
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -426,8 +452,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
             vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorFillOpacity: isVectorMode ? vectorStyleRef.current.fillOpacity : undefined,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         } else if (tool === 'circle') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
@@ -443,6 +471,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             rx: 0,
             ry: 0,
             fill: vectorRenderFill,
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -453,8 +482,10 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
             vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorFillOpacity: isVectorMode ? vectorStyleRef.current.fillOpacity : undefined,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         } else if (tool === 'triangle' || tool === 'star') {
           const bounds = getStrokedShapeBoundsFromPathBounds(
@@ -473,6 +504,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             originX: 'left',
             originY: 'top',
             fill: vectorRenderFill,
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -481,12 +513,15 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
             vectorFillColor: isVectorMode ? fillColor : undefined,
+            vectorFillOpacity: isVectorMode ? vectorStyleRef.current.fillOpacity : undefined,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
           object.setBoundingBox?.(true);
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
+            opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
@@ -495,6 +530,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             evented: false,
             vectorStrokeBrushId: isVectorMode ? vectorStyleRef.current.strokeBrushId : undefined,
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
+            vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         }
         shapeDraftRef.current = {
@@ -539,13 +575,41 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
           return;
         }
 
-        const transformed = callbacks.applyPointSelectionTransformSession(pointSelectionTransformSession, pointer);
+        const transformed = callbacks.applyPointSelectionTransformSession(pointSelectionTransformSession, pointer, opt.e);
         if (transformed) {
           pointSelectionTransformSession.hasChanged = true;
           fabricCanvas.setActiveObject(pointSelectionTransformSession.path);
           fabricCanvas.requestRenderAll();
         }
         return;
+      }
+
+      if (
+        editorModeRef.current === 'vector' &&
+        activeToolRef.current === 'select' &&
+        !pointSelectionMarqueeSessionRef.current &&
+        !insertedPathAnchorDragSessionRef.current &&
+        opt.e
+      ) {
+        const pointEditingTarget = vectorPointEditingTargetRef.current;
+        if (pointEditingTarget && getFabricObjectType(pointEditingTarget) === 'path') {
+          const pointer = fabricCanvas.getScenePoint(opt.e);
+          const snapshot = callbacks.getSelectedPathAnchorTransformSnapshot(pointEditingTarget);
+          const pointSelectionTransformHit = snapshot
+            ? callbacks.hitPointSelectionTransform(snapshot, pointer)
+            : null;
+          const cursor = (() => {
+            const rotationRadians = snapshot?.bounds.rotationRadians ?? 0;
+            if (pointSelectionTransformHit === 'move') {
+              return 'move';
+            }
+            if (pointSelectionTransformHit?.startsWith('scale-') || pointSelectionTransformHit?.startsWith('rotate-')) {
+              return getTransformGizmoCursorForCornerTarget(pointSelectionTransformHit, rotationRadians);
+            }
+            return 'default';
+          })();
+          applyCanvasCursor(fabricCanvas, cursor);
+        }
       }
 
       const pointSelectionMarqueeSession = pointSelectionMarqueeSessionRef.current;
@@ -654,6 +718,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onMouseUp = () => {
       const callbacks = callbacksRef.current;
+      clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (penAnchorPlacementSessionRef.current) {
         callbacks.commitCurrentPenPlacement();
         fabricCanvas.requestRenderAll();
@@ -686,6 +751,15 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       if (insertedPathAnchorDragSessionRef.current) {
         insertedPathAnchorDragSessionRef.current = null;
         callbacks.saveHistory();
+        return;
+      }
+
+      if (mirroredPathAnchorDragSessionRef.current) {
+        const shouldSave = mirroredPathAnchorDragSessionRef.current.hasChanged;
+        mirroredPathAnchorDragSessionRef.current = null;
+        if (shouldSave) {
+          callbacks.saveHistory();
+        }
         return;
       }
 
@@ -729,6 +803,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
     };
 
     const onObjectModified = () => {
+      clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (editorModeRef.current === 'vector') {
         callbacksRef.current.saveHistory();
       }
@@ -761,6 +836,8 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
       ) {
         callbacks.activateVectorPointEditing(activeObject, false);
         callbacks.configureCanvasForTool();
+      } else {
+        callbacks.configureCanvasForTool();
       }
     };
 
@@ -782,6 +859,7 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
 
     const onSelectionCleared = () => {
       const callbacks = callbacksRef.current;
+      clearUnifiedCanvasTransformGuide(fabricCanvas, true);
       if (
         editorModeRef.current === 'bitmap' &&
         activeToolRef.current === 'select' &&

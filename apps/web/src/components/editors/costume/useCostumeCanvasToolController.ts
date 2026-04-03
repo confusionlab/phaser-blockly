@@ -4,13 +4,7 @@ import { getBrushPaintColor, getCompositeOperation, type BitmapBrushKind } from 
 import type { CostumeEditorMode } from '@/types';
 import { attachTextEditingContainer, isTextEditableObject } from './costumeTextCommands';
 import {
-  OBJECT_SELECTION_CORNER_SIZE,
-  OBJECT_SELECTION_PADDING,
-  VECTOR_SELECTION_BORDER_OPACITY,
-  VECTOR_SELECTION_BORDER_SCALE,
   VECTOR_SELECTION_COLOR,
-  VECTOR_SELECTION_CORNER_COLOR,
-  VECTOR_SELECTION_CORNER_STROKE,
 } from './costumeCanvasShared';
 import {
   applyCanvasCursor,
@@ -24,6 +18,10 @@ import {
   VectorPencilBrush,
 } from './costumeCanvasVectorRuntime';
 import type { DrawingTool } from './CostumeToolbar';
+import {
+  applyUnifiedFabricTransformCanvasOptions,
+  applyUnifiedObjectTransformGizmoAppearance,
+} from './costumeCanvasObjectTransformGizmo';
 
 interface UseCostumeCanvasToolControllerOptions {
   activeLayerLocked: boolean;
@@ -32,13 +30,14 @@ interface UseCostumeCanvasToolControllerOptions {
   applyVectorPointControls: (target: any) => boolean;
   applyVectorPointEditingAppearance: (target: any) => void;
   bitmapBrushKindRef: MutableRefObject<BitmapBrushKind>;
-  bitmapFloatingObjectRef: MutableRefObject<any | null>;
   brushColorRef: MutableRefObject<string>;
+  brushOpacityRef: MutableRefObject<number>;
   brushSizeRef: MutableRefObject<number>;
   commitBitmapStampBrushStroke: (payload: BitmapStampBrushCommitPayload) => Promise<void>;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   ensurePathLikeObjectForVectorTool: (target: any) => any | null;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
+  getBitmapFloatingSelectionObject: () => any | null;
   getZoomInvariantMetric: (value: number, zoom?: number) => number;
   normalizeCanvasVectorStrokeUniform: () => void;
   restoreAllOriginalControls: () => void;
@@ -59,13 +58,14 @@ export function useCostumeCanvasToolController({
   applyVectorPointControls,
   applyVectorPointEditingAppearance,
   bitmapBrushKindRef,
-  bitmapFloatingObjectRef,
   brushColorRef,
+  brushOpacityRef,
   brushSizeRef,
   commitBitmapStampBrushStroke,
   editorModeRef,
   ensurePathLikeObjectForVectorTool,
   fabricCanvasRef,
+  getBitmapFloatingSelectionObject,
   getZoomInvariantMetric,
   normalizeCanvasVectorStrokeUniform,
   restoreAllOriginalControls,
@@ -150,11 +150,13 @@ export function useCostumeCanvasToolController({
     const isBitmapBrush = layerInteractive && mode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
     const isVectorPencil = layerInteractive && mode === 'vector' && tool === 'brush';
     if (isBitmapBrush) {
+      const brushOpacity = tool === 'brush' ? brushOpacityRef.current : 1;
       const compositeOperation = getCompositeOperation(tool);
       const brush = bitmapBrushKindRef.current !== 'hard-round'
         ? new BitmapStampBrush(fabricCanvas, {
             brushKind: bitmapBrushKindRef.current,
             brushColor: brushColorRef.current,
+            brushOpacity,
             brushSize: brushSizeRef.current,
             compositeOperation,
             onCommit: commitBitmapStampBrushStroke,
@@ -164,6 +166,7 @@ export function useCostumeCanvasToolController({
       brush.color = getBrushPaintColor(tool, brushColorRef.current);
       if (brush instanceof CompositePencilBrush) {
         brush.compositeOperation = compositeOperation;
+        brush.opacityMultiplier = brushOpacity;
       }
       (fabricCanvas as any).freeDrawingBrush = brush;
       fabricCanvas.isDrawingMode = true;
@@ -171,6 +174,7 @@ export function useCostumeCanvasToolController({
       const brush = new VectorPencilBrush(fabricCanvas, {
         strokeBrushId: vectorStyleRef.current.strokeBrushId,
         strokeColor: vectorStyleRef.current.strokeColor,
+        strokeOpacity: vectorStyleRef.current.strokeOpacity,
         strokeWidth: vectorStyleRef.current.strokeWidth,
       });
       (fabricCanvas as any).freeDrawingBrush = brush;
@@ -188,7 +192,7 @@ export function useCostumeCanvasToolController({
     const isVectorPointMode = layerInteractive && mode === 'vector' && tool === 'select' && !!vectorPointEditingTargetRef.current;
     const isVectorSelectionMode = layerInteractive && mode === 'vector' && tool === 'select' && !isVectorPointMode;
     const isVectorTextMode = layerInteractive && mode === 'vector' && tool === 'text';
-    const floatingBitmapObject = bitmapFloatingObjectRef.current;
+    const floatingBitmapObject = getBitmapFloatingSelectionObject();
     const isBitmapFloatingSelectionMode =
       layerInteractive &&
       mode === 'bitmap' &&
@@ -196,6 +200,7 @@ export function useCostumeCanvasToolController({
       !!floatingBitmapObject;
 
     restoreAllOriginalControls();
+    applyUnifiedFabricTransformCanvasOptions(fabricCanvas);
     fabricCanvas.selection = isVectorSelectionMode;
     fabricCanvas.selectionColor = 'rgba(0, 94, 255, 0.14)';
     fabricCanvas.selectionBorderColor = VECTOR_SELECTION_COLOR;
@@ -226,15 +231,7 @@ export function useCostumeCanvasToolController({
       obj.lockRotation = !selectable || isVectorPointMode;
       obj.lockScalingX = !selectable || isVectorPointMode;
       obj.lockScalingY = !selectable || isVectorPointMode;
-      obj.borderColor = VECTOR_SELECTION_COLOR;
-      obj.borderScaleFactor = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE);
-      obj.borderOpacityWhenMoving = VECTOR_SELECTION_BORDER_OPACITY;
-      obj.cornerStyle = 'rect';
-      obj.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
-      obj.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
-      obj.cornerSize = getZoomInvariantMetric(OBJECT_SELECTION_CORNER_SIZE);
-      obj.transparentCorners = false;
-      obj.padding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING);
+      applyUnifiedObjectTransformGizmoAppearance(obj, getZoomInvariantMetric, 1);
 
       if (isVectorPointMode) {
         if (isPointEditingTarget) {
@@ -283,6 +280,8 @@ export function useCostumeCanvasToolController({
 
       if (activeObject && isVectorPointMode && activeObject === vectorPointEditingTargetRef.current) {
         activateVectorPointEditing(activeObject, false);
+      } else if (activeObject) {
+        applyUnifiedObjectTransformGizmoAppearance(activeObject, getZoomInvariantMetric, 1);
       }
     }
 
@@ -318,12 +317,12 @@ export function useCostumeCanvasToolController({
     applyVectorPointControls,
     applyVectorPointEditingAppearance,
     bitmapBrushKindRef,
-    bitmapFloatingObjectRef,
     brushColorRef,
     brushSizeRef,
     commitBitmapStampBrushStroke,
     editorModeRef,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
     restoreAllOriginalControls,

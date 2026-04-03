@@ -1,4 +1,5 @@
 import type { GameObject, Project, Scene, SceneFolder } from '@/types';
+import { normalizeSiblingDropTarget } from '@/utils/dropTargets';
 
 export type LayerNodeKey = string;
 export type LayerNodeType = 'folder' | 'object';
@@ -563,6 +564,25 @@ export function moveSceneLayerNodes(
   return applySiblingOrdering(nextScene);
 }
 
+export function insertSceneFolder(
+  scene: Scene,
+  folder: SceneFolder,
+  target: LayerDropTarget,
+): Scene {
+  const normalizedScene = normalizeSceneLayering(scene);
+  const nextScene: Scene = {
+    ...normalizedScene,
+    objectFolders: [...normalizedScene.objectFolders, folder],
+  };
+  const nextTarget = normalizeSceneLayerDropTarget(nextScene, target);
+
+  return moveSceneLayerNodes(
+    nextScene,
+    [getFolderNodeKey(folder.id)],
+    nextTarget,
+  );
+}
+
 export function normalizeSceneLayerDropTarget(
   scene: Scene,
   target: LayerDropTarget,
@@ -583,24 +603,15 @@ export function normalizeSceneLayerDropTarget(
 
   const parentKey = parentToGroupKey(targetNode.parentId ?? null);
   const siblings = siblingsByParent.get(parentKey) ?? [];
-  const targetIndex = siblings.indexOf(targetNode.key);
-
-  if (targetIndex < 0) {
-    return { key: null, dropPosition: null };
-  }
-
-  const destinationIndex = targetIndex + (target.dropPosition === 'after' ? 1 : 0);
-  const nextSiblingKey = siblings[destinationIndex];
-
-  if (nextSiblingKey) {
-    return { key: nextSiblingKey, dropPosition: 'before' };
-  }
-
-  if (parentKey === ROOT_KEY) {
-    return { key: null, dropPosition: null };
-  }
-
-  return { key: targetNode.key, dropPosition: 'after' };
+  return normalizeSiblingDropTarget({
+    target,
+    targetNode,
+    siblings,
+    rootDestination: parentKey === ROOT_KEY
+      ? { key: null, dropPosition: null }
+      : { key: targetNode.key, dropPosition: 'after' },
+    acceptsOnTarget: (node) => node.type === 'folder',
+  });
 }
 
 export function getSceneTree(scene: Scene): LayerTreeNode[] {

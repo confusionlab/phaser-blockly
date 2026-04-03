@@ -62,6 +62,64 @@ async function readPersistedDarkPixelCount(page: Page): Promise<number> {
   });
 }
 
+async function readBackgroundSelectionGizmoBluePixelCount(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const canvas = document.querySelector('[data-testid="background-editor-canvas"]');
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let bluePixelCount = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const red = data[index] ?? 0;
+      const green = data[index + 1] ?? 0;
+      const blue = data[index + 2] ?? 0;
+      const alpha = data[index + 3] ?? 0;
+      if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
+        bluePixelCount += 1;
+      }
+    }
+
+    return bluePixelCount;
+  });
+}
+
+async function readBackgroundBrushCursorOverlay(page: Page): Promise<{
+  cursor: string;
+  height: number;
+  opacity: number;
+  width: number;
+}> {
+  return await page.evaluate(() => {
+    const overlay = document.querySelector('[data-testid="background-brush-cursor-overlay"]') as HTMLDivElement | null;
+    const canvas = document.querySelector('[data-testid="background-editor-canvas"]') as HTMLCanvasElement | null;
+    if (!overlay || !canvas) {
+      return {
+        cursor: '',
+        height: 0,
+        opacity: 0,
+        width: 0,
+      };
+    }
+
+    const overlayStyle = window.getComputedStyle(overlay);
+    const canvasStyle = window.getComputedStyle(canvas);
+    const bounds = overlay.getBoundingClientRect();
+    return {
+      cursor: canvasStyle.cursor,
+      height: bounds.height,
+      opacity: Number.parseFloat(overlayStyle.opacity || '0') || 0,
+      width: bounds.width,
+    };
+  });
+}
+
 async function readBackgroundDocumentSummary(page: Page): Promise<{
   activeLayerId: string | null;
   bitmapLayerChunkCount: number;
@@ -116,6 +174,42 @@ async function readSavedBackgroundVectorObjectCount(page: Page): Promise<number>
   });
 }
 
+async function readSavedBackgroundVectorObjectStyle(page: Page): Promise<{
+  fillOpacity: number | null;
+  strokeOpacity: number | null;
+} | null> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{
+          vectorFillOpacity?: unknown;
+          vectorStrokeOpacity?: unknown;
+        }>;
+      };
+      const object = Array.isArray(parsed.objects) ? parsed.objects[0] : null;
+      if (!object) {
+        return null;
+      }
+
+      return {
+        fillOpacity: typeof object.vectorFillOpacity === 'number' ? object.vectorFillOpacity : null,
+        strokeOpacity: typeof object.vectorStrokeOpacity === 'number' ? object.vectorStrokeOpacity : null,
+      };
+    } catch {
+      return null;
+    }
+  });
+}
+
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
   await page.locator('[data-testid="layer-row"][aria-pressed="true"]').click({ button: 'right' });
   const slider = page.getByLabel('Layer opacity');
@@ -131,6 +225,27 @@ async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promis
 
 function backgroundLayerRow(page: Page, index: number) {
   return page.locator('[data-testid="layer-row"]').nth(index);
+}
+
+async function setToolbarColorOpacity(page: Page, label: 'Fill' | 'Stroke', opacityPercent: number): Promise<void> {
+  const button = page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }).first();
+  await button.click();
+  const slider = page.getByTestId('compact-color-picker-opacity');
+  await expect(slider).toBeVisible();
+  const box = await slider.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) {
+    throw new Error(`Missing ${label} opacity slider bounds.`);
+  }
+  const clampedOpacity = Math.max(0, Math.min(100, opacityPercent));
+
+  await slider.click({
+    position: {
+      x: 12 + ((box.width - 24) * clampedOpacity) / 100,
+      y: box.height / 2,
+    },
+  });
+  await button.click();
 }
 
 async function addVectorLayer(page: Page): Promise<void> {
@@ -159,6 +274,34 @@ async function openBackgroundEditor(page: Page) {
 }
 
 test.describe('Background editor', () => {
+  test('brush and eraser reuse the shared bitmap cursor overlay', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+    const { box } = await openBackgroundEditor(page);
+
+    const centerX = box.x + box.width / 2;
+    const centerY = box.y + box.height / 2;
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await page.mouse.move(centerX, centerY);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBeGreaterThan(0.5);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).width).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).height).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).cursor).toBe('none');
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    await page.mouse.move(centerX + 32, centerY + 24);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBeGreaterThan(0.5);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).width).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).height).toBeGreaterThan(0);
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).cursor).toBe('none');
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBe(0);
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: /cancel/i }).first().click();
+  });
+
   test('can draw and persist chunked background', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
     const { root, box } = await openBackgroundEditor(page);
@@ -323,6 +466,137 @@ test.describe('Background editor', () => {
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(1);
   });
 
+  test('vector pen and text tools persist through the saved background document', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    await expect(vectorCanvas).toBeVisible();
+
+    await page.getByRole('button', { name: /^pen$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.42), y: Math.round(editor.box.height * 0.36) },
+    });
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.54), y: Math.round(editor.box.height * 0.44) },
+    });
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.48), y: Math.round(editor.box.height * 0.58) },
+    });
+    await page.keyboard.press('Enter');
+
+    await page.getByRole('button', { name: /^text$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.64), y: Math.round(editor.box.height * 0.5) },
+    });
+    await page.keyboard.type('BG');
+    await page.getByRole('button', { name: /^select$/i }).click();
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+    await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(2);
+  });
+
+  test('vector point editing uses the shared costume handle controls', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.42;
+    const startY = editor.box.y + editor.box.height * 0.42;
+    const endX = editor.box.x + editor.box.width * 0.58;
+    const endY = editor.box.y + editor.box.height * 0.58;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.mouse.dblclick(centerX, centerY);
+    await page.mouse.click(startX, startY);
+
+    await expect(page.getByText('Handles')).toBeVisible();
+  });
+
+  test('vector selection enables the shared align and zoom-to-selection controls', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.38;
+    const startY = editor.box.y + editor.box.height * 0.38;
+    const endX = editor.box.x + editor.box.width * 0.48;
+    const endY = editor.box.y + editor.box.height * 0.5;
+    const centerX = (startX + endX) / 2;
+    const centerY = (startY + endY) / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: {
+        x: Math.round(centerX - editor.box.x),
+        y: Math.round(centerY - editor.box.y),
+      },
+    });
+
+    await expect(page.getByRole('button', { name: /^align$/i })).toBeEnabled();
+
+    const zoomButton = page.getByRole('button', { name: 'Zoom options' });
+    const initialZoomText = (await zoomButton.textContent())?.trim() ?? '';
+    await zoomButton.click();
+    const zoomToSelection = page.getByRole('menuitem', { name: /zoom to selection/i });
+    await expect(zoomToSelection).toBeEnabled();
+    await zoomToSelection.click();
+    await expect(zoomButton).not.toContainText(initialZoomText);
+  });
+
+  test('selected vector shapes keep fill and stroke opacity independent', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await setToolbarColorOpacity(page, 'Fill', 60);
+    await setToolbarColorOpacity(page, 'Stroke', 85);
+
+    await page.mouse.move(editor.box.x + editor.box.width * 0.52, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.56);
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({
+      position: { x: Math.round(editor.box.width * 0.62), y: Math.round(editor.box.height * 0.44) },
+    });
+    await setToolbarColorOpacity(page, 'Fill', 20);
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectStyle(page), { timeout: 10000 }).toMatchObject({
+      fillOpacity: expect.any(Number),
+      strokeOpacity: expect.any(Number),
+    });
+
+    const style = await readSavedBackgroundVectorObjectStyle(page);
+    expect(style).not.toBeNull();
+    expect(style?.fillOpacity).toBeLessThan(0.35);
+    expect(style?.strokeOpacity).toBeGreaterThan(0.75);
+    expect(style?.strokeOpacity).toBeGreaterThan((style?.fillOpacity ?? 0) + 0.3);
+  });
+
   test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
@@ -411,7 +685,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await page.mouse.move(reopened.box.x + reopened.box.width * 0.65, reopened.box.y + reopened.box.height * 0.65);
     await page.mouse.up();
 
-    await expect(reopened.root.getByText('Selection')).toBeVisible();
+    await expect.poll(async () => readBackgroundSelectionGizmoBluePixelCount(page), { timeout: 5000 }).toBeGreaterThan(200);
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(page.getByTestId('background-editor-root')).toBeHidden();
 
@@ -446,7 +720,7 @@ test.describe('Background editor high-DPI selection rendering', () => {
     await page.mouse.move(reopened.box.x + reopened.box.width * 0.66, reopened.box.y + reopened.box.height * 0.66);
     await page.mouse.up();
 
-    await expect(reopened.root.getByText('Selection')).toBeVisible();
+    await expect.poll(async () => readBackgroundSelectionGizmoBluePixelCount(page), { timeout: 5000 }).toBeGreaterThan(200);
     await setActiveLayerOpacity(page, 60);
     await page.getByRole('button', { name: /done/i }).first().click();
     await expect(reopened.root).toBeHidden();

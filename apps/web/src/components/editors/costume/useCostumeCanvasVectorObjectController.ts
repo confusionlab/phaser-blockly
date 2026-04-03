@@ -1,21 +1,23 @@
 import { useCallback, type MutableRefObject } from 'react';
 import { Path, Point, controlsUtils, type Canvas as FabricCanvas, type Control } from 'fabric';
 import type { CostumeEditorMode } from '@/types';
+import {
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  type TransformGizmoCorner,
+} from '@/lib/editor/unifiedTransformGizmo';
 import type { DrawingTool, VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
 import { vectorHandleModeToPathNodeHandleType } from './CostumeToolbar';
+import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
 import {
-  CANVAS_SIZE,
   HANDLE_SIZE,
+  type MirroredPathAnchorDragSession,
+  type MirroredPathAnchorHandleRole,
   VECTOR_POINT_EDIT_GUIDE_STROKE,
   VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH,
   VECTOR_POINT_HANDLE_GUIDE_STROKE,
   VECTOR_POINT_HANDLE_GUIDE_STROKE_WIDTH,
-  VECTOR_POINT_SELECTION_BOX_FILL,
-  VECTOR_POINT_SELECTION_HANDLE_SIZE,
   VECTOR_SELECTION_BORDER_SCALE,
   VECTOR_SELECTION_COLOR,
-  VECTOR_SELECTION_CORNER_COLOR,
-  VECTOR_SELECTION_CORNER_STROKE,
   getEditableVectorHandleMode,
 } from './costumeCanvasShared';
 import {
@@ -23,9 +25,11 @@ import {
   getFabricObjectType,
   getFabricStrokeValueForVectorBrush,
   getVectorObjectFillColor,
+  getVectorObjectFillOpacity,
   getVectorObjectFillTextureId,
   getVectorObjectStrokeBrushId,
   getVectorObjectStrokeColor,
+  getVectorObjectStrokeOpacity,
   isActiveSelectionObject,
   isDirectlyEditablePathObject,
   isImageObject,
@@ -37,8 +41,14 @@ import {
 interface UseCostumeCanvasVectorObjectControllerOptions {
   activePathAnchorRef: MutableRefObject<{ path: any; anchorIndex: number } | null>;
   activeToolRef: MutableRefObject<DrawingTool>;
+  applyOverlaySceneTransform: (ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => void;
+  applyMirroredPathAnchorCurveDragSession: (
+    session: MirroredPathAnchorDragSession,
+    pointerScene: Point,
+  ) => boolean;
   buildPathDataFromPoints: (points: Point[], closed: boolean) => string;
   createFourPointEllipsePathData: (obj: any) => string | null;
+  clearOverlayContext: (ctx: CanvasRenderingContext2D) => void;
   editorModeRef: MutableRefObject<CostumeEditorMode>;
   enforcePathAnchorHandleType: (pathObj: any, anchorIndex: number, changed: any, dragState?: any) => void;
   fabricCanvasRef: MutableRefObject<FabricCanvas | null>;
@@ -54,12 +64,21 @@ interface UseCostumeCanvasVectorObjectControllerOptions {
   getSelectedPathAnchorTransformSnapshot: (pathObj: any) => any;
   getZoomInvariantMetric: (value: number, zoom?: number) => number;
   hasPointSelectionMarqueeExceededThreshold: (session: any) => boolean;
+  isPathCurveDragModifierPressed: (eventData: any) => boolean;
   isPointSelectionToggleModifierPressed: (eventData: any) => boolean;
+  mapFabricOverlayPoint: (point: Point) => Point;
   movePathAnchorByDelta: (pathObj: any, anchorIndex: number, deltaX: number, deltaY: number, dragState?: any) => boolean;
+  mirroredPathAnchorDragSessionRef: MutableRefObject<MirroredPathAnchorDragSession | null>;
   originalControlsRef: MutableRefObject<WeakMap<object, Record<string, Control> | undefined>>;
   pointSelectionMarqueeSessionRef: MutableRefObject<any>;
+  pointSelectionTransformSessionRef?: MutableRefObject<any>;
   removeDuplicateClosedPathAnchorControl: (pathObj: any, controls: Record<string, Control>) => void;
   renderPenDraftGuide: (ctx: CanvasRenderingContext2D) => void;
+  resolveMirroredPathAnchorHandleRole: (
+    pathObj: any,
+    anchorIndex: number,
+    changed: 'anchor' | 'incoming' | 'outgoing',
+  ) => MirroredPathAnchorHandleRole;
   resolveAnchorFromPathControlKey: (pathObj: any, key: string) => { anchorIndex: number; changed: 'anchor' | 'incoming' | 'outgoing' } | null;
   restoreOriginalControls: (obj: any) => void;
   setPathNodeHandleType: (pathObj: any, anchorIndex: number, type: VectorPathNodeHandleType) => void;
@@ -77,8 +96,11 @@ interface UseCostumeCanvasVectorObjectControllerOptions {
 export function useCostumeCanvasVectorObjectController({
   activePathAnchorRef,
   activeToolRef,
+  applyOverlaySceneTransform,
+  applyMirroredPathAnchorCurveDragSession,
   buildPathDataFromPoints,
   createFourPointEllipsePathData,
+  clearOverlayContext,
   editorModeRef,
   enforcePathAnchorHandleType,
   fabricCanvasRef,
@@ -94,12 +116,17 @@ export function useCostumeCanvasVectorObjectController({
   getSelectedPathAnchorTransformSnapshot,
   getZoomInvariantMetric,
   hasPointSelectionMarqueeExceededThreshold,
+  isPathCurveDragModifierPressed,
   isPointSelectionToggleModifierPressed,
+  mapFabricOverlayPoint,
   movePathAnchorByDelta,
+  mirroredPathAnchorDragSessionRef,
   originalControlsRef,
   pointSelectionMarqueeSessionRef,
+  pointSelectionTransformSessionRef,
   removeDuplicateClosedPathAnchorControl,
   renderPenDraftGuide,
+  resolveMirroredPathAnchorHandleRole,
   resolveAnchorFromPathControlKey,
   restoreOriginalControls,
   setPathNodeHandleType,
@@ -184,12 +211,14 @@ export function useCostumeCanvasVectorObjectController({
     if (!pathData) return null;
 
     const fillColor = getVectorObjectFillColor(obj) ?? (typeof obj.fill === 'string' ? obj.fill : '#000000');
+    const fillOpacity = getVectorObjectFillOpacity(obj) ?? 1;
     const fillTextureId = getVectorObjectFillTextureId(obj);
     const strokeColor = getVectorObjectStrokeColor(obj) ?? fillColor;
+    const strokeOpacity = getVectorObjectStrokeOpacity(obj) ?? 1;
     const strokeBrushId = getVectorObjectStrokeBrushId(obj);
     const path = new Path(pathData, {
-      fill: shouldFill ? getFabricFillValueForVectorTexture(fillTextureId, fillColor) : null,
-      stroke: getFabricStrokeValueForVectorBrush(strokeBrushId, strokeColor),
+      fill: shouldFill ? getFabricFillValueForVectorTexture(fillTextureId, fillColor, fillOpacity) : null,
+      stroke: getFabricStrokeValueForVectorBrush(strokeBrushId, strokeColor, strokeOpacity),
       strokeWidth: typeof obj.strokeWidth === 'number' ? obj.strokeWidth : 1,
       strokeUniform: true,
       noScaleCache: false,
@@ -197,7 +226,7 @@ export function useCostumeCanvasVectorObjectController({
       strokeLineJoin: obj.strokeLineJoin,
       strokeMiterLimit: obj.strokeMiterLimit,
       strokeDashArray: Array.isArray(obj.strokeDashArray) ? [...obj.strokeDashArray] : null,
-      opacity: typeof obj.opacity === 'number' ? obj.opacity : 1,
+      opacity: 1,
       globalCompositeOperation: obj.globalCompositeOperation ?? 'source-over',
       fillRule: obj.fillRule,
       paintFirst: obj.paintFirst,
@@ -205,8 +234,10 @@ export function useCostumeCanvasVectorObjectController({
       nodeHandleTypes: initialNodeHandleTypes,
       vectorFillTextureId: shouldFill ? fillTextureId : undefined,
       vectorFillColor: shouldFill ? fillColor : undefined,
+      vectorFillOpacity: shouldFill ? fillOpacity : undefined,
       vectorStrokeBrushId: strokeBrushId,
       vectorStrokeColor: strokeColor,
+      vectorStrokeOpacity: strokeOpacity,
       selectable: true,
       evented: true,
       hasControls: true,
@@ -243,10 +274,10 @@ export function useCostumeCanvasVectorObjectController({
     if (!obj || typeof obj !== 'object') return;
     obj.hasControls = true;
     obj.hasBorders = false;
-    obj.borderColor = VECTOR_SELECTION_COLOR;
+    obj.borderColor = 'rgba(0, 0, 0, 0)';
     obj.cornerStyle = 'circle';
-    obj.cornerColor = VECTOR_SELECTION_CORNER_COLOR;
-    obj.cornerStrokeColor = VECTOR_SELECTION_CORNER_STROKE;
+    obj.cornerColor = 'rgba(0, 0, 0, 0)';
+    obj.cornerStrokeColor = 'rgba(0, 0, 0, 0)';
     obj.cornerSize = getZoomInvariantMetric(HANDLE_SIZE);
     obj.transparentCorners = false;
     obj.padding = 0;
@@ -399,47 +430,30 @@ export function useCostumeCanvasVectorObjectController({
     if (!snapshot) return;
 
     const handlePoints = getPointSelectionTransformHandlePoints(snapshot.bounds);
-    const handleSize = getZoomInvariantMetric(VECTOR_POINT_SELECTION_HANDLE_SIZE);
-    const handleHalfSize = handleSize / 2;
+    const activeTransform = pointSelectionTransformSessionRef?.current;
+    const proportionalCorner = (
+      activeTransform?.path === target &&
+      activeTransform.corner &&
+      activeTransform.proportional
+    ) ? activeTransform.corner : null;
+    const proportionalGuide = !!(
+      activeTransform?.path === target &&
+      activeTransform.proportional
+    );
 
-    ctx.save();
-    try {
-      ctx.fillStyle = VECTOR_POINT_SELECTION_BOX_FILL;
-      ctx.strokeStyle = VECTOR_SELECTION_COLOR;
-      ctx.lineWidth = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE);
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.moveTo(snapshot.bounds.topLeft.x, snapshot.bounds.topLeft.y);
-      ctx.lineTo(snapshot.bounds.topRight.x, snapshot.bounds.topRight.y);
-      ctx.lineTo(snapshot.bounds.bottomRight.x, snapshot.bounds.bottomRight.y);
-      ctx.lineTo(snapshot.bounds.bottomLeft.x, snapshot.bounds.bottomLeft.y);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(handlePoints.topCenter.x, handlePoints.topCenter.y);
-      ctx.lineTo(handlePoints.rotate.x, handlePoints.rotate.y);
-      ctx.stroke();
-
-      ctx.fillStyle = '#ffffff';
-      const scaleHandlePoints = [handlePoints.scaleTl, handlePoints.scaleTr, handlePoints.scaleBr, handlePoints.scaleBl];
-      for (const point of scaleHandlePoints) {
-        ctx.fillRect(point.x - handleHalfSize, point.y - handleHalfSize, handleSize, handleSize);
-        ctx.strokeRect(point.x - handleHalfSize, point.y - handleHalfSize, handleSize, handleSize);
-      }
-
-      ctx.beginPath();
-      ctx.arc(handlePoints.rotate.x, handlePoints.rotate.y, handleHalfSize, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    } finally {
-      ctx.restore();
-    }
+    renderScreenSpaceTransformOverlay(ctx, handlePoints.corners, {
+      proportionalGuide,
+      corner: proportionalCorner,
+      handleRadius: getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS),
+      showFill: false,
+      strokeWidth: getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE),
+    });
   }, [
     getPointSelectionTransformHandlePoints,
     getSelectedPathAnchorTransformSnapshot,
     getZoomInvariantMetric,
+    pointSelectionMarqueeSessionRef,
+    pointSelectionTransformSessionRef,
   ]);
 
   const renderPointSelectionMarquee = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -461,47 +475,163 @@ export function useCostumeCanvasVectorObjectController({
     } finally {
       ctx.restore();
     }
-  }, [getSceneRectFromPoints, getZoomInvariantMetric, hasPointSelectionMarqueeExceededThreshold]);
+  }, [
+    getSceneRectFromPoints,
+    getZoomInvariantMetric,
+    hasPointSelectionMarqueeExceededThreshold,
+    pointSelectionMarqueeSessionRef,
+  ]);
+
+  const renderVectorPointControlOverlay = useCallback((ctx: CanvasRenderingContext2D, target: any) => {
+    if (getFabricObjectType(target) !== 'path' || !target.controls) return;
+
+    const pathOffset = target.pathOffset ?? { x: 0, y: 0 };
+    const toTransformedPoint = (point: Point) => (
+      toCanvasPoint(target, point.x - pathOffset.x, point.y - pathOffset.y)
+    );
+    const handleRadius = getZoomInvariantMetric(HANDLE_SIZE) * 0.5;
+
+    ctx.save();
+    try {
+      for (const key of Object.keys(target.controls as Record<string, Control>)) {
+        const resolved = resolveAnchorFromPathControlKey(target, key);
+        if (!resolved) continue;
+        const isVisible = typeof target.isControlVisible === 'function'
+          ? target.isControlVisible(key)
+          : (target.controls as Record<string, Control>)[key]?.visible !== false;
+        if (!isVisible) continue;
+
+        let point: Point | null = null;
+        if (resolved.changed === 'anchor') {
+          point = getAnchorPointForIndex(target, resolved.anchorIndex);
+          if (point) {
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#0ea5e9';
+          }
+        } else if (resolved.changed === 'incoming') {
+          const incomingCommandIndex = findIncomingCubicCommandIndex(target, resolved.anchorIndex);
+          const incomingCommand = incomingCommandIndex >= 0 ? target.path?.[incomingCommandIndex] : null;
+          if (incomingCommand && getCommandType(incomingCommand) === 'C') {
+            point = new Point(Number(incomingCommand[3]), Number(incomingCommand[4]));
+            ctx.fillStyle = '#0ea5e9';
+            ctx.strokeStyle = '#ffffff';
+          }
+        } else if (resolved.changed === 'outgoing') {
+          const outgoingCommandIndex = findOutgoingCubicCommandIndex(target, resolved.anchorIndex);
+          const outgoingCommand = outgoingCommandIndex >= 0 ? target.path?.[outgoingCommandIndex] : null;
+          if (outgoingCommand && getCommandType(outgoingCommand) === 'C') {
+            point = new Point(Number(outgoingCommand[1]), Number(outgoingCommand[2]));
+            ctx.fillStyle = '#0ea5e9';
+            ctx.strokeStyle = '#ffffff';
+          }
+        }
+
+        if (!point) continue;
+        const canvasPoint = toTransformedPoint(point);
+        ctx.lineWidth = getZoomInvariantMetric(2);
+        ctx.beginPath();
+        ctx.arc(canvasPoint.x, canvasPoint.y, handleRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    } finally {
+      ctx.restore();
+    }
+  }, [
+    findIncomingCubicCommandIndex,
+    findOutgoingCubicCommandIndex,
+    getAnchorPointForIndex,
+    getCommandType,
+    getZoomInvariantMetric,
+    resolveAnchorFromPathControlKey,
+    toCanvasPoint,
+  ]);
+
+  const renderActiveObjectTransformOverlay = useCallback((ctx: CanvasRenderingContext2D, fabricCanvas: FabricCanvas) => {
+    const activeObject = fabricCanvas.getActiveObject() as any;
+    if (!activeObject || activeObject === vectorPointEditingTargetRef.current) {
+      return;
+    }
+
+    const coords = activeObject.oCoords;
+    if (!coords?.tl || !coords?.tr || !coords?.br || !coords?.bl) {
+      return;
+    }
+
+    const guideState = (fabricCanvas as FabricCanvas & {
+      __unifiedTransformGuide?: {
+        corner: TransformGizmoCorner | null;
+        proportional: boolean;
+        target: any | null;
+      } | null;
+    }).__unifiedTransformGuide;
+
+    renderScreenSpaceTransformOverlay(ctx, {
+      nw: mapFabricOverlayPoint(new Point(coords.tl.x, coords.tl.y)),
+      ne: mapFabricOverlayPoint(new Point(coords.tr.x, coords.tr.y)),
+      se: mapFabricOverlayPoint(new Point(coords.br.x, coords.br.y)),
+      sw: mapFabricOverlayPoint(new Point(coords.bl.x, coords.bl.y)),
+    }, {
+      proportionalGuide: !!guideState?.proportional && guideState.target === activeObject,
+      corner: guideState?.proportional && guideState.target === activeObject ? guideState.corner : null,
+    });
+  }, [mapFabricOverlayPoint, vectorPointEditingTargetRef]);
 
   const renderVectorPointEditingGuide = useCallback(() => {
     const ctx = vectorGuideCtxRef.current;
     const fabricCanvas = fabricCanvasRef.current;
     const target = vectorPointEditingTargetRef.current as any;
     if (!fabricCanvas || !ctx) return;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    if (editorModeRef.current !== 'vector') return;
-    if (activeToolRef.current === 'pen') {
-      renderPenDraftGuide(ctx);
+    clearOverlayContext(ctx);
+    if (editorModeRef.current === 'bitmap') {
+      renderActiveObjectTransformOverlay(ctx, fabricCanvas);
       return;
     }
-    if (activeToolRef.current !== 'select') return;
-    if (!target || !fabricCanvas.getObjects().includes(target)) return;
-
-    ctx.save();
-    try {
-      ctx.strokeStyle = VECTOR_POINT_EDIT_GUIDE_STROKE;
-      ctx.lineWidth = getZoomInvariantMetric(VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH);
-      ctx.lineJoin = target.strokeLineJoin ?? 'round';
-      ctx.lineCap = target.strokeLineCap ?? 'round';
-      ctx.setLineDash([]);
-
-      if (traceVectorPointEditingGuidePath(ctx, target)) {
-        ctx.stroke();
+    if (editorModeRef.current !== 'vector') return;
+    if (activeToolRef.current === 'pen') {
+      ctx.save();
+      try {
+        applyOverlaySceneTransform(ctx, fabricCanvas);
+        renderPenDraftGuide(ctx);
+      } finally {
+        ctx.restore();
       }
-
-      renderVectorPointHandleGuides(ctx, target);
-      renderPointSelectionTransformGuides(ctx, target);
-      renderPointSelectionMarquee(ctx);
-    } finally {
-      ctx.restore();
+      return;
     }
+    if (activeToolRef.current === 'select' && target && fabricCanvas.getObjects().includes(target)) {
+      ctx.save();
+      try {
+        applyOverlaySceneTransform(ctx, fabricCanvas);
+        ctx.strokeStyle = VECTOR_POINT_EDIT_GUIDE_STROKE;
+        ctx.lineWidth = getZoomInvariantMetric(VECTOR_POINT_EDIT_GUIDE_STROKE_WIDTH);
+        ctx.lineJoin = target.strokeLineJoin ?? 'round';
+        ctx.lineCap = target.strokeLineCap ?? 'round';
+        ctx.setLineDash([]);
+
+        if (traceVectorPointEditingGuidePath(ctx, target)) {
+          ctx.stroke();
+        }
+
+        renderVectorPointHandleGuides(ctx, target);
+        renderPointSelectionTransformGuides(ctx, target);
+        renderPointSelectionMarquee(ctx);
+        renderVectorPointControlOverlay(ctx, target);
+      } finally {
+        ctx.restore();
+      }
+    }
+
+    renderActiveObjectTransformOverlay(ctx, fabricCanvas);
   }, [
     activeToolRef,
+    applyOverlaySceneTransform,
+    clearOverlayContext,
     editorModeRef,
     fabricCanvasRef,
     getZoomInvariantMetric,
     renderPenDraftGuide,
+    renderActiveObjectTransformOverlay,
+    renderVectorPointControlOverlay,
     renderPointSelectionMarquee,
     renderPointSelectionTransformGuides,
     renderVectorPointHandleGuides,
@@ -524,12 +654,12 @@ export function useCostumeCanvasVectorObjectController({
       const controls = controlsUtils.createPathControls(obj, {
         ...VECTOR_POINT_CONTROL_STYLE,
         pointStyle: {
-          controlFill: '#ffffff',
-          controlStroke: '#0ea5e9',
+          controlFill: 'rgba(0, 0, 0, 0)',
+          controlStroke: 'rgba(0, 0, 0, 0)',
         },
         controlPointStyle: {
-          controlFill: '#0ea5e9',
-          controlStroke: '#ffffff',
+          controlFill: 'rgba(0, 0, 0, 0)',
+          controlStroke: 'rgba(0, 0, 0, 0)',
         },
       });
       removeDuplicateClosedPathAnchorControl(obj, controls);
@@ -540,9 +670,49 @@ export function useCostumeCanvasVectorObjectController({
           if (pathObj && getFabricObjectType(pathObj) === 'path') {
             const resolved = resolveAnchorFromPathControlKey(pathObj, key);
             if (resolved) {
+              const curveDrag = (
+                isPathCurveDragModifierPressed(eventData)
+              );
+              if (curveDrag) {
+                const dragState = getPathAnchorDragState(pathObj, resolved.anchorIndex);
+                const pointerScene = fabricCanvasRef.current && eventData?.e
+                  ? fabricCanvasRef.current.getScenePoint(eventData.e)
+                  : new Point(x, y);
+                const handleRole = resolveMirroredPathAnchorHandleRole(
+                  pathObj,
+                  resolved.anchorIndex,
+                  resolved.changed,
+                );
+                mirroredPathAnchorDragSessionRef.current = {
+                  path: pathObj,
+                  anchorIndex: resolved.anchorIndex,
+                  handleRole,
+                  dragState,
+                  currentPointerScene: new Point(pointerScene.x, pointerScene.y),
+                  hasChanged: false,
+                  moveAnchorMode: false,
+                  moveAnchorStartCommandPoint: null,
+                  moveAnchorSnapshot: null,
+                  controlsHydrated: false,
+                };
+                setPathNodeHandleType(pathObj, resolved.anchorIndex, 'symmetric');
+                if (
+                  mirroredPathAnchorDragSessionRef.current &&
+                  applyMirroredPathAnchorCurveDragSession(
+                    mirroredPathAnchorDragSessionRef.current,
+                    pointerScene,
+                  )
+                ) {
+                  applyVectorPointControls(pathObj);
+                  mirroredPathAnchorDragSessionRef.current.controlsHydrated = true;
+                }
+              } else {
+                mirroredPathAnchorDragSessionRef.current = null;
+              }
+
               const selectionToggle = isPointSelectionToggleModifierPressed(eventData);
               const selectedAnchors = new Set(getSelectedPathAnchorIndices(pathObj));
-              if (selectionToggle) {
+              if (selectionToggle && !curveDrag) {
                 if (selectedAnchors.has(resolved.anchorIndex)) {
                   selectedAnchors.delete(resolved.anchorIndex);
                 } else {
@@ -554,7 +724,7 @@ export function useCostumeCanvasVectorObjectController({
                 return false;
               }
 
-              if (!selectedAnchors.has(resolved.anchorIndex) || selectedAnchors.size <= 1) {
+              if (curveDrag || !selectedAnchors.has(resolved.anchorIndex) || selectedAnchors.size <= 1) {
                 setSelectedPathAnchors(pathObj, [resolved.anchorIndex], {
                   primaryAnchorIndex: resolved.anchorIndex,
                 });
@@ -572,6 +742,11 @@ export function useCostumeCanvasVectorObjectController({
                 );
               }
               syncVectorHandleModeFromSelection();
+              if (curveDrag) {
+                // Mirrored handle drags own the full gesture so Fabric doesn't also
+                // start the default anchor drag underneath and move the center point.
+                return true;
+              }
             }
           }
           if (typeof originalMouseDownHandler === 'function') {
@@ -586,6 +761,13 @@ export function useCostumeCanvasVectorObjectController({
           const pathObjBefore = transform?.target;
           const resolvedBefore = pathObjBefore && getFabricObjectType(pathObjBefore) === 'path'
             ? resolveAnchorFromPathControlKey(pathObjBefore, key)
+            : null;
+          const mirroredCurveDragSession = (
+            resolvedBefore &&
+            mirroredPathAnchorDragSessionRef.current?.path === pathObjBefore &&
+            mirroredPathAnchorDragSessionRef.current?.anchorIndex === resolvedBefore.anchorIndex
+          )
+            ? mirroredPathAnchorDragSessionRef.current
             : null;
           const selectedAnchorsBefore = pathObjBefore && resolvedBefore
             ? getSelectedPathAnchorIndices(pathObjBefore)
@@ -614,6 +796,29 @@ export function useCostumeCanvasVectorObjectController({
                 });
               }
             }
+          }
+
+          if (pathObjBefore && resolvedBefore && mirroredCurveDragSession) {
+            const fabricCanvas = fabricCanvasRef.current;
+            const pointerScene = fabricCanvas && eventData?.e
+              ? fabricCanvas.getScenePoint(eventData.e)
+              : new Point(x, y);
+            const appliedMirroredDrag = applyMirroredPathAnchorCurveDragSession(
+              mirroredCurveDragSession,
+              pointerScene,
+            );
+            if (appliedMirroredDrag) {
+              if (!mirroredCurveDragSession.controlsHydrated) {
+                applyVectorPointControls(pathObjBefore);
+                mirroredCurveDragSession.controlsHydrated = true;
+              }
+              activePathAnchorRef.current = { path: pathObjBefore, anchorIndex: resolvedBefore.anchorIndex };
+              syncVectorHandleModeFromSelection();
+              mirroredCurveDragSession.hasChanged = true;
+            }
+            // Mirrored curve drags should never fall back to Fabric's default
+            // anchor action handler, or the center point can start moving.
+            return appliedMirroredDrag;
           }
 
           const performed = originalActionHandler.call(control, eventData, transform, x, y);
@@ -699,15 +904,20 @@ export function useCostumeCanvasVectorObjectController({
     return false;
   }, [
     activePathAnchorRef,
+    applyMirroredPathAnchorCurveDragSession,
     enforcePathAnchorHandleType,
+    fabricCanvasRef,
     getAnchorPointForIndex,
     getPathAnchorDragState,
     getPathNodeHandleType,
     getSelectedPathAnchorIndices,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
+    mirroredPathAnchorDragSessionRef,
     movePathAnchorByDelta,
     originalControlsRef,
     removeDuplicateClosedPathAnchorControl,
+    resolveMirroredPathAnchorHandleRole,
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
     setPathNodeHandleType,

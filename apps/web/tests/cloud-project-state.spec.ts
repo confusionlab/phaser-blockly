@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import {
+  deriveEditorSaveControlState,
   doesLocalProjectMatchCloudHead,
   shouldTreatOpenedProjectAsCloudSaved,
 } from '../src/lib/cloudProjectState';
@@ -60,5 +61,47 @@ test.describe('cloud project state', () => {
         pullStatus: 'unchanged',
       }),
     ).toBe(false);
+  });
+
+  test('shows a freshly opened clean project as saved while cloud catch-up is pending', () => {
+    expect(
+      deriveEditorSaveControlState({
+        hasProject: true,
+        isDirty: false,
+        hasActionableCloudError: false,
+        isManualSaveInProgress: false,
+      }),
+    ).toBe('saved');
+  });
+
+  test('keeps dirty projects actionable until cloud sync completes', () => {
+    expect(
+      deriveEditorSaveControlState({
+        hasProject: true,
+        isDirty: true,
+        hasActionableCloudError: false,
+        isManualSaveInProgress: false,
+      }),
+    ).toBe('save');
+  });
+
+  test('only shows saving for explicit manual saves and save for actionable errors', () => {
+    expect(
+      deriveEditorSaveControlState({
+        hasProject: true,
+        isDirty: false,
+        hasActionableCloudError: false,
+        isManualSaveInProgress: true,
+      }),
+    ).toBe('saving');
+
+    expect(
+      deriveEditorSaveControlState({
+        hasProject: true,
+        isDirty: false,
+        hasActionableCloudError: true,
+        isManualSaveInProgress: false,
+      }),
+    ).toBe('save');
   });
 });

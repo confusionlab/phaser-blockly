@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { templateScopeValidator } from "./templateLibrary";
 
 const assetKindValidator = v.union(
   v.literal("image"),
@@ -71,6 +72,7 @@ export const upsert = mutation({
       if (existing.orphanedAt !== undefined) {
         await ctx.db.replace(existing._id, {
           ownerUserId: existing.ownerUserId,
+          scope: existing.scope ?? "user",
           assetId: existing.assetId,
           kind: existing.kind,
           mimeType: existing.mimeType,
@@ -90,6 +92,7 @@ export const upsert = mutation({
 
     await ctx.db.insert("projectAssets", {
       ownerUserId,
+      scope: "user",
       assetId: args.assetId,
       kind: args.kind,
       mimeType: args.mimeType,
@@ -138,6 +141,45 @@ export const getMany = query({
       mimeType: row.mimeType,
       size: row.size,
       storageId: row.storageId as Id<"_storage">,
+      url: await ctx.storage.getUrl(row.storageId),
+    })));
+  },
+});
+
+export const getSystemMany = query({
+  args: {
+    assetIds: v.array(v.string()),
+  },
+  returns: v.array(v.object({
+    assetId: v.string(),
+    kind: assetKindValidator,
+    mimeType: v.string(),
+    size: v.number(),
+    storageId: v.id("_storage"),
+    url: v.union(v.string(), v.null()),
+    scope: templateScopeValidator,
+  })),
+  handler: async (ctx, args) => {
+    const uniqueIds = Array.from(new Set(args.assetIds.filter((assetId) => assetId.trim().length > 0)));
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const rows = await Promise.all(uniqueIds.map(async (assetId) => {
+      return await ctx.db
+        .query("projectAssets")
+        .withIndex("by_scope_and_assetId", (q) => q.eq("scope", "system").eq("assetId", assetId))
+        .first();
+    }));
+
+    const existingRows = rows.filter((row): row is NonNullable<typeof row> => row !== null);
+    return await Promise.all(existingRows.map(async (row) => ({
+      assetId: row.assetId,
+      kind: row.kind,
+      mimeType: row.mimeType,
+      size: row.size,
+      storageId: row.storageId as Id<"_storage">,
+      scope: "system" as const,
       url: await ctx.storage.getUrl(row.storageId),
     })));
   },

@@ -1,4 +1,5 @@
 import type { MutableRefObject, Ref, RefObject } from 'react';
+import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import type { CostumeEditorMode, CostumeLayer } from '@/types';
 import type { DrawingTool } from './CostumeToolbar';
@@ -126,6 +127,14 @@ export function CostumeCanvasStage({
           className="fixed inset-0 overflow-hidden pointer-events-none"
         />
 
+        <canvas
+          ref={vectorGuideCanvasRef}
+          data-testid="costume-vector-guide-overlay"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{ zIndex: 30 }}
+        />
+
         <div
           data-testid="costume-canvas-surface"
           className="border shadow-sm absolute top-0 left-0 overflow-hidden checkerboard-bg-soft"
@@ -187,28 +196,13 @@ export function CostumeCanvasStage({
             editorModeState={editorModeState}
             hasBitmapFloatingSelection={hasBitmapFloatingSelection}
             layerZIndex={Math.max(2, hostedLayerIndex >= 0 ? hostedLayerIndex * 2 + 2 : documentLayers.length * 2 + 2)}
-            vectorGuideCanvasRef={vectorGuideCanvasRef}
           />
 
         </div>
 
-        <div
+        <BitmapBrushCursorOverlay
           ref={brushCursorOverlayRef}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: 12,
-            height: 12,
-            borderRadius: '9999px',
-            border: '1.5px solid #111111',
-            background: 'rgba(255,255,255,0.1)',
-            boxShadow: 'none',
-            transform: 'translate(-9999px, -9999px)',
-            opacity: 0,
-            pointerEvents: 'none',
-            zIndex: 40,
-          }}
+          testId="costume-brush-cursor-overlay"
         />
       </div>
     </div>

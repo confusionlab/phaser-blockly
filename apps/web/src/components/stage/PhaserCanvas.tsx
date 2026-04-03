@@ -1,6 +1,5 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useLayoutEffect, useState } from 'react';
 import Phaser from 'phaser';
-import { flushSync } from 'react-dom';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { RuntimeEngine, setCurrentRuntime, registerCodeGenerators, generateCodeForObject, clearSharedGlobalVariables } from '@/phaser';
@@ -16,7 +15,7 @@ import type {
   CostumeAssetFrame,
   CostumeBounds,
 } from '@/types';
-import { getEffectiveObjectProps } from '@/types';
+import { COMPONENT_COLOR, getEffectiveObjectProps } from '@/types';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import {
@@ -24,10 +23,20 @@ import {
 } from '@/lib/background/chunkMath';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 import {
-  getScrollCameraForViewportCenter,
-  getViewportCenterFromScrollCamera,
-} from '@/lib/viewportNavigation';
+  normalizeStageEditorViewport,
+  panStageEditorViewport,
+  scrollStageEditorViewport,
+  zoomStageEditorViewportAtScreenPoint,
+  type StageEditorViewport,
+  type StageSize,
+  type StageViewMode,
+} from '@/lib/stageViewport';
+import {
+  createStageViewportController,
+  getStageViewportController,
+} from '@/lib/phaserStageViewport';
 import { focusKeyboardSurface } from '@/utils/keyboard';
+import { getDraggedComponentId, setDraggedComponentId } from './shelfDrag';
 import {
   getSceneBackgroundBaseColor,
   getTiledBackgroundChunkSize,
@@ -41,6 +50,28 @@ import {
   getCostumeBoundsInAssetSpace,
   getCostumeVisibleCenterOffset,
 } from '@/lib/costume/costumeAssetFrame';
+import {
+  computeEdgeScaleResult,
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  getTransformGizmoCornerHitRadius,
+  getTransformGizmoEdgeCornerPreferenceInset,
+  computeCornerScaleResult,
+  DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL,
+  getTransformCornerDiagonal,
+  getTransformGizmoRotateRingRadii,
+  getTransformGizmoCornerCursor,
+  getTransformGizmoEdgeCursor,
+  getTransformGizmoEdgeSegments,
+  getTransformGizmoHandleFrame,
+  getOppositeTransformGizmoSide,
+  getTransformGizmoRotateCursor,
+  getTransformDiagonal,
+  isPointInsideTransformRotateRing,
+  rotateTransformPoint,
+  TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH,
+  TRANSFORM_GIZMO_STROKE_WIDTH,
+} from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
 import { buildVariableDefinitionIndex } from '@/lib/variableUtils';
 import type { InventoryItemEntry } from '@/phaser/RuntimeEngine';
 
@@ -49,26 +80,44 @@ registerCodeGenerators();
 
 // Track runtimes for each scene (for pause/resume across scene switches)
 const sceneRuntimes: Map<string, RuntimeEngine> = new Map();
-const GIZMO_HANDLE_NAMES = ['handle_nw', 'handle_ne', 'handle_sw', 'handle_se', 'handle_n', 'handle_s', 'handle_e', 'handle_w', 'handle_rotate'];
+const GIZMO_HANDLE_NAMES = [
+  'handle_nw',
+  'handle_ne',
+  'handle_sw',
+  'handle_se',
+  'handle_n',
+  'handle_e',
+  'handle_s',
+  'handle_w',
+  'handle_rotate',
+  'handle_rotate_nw',
+  'handle_rotate_ne',
+  'handle_rotate_sw',
+  'handle_rotate_se',
+];
 const PIXEL_HIT_ALPHA_TOLERANCE = 1;
 const GIZMO_STROKE_PX = 2;
-const GIZMO_HANDLE_SIZE_PX = 8;
-const GIZMO_EDGE_LONG_PX = 16;
-const GIZMO_ROTATE_DISTANCE_PX = 24;
-const GIZMO_ROTATE_RADIUS_PX = 6;
-const DEFAULT_EDITOR_CAMERA_ZOOM = 0.5;
+const GIZMO_EDGE_HIT_THICKNESS_PX = 16;
+const GIZMO_CORNER_HIT_RADIUS_PX = getTransformGizmoCornerHitRadius(TRANSFORM_GIZMO_HANDLE_RADIUS);
+const GIZMO_EDGE_CORNER_PREFERENCE_INSET_PX = getTransformGizmoEdgeCornerPreferenceInset(TRANSFORM_GIZMO_HANDLE_RADIUS);
+const GIZMO_ROTATE_RING_RADIUS_PX = getTransformGizmoRotateRingRadii(TRANSFORM_GIZMO_HANDLE_RADIUS).outerRadius;
 const BACKGROUND_MIN_PROJECTED_CHUNK_SIZE = 0.35;
 const GROUND_LAYER_DEPTH = -1000;
 const TILED_BACKGROUND_LAYER_DEPTH = -950;
 const INVENTORY_PAGE_SIZE = 8;
 const COSTUME_CANVAS_SIZE = 1024;
 const INVENTORY_PREVIEW_SIZE = 40;
-const EDITOR_RESIZE_FREEZE_EVENT = 'pocha-editor-resize-freeze';
+const STAGE_GIZMO_COLOR = 0x0ea5e9;
+const STAGE_GIZMO_COLOR_CSS = 'rgb(14, 165, 233)';
+const STAGE_GIZMO_FILL_CSS = 'rgba(14, 165, 233, 0.08)';
+const STAGE_SELECTION_FILL_ALPHA = 0.06;
+const MIN_STAGE_SURFACE_SIZE = 64;
 
-type FrozenStageFrame = {
-  src: string;
-  width: number;
-  height: number;
+type StageGizmoPalette = {
+  phaserColor: number;
+  strokeCss: string;
+  fillCss: string;
+  handleStrokeCss: string;
 };
 
 type PendingCostumeVisualTarget = {
@@ -78,6 +127,129 @@ type PendingCostumeVisualTarget = {
   textureKey: string | null;
 };
 
+type ComponentDragPreview = {
+  componentId: string;
+  localX: number;
+  localY: number;
+  bounds: CostumeBounds | null;
+  assetId: string | null;
+  assetFrame: CostumeAssetFrame | null;
+  zoom: number;
+};
+
+type CostumeVisualMetrics = {
+  imageWidth: number;
+  imageHeight: number;
+  assetOffset: { x: number; y: number };
+  localBounds: CostumeBounds | null;
+  interactionWidth: number;
+  interactionHeight: number;
+  interactionOffset: { x: number; y: number };
+};
+
+type SelectionFrame = {
+  centerX: number;
+  centerY: number;
+  width: number;
+  height: number;
+  rotation?: number;
+};
+
+type SelectionGuide = {
+  proportional: boolean;
+  corner: TransformGizmoCorner | null;
+};
+
+type StageDebugSnapshot = {
+  mode: StageViewMode;
+  editorViewport: StageEditorViewport | null;
+  hostSize: StageSize;
+  surfaceSize: StageSize | null;
+  surfaceResizeCount: number;
+  tiledBackgroundRenderCount: number;
+  visibleRect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
+  gameLoopFrame: number;
+  canvasState: {
+    width: number;
+    height: number;
+    visibility: string;
+  } | null;
+  cameraViewportCenter: { x: number; y: number } | null;
+  cameraWorldView: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  } | null;
+  cameraState: {
+    scrollX: number;
+    scrollY: number;
+    zoomX: number;
+    zoomY: number;
+    viewportX: number;
+    viewportY: number;
+    width: number;
+    height: number;
+  } | null;
+};
+
+type StageDebugApi = {
+  getEditorSceneSnapshot: () => StageDebugSnapshot | null;
+  setEditorViewport: (viewport: StageEditorViewport) => void;
+  setViewMode: (mode: StageViewMode) => void;
+  getWorldPointAtClientPosition: (clientX: number, clientY: number) => { x: number; y: number } | null;
+};
+
+function getCostumeVisualMetrics({
+  bounds,
+  assetFrame,
+  imageWidth,
+  imageHeight,
+}: {
+  bounds: CostumeBounds | null | undefined;
+  assetFrame?: CostumeAssetFrame | null;
+  imageWidth: number;
+  imageHeight: number;
+}): CostumeVisualMetrics {
+  const resolvedImageWidth = Math.max(1, Math.round(imageWidth || assetFrame?.width || COSTUME_CANVAS_SIZE));
+  const resolvedImageHeight = Math.max(1, Math.round(imageHeight || assetFrame?.height || COSTUME_CANVAS_SIZE));
+  const assetOffset = getCostumeAssetCenterOffset(assetFrame);
+  const localBounds = getCostumeBoundsInAssetSpace(bounds, assetFrame);
+
+  if (bounds && bounds.width > 0 && bounds.height > 0) {
+    return {
+      imageWidth: resolvedImageWidth,
+      imageHeight: resolvedImageHeight,
+      assetOffset,
+      localBounds,
+      interactionWidth: Math.max(bounds.width, 32),
+      interactionHeight: Math.max(bounds.height, 32),
+      interactionOffset: getCostumeVisibleCenterOffset(bounds, {
+        assetFrame,
+        assetWidth: resolvedImageWidth,
+        assetHeight: resolvedImageHeight,
+      }),
+    };
+  }
+
+  return {
+    imageWidth: resolvedImageWidth,
+    imageHeight: resolvedImageHeight,
+    assetOffset,
+    localBounds,
+    interactionWidth: Math.max(resolvedImageWidth, 32),
+    interactionHeight: Math.max(resolvedImageHeight, 32),
+    interactionOffset: assetOffset,
+  };
+}
+
 function areCostumeBoundsEqual(
   a: CostumeBounds | null | undefined,
   b: CostumeBounds | null | undefined,
@@ -85,6 +257,186 @@ function areCostumeBoundsEqual(
   if (!a && !b) return true;
   if (!a || !b) return false;
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+let cssColorParsingContext: CanvasRenderingContext2D | null | undefined;
+
+function getCssColorParsingContext(): CanvasRenderingContext2D | null {
+  if (cssColorParsingContext !== undefined) {
+    return cssColorParsingContext;
+  }
+
+  if (typeof document === 'undefined') {
+    cssColorParsingContext = null;
+    return cssColorParsingContext;
+  }
+
+  cssColorParsingContext = document.createElement('canvas').getContext('2d');
+  return cssColorParsingContext;
+}
+
+function parseResolvedCssColorToRgb(color: string): { r: number; g: number; b: number } | null {
+  const normalized = color.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith('#')) {
+    const hex = normalized.slice(1);
+    const expandedHex = hex.length === 3
+      ? hex.split('').map((char) => `${char}${char}`).join('')
+      : hex.length === 6
+        ? hex
+        : null;
+    if (!expandedHex) {
+      return null;
+    }
+    const value = Number.parseInt(expandedHex, 16);
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    return {
+      r: (value >> 16) & 0xff,
+      g: (value >> 8) & 0xff,
+      b: value & 0xff,
+    };
+  }
+
+  const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (!rgbMatch) {
+    return null;
+  }
+
+  const channels = rgbMatch[1]
+    .split(',')
+    .map((segment) => Number.parseFloat(segment.trim()))
+    .filter((channel) => Number.isFinite(channel));
+  if (channels.length < 3) {
+    return null;
+  }
+
+  return {
+    r: Math.max(0, Math.min(255, Math.round(channels[0]!))),
+    g: Math.max(0, Math.min(255, Math.round(channels[1]!))),
+    b: Math.max(0, Math.min(255, Math.round(channels[2]!))),
+  };
+}
+
+function resolveCssColorToRgb(color: string): { r: number; g: number; b: number } | null {
+  const context = getCssColorParsingContext();
+  if (context) {
+    context.fillStyle = '#000000';
+    context.fillStyle = color;
+    const parsed = parseResolvedCssColorToRgb(context.fillStyle);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return parseResolvedCssColorToRgb(color);
+}
+
+function getResolvedComponentStageColor(): string {
+  if (typeof document === 'undefined') {
+    return COMPONENT_COLOR;
+  }
+
+  const color = window.getComputedStyle(document.documentElement).getPropertyValue('--component-color').trim();
+  return color || COMPONENT_COLOR;
+}
+
+function createStageGizmoPaletteFromCssColor(cssColor: string, fallbackPhaserColor: number): StageGizmoPalette {
+  const rgb = resolveCssColorToRgb(cssColor);
+  if (!rgb) {
+    return {
+      phaserColor: fallbackPhaserColor,
+      strokeCss: cssColor,
+      fillCss: STAGE_GIZMO_FILL_CSS,
+      handleStrokeCss: cssColor,
+    };
+  }
+
+  return {
+    phaserColor: (rgb.r << 16) | (rgb.g << 8) | rgb.b,
+    strokeCss: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+    fillCss: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.08)`,
+    handleStrokeCss: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+  };
+}
+
+function getStageGizmoPaletteForObject(object: GameObject | null | undefined): StageGizmoPalette {
+  if (!object?.componentId) {
+    return {
+      phaserColor: STAGE_GIZMO_COLOR,
+      strokeCss: STAGE_GIZMO_COLOR_CSS,
+      fillCss: STAGE_GIZMO_FILL_CSS,
+      handleStrokeCss: STAGE_GIZMO_COLOR_CSS,
+    };
+  }
+
+  return createStageGizmoPaletteFromCssColor(getResolvedComponentStageColor(), STAGE_GIZMO_COLOR);
+}
+
+function getStageGizmoPaletteForSelection(scene: Phaser.Scene, selectedIds: string[]): StageGizmoPalette {
+  if (
+    selectedIds.length > 0
+    && selectedIds.every((selectedId) => {
+      const container = scene.children.getByName(selectedId) as Phaser.GameObjects.Container | null;
+      const objectData = container?.getData('objectData') as GameObject | undefined;
+      return !!objectData?.componentId;
+    })
+  ) {
+    return createStageGizmoPaletteFromCssColor(getResolvedComponentStageColor(), STAGE_GIZMO_COLOR);
+  }
+
+  return {
+    phaserColor: STAGE_GIZMO_COLOR,
+    strokeCss: STAGE_GIZMO_COLOR_CSS,
+    fillCss: STAGE_GIZMO_FILL_CSS,
+    handleStrokeCss: STAGE_GIZMO_COLOR_CSS,
+  };
+}
+
+function getStageShellBackgroundColor(
+  mode: StageViewMode,
+  background: BackgroundConfig | null | undefined,
+): string {
+  return mode === 'editor' ? getSceneBackgroundBaseColor(background) : '#000000';
+}
+
+function drawDashedWorldLine(
+  graphics: Phaser.GameObjects.Graphics,
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  dashLength: number,
+  gapLength: number,
+): void {
+  const totalLength = Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y);
+  if (totalLength <= 0) {
+    return;
+  }
+
+  const safeDashLength = Math.max(0.0001, dashLength);
+  const safeGapLength = Math.max(0, gapLength);
+  let distance = 0;
+
+  while (distance < totalLength) {
+    const dashStart = distance;
+    const dashEnd = Math.min(totalLength, dashStart + safeDashLength);
+    const startT = dashStart / totalLength;
+    const endT = dashEnd / totalLength;
+    graphics.beginPath();
+    graphics.moveTo(
+      Phaser.Math.Linear(start.x, end.x, startT),
+      Phaser.Math.Linear(start.y, end.y, startT),
+    );
+    graphics.lineTo(
+      Phaser.Math.Linear(start.x, end.x, endT),
+      Phaser.Math.Linear(start.y, end.y, endT),
+    );
+    graphics.strokePath();
+    distance += safeDashLength + safeGapLength;
+  }
 }
 
 // Coordinate transformation utilities
@@ -127,6 +479,38 @@ function getElementRenderSize(element: HTMLElement): { width: number; height: nu
   };
 }
 
+function getViewportSurfaceSize(minimumSize?: StageSize): StageSize {
+  const minimumWidth = minimumSize ? Math.max(MIN_STAGE_SURFACE_SIZE, Math.round(minimumSize.width)) : MIN_STAGE_SURFACE_SIZE;
+  const minimumHeight = minimumSize ? Math.max(MIN_STAGE_SURFACE_SIZE, Math.round(minimumSize.height)) : MIN_STAGE_SURFACE_SIZE;
+  if (typeof window === 'undefined') {
+    return {
+      width: minimumWidth,
+      height: minimumHeight,
+    };
+  }
+
+  return {
+    width: Math.max(minimumWidth, Math.round(window.innerWidth || minimumWidth)),
+    height: Math.max(minimumHeight, Math.round(window.innerHeight || minimumHeight)),
+  };
+}
+
+function getElementLocalPoint(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  const renderSize = getElementRenderSize(element);
+  const width = Math.max(rect.width, 1);
+  const height = Math.max(rect.height, 1);
+
+  return {
+    x: ((clientX - rect.left) / width) * renderSize.width,
+    y: ((clientY - rect.top) / height) * renderSize.height,
+  };
+}
+
 function getPendingCostumeVisualTarget(
   container: Phaser.GameObjects.Container,
 ): PendingCostumeVisualTarget | undefined {
@@ -159,8 +543,8 @@ function drawWorldBoundary(
 }
 
 interface TiledBackgroundRenderSnapshot {
-  viewportWidth: number;
-  viewportHeight: number;
+  pixelWidth: number;
+  pixelHeight: number;
   worldLeft: number;
   worldTop: number;
   worldWidth: number;
@@ -181,6 +565,7 @@ interface TiledBackgroundLayerState {
   renderScale: number;
   lastBackgroundRef: BackgroundConfig | null;
   lastRenderSnapshot: TiledBackgroundRenderSnapshot | null;
+  renderCount: number;
 }
 
 function createTiledBackgroundLayerState(
@@ -219,6 +604,7 @@ function createTiledBackgroundLayerState(
     renderScale: 1,
     lastBackgroundRef: null,
     lastRenderSnapshot: null,
+    renderCount: 0,
   });
   return layer;
 }
@@ -238,14 +624,51 @@ function hasTiledBackgroundSnapshotChanged(
   if (!previous) return true;
   const epsilon = 1e-3;
   return (
-    previous.viewportWidth !== next.viewportWidth ||
-    previous.viewportHeight !== next.viewportHeight ||
+    previous.pixelWidth !== next.pixelWidth ||
+    previous.pixelHeight !== next.pixelHeight ||
     Math.abs(previous.worldLeft - next.worldLeft) > epsilon ||
     Math.abs(previous.worldTop - next.worldTop) > epsilon ||
     Math.abs(previous.worldWidth - next.worldWidth) > epsilon ||
     Math.abs(previous.worldHeight - next.worldHeight) > epsilon ||
     Math.abs(previous.zoom - next.zoom) > epsilon
   );
+}
+
+function getTiledBackgroundRenderSnapshot(
+  scene: Phaser.Scene,
+  layer: TiledBackgroundLayerState,
+  camera: Phaser.Cameras.Scene2D.Camera,
+): TiledBackgroundRenderSnapshot {
+  const stageViewportController = getStageViewportController(scene);
+  const projection = stageViewportController?.getProjection() ?? null;
+  const zoom = Math.max(Math.abs(camera.zoom), 1e-6);
+
+  if (projection?.mode === 'editor') {
+    const editorViewport = stageViewportController?.getEditorViewport();
+    const worldWidth = projection.surfaceSize.width / zoom;
+    const worldHeight = projection.surfaceSize.height / zoom;
+    const centerX = editorViewport?.centerX ?? camera.worldView.centerX;
+    const centerY = editorViewport?.centerY ?? camera.worldView.centerY;
+    return {
+      pixelWidth: Math.max(1, Math.round(projection.surfaceSize.width * layer.renderScale)),
+      pixelHeight: Math.max(1, Math.round(projection.surfaceSize.height * layer.renderScale)),
+      worldLeft: centerX - (worldWidth / 2),
+      worldTop: centerY - (worldHeight / 2),
+      worldWidth,
+      worldHeight,
+      zoom: camera.zoom,
+    };
+  }
+
+  return {
+    pixelWidth: Math.max(1, Math.round(camera.width * layer.renderScale)),
+    pixelHeight: Math.max(1, Math.round(camera.height * layer.renderScale)),
+    worldLeft: camera.worldView.left,
+    worldTop: camera.worldView.top,
+    worldWidth: camera.worldView.width,
+    worldHeight: camera.worldView.height,
+    zoom: camera.zoom,
+  };
 }
 
 function getUserViewportFromPhaserWorldView(
@@ -290,36 +713,32 @@ function updateTiledBackgroundLayer(scene: Phaser.Scene, layer: TiledBackgroundL
   }
 
   camera.preRender();
-  const worldView = camera.worldView;
-  const viewportWidth = Math.max(1, Math.round(camera.width));
-  const viewportHeight = Math.max(1, Math.round(camera.height));
-  const nextSnapshot: TiledBackgroundRenderSnapshot = {
-    viewportWidth,
-    viewportHeight,
-    worldLeft: worldView.left,
-    worldTop: worldView.top,
-    worldWidth: worldView.width,
-    worldHeight: worldView.height,
-    zoom: camera.zoom,
-  };
+  const nextSnapshot = getTiledBackgroundRenderSnapshot(scene, layer, camera);
 
   if (layer.needsRedraw || hasTiledBackgroundSnapshotChanged(layer.lastRenderSnapshot, nextSnapshot)) {
-    const viewport = getUserViewportFromPhaserWorldView(worldView, layer.canvasWidth, layer.canvasHeight);
+    const renderWorldView = new Phaser.Geom.Rectangle(
+      nextSnapshot.worldLeft,
+      nextSnapshot.worldTop,
+      nextSnapshot.worldWidth,
+      nextSnapshot.worldHeight,
+    );
+    const viewport = getUserViewportFromPhaserWorldView(renderWorldView, layer.canvasWidth, layer.canvasHeight);
     const { pending } = layer.compositor.render({
       canvas: layer.canvas,
       background,
       viewport,
-      pixelWidth: viewportWidth * layer.renderScale,
-      pixelHeight: viewportHeight * layer.renderScale,
+      pixelWidth: nextSnapshot.pixelWidth,
+      pixelHeight: nextSnapshot.pixelHeight,
     });
     layer.texture.setSize(layer.canvas.width, layer.canvas.height);
     layer.texture.refresh();
     layer.needsRedraw = pending;
     layer.lastRenderSnapshot = nextSnapshot;
+    layer.renderCount += 1;
   }
 
-  layer.image.setPosition(worldView.left, worldView.top);
-  layer.image.setDisplaySize(worldView.width, worldView.height);
+  layer.image.setPosition(nextSnapshot.worldLeft, nextSnapshot.worldTop);
+  layer.image.setDisplaySize(nextSnapshot.worldWidth, nextSnapshot.worldHeight);
   layer.image.setVisible(true);
 }
 
@@ -481,10 +900,10 @@ function isClientPointInsideInventoryUI(clientX: number, clientY: number): boole
 
 interface PhaserCanvasProps {
   isPlaying: boolean;
-  deferEditorResize?: boolean;
+  layoutMode?: 'panel' | 'fullscreen';
 }
 
-export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCanvasProps) {
+export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const runtimeRef = useRef<RuntimeEngine | null>(null);
@@ -500,6 +919,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   const creationIdRef = useRef(0); // Track which creation attempt is current
   // Track the initial scene when play mode starts - don't recreate game when scene changes during play
   const playModeInitialSceneRef = useRef<string | null>(null);
+  const editorViewportBySceneIdRef = useRef<Map<string, StageEditorViewport>>(new Map());
   const [activeRuntime, setActiveRuntime] = useState<RuntimeEngine | null>(null);
   const [inventoryItems, setInventoryItems] = useState<InventoryItemEntry[]>([]);
   const [isInventoryVisible, setIsInventoryVisible] = useState(true);
@@ -512,11 +932,15 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     height: number;
   } | null>(null);
   const [draggedInventoryCanDrop, setDraggedInventoryCanDrop] = useState(false);
-  const [frozenStageFrame, setFrozenStageFrame] = useState<FrozenStageFrame | null>(null);
-  const immediateResizeFreezeRef = useRef(false);
-  const [manualResizeFreezeActive, setManualResizeFreezeActive] = useState(false);
+  const [componentDragPreview, setComponentDragPreview] = useState<ComponentDragPreview | null>(null);
+  const scheduledEditorResizeRef = useRef<number | null>(null);
+  const scheduledEditorResizeForceRef = useRef(false);
+  const scheduledEditorResizeSizeRef = useRef<StageSize | null>(null);
+  const editorHostSizeRef = useRef<StageSize>({ width: 1, height: 1 });
+  const editorSurfaceSizeRef = useRef<StageSize | null>(null);
+  const editorSurfaceResizeCountRef = useRef(0);
 
-  const { project, updateObject } = useProjectStore();
+  const { project, updateObject, addComponentInstance } = useProjectStore();
   const { selectedSceneId, selectedObjectId, selectedObjectIds, selectObjects, selectScene, showColliderOutlines, viewMode } = useEditorStore();
 
   // Use refs for values accessed in Phaser callbacks to avoid stale closures
@@ -534,23 +958,348 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   }
 
   const selectedScene = project?.scenes.find(s => s.id === selectedSceneId);
-  const isResizeFrozen = deferEditorResize || manualResizeFreezeActive;
 
-  const captureFrozenStageFrame = useCallback((): FrozenStageFrame | null => {
-    const canvas = gameRef.current?.canvas;
-    if (!canvas || canvas.width <= 0 || canvas.height <= 0) {
-      return null;
+  const syncEditorCanvasElementBox = useCallback((hostSize?: StageSize, surfaceSize?: StageSize) => {
+    if (isPlaying) {
+      return;
     }
 
-    const src = canvas.toDataURL('image/png');
-    const canvasRect = canvas.getBoundingClientRect();
+    const canvas = gameRef.current?.canvas;
+    if (!canvas) {
+      return;
+    }
+
+    const resolvedHostSize = hostSize ?? editorHostSizeRef.current;
+    const resolvedSurfaceSize = surfaceSize ?? editorSurfaceSizeRef.current ?? {
+      width: Math.max(1, canvas.width || 1),
+      height: Math.max(1, canvas.height || 1),
+    };
+    const offsetX = Math.round((resolvedHostSize.width - resolvedSurfaceSize.width) / 2);
+    const offsetY = Math.round((resolvedHostSize.height - resolvedSurfaceSize.height) / 2);
+
+    canvas.style.display = 'block';
+    canvas.style.position = 'absolute';
+    canvas.style.left = `${offsetX}px`;
+    canvas.style.top = `${offsetY}px`;
+    canvas.style.width = `${resolvedSurfaceSize.width}px`;
+    canvas.style.height = `${resolvedSurfaceSize.height}px`;
+    canvas.style.maxWidth = 'none';
+    canvas.style.maxHeight = 'none';
+  }, [isPlaying]);
+
+  const ensureEditorSurfaceSize = useCallback((hostSize: StageSize, force = false): StageSize => {
+    const currentSurfaceSize = editorSurfaceSizeRef.current;
+    const viewportSurfaceSize = getViewportSurfaceSize(hostSize);
+
+    if (!force && currentSurfaceSize) {
+      return {
+        width: Math.max(currentSurfaceSize.width, hostSize.width, viewportSurfaceSize.width),
+        height: Math.max(currentSurfaceSize.height, hostSize.height, viewportSurfaceSize.height),
+      };
+    }
 
     return {
-      src,
-      width: canvasRect.width,
-      height: canvasRect.height,
+      width: Math.max(hostSize.width, viewportSurfaceSize.width, currentSurfaceSize?.width ?? 0),
+      height: Math.max(hostSize.height, viewportSurfaceSize.height, currentSurfaceSize?.height ?? 0),
     };
   }, []);
+
+  const syncEditorCanvasToHost = useCallback((hostSize: StageSize, force = false) => {
+    if (isPlaying) {
+      return;
+    }
+
+    const game = gameRef.current;
+    if (!game) {
+      return;
+    }
+
+    const resolvedHostSize = {
+      width: Math.max(1, Math.round(hostSize.width)),
+      height: Math.max(1, Math.round(hostSize.height)),
+    };
+    const previousSurfaceSize = editorSurfaceSizeRef.current;
+    const nextSurfaceSize = ensureEditorSurfaceSize(resolvedHostSize, force);
+    const surfaceRefMatches = previousSurfaceSize?.width === nextSurfaceSize.width
+      && previousSurfaceSize?.height === nextSurfaceSize.height;
+    const canvasWidth = game.canvas?.width ?? 0;
+    const canvasHeight = game.canvas?.height ?? 0;
+    const canvasMatches = canvasWidth === nextSurfaceSize.width && canvasHeight === nextSurfaceSize.height;
+
+    editorHostSizeRef.current = resolvedHostSize;
+    editorSurfaceSizeRef.current = nextSurfaceSize;
+
+    if (!surfaceRefMatches || !canvasMatches) {
+      editorSurfaceResizeCountRef.current += 1;
+      game.scale.resize(nextSurfaceSize.width, nextSurfaceSize.height);
+      game.scale.refresh();
+    }
+
+    syncEditorCanvasElementBox(resolvedHostSize, nextSurfaceSize);
+
+    const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+    if (phaserScene) {
+      getStageViewportController(phaserScene)?.syncProjection();
+    }
+  }, [ensureEditorSurfaceSize, isPlaying, syncEditorCanvasElementBox]);
+
+  const flushScheduledEditorCanvasResize = useCallback(() => {
+    scheduledEditorResizeRef.current = null;
+    const force = scheduledEditorResizeForceRef.current;
+    const nextSize = scheduledEditorResizeSizeRef.current;
+    scheduledEditorResizeForceRef.current = false;
+    scheduledEditorResizeSizeRef.current = null;
+
+    if (nextSize) {
+      syncEditorCanvasToHost(nextSize, force);
+      return;
+    }
+
+    const host = containerRef.current;
+    if (!host) {
+      return;
+    }
+
+    syncEditorCanvasToHost(getElementRenderSize(host), force);
+  }, [syncEditorCanvasToHost]);
+
+  const cancelScheduledEditorCanvasResize = useCallback(() => {
+    if (scheduledEditorResizeRef.current !== null) {
+      window.cancelAnimationFrame(scheduledEditorResizeRef.current);
+      scheduledEditorResizeRef.current = null;
+    }
+    scheduledEditorResizeForceRef.current = false;
+    scheduledEditorResizeSizeRef.current = null;
+  }, []);
+
+  const scheduleEditorCanvasResize = useCallback((size?: StageSize, force = false) => {
+    if (isPlaying) {
+      return;
+    }
+
+    if (size) {
+      scheduledEditorResizeSizeRef.current = {
+        width: size.width,
+        height: size.height,
+      };
+    }
+    scheduledEditorResizeForceRef.current = scheduledEditorResizeForceRef.current || force;
+
+    if (typeof window === 'undefined') {
+      flushScheduledEditorCanvasResize();
+      return;
+    }
+
+    if (scheduledEditorResizeRef.current !== null) {
+      return;
+    }
+
+    scheduledEditorResizeRef.current = window.requestAnimationFrame(() => {
+      flushScheduledEditorCanvasResize();
+    });
+  }, [flushScheduledEditorCanvasResize, isPlaying]);
+
+  useEffect(() => {
+    editorViewportBySceneIdRef.current.clear();
+  }, [project?.id]);
+
+  const getStoredEditorViewport = useCallback((
+    sceneId: string | null | undefined,
+    canvasSize: StageSize,
+  ): StageEditorViewport => {
+    const key = sceneId ?? '__default__';
+    const stored = editorViewportBySceneIdRef.current.get(key);
+    return normalizeStageEditorViewport(stored, canvasSize);
+  }, []);
+
+  const storeEditorViewport = useCallback((
+    sceneId: string | null | undefined,
+    viewport: StageEditorViewport,
+  ) => {
+    const key = sceneId ?? '__default__';
+    editorViewportBySceneIdRef.current.set(key, viewport);
+  }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined' || isPlaying) {
+      return;
+    }
+
+    const debugApi: StageDebugApi = {
+      getEditorSceneSnapshot: () => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const host = containerRef.current;
+        const game = gameRef.current;
+        if (!editorScene || !host) {
+          return null;
+        }
+
+        const controller = getStageViewportController(editorScene);
+        const camera = editorScene.cameras.main;
+        const projection = controller?.getProjection() ?? null;
+        const hostSize = getElementRenderSize(host);
+        const tiledBackgroundLayer = editorScene.data.get('tiledBackgroundLayer') as TiledBackgroundLayerState | undefined;
+        camera.preRender();
+        const cameraViewportCenter = {
+          x: camera.worldView.centerX,
+          y: camera.worldView.centerY,
+        };
+        const canvas = game?.canvas;
+
+        return {
+          mode: controller?.getMode() ?? 'editor',
+          editorViewport: controller?.getEditorViewport() ?? null,
+          hostSize,
+          surfaceSize: projection?.surfaceSize ?? null,
+          surfaceResizeCount: editorSurfaceResizeCountRef.current,
+          tiledBackgroundRenderCount: tiledBackgroundLayer?.renderCount ?? 0,
+          visibleRect: projection?.visibleRect ?? null,
+          gameLoopFrame: game?.loop?.frame ?? 0,
+          canvasState: canvas
+            ? {
+                width: canvas.width,
+                height: canvas.height,
+                visibility: window.getComputedStyle(canvas).visibility,
+              }
+            : null,
+          cameraViewportCenter,
+          cameraWorldView: {
+            left: camera.worldView.left,
+            top: camera.worldView.top,
+            right: camera.worldView.right,
+            bottom: camera.worldView.bottom,
+            width: camera.worldView.width,
+            height: camera.worldView.height,
+          },
+          cameraState: {
+            scrollX: camera.scrollX,
+            scrollY: camera.scrollY,
+            zoomX: camera.zoomX,
+            zoomY: camera.zoomY,
+            viewportX: camera.x,
+            viewportY: camera.y,
+            width: camera.width,
+            height: camera.height,
+          },
+        };
+      },
+      setEditorViewport: (viewport) => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const controller = editorScene ? getStageViewportController(editorScene) : null;
+        if (!controller) {
+          return;
+        }
+        controller.setMode('editor');
+        controller.setEditorViewport(viewport);
+      },
+      setViewMode: (mode) => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const controller = editorScene ? getStageViewportController(editorScene) : null;
+        controller?.setMode(mode);
+      },
+      getWorldPointAtClientPosition: (clientX, clientY) => {
+        const editorScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+        const host = containerRef.current;
+        const controller = editorScene ? getStageViewportController(editorScene) : null;
+        if (!editorScene || !controller || !host) {
+          return null;
+        }
+        const inputSurface = gameRef.current?.canvas ?? host;
+        const { x, y } = getElementLocalPoint(inputSurface, clientX, clientY);
+        const worldPoint = editorScene.cameras.main.getWorldPoint(x, y);
+        return worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
+      },
+    };
+
+    const stageWindow = window as typeof window & { __pochaStageDebug?: StageDebugApi };
+    stageWindow.__pochaStageDebug = debugApi;
+    return () => {
+      if (stageWindow.__pochaStageDebug === debugApi) {
+        delete stageWindow.__pochaStageDebug;
+      }
+    };
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (isPlaying || !containerRef.current) {
+      return;
+    }
+
+    const host = containerRef.current;
+
+    const getEditorViewportController = () => {
+      const game = gameRef.current;
+      if (!game) {
+        return null;
+      }
+
+      const editorScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
+      if (!editorScene) {
+        return null;
+      }
+
+      return getStageViewportController(editorScene);
+    };
+
+    const handleHostContextMenu = (event: MouseEvent) => {
+      const controller = getEditorViewportController();
+      if (controller?.getMode() === 'editor') {
+        event.preventDefault();
+      }
+    };
+
+    const handleHostWheel = (event: WheelEvent) => {
+      const controller = getEditorViewportController();
+      if (!controller || controller.getMode() !== 'editor') {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.ctrlKey || event.metaKey) {
+        const editorViewport = controller.getEditorViewport();
+        const screenPoint = getElementLocalPoint(host, event.clientX, event.clientY);
+        const hostSize = controller.getProjection().hostSize;
+        const zoomDelta = -event.deltaY * 0.01;
+        const zoomFactor = 1 + zoomDelta;
+        const newZoom = Phaser.Math.Clamp(
+          editorViewport.zoom * zoomFactor,
+          0.1,
+          10,
+        );
+
+        controller.setEditorViewport(
+          zoomStageEditorViewportAtScreenPoint(
+            editorViewport,
+            hostSize,
+            screenPoint,
+            newZoom,
+          ),
+        );
+        return;
+      }
+
+      controller.setEditorViewport(
+        scrollStageEditorViewport(
+          controller.getEditorViewport(),
+          event.deltaX,
+          event.deltaY,
+        ),
+      );
+    };
+
+    host.addEventListener('contextmenu', handleHostContextMenu);
+    host.addEventListener('wheel', handleHostWheel, {
+      passive: false,
+      capture: true,
+    });
+
+    return () => {
+      host.removeEventListener('contextmenu', handleHostContextMenu);
+      host.removeEventListener('wheel', handleHostWheel, true);
+    };
+  }, [isPlaying]);
 
   useEffect(() => {
     inventoryUnsubscribeRef.current?.();
@@ -696,6 +1445,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       const nextIds = alreadySelected
         ? currentSelection.filter(id => id !== objectId)
         : [...currentSelection, objectId];
+      state.setActiveHierarchyTab('object');
       state.selectObjects(nextIds, nextIds.includes(objectId) ? objectId : (nextIds[0] ?? null));
       return;
     }
@@ -704,15 +1454,18 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       const nextIds = currentSelection.includes(objectId)
         ? currentSelection
         : [...currentSelection, objectId];
+      state.setActiveHierarchyTab('object');
       state.selectObjects(nextIds, objectId);
       return;
     }
 
     if (currentSelection.length > 1 && currentSelection.includes(objectId)) {
       // Keep multi-selection intact so immediate drag can move the whole selection.
+      state.setActiveHierarchyTab('object');
       return;
     }
 
+    state.setActiveHierarchyTab('object');
     state.selectObject(objectId);
   }, []);
 
@@ -830,8 +1583,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }
 
     const { canvasWidth, canvasHeight, backgroundColor } = project.settings;
-    const editorBackgroundColor = getSceneBackgroundBaseColor(selectedScene?.background);
-    const editorShellBackgroundColor = viewMode === 'camera-viewport' ? '#000000' : editorBackgroundColor;
+    const editorShellBackgroundColor = getStageShellBackgroundColor(viewMode, selectedScene?.background);
     const container = containerRef.current;
 
     // Function to create the game
@@ -844,13 +1596,29 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
       if (!container) return;
       console.log(`[PhaserCanvas] Creating game #${thisCreationId}`);
 
-      // Editor mode uses container size for infinite canvas, play mode uses game dimensions
+      // In editor mode we render into a persistent live surface that can be larger than the host.
       const containerSize = getElementRenderSize(container);
+      const viewportSurfaceSize = getViewportSurfaceSize(containerSize);
+      const initialSurfaceSize = isPlaying
+        ? containerSize
+        : {
+            width: Math.max(
+              editorSurfaceSizeRef.current?.width ?? 0,
+              viewportSurfaceSize.width,
+            ),
+            height: Math.max(
+              editorSurfaceSizeRef.current?.height ?? 0,
+              viewportSurfaceSize.height,
+            ),
+          };
+      editorHostSizeRef.current = containerSize;
+      editorSurfaceSizeRef.current = initialSurfaceSize;
+      editorSurfaceResizeCountRef.current = 0;
       const config: Phaser.Types.Core.GameConfig = {
         type: Phaser.AUTO,
         parent: container,
-        width: isPlaying ? canvasWidth : containerSize.width,
-        height: isPlaying ? canvasHeight : containerSize.height,
+        width: isPlaying ? canvasWidth : initialSurfaceSize.width,
+        height: isPlaying ? canvasHeight : initialSurfaceSize.height,
         render: isPlaying ? undefined : {
           preserveDrawingBuffer: true,
         },
@@ -860,7 +1628,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           mode: Phaser.Scale.FIT,
           autoCenter: Phaser.Scale.CENTER_BOTH,
         } : {
-          mode: Phaser.Scale.RESIZE,
+          mode: Phaser.Scale.NONE,
           autoCenter: Phaser.Scale.NO_CENTER,
         },
         physics: {
@@ -918,6 +1686,14 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                 canvasHeight,
                 project.components || [],
                 currentViewMode,
+                getStoredEditorViewport(selectedScene?.id ?? null, { width: canvasWidth, height: canvasHeight }),
+                () => ({
+                  hostSize: editorHostSizeRef.current,
+                  surfaceSize: editorSurfaceSizeRef.current ?? getViewportSurfaceSize(editorHostSizeRef.current),
+                }),
+                (nextViewport) => {
+                  storeEditorViewport(selectedScene?.id ?? null, nextViewport);
+                },
               );
             }
           },
@@ -1003,6 +1779,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         if (gameRef.current?.scale) {
           gameRef.current.scale.refresh();
         }
+        syncEditorCanvasElementBox();
       });
     };
 
@@ -1019,113 +1796,80 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     }
 
     return () => cleanupPhaserInstance('effect-dispose');
-  }, [project?.id, selectedSceneId, isPlaying, handleObjectDragEnd]);
+  }, [
+    getStoredEditorViewport,
+    handleObjectDragEnd,
+    isPlaying,
+    project?.id,
+    project?.settings.canvasHeight,
+    project?.settings.canvasWidth,
+    selectedSceneId,
+    storeEditorViewport,
+  ]);
 
   useEffect(() => {
     if (isPlaying || !containerRef.current || typeof ResizeObserver === 'undefined') return;
 
-    const syncEditorCanvasSize = () => {
-      if (isResizeFrozen || immediateResizeFreezeRef.current) return;
-      const host = containerRef.current;
-      const game = gameRef.current;
-      if (!host || !game) return;
-
-      const { width: nextWidth, height: nextHeight } = getElementRenderSize(host);
-      if (game.scale.width === nextWidth && game.scale.height === nextHeight) {
-        return;
-      }
-
-      game.scale.resize(nextWidth, nextHeight);
-
-      const phaserScene = game.scene.getScene('EditorScene') as Phaser.Scene | undefined;
-      if (phaserScene) {
-        refreshTiledBackgroundLayer(phaserScene);
-      }
-    };
-
-    const observer = new ResizeObserver(() => {
-      syncEditorCanvasSize();
+    const observer = new ResizeObserver((entries) => {
+      const latestEntry = entries[entries.length - 1];
+      const contentRect = latestEntry?.contentRect;
+      scheduleEditorCanvasResize(contentRect
+        ? {
+            width: contentRect.width,
+            height: contentRect.height,
+          }
+        : undefined);
     });
     observer.observe(containerRef.current);
-    syncEditorCanvasSize();
+    scheduleEditorCanvasResize(getElementRenderSize(containerRef.current), true);
 
     return () => {
       observer.disconnect();
     };
-  }, [isPlaying, project?.id, selectedSceneId, isResizeFrozen]);
+  }, [isPlaying, project?.id, scheduleEditorCanvasResize, selectedSceneId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isPlaying) {
-      setFrozenStageFrame(null);
       return;
     }
 
-    const canvas = gameRef.current?.canvas;
-    if (!canvas) return;
+    let cancelled = false;
+    let raf1 = 0;
+    let raf2 = 0;
+    let timeoutId: number | null = null;
 
-    if (isResizeFrozen) {
-      try {
-        const frozenFrame = captureFrozenStageFrame();
-        if (frozenFrame) {
-          setFrozenStageFrame(frozenFrame);
-          canvas.style.visibility = 'hidden';
-          return;
-        }
-        setFrozenStageFrame(null);
-        canvas.style.visibility = 'visible';
-      } catch {
-        setFrozenStageFrame(null);
-        canvas.style.visibility = 'visible';
+    const syncNow = (force = false) => {
+      if (!cancelled) {
+        scheduleEditorCanvasResize(undefined, force);
       }
-      return;
-    }
+    };
 
-    const revealCanvas = requestAnimationFrame(() => {
-      const nextCanvas = gameRef.current?.canvas;
-      if (nextCanvas) {
-        nextCanvas.style.visibility = 'visible';
-      }
-      setFrozenStageFrame(null);
+    syncNow(true);
+    raf1 = window.requestAnimationFrame(() => {
+      syncNow(true);
+      raf2 = window.requestAnimationFrame(() => {
+        syncNow(true);
+      });
     });
+    timeoutId = window.setTimeout(() => {
+      syncNow(true);
+    }, 120);
 
     return () => {
-      cancelAnimationFrame(revealCanvas);
+      cancelled = true;
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
-  }, [captureFrozenStageFrame, isResizeFrozen, isPlaying]);
+  }, [isPlaying, layoutMode, scheduleEditorCanvasResize]);
 
   useEffect(() => {
-    if (isPlaying) return;
-
-    const handleResizeFreeze = (event: Event) => {
-      const customEvent = event as CustomEvent<{ active?: boolean }>;
-      const active = !!customEvent.detail?.active;
-      immediateResizeFreezeRef.current = active;
-
-      const canvas = gameRef.current?.canvas;
-      if (active && canvas) {
-        let frozenFrame: FrozenStageFrame | null = null;
-        try {
-          frozenFrame = captureFrozenStageFrame();
-        } catch {
-          frozenFrame = null;
-        }
-
-        flushSync(() => {
-          setFrozenStageFrame(frozenFrame);
-          setManualResizeFreezeActive(true);
-        });
-        canvas.style.visibility = frozenFrame ? 'hidden' : 'visible';
-        return;
-      }
-
-      setManualResizeFreezeActive(active);
-    };
-
-    window.addEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
     return () => {
-      window.removeEventListener(EDITOR_RESIZE_FREEZE_EVENT, handleResizeFreeze as EventListener);
+      cancelScheduledEditorCanvasResize();
     };
-  }, [captureFrozenStageFrame, isPlaying]);
+  }, [cancelScheduledEditorCanvasResize]);
 
   // Toggle collider debug rendering at runtime (without recreating game)
   useEffect(() => {
@@ -1159,51 +1903,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
     if (!phaserScene) return;
 
-    const camera = phaserScene.cameras.main;
-    const canvasW = phaserScene.data.get('canvasWidth') as number || 800;
-    const canvasH = phaserScene.data.get('canvasHeight') as number || 600;
-    const shellBgColorValue = viewMode === 'camera-viewport' ? '#000000' : getSceneBackgroundBaseColor(selectedScene?.background);
+    const controller = getStageViewportController(phaserScene);
+    controller?.setMode(viewMode);
 
-    phaserScene.data.set('viewMode', viewMode);
-
-    const containerWidth = phaserScene.scale.width;
-    const containerHeight = phaserScene.scale.height;
-
-    if (viewMode === 'camera-viewport') {
-      // Camera mode: use viewport to letterbox
-      const scaleX = containerWidth / canvasW;
-      const scaleY = containerHeight / canvasH;
-      const scale = Math.min(scaleX, scaleY);
-
-      const viewportWidth = Math.floor(canvasW * scale);
-      const viewportHeight = Math.floor(canvasH * scale);
-      const viewportX = Math.floor((containerWidth - viewportWidth) / 2);
-      const viewportY = Math.floor((containerHeight - viewportHeight) / 2);
-
-      camera.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
-      camera.setZoom(scale);
-      camera.centerOn(canvasW / 2, canvasH / 2);
-    } else {
-      // Editor mode - full viewport
-      const previousCenter = getViewportCenterFromScrollCamera(
-        {
-          scrollX: camera.scrollX,
-          scrollY: camera.scrollY,
-          zoom: camera.zoom || DEFAULT_EDITOR_CAMERA_ZOOM,
-        },
-        { width: camera.width, height: camera.height },
-      );
-      const nextZoom = camera.zoom || DEFAULT_EDITOR_CAMERA_ZOOM;
-      camera.setViewport(0, 0, containerWidth, containerHeight);
-      camera.setZoom(nextZoom);
-      const nextScroll = getScrollCameraForViewportCenter(
-        previousCenter,
-        { width: containerWidth, height: containerHeight },
-        nextZoom,
-      );
-      camera.scrollX = nextScroll.scrollX;
-      camera.scrollY = nextScroll.scrollY;
-    }
+    const shellBgColorValue = getStageShellBackgroundColor(viewMode, selectedScene?.background);
 
     const renderer = phaserScene.game.renderer as { config?: { backgroundColor?: Phaser.Display.Color } };
     if (renderer.config) {
@@ -1265,14 +1968,10 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
           const selRect = newContainer.getByName('selection') as Phaser.GameObjects.Rectangle;
           if (selRect) selRect.setVisible(visible);
 
+          // Per-object gizmo handles stay disabled; stage transforms use the shared global selection gizmo.
           for (const name of [...GIZMO_HANDLE_NAMES, 'rotate_line']) {
             const handle = newContainer.getByName(name);
-            if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(visible);
-          }
-
-          if (visible) {
-            const updateGizmo = newContainer.getData('updateGizmoPositions') as (() => void) | undefined;
-            if (updateGizmo) updateGizmo();
+            if (handle) (handle as Phaser.GameObjects.Shape | Phaser.GameObjects.Graphics).setVisible(false);
           }
         };
         newContainer.setData('setSelectionVisible', setSelectionVisible);
@@ -1351,6 +2050,13 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
         });
       } else {
         const targetContainer = container;
+        targetContainer.setData('objectData', obj);
+        const selectionRect = targetContainer.getByName('selection') as Phaser.GameObjects.Rectangle | null;
+        if (selectionRect) {
+          const selectionPalette = getStageGizmoPaletteForObject(obj);
+          selectionRect.setStrokeStyle(GIZMO_STROKE_PX, selectionPalette.phaserColor);
+          selectionRect.setFillStyle(selectionPalette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
+        }
         // Update existing object - convert user coords to Phaser coords
         const cw = phaserScene.data.get('canvasWidth') as number || 800;
         const ch = phaserScene.data.get('canvasHeight') as number || 600;
@@ -1405,52 +2111,26 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             cont.add(sprite);
             const hitRect = cont.getByName('hitArea') as Phaser.GameObjects.Rectangle | null;
             const selRect = cont.getByName('selection') as Phaser.GameObjects.Rectangle | null;
-            const assetOffset = getCostumeAssetCenterOffset(assetFrame);
-            const imgWidth = sprite.width;
-            const imgHeight = sprite.height;
+            const metrics = getCostumeVisualMetrics({
+              bounds,
+              assetFrame,
+              imageWidth: sprite.width,
+              imageHeight: sprite.height,
+            });
 
-            sprite.setPosition(assetOffset.x, assetOffset.y);
-
-            if (bounds && bounds.width > 0 && bounds.height > 0) {
-              const width = Math.max(bounds.width, 32);
-              const height = Math.max(bounds.height, 32);
-              const visibleCenterOffset = getCostumeVisibleCenterOffset(bounds, {
-                assetFrame,
-                assetWidth: imgWidth,
-                assetHeight: imgHeight,
-              });
-
-              cont.setSize(width, height);
-
-              if (hitRect) {
-                hitRect.setSize(width, height);
-                hitRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-                hitRect.removeInteractive();
-                hitRect.setInteractive({ useHandCursor: true });
-              }
-
-              if (selRect) {
-                selRect.setSize(width + 8, height + 8);
-                selRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-                cont.sendToBack(selRect);
-              }
-              return;
-            }
-
-            const width = Math.max(imgWidth, 32);
-            const height = Math.max(imgHeight, 32);
-            cont.setSize(width, height);
+            sprite.setPosition(metrics.assetOffset.x, metrics.assetOffset.y);
+            cont.setSize(metrics.interactionWidth, metrics.interactionHeight);
 
             if (hitRect) {
-              hitRect.setSize(width, height);
-              hitRect.setPosition(assetOffset.x, assetOffset.y);
+              hitRect.setSize(metrics.interactionWidth, metrics.interactionHeight);
+              hitRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
               hitRect.removeInteractive();
               hitRect.setInteractive({ useHandCursor: true });
             }
 
             if (selRect) {
-              selRect.setSize(width + 8, height + 8);
-              selRect.setPosition(assetOffset.x, assetOffset.y);
+              selRect.setSize(metrics.interactionWidth + 8, metrics.interactionHeight + 8);
+              selRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
               cont.sendToBack(selRect);
             }
           };
@@ -1606,7 +2286,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     if (!phaserScene || !selectedScene) return;
 
     const bgColorValue = getSceneBackgroundBaseColor(selectedScene.background);
-    const shellBgColorValue = viewMode === 'camera-viewport' ? '#000000' : bgColorValue;
+    const shellBgColorValue = getStageShellBackgroundColor(viewMode, selectedScene.background);
 
     phaserScene.cameras.main.setBackgroundColor(bgColorValue);
 
@@ -1679,8 +2359,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
   );
   const canGoToPreviousInventoryPage = totalInventoryPages > 1 && inventoryPage > 0;
   const canGoToNextInventoryPage = totalInventoryPages > 1 && inventoryPage < totalInventoryPages - 1;
-  const editorStageBaseColor = getSceneBackgroundBaseColor(selectedScene?.background);
-  const editorStageShellColor = viewMode === 'camera-viewport' ? '#000000' : editorStageBaseColor;
+  const editorStageShellColor = getStageShellBackgroundColor(viewMode, selectedScene?.background);
   const handleShortcutSurfacePointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (isPlaying) {
       return;
@@ -1688,38 +2367,224 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
     focusKeyboardSurface(event.currentTarget);
   }, [isPlaying]);
 
+  const handleComponentDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (isPlaying || !event.dataTransfer.types.includes('application/x-pocha-component-id')) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+
+    if (!containerRef.current || !gameRef.current || !project) {
+      return;
+    }
+
+    const componentId = event.dataTransfer.getData('application/x-pocha-component-id') || getDraggedComponentId();
+    if (!componentId) {
+      setComponentDragPreview(null);
+      return;
+    }
+
+    const component = (project.components || []).find((candidate) => candidate.id === componentId);
+    const costume = component?.costumes[component.currentCostumeIndex] ?? component?.costumes[0] ?? null;
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
+    const camera = phaserScene?.cameras?.main;
+    if (!component || !camera) {
+      setComponentDragPreview(null);
+      return;
+    }
+
+    const rect = containerRef.current.getBoundingClientRect();
+    setComponentDragPreview({
+      componentId,
+      localX: event.clientX - rect.left,
+      localY: event.clientY - rect.top,
+      bounds: costume?.bounds ?? null,
+      assetId: costume?.assetId ?? null,
+      assetFrame: costume?.assetFrame ?? null,
+      zoom: camera.zoom,
+    });
+  }, [isPlaying, project]);
+
+  const handleComponentDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!componentDragPreview || !containerRef.current) {
+      return;
+    }
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const isOutside = event.clientX < rect.left
+      || event.clientX > rect.right
+      || event.clientY < rect.top
+      || event.clientY > rect.bottom;
+
+    if (isOutside) {
+      setComponentDragPreview(null);
+    }
+  }, [componentDragPreview]);
+
+  const handleComponentDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (isPlaying) {
+      return;
+    }
+    const componentId = event.dataTransfer.getData('application/x-pocha-component-id') || getDraggedComponentId();
+    if (!componentId || !selectedSceneId || !project || !containerRef.current || !gameRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    setComponentDragPreview(null);
+    setDraggedComponentId(null);
+    const phaserScene = gameRef.current.scene.getScene('EditorScene') as Phaser.Scene;
+    const camera = phaserScene?.cameras?.main;
+    if (!camera) {
+      return;
+    }
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
+    const worldPoint = camera.getWorldPoint(localX, localY);
+    const userPoint = phaserToUser(
+      worldPoint.x,
+      worldPoint.y,
+      project.settings.canvasWidth,
+      project.settings.canvasHeight,
+    );
+
+    runInHistoryTransaction('stage:drop-component-instance', () => {
+      const createdObject = addComponentInstance(selectedSceneId, componentId);
+      if (!createdObject) {
+        return;
+      }
+      updateObject(selectedSceneId, createdObject.id, {
+        x: userPoint.x,
+        y: userPoint.y,
+      });
+      selectObjects([createdObject.id], createdObject.id);
+    });
+  }, [addComponentInstance, isPlaying, project, selectObjects, selectedSceneId, updateObject]);
+
+  useEffect(() => {
+    if (isPlaying) {
+      setComponentDragPreview(null);
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!componentDragPreview) {
+      return;
+    }
+
+    const handleWindowDragOver = (event: DragEvent) => {
+      const container = containerRef.current;
+      if (!container) {
+        setComponentDragPreview(null);
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const isOutside = event.clientX < rect.left
+        || event.clientX > rect.right
+        || event.clientY < rect.top
+        || event.clientY > rect.bottom;
+
+      if (isOutside) {
+        setComponentDragPreview(null);
+      }
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver);
+    };
+  }, [componentDragPreview]);
+
+  useEffect(() => {
+    const handleWindowDragEnd = () => {
+      setComponentDragPreview(null);
+      setDraggedComponentId(null);
+    };
+
+    window.addEventListener('dragend', handleWindowDragEnd);
+    return () => {
+      window.removeEventListener('dragend', handleWindowDragEnd);
+    };
+  }, []);
+
+  const previewZoom = componentDragPreview?.zoom ?? 1;
+  const previewMetrics = componentDragPreview
+    ? getCostumeVisualMetrics({
+        bounds: componentDragPreview.bounds,
+        assetFrame: componentDragPreview.assetFrame,
+        imageWidth: componentDragPreview.assetFrame?.width ?? COSTUME_CANVAS_SIZE,
+        imageHeight: componentDragPreview.assetFrame?.height ?? COSTUME_CANVAS_SIZE,
+      })
+    : null;
+  const previewWidth = previewMetrics
+    ? Math.max(1, (previewMetrics.localBounds?.width ?? previewMetrics.imageWidth) * previewZoom)
+    : Math.max(24, 64 * previewZoom);
+  const previewHeight = previewMetrics
+    ? Math.max(1, (previewMetrics.localBounds?.height ?? previewMetrics.imageHeight) * previewZoom)
+    : Math.max(24, 64 * previewZoom);
+  const previewCenterX = componentDragPreview
+    ? componentDragPreview.localX + ((previewMetrics?.interactionOffset.x ?? 0) * previewZoom)
+    : 0;
+  const previewCenterY = componentDragPreview
+    ? componentDragPreview.localY + ((previewMetrics?.interactionOffset.y ?? 0) * previewZoom)
+    : 0;
+  const previewComponentName = componentDragPreview
+    ? ((project?.components || []).find((candidate) => candidate.id === componentDragPreview.componentId)?.name ?? 'Component')
+    : 'Component';
+
   return (
     <div
       className="relative w-full h-full outline-none"
       data-editor-shortcut-surface={isPlaying ? undefined : 'scene-objects'}
       tabIndex={isPlaying ? -1 : 0}
       onPointerDownCapture={handleShortcutSurfacePointerDownCapture}
+      onDragOver={handleComponentDragOver}
+      onDragLeave={handleComponentDragLeave}
+      onDrop={handleComponentDrop}
     >
       <div
         ref={containerRef}
         data-testid={isPlaying ? 'play-phaser-host' : 'stage-phaser-host'}
-        className="w-full h-full"
+        className="relative h-full w-full overflow-hidden"
         style={isPlaying ? undefined : { backgroundColor: editorStageShellColor }}
       />
-      {!isPlaying && frozenStageFrame ? (
-        <img
-          src={frozenStageFrame.src}
-          alt=""
-          aria-hidden="true"
-          data-testid="stage-frozen-frame"
-          className="pointer-events-none absolute z-10 select-none"
-          style={{
-            left: '50%',
-            top: '50%',
-            width: `${frozenStageFrame.width}px`,
-            height: `${frozenStageFrame.height}px`,
-            maxWidth: 'none',
-            maxHeight: 'none',
-            transform: 'translate3d(-50%, -50%, 0)',
-            transformOrigin: 'center center',
-          }}
-          draggable={false}
-        />
+      {!isPlaying && componentDragPreview ? (
+        componentDragPreview.assetId ? (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute z-[12] overflow-hidden opacity-70 shadow-[0_0_0_1px_rgba(14,165,233,0.35)]"
+            style={{
+              left: previewCenterX,
+              top: previewCenterY,
+              width: previewWidth,
+              height: previewHeight,
+              transform: 'translate(-50%, -50%)',
+              backgroundImage: `url(${componentDragPreview.assetId})`,
+              backgroundPosition: previewMetrics?.localBounds
+                ? `${-previewMetrics.localBounds.x * previewZoom}px ${-previewMetrics.localBounds.y * previewZoom}px`
+                : '0 0',
+              backgroundSize: `${(previewMetrics?.imageWidth ?? 64) * previewZoom}px ${(previewMetrics?.imageHeight ?? 64) * previewZoom}px`,
+              backgroundRepeat: 'no-repeat',
+            }}
+          />
+        ) : (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute z-[12] flex items-center justify-center border border-sky-500/50 bg-sky-500/10 px-2 text-xs font-medium text-sky-700 opacity-80 dark:text-sky-200"
+            style={{
+              left: previewCenterX,
+              top: previewCenterY,
+              width: previewWidth,
+              height: previewHeight,
+              transform: 'translate(-50%, -50%)',
+            }}
+          >
+            {previewComponentName}
+          </div>
+        )
       ) : null}
       {isPlaying && isInventoryVisible && inventoryItems.length > 0 && (
         <>
@@ -1727,7 +2592,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
             data-pocha-ui="inventory"
             className="absolute left-4 right-4 bottom-4 z-20 pointer-events-none"
           >
-            <div className="pointer-events-auto mx-auto max-w-4xl rounded-2xl border bg-card/92 backdrop-blur px-3 py-3 shadow-lg">
+            <div className="pointer-events-auto mx-auto max-w-4xl rounded-2xl border bg-surface-floating backdrop-blur px-3 py-3 shadow-lg">
               <div className="flex items-center gap-2">
                 {canGoToPreviousInventoryPage ? (
                   <Button
@@ -1741,16 +2606,17 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                 ) : null}
                 <div className="flex-1 grid grid-cols-4 md:grid-cols-8 gap-2">
                   {visibleInventoryItems.map((item) => (
-                    <button
+                    <Button
                       key={item.entryId}
-                      type="button"
                       disabled={item.isPendingUse}
                       aria-disabled={item.isPendingUse}
-                      className={`group flex h-16 w-16 items-center justify-center rounded-xl border bg-background transition-opacity ${
+                      className={`group flex h-16 w-16 items-center justify-center rounded-xl border bg-surface-panel transition-opacity ${
                         item.isPendingUse
                           ? 'cursor-not-allowed opacity-50'
-                          : 'hover:border-primary/60 hover:bg-muted/70'
+                          : 'hover:border-primary/60 hover:bg-surface-interactive'
                       }`}
+                      size="icon-lg"
+                      variant="outline"
                       onPointerDown={(event) => {
                         if (item.isPendingUse) {
                           event.preventDefault();
@@ -1786,7 +2652,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
                           {item.label}
                         </span>
                       )}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 {canGoToNextInventoryPage ? (
@@ -1808,7 +2674,7 @@ export function PhaserCanvas({ isPlaying, deferEditorResize = false }: PhaserCan
               style={{ left: draggedInventoryItem.x, top: draggedInventoryItem.y }}
             >
               <div
-                className={`flex items-center justify-center rounded-xl border bg-card/95 shadow-xl transition-opacity ${
+                className={`flex items-center justify-center rounded-xl border bg-surface-floating shadow-xl transition-opacity ${
                   draggedInventoryCanDrop ? 'opacity-100' : 'opacity-50'
                 }`}
                 style={{
@@ -1852,6 +2718,9 @@ function createEditorScene(
   canvasHeight: number,
   components: ComponentDefinition[] = [],
   viewMode: 'camera-masked' | 'camera-viewport' | 'editor' = 'editor',
+  initialEditorViewport: StageEditorViewport,
+  getLayoutMetrics: () => { hostSize: StageSize; surfaceSize: StageSize },
+  onEditorViewportChange: (viewport: StageEditorViewport) => void,
 ) {
   if (!sceneData) return;
   const getOrderedSceneObjectIds = () => getOrderedObjectIdsForActiveScene(
@@ -1911,70 +2780,19 @@ function createEditorScene(
     destroyTiledBackgroundLayer(scene, tiledBackgroundLayer);
   });
 
-  // Function to update the view based on current mode
-  const updateViewMode = (
-    mode: 'camera-masked' | 'camera-viewport' | 'editor',
-    options: { preserveEditorCamera?: boolean } = {},
-  ) => {
-    scene.data.set('viewMode', mode);
-
-    const containerWidth = scene.scale.width;
-    const containerHeight = scene.scale.height;
-
-    if (mode === 'camera-viewport') {
-      // Camera mode: use viewport to letterbox and maintain aspect ratio
-      const scaleX = containerWidth / canvasWidth;
-      const scaleY = containerHeight / canvasHeight;
-      const scale = Math.min(scaleX, scaleY);
-
-      const viewportWidth = Math.floor(canvasWidth * scale);
-      const viewportHeight = Math.floor(canvasHeight * scale);
-      const viewportX = Math.floor((containerWidth - viewportWidth) / 2);
-      const viewportY = Math.floor((containerHeight - viewportHeight) / 2);
-
-      camera.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
-      camera.setZoom(scale);
-      camera.centerOn(canvasWidth / 2, canvasHeight / 2);
-    } else {
-      // Editor mode - full viewport, free pan
-      const previousZoom = camera.zoom;
-      const previousCenter = getViewportCenterFromScrollCamera(
-        {
-          scrollX: camera.scrollX,
-          scrollY: camera.scrollY,
-          zoom: previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM,
-        },
-        { width: camera.width, height: camera.height },
-      );
-      camera.setViewport(0, 0, containerWidth, containerHeight);
-      if (options.preserveEditorCamera) {
-        const nextZoom = previousZoom || DEFAULT_EDITOR_CAMERA_ZOOM;
-        camera.setZoom(nextZoom);
-        const nextScroll = getScrollCameraForViewportCenter(
-          previousCenter,
-          { width: containerWidth, height: containerHeight },
-          nextZoom,
-        );
-        camera.scrollX = nextScroll.scrollX;
-        camera.scrollY = nextScroll.scrollY;
-      } else {
-        camera.setZoom(DEFAULT_EDITOR_CAMERA_ZOOM);
-        camera.centerOn(canvasWidth / 2, canvasHeight / 2);
-      }
-    }
-
-  };
-
-  // Initialize view mode
-  scene.data.set('viewMode', viewMode);
-  updateViewMode(viewMode);
+  const stageViewportController = createStageViewportController({
+    scene,
+    canvasSize: { width: canvasWidth, height: canvasHeight },
+    initialMode: viewMode,
+    initialEditorViewport,
+    getLayoutMetrics,
+    onEditorViewportChange,
+  });
+  onEditorViewportChange(stageViewportController.getEditorViewport());
 
   // Keep camera viewport in sync with stage panel resizes.
   const handleScaleResize = () => {
-    const currentMode = scene.data.get('viewMode') as 'camera-masked' | 'camera-viewport' | 'editor' | undefined;
-    updateViewMode(currentMode ?? 'editor', {
-      preserveEditorCamera: (currentMode ?? 'editor') === 'editor',
-    });
+    stageViewportController.syncProjection();
     refreshTiledBackgroundLayer(scene);
   };
   scene.scale.on('resize', handleScaleResize);
@@ -1986,92 +2804,49 @@ function createEditorScene(
   let isPanning = false;
   let panStartX = 0;
   let panStartY = 0;
-  let cameraStartX = 0;
-  let cameraStartY = 0;
+  let panStartViewport: StageEditorViewport | null = null;
 
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     // Middle mouse (button 1) or right mouse (button 2) starts panning (only in editor mode)
-    const currentMode = scene.data.get('viewMode');
+    const currentMode = stageViewportController.getMode();
     if (currentMode === 'editor' && (pointer.middleButtonDown() || pointer.rightButtonDown())) {
       isPanning = true;
       panStartX = pointer.x;
       panStartY = pointer.y;
-      cameraStartX = camera.scrollX;
-      cameraStartY = camera.scrollY;
+      panStartViewport = stageViewportController.getEditorViewport();
     }
   });
 
   scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-    if (isPanning) {
-      // Divide by zoom to make panning match mouse movement 1:1
-      const dx = (pointer.x - panStartX) / camera.zoom;
-      const dy = (pointer.y - panStartY) / camera.zoom;
-      camera.scrollX = cameraStartX - dx;
-      camera.scrollY = cameraStartY - dy;
+    if (isPanning && panStartViewport) {
+      stageViewportController.setEditorViewport(
+        panStageEditorViewport(
+          panStartViewport,
+          pointer.x - panStartX,
+          pointer.y - panStartY,
+        ),
+      );
     }
   });
 
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
     if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
       isPanning = false;
+      panStartViewport = null;
     }
   });
 
   scene.input.on('pointerupoutside', (pointer: Phaser.Input.Pointer) => {
     if (!pointer.middleButtonDown() && !pointer.rightButtonDown()) {
       isPanning = false;
+      panStartViewport = null;
     }
+    setLockedStageCursor(null);
     endTranslateDrag(pointer);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
     }
   });
-
-  // Prevent context menu on right click
-  scene.game.canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-  });
-
-  // Natural trackpad/mouse wheel controls (like Figma) - only in editor mode
-  // - Two-finger pan (no modifier) = pan
-  // - Pinch to zoom (ctrl/meta key on trackpad) = zoom with cursor as pivot
-  const zoomCameraAtPointer = (screenX: number, screenY: number, newZoom: number) => {
-    const worldBefore = camera.getWorldPoint(screenX, screenY);
-    camera.setZoom(newZoom);
-    camera.preRender();
-    const worldAfter = camera.getWorldPoint(screenX, screenY);
-    camera.scrollX += worldBefore.x - worldAfter.x;
-    camera.scrollY += worldBefore.y - worldAfter.y;
-  };
-
-  scene.game.canvas.addEventListener('wheel', (e: WheelEvent) => {
-    const currentMode = scene.data.get('viewMode');
-
-    // Only allow pan/zoom in editor mode
-    if (currentMode !== 'editor') {
-      return;
-    }
-
-    e.preventDefault();
-
-    // Check if this is a pinch-to-zoom gesture (trackpad sends ctrlKey=true for pinch)
-    if (e.ctrlKey || e.metaKey) {
-      // Pinch to zoom with cursor as pivot point
-      const pointerX = scene.scale.transformX(e.pageX);
-      const pointerY = scene.scale.transformY(e.pageY);
-
-      // Calculate new zoom (deltaY is inverted for natural feel)
-      const zoomDelta = -e.deltaY * 0.01;
-      const zoomFactor = 1 + zoomDelta;
-      const newZoom = Phaser.Math.Clamp(camera.zoom * zoomFactor, 0.1, 10);
-      zoomCameraAtPointer(pointerX, pointerY, newZoom);
-    } else {
-      // Two-finger pan (natural trackpad scrolling)
-      // Divide by zoom to make pan speed consistent at any zoom level
-      camera.scrollX += e.deltaX / camera.zoom;
-      camera.scrollY += e.deltaY / camera.zoom;
-    }
-  }, { passive: false });
 
   scene.input.setTopOnly(true);
 
@@ -2093,50 +2868,204 @@ function createEditorScene(
     startPositions: Map<string, { x: number; y: number }>;
     hasMoved: boolean;
   } | null = null;
-  const groupSelectionRect = scene.add.rectangle(0, 0, 10, 10);
-  groupSelectionRect.setStrokeStyle(GIZMO_STROKE_PX, 0x4A90D9);
-  groupSelectionRect.setFillStyle(0x4A90D9, 0.08);
-  groupSelectionRect.setVisible(false);
-  groupSelectionRect.setDepth(10_002);
-
-  const groupRotateLine = scene.add.graphics();
-  groupRotateLine.setVisible(false);
-  groupRotateLine.setDepth(10_003);
+  const groupOverlayGraphics = scene.add.graphics();
+  groupOverlayGraphics.setVisible(false);
+  groupOverlayGraphics.setDepth(10_003);
 
   const groupHandles = new Map<string, Phaser.GameObjects.Shape | Phaser.GameObjects.Arc>();
-  const createGroupHandle = (name: string, shape: Phaser.GameObjects.Shape | Phaser.GameObjects.Arc, cursor: string) => {
-    shape.setFillStyle(0xffffff, 1);
-    shape.setStrokeStyle(1.5, 0x4A90D9, 1);
+  const createGroupHandle = (
+    name: string,
+    shape: Phaser.GameObjects.Shape | Phaser.GameObjects.Arc,
+    cursor: string,
+    options?: {
+      interactiveAlpha?: number;
+      showStroke?: boolean;
+      hitArea?: Phaser.Geom.Circle | Phaser.Geom.Rectangle;
+      hitAreaCallback?: Phaser.Types.Input.HitAreaCallback;
+      depth?: number;
+    },
+  ) => {
+    shape.setFillStyle(0xffffff, options?.interactiveAlpha ?? 0.001);
+    if (options?.showStroke !== false) {
+      shape.setStrokeStyle(1.5, STAGE_GIZMO_COLOR, 1);
+    }
     shape.setName(name);
     shape.setVisible(false);
-    shape.setDepth(10_004);
-    shape.setInteractive({ useHandCursor: false, cursor });
+    shape.setDepth(options?.depth ?? 10_004);
+    if (options?.hitArea && options.hitAreaCallback) {
+      shape.setInteractive(options.hitArea, options.hitAreaCallback as any);
+      if (shape.input) {
+        shape.input.cursor = cursor;
+      }
+    } else {
+      shape.setInteractive({ useHandCursor: false, cursor });
+    }
     scene.input.setDraggable(shape);
     groupHandles.set(name, shape);
   };
 
-  createGroupHandle('handle_nw', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nwse-resize');
-  createGroupHandle('handle_ne', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nesw-resize');
-  createGroupHandle('handle_sw', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nesw-resize');
-  createGroupHandle('handle_se', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'nwse-resize');
-  createGroupHandle('handle_n', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'ns-resize');
-  createGroupHandle('handle_s', scene.add.rectangle(0, 0, GIZMO_EDGE_LONG_PX, GIZMO_HANDLE_SIZE_PX, 0x4A90D9), 'ns-resize');
-  createGroupHandle('handle_e', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9), 'ew-resize');
-  createGroupHandle('handle_w', scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_EDGE_LONG_PX, 0x4A90D9), 'ew-resize');
-  createGroupHandle('handle_rotate', scene.add.circle(0, 0, GIZMO_ROTATE_RADIUS_PX, 0x4A90D9), 'grab');
+  createGroupHandle(
+    'handle_nw',
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
+    getTransformGizmoCornerCursor('nw'),
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
+  );
+  createGroupHandle(
+    'handle_ne',
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
+    getTransformGizmoCornerCursor('ne'),
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
+  );
+  createGroupHandle(
+    'handle_sw',
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
+    getTransformGizmoCornerCursor('sw'),
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
+  );
+  createGroupHandle(
+    'handle_se',
+    scene.add.circle(0, 0, GIZMO_CORNER_HIT_RADIUS_PX, 0xffffff),
+    getTransformGizmoCornerCursor('se'),
+    { interactiveAlpha: 0.001, showStroke: false, depth: 10_005 },
+  );
+  createGroupHandle(
+    'handle_n',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('vertical'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_e',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('horizontal'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_s',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('vertical'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  createGroupHandle(
+    'handle_w',
+    scene.add.rectangle(0, 0, 1, 1, 0xffffff),
+    getTransformGizmoEdgeCursor('horizontal'),
+    { interactiveAlpha: 0.001, showStroke: false },
+  );
+  const createRotateGroupHandle = (name: string, corner: TransformGizmoCorner) => createGroupHandle(
+    name,
+    scene.add.circle(0, 0, GIZMO_ROTATE_RING_RADIUS_PX, 0xffffff, 0.001),
+    getTransformGizmoRotateCursor(0, corner),
+    {
+      interactiveAlpha: 0.001,
+      showStroke: false,
+      depth: 10_006,
+      hitArea: new Phaser.Geom.Circle(
+        GIZMO_ROTATE_RING_RADIUS_PX,
+        GIZMO_ROTATE_RING_RADIUS_PX,
+        GIZMO_ROTATE_RING_RADIUS_PX,
+      ),
+      hitAreaCallback: ((hitArea: Phaser.Geom.Circle, x: number, y: number, gameObject: Phaser.GameObjects.GameObject) => {
+        const frameRotation = Number(gameObject.getData('frameRotation') ?? 0);
+        return isPointInsideTransformRotateRing(
+          { x, y },
+          { x: hitArea.x, y: hitArea.y },
+          TRANSFORM_GIZMO_HANDLE_RADIUS,
+          corner,
+          frameRotation,
+        );
+      }) as Phaser.Types.Input.HitAreaCallback,
+    },
+  );
+  createRotateGroupHandle('handle_rotate_nw', 'nw');
+  createRotateGroupHandle('handle_rotate_ne', 'ne');
+  createRotateGroupHandle('handle_rotate_sw', 'sw');
+  createRotateGroupHandle('handle_rotate_se', 'se');
 
   let groupTransformContext: {
     handleName: string;
     selectedIds: string[];
     startPointerX: number;
     startPointerY: number;
-    bounds: { centerX: number; centerY: number; width: number; height: number };
+    frame: SelectionFrame;
+    corner: TransformGizmoCorner | null;
+    proportional: boolean;
     startObjects: Map<string, { x: number; y: number; scaleX: number; scaleY: number; rotation: number }>;
   } | null = null;
+  let lockedStageCursor: string | null = null;
+
+  const setLockedStageCursor = (cursor: string | null) => {
+    lockedStageCursor = cursor;
+    const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+    if (!canvas) {
+      return;
+    }
+    if (cursor) {
+      canvas.style.cursor = cursor;
+    } else {
+      canvas.style.removeProperty('cursor');
+    }
+  };
+
+  scene.input.on('pointermove', () => {
+    if (!lockedStageCursor) {
+      return;
+    }
+    const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+    if (canvas && canvas.style.cursor !== lockedStageCursor) {
+      canvas.style.cursor = lockedStageCursor;
+    }
+  });
+
+  const getGroupCorner = (handleName: string): TransformGizmoCorner | null => {
+    switch (handleName) {
+      case 'handle_nw':
+        return 'nw';
+      case 'handle_ne':
+        return 'ne';
+      case 'handle_sw':
+        return 'sw';
+      case 'handle_se':
+        return 'se';
+      default:
+        return null;
+    }
+  };
+
+  const getGroupSide = (handleName: string): TransformGizmoSide | null => {
+    switch (handleName) {
+      case 'handle_n':
+        return 'n';
+      case 'handle_e':
+        return 'e';
+      case 'handle_s':
+        return 's';
+      case 'handle_w':
+        return 'w';
+      default:
+        return null;
+    }
+  };
+
+  const shouldUseProportionalStageScale = (
+    selectedIds: string[],
+    event?: MouseEvent | PointerEvent,
+  ) => {
+    if (event?.shiftKey) {
+      return true;
+    }
+    return selectedIds.some((selectedId) => {
+      const selectedContainer = scene.children.getByName(selectedId) as Phaser.GameObjects.Container | null;
+      const objectData = selectedContainer?.getData('objectData') as GameObject | undefined;
+      return objectData?.lockScaleProportions ?? true;
+    });
+  };
 
   const setGroupGizmoVisible = (visible: boolean) => {
-    groupSelectionRect.setVisible(visible);
-    groupRotateLine.setVisible(visible);
+    groupOverlayGraphics.setVisible(visible);
+    if (!visible) {
+      groupOverlayGraphics.clear();
+    }
     groupHandles.forEach((handle) => handle.setVisible(visible));
   };
 
@@ -2207,71 +3136,133 @@ function createEditorScene(
     };
   };
 
-  const updateGroupGizmo = (frame: { centerX: number; centerY: number; width: number; height: number; rotation?: number }) => {
+  const updateGroupGizmo = (frame: SelectionFrame) => {
     const cameraZoom = scene.cameras.main.zoom || 1;
     const uiScale = 1 / cameraZoom;
-    const strokeWidth = Math.max(0.5, GIZMO_STROKE_PX / cameraZoom);
-    const frameColor = 0x7bb4e8;
-    const halfW = frame.width / 2;
-    const halfH = frame.height / 2;
-    const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / cameraZoom;
     const rotation = frame.rotation ?? 0;
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    const rotateOffset = (ox: number, oy: number) => ({
-      x: frame.centerX + ox * cos - oy * sin,
-      y: frame.centerY + ox * sin + oy * cos,
-    });
+    const frameGeometry = getTransformGizmoHandleFrame(
+      { x: frame.centerX, y: frame.centerY },
+      frame.width,
+      frame.height,
+      rotation,
+    );
+    const edgeSegments = getTransformGizmoEdgeSegments(frameGeometry);
+    const palette = getStageGizmoPaletteForSelection(scene, selectedIdsCache);
+    const guide: SelectionGuide | null = groupTransformContext?.proportional
+      ? {
+          proportional: true,
+          corner: groupTransformContext.corner,
+        }
+      : null;
 
-    groupSelectionRect.setPosition(frame.centerX, frame.centerY);
-    groupSelectionRect.setSize(frame.width, frame.height);
-    groupSelectionRect.setRotation(rotation);
-    groupSelectionRect.setStrokeStyle(strokeWidth, frameColor);
-    groupSelectionRect.setFillStyle(frameColor, 0.06);
+    groupOverlayGraphics.clear();
+    groupOverlayGraphics.lineStyle(TRANSFORM_GIZMO_STROKE_WIDTH * uiScale, palette.phaserColor, 1);
+    groupOverlayGraphics.fillStyle(palette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
+    groupOverlayGraphics.beginPath();
+    groupOverlayGraphics.moveTo(frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
+    groupOverlayGraphics.lineTo(frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
+    groupOverlayGraphics.lineTo(frameGeometry.corners.se.x, frameGeometry.corners.se.y);
+    groupOverlayGraphics.lineTo(frameGeometry.corners.sw.x, frameGeometry.corners.sw.y);
+    groupOverlayGraphics.closePath();
+    groupOverlayGraphics.fillPath();
+    groupOverlayGraphics.strokePath();
 
-    const setHandle = (name: string, x: number, y: number) => {
+    if (guide?.proportional) {
+      const diagonal = guide.corner
+        ? getTransformCornerDiagonal(frameGeometry.corners, guide.corner)
+        : getTransformDiagonal(frameGeometry.corners, DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL);
+      if (diagonal) {
+        groupOverlayGraphics.lineStyle(TRANSFORM_GIZMO_STROKE_WIDTH * uiScale, palette.phaserColor, 1);
+        drawDashedWorldLine(
+          groupOverlayGraphics,
+          diagonal.start,
+          diagonal.end,
+          TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH[0] * uiScale,
+          TRANSFORM_GIZMO_PROPORTIONAL_GUIDE_DASH[1] * uiScale,
+        );
+      }
+    }
+
+    const handleRadius = TRANSFORM_GIZMO_HANDLE_RADIUS * uiScale;
+    groupOverlayGraphics.lineStyle(GIZMO_STROKE_PX * uiScale, palette.phaserColor, 1);
+    groupOverlayGraphics.fillStyle(0xffffff, 1);
+    for (const point of [
+      frameGeometry.corners.nw,
+      frameGeometry.corners.ne,
+      frameGeometry.corners.sw,
+      frameGeometry.corners.se,
+    ]) {
+      groupOverlayGraphics.fillCircle(point.x, point.y, handleRadius);
+      groupOverlayGraphics.strokeCircle(point.x, point.y, handleRadius);
+    }
+
+    const setHandle = (name: string, x: number, y: number, corner?: TransformGizmoCorner) => {
       const handle = groupHandles.get(name);
       if (!handle) return;
       handle.setPosition(x, y);
-      const isHorizontalSide = name === 'handle_n' || name === 'handle_s';
-      const isVerticalSide = name === 'handle_e' || name === 'handle_w';
-      if (isHorizontalSide) {
-        handle.setScale(uiScale, uiScale * 0.7);
-      } else if (isVerticalSide) {
-        handle.setScale(uiScale * 0.7, uiScale);
+      const isEdgeHandle = name === 'handle_n' || name === 'handle_e' || name === 'handle_s' || name === 'handle_w';
+      if (isEdgeHandle && handle instanceof Phaser.GameObjects.Rectangle) {
+        const isHorizontalEdge = name === 'handle_n' || name === 'handle_s';
+        const cornerInsetWorld = GIZMO_EDGE_CORNER_PREFERENCE_INSET_PX / Math.max(cameraZoom, 0.0001);
+        const displayWidth = isHorizontalEdge
+          ? Math.max(1, frame.width - (cornerInsetWorld * 2))
+          : GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom;
+        const displayHeight = isHorizontalEdge
+          ? GIZMO_EDGE_HIT_THICKNESS_PX / cameraZoom
+          : Math.max(1, frame.height - (cornerInsetWorld * 2));
+        handle.setSize(displayWidth, displayHeight);
+        handle.setDisplaySize(displayWidth, displayHeight);
+        handle.setRotation(rotation);
       } else {
         handle.setScale(uiScale, uiScale);
+        handle.setRotation(0);
       }
-      if (name !== 'handle_rotate') {
-        handle.setRotation(rotation);
+      if (handle.input) {
+        switch (name) {
+          case 'handle_nw':
+            handle.input.cursor = getTransformGizmoCornerCursor('nw', rotation);
+            break;
+          case 'handle_ne':
+            handle.input.cursor = getTransformGizmoCornerCursor('ne', rotation);
+            break;
+          case 'handle_sw':
+            handle.input.cursor = getTransformGizmoCornerCursor('sw', rotation);
+            break;
+          case 'handle_se':
+            handle.input.cursor = getTransformGizmoCornerCursor('se', rotation);
+            break;
+          case 'handle_n':
+          case 'handle_s':
+            handle.input.cursor = getTransformGizmoEdgeCursor('vertical', rotation);
+            break;
+          case 'handle_e':
+          case 'handle_w':
+            handle.input.cursor = getTransformGizmoEdgeCursor('horizontal', rotation);
+            break;
+          default:
+            if (corner) {
+              handle.input.cursor = getTransformGizmoRotateCursor(rotation, corner);
+            }
+            break;
+        }
+      }
+      if (corner) {
+        handle.setData('frameRotation', rotation);
       }
     };
 
-    const nw = rotateOffset(-halfW, -halfH);
-    const ne = rotateOffset(halfW, -halfH);
-    const sw = rotateOffset(-halfW, halfH);
-    const se = rotateOffset(halfW, halfH);
-    const n = rotateOffset(0, -halfH);
-    const s = rotateOffset(0, halfH);
-    const e = rotateOffset(halfW, 0);
-    const w = rotateOffset(-halfW, 0);
-    const rotateHandlePos = rotateOffset(0, -halfH - rotateDistance);
-
-    setHandle('handle_nw', nw.x, nw.y);
-    setHandle('handle_ne', ne.x, ne.y);
-    setHandle('handle_sw', sw.x, sw.y);
-    setHandle('handle_se', se.x, se.y);
-    setHandle('handle_n', n.x, n.y);
-    setHandle('handle_s', s.x, s.y);
-    setHandle('handle_e', e.x, e.y);
-    setHandle('handle_w', w.x, w.y);
-    setHandle('handle_rotate', rotateHandlePos.x, rotateHandlePos.y);
-
-    groupRotateLine.clear();
-    groupRotateLine.lineStyle(strokeWidth, frameColor, 1);
-    const lineStart = rotateOffset(0, -halfH);
-    const lineEnd = rotateOffset(0, -halfH - rotateDistance + 4 / cameraZoom);
-    groupRotateLine.lineBetween(lineStart.x, lineStart.y, lineEnd.x, lineEnd.y);
+    setHandle('handle_nw', frameGeometry.corners.nw.x, frameGeometry.corners.nw.y);
+    setHandle('handle_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y);
+    setHandle('handle_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y);
+    setHandle('handle_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y);
+    setHandle('handle_n', edgeSegments.n.center.x, edgeSegments.n.center.y);
+    setHandle('handle_e', edgeSegments.e.center.x, edgeSegments.e.center.y);
+    setHandle('handle_s', edgeSegments.s.center.x, edgeSegments.s.center.y);
+    setHandle('handle_w', edgeSegments.w.center.x, edgeSegments.w.center.y);
+    setHandle('handle_rotate_nw', frameGeometry.corners.nw.x, frameGeometry.corners.nw.y, 'nw');
+    setHandle('handle_rotate_ne', frameGeometry.corners.ne.x, frameGeometry.corners.ne.y, 'ne');
+    setHandle('handle_rotate_sw', frameGeometry.corners.sw.x, frameGeometry.corners.sw.y, 'sw');
+    setHandle('handle_rotate_se', frameGeometry.corners.se.x, frameGeometry.corners.se.y, 'se');
   };
 
   const drawMarquee = (pointer: Phaser.Input.Pointer) => {
@@ -2291,7 +3282,7 @@ function createEditorScene(
     marqueeGraphics.clear();
     marqueeGraphics.setVisible(false);
 
-    const currentMode = scene.data.get('viewMode');
+    const currentMode = stageViewportController.getMode();
     if (currentMode !== 'editor') {
       isMarqueeSelecting = false;
       marqueePointerId = null;
@@ -2388,8 +3379,8 @@ function createEditorScene(
         return;
       }
 
-      const bounds = getSelectionBounds(selectedIds);
-      if (!bounds) {
+      const frame = getSelectionGizmoFrame(selectedIds);
+      if (!frame) {
         groupTransformContext = null;
         return;
       }
@@ -2413,75 +3404,152 @@ function createEditorScene(
         selectedIds,
         startPointerX: pointer.worldX,
         startPointerY: pointer.worldY,
-        bounds,
+        frame,
+        corner: getGroupCorner(handleName),
+        proportional: shouldUseProportionalStageScale(selectedIds, pointer.event as MouseEvent | PointerEvent | undefined),
         startObjects,
       };
+      setLockedStageCursor(handleName.startsWith('handle_rotate_') && groupTransformContext.corner
+        ? getTransformGizmoRotateCursor(frame.rotation ?? 0, groupTransformContext.corner)
+        : null);
     });
 
     handle.on('drag', (pointer: Phaser.Input.Pointer) => {
       if (!groupTransformContext || groupTransformContext.handleName !== handleName) return;
 
-      const { bounds, startPointerX, startPointerY, startObjects } = groupTransformContext;
-      const dx = pointer.worldX - startPointerX;
-      const dy = pointer.worldY - startPointerY;
-
-      if (handleName === 'handle_rotate') {
-        const angleToStart = Math.atan2(startPointerY - bounds.centerY, startPointerX - bounds.centerX);
-        const angleToCurrent = Math.atan2(pointer.worldY - bounds.centerY, pointer.worldX - bounds.centerX);
+      const { frame, corner, startObjects, startPointerX, startPointerY } = groupTransformContext;
+      const pointerEvent = pointer.event as MouseEvent | PointerEvent | undefined;
+      if (handleName.startsWith('handle_rotate_')) {
+        const angleToStart = Math.atan2(startPointerY - frame.centerY, startPointerX - frame.centerX);
+        const angleToCurrent = Math.atan2(pointer.worldY - frame.centerY, pointer.worldX - frame.centerX);
         const deltaRotation = angleToCurrent - angleToStart;
 
         for (const [id, start] of startObjects) {
           const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
           if (!selectedContainer) continue;
 
-          const relX = start.x - bounds.centerX;
-          const relY = start.y - bounds.centerY;
+          const relX = start.x - frame.centerX;
+          const relY = start.y - frame.centerY;
           const cos = Math.cos(deltaRotation);
           const sin = Math.sin(deltaRotation);
-          selectedContainer.x = bounds.centerX + relX * cos - relY * sin;
-          selectedContainer.y = bounds.centerY + relX * sin + relY * cos;
+          selectedContainer.x = frame.centerX + relX * cos - relY * sin;
+          selectedContainer.y = frame.centerY + relX * sin + relY * cos;
           selectedContainer.rotation = start.rotation + deltaRotation;
         }
-      } else {
-        let sx = 1;
-        let sy = 1;
-        const safeWidth = Math.max(1, bounds.width);
-        const safeHeight = Math.max(1, bounds.height);
-
-        if (handleName === 'handle_n') sy = (bounds.height - (2 * dy)) / safeHeight;
-        else if (handleName === 'handle_s') sy = (bounds.height + (2 * dy)) / safeHeight;
-        else if (handleName === 'handle_e') sx = (bounds.width + (2 * dx)) / safeWidth;
-        else if (handleName === 'handle_w') sx = (bounds.width - (2 * dx)) / safeWidth;
-        else if (handleName === 'handle_nw') {
-          const uniform = (safeWidth + (-dx - dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
-        } else if (handleName === 'handle_ne') {
-          const uniform = (safeWidth + (dx - dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
-        } else if (handleName === 'handle_sw') {
-          const uniform = (safeWidth + (-dx + dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
-        } else if (handleName === 'handle_se') {
-          const uniform = (safeWidth + (dx + dy)) / safeWidth;
-          sx = uniform;
-          sy = uniform;
+        const canvas = scene.game.canvas as HTMLCanvasElement | undefined;
+        if (canvas && corner) {
+          canvas.style.cursor = getTransformGizmoRotateCursor((frame.rotation ?? 0) + deltaRotation, corner);
         }
-
-        sx = Math.max(0.1, sx);
-        sy = Math.max(0.1, sy);
+      } else if (corner) {
+        const rotation = frame.rotation ?? 0;
+        const localRotation = -rotation;
+        const frameGeometry = getTransformGizmoHandleFrame(
+          { x: frame.centerX, y: frame.centerY },
+          frame.width,
+          frame.height,
+          rotation,
+        );
+        const centered = !!pointerEvent?.altKey;
+        const proportional = shouldUseProportionalStageScale(groupTransformContext.selectedIds, pointerEvent);
+        groupTransformContext.proportional = proportional;
+        const cornerConfig: Record<TransformGizmoCorner, {
+          anchor: { x: number; y: number };
+          handleXSign: -1 | 1;
+          handleYSign: -1 | 1;
+        }> = {
+          nw: { anchor: frameGeometry.corners.se, handleXSign: -1, handleYSign: -1 },
+          ne: { anchor: frameGeometry.corners.sw, handleXSign: 1, handleYSign: -1 },
+          se: { anchor: frameGeometry.corners.nw, handleXSign: 1, handleYSign: 1 },
+          sw: { anchor: frameGeometry.corners.ne, handleXSign: -1, handleYSign: 1 },
+        };
+        const resolvedCorner = cornerConfig[corner];
+        const scaled = computeCornerScaleResult({
+          referencePoint: centered ? { x: frame.centerX, y: frame.centerY } : resolvedCorner.anchor,
+          pointerPoint: { x: pointer.worldX, y: pointer.worldY },
+          handleXSign: resolvedCorner.handleXSign,
+          handleYSign: resolvedCorner.handleYSign,
+          rotationRadians: localRotation,
+          baseWidth: Math.max(1, frame.width),
+          baseHeight: Math.max(1, frame.height),
+          minWidth: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
+          minHeight: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
+          proportional,
+          centered,
+        });
+        const sx = scaled.signedWidth / Math.max(1, frame.width);
+        const sy = scaled.signedHeight / Math.max(1, frame.height);
+        const referencePoint = centered ? { x: frame.centerX, y: frame.centerY } : resolvedCorner.anchor;
 
         for (const [id, start] of startObjects) {
           const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
           if (!selectedContainer) continue;
 
-          const relX = start.x - bounds.centerX;
-          const relY = start.y - bounds.centerY;
-          selectedContainer.x = bounds.centerX + relX * sx;
-          selectedContainer.y = bounds.centerY + relY * sy;
-          selectedContainer.setScale(Math.max(0.1, start.scaleX * sx), Math.max(0.1, start.scaleY * sy));
+          const localStart = rotateTransformPoint(
+            { x: start.x - referencePoint.x, y: start.y - referencePoint.y },
+            localRotation,
+          );
+          const scaledLocal = {
+            x: localStart.x * sx,
+            y: localStart.y * sy,
+          };
+          const nextCenter = rotateTransformPoint(scaledLocal, -localRotation);
+          selectedContainer.x = referencePoint.x + nextCenter.x;
+          selectedContainer.y = referencePoint.y + nextCenter.y;
+          selectedContainer.setScale(start.scaleX * sx, start.scaleY * sy);
+        }
+      } else {
+        const side = getGroupSide(handleName);
+        if (!side) {
+          return;
+        }
+        const rotation = frame.rotation ?? 0;
+        const localRotation = -rotation;
+        const frameGeometry = getTransformGizmoHandleFrame(
+          { x: frame.centerX, y: frame.centerY },
+          frame.width,
+          frame.height,
+          rotation,
+        );
+        const edgeSegments = getTransformGizmoEdgeSegments(frameGeometry);
+        const resolvedEdge = edgeSegments[side];
+        const centered = !!pointerEvent?.altKey;
+        const proportional = shouldUseProportionalStageScale(groupTransformContext.selectedIds, pointerEvent);
+        groupTransformContext.proportional = proportional;
+        const referencePoint = centered
+          ? { x: frame.centerX, y: frame.centerY }
+          : edgeSegments[getOppositeTransformGizmoSide(side)].center;
+        const scaled = computeEdgeScaleResult({
+          referencePoint,
+          pointerPoint: { x: pointer.worldX, y: pointer.worldY },
+          edge: resolvedEdge.edge,
+          handleSign: resolvedEdge.handleSign,
+          rotationRadians: localRotation,
+          baseWidth: Math.max(1, frame.width),
+          baseHeight: Math.max(1, frame.height),
+          minWidth: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
+          minHeight: 8 / Math.max(scene.cameras.main.zoom || 1, 0.0001),
+          proportional,
+          centered,
+        });
+        const sx = scaled.signedWidth / Math.max(1, frame.width);
+        const sy = scaled.signedHeight / Math.max(1, frame.height);
+
+        for (const [id, start] of startObjects) {
+          const selectedContainer = scene.children.getByName(id) as Phaser.GameObjects.Container | null;
+          if (!selectedContainer) continue;
+
+          const localStart = rotateTransformPoint(
+            { x: start.x - referencePoint.x, y: start.y - referencePoint.y },
+            localRotation,
+          );
+          const scaledLocal = {
+            x: localStart.x * sx,
+            y: localStart.y * sy,
+          };
+          const nextCenter = rotateTransformPoint(scaledLocal, -localRotation);
+          selectedContainer.x = referencePoint.x + nextCenter.x;
+          selectedContainer.y = referencePoint.y + nextCenter.y;
+          selectedContainer.setScale(start.scaleX * sx, start.scaleY * sy);
         }
       }
 
@@ -2503,6 +3571,7 @@ function createEditorScene(
         }
       });
       groupTransformContext = null;
+      setLockedStageCursor(null);
     });
   }
 
@@ -2577,7 +3646,7 @@ function createEditorScene(
       return;
     }
 
-    const currentMode = scene.data.get('viewMode');
+    const currentMode = stageViewportController.getMode();
     if (currentMode !== 'editor') {
       const event = pointer.event as MouseEvent | PointerEvent | undefined;
       if (!(event?.metaKey || event?.ctrlKey || event?.shiftKey)) {
@@ -2695,13 +3764,6 @@ function createEditorScene(
       });
     });
 
-    // Handle transform end from gizmo (includes scale and rotation)
-    container.on('transformend', () => {
-      const rotationDeg = Phaser.Math.RadToDeg(container.rotation);
-      runInHistoryTransaction('stage:transform-object', () => {
-        onDragEnd(obj.id, container.x, container.y, container.scaleX, container.scaleY, rotationDeg);
-      });
-    });
   });
 
   // Update selection visuals on scene update
@@ -2733,6 +3795,7 @@ function createEditorScene(
   });
 
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+    setLockedStageCursor(null);
     endTranslateDrag(pointer);
     if (isMarqueeSelecting && marqueePointerId === pointer.id) {
       endMarqueeSelection(pointer);
@@ -2990,7 +4053,9 @@ function createPlaySceneContent(
     container.setDepth(objectCount - index);
 
     // Register with runtime
-    const runtimeSprite = runtime.registerSprite(obj.id, obj.name, container, obj.componentId);
+    const runtimeSprite = runtime.registerSprite(obj.id, obj.name, container, {
+      componentId: obj.componentId,
+    });
 
     // Set costumes if available
     const costumes = effectiveProps.costumes || [];
@@ -3243,230 +4308,21 @@ function createObjectVisual(
   let selectionRect: Phaser.GameObjects.Rectangle | null = null;
   // Create invisible hit area rectangle for reliable click detection
   let hitRect: Phaser.GameObjects.Rectangle | null = null;
-  // Gizmo handles for transform
-  const gizmoHandles: Phaser.GameObjects.GameObject[] = [];
-
   if (isEditorMode) {
     // Selection visual
+    const selectionPalette = getStageGizmoPaletteForObject(obj);
     selectionRect = scene.add.rectangle(0, 0, defaultSize + 8, defaultSize + 8);
-    selectionRect.setStrokeStyle(2, 0x4A90D9);
-    selectionRect.setFillStyle(0x4A90D9, 0.1);
+    selectionRect.setStrokeStyle(GIZMO_STROKE_PX, selectionPalette.phaserColor);
+    selectionRect.setFillStyle(selectionPalette.phaserColor, STAGE_SELECTION_FILL_ALPHA);
     selectionRect.setVisible(false);
     selectionRect.setName('selection');
     container.add(selectionRect);
 
-    // Create gizmo handles
-    const handleColor = 0x4A90D9;
-
-    // Corner handles (for proportional scaling)
-    const cornerNames = ['nw', 'ne', 'sw', 'se'];
-    const cornerCursors = ['nwse-resize', 'nesw-resize', 'nesw-resize', 'nwse-resize'];
-    for (let i = 0; i < 4; i++) {
-      const handle = scene.add.rectangle(0, 0, GIZMO_HANDLE_SIZE_PX, GIZMO_HANDLE_SIZE_PX, handleColor);
-      handle.setName(`handle_${cornerNames[i]}`);
-      handle.setVisible(false);
-      handle.setInteractive({ useHandCursor: false, cursor: cornerCursors[i] });
-      scene.input.setDraggable(handle);
-      container.add(handle);
-      gizmoHandles.push(handle);
-    }
-
-    // Edge handles (for axis scaling)
-    const edgeNames = ['n', 's', 'e', 'w'];
-    const edgeCursors = ['ns-resize', 'ns-resize', 'ew-resize', 'ew-resize'];
-    for (let i = 0; i < 4; i++) {
-      const isVertical = i < 2;
-      const handle = scene.add.rectangle(0, 0, isVertical ? GIZMO_EDGE_LONG_PX : GIZMO_HANDLE_SIZE_PX, isVertical ? GIZMO_HANDLE_SIZE_PX : GIZMO_EDGE_LONG_PX, handleColor);
-      handle.setName(`handle_${edgeNames[i]}`);
-      handle.setVisible(false);
-      handle.setInteractive({ useHandCursor: false, cursor: edgeCursors[i] });
-      scene.input.setDraggable(handle);
-      container.add(handle);
-      gizmoHandles.push(handle);
-    }
-
-    // Rotation handle (circle above object)
-    const rotateHandle = scene.add.circle(0, 0, GIZMO_ROTATE_RADIUS_PX, handleColor);
-    rotateHandle.setName('handle_rotate');
-    rotateHandle.setVisible(false);
-    rotateHandle.setInteractive({ useHandCursor: false, cursor: 'grab' });
-    scene.input.setDraggable(rotateHandle);
-    container.add(rotateHandle);
-    gizmoHandles.push(rotateHandle);
-
-    // Rotation line connecting to top edge
-    const rotateLine = scene.add.graphics();
-    rotateLine.setName('rotate_line');
-    rotateLine.setVisible(false);
-    container.add(rotateLine);
-
-    // Store gizmo data on container
-    container.setData('gizmoHandles', gizmoHandles);
-
     // Invisible hit area - this is what actually receives clicks
     hitRect = scene.add.rectangle(0, 0, defaultSize, defaultSize, 0x000000, 0);
     hitRect.setName('hitArea');
+    hitRect.setInteractive({ useHandCursor: true });
     container.add(hitRect);
-
-    // Set up editor interactivity immediately (with one-frame fallback for scene init edge cases).
-    const setupEditorInteractivity = () => {
-      if (!hitRect || !hitRect.scene) return;
-      if (container.getData('editorInteractivityBound')) return;
-
-      hitRect.setInteractive({ useHandCursor: true });
-
-      // Set up gizmo handle drag logic
-      let startScaleX = 1, startScaleY = 1;
-      let startWidth = 0, startHeight = 0;
-      let startPointerX = 0, startPointerY = 0;
-      let startRotation = 0;
-      let startCenterX = 0, startCenterY = 0;
-
-      for (const handle of gizmoHandles) {
-        const handleName = handle.name;
-
-        (handle as Phaser.GameObjects.Shape).on('dragstart', (pointer: Phaser.Input.Pointer) => {
-          startScaleX = container.scaleX;
-          startScaleY = container.scaleY;
-          startWidth = container.width * container.scaleX;
-          startHeight = container.height * container.scaleY;
-          startPointerX = pointer.worldX;
-          startPointerY = pointer.worldY;
-          startRotation = container.rotation;
-          startCenterX = container.x;
-          startCenterY = container.y;
-        });
-
-        (handle as Phaser.GameObjects.Shape).on('drag', (pointer: Phaser.Input.Pointer) => {
-          const dx = pointer.worldX - startPointerX;
-          const dy = pointer.worldY - startPointerY;
-
-          if (handleName === 'handle_rotate') {
-            // Rotation handle
-            const angleToStart = Math.atan2(startPointerY - startCenterY, startPointerX - startCenterX);
-            const angleToCurrent = Math.atan2(pointer.worldY - startCenterY, pointer.worldX - startCenterX);
-            container.rotation = startRotation + (angleToCurrent - angleToStart);
-          } else if (handleName.startsWith('handle_n') || handleName.startsWith('handle_s') ||
-                     handleName === 'handle_e' || handleName === 'handle_w') {
-            // Scale handles
-            let newScaleX = startScaleX;
-            let newScaleY = startScaleY;
-
-            // Corner handles (proportional)
-            if (handleName === 'handle_nw') {
-              const avgDelta = -dx - dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            } else if (handleName === 'handle_ne') {
-              const avgDelta = dx - dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            } else if (handleName === 'handle_sw') {
-              const avgDelta = -dx + dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            } else if (handleName === 'handle_se') {
-              const avgDelta = dx + dy;
-              const scale = (startWidth + avgDelta) / startWidth;
-              newScaleX = startScaleX * scale;
-              newScaleY = startScaleY * scale;
-            }
-            // Edge handles (axis scale)
-            else if (handleName === 'handle_n') {
-              newScaleY = startScaleY * (startHeight - (2 * dy)) / startHeight;
-            } else if (handleName === 'handle_s') {
-              newScaleY = startScaleY * (startHeight + (2 * dy)) / startHeight;
-            } else if (handleName === 'handle_e') {
-              newScaleX = startScaleX * (startWidth + (2 * dx)) / startWidth;
-            } else if (handleName === 'handle_w') {
-              newScaleX = startScaleX * (startWidth - (2 * dx)) / startWidth;
-            }
-
-            // Apply scale with minimum
-            container.setScale(Math.max(0.1, newScaleX), Math.max(0.1, newScaleY));
-          }
-
-          // Update gizmo handle positions
-          updateGizmoPositions();
-        });
-
-        (handle as Phaser.GameObjects.Shape).on('dragend', () => {
-          // Emit transform end event for editor scene to handle
-          container.emit('transformend');
-        });
-      }
-
-      container.setData('editorInteractivityBound', true);
-    };
-
-    setupEditorInteractivity();
-    scene.time.delayedCall(0, setupEditorInteractivity);
-
-    // Function to update gizmo handle positions based on current bounds
-    const updateGizmoPositions = () => {
-      const selRect = container.getByName('selection') as Phaser.GameObjects.Rectangle;
-      if (!selRect) return;
-      const cameraZoom = scene.cameras.main.zoom || 1;
-      const absScaleX = Math.max(Math.abs(container.scaleX), 0.0001);
-      const absScaleY = Math.max(Math.abs(container.scaleY), 0.0001);
-      const invUiScaleX = 1 / (absScaleX * cameraZoom);
-      const invUiScaleY = 1 / (absScaleY * cameraZoom);
-      const strokeWidth = GIZMO_STROKE_PX / (Math.max(absScaleX, absScaleY) * cameraZoom);
-      selRect.setStrokeStyle(Math.max(0.5, strokeWidth), 0x4A90D9);
-
-      const halfW = selRect.width / 2;
-      const halfH = selRect.height / 2;
-      const offsetX = selRect.x;
-      const offsetY = selRect.y;
-      const rotateDistance = GIZMO_ROTATE_DISTANCE_PX / (Math.max(absScaleX, absScaleY) * cameraZoom);
-
-      // Corner handles
-      const nw = container.getByName('handle_nw') as Phaser.GameObjects.Rectangle;
-      const ne = container.getByName('handle_ne') as Phaser.GameObjects.Rectangle;
-      const sw = container.getByName('handle_sw') as Phaser.GameObjects.Rectangle;
-      const se = container.getByName('handle_se') as Phaser.GameObjects.Rectangle;
-      if (nw) nw.setScale(invUiScaleX, invUiScaleY);
-      if (ne) ne.setScale(invUiScaleX, invUiScaleY);
-      if (sw) sw.setScale(invUiScaleX, invUiScaleY);
-      if (se) se.setScale(invUiScaleX, invUiScaleY);
-      if (nw) nw.setPosition(offsetX - halfW, offsetY - halfH);
-      if (ne) ne.setPosition(offsetX + halfW, offsetY - halfH);
-      if (sw) sw.setPosition(offsetX - halfW, offsetY + halfH);
-      if (se) se.setPosition(offsetX + halfW, offsetY + halfH);
-
-      // Edge handles
-      const n = container.getByName('handle_n') as Phaser.GameObjects.Rectangle;
-      const s = container.getByName('handle_s') as Phaser.GameObjects.Rectangle;
-      const e = container.getByName('handle_e') as Phaser.GameObjects.Rectangle;
-      const w = container.getByName('handle_w') as Phaser.GameObjects.Rectangle;
-      if (n) n.setScale(invUiScaleX, invUiScaleY);
-      if (s) s.setScale(invUiScaleX, invUiScaleY);
-      if (e) e.setScale(invUiScaleX, invUiScaleY);
-      if (w) w.setScale(invUiScaleX, invUiScaleY);
-      if (n) n.setPosition(offsetX, offsetY - halfH);
-      if (s) s.setPosition(offsetX, offsetY + halfH);
-      if (e) e.setPosition(offsetX + halfW, offsetY);
-      if (w) w.setPosition(offsetX - halfW, offsetY);
-
-      // Rotation handle and line
-      const rotateHandle = container.getByName('handle_rotate') as Phaser.GameObjects.Arc;
-      const rotateLine = container.getByName('rotate_line') as Phaser.GameObjects.Graphics;
-      if (rotateHandle) {
-        rotateHandle.setScale(invUiScaleX, invUiScaleY);
-        rotateHandle.setPosition(offsetX, offsetY - halfH - rotateDistance);
-      }
-      if (rotateLine) {
-        rotateLine.clear();
-        rotateLine.lineStyle(Math.max(0.5, strokeWidth), 0x4A90D9, 1);
-        rotateLine.lineBetween(offsetX, offsetY - halfH, offsetX, offsetY - halfH - rotateDistance + 4);
-      }
-    };
-
-    // Store updateGizmoPositions on container for external access
-    container.setData('updateGizmoPositions', updateGizmoPositions);
   }
 
   // Helper to update container size, hit area, and selection rect based on bounds
@@ -3475,62 +4331,26 @@ function createObjectVisual(
     bounds: { x: number; y: number; width: number; height: number } | null | undefined,
     assetFrame?: CostumeAssetFrame | null,
   ) => {
-    const imgWidth = sprite.width;
-    const imgHeight = sprite.height;
-    const assetOffset = getCostumeAssetCenterOffset(assetFrame);
-    sprite.setPosition(assetOffset.x, assetOffset.y);
+    const metrics = getCostumeVisualMetrics({
+      bounds,
+      assetFrame,
+      imageWidth: sprite.width,
+      imageHeight: sprite.height,
+    });
+    sprite.setPosition(metrics.assetOffset.x, metrics.assetOffset.y);
 
-    // If we have bounds, offset the hit area and selection to cover visible content
-    if (bounds && bounds.width > 0 && bounds.height > 0) {
-      const w = Math.max(bounds.width, 32);
-      const h = Math.max(bounds.height, 32);
-      const visibleCenterOffset = getCostumeVisibleCenterOffset(bounds, {
-        assetFrame,
-        assetWidth: imgWidth,
-        assetHeight: imgHeight,
-      });
+    container.setSize(metrics.interactionWidth, metrics.interactionHeight);
 
-      container.setSize(w, h);
+    if (hitRect) {
+      hitRect.setSize(metrics.interactionWidth, metrics.interactionHeight);
+      hitRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
+      hitRect.removeInteractive();
+      hitRect.setInteractive({ useHandCursor: true });
+    }
 
-      // Update hit area rectangle - position it over the visible bounds
-      if (hitRect) {
-        hitRect.setSize(w, h);
-        hitRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-        hitRect.removeInteractive();
-        hitRect.setInteractive({ useHandCursor: true });
-      }
-
-      // Update selection rectangle
-      if (selectionRect) {
-        selectionRect.setSize(w + 8, h + 8);
-        selectionRect.setPosition(visibleCenterOffset.x, visibleCenterOffset.y);
-      }
-
-      // Update gizmo handle positions
-      const updateGizmo = container.getData('updateGizmoPositions') as (() => void) | undefined;
-      if (updateGizmo) updateGizmo();
-    } else {
-      // No bounds - use full image size (fallback)
-      const w = Math.max(imgWidth, 32);
-      const h = Math.max(imgHeight, 32);
-
-      container.setSize(w, h);
-
-      if (hitRect) {
-        hitRect.setSize(w, h);
-        hitRect.setPosition(0, 0);
-        hitRect.removeInteractive();
-        hitRect.setInteractive({ useHandCursor: true });
-      }
-
-      if (selectionRect) {
-        selectionRect.setSize(w + 8, h + 8);
-        selectionRect.setPosition(0, 0);
-      }
-
-      // Update gizmo handle positions
-      const updateGizmo = container.getData('updateGizmoPositions') as (() => void) | undefined;
-      if (updateGizmo) updateGizmo();
+    if (selectionRect) {
+      selectionRect.setSize(metrics.interactionWidth + 8, metrics.interactionHeight + 8);
+      selectionRect.setPosition(metrics.interactionOffset.x, metrics.interactionOffset.y);
     }
   };
 

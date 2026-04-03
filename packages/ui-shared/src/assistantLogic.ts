@@ -1,5 +1,6 @@
 import { DOMParser } from '@xmldom/xmldom';
 import { normalizeBlocklyXml } from './blocklyXml';
+import { assistantStatementUsesNextConnection } from './assistantBlocks';
 
 export type AssistantLogicTrigger =
   | { kind: 'on_start' }
@@ -579,22 +580,22 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
       ];
     case 'event_when_touching':
       return [
-        indentLine(indent, `when touching ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}:`),
+        indentLine(indent, `when I touch ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'event_when_touching_value':
       return [
-        indentLine(indent, `when touching ${renderBlocklyExpression(getValue(node, 'TARGET'))}:`),
+        indentLine(indent, `when I touch ${renderBlocklyExpression(getValue(node, 'TARGET'))}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'event_when_touching_direction':
       return [
-        indentLine(indent, `when touching ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
+        indentLine(indent, `when I touch ${formatFieldValue('TARGET', getField(node, 'TARGET') ?? '')} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'event_when_touching_direction_value':
       return [
-        indentLine(indent, `when touching ${renderBlocklyExpression(getValue(node, 'TARGET'))} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
+        indentLine(indent, `when I touch ${renderBlocklyExpression(getValue(node, 'TARGET'))} from ${formatFieldValue('DIRECTION', getField(node, 'DIRECTION') ?? 'SIDE')}:`),
         ...renderBlockBodyLines(getStatement(node, 'NEXT', 'DO'), indent + 1),
       ];
     case 'looks_show':
@@ -685,14 +686,15 @@ function renderBlocklyStatement(node: BlocklyProjectionNode, indent: number): st
       return [indentLine(indent, `set bounce to ${renderBlocklyExpression(getValue(node, 'BOUNCE'))}`)];
     case 'physics_set_friction':
       return [indentLine(indent, `set friction to ${renderBlocklyExpression(getValue(node, 'FRICTION'))}`)];
+    case 'physics_make_dynamic':
+      return [indentLine(indent, 'make myself dynamic')];
+    case 'physics_make_static':
     case 'physics_immovable':
-      return [indentLine(indent, 'make immovable')];
+      return [indentLine(indent, 'make myself static')];
     case 'physics_ground_on':
       return [indentLine(indent, 'enable ground collision')];
     case 'physics_ground_off':
       return [indentLine(indent, 'disable ground collision')];
-    case 'physics_set_ground_y':
-      return [indentLine(indent, `set ground y to ${renderBlocklyExpression(getValue(node, 'Y'))}`)];
     case 'camera_follow_me':
       return [indentLine(indent, 'camera follow me')];
     case 'camera_follow_object':
@@ -831,6 +833,14 @@ function appendNextBlocks(blocks: readonly string[]): string {
   return head!.replace(/<\/block>$/, `<next>${appendNextBlocks(tail)}</next></block>`);
 }
 
+function wrapStatementChain(blockType: string, statementName: string, blocks: readonly string[]): string {
+  const chain = appendNextBlocks(blocks);
+  if (!chain) return '';
+  return assistantStatementUsesNextConnection(blockType, statementName)
+    ? `<next>${chain}</next>`
+    : `<statement name="${statementName}">${chain}</statement>`;
+}
+
 function buildConditionBlock(condition: AssistantLogicCondition): string {
   switch (condition.kind) {
     case 'key_pressed':
@@ -889,17 +899,19 @@ function buildActionBlock(action: AssistantLogicAction): string {
 }
 
 function buildScriptBlock(script: AssistantLogicScript): string {
-  const actions = appendNextBlocks(script.actions.map((action) => buildActionBlock(action)));
+  const actions = script.actions.map((action) => buildActionBlock(action));
 
   switch (script.trigger.kind) {
     case 'on_start':
-      return `<block type="event_game_start"><statement name="NEXT">${actions}</statement></block>`;
+      return `<block type="event_game_start">${wrapStatementChain('event_game_start', 'NEXT', actions)}</block>`;
     case 'forever':
-      return `<block type="event_game_start"><statement name="NEXT"><block type="event_forever"><statement name="DO">${actions}</statement></block></statement></block>`;
+      return `<block type="event_game_start">${wrapStatementChain('event_game_start', 'NEXT', [
+        `<block type="event_forever">${wrapStatementChain('event_forever', 'DO', actions)}</block>`,
+      ])}</block>`;
     case 'on_clicked':
-      return `<block type="event_clicked"><statement name="NEXT">${actions}</statement></block>`;
+      return `<block type="event_clicked">${wrapStatementChain('event_clicked', 'NEXT', actions)}</block>`;
     case 'on_key_pressed':
-      return `<block type="event_key_pressed"><field name="KEY">${escapeXml(normalizeLogicKey(script.trigger.key))}</field><statement name="NEXT">${actions}</statement></block>`;
+      return `<block type="event_key_pressed"><field name="KEY">${escapeXml(normalizeLogicKey(script.trigger.key))}</field>${wrapStatementChain('event_key_pressed', 'NEXT', actions)}</block>`;
   }
 }
 

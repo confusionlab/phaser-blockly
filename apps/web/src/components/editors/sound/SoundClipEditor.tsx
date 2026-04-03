@@ -1,13 +1,18 @@
-import { type ChangeEvent, memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { generateWaveform, getCachedWaveform, type WaveformData } from '@/lib/audioWaveform';
 import {
-  FloatingBottomToolbar,
   FloatingBottomToolbarDock,
+  FloatingToolToolbar,
+  floatingToolbarControlActiveClass,
+  floatingToolbarControlBaseClass,
 } from '@/components/editors/shared/FloatingBottomToolbar';
+import { FloatingToolbarSlider } from '@/components/editors/shared/FloatingToolbarSlider';
 import type { Sound } from '@/types';
+import { cn } from '@/lib/utils';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
-import { Play, RotateCcw, Scissors, Square, Volume2, VolumeX } from 'lucide-react';
+import { Play, RotateCcw, Scissors, Square, Volume2 } from '@/components/ui/icons';
 import { WaveformViewport } from './WaveformViewport';
 
 interface SoundClipEditorProps {
@@ -17,6 +22,7 @@ interface SoundClipEditorProps {
 }
 
 export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipEditorProps) => {
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playheadRafRef = useRef<number | null>(null);
   const waveformLoadIdRef = useRef(0);
@@ -30,7 +36,6 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
   const [isTrimming, setIsTrimming] = useState(false);
 
   trimStartRef.current = trimStart;
@@ -172,8 +177,8 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
       return;
     }
 
-    audioRef.current.volume = isMuted ? 0 : volume;
-  }, [isMuted, volume]);
+    audioRef.current.volume = volume;
+  }, [volume]);
 
   const handleSeek = (nextTime: number) => {
     if (!audioRef.current) {
@@ -206,8 +211,37 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
     });
   }, [isPlaying, trimEnd, trimStart]);
 
+  const focusEditorSurface = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+
+    try {
+      editor.focus({ preventScroll: true });
+    } catch {
+      editor.focus();
+    }
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const editor = editorRef.current;
+      const target = event.target instanceof Node ? event.target : null;
+      const isWithinEditor = !!editor && !!target && editor.contains(target);
+      const isEditorFocused = !!editor && !!document.activeElement && editor.contains(document.activeElement);
+
+      if (isWithinEditor || isEditorFocused) {
+        if (event.code !== 'Space' || event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+          return;
+        }
+
+        event.preventDefault();
+        focusEditorSurface();
+        handleTogglePlay();
+        return;
+      }
+
       if (shouldIgnoreGlobalKeyboardEvent(event)) {
         return;
       }
@@ -238,25 +272,6 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
     }
   };
 
-  const handleVolumeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const nextVolume = Number.parseFloat(event.target.value);
-    setVolume(nextVolume);
-    if (audioRef.current) {
-      audioRef.current.volume = nextVolume;
-    }
-    if (nextVolume > 0 && isMuted) {
-      setIsMuted(false);
-    }
-  };
-
-  const toggleMute = () => {
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    if (audioRef.current) {
-      audioRef.current.volume = nextMuted ? 0 : volume;
-    }
-  };
-
   const handleTrimAction = () => {
     if (!isTrimming) {
       setIsTrimming(true);
@@ -267,37 +282,56 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
     setIsTrimming(false);
   };
 
-  return (
-    <div className="relative flex flex-1 min-h-0 flex-col">
-      <div className="flex-1 min-h-0 px-4 pb-28 pt-4 md:px-5 md:pb-32 md:pt-5">
-        <div className="flex h-full min-h-0 flex-col gap-4">
-          <div className="flex-1 min-h-0 rounded-[28px] border border-border/70 bg-background/95 p-4 shadow-sm">
-            <WaveformViewport
-              waveform={waveform}
-              duration={duration}
-              currentTime={currentTime}
-              trimStart={trimStart}
-              trimEnd={trimEnd}
-              showTrimControls={isTrimming}
-              onSeek={handleSeek}
-              onTrimCommit={(nextStart, nextEnd) => {
-                setTrimStart(nextStart);
-                setTrimEnd(nextEnd);
-              }}
-            />
-          </div>
+  const waveformAmplitudeScale = 0.015 + (volume * 0.985);
 
-          {footer ? footer : null}
+  return (
+    <div
+      ref={editorRef}
+      className="relative flex flex-1 min-h-0 flex-col outline-none focus:outline-none focus-visible:outline-none"
+      onKeyDownCapture={(event) => {
+        if (event.code !== 'Space' || event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+          return;
+        }
+
+      event.preventDefault();
+      event.stopPropagation();
+      focusEditorSurface();
+      handleTogglePlay();
+    }}
+      tabIndex={-1}
+    >
+      <div className="flex-1 min-h-0 px-4 pb-28 pt-4 md:px-5 md:pb-32 md:pt-5">
+        <div className="flex h-full min-h-0 flex-col">
+          <WaveformViewport
+            waveform={waveform}
+            duration={duration}
+            currentTime={currentTime}
+            trimStart={trimStart}
+            trimEnd={trimEnd}
+            amplitudeScale={waveformAmplitudeScale}
+            showTrimControls={isTrimming}
+            onSeek={handleSeek}
+            onTrimCommit={(nextStart, nextEnd) => {
+              setTrimStart(nextStart);
+              setTrimEnd(nextEnd);
+            }}
+            className="flex-1 min-h-0"
+          />
         </div>
       </div>
 
       <FloatingBottomToolbarDock>
-        <FloatingBottomToolbar variant="tool">
-          <div className="grid min-w-full gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
-            <div className="flex flex-wrap items-center gap-2">
+        {footer ? footer : null}
+        <FloatingToolToolbar>
+          <div className="flex min-w-max items-center gap-3">
+            <div className="flex items-center gap-2">
               <Button
-                variant={isTrimming ? 'default' : 'outline'}
-                className="rounded-full"
+                variant="ghost"
+                className={cn(
+                  floatingToolbarControlBaseClass,
+                  'min-w-[92px] px-4 text-foreground hover:text-foreground',
+                  isTrimming && floatingToolbarControlActiveClass,
+                )}
                 onClick={handleTrimAction}
                 disabled={!duration}
               >
@@ -306,31 +340,53 @@ export const SoundClipEditor = memo(({ sound, onTrimChange, footer }: SoundClipE
               </Button>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button className="size-9 rounded-full" size="icon" onClick={handleTogglePlay} title={isPlaying ? 'Stop' : 'Play'}>
+            <div className="app-divider-x app-divider-fill h-8 shrink-0" />
+
+            <div className="flex items-center justify-center gap-2">
+              <IconButton
+                className={cn(
+                  floatingToolbarControlBaseClass,
+                  'w-11 text-foreground hover:text-foreground',
+                  isPlaying && floatingToolbarControlActiveClass,
+                )}
+                label={isPlaying ? 'Stop' : 'Play'}
+                onClick={handleTogglePlay}
+                pressed={isPlaying}
+                size="lg"
+              >
                 {isPlaying ? <Square className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
-              </Button>
-              <Button variant="outline" size="icon" className="size-9 rounded-full" onClick={handleRestart} title="Restart">
+              </IconButton>
+              <IconButton
+                className={cn(floatingToolbarControlBaseClass, 'text-foreground hover:text-foreground')}
+                label="Restart"
+                onClick={handleRestart}
+                size="lg"
+              >
                 <RotateCcw className="size-4" />
-              </Button>
+              </IconButton>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 md:justify-self-end">
-              <Button variant="ghost" size="icon" className="size-9 rounded-full" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
-                {isMuted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-              </Button>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={isMuted ? 0 : volume}
-                onChange={handleVolumeChange}
-                className="h-2 w-32 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
-              />
+            <div className="app-divider-x app-divider-fill h-8 shrink-0" />
+
+            <div className="flex items-center gap-2">
+              <Volume2 className="size-4 text-foreground" aria-hidden="true" />
+              <div className="w-32">
+                <FloatingToolbarSlider
+                value={volume}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onValueChange={(nextVolume) => {
+                    setVolume(nextVolume);
+                    if (audioRef.current) {
+                      audioRef.current.volume = nextVolume;
+                    }
+                  }}
+                />
+              </div>
             </div>
           </div>
-        </FloatingBottomToolbar>
+        </FloatingToolToolbar>
       </FloatingBottomToolbarDock>
     </div>
   );

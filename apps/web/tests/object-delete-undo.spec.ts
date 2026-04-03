@@ -325,7 +325,7 @@ test.describe('Object delete undo history', () => {
         {
           id: heroVariableId,
           name: 'health',
-          type: 'integer',
+          type: 'number',
           defaultValue: 100,
           scope: 'local',
           objectId: fixture.heroId,

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import { Check, LocateFixed, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Check, X } from '@/components/ui/icons';
+import { BitmapBrushCursorOverlay } from '@/components/editors/shared/BitmapBrushCursorOverlay';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
+import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { OverlayActionButton } from '@/components/ui/overlay-action-button';
+import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
+import { OverlayPill } from '@/components/ui/overlay-pill';
+import { useModal } from '@/components/ui/modal-provider';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore, type UndoRedoHandler } from '@/store/editorStore';
 import type {
@@ -11,6 +16,7 @@ import type {
   BackgroundVectorLayer,
 } from '@/types';
 import {
+  type AlignAction,
   CostumeToolbar,
   type BitmapFillStyle,
   type BitmapShapeStyle,
@@ -22,6 +28,7 @@ import {
   type VectorStyleCapabilities,
   type VectorToolStyle,
 } from '@/components/editors/costume/CostumeToolbar';
+import { resolveCostumeToolShortcut } from '@/components/editors/costume/costumeToolShortcuts';
 import {
   DEFAULT_BACKGROUND_CHUNK_SIZE,
   getChunkBoundsFromKeys,
@@ -37,6 +44,7 @@ import {
   MutableBackgroundChunkIndex,
 } from '@/lib/background/chunkIndex';
 import {
+  applyRasterPatchToChunkCanvas,
   DEFAULT_BACKGROUND_HARD_CHUNK_LIMIT,
   DEFAULT_BACKGROUND_SOFT_CHUNK_LIMIT,
   canCreateChunk,
@@ -49,7 +57,6 @@ import {
   type ChunkDataMap,
 } from '@/lib/background/chunkStore';
 import {
-  getBitmapBrushCursorStyle,
   getBitmapBrushStampDefinition,
   getBrushPaintColor,
   getCompositeOperation,
@@ -101,6 +108,22 @@ import {
 } from '@/lib/viewportNavigation';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 import { calculateBoundsFromImageData } from '@/utils/imageBounds';
+import {
+  TRANSFORM_GIZMO_BORDER_COLOR,
+  TRANSFORM_GIZMO_FILL_COLOR,
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  computeCornerScaleResult,
+  computeEdgeScaleResult,
+  getTransformGizmoCornerFromTarget,
+  getTransformGizmoCursorForCornerTarget,
+  getTransformGizmoEdgeCursor,
+  getTransformGizmoEdgeSegments,
+  getTransformGizmoHandleFrame,
+  hitTransformGizmoCornerTarget,
+  isPointNearTransformEdge,
+} from '@/lib/editor/unifiedTransformGizmo';
+import type { TransformGizmoCorner, TransformGizmoCornerTarget, TransformGizmoSide } from '@/lib/editor/unifiedTransformGizmo';
+import { renderScreenSpaceTransformOverlay } from '@/lib/editor/transformOverlayRenderer';
 import { BackgroundLayerPanel } from './BackgroundLayerPanel';
 import {
   BackgroundVectorCanvas,
@@ -124,7 +147,10 @@ type ChunkDelta = {
 };
 
 type BackgroundShapeTool = Extract<CostumeDrawingTool, 'line' | 'circle' | 'rectangle' | 'triangle' | 'star'>;
-type BackgroundDrawingTool = Extract<CostumeDrawingTool, 'select' | 'brush' | 'eraser' | 'fill' | 'line' | 'circle' | 'rectangle' | 'triangle' | 'star'>;
+type BackgroundDrawingTool = Extract<
+  CostumeDrawingTool,
+  'select' | 'pen' | 'brush' | 'eraser' | 'fill' | 'line' | 'circle' | 'rectangle' | 'triangle' | 'star' | 'text'
+>;
 
 type MutationSession = {
   touched: Set<string>;
@@ -187,6 +213,7 @@ type BackgroundFloatingSelectionTransformSession =
       kind: 'rotate';
       selection: BackgroundFloatingSelection;
       centerScreen: ScreenPoint;
+      corner: TransformGizmoCorner;
       startPointerAngle: number;
       startRotation: number;
     }
@@ -194,20 +221,34 @@ type BackgroundFloatingSelectionTransformSession =
       kind: 'scale';
       selection: BackgroundFloatingSelection;
       anchorScreen: ScreenPoint;
-      handleXSign: -1 | 1;
-      handleYSign: -1 | 1;
+      centerScreen: ScreenPoint;
+      scaleMode: 'corner' | 'edge';
+      corner: TransformGizmoCorner | null;
+      side: TransformGizmoSide | null;
+      handleXSign: -1 | 1 | null;
+      handleYSign: -1 | 1 | null;
+      edge: 'horizontal' | 'vertical' | null;
+      handleSign: -1 | 1 | null;
       rotation: number;
       sourceWidth: number;
       sourceHeight: number;
+      startScaleX: number;
+      startScaleY: number;
+      proportional: boolean;
     };
 
 type BackgroundFloatingSelectionHitTarget =
   | 'body'
-  | 'rotate'
-  | 'scale-nw'
-  | 'scale-ne'
-  | 'scale-se'
-  | 'scale-sw';
+  | TransformGizmoCornerTarget
+  | 'scale-n'
+  | 'scale-e'
+  | 'scale-s'
+  | 'scale-w'
+
+type BackgroundFloatingSelectionScaleTarget = Exclude<
+  BackgroundFloatingSelectionHitTarget,
+  'body' | `rotate-${TransformGizmoCorner}`
+>;
 
 type BackgroundFloatingSelectionScreenGeometry = {
   centerScreen: ScreenPoint;
@@ -217,19 +258,13 @@ type BackgroundFloatingSelectionScreenGeometry = {
     se: ScreenPoint;
     sw: ScreenPoint;
   };
-  rotateHandle: ScreenPoint;
-  topCenter: ScreenPoint;
   halfWidth: number;
   halfHeight: number;
 };
 
-const FLOATING_SELECTION_HANDLE_RADIUS = 7;
-const FLOATING_SELECTION_ROTATE_HANDLE_OFFSET = 26;
 const FLOATING_SELECTION_MIN_SCREEN_SIZE = 8;
-const FLOATING_SELECTION_BORDER_COLOR = '#0ea5e9';
-const FLOATING_SELECTION_BORDER_FILL = 'rgba(14, 165, 233, 0.08)';
 
-const BACKGROUND_TOOLBAR_TEXT_STYLE: TextToolStyle = {
+const BACKGROUND_TOOLBAR_INITIAL_TEXT_STYLE: TextToolStyle = {
   fontFamily: 'Arial',
   fontSize: 32,
   fontWeight: 'normal',
@@ -242,13 +277,15 @@ const BACKGROUND_TOOLBAR_TEXT_STYLE: TextToolStyle = {
 const BACKGROUND_TOOLBAR_VECTOR_STYLE: VectorToolStyle = {
   fillColor: '#000000',
   fillTextureId: DEFAULT_VECTOR_FILL_TEXTURE_ID,
+  fillOpacity: 1,
   strokeColor: '#000000',
+  strokeOpacity: 1,
   strokeWidth: 1,
   strokeBrushId: DEFAULT_VECTOR_STROKE_BRUSH_ID,
 };
 
-const BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE: VectorHandleMode = 'linear';
-const BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES: VectorStyleCapabilities = { supportsFill: true };
+const BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE: VectorHandleMode = 'linear';
+const BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES: VectorStyleCapabilities = { supportsFill: true };
 
 function isShapeTool(tool: BackgroundDrawingTool): tool is BackgroundShapeTool {
   return tool === 'line' || tool === 'circle' || tool === 'rectangle' || tool === 'triangle' || tool === 'star';
@@ -257,6 +294,7 @@ function isShapeTool(tool: BackgroundDrawingTool): tool is BackgroundShapeTool {
 function isBackgroundToolbarTool(tool: CostumeDrawingTool): tool is BackgroundDrawingTool {
   return (
     tool === 'select' ||
+    tool === 'pen' ||
     tool === 'brush' ||
     tool === 'eraser' ||
     tool === 'fill' ||
@@ -264,19 +302,25 @@ function isBackgroundToolbarTool(tool: CostumeDrawingTool): tool is BackgroundDr
     tool === 'circle' ||
     tool === 'triangle' ||
     tool === 'star' ||
-    tool === 'line'
+    tool === 'line' ||
+    tool === 'text'
   );
 }
 
 function ensureToolForBackgroundMode(mode: 'bitmap' | 'vector', tool: BackgroundDrawingTool): BackgroundDrawingTool {
   if (mode === 'vector') {
-    return tool === 'select' || tool === 'brush' || isShapeTool(tool) ? tool : 'select';
+    return tool === 'select' || tool === 'pen' || tool === 'brush' || tool === 'text' || isShapeTool(tool) ? tool : 'select';
   }
-  return tool;
+  return tool === 'eraser' || tool === 'fill' || tool === 'brush' || tool === 'select' || isShapeTool(tool) ? tool : 'brush';
 }
 
-function toSupportedVectorTool(tool: BackgroundDrawingTool): Extract<BackgroundDrawingTool, 'select' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line'> {
-  return ensureToolForBackgroundMode('vector', tool) as Extract<BackgroundDrawingTool, 'select' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line'>;
+function toSupportedVectorTool(
+  tool: BackgroundDrawingTool,
+): Extract<BackgroundDrawingTool, 'select' | 'pen' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line' | 'text'> {
+  return ensureToolForBackgroundMode('vector', tool) as Extract<
+    BackgroundDrawingTool,
+    'select' | 'pen' | 'brush' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'line' | 'text'
+  >;
 }
 
 function getWorldRectFromPoints(start: WorldPoint, end: WorldPoint): WorldRect {
@@ -292,6 +336,12 @@ function getWorldRectFromPoints(start: WorldPoint, end: WorldPoint): WorldRect {
     width: right - left,
     height: top - bottom,
   };
+}
+
+function isBackgroundFloatingSelectionScaleTarget(
+  target: BackgroundFloatingSelectionHitTarget,
+): target is BackgroundFloatingSelectionScaleTarget {
+  return target.startsWith('scale-');
 }
 
 function getShapeWorldBounds(
@@ -401,8 +451,8 @@ function traceBackgroundShapePath(
 }
 
 function getFloatingSelectionWorldCorners(selection: BackgroundFloatingSelection): Array<WorldPoint> {
-  const halfWidth = selection.canvas.width * selection.scaleX * 0.5;
-  const halfHeight = selection.canvas.height * selection.scaleY * 0.5;
+  const halfWidth = selection.canvas.width * Math.abs(selection.scaleX) * 0.5;
+  const halfHeight = selection.canvas.height * Math.abs(selection.scaleY) * 0.5;
   const localCorners: Array<WorldPoint> = [
     { x: -halfWidth, y: halfHeight },
     { x: halfWidth, y: halfHeight },
@@ -443,27 +493,13 @@ function getFloatingSelectionScreenGeometry(
   zoom: number,
 ): BackgroundFloatingSelectionScreenGeometry {
   const centerScreen = worldToScreen(selection.centerWorld.x, selection.centerWorld.y);
-  const halfWidth = selection.canvas.width * selection.scaleX * zoom * 0.5;
-  const halfHeight = selection.canvas.height * selection.scaleY * zoom * 0.5;
-  const screenRotation = -selection.rotation;
-  const mapLocal = (x: number, y: number): ScreenPoint => {
-    const rotated = rotatePoint({ x, y }, screenRotation);
-    return {
-      x: centerScreen.x + rotated.x,
-      y: centerScreen.y + rotated.y,
-    };
-  };
+  const halfWidth = selection.canvas.width * Math.abs(selection.scaleX) * zoom * 0.5;
+  const halfHeight = selection.canvas.height * Math.abs(selection.scaleY) * zoom * 0.5;
+  const frame = getTransformGizmoHandleFrame(centerScreen, halfWidth * 2, halfHeight * 2, -selection.rotation);
 
   return {
     centerScreen,
-    corners: {
-      nw: mapLocal(-halfWidth, -halfHeight),
-      ne: mapLocal(halfWidth, -halfHeight),
-      se: mapLocal(halfWidth, halfHeight),
-      sw: mapLocal(-halfWidth, halfHeight),
-    },
-    topCenter: mapLocal(0, -halfHeight),
-    rotateHandle: mapLocal(0, -halfHeight - FLOATING_SELECTION_ROTATE_HANDLE_OFFSET),
+    corners: frame.corners,
     halfWidth,
     halfHeight,
   };
@@ -511,9 +547,11 @@ function areRenderedLayerChunkEntriesEqual(
 }
 
 export function BackgroundCanvasEditor() {
+  const { showAlert, showConfirm } = useModal();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const brushCursorOverlayRef = useRef<HTMLDivElement>(null);
   const vectorCanvasRef = useRef<BackgroundVectorCanvasHandle | null>(null);
   const pointerWorldRef = useRef<{ x: number; y: number } | null>(null);
   const drawingStrokeRef = useRef<StrokeSession | null>(null);
@@ -553,7 +591,9 @@ export function BackgroundCanvasEditor() {
   const [tool, setTool] = useState<BackgroundDrawingTool>('brush');
   const [bitmapBrushKind, setBitmapBrushKind] = useState<BitmapBrushKind>('hard-round');
   const [brushColor, setBrushColor] = useState(INITIAL_BRUSH_COLOR);
+  const [brushOpacity, setBrushOpacity] = useState(1);
   const [backgroundColor, setBackgroundColor] = useState('#87CEEB');
+  const [backgroundColorPickerOpen, setBackgroundColorPickerOpen] = useState(false);
   const [brushSize, setBrushSize] = useState(INITIAL_BRUSH_SIZE);
   const [bitmapFillStyle, setBitmapFillStyle] = useState<BitmapFillStyle>({
     textureId: DEFAULT_BITMAP_FILL_TEXTURE_ID,
@@ -563,6 +603,7 @@ export function BackgroundCanvasEditor() {
     strokeColor: INITIAL_BRUSH_COLOR,
     strokeWidth: INITIAL_SHAPE_STROKE_WIDTH,
   });
+  const [textStyle, setTextStyle] = useState<TextToolStyle>(BACKGROUND_TOOLBAR_INITIAL_TEXT_STYLE);
   const [vectorStyle, setVectorStyle] = useState<VectorToolStyle>(BACKGROUND_TOOLBAR_VECTOR_STYLE);
   const [zoom, setZoom] = useState(0.5);
   const [camera, setCamera] = useState({ x: 0, y: 0 });
@@ -579,6 +620,12 @@ export function BackgroundCanvasEditor() {
   const [backgroundDocument, setBackgroundDocumentState] = useState<BackgroundDocument | null>(null);
   const [renderedLayerChunks, setRenderedLayerChunks] = useState<Record<string, ChunkDataMap>>({});
   const [hasVectorSelection, setHasVectorSelection] = useState(false);
+  const [canZoomToVectorSelection, setCanZoomToVectorSelection] = useState(false);
+  const [hasVectorTextSelection, setHasVectorTextSelection] = useState(false);
+  const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
+  const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
+  const [vectorHandleMode, setVectorHandleMode] = useState<VectorHandleMode>(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
+  const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
 
@@ -590,6 +637,7 @@ export function BackgroundCanvasEditor() {
   const {
     backgroundEditorOpen,
     backgroundEditorSceneId,
+    isDarkMode,
     selectedSceneId,
     closeBackgroundEditor,
     registerBackgroundUndo,
@@ -624,6 +672,53 @@ export function BackgroundCanvasEditor() {
   backgroundDocumentRef.current = backgroundDocument;
   const activeLayer = useMemo(() => getActiveBackgroundLayer(backgroundDocument), [backgroundDocument]);
   const editorMode = useMemo(() => getActiveBackgroundLayerKind(backgroundDocument), [backgroundDocument]);
+  const resolveBrushCursorState = useCallback(() => {
+    const layerInteractive = !!activeLayer && activeLayer.visible && !activeLayer.locked;
+    const enabled = layerInteractive && editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser');
+    return {
+      brushColor,
+      brushKind: bitmapBrushKind,
+      brushOpacity,
+      brushSize,
+      displayScale: zoom,
+      enabled,
+      tool: enabled ? tool : null,
+    };
+  }, [activeLayer, bitmapBrushKind, brushColor, brushOpacity, brushSize, editorMode, tool, zoom]);
+  const { syncBrushCursorOverlay } = useBitmapBrushCursorOverlay({
+    containerRef: hostRef,
+    overlayRef: brushCursorOverlayRef,
+    resolveCursorState: resolveBrushCursorState,
+  });
+
+  useEffect(() => {
+    if (editorMode === 'vector') {
+      return;
+    }
+    setHasVectorSelection(false);
+    setCanZoomToVectorSelection(false);
+    setHasVectorTextSelection(false);
+    setIsVectorPointEditing(false);
+    setHasSelectedVectorPoints(false);
+    setVectorHandleMode(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
+    setVectorStyleCapabilities(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
+  }, [editorMode, activeLayer?.id]);
+
+  useEffect(() => {
+    syncBrushCursorOverlay();
+  }, [
+    activeLayer?.id,
+    activeLayer?.locked,
+    activeLayer?.visible,
+    bitmapBrushKind,
+    brushColor,
+    brushOpacity,
+    brushSize,
+    editorMode,
+    syncBrushCursorOverlay,
+    tool,
+    zoom,
+  ]);
 
   backgroundColorRef.current = backgroundColor;
   const cameraBounds = useMemo(() => ({
@@ -632,6 +727,13 @@ export function BackgroundCanvasEditor() {
     bottom: -(project?.settings.canvasHeight ?? 600) / 2,
     top: (project?.settings.canvasHeight ?? 600) / 2,
   }), [project?.settings.canvasHeight, project?.settings.canvasWidth]);
+  const vectorAlignmentBounds = useMemo(() => ({
+    left: cameraBounds.left,
+    top: -cameraBounds.top,
+    width: cameraBounds.right - cameraBounds.left,
+    height: cameraBounds.top - cameraBounds.bottom,
+  }), [cameraBounds.bottom, cameraBounds.left, cameraBounds.right, cameraBounds.top]);
+  const overlayPillTone = isDarkMode ? 'dark' : 'light';
 
   const screenToWorld = useCallback((clientX: number, clientY: number): { x: number; y: number } => {
     const host = hostRef.current;
@@ -768,10 +870,19 @@ export function BackgroundCanvasEditor() {
   }, [zoomAroundViewportCenter]);
 
   const handleZoomToSelection = useCallback(() => {
+    if (editorMode === 'vector') {
+      const selectionBounds = vectorCanvasRef.current?.getSelectionBounds();
+      if (!selectionBounds) {
+        return;
+      }
+      fitToBounds(selectionBounds);
+      return;
+    }
+
     const selection = floatingSelectionRef.current;
     if (!selection) return;
     fitToBounds(getFloatingSelectionWorldBounds(selection));
-  }, [fitToBounds]);
+  }, [editorMode, fitToBounds]);
 
   const resolveBitmapFillTextureSource = useCallback((textureId: BitmapFillTextureId) => {
     const preset = getBitmapFillTexturePreset(textureId);
@@ -995,6 +1106,12 @@ export function BackgroundCanvasEditor() {
       setTool((currentTool) => ensureToolForBackgroundMode(getActiveBackgroundLayerKind(nextDocument), currentTool));
     }
     setHasVectorSelection(false);
+    setCanZoomToVectorSelection(false);
+    setHasVectorTextSelection(false);
+    setIsVectorPointEditing(false);
+    setHasSelectedVectorPoints(false);
+    setVectorHandleMode(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
+    setVectorStyleCapabilities(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
     setIsDirty(true);
     setRevision((value) => value + 1);
   }, [loadActiveBitmapLayerState, replaceBackgroundDocument, syncUndoRedoAvailability]);
@@ -1484,8 +1601,8 @@ export function BackgroundCanvasEditor() {
       const topLeft = worldToScreen(marqueeBounds.left, marqueeBounds.top);
       ctx.save();
       ctx.setLineDash([8, 6]);
-      ctx.fillStyle = FLOATING_SELECTION_BORDER_FILL;
-      ctx.strokeStyle = FLOATING_SELECTION_BORDER_COLOR;
+      ctx.fillStyle = TRANSFORM_GIZMO_FILL_COLOR;
+      ctx.strokeStyle = TRANSFORM_GIZMO_BORDER_COLOR;
       ctx.lineWidth = 1.5;
       ctx.fillRect(topLeft.x, topLeft.y, marqueeBounds.width * zoom, marqueeBounds.height * zoom);
       ctx.strokeRect(topLeft.x, topLeft.y, marqueeBounds.width * zoom, marqueeBounds.height * zoom);
@@ -1508,55 +1625,19 @@ export function BackgroundCanvasEditor() {
       );
       ctx.restore();
 
-      ctx.save();
-      ctx.fillStyle = FLOATING_SELECTION_BORDER_FILL;
-      ctx.strokeStyle = FLOATING_SELECTION_BORDER_COLOR;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(geometry.corners.nw.x, geometry.corners.nw.y);
-      ctx.lineTo(geometry.corners.ne.x, geometry.corners.ne.y);
-      ctx.lineTo(geometry.corners.se.x, geometry.corners.se.y);
-      ctx.lineTo(geometry.corners.sw.x, geometry.corners.sw.y);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(geometry.topCenter.x, geometry.topCenter.y);
-      ctx.lineTo(geometry.rotateHandle.x, geometry.rotateHandle.y);
-      ctx.stroke();
-
-      const drawHandle = (point: ScreenPoint, fillStyle: string = '#ffffff', strokeStyle: string = FLOATING_SELECTION_BORDER_COLOR) => {
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, FLOATING_SELECTION_HANDLE_RADIUS, 0, Math.PI * 2);
-        ctx.fillStyle = fillStyle;
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = strokeStyle;
-        ctx.stroke();
-      };
-
-      drawHandle(geometry.corners.nw);
-      drawHandle(geometry.corners.ne);
-      drawHandle(geometry.corners.se);
-      drawHandle(geometry.corners.sw);
-      drawHandle(geometry.rotateHandle, FLOATING_SELECTION_BORDER_COLOR, '#ffffff');
-      ctx.restore();
+      const activeTransform = floatingSelectionTransformRef.current;
+      renderScreenSpaceTransformOverlay(ctx, geometry.corners, {
+        proportionalGuide: activeTransform?.kind === 'scale' && activeTransform.proportional,
+        corner: activeTransform?.kind === 'scale' && activeTransform.proportional && activeTransform.corner
+          ? activeTransform.corner
+          : null,
+      });
     }
 
     if (pointerWorldRef.current && !isPanning) {
       const pointerScreen = worldToScreen(pointerWorldRef.current.x, pointerWorldRef.current.y);
 
-      if (editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser')) {
-        const cursor = getBitmapBrushCursorStyle(tool, bitmapBrushKind, brushColor, brushSize, zoom);
-        ctx.beginPath();
-        ctx.arc(pointerScreen.x, pointerScreen.y, cursor.diameter * 0.5, 0, Math.PI * 2);
-        ctx.fillStyle = cursor.fill;
-        ctx.strokeStyle = cursor.stroke;
-        ctx.lineWidth = cursor.borderWidth;
-        ctx.fill();
-        ctx.stroke();
-      } else if (tool !== 'select' && !(editorMode === 'vector' && (tool === 'brush'))) {
+      if (tool !== 'select' && !(editorMode === 'vector' && (tool === 'brush')) && !(editorMode === 'bitmap' && (tool === 'brush' || tool === 'eraser'))) {
         ctx.strokeStyle = 'rgba(255,255,255,0.9)';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -1581,6 +1662,7 @@ export function BackgroundCanvasEditor() {
     bitmapShapeStyle.strokeColor,
     bitmapShapeStyle.strokeWidth,
     brushColor,
+    brushOpacity,
     brushSize,
     camera.x,
     camera.y,
@@ -1676,6 +1758,7 @@ export function BackgroundCanvasEditor() {
 
     const composite = getCompositeOperation(brushTool);
     const color = getBrushPaintColor(brushTool, brushColor);
+    const opacity = brushTool === 'brush' ? brushOpacity : 1;
     let updated = false;
 
     for (const { cx, cy } of touchedChunkCoords) {
@@ -1710,6 +1793,7 @@ export function BackgroundCanvasEditor() {
       if (!ctx) continue;
       ctx.save();
       ctx.globalCompositeOperation = composite;
+      ctx.globalAlpha = opacity;
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(localX, localY, radius, 0, Math.PI * 2);
@@ -1721,7 +1805,7 @@ export function BackgroundCanvasEditor() {
     if (updated) {
       setRevision((value) => value + 1);
     }
-  }, [brushColor, brushSize, chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
+  }, [brushColor, brushOpacity, brushSize, chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
 
   const paintStampedPoint = useCallback((
     worldX: number,
@@ -1784,7 +1868,7 @@ export function BackgroundCanvasEditor() {
       if (!ctx) continue;
       ctx.save();
       ctx.globalCompositeOperation = getCompositeOperation(brushTool);
-      ctx.globalAlpha = stampDefinition.opacity;
+      ctx.globalAlpha = stampDefinition.opacity * (brushTool === 'brush' ? brushOpacity : 1);
       ctx.translate(localX, localY);
       if (rotation !== 0) {
         ctx.rotate(rotation);
@@ -1800,7 +1884,7 @@ export function BackgroundCanvasEditor() {
     if (updated) {
       setRevision((value) => value + 1);
     }
-  }, [chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
+  }, [brushOpacity, chunkSize, getOrCreateChunkCanvas, rememberChunkBeforeMutation]);
 
   const paintSegment = useCallback((from: { x: number; y: number }, to: { x: number; y: number }, stroke: StrokeSession) => {
     const brushTool: BitmapBrushTool = tool === 'eraser' ? 'eraser' : 'brush';
@@ -2057,7 +2141,10 @@ export function BackgroundCanvasEditor() {
       bounds.height > MAX_RASTER_OPERATION_DIMENSION ||
       bounds.width * bounds.height > MAX_RASTER_OPERATION_PIXELS
     ) {
-      window.alert('This fill region is too large to rasterize safely in one pass. Zoom in or reduce the edited area.');
+      await showAlert({
+        title: 'Region Too Large',
+        description: 'This fill region is too large to rasterize safely in one pass. Zoom in or reduce the edited area.',
+      });
       return null;
     }
 
@@ -2093,7 +2180,7 @@ export function BackgroundCanvasEditor() {
     }
 
     return { canvas, ctx };
-  }, [chunkSize, ensureChunkCanvasLoaded]);
+  }, [chunkSize, ensureChunkCanvasLoaded, showAlert]);
 
   const applyRasterCanvasToChunks = useCallback((
     rasterCanvas: HTMLCanvasElement,
@@ -2111,25 +2198,18 @@ export function BackgroundCanvasEditor() {
       }
 
       rememberChunkBeforeMutation(session, key);
-
-      const nextCanvas = createEmptyChunkCanvas(chunkSize);
-      const nextCtx = getChunkCanvasContext(nextCanvas);
-      if (!nextCtx) {
+      const chunkBounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
+      const existingChunkCanvas = chunkCanvasesRef.current.get(key) ?? null;
+      const nextCanvas = applyRasterPatchToChunkCanvas({
+        chunkSize,
+        chunkBounds,
+        patchBounds: bounds,
+        rasterCanvas,
+        existingChunkCanvas,
+      });
+      if (!nextCanvas) {
         continue;
       }
-
-      const chunkBounds = getChunkWorldBounds(parsed.cx, parsed.cy, chunkSize);
-      nextCtx.drawImage(
-        rasterCanvas,
-        chunkBounds.left - bounds.left,
-        bounds.top - chunkBounds.top,
-        chunkSize,
-        chunkSize,
-        0,
-        0,
-        chunkSize,
-        chunkSize,
-      );
 
       const hasExistingChunk = key in chunkDataRef.current || chunkCanvasesRef.current.has(key);
       const isTransparent = isChunkCanvasTransparent(nextCanvas);
@@ -2229,20 +2309,31 @@ export function BackgroundCanvasEditor() {
     screenPoint: ScreenPoint,
   ): BackgroundFloatingSelectionHitTarget | null => {
     const geometry = getFloatingSelectionScreenGeometry(selection, worldToScreen, zoom);
-    const handleRadius = FLOATING_SELECTION_HANDLE_RADIUS + 4;
+    const cornerTarget = hitTransformGizmoCornerTarget(
+      screenPoint,
+      geometry.corners,
+      TRANSFORM_GIZMO_HANDLE_RADIUS + 4,
+      TRANSFORM_GIZMO_HANDLE_RADIUS,
+      -selection.rotation,
+    );
+    if (cornerTarget) {
+      return cornerTarget;
+    }
 
-    const handleTargets: Array<[BackgroundFloatingSelectionHitTarget, ScreenPoint]> = [
-      ['scale-nw', geometry.corners.nw],
-      ['scale-ne', geometry.corners.ne],
-      ['scale-se', geometry.corners.se],
-      ['scale-sw', geometry.corners.sw],
-      ['rotate', geometry.rotateHandle],
+    const frame = {
+      center: geometry.centerScreen,
+      corners: geometry.corners,
+    };
+    const edgeSegments = getTransformGizmoEdgeSegments(frame);
+    const edgeTargets: Array<[BackgroundFloatingSelectionHitTarget, TransformGizmoSide]> = [
+      ['scale-n', 'n'],
+      ['scale-e', 'e'],
+      ['scale-s', 's'],
+      ['scale-w', 'w'],
     ];
-
-    for (const [target, point] of handleTargets) {
-      const dx = screenPoint.x - point.x;
-      const dy = screenPoint.y - point.y;
-      if (Math.hypot(dx, dy) <= handleRadius) {
+    for (const [target, side] of edgeTargets) {
+      const segment = edgeSegments[side];
+      if (isPointNearTransformEdge(screenPoint, segment.start, segment.end, TRANSFORM_GIZMO_HANDLE_RADIUS + 4)) {
         return target;
       }
     }
@@ -2287,7 +2378,10 @@ export function BackgroundCanvasEditor() {
       bounds.height > MAX_RASTER_OPERATION_DIMENSION ||
       bounds.width * bounds.height > MAX_RASTER_OPERATION_PIXELS
     ) {
-      window.alert('This selection is too large to rasterize safely in one pass.');
+      void showAlert({
+        title: 'Selection Too Large',
+        description: 'This selection is too large to rasterize safely in one pass.',
+      });
       return false;
     }
 
@@ -2343,7 +2437,7 @@ export function BackgroundCanvasEditor() {
     }
     setRevision((value) => value + 1);
     return true;
-  }, [chunkSize, commitRasterCanvasToChunks]);
+  }, [chunkSize, commitRasterCanvasToChunks, showAlert]);
 
   const deleteFloatingSelection = useCallback(() => {
     const selection = floatingSelectionRef.current;
@@ -2491,6 +2585,7 @@ export function BackgroundCanvasEditor() {
     }
 
     if (editorMode === 'vector') {
+      vectorCanvasRef.current?.flushPendingEdits();
       await vectorCanvasRef.current?.awaitIdle();
     }
 
@@ -2724,7 +2819,11 @@ export function BackgroundCanvasEditor() {
       return sum + estimateSerializedChunkBytes(layer.bitmap.chunks);
     }, 0);
     if (payloadSize > LARGE_PAYLOAD_WARNING_BYTES) {
-      const proceed = window.confirm('Background payload is large and may affect project size. Save anyway?');
+      const proceed = await showConfirm({
+        title: 'Large Background Payload',
+        description: 'Background payload is large and may affect project size. Save anyway?',
+        confirmLabel: 'Save Anyway',
+      });
       if (!proceed) {
         return;
       }
@@ -2737,19 +2836,30 @@ export function BackgroundCanvasEditor() {
     });
 
     closeBackgroundEditor();
-  }, [backgroundColor, closeBackgroundEditor, flushActiveInteraction, persistActiveLayerIntoDocument, scene, updateScene]);
+  }, [backgroundColor, closeBackgroundEditor, flushActiveInteraction, persistActiveLayerIntoDocument, scene, showConfirm, updateScene]);
 
   const handleCancel = useCallback(() => {
-    if (rasterOperationBusyRef.current) {
-      window.alert('Please wait for the current bitmap operation to finish.');
-      return;
-    }
-    if (hasUnsavedBackgroundChanges()) {
-      const confirmed = window.confirm('Discard unsaved background edits?');
-      if (!confirmed) return;
-    }
-    closeBackgroundEditor();
-  }, [closeBackgroundEditor, hasUnsavedBackgroundChanges]);
+    const run = async () => {
+      if (rasterOperationBusyRef.current) {
+        await showAlert({
+          title: 'Operation In Progress',
+          description: 'Please wait for the current bitmap operation to finish.',
+        });
+        return;
+      }
+      if (hasUnsavedBackgroundChanges()) {
+        const confirmed = await showConfirm({
+          title: 'Discard Changes',
+          description: 'Discard unsaved background edits?',
+          confirmLabel: 'Discard',
+          tone: 'destructive',
+        });
+        if (!confirmed) return;
+      }
+      closeBackgroundEditor();
+    };
+    void run();
+  }, [closeBackgroundEditor, hasUnsavedBackgroundChanges, showAlert, showConfirm]);
 
   useEffect(() => {
     const handler: UndoRedoHandler = {
@@ -2774,57 +2884,15 @@ export function BackgroundCanvasEditor() {
         return true;
       }
 
-      if (event.key.toLowerCase() === 'b' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('brush');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'v' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('select');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'e' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (editorMode !== 'bitmap') {
-          return false;
+      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+        const shortcutTool = resolveCostumeToolShortcut(event.key, editorMode);
+        if (shortcutTool && isBackgroundToolbarTool(shortcutTool)) {
+          event.preventDefault();
+          setTool(ensureToolForBackgroundMode(editorMode, shortcutTool));
+          return true;
         }
-        event.preventDefault();
-        setTool('eraser');
-        return true;
       }
-      if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (editorMode !== 'bitmap') {
-          return false;
-        }
-        event.preventDefault();
-        setTool('fill');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'r' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('rectangle');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('circle');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'g' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('triangle');
-        return true;
-      }
-      if (event.key.toLowerCase() === 's' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('star');
-        return true;
-      }
-      if (event.key.toLowerCase() === 'l' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        setTool('line');
-        return true;
-      }
+
       if (event.key === '[' && !event.metaKey && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
         if (editorMode === 'bitmap') {
@@ -2925,13 +2993,21 @@ export function BackgroundCanvasEditor() {
     if (!backgroundEditorOpen) return;
     if (!scene || !selectedSceneId) return;
     if (scene.id === selectedSceneId) return;
-    const save = window.confirm('Save background changes before switching scenes?');
-    if (save) {
-      void handleDone();
-    } else {
-      handleCancel();
-    }
-  }, [backgroundEditorOpen, handleCancel, handleDone, scene, selectedSceneId]);
+    const run = async () => {
+      const save = await showConfirm({
+        title: 'Save Background Changes',
+        description: 'Save background changes before switching scenes?',
+        confirmLabel: 'Save Changes',
+        cancelLabel: 'Discard',
+      });
+      if (save) {
+        await handleDone();
+      } else {
+        handleCancel();
+      }
+    };
+    void run();
+  }, [backgroundEditorOpen, handleCancel, handleDone, scene, selectedSceneId, showConfirm]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (rasterOperationBusyRef.current) {
@@ -2971,35 +3047,62 @@ export function BackgroundCanvasEditor() {
                 startScreen: screen,
                 startCenterWorld: { ...floatingSelection.centerWorld },
               };
-            } else if (hitTarget === 'rotate') {
+            } else if (hitTarget.startsWith('rotate-')) {
               floatingSelectionTransformRef.current = {
                 kind: 'rotate',
                 selection: floatingSelection,
                 centerScreen: geometry.centerScreen,
+                corner: getTransformGizmoCornerFromTarget(hitTarget as TransformGizmoCornerTarget) ?? 'nw',
                 startPointerAngle: Math.atan2(screen.y - geometry.centerScreen.y, screen.x - geometry.centerScreen.x),
                 startRotation: floatingSelection.rotation,
               };
             } else {
-              const handleMap: Record<Exclude<BackgroundFloatingSelectionHitTarget, 'body' | 'rotate'>, {
+              if (!isBackgroundFloatingSelectionScaleTarget(hitTarget)) {
+                return;
+              }
+              const frame = {
+                center: geometry.centerScreen,
+                corners: geometry.corners,
+              };
+              const edgeSegments = getTransformGizmoEdgeSegments(frame);
+              const handleMap: Record<Exclude<BackgroundFloatingSelectionHitTarget, 'body' | `rotate-${TransformGizmoCorner}`>, {
                 anchor: ScreenPoint;
-                handleXSign: -1 | 1;
-                handleYSign: -1 | 1;
+                scaleMode: 'corner' | 'edge';
+                corner: TransformGizmoCorner | null;
+                side: TransformGizmoSide | null;
+                handleXSign: -1 | 1 | null;
+                handleYSign: -1 | 1 | null;
+                edge: 'horizontal' | 'vertical' | null;
+                handleSign: -1 | 1 | null;
               }> = {
-                'scale-nw': { anchor: geometry.corners.se, handleXSign: -1, handleYSign: -1 },
-                'scale-ne': { anchor: geometry.corners.sw, handleXSign: 1, handleYSign: -1 },
-                'scale-se': { anchor: geometry.corners.nw, handleXSign: 1, handleYSign: 1 },
-                'scale-sw': { anchor: geometry.corners.ne, handleXSign: -1, handleYSign: 1 },
+                'scale-nw': { anchor: geometry.corners.se, scaleMode: 'corner', corner: 'nw', side: null, handleXSign: -1, handleYSign: -1, edge: null, handleSign: null },
+                'scale-ne': { anchor: geometry.corners.sw, scaleMode: 'corner', corner: 'ne', side: null, handleXSign: 1, handleYSign: -1, edge: null, handleSign: null },
+                'scale-se': { anchor: geometry.corners.nw, scaleMode: 'corner', corner: 'se', side: null, handleXSign: 1, handleYSign: 1, edge: null, handleSign: null },
+                'scale-sw': { anchor: geometry.corners.ne, scaleMode: 'corner', corner: 'sw', side: null, handleXSign: -1, handleYSign: 1, edge: null, handleSign: null },
+                'scale-n': { anchor: edgeSegments.s.center, scaleMode: 'edge', corner: null, side: 'n', handleXSign: null, handleYSign: null, edge: edgeSegments.n.edge, handleSign: edgeSegments.n.handleSign },
+                'scale-e': { anchor: edgeSegments.w.center, scaleMode: 'edge', corner: null, side: 'e', handleXSign: null, handleYSign: null, edge: edgeSegments.e.edge, handleSign: edgeSegments.e.handleSign },
+                'scale-s': { anchor: edgeSegments.n.center, scaleMode: 'edge', corner: null, side: 's', handleXSign: null, handleYSign: null, edge: edgeSegments.s.edge, handleSign: edgeSegments.s.handleSign },
+                'scale-w': { anchor: edgeSegments.e.center, scaleMode: 'edge', corner: null, side: 'w', handleXSign: null, handleYSign: null, edge: edgeSegments.w.edge, handleSign: edgeSegments.w.handleSign },
               };
               const handle = handleMap[hitTarget];
               floatingSelectionTransformRef.current = {
                 kind: 'scale',
                 selection: floatingSelection,
                 anchorScreen: handle.anchor,
+                centerScreen: geometry.centerScreen,
+                scaleMode: handle.scaleMode,
+                corner: handle.corner,
+                side: handle.side,
                 handleXSign: handle.handleXSign,
                 handleYSign: handle.handleYSign,
+                edge: handle.edge,
+                handleSign: handle.handleSign,
                 rotation: floatingSelection.rotation,
                 sourceWidth: floatingSelection.canvas.width,
                 sourceHeight: floatingSelection.canvas.height,
+                startScaleX: floatingSelection.scaleX,
+                startScaleY: floatingSelection.scaleY,
+                proportional: !!event.shiftKey,
               };
             }
             setIsDrawing(true);
@@ -3131,38 +3234,91 @@ export function BackgroundCanvasEditor() {
           floatingSelectionTransform.startRotation -
           (angle - floatingSelectionTransform.startPointerAngle)
         );
+        const canvas = canvasRef.current;
+        if (canvas) {
+          canvas.style.cursor = getTransformGizmoCursorForCornerTarget(
+            `rotate-${floatingSelectionTransform.corner}` as TransformGizmoCornerTarget,
+            -floatingSelectionTransform.selection.rotation,
+          );
+        }
       } else {
-        const rotatedPointer = rotatePoint(
-          {
-            x: screen.x - floatingSelectionTransform.anchorScreen.x,
-            y: screen.y - floatingSelectionTransform.anchorScreen.y,
-          },
-          floatingSelectionTransform.rotation,
+        const centered = event.altKey;
+        const proportional = !!event.shiftKey;
+        floatingSelectionTransform.proportional = proportional;
+        const baseWidth = Math.max(1, floatingSelectionTransform.sourceWidth * Math.abs(floatingSelectionTransform.startScaleX) * zoom);
+        const baseHeight = Math.max(1, floatingSelectionTransform.sourceHeight * Math.abs(floatingSelectionTransform.startScaleY) * zoom);
+        const referencePoint = centered ? floatingSelectionTransform.centerScreen : floatingSelectionTransform.anchorScreen;
+        const scaled = floatingSelectionTransform.scaleMode === 'edge'
+          ? computeEdgeScaleResult({
+            referencePoint,
+            pointerPoint: screen,
+            edge: floatingSelectionTransform.edge ?? 'horizontal',
+            handleSign: floatingSelectionTransform.handleSign ?? 1,
+            rotationRadians: floatingSelectionTransform.rotation,
+            baseWidth,
+            baseHeight,
+            minWidth: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+            minHeight: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+            proportional,
+            centered,
+          })
+          : computeCornerScaleResult({
+            referencePoint,
+            pointerPoint: screen,
+            handleXSign: floatingSelectionTransform.handleXSign ?? 1,
+            handleYSign: floatingSelectionTransform.handleYSign ?? 1,
+            rotationRadians: floatingSelectionTransform.rotation,
+            baseWidth,
+            baseHeight,
+            minWidth: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+            minHeight: FLOATING_SELECTION_MIN_SCREEN_SIZE,
+            proportional,
+            centered,
+          });
+        floatingSelectionTransform.selection.centerWorld = screenToWorldFromCanvasPoint(scaled.center);
+        floatingSelectionTransform.selection.scaleX = floatingSelectionTransform.startScaleX * (
+          scaled.signedWidth / Math.max(baseWidth, 0.0001)
         );
-        const width = Math.max(
-          FLOATING_SELECTION_MIN_SCREEN_SIZE,
-          floatingSelectionTransform.handleXSign * rotatedPointer.x,
+        floatingSelectionTransform.selection.scaleY = floatingSelectionTransform.startScaleY * (
+          scaled.signedHeight / Math.max(baseHeight, 0.0001)
         );
-        const height = Math.max(
-          FLOATING_SELECTION_MIN_SCREEN_SIZE,
-          floatingSelectionTransform.handleYSign * rotatedPointer.y,
-        );
-        const centerScreen = {
-          x: floatingSelectionTransform.anchorScreen.x + rotatePoint({
-            x: floatingSelectionTransform.handleXSign * width * 0.5,
-            y: floatingSelectionTransform.handleYSign * height * 0.5,
-          }, -floatingSelectionTransform.rotation).x,
-          y: floatingSelectionTransform.anchorScreen.y + rotatePoint({
-            x: floatingSelectionTransform.handleXSign * width * 0.5,
-            y: floatingSelectionTransform.handleYSign * height * 0.5,
-          }, -floatingSelectionTransform.rotation).y,
-        };
-        floatingSelectionTransform.selection.centerWorld = screenToWorldFromCanvasPoint(centerScreen);
-        floatingSelectionTransform.selection.scaleX = width / Math.max(1, floatingSelectionTransform.sourceWidth * zoom);
-        floatingSelectionTransform.selection.scaleY = height / Math.max(1, floatingSelectionTransform.sourceHeight * zoom);
       }
       setRevision((value) => value + 1);
       return;
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas && editorMode === 'bitmap') {
+      if (tool === 'select' && floatingSelectionRef.current) {
+        const hitTarget = hitTestFloatingSelection(floatingSelectionRef.current, screen);
+        const rotationRadians = -floatingSelectionRef.current.rotation;
+        if (hitTarget === 'body') {
+          canvas.style.cursor = 'move';
+        } else if (hitTarget?.startsWith('scale-')) {
+          canvas.style.cursor = (
+            hitTarget === 'scale-n' || hitTarget === 'scale-s'
+              ? getTransformGizmoEdgeCursor('vertical', rotationRadians)
+              : hitTarget === 'scale-e' || hitTarget === 'scale-w'
+                ? getTransformGizmoEdgeCursor('horizontal', rotationRadians)
+                : getTransformGizmoCursorForCornerTarget(hitTarget as TransformGizmoCornerTarget, rotationRadians)
+          );
+        } else if (hitTarget?.startsWith('rotate-')) {
+          canvas.style.cursor = getTransformGizmoCursorForCornerTarget(
+            hitTarget as TransformGizmoCornerTarget,
+            rotationRadians,
+          );
+        } else {
+          canvas.style.cursor = 'crosshair';
+        }
+      } else if (tool === 'brush' || tool === 'eraser') {
+        canvas.style.cursor = 'none';
+      } else if (tool === 'text') {
+        canvas.style.cursor = 'text';
+      } else if (tool === 'fill' || isShapeTool(tool)) {
+        canvas.style.cursor = 'crosshair';
+      } else {
+        canvas.style.cursor = 'default';
+      }
     }
 
     const selectionMarquee = selectionMarqueeRef.current;
@@ -3236,6 +3392,9 @@ export function BackgroundCanvasEditor() {
 
   const onPointerLeave = useCallback(() => {
     pointerWorldRef.current = null;
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = 'default';
+    }
     setRevision((value) => value + 1);
   }, []);
 
@@ -3289,11 +3448,41 @@ export function BackgroundCanvasEditor() {
     }
     vectorCanvasRef.current?.rotateSelection();
   }, [editorMode]);
-  const handleToolbarVectorHandleModeChange = useCallback(() => {}, []);
-  const handleToolbarAlign = useCallback(() => {}, []);
-  const handleToolbarTextStyleChange = useCallback(() => {}, []);
+  const handleToolbarVectorHandleModeChange = useCallback((mode: Extract<VectorHandleMode, 'linear' | 'corner' | 'smooth' | 'symmetric'>) => {
+    setVectorHandleMode(mode);
+  }, []);
+  const handleToolbarAlign = useCallback((action: AlignAction) => {
+    if (editorMode !== 'vector') {
+      return;
+    }
+    vectorCanvasRef.current?.alignSelection(action);
+  }, [editorMode]);
+  const handleToolbarTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
+    setTextStyle((previous) => ({ ...previous, ...updates }));
+  }, []);
   const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
     setVectorStyle((prev) => ({ ...prev, ...updates }));
+  }, []);
+  const handleVectorTextSelectionChange = useCallback((hasTextSelection: boolean) => {
+    setHasVectorTextSelection(hasTextSelection);
+  }, []);
+  const handleVectorTextStyleSync = useCallback((updates: Partial<TextToolStyle>) => {
+    setTextStyle((previous) => ({ ...previous, ...updates }));
+  }, []);
+  const handleVectorHandleModeSync = useCallback((mode: VectorHandleMode) => {
+    setVectorHandleMode(mode);
+  }, []);
+  const handleVectorPointEditingChange = useCallback((isEditing: boolean) => {
+    setIsVectorPointEditing(isEditing);
+  }, []);
+  const handleVectorPointSelectionChange = useCallback((hasSelectedPoints: boolean) => {
+    setHasSelectedVectorPoints(hasSelectedPoints);
+  }, []);
+  const handleVectorStyleSync = useCallback((updates: Partial<VectorToolStyle>) => {
+    setVectorStyle((previous) => ({ ...previous, ...updates }));
+  }, []);
+  const handleVectorStyleCapabilitiesSync = useCallback((capabilities: VectorStyleCapabilities) => {
+    setVectorStyleCapabilities(capabilities);
   }, []);
 
   const handleToolbarColorChange = useCallback((color: string) => {
@@ -3301,6 +3490,13 @@ export function BackgroundCanvasEditor() {
       return;
     }
     setBrushColor(color);
+  }, [busy]);
+
+  const handleToolbarBrushOpacityChange = useCallback((opacity: number) => {
+    if (busy) {
+      return;
+    }
+    setBrushOpacity(opacity);
   }, [busy]);
 
   const handleToolbarBitmapBrushKindChange = useCallback((kind: BitmapBrushKind) => {
@@ -3342,36 +3538,6 @@ export function BackgroundCanvasEditor() {
       data-testid="background-editor-root"
       data-chunk-count={activeChunkCount}
     >
-      <div className="h-12 border-b bg-card px-3 flex items-center gap-2">
-        <Button variant="default" size="sm" onClick={handleDone} disabled={busy}>
-          <Check className="size-4" />
-          Done
-        </Button>
-        <Button variant="outline" size="sm" onClick={handleCancel} disabled={busy}>
-          <X className="size-4" />
-          Cancel
-        </Button>
-        <div className="app-divider-x app-divider-fill h-6 mx-1" />
-        <label className="text-xs text-muted-foreground">BG</label>
-        <input
-          type="color"
-          value={backgroundColor}
-          onChange={(event) => setBackgroundColor(event.target.value)}
-          className="h-8 w-10 rounded border bg-background"
-          title="Background color"
-          disabled={busy}
-        />
-        <Button variant="outline" size="sm" onClick={fitToContent} disabled={busy}>
-          <LocateFixed className="size-4" />
-          Fit
-        </Button>
-        <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
-          {isRasterOperationBusy && <span>Processing</span>}
-          {(hasFloatingSelection || hasVectorSelection) && <span>Selection</span>}
-          {isPanning && <span>Panning</span>}
-        </div>
-      </div>
-
       {chunkLimitWarning && (
         <div className="px-3 py-2 text-xs bg-amber-50 text-amber-900 border-b border-amber-200">
           {chunkLimitWarning}
@@ -3398,7 +3564,27 @@ export function BackgroundCanvasEditor() {
             onZoomToActualSize={handleZoomToActualSize}
             onZoomToFit={fitToContent}
             onZoomToSelection={handleZoomToSelection}
-            canZoomToSelection={editorMode === 'bitmap' && hasFloatingSelection}
+            canZoomToSelection={editorMode === 'bitmap' ? hasFloatingSelection : canZoomToVectorSelection}
+            rightAccessory={(
+              <OverlayPill tone={overlayPillTone} size="compact">
+                <OverlayActionButton
+                  disabled={busy}
+                  label="Cancel"
+                  onClick={handleCancel}
+                  tone={overlayPillTone}
+                >
+                  <X className="size-3.5" />
+                </OverlayActionButton>
+                <OverlayActionButton
+                  disabled={busy}
+                  label="Done"
+                  onClick={handleDone}
+                  tone={overlayPillTone}
+                >
+                  <Check className="size-3.5" />
+                </OverlayActionButton>
+              </OverlayPill>
+            )}
           />
           <CostumeToolbar
             editorMode={editorMode}
@@ -3406,39 +3592,51 @@ export function BackgroundCanvasEditor() {
             hasActiveSelection={editorMode === 'bitmap' ? hasFloatingSelection : hasVectorSelection}
             toolVisibility={{
               showSelectTool: true,
-              showPenTool: false,
-              showTextTool: false,
+              showPenTool: true,
+              showTextTool: true,
               showShapeTools: true,
             }}
             showModeSwitcher={false}
             selectionActionsEnabled={editorMode === 'vector'}
-            showTextControls={false}
-            isVectorPointEditing={false}
-            hasSelectedVectorPoints={false}
+            showTextControls={editorMode === 'vector' && (tool === 'text' || hasVectorTextSelection)}
+            isVectorPointEditing={isVectorPointEditing}
+            hasSelectedVectorPoints={hasSelectedVectorPoints}
             bitmapBrushKind={bitmapBrushKind}
             brushColor={brushColor}
+            brushOpacity={brushOpacity}
             brushSize={brushSize}
             bitmapFillStyle={bitmapFillStyle}
             bitmapShapeStyle={bitmapShapeStyle}
-            textStyle={BACKGROUND_TOOLBAR_TEXT_STYLE}
+            textStyle={textStyle}
             vectorStyle={vectorStyle}
-            vectorStyleCapabilities={BACKGROUND_TOOLBAR_VECTOR_CAPABILITIES}
+            vectorStyleCapabilities={vectorStyleCapabilities}
             previewScale={zoom}
             onToolChange={handleToolbarToolChange}
             onMoveOrder={handleToolbarMoveOrder}
             onFlipSelection={handleToolbarFlipSelection}
             onRotateSelection={handleToolbarRotateSelection}
-            vectorHandleMode={BACKGROUND_TOOLBAR_VECTOR_HANDLE_MODE}
+            vectorHandleMode={vectorHandleMode}
             onVectorHandleModeChange={handleToolbarVectorHandleModeChange}
             onAlign={handleToolbarAlign}
-            alignDisabled
+            alignDisabled={editorMode !== 'vector' || !hasVectorSelection}
             onColorChange={handleToolbarColorChange}
+            onBrushOpacityChange={handleToolbarBrushOpacityChange}
             onBitmapBrushKindChange={handleToolbarBitmapBrushKindChange}
             onBrushSizeChange={handleToolbarBrushSizeChange}
             onBitmapFillStyleChange={handleToolbarBitmapFillStyleChange}
             onBitmapShapeStyleChange={handleToolbarBitmapShapeStyleChange}
             onTextStyleChange={handleToolbarTextStyleChange}
             onVectorStyleChange={handleToolbarVectorStyleChange}
+            toolAccessory={(
+              <FloatingToolbarColorControl
+                label="BG"
+                value={backgroundColor}
+                open={backgroundColorPickerOpen}
+                onOpenChange={setBackgroundColorPickerOpen}
+                onColorChange={setBackgroundColor}
+                disabled={busy}
+              />
+            )}
           />
           <canvas
             ref={canvasRef}
@@ -3450,19 +3648,35 @@ export function BackgroundCanvasEditor() {
             onPointerCancel={onPointerUp}
             onPointerLeave={onPointerLeave}
           />
+          <BitmapBrushCursorOverlay
+            ref={brushCursorOverlayRef}
+            testId="background-brush-cursor-overlay"
+          />
           {isVectorBackgroundLayer(activeLayer) ? (
             <BackgroundVectorCanvas
               ref={vectorCanvasRef}
+              alignmentBounds={vectorAlignmentBounds}
               layer={activeLayer as BackgroundVectorLayer}
               viewport={viewport}
               camera={camera}
               zoom={zoom}
               activeTool={toSupportedVectorTool(tool)}
+              brushColor={brushColor}
+              textStyle={textStyle}
               vectorStyle={vectorStyle}
               interactive={editorMode === 'vector'}
               onDirty={markActiveLayerDirty}
               onHistoryStateChange={handleVectorHistoryStateChange}
               onSelectionChange={setHasVectorSelection}
+              onTextSelectionChange={handleVectorTextSelectionChange}
+              onTextStyleSync={handleVectorTextStyleSync}
+              vectorHandleMode={vectorHandleMode}
+              onVectorHandleModeSync={handleVectorHandleModeSync}
+              onVectorPointEditingChange={handleVectorPointEditingChange}
+              onVectorPointSelectionChange={handleVectorPointSelectionChange}
+              onVectorStyleSync={handleVectorStyleSync}
+              onVectorStyleCapabilitiesSync={handleVectorStyleCapabilitiesSync}
+              onCanZoomToSelectionChange={setCanZoomToVectorSelection}
             />
           ) : null}
           {backgroundDocument ? (

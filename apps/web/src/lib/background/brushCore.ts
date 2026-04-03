@@ -167,9 +167,9 @@ function createAirbrushStampCanvas(size: number, color: string) {
   const center = canvas.width / 2;
   const radius = Math.max(6, size * 0.75);
   const gradient = ctx.createRadialGradient(center, center, 0, center, center, radius);
-  gradient.addColorStop(0, colorWithAlpha(color, 0.34));
-  gradient.addColorStop(0.3, colorWithAlpha(color, 0.2));
-  gradient.addColorStop(0.68, colorWithAlpha(color, 0.08));
+  gradient.addColorStop(0, colorWithAlpha(color, 1));
+  gradient.addColorStop(0.24, colorWithAlpha(color, 0.72));
+  gradient.addColorStop(0.58, colorWithAlpha(color, 0.24));
   gradient.addColorStop(1, colorWithAlpha(color, 0));
   ctx.fillStyle = gradient;
   ctx.beginPath();
@@ -256,22 +256,22 @@ export function getBitmapBrushStampDefinition(
   if (brushKind === 'airbrush') {
     return {
       stamp: createAirbrushStampCanvas(brushSize, brushColor),
-      spacing: Math.max(1, brushSize * 0.14),
-      opacity: 0.22,
+      spacing: Math.max(0.75, brushSize * 0.05),
+      opacity: 1,
       rotationJitter: 0,
-      scaleJitter: 0.08,
-      scatter: brushSize * 0.03,
+      scaleJitter: 0,
+      scatter: 0,
       alphaThreshold: 1,
     };
   }
 
   return {
     stamp: createCrayonStampCanvas(brushSize, brushColor, assets),
-    spacing: Math.max(1, brushSize * 0.18),
-    opacity: 0.32,
-    rotationJitter: Math.PI * 0.18,
-    scaleJitter: 0.16,
-    scatter: brushSize * 0.06,
+    spacing: Math.max(1, brushSize * 0.12),
+    opacity: 1,
+    rotationJitter: Math.PI * 0.12,
+    scaleJitter: 0.1,
+    scatter: brushSize * 0.04,
     alphaThreshold: 8,
   };
 }
@@ -282,8 +282,10 @@ export function getBitmapBrushCursorStyle(
   brushColor: string,
   brushSize: number,
   displayScale: number,
+  brushOpacity = 1,
 ): BrushCursorStyle {
   const diameter = Math.max(6, brushSize * displayScale);
+  const effectiveOpacity = clampUnit(brushOpacity);
   if (isEraseTool(tool)) {
     return {
       diameter,
@@ -296,26 +298,26 @@ export function getBitmapBrushCursorStyle(
   if (brushKind === 'airbrush') {
     return {
       diameter,
-      stroke: colorWithAlpha(brushColor, 0.8),
-      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.34)} 0%, ${colorWithAlpha(brushColor, 0.14)} 42%, ${colorWithAlpha(brushColor, 0.03)} 78%, rgba(255,255,255,0) 100%)`,
+      stroke: colorWithAlpha(brushColor, 0.8 * effectiveOpacity),
+      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.34 * effectiveOpacity)} 0%, ${colorWithAlpha(brushColor, 0.14 * effectiveOpacity)} 42%, ${colorWithAlpha(brushColor, 0.03 * effectiveOpacity)} 78%, rgba(255,255,255,0) 100%)`,
       borderWidth: 1.25,
-      boxShadow: `0 0 ${Math.max(6, diameter * 0.18)}px ${colorWithAlpha(brushColor, 0.16)}`,
+      boxShadow: `0 0 ${Math.max(6, diameter * 0.18)}px ${colorWithAlpha(brushColor, 0.16 * effectiveOpacity)}`,
     };
   }
 
   if (brushKind === 'crayon') {
     return {
       diameter,
-      stroke: colorWithAlpha(brushColor, 0.82),
-      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.18)} 0%, ${colorWithAlpha(brushColor, 0.07)} 70%, rgba(255,255,255,0) 100%)`,
+      stroke: colorWithAlpha(brushColor, 0.82 * effectiveOpacity),
+      fill: `radial-gradient(circle, ${colorWithAlpha(brushColor, 0.18 * effectiveOpacity)} 0%, ${colorWithAlpha(brushColor, 0.07 * effectiveOpacity)} 70%, rgba(255,255,255,0) 100%)`,
       borderWidth: 1.5,
-      boxShadow: `0 0 ${Math.max(4, diameter * 0.08)}px ${colorWithAlpha(brushColor, 0.12)}`,
+      boxShadow: `0 0 ${Math.max(4, diameter * 0.08)}px ${colorWithAlpha(brushColor, 0.12 * effectiveOpacity)}`,
     };
   }
 
   return {
     diameter,
-    stroke: brushColor,
+    stroke: colorWithAlpha(brushColor, effectiveOpacity),
     fill: 'rgba(255,255,255,0.12)',
     borderWidth: 1.5,
   };
@@ -326,6 +328,7 @@ export function getBrushCursorStyle(
   brushColor: string,
   brushSize: number,
   displayScale: number,
+  brushOpacity = 1,
 ): BrushCursorStyle {
-  return getBitmapBrushCursorStyle(tool, 'hard-round', brushColor, brushSize, displayScale);
+  return getBitmapBrushCursorStyle(tool, 'hard-round', brushColor, brushSize, displayScale, brushOpacity);
 }

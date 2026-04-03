@@ -21,10 +21,12 @@ import {
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
-import { Download, Trash2, Upload, Plus, FolderOpen } from 'lucide-react';
+import { Download, Trash2, Upload, Plus, FolderOpen } from '@/components/ui/icons';
 import { createDefaultProject } from '@/types';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface ProjectDialogProps {
   onClose?: () => void;
@@ -52,6 +54,7 @@ export function ProjectDialog({
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const { showAlert, showConfirm } = useModal();
 
   // Cloud sync hook
   const { syncAllFromCloud, deleteProjectFromCloud } = useCloudSync({
@@ -120,20 +123,33 @@ export function ProjectDialog({
 
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this project?')) {
+    const confirmed = await showConfirm({
+      title: 'Delete Project',
+      description: 'Are you sure you want to delete this project?',
+      confirmLabel: 'Delete',
+      tone: 'destructive',
+    });
+    if (!confirmed) {
       return;
     }
 
     const cloudProjectExists = !!cloudProjectSummaries?.some((project) => project.localId === projectId);
     if (isConvexAuthenticated && cloudProjectSummaries === undefined) {
-      alert('Cloud project list is still loading. Please try deleting again in a moment.');
+      await showAlert({
+        title: 'Projects Still Loading',
+        description: 'Cloud project list is still loading. Please try deleting again in a moment.',
+      });
       return;
     }
 
     if (cloudProjectExists) {
       const deletedInCloud = await deleteProjectFromCloud(projectId);
       if (!deletedInCloud) {
-        alert('Could not delete the cloud project. Please try again.');
+        await showAlert({
+          title: 'Delete Failed',
+          description: 'Could not delete the cloud project. Please try again.',
+          tone: 'destructive',
+        });
         return;
       }
     }
@@ -227,23 +243,21 @@ export function ProjectDialog({
               </p>
             </div>
             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button
-                variant="ghost"
-                size="icon-sm"
+              <IconButton
+                label="Download to computer"
                 onClick={(e) => handleExportProject(proj.id, e)}
-                title="Download to computer"
+                size="sm"
               >
                 <Download className="size-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={(e) => handleDeleteProject(proj.id, e)}
-                title="Delete project"
+              </IconButton>
+              <IconButton
                 className="hover:text-destructive"
+                label="Delete project"
+                onClick={(e) => handleDeleteProject(proj.id, e)}
+                size="sm"
               >
                 <Trash2 className="size-4" />
-              </Button>
+              </IconButton>
             </div>
           </Card>
         ))
@@ -321,7 +335,7 @@ export function ProjectDialog({
           )}
 
           {loading && (
-            <div className="absolute inset-0 bg-background/80 flex items-center justify-center">
+            <div className="absolute inset-0 bg-surface-wash flex items-center justify-center">
               <div className="text-muted-foreground">Loading...</div>
             </div>
           )}
@@ -408,7 +422,7 @@ export function ProjectDialog({
         </Tabs>
 
         {loading && (
-          <div className="absolute inset-0 bg-background/80 flex items-center justify-center rounded-lg">
+          <div className="absolute inset-0 rounded-lg bg-surface-wash flex items-center justify-center">
             <div className="text-muted-foreground">Loading...</div>
           </div>
         )}

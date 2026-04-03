@@ -6,17 +6,16 @@ import { BlocklyEditor } from '../blockly/BlocklyEditor';
 import { CostumeEditor } from './CostumeEditor';
 import { SoundEditor } from './SoundEditor';
 import { SegmentedControl, type SegmentedControlOption } from '@/components/ui/segmented-control';
-import { Button } from '@/components/ui/button';
-import { Code, Maximize2, Minimize2, Palette, Volume2 } from 'lucide-react';
+import { IconButton } from '@/components/ui/icon-button';
+import { Code, Maximize2, Minimize2, Palette, Volume2 } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
-import { freezeEditorResizeForLayoutTransition } from '@/lib/freezeEditorResize';
 import { NO_OBJECT_SELECTED_MESSAGE } from '@/lib/selectionMessages';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 const objectEditorSections: SegmentedControlOption<ObjectEditorTab>[] = [
   { value: 'code', label: 'Code', icon: <Code className="size-3" /> },
-  { value: 'costumes', label: 'Costume', icon: <Palette className="size-3" /> },
-  { value: 'sounds', label: 'Sound', icon: <Volume2 className="size-3" /> },
+  { value: 'costumes', label: 'Costumes', icon: <Palette className="size-3" /> },
+  { value: 'sounds', label: 'Sounds', icon: <Volume2 className="size-3" /> },
 ];
 
 interface ObjectEditorProps {
@@ -38,7 +37,7 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
 
   const scene = project?.scenes.find((candidate) => candidate.id === selectedSceneId);
   const hasCodeTarget = !!selectedObjectId || !!selectedComponentId;
-  const hasObjectAssetTarget = !!selectedObjectId;
+  const hasObjectAssetTarget = !!selectedObjectId || !!selectedComponentId;
   const emptyStateMessage = !hasCodeTarget ? NO_OBJECT_SELECTED_MESSAGE : null;
   const [mountedTabs, setMountedTabs] = useState<Record<ObjectEditorTab, boolean>>({
     code: true,
@@ -57,10 +56,10 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [scene, selectedObjectId, selectedComponentId, selectedFolderId, selectObject]);
 
   useEffect(() => {
-    if ((selectedComponentId || selectedFolderId || !selectedObjectId) && activeObjectTab !== 'code') {
+    if ((selectedFolderId || !hasCodeTarget) && activeObjectTab !== 'code') {
       setActiveObjectTab('code');
     }
-  }, [selectedComponentId, selectedFolderId, selectedObjectId, activeObjectTab, setActiveObjectTab]);
+  }, [activeObjectTab, hasCodeTarget, selectedFolderId, setActiveObjectTab]);
 
   useEffect(() => {
     setMountedTabs((current) => (
@@ -71,7 +70,6 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [activeObjectTab]);
 
   const handleSectionChange = useCallback((nextTab: ObjectEditorTab) => {
-    freezeEditorResizeForLayoutTransition();
     setMountedTabs((current) => (
       current[nextTab]
         ? current
@@ -81,7 +79,6 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
   }, [setActiveObjectTab]);
 
   const toggleFullscreen = useCallback(() => {
-    freezeEditorResizeForLayoutTransition();
     onFullscreenChange(!isFullscreen);
   }, [isFullscreen, onFullscreenChange]);
 
@@ -113,19 +110,17 @@ export function ObjectEditor({ isFullscreen, onFullscreenChange }: ObjectEditorP
                 />
               </div>
               <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="size-6 rounded-full"
+                <IconButton
+                  className="size-6"
                   data-testid="object-editor-fullscreen-toggle"
-                  title={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                  aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
-                  aria-pressed={isFullscreen}
+                  label={isFullscreen ? 'Exit fullscreen editor' : 'Fullscreen editor'}
+                  pressed={isFullscreen}
                   onClick={toggleFullscreen}
+                  shape="pill"
+                  size="xs"
                 >
                   {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-                </Button>
+                </IconButton>
               </div>
             </div>
           </div>

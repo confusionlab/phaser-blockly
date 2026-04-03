@@ -29,6 +29,12 @@ import {
   normalizeVectorObjectRendering,
   renderVectorTextureOverlayForFabricCanvas,
 } from '@/lib/costume/costumeVectorTextureRenderer';
+import {
+  getBackgroundVectorChunkViewportTransform,
+  parseBackgroundVectorFabricJson,
+  toBackgroundVectorWorldY,
+  type BackgroundVectorCoordinateSpace,
+} from './backgroundVectorCoordinateSpace';
 
 const MAX_CACHED_BACKGROUND_VECTOR_LAYER_CHUNKS = 64;
 const MAX_CACHED_BACKGROUND_LAYER_THUMBNAILS = 128;
@@ -260,7 +266,10 @@ function toPoint(value: unknown): { x: number; y: number } | null {
   return { x, y };
 }
 
-function getVectorLayerWorldBounds(objects: readonly any[]): VectorWorldBounds | null {
+function getVectorLayerWorldBounds(
+  objects: readonly any[],
+  coordinateSpace: BackgroundVectorCoordinateSpace,
+): VectorWorldBounds | null {
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
@@ -277,10 +286,11 @@ function getVectorLayerWorldBounds(objects: readonly any[]): VectorWorldBounds |
       if (!point) {
         continue;
       }
+      const worldY = toBackgroundVectorWorldY(coordinateSpace, point.y);
       if (point.x < minX) minX = point.x;
       if (point.x > maxX) maxX = point.x;
-      if (point.y < minY) minY = point.y;
-      if (point.y > maxY) maxY = point.y;
+      if (worldY < minY) minY = worldY;
+      if (worldY > maxY) maxY = worldY;
     }
   }
 
@@ -317,8 +327,11 @@ export async function renderBackgroundVectorLayerToChunkData(
 
     try {
       let parsed: string | Record<string, any>;
+      let coordinateSpace: BackgroundVectorCoordinateSpace = 'legacy-world-up';
       try {
-        parsed = JSON.parse(layer.vector.fabricJson);
+        const parsedDocument = parseBackgroundVectorFabricJson(layer.vector.fabricJson);
+        parsed = parsedDocument.parsed;
+        coordinateSpace = parsedDocument.coordinateSpace;
       } catch (error) {
         console.warn('Invalid background vector document. Rendering an empty layer instead.', error);
         parsed = JSON.parse(EMPTY_BACKGROUND_VECTOR_FABRIC_JSON);
@@ -329,7 +342,7 @@ export async function renderBackgroundVectorLayerToChunkData(
       }
 
       const objects = vectorCanvas.getObjects() as any[];
-      const worldBounds = getVectorLayerWorldBounds(objects);
+      const worldBounds = getVectorLayerWorldBounds(objects, coordinateSpace);
       if (!worldBounds) {
         return {};
       }
@@ -357,14 +370,7 @@ export async function renderBackgroundVectorLayerToChunkData(
           continue;
         }
 
-        vectorCanvas.viewportTransform = [
-          1,
-          0,
-          0,
-          -1,
-          -chunkBounds.left,
-          chunkBounds.top,
-        ];
+        vectorCanvas.viewportTransform = getBackgroundVectorChunkViewportTransform(chunkBounds, coordinateSpace);
         vectorCanvas.renderAll();
 
         snapshotCtx.clearRect(0, 0, chunkSize, chunkSize);

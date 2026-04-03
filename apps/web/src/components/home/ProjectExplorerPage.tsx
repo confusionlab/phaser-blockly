@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useConvexAuth } from 'convex/react';
+import { useConvexAuth, useMutation } from 'convex/react';
+import { UserProfile } from '@clerk/clerk-react';
+import { api } from '@convex-generated/api';
 import {
   ArrowLeft,
-  Check,
   ChevronRight,
   FileCode2,
   Folder,
@@ -10,12 +11,14 @@ import {
   ImageOff,
   Loader2,
   MoreHorizontal,
+  Palette,
   Plus,
   RotateCcw,
-  SquareCheck,
+  Settings2,
   Trash2,
   Upload,
-} from 'lucide-react';
+  User,
+} from '@/components/ui/icons';
 
 import {
   createProjectFolder,
@@ -35,16 +38,28 @@ import { useProjectExplorerCatalog } from '@/hooks/useProjectExplorerCatalog';
 import { useCloudSync } from '@/hooks/useCloudSync';
 import { compareProjectsByLastEdited, type ProjectExplorerCatalogFolderSummary } from '@/lib/projectExplorerCatalog';
 import { PROJECT_EXPLORER_ROOT_FOLDER_ID } from '@/lib/projectExplorer';
+import { useClerkAppearance } from '@/lib/useClerkAppearance';
+import { useEditorStore } from '@/store/editorStore';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { NameInputDialog } from '@/components/dialogs/NameInputDialog';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import {
+  CollectionSelectionCheckbox,
+  CollectionViewControls,
+  collectionCardClassName,
+  collectionRowClassName,
+} from '@/components/shared/CollectionBrowserChrome';
 import { createDefaultProject } from '@/types';
 
 type ExplorerKey = `folder:${string}` | `project:${string}`;
@@ -76,6 +91,13 @@ type PendingTrashConfirmation =
     }
   | null;
 
+type ExplorerViewMode = 'row' | 'card';
+type RenameDialogState = {
+  id: string;
+  kind: VisibleItem['kind'];
+  label: string;
+};
+
 type ProjectExplorerPageProps = {
   authBootstrapState?: 'steady' | 'reconnecting';
   onProjectOpen?: (project: { id: string }) => void;
@@ -102,19 +124,6 @@ function formatExplorerTimestamp(date: Date): string {
   return isSameDay ? timeFormatter.format(date) : dateFormatter.format(date);
 }
 
-function SelectionCheckbox({ checked }: { checked: boolean }) {
-  return (
-    <div
-      className={cn(
-        'inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors',
-        checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background',
-      )}
-    >
-      {checked ? <Check className="size-3" /> : null}
-    </div>
-  );
-}
-
 function getSelectionRange(orderedKeys: ExplorerKey[], fromKey: ExplorerKey, toKey: ExplorerKey): ExplorerKey[] {
   const fromIndex = orderedKeys.indexOf(fromKey);
   const toIndex = orderedKeys.indexOf(toKey);
@@ -127,20 +136,6 @@ function getSelectionRange(orderedKeys: ExplorerKey[], fromKey: ExplorerKey, toK
   return orderedKeys.slice(start, end + 1);
 }
 
-function fileRowClassName(options: {
-  dragging?: boolean;
-  selected?: boolean;
-  dropTarget?: boolean;
-}) {
-  return cn(
-    'group flex w-full items-center gap-4 border-b border-border/70 bg-background/95 px-4 py-3 text-left transition',
-    options.selected && 'bg-primary/6',
-    options.dropTarget && 'bg-primary/10 ring-1 ring-inset ring-primary/30',
-    options.dragging && 'opacity-45',
-    'hover:bg-accent/50',
-  );
-}
-
 function ExplorerLoadingRows() {
   return (
     <div className="flex h-full min-h-[280px] flex-col">
@@ -149,12 +144,32 @@ function ExplorerLoadingRows() {
           key={`loading-row:${index}`}
           className="flex items-center gap-4 border-b border-border/70 px-4 py-3"
         >
-          <div className="h-16 w-28 shrink-0 animate-pulse rounded-2xl bg-slate-200/80" />
+          <div className="h-16 w-28 shrink-0 animate-pulse rounded-2xl bg-muted/80 dark:bg-muted/60" />
           <div className="min-w-0 flex-1 space-y-2">
-            <div className="h-4 w-40 animate-pulse rounded-full bg-slate-200/80" />
-            <div className="h-3 w-24 animate-pulse rounded-full bg-slate-100" />
+            <div className="h-4 w-40 animate-pulse rounded-full bg-muted/80 dark:bg-muted/60" />
+            <div className="h-3 w-24 animate-pulse rounded-full bg-muted/55 dark:bg-muted/40" />
           </div>
-          <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-slate-100" />
+          <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-muted/55 dark:bg-muted/40" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ExplorerLoadingCards() {
+  return (
+    <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div
+          key={`loading-card:${index}`}
+          className="overflow-hidden rounded-[24px] border border-border/70 bg-surface-floating"
+        >
+          <div className="aspect-[16/10] animate-pulse bg-muted/75 dark:bg-muted/55" />
+          <div className="space-y-3 p-4">
+            <div className="h-4 w-2/3 animate-pulse rounded-full bg-muted/80 dark:bg-muted/60" />
+            <div className="h-3 w-1/3 animate-pulse rounded-full bg-muted/55 dark:bg-muted/40" />
+            <div className="h-8 w-full animate-pulse rounded-2xl bg-muted/55 dark:bg-muted/40" />
+          </div>
         </div>
       ))}
     </div>
@@ -165,7 +180,10 @@ export function ProjectExplorerPage({
   authBootstrapState = 'steady',
   onProjectOpen,
 }: ProjectExplorerPageProps) {
+  const clerkAppearance = useClerkAppearance();
+  const isDarkMode = useEditorStore((state) => state.isDarkMode);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const {
     ensureManagedAssetsAvailableLocally,
     syncProjectExplorerToCloud,
@@ -188,6 +206,22 @@ export function ProjectExplorerPage({
     }
     void syncProjectToCloud(projectId);
   }, [isConvexAuthenticated, syncProjectToCloud]);
+
+  const handleToggleDarkMode = useCallback(async () => {
+    const nextIsDarkMode = !isDarkMode;
+    useEditorStore.getState().toggleDarkMode();
+
+    if (!isConvexAuthenticated) {
+      return;
+    }
+
+    try {
+      await updateMySettings({ isDarkMode: nextIsDarkMode });
+    } catch (error) {
+      console.error('[UserSettings] Failed to persist dark mode setting from home:', error);
+    }
+  }, [isConvexAuthenticated, isDarkMode, updateMySettings]);
+
   const {
     data: explorerCatalog,
     isInitialLoading,
@@ -200,17 +234,21 @@ export function ProjectExplorerPage({
   const [isOpeningProjectId, setIsOpeningProjectId] = useState<string | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>(PROJECT_EXPLORER_ROOT_FOLDER_ID);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [viewMode, setViewMode] = useState<ExplorerViewMode>('card');
   const [selectedKeys, setSelectedKeys] = useState<ExplorerKey[]>([]);
   const [selectionAnchorKey, setSelectionAnchorKey] = useState<ExplorerKey | null>(null);
-  const [editingKey, setEditingKey] = useState<ExplorerKey | null>(null);
-  const [editingValue, setEditingValue] = useState('');
+  const [renameDialogState, setRenameDialogState] = useState<RenameDialogState | null>(null);
+  const [renameDialogValue, setRenameDialogValue] = useState('');
+  const [renameDialogError, setRenameDialogError] = useState<string | null>(null);
   const [isEditingCurrentFolder, setIsEditingCurrentFolder] = useState(false);
   const [currentFolderNameDraft, setCurrentFolderNameDraft] = useState('');
   const [dragKeys, setDragKeys] = useState<ExplorerKey[]>([]);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [pendingTrashConfirmation, setPendingTrashConfirmation] = useState<PendingTrashConfirmation>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const explorerShellRef = useRef<HTMLElement | null>(null);
   const explorerListRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { folders, projects } = explorerCatalog;
@@ -313,38 +351,39 @@ export function ProjectExplorerPage({
   }, [visibleKeySet]);
 
   useEffect(() => {
-    if (!editingKey || visibleKeySet.has(editingKey)) {
-      return;
-    }
-
-    setEditingKey(null);
-    setEditingValue('');
-  }, [editingKey, visibleKeySet]);
-
-  useEffect(() => {
     if (currentFolderSafeId === PROJECT_EXPLORER_ROOT_FOLDER_ID) {
       setIsEditingCurrentFolder(false);
       setCurrentFolderNameDraft('');
     }
   }, [currentFolderSafeId]);
 
+  const clearSelection = useCallback(() => {
+    setSelectedKeys([]);
+    setSelectionAnchorKey(null);
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    clearSelection();
+  }, [clearSelection]);
+
   useEffect(() => {
     if (!isExplorerReadOnly) {
       return;
     }
 
-    setSelectionMode(false);
-    setSelectedKeys([]);
-    setSelectionAnchorKey(null);
-    setEditingKey(null);
-    setEditingValue('');
+    exitSelectionMode();
+    setRenameDialogState(null);
+    setRenameDialogValue('');
+    setRenameDialogError(null);
     setIsEditingCurrentFolder(false);
     setCurrentFolderNameDraft('');
     setDragKeys([]);
     setDropFolderId(null);
+    setAccountOpen(false);
     setTrashOpen(false);
     setPendingTrashConfirmation(null);
-  }, [isExplorerReadOnly]);
+  }, [exitSelectionMode, isExplorerReadOnly]);
 
   const staleVisibleProjects = useMemo(
     () => visibleProjects.filter((project) => project.thumbnailStale),
@@ -400,15 +439,11 @@ export function ProjectExplorerPage({
     };
   }, [queueExplorerCloudSync, refreshExplorer, staleVisibleProjects]);
 
-  const requestTrashForSelection = useCallback(async () => {
-    if (isExplorerReadOnly) {
-      return;
-    }
-
-    const folderIds = selectedKeys
+  const requestTrashForKeys = useCallback((keys: ExplorerKey[]) => {
+    const folderIds = keys
       .filter((key): key is `folder:${string}` => key.startsWith('folder:'))
       .map((key) => key.slice('folder:'.length));
-    const projectIds = selectedKeys
+    const projectIds = keys
       .filter((key): key is `project:${string}` => key.startsWith('project:'))
       .map((key) => key.slice('project:'.length));
 
@@ -421,7 +456,15 @@ export function ProjectExplorerPage({
       heading: 'Move selected items to trash?',
       projectIds,
     });
-  }, [isExplorerReadOnly, selectedKeys]);
+  }, []);
+
+  const requestTrashForSelection = useCallback(async () => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+
+    requestTrashForKeys(selectedKeys);
+  }, [isExplorerReadOnly, requestTrashForKeys, selectedKeys]);
 
   useEffect(() => {
     if (!selectionMode) {
@@ -429,13 +472,11 @@ export function ProjectExplorerPage({
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (explorerListRef.current?.contains(event.target as Node)) {
+      if (explorerShellRef.current?.contains(event.target as Node)) {
         return;
       }
 
-      setSelectionMode(false);
-      setSelectedKeys([]);
-      setSelectionAnchorKey(null);
+      exitSelectionMode();
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -445,9 +486,7 @@ export function ProjectExplorerPage({
       }
 
       if (event.key === 'Escape') {
-        setSelectionMode(false);
-        setSelectedKeys([]);
-        setSelectionAnchorKey(null);
+        exitSelectionMode();
         return;
       }
 
@@ -463,7 +502,7 @@ export function ProjectExplorerPage({
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [requestTrashForSelection, selectedKeys.length, selectionMode]);
+  }, [exitSelectionMode, requestTrashForSelection, selectedKeys.length, selectionMode]);
 
   const handleSelectKey = useCallback((key: ExplorerKey, event: Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'shiftKey'>) => {
     if (isExplorerReadOnly) {
@@ -481,6 +520,16 @@ export function ProjectExplorerPage({
     if (range && selectionAnchorKey) {
       const rangeKeys = getSelectionRange(orderedKeys, selectionAnchorKey, key);
       setSelectedKeys((current) => Array.from(new Set([...current, ...rangeKeys])));
+      setSelectionAnchorKey(key);
+      return;
+    }
+
+    if (selectionMode) {
+      setSelectedKeys((current) => (
+        current.includes(key)
+          ? current.filter((currentKey) => currentKey !== key)
+          : [...current, key]
+      ));
       setSelectionAnchorKey(key);
       return;
     }
@@ -534,10 +583,16 @@ export function ProjectExplorerPage({
       return;
     }
 
-    const folderId = await createProjectFolder(`New folder ${visibleFolders.length + 1}`, currentFolderSafeId);
+    const folderName = `New folder ${visibleFolders.length + 1}`;
+    const folderId = await createProjectFolder(folderName, currentFolderSafeId);
     await refreshExplorer();
-    setEditingKey(`folder:${folderId}`);
-    setEditingValue(`New folder ${visibleFolders.length + 1}`);
+    setRenameDialogState({
+      id: folderId,
+      kind: 'folder',
+      label: folderName,
+    });
+    setRenameDialogValue(folderName);
+    setRenameDialogError(null);
     queueExplorerCloudSync();
   }, [currentFolderSafeId, isExplorerReadOnly, queueExplorerCloudSync, refreshExplorer, visibleFolders.length]);
 
@@ -562,33 +617,58 @@ export function ProjectExplorerPage({
     }
   }, [currentFolderSafeId, isExplorerReadOnly, onProjectOpen, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer]);
 
-  const commitRename = useCallback(async () => {
-    if (!editingKey || isExplorerReadOnly) {
+  const handleRenameDialogOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      return;
+    }
+    setRenameDialogState(null);
+    setRenameDialogValue('');
+    setRenameDialogError(null);
+  }, []);
+
+  const openRenameDialog = useCallback((item: VisibleItem) => {
+    if (isExplorerReadOnly) {
+      return;
+    }
+    setRenameDialogState({
+      id: item.id,
+      kind: item.kind,
+      label: item.label,
+    });
+    setRenameDialogValue(item.label);
+    setRenameDialogError(null);
+  }, [isExplorerReadOnly]);
+
+  const submitRenameDialog = useCallback(async () => {
+    if (!renameDialogState || isExplorerReadOnly) {
       return;
     }
 
-    const nextValue = editingValue.trim();
+    const nextValue = renameDialogValue.trim();
     if (!nextValue) {
-      setEditingKey(null);
-      setEditingValue('');
+      setRenameDialogError('Name cannot be empty.');
       return;
     }
 
-    if (editingKey.startsWith('folder:')) {
-      await renameProjectFolder(editingKey.slice('folder:'.length), nextValue);
-      queueExplorerCloudSync();
-    } else {
-      const projectId = editingKey.slice('project:'.length);
-      const changed = await renameStoredProject(projectId, nextValue);
-      if (changed) {
-        queueProjectCloudSync(projectId);
+    try {
+      if (renameDialogState.kind === 'folder') {
+        await renameProjectFolder(renameDialogState.id, nextValue);
+        queueExplorerCloudSync();
+      } else {
+        const changed = await renameStoredProject(renameDialogState.id, nextValue);
+        if (changed) {
+          queueProjectCloudSync(renameDialogState.id);
+        }
       }
-    }
 
-    await refreshExplorer();
-    setEditingKey(null);
-    setEditingValue('');
-  }, [editingKey, editingValue, isExplorerReadOnly, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer]);
+      await refreshExplorer();
+      setRenameDialogState(null);
+      setRenameDialogValue('');
+      setRenameDialogError(null);
+    } catch (error) {
+      setRenameDialogError(error instanceof Error ? error.message : 'Failed to rename item.');
+    }
+  }, [isExplorerReadOnly, queueExplorerCloudSync, queueProjectCloudSync, refreshExplorer, renameDialogState, renameDialogValue]);
 
   const commitCurrentFolderRename = useCallback(async () => {
     if (isExplorerReadOnly) {
@@ -638,12 +718,10 @@ export function ProjectExplorerPage({
     }
 
     setPendingTrashConfirmation(null);
-    setSelectionMode(false);
-    setSelectedKeys([]);
-    setSelectionAnchorKey(null);
+    exitSelectionMode();
     await refreshExplorer();
     queueExplorerCloudSync();
-  }, [isExplorerReadOnly, pendingTrashConfirmation, queueExplorerCloudSync, refreshExplorer]);
+  }, [exitSelectionMode, isExplorerReadOnly, pendingTrashConfirmation, queueExplorerCloudSync, refreshExplorer]);
 
   const handleRestoreProject = useCallback(async (projectId: string) => {
     if (isExplorerReadOnly) {
@@ -737,8 +815,137 @@ export function ProjectExplorerPage({
     },
   }), [dropFolderId, handleDropToFolder, isExplorerReadOnly]);
 
+  const explorerStatusLabel = useMemo(() => {
+    if (isInitialLoading) {
+      return 'Loading projects...';
+    }
+    if (visibleItems.length === 0) {
+      return 'Empty folder';
+    }
+    return null;
+  }, [isInitialLoading, visibleItems.length]);
+
+  const handleItemClick = useCallback((item: VisibleItem, event: React.MouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (isExplorerInteractionBlocked) {
+      return;
+    }
+    if (selectionMode || event.shiftKey || event.metaKey || event.ctrlKey) {
+      handleSelectKey(item.key, event.nativeEvent);
+      return;
+    }
+    if (item.kind === 'folder') {
+      setCurrentFolderId(item.id);
+      return;
+    }
+    if (isExplorerMutationLocked) {
+      return;
+    }
+    void handleOpenProject(item.id);
+  }, [
+    handleOpenProject,
+    handleSelectKey,
+    isExplorerInteractionBlocked,
+    isExplorerMutationLocked,
+    selectionMode,
+  ]);
+
+  const renderItemActions = (item: VisibleItem, triggerClassName: string) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <IconButton
+          className={triggerClassName}
+          disabled={isExplorerReadOnly}
+          label="Open item actions"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          shape="pill"
+          size="sm"
+        >
+          <MoreHorizontal className="size-4" />
+        </IconButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (isExplorerReadOnly) {
+              return;
+            }
+            openRenameDialog(item);
+          }}
+        >
+          Rename
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (isExplorerReadOnly) {
+              return;
+            }
+            if (selectionMode && selectedKeys.includes(item.key)) {
+              requestTrashForKeys(selectedKeys);
+              return;
+            }
+            if (item.kind === 'folder') {
+              handleTrashFolder(item.id);
+              return;
+            }
+            handleTrashProject(item.id);
+          }}
+        >
+          Move to trash
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
-    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(96,165,250,0.12),transparent_32%),radial-gradient(circle_at_top_right,rgba(244,114,182,0.10),transparent_28%),linear-gradient(180deg,#f8fafc_0%,#f3f4f6_100%)]">
+    <div className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-background text-foreground">
+      <div className="fixed right-4 top-3 z-[100300]">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <IconButton
+              className="rounded-full border-border/70 bg-surface-floating shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur dark:shadow-[0_28px_70px_-42px_rgba(0,0,0,0.82)]"
+              label="Home settings"
+              shape="pill"
+              size="sm"
+              variant="outline"
+            >
+              <Settings2 className="size-4" />
+            </IconButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuCheckboxItem
+              checked={isDarkMode}
+              onCheckedChange={() => {
+                void handleToggleDarkMode();
+              }}
+            >
+              <Palette className="size-4" />
+              Dark mode
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => setTrashOpen(true)}
+            >
+              <Trash2 className="size-4" />
+              Trash
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setAccountOpen(true)}
+            >
+              <User className="size-4" />
+              Account
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <input
         ref={fileInputRef}
         accept=".json,.zip"
@@ -757,25 +964,49 @@ export function ProjectExplorerPage({
         }}
       />
 
-      <main className="mx-auto flex h-full w-full max-w-[1440px] min-h-0 flex-col px-6 py-8 lg:px-10">
-        <div className="mb-8 flex flex-wrap items-start justify-between gap-6">
+      <main
+        ref={explorerShellRef}
+        className="relative z-10 mx-auto flex h-full w-full max-w-[1440px] min-h-0 flex-col px-6 py-8 lg:px-10"
+      >
+        <NameInputDialog
+          open={!!renameDialogState}
+          title={renameDialogState?.kind === 'folder' ? 'Rename Folder' : 'Rename Project'}
+          label="Name"
+          value={renameDialogValue}
+          submitLabel={renameDialogState?.kind === 'folder' ? 'Rename Folder' : 'Rename Project'}
+          description={
+            renameDialogState
+              ? `Choose a new name for "${renameDialogState.label}".`
+              : undefined
+          }
+          error={renameDialogError}
+          onValueChange={setRenameDialogValue}
+          onOpenChange={handleRenameDialogOpenChange}
+          onSubmit={() => void submitRenameDialog()}
+        />
+
+        <div className="mb-8">
           <div className="max-w-4xl">
             {currentFolder && currentFolder.id !== PROJECT_EXPLORER_ROOT_FOLDER_ID ? (
-              <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+              <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                 {breadcrumbFolders.map((folder, index) => (
                   <div className="flex items-center gap-2" key={folder.id}>
-                    <button
-                      type="button"
+                    <Button
                       className={cn(
-                        'rounded-full px-2 py-1 transition-colors',
-                        folder.id === currentFolderSafeId ? 'bg-slate-900 text-white' : 'hover:bg-white/60 hover:text-slate-900',
+                        'px-2 py-1 transition-colors',
+                        folder.id === currentFolderSafeId
+                          ? 'bg-foreground text-background shadow-sm'
+                          : 'text-muted-foreground hover:bg-surface-interactive hover:text-foreground',
                         dropFolderId === folder.id && 'bg-primary/15 text-primary',
                       )}
                       onClick={() => setCurrentFolderId(folder.id)}
+                      shape="pill"
+                      size="xs"
+                      variant="ghost"
                       {...dropTargetProps(folder.id)}
                     >
                       {folder.id === PROJECT_EXPLORER_ROOT_FOLDER_ID ? 'Home' : folder.name}
-                    </button>
+                    </Button>
                     {index < breadcrumbFolders.length - 1 ? <ChevronRight className="size-3" /> : null}
                   </div>
                 ))}
@@ -787,8 +1018,8 @@ export function ProjectExplorerPage({
                 {isEditingCurrentFolder ? (
                   <InlineRenameField
                     autoFocus
-                    className="text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl"
-                    inputClassName="text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl"
+                    className="text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl"
+                    inputClassName="text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl"
                     onBlur={() => void commitCurrentFolderRename()}
                     onChange={(event) => setCurrentFolderNameDraft(event.target.value)}
                     onKeyDown={(event) => {
@@ -805,10 +1036,9 @@ export function ProjectExplorerPage({
                     value={currentFolderNameDraft}
                   />
                 ) : (
-                  <button
-                    className="text-left text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl"
+                  <Button
+                    className="text-left text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl"
                     disabled={isExplorerReadOnly}
-                    type="button"
                     onClick={() => {
                       if (isExplorerReadOnly) {
                         return;
@@ -816,125 +1046,105 @@ export function ProjectExplorerPage({
                       setIsEditingCurrentFolder(true);
                       setCurrentFolderNameDraft(currentFolder.name);
                     }}
+                    shape="none"
+                    size="xs"
+                    variant="link"
                   >
                     {currentFolder.name}
-                  </button>
+                  </Button>
                 )}
               </div>
             ) : (
-              <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">
+              <h1 className="mt-4 text-4xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl">
                 Home
               </h1>
             )}
           </div>
-
-          <div className="flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-3 py-2 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] backdrop-blur">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="icon-sm" variant="ghost" className="rounded-full" disabled={isExplorerReadOnly}>
-                  <Plus className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuItem onClick={() => void handleCreateProject()}>
-                  <FileCode2 className="size-4" />
-                  Blank project
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
-                  <Upload className="size-4" />
-                  Import project
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => void handleCreateFolder()}>
-                  <Folder className="size-4" />
-                  New folder
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {parentFolder ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className={cn('rounded-full', dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
-                disabled={isExplorerInteractionBlocked}
-                onClick={() => setCurrentFolderId(parentFolder.id)}
-                {...dropTargetProps(parentFolder.id)}
-              >
-                <ArrowLeft className="size-4" />
-              </Button>
-            ) : null}
-
-            {selectionMode && selectedKeys.length > 0 ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className="rounded-full"
-                disabled={isExplorerReadOnly}
-                onClick={() => void requestTrashForSelection()}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            ) : null}
-
-            <Button
-              size="icon-sm"
-              variant={selectionMode ? 'default' : 'ghost'}
-              className="rounded-full"
-              disabled={isExplorerReadOnly}
-              onClick={() => {
-                if (isExplorerReadOnly) {
-                  return;
-                }
-                setSelectionMode((current) => {
-                  if (current) {
-                    setSelectedKeys([]);
-                    setSelectionAnchorKey(null);
-                  }
-                  return !current;
-                });
-              }}
-            >
-              <SquareCheck className="size-4" />
-            </Button>
-
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="rounded-full"
-              disabled={isExplorerReadOnly}
-              onClick={() => setTrashOpen(true)}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
         </div>
 
-        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/75 bg-white/80 shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur">
+        <section className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-surface-floating shadow-[0_26px_90px_-38px_rgba(15,23,42,0.45)] backdrop-blur dark:shadow-[0_34px_100px_-52px_rgba(0,0,0,0.9)]">
           <div className="flex items-center justify-between gap-4 border-b border-border/70 px-5 py-4">
-            <div className="flex items-center gap-3">
-              <div className="text-sm font-medium text-slate-700">
-                {isInitialLoading
-                  ? 'Loading projects...'
-                  : visibleItems.length === 0
-                    ? 'Empty folder'
-                    : `${visibleItems.length} item${visibleItems.length === 1 ? '' : 's'}`}
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <div className="flex shrink-0 items-center gap-1.5">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton label="Create or import" disabled={isExplorerReadOnly} shape="pill" size="sm">
+                      <Plus className="size-4" />
+                    </IconButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    <DropdownMenuItem onClick={() => void handleCreateProject()}>
+                      <FileCode2 className="size-4" />
+                      Blank project
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+                      <Upload className="size-4" />
+                      Import project
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => void handleCreateFolder()}>
+                      <Folder className="size-4" />
+                      New folder
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {parentFolder ? (
+                  <IconButton
+                    className={cn(dropFolderId === parentFolder.id && 'bg-primary/10 text-primary')}
+                    disabled={isExplorerInteractionBlocked}
+                    label="Back to parent folder"
+                    onClick={() => setCurrentFolderId(parentFolder.id)}
+                    shape="pill"
+                    size="sm"
+                    {...dropTargetProps(parentFolder.id)}
+                  >
+                    <ArrowLeft className="size-4" />
+                  </IconButton>
+                ) : null}
               </div>
+
+              {explorerStatusLabel ? (
+                <div className="text-sm font-medium text-foreground/80">
+                  {explorerStatusLabel}
+                </div>
+              ) : null}
               <div className="flex h-7 w-[220px] items-center">
                 {authBootstrapState === 'reconnecting' ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-sky-300/45 bg-sky-100/75 px-3 py-1.5 text-xs font-medium text-sky-950 shadow-sm backdrop-blur dark:border-sky-400/18 dark:bg-sky-400/12 dark:text-sky-100">
                     <Loader2 className="size-3.5 animate-spin text-sky-600" />
                     Reconnecting to cloud...
                   </div>
                 ) : isRefreshing ? (
-                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
-                    <Loader2 className="size-3.5 animate-spin text-slate-500" />
+                  <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-surface-floating px-3 py-1.5 text-xs font-medium text-foreground/70 shadow-sm backdrop-blur">
+                    <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
                     Refreshing workspace...
                   </div>
                 ) : null}
               </div>
             </div>
-            {importError ? <div className="text-sm text-destructive">{importError}</div> : null}
+            <div className="flex items-center gap-3">
+              {importError ? <div className="text-sm text-destructive">{importError}</div> : null}
+              <CollectionViewControls
+                ariaLabel="Project explorer view"
+                disabled={isExplorerReadOnly}
+                onDeleteSelected={() => void requestTrashForSelection()}
+                onToggleSelectionMode={() => {
+                  if (isExplorerReadOnly) {
+                    return;
+                  }
+                  if (selectionMode) {
+                    exitSelectionMode();
+                    return;
+                  }
+                  setSelectionMode(true);
+                }}
+                onViewModeChange={setViewMode}
+                selectionCount={selectedKeys.length}
+                selectionMode={selectionMode}
+                viewMode={viewMode}
+              />
+            </div>
           </div>
 
           <div
@@ -944,23 +1154,97 @@ export function ProjectExplorerPage({
               if (!selectionMode) {
                 return;
               }
-              setSelectedKeys([]);
-              setSelectionAnchorKey(null);
+              clearSelection();
             }}
           >
             {isInitialLoading ? (
-              <ExplorerLoadingRows />
+              viewMode === 'card' ? <ExplorerLoadingCards /> : <ExplorerLoadingRows />
             ) : visibleItems.length === 0 ? (
-              <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-4 px-6 text-center text-slate-500">
-                <div className="flex size-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+              <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-4 px-6 text-center text-muted-foreground">
+                <div className="flex size-16 items-center justify-center rounded-full bg-muted text-muted-foreground">
                   <FolderOpen className="size-8" />
                 </div>
                 <div>
-                  <div className="text-lg font-semibold text-slate-700">Nothing here yet</div>
+                  <div className="text-lg font-semibold text-foreground">Nothing here yet</div>
                   <div className="mt-2 text-sm leading-6">
                     Create a new project, import one, or drop projects into this folder from somewhere else in the explorer.
                   </div>
                 </div>
+              </div>
+            ) : viewMode === 'card' ? (
+              <div className="grid auto-rows-fr gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {visibleItems.map((item) => {
+                  const isSelected = selectedKeys.includes(item.key);
+                  const isDragging = dragKeys.includes(item.key);
+                  const isDropTarget = item.kind === 'folder' && dropFolderId === item.id;
+
+                  return (
+                    <div
+                      key={item.key}
+                      className={collectionCardClassName({
+                        dragging: isDragging,
+                        dropTarget: isDropTarget,
+                        selected: isSelected,
+                      })}
+                      draggable={!isExplorerReadOnly}
+                      onDragStart={(event) => handleDragStart(event, item.key)}
+                      onDragEnd={() => {
+                        setDragKeys([]);
+                        setDropFolderId(null);
+                      }}
+                      onClick={(event) => handleItemClick(item, event)}
+                      {...(item.kind === 'folder' ? dropTargetProps(item.id) : {})}
+                    >
+                      {selectionMode ? <CollectionSelectionCheckbox checked={isSelected} className="absolute left-3 top-3 z-10 shadow-sm" /> : null}
+
+                      <div className="absolute right-3 top-3 z-10">
+                        {renderItemActions(item, 'rounded-full bg-surface-floating shadow-sm backdrop-blur')}
+                      </div>
+
+                      {item.kind === 'folder' ? (
+                        <div className="flex aspect-[16/10] items-center justify-center bg-muted/60 text-muted-foreground dark:bg-muted/35">
+                          <div className="flex size-[4.5rem] items-center justify-center rounded-[28px] border border-border/70 bg-surface-elevated shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]">
+                            <FolderOpen className="size-8" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="relative aspect-[16/10] overflow-hidden border-b border-border/60 bg-muted">
+                          {item.thumbnailUrl ? (
+                            <img
+                              alt={`${item.label} thumbnail`}
+                              className="pointer-events-none h-full w-full select-none object-cover"
+                              draggable={false}
+                              src={item.thumbnailUrl}
+                            />
+                          ) : item.staleThumbnail || item.thumbnailAssetMissing ? (
+                            <div className="flex h-full items-center justify-center">
+                              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                            </div>
+                          ) : (
+                            <div className="flex h-full items-center justify-center">
+                              <ImageOff className="size-5 text-muted-foreground" />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+                        <div className="min-w-0">
+                          <div className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">{item.label}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
+                          </div>
+                        </div>
+
+                        {item.kind === 'project' && isOpeningProjectId === item.id ? (
+                          <div className="mt-auto flex items-center justify-end text-xs text-muted-foreground">
+                            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               visibleItems.map((item) => {
@@ -971,92 +1255,47 @@ export function ProjectExplorerPage({
                 return (
                   <div
                     key={item.key}
-                    className={fileRowClassName({
+                    className={collectionRowClassName({
                       dragging: isDragging,
                       dropTarget: isDropTarget,
                       selected: isSelected,
                     })}
-                    draggable={!isExplorerReadOnly && editingKey !== item.key}
+                    draggable={!isExplorerReadOnly}
                     onDragStart={(event) => handleDragStart(event, item.key)}
                     onDragEnd={() => {
                       setDragKeys([]);
                       setDropFolderId(null);
                     }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (isExplorerInteractionBlocked) {
-                        return;
-                      }
-                      if (selectionMode || event.shiftKey || event.metaKey || event.ctrlKey) {
-                        handleSelectKey(item.key, event.nativeEvent);
-                        return;
-                      }
-
-                      if (editingKey === item.key) {
-                        return;
-                      }
-
-                      if (item.kind === 'folder') {
-                        setCurrentFolderId(item.id);
-                        return;
-                      }
-
-                      if (isExplorerMutationLocked) {
-                        return;
-                      }
-
-                      void handleOpenProject(item.id);
-                    }}
+                    onClick={(event) => handleItemClick(item, event)}
                     {...(item.kind === 'folder' ? dropTargetProps(item.id) : {})}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-4">
-                      {selectionMode ? <SelectionCheckbox checked={isSelected} /> : null}
+                      {selectionMode ? <CollectionSelectionCheckbox checked={isSelected} /> : null}
 
                       {item.kind === 'folder' ? (
-                        <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-100 text-slate-600">
+                        <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted text-muted-foreground">
                           <FolderOpen className="size-6" />
                         </div>
                       ) : (
-                        <div className="relative flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
+                        <div className="relative flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
                           {item.thumbnailUrl ? (
                             <img
                               alt={`${item.label} thumbnail`}
-                              className="h-full w-full object-cover"
+                              className="pointer-events-none h-full w-full select-none object-cover"
+                              draggable={false}
                               src={item.thumbnailUrl}
                             />
                           ) : item.staleThumbnail || item.thumbnailAssetMissing ? (
-                            <Loader2 className="size-5 animate-spin text-slate-400" />
+                            <Loader2 className="size-5 animate-spin text-muted-foreground" />
                           ) : (
-                            <ImageOff className="size-5 text-slate-400" />
+                            <ImageOff className="size-5 text-muted-foreground" />
                           )}
                         </div>
                       )}
 
                       <div className="min-w-0 flex-1">
-                        {editingKey === item.key ? (
-                        <InlineRenameField
-                          autoFocus
-                          className="max-w-lg"
-                          inputClassName="text-sm font-medium"
-                            onBlur={() => void commitRename()}
-                            onChange={(event) => setEditingValue(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') {
-                                event.preventDefault();
-                                void commitRename();
-                              }
-                              if (event.key === 'Escape') {
-                                event.preventDefault();
-                                setEditingKey(null);
-                                setEditingValue('');
-                              }
-                            }}
-                            value={editingValue}
-                          />
-                        ) : (
-                          <div className="truncate text-sm font-semibold text-slate-900">{item.label}</div>
-                        )}
-                        <div className="mt-1 text-xs text-slate-500">
+                        <div className="truncate text-sm font-semibold text-foreground">{item.label}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
                           Updated {formatExplorerTimestamp(new Date(item.updatedAt))}
                         </div>
                       </div>
@@ -1064,53 +1303,9 @@ export function ProjectExplorerPage({
 
                     <div className="flex shrink-0 items-center gap-2">
                       {item.kind === 'project' && isOpeningProjectId === item.id ? (
-                        <Loader2 className="size-4 animate-spin text-slate-500" />
+                        <Loader2 className="size-4 animate-spin text-muted-foreground" />
                       ) : null}
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            className="rounded-full"
-                            disabled={isExplorerReadOnly}
-                            onClick={(event) => event.stopPropagation()}
-                            onPointerDown={(event) => event.stopPropagation()}
-                          >
-                            <MoreHorizontal className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={(event) => {
-                              event.preventDefault();
-                              if (isExplorerReadOnly) {
-                                return;
-                              }
-                              setEditingKey(item.key);
-                              setEditingValue(item.label);
-                            }}
-                          >
-                            Rename
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              if (isExplorerReadOnly) {
-                                return;
-                              }
-                              if (item.kind === 'folder') {
-                                handleTrashFolder(item.id);
-                                return;
-                              }
-                              handleTrashProject(item.id);
-                            }}
-                          >
-                            Move to trash
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {renderItemActions(item, 'rounded-full')}
                     </div>
                   </div>
                 );
@@ -1120,24 +1315,35 @@ export function ProjectExplorerPage({
         </section>
       </main>
 
+      <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="w-[calc(100vw-2rem)] max-w-none sm:max-w-none border-none bg-transparent p-0 shadow-none"
+        >
+          <div className="pocha-account-profile max-h-[84vh] overflow-y-auto overflow-x-hidden">
+            <UserProfile appearance={clerkAppearance} routing="hash" />
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {trashOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6" onClick={() => setTrashOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim px-4 py-6" onClick={() => setTrashOpen(false)}>
           <div
-            className="flex h-full max-h-[82vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] border border-white/80 bg-white shadow-[0_32px_120px_-48px_rgba(15,23,42,0.65)]"
+            className="flex h-full max-h-[82vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card shadow-[0_32px_120px_-48px_rgba(15,23,42,0.65)] dark:shadow-[0_36px_120px_-54px_rgba(0,0,0,0.94)]"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-4 border-b border-border/70 px-6 py-5">
               <div>
-                <div className="text-2xl font-semibold tracking-[-0.03em] text-slate-950">Trash</div>
-                <div className="mt-2 text-sm text-slate-500">Restore projects and folders whenever you’re ready.</div>
+                <div className="text-2xl font-semibold tracking-[-0.03em] text-foreground">Trash</div>
+                <div className="mt-2 text-sm text-muted-foreground">Restore projects and folders whenever you’re ready.</div>
               </div>
-              <Button variant="ghost" size="icon-sm" className="rounded-full" onClick={() => setTrashOpen(false)}>
+              <IconButton label="Close trash" onClick={() => setTrashOpen(false)} shape="pill" size="sm">
                 <ArrowLeft className="size-4" />
-              </Button>
+              </IconButton>
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
               {[...trashedFolders, ...trashedProjects].length === 0 ? (
-                <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-slate-500">Trash is empty.</div>
+                <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-muted-foreground">Trash is empty.</div>
               ) : (
                 <div className="divide-y divide-border/70">
                   {trashedFolders
@@ -1145,12 +1351,12 @@ export function ProjectExplorerPage({
                     .map((folder) => (
                       <div className="flex items-center justify-between gap-4 px-5 py-4" key={`trash-folder:${folder.id}`}>
                         <div className="min-w-0 flex items-center gap-4">
-                          <div className="flex size-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-600">
+                          <div className="flex size-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
                             <FolderOpen className="size-5" />
                           </div>
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{folder.name}</div>
-                            <div className="mt-1 text-xs text-slate-500">
+                            <div className="truncate text-sm font-semibold text-foreground">{folder.name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
                               Deleted {folder.trashedAt ? formatExplorerTimestamp(new Date(folder.trashedAt)) : ''}
                             </div>
                           </div>
@@ -1166,16 +1372,16 @@ export function ProjectExplorerPage({
                     .map((project) => (
                       <div className="flex items-center justify-between gap-4 px-5 py-4" key={`trash-project:${project.id}`}>
                         <div className="min-w-0 flex items-center gap-4">
-                          <div className="relative flex h-14 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
+                          <div className="relative flex h-14 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
                             {project.thumbnailUrl ? (
-                              <img alt="" className="h-full w-full object-cover" src={project.thumbnailUrl} />
+                              <img alt="" className="pointer-events-none h-full w-full select-none object-cover" draggable={false} src={project.thumbnailUrl} />
                             ) : (
-                              <ImageOff className="size-5 text-slate-400" />
+                              <ImageOff className="size-5 text-muted-foreground" />
                             )}
                           </div>
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900">{project.name}</div>
-                            <div className="mt-1 text-xs text-slate-500">
+                            <div className="truncate text-sm font-semibold text-foreground">{project.name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
                               Deleted {project.trashedAt ? formatExplorerTimestamp(new Date(project.trashedAt)) : ''}
                             </div>
                           </div>
@@ -1194,13 +1400,13 @@ export function ProjectExplorerPage({
       ) : null}
 
       {pendingTrashConfirmation ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 px-4" onClick={() => setPendingTrashConfirmation(null)}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-surface-scrim px-4" onClick={() => setPendingTrashConfirmation(null)}>
           <div
-            className="w-full max-w-lg rounded-[24px] border border-white/80 bg-white p-6 shadow-[0_28px_90px_-42px_rgba(15,23,42,0.65)]"
+            className="w-full max-w-lg rounded-[24px] border border-border/70 bg-card p-6 shadow-[0_28px_90px_-42px_rgba(15,23,42,0.65)] dark:shadow-[0_32px_100px_-48px_rgba(0,0,0,0.95)]"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="text-xl font-semibold tracking-[-0.03em] text-slate-950">{pendingTrashConfirmation.heading}</div>
-            <div className="mt-3 text-sm leading-6 text-slate-500">
+            <div className="text-xl font-semibold tracking-[-0.03em] text-foreground">{pendingTrashConfirmation.heading}</div>
+            <div className="mt-3 text-sm leading-6 text-muted-foreground">
               Everything stays recoverable from trash until you decide otherwise.
             </div>
             <div className="mt-6 flex justify-end gap-3">

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useCallback, forwardRef, useMemo, u
 import {
   Canvas as FabricCanvas,
   Control,
+  Point,
 } from 'fabric';
 import type {
   AlignAction,
@@ -32,19 +33,18 @@ import {
 import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import {
   CANVAS_SIZE,
+  DEFAULT_COSTUME_PREVIEW_SCALE,
+  type MirroredPathAnchorDragSession,
   MIN_ZOOM,
   MAX_ZOOM,
   ZOOM_STEP,
-  HANDLE_SIZE,
-  VECTOR_SELECTION_BORDER_SCALE,
-  OBJECT_SELECTION_CORNER_SIZE,
-  OBJECT_SELECTION_PADDING,
   COSTUME_WORLD_RECT,
   type PathAnchorDragState,
   type PointSelectionTransformSession,
   type PointSelectionMarqueeSession,
   type PointSelectionTransformFrameState,
 } from './costumeCanvasShared';
+import { clearCanvasInCssPixels, syncCanvasViewportSize } from '@/lib/editor/canvasOverlay';
 import { useCostumeCanvasColliderController } from './useCostumeCanvasColliderController';
 import { useCostumeCanvasFabricHostController } from './useCostumeCanvasFabricHostController';
 import { useCostumeCanvasHistoryController } from './useCostumeCanvasHistoryController';
@@ -53,6 +53,7 @@ import { useCostumeCanvasBitmapSelectionController } from './useCostumeCanvasBit
 import { useCostumeCanvasBitmapLayerController } from './useCostumeCanvasBitmapLayerController';
 import { useCostumeCanvasCommandController } from './useCostumeCanvasCommandController';
 import { useCostumeCanvasPenController } from './useCostumeCanvasPenController';
+import { useCostumeCanvasMirroredPathHotkeys } from './useCostumeCanvasMirroredPathHotkeys';
 import { useCostumeCanvasPenHotkeys } from './useCostumeCanvasPenHotkeys';
 import { useCostumeCanvasSelectionController } from './useCostumeCanvasSelectionController';
 import { useCostumeCanvasToolController } from './useCostumeCanvasToolController';
@@ -61,6 +62,7 @@ import { useCostumeCanvasVectorBrushRenderer } from './useCostumeCanvasVectorBru
 import { useCostumeCanvasVectorObjectController } from './useCostumeCanvasVectorObjectController';
 import { useCostumeCanvasVectorPathController } from './useCostumeCanvasVectorPathController';
 import { useCostumeCanvasViewportController } from './useCostumeCanvasViewportController';
+import { syncCanvasSelectionGizmoAppearance } from './costumeCanvasSelectionGizmo';
 
 export { DEFAULT_COSTUME_PREVIEW_SCALE } from './costumeCanvasShared';
 
@@ -105,6 +107,7 @@ interface CostumeCanvasProps {
   activeTool: DrawingTool;
   bitmapBrushKind: BitmapBrushKind;
   brushColor: string;
+  brushOpacity: number;
   brushSize: number;
   bitmapFillStyle: BitmapFillStyle;
   bitmapShapeStyle: BitmapShapeStyle;
@@ -137,6 +140,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   activeTool,
   bitmapBrushKind,
   brushColor,
+  brushOpacity,
   brushSize,
   bitmapFillStyle,
   bitmapShapeStyle,
@@ -170,6 +174,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   const layerSurfaceRefs = useRef(new Map<string, HTMLCanvasElement>());
   const vectorStrokeCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement>(null);
+  const vectorGuideOverlayDprRef = useRef(1);
   const bitmapSelectionCanvasRef = useRef<HTMLCanvasElement>(null);
   const colliderCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorStrokeCtxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -232,6 +237,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
 
   const brushColorRef = useRef(brushColor);
   brushColorRef.current = brushColor;
+  const brushOpacityRef = useRef(brushOpacity);
+  brushOpacityRef.current = brushOpacity;
 
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
@@ -323,6 +330,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     anchorIndex: number;
     dragState: PathAnchorDragState;
   } | null>(null);
+  const mirroredPathAnchorDragSessionRef = useRef<MirroredPathAnchorDragSession | null>(null);
+  const mirroredPathAnchorDragModifierStateRef = useRef({ space: false });
   const pointSelectionTransformFrameRef = useRef<PointSelectionTransformFrameState | null>(null);
   const pointSelectionTransformSessionRef = useRef<PointSelectionTransformSession | null>(null);
   const pointSelectionMarqueeSessionRef = useRef<PointSelectionMarqueeSession | null>(null);
@@ -348,6 +357,8 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     bitmapBrushKindRef,
     brushColor,
     brushColorRef,
+    brushOpacity,
+    brushOpacityRef,
     brushCursorOverlayRef,
     brushSize,
     brushSizeRef,
@@ -358,6 +369,44 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     onViewScaleChange,
   });
 
+  useEffect(() => {
+    const vectorGuideCanvas = vectorGuideCanvasRef.current;
+    if (!vectorGuideCanvas) {
+      return;
+    }
+    vectorGuideOverlayDprRef.current = syncCanvasViewportSize(
+      vectorGuideCanvas,
+      viewportSize.width,
+      viewportSize.height,
+    );
+  }, [viewportSize.height, viewportSize.width]);
+
+  const clearVectorGuideOverlayContext = useCallback((ctx: CanvasRenderingContext2D) => {
+    clearCanvasInCssPixels(
+      ctx,
+      viewportSize.width,
+      viewportSize.height,
+      vectorGuideOverlayDprRef.current,
+    );
+  }, [viewportSize.height, viewportSize.width]);
+
+  const applyVectorGuideSceneTransform = useCallback((ctx: CanvasRenderingContext2D) => {
+    const previewScale = zoom * DEFAULT_COSTUME_PREVIEW_SCALE;
+    const canvasLeft = viewportSize.width / 2 - cameraCenter.x * previewScale;
+    const canvasTop = viewportSize.height / 2 - cameraCenter.y * previewScale;
+    ctx.transform(previewScale, 0, 0, previewScale, canvasLeft, canvasTop);
+  }, [cameraCenter.x, cameraCenter.y, viewportSize.height, viewportSize.width, zoom]);
+
+  const mapCostumeCanvasPointToOverlay = useCallback((point: Point) => {
+    const previewScale = zoom * DEFAULT_COSTUME_PREVIEW_SCALE;
+    const canvasLeft = viewportSize.width / 2 - cameraCenter.x * previewScale;
+    const canvasTop = viewportSize.height / 2 - cameraCenter.y * previewScale;
+    return new Point(
+      canvasLeft + point.x * previewScale,
+      canvasTop + point.y * previewScale,
+    );
+  }, [cameraCenter.x, cameraCenter.y, viewportSize.height, viewportSize.width, zoom]);
+
   const { drawCollider } = useCostumeCanvasColliderController({
     activeTool,
     collider,
@@ -366,8 +415,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   });
 
   const {
+    getBitmapFloatingSelectionObject,
     getSelectionBoundsSnapshot,
     restoreCanvasSelection,
+    setBitmapFloatingSelectionObject,
     setVectorPointEditingTarget,
     syncSelectionState,
   } = useCostumeCanvasSelectionController({
@@ -386,6 +437,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     pointSelectionTransformSessionRef,
     selectedPathAnchorIndicesRef,
     setCanZoomToSelection,
+    setHasBitmapFloatingSelection,
     vectorPointEditingTargetRef,
   });
 
@@ -497,7 +549,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     loadBitmapLayer,
     normalizeCanvasVectorStrokeUniform,
   } = useCostumeCanvasBitmapLayerController({
-    bitmapFloatingObjectRef,
     bitmapMarqueeRectRef,
     bitmapRasterCommitQueueRef,
     bitmapSelectionBusyRef,
@@ -506,9 +557,10 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     drawBitmapSelectionOverlay,
     editorModeRef,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     isLoadRequestActive,
     saveHistory,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     suppressHistoryRef,
     syncSelectionState,
     waitForFabricCanvas,
@@ -583,7 +635,6 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     activeLayerOpacity,
     activeLayerVisible,
     bitmapFillStyleRef,
-    bitmapFloatingObjectRef,
     bitmapMarqueeRectRef,
     bitmapSelectionCanvasRef,
     bitmapSelectionBusyRef,
@@ -596,6 +647,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     editorModeRef,
     fabricCanvasRef,
     getActiveLayerCanvasElement,
+    getBitmapFloatingSelectionObject,
     getSelectionBoundsSnapshot,
     hostedLayerIdRef,
     isLoadRequestActive,
@@ -617,7 +669,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     restoreCanvasSelection,
     saveHistory,
     setEditorMode,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     setHostedLayerId,
     setHostedLayerReady,
     suppressBitmapSelectionAutoCommitRef,
@@ -639,6 +691,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   }, [setHostedLayerReady, syncActiveLayerCanvasVisibility]);
 
   const {
+    applyMirroredPathAnchorCurveDragSession,
     applyPointSelectionMarqueeSession,
     applyPointSelectionTransformSession,
     beginPointSelectionTransformSession,
@@ -659,12 +712,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     hasPointSelectionMarqueeExceededThreshold,
     hitPointSelectionTransform,
     insertPathPointAtScenePosition,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
     movePathAnchorByDelta,
     removeDuplicateClosedPathAnchorControl,
     resolveAnchorFromPathControlKey,
     restoreAllOriginalControls,
     restoreOriginalControls,
+    resolveMirroredPathAnchorHandleRole,
+    setMirroredPathAnchorDragSessionMoveMode,
     setPathNodeHandleType,
     setSelectedPathAnchors,
     stabilizePathAfterAnchorMutation,
@@ -696,8 +752,11 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   } = useCostumeCanvasVectorObjectController({
     activePathAnchorRef,
     activeToolRef,
+    applyOverlaySceneTransform: applyVectorGuideSceneTransform,
+    applyMirroredPathAnchorCurveDragSession,
     buildPathDataFromPoints,
     createFourPointEllipsePathData,
+    clearOverlayContext: clearVectorGuideOverlayContext,
     editorModeRef,
     enforcePathAnchorHandleType,
     fabricCanvasRef,
@@ -713,12 +772,17 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getSelectedPathAnchorTransformSnapshot,
     getZoomInvariantMetric,
     hasPointSelectionMarqueeExceededThreshold,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
+    mapFabricOverlayPoint: mapCostumeCanvasPointToOverlay,
     movePathAnchorByDelta,
+    mirroredPathAnchorDragSessionRef,
     originalControlsRef,
     pointSelectionMarqueeSessionRef,
+    pointSelectionTransformSessionRef,
     removeDuplicateClosedPathAnchorControl,
     renderPenDraftGuide,
+    resolveMirroredPathAnchorHandleRole,
     resolveAnchorFromPathControlKey,
     restoreOriginalControls,
     setPathNodeHandleType,
@@ -743,13 +807,14 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     applyVectorPointControls,
     applyVectorPointEditingAppearance,
     bitmapBrushKindRef,
-    bitmapFloatingObjectRef,
     brushColorRef,
+    brushOpacityRef,
     brushSizeRef,
     commitBitmapStampBrushStroke,
     editorModeRef,
     ensurePathLikeObjectForVectorTool,
     fabricCanvasRef,
+    getBitmapFloatingSelectionObject,
     getZoomInvariantMetric,
     normalizeCanvasVectorStrokeUniform,
     restoreAllOriginalControls,
@@ -801,6 +866,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     insertPathPointAtScenePosition,
     isPointSelectionToggleModifierPressed,
     loadBitmapLayer,
+    mirroredPathAnchorDragSessionRef,
     movePathAnchorByDelta,
     penAnchorPlacementSessionRef,
     penDraftRef,
@@ -838,7 +904,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
   // Sync tool behavior.
   useLayoutEffect(() => {
     configureCanvasForTool();
-  }, [activeTool, bitmapBrushKind, brushColor, brushSize, editorModeState, hasBitmapFloatingSelection, vectorStyle, configureCanvasForTool]);
+  }, [activeTool, bitmapBrushKind, brushColor, brushOpacity, brushSize, editorModeState, hasBitmapFloatingSelection, vectorStyle, configureCanvasForTool]);
 
   useLayoutEffect(() => {
     syncActiveLayerCanvasVisibility();
@@ -880,7 +946,7 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     getSelectionMousePos,
     hasBitmapFloatingSelection,
     loadBitmapLayer,
-    setHasBitmapFloatingSelection,
+    setBitmapFloatingSelectionObject,
     syncSelectionState,
   });
 
@@ -924,6 +990,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     if (insertedPathAnchorDragSessionRef.current) {
       insertedPathAnchorDragSessionRef.current = null;
       saveHistory();
+    }
+
+    if (mirroredPathAnchorDragSessionRef.current) {
+      const shouldSave = mirroredPathAnchorDragSessionRef.current.hasChanged;
+      mirroredPathAnchorDragSessionRef.current = null;
+      mirroredPathAnchorDragModifierStateRef.current.space = false;
+      if (shouldSave) {
+        saveHistory();
+      }
     }
 
     if (shapeDraftRef.current) {
@@ -983,6 +1058,15 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     removeLastPenDraftAnchor,
     setPenAnchorMoveMode,
     syncPenPlacementToAltModifier,
+  });
+
+  useCostumeCanvasMirroredPathHotkeys({
+    activeToolRef,
+    editorModeRef,
+    fabricCanvasRef,
+    mirroredPathAnchorDragModifierStateRef,
+    mirroredPathAnchorDragSessionRef,
+    setMirroredPathAnchorDragSessionMoveMode,
   });
 
   useCostumeCanvasImperativeHandle({
@@ -1083,31 +1167,13 @@ export const CostumeCanvas = forwardRef<CostumeCanvasHandle, CostumeCanvasProps>
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas) return;
 
-    const selectionCornerSize = getZoomInvariantMetric(OBJECT_SELECTION_CORNER_SIZE, zoom);
-    const selectionBorderScale = getZoomInvariantMetric(VECTOR_SELECTION_BORDER_SCALE, zoom);
-    const selectionPadding = getZoomInvariantMetric(OBJECT_SELECTION_PADDING, zoom);
-    const pointEditingTarget = vectorPointEditingTargetRef.current as any;
-
-    fabricCanvas.forEachObject((obj: any) => {
-      obj.borderScaleFactor = selectionBorderScale;
-      obj.padding = obj === pointEditingTarget ? 0 : selectionPadding;
-      obj.cornerSize = obj === pointEditingTarget
-        ? getZoomInvariantMetric(HANDLE_SIZE, zoom)
-        : selectionCornerSize;
-      obj.setCoords?.();
+    syncCanvasSelectionGizmoAppearance({
+      fabricCanvas,
+      getZoomInvariantMetric,
+      pointEditingTarget: vectorPointEditingTargetRef.current,
+      renderVectorPointEditingGuide,
+      zoom,
     });
-
-    const activeObject = fabricCanvas.getActiveObject() as any;
-    if (activeObject) {
-      activeObject.borderScaleFactor = selectionBorderScale;
-      activeObject.padding = activeObject === pointEditingTarget ? 0 : selectionPadding;
-      activeObject.cornerSize = activeObject === pointEditingTarget
-        ? getZoomInvariantMetric(HANDLE_SIZE, zoom)
-        : selectionCornerSize;
-    }
-    activeObject?.setCoords?.();
-    fabricCanvas.requestRenderAll();
-    renderVectorPointEditingGuide();
     drawCollider(collider, activeTool === 'collider');
   }, [activeTool, collider, drawCollider, getZoomInvariantMetric, renderVectorPointEditingGuide, zoom]);
 

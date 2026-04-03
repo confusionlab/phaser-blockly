@@ -1,21 +1,150 @@
 import * as Blockly from 'blockly';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
+import { getAppIconDataUri, type AppIconName } from '@/components/ui/icons';
 import type { MessageDefinition, Variable, VariableType } from '@/types';
 import { COMPONENT_ANY_PREFIX, PICK_FROM_STAGE } from '@/lib/blocklyReferenceMaps';
+import {
+  buildVariableDisplayLabelMap,
+  normalizeVariableCardinality,
+  normalizeVariableName,
+} from '@/lib/variableUtils';
 import { KEY_DROPDOWN_OPTIONS } from '@/utils/keyboard';
+const TOOLBOX_CATEGORY_ORDER = [
+  'Events',
+  'Control',
+  'Motion',
+  'Looks',
+  'Sensing',
+  'Sound',
+  'Physics',
+  'Camera',
+  'Inventory',
+  'Variables',
+  'Operators',
+] as const;
+const BLOCK_COLOURS = {
+  events: '#FFBF00',
+  actions: '#FFAB19',
+  inventory: '#FF5B5B',
+  motion: '#4C97FF',
+  looks: '#9966FF',
+  physics: '#40BF4A',
+  camera: '#0fBDA8',
+  sensing: '#5CB1D6',
+  sound: '#CF63CF',
+  variables: '#FF8C1A',
+  operators: '#59C059',
+  debug: '#888888',
+} as const;
+const ADVANCED_BLOCK_TYPES = new Set<string>([
+  'camera_set_follow_offset',
+  'camera_set_follow_smoothness',
+  'control_current_item',
+  'control_for_each',
+  'control_group_block',
+  'debug_console_log',
+  'looks_change_axis_scale',
+  'looks_speak',
+  'looks_stop_speaking',
+  'looks_target_speak',
+  'looks_target_stop_speaking',
+  'motion_attach_block_to_me',
+  'motion_attach_to_block',
+  'motion_detach',
+  'motion_limit_world_boundary_off',
+  'motion_limit_world_boundary_on',
+  'object_from_dropdown',
+  'operator_mathop',
+  'operator_mod',
+  'physics_set_bounce',
+  'physics_set_friction',
+  'event_when_touching_direction_value',
+  'sensing_my_type',
+  'sensing_all_touching_objects',
+  'sensing_touching_direction_value',
+  'sensing_type_literal',
+  'sensing_type_of_object',
+  'target_camera',
+  'target_ground',
+  'target_mouse',
+  'target_myself',
+]);
+const BLOCKLY_INLINE_ICON_DEFAULT_SIZE = 16;
+const BLOCKLY_INLINE_ICON_DEFAULT_TEXT = '#ffffff';
+const FLYOUT_SUBSECTION_HEADING_GAP = '20';
+const FLYOUT_SUBSECTION_HEADING_BOTTOM_GAP = '12';
+const FLYOUT_GROUP_BREAK_GAP = '56';
 
-const CREATE_MESSAGE_OPTION = '__CREATE_MESSAGE_OPTION__';
-const RENAME_SELECTED_MESSAGE_OPTION = '__RENAME_SELECTED_MESSAGE_OPTION__';
+let editMessagesToolbarCallback: (() => void) | null = null;
 
-type MessageDialogMode = 'create' | 'rename';
-type MessageDialogCallback = (
-  mode: MessageDialogMode,
-  selectedMessageId: string | null,
-  applySelectedMessageId: (messageId: string) => void,
-) => void;
+export type ToolboxShadowConfig = {
+  type: string;
+  fields?: Record<string, string>;
+};
 
-let messageDialogCallback: MessageDialogCallback | null = null;
+export type ToolboxBlockInputConfig = {
+  block?: ToolboxBlockConfig;
+  shadow?: ToolboxShadowConfig;
+};
+
+export type ToolboxBlockConfig = {
+  kind: 'block';
+  type: string;
+  inputs?: Record<string, ToolboxBlockInputConfig>;
+  fields?: Record<string, string>;
+  extraState?: Record<string, unknown>;
+};
+
+export type ToolboxButtonConfig = {
+  kind: 'button';
+  text: string;
+  callbackKey: string;
+  'web-class'?: string;
+};
+
+export type ToolboxSeparatorConfig = {
+  kind: 'sep';
+  gap: string;
+};
+
+export type ToolboxLabelConfig = {
+  kind: 'label';
+  text: string;
+};
+
+export type ToolboxCategoryConfig = {
+  kind: 'category';
+  name: string;
+  colour: string;
+  contents: ToolboxContentItem[];
+};
+
+export type ToolboxContentItem =
+  | ToolboxBlockConfig
+  | ToolboxButtonConfig
+  | ToolboxSeparatorConfig
+  | ToolboxLabelConfig
+  | ToolboxCategoryConfig;
+
+export type ToolboxConfig = {
+  kind: 'categoryToolbox';
+  contents: ToolboxCategoryConfig[];
+};
+
+export type ToolboxConfigOptions = {
+  includeAdvancedBlocks?: boolean;
+};
+
+function withFlyoutHeadingBottomGap(
+  contents: ToolboxContentItem[],
+): ToolboxContentItem[] {
+  return contents.flatMap<ToolboxContentItem>((item): ToolboxContentItem[] =>
+    item.kind === 'label'
+      ? [item, { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_BOTTOM_GAP }]
+      : [item],
+  );
+}
 
 // Custom FieldDropdown that preserves unknown values (for object IDs that may not be loaded yet)
 class PreservingFieldDropdown extends Blockly.FieldDropdown {
@@ -81,43 +210,9 @@ class VariableFieldDropdown extends Blockly.FieldDropdown {
       }
     }
 
-    // Value not in options - try to find the variable name from the project
-    const project = useProjectStore.getState().project;
-    const selectedSceneId = useEditorStore.getState().selectedSceneId;
-    const selectedObjectId = useEditorStore.getState().selectedObjectId;
-    const selectedComponentId = useEditorStore.getState().selectedComponentId;
-
-    if (project) {
-      // Check global variables
-      const globalVar = project.globalVariables?.find(v => v.id === value);
-      if (globalVar) {
-        return `${getTypeIcon(globalVar.type)} ${globalVar.name}`;
-      }
-
-      // Check local variables
-      if (selectedSceneId && selectedObjectId) {
-        const scene = project.scenes.find(s => s.id === selectedSceneId);
-        const obj = scene?.objects.find(o => o.id === selectedObjectId);
-        const component = obj?.componentId
-          ? (project.components || []).find((componentItem) => componentItem.id === obj.componentId)
-          : null;
-        const componentLocalVariables = component?.localVariables || [];
-        const localVariables = componentLocalVariables.length > 0
-          ? componentLocalVariables
-          : (obj?.localVariables || []);
-        const localVar = localVariables.find(v => v.id === value);
-        if (localVar) {
-          return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
-        }
-      }
-
-      if (selectedComponentId) {
-        const component = (project.components || []).find((componentItem) => componentItem.id === selectedComponentId);
-        const localVar = (component?.localVariables || []).find((variable) => variable.id === value);
-        if (localVar) {
-          return `(local) ${getTypeIcon(localVar.type)} ${localVar.name}`;
-        }
-      }
+    const label = getVariableDisplayLabelById(value);
+    if (label) {
+      return label;
     }
 
     // Still not found - show placeholder
@@ -232,7 +327,103 @@ function buildGroupBlockToggleIcon(collapsed: boolean): string {
 
 const GROUP_BLOCK_EXPANDED_ICON = buildGroupBlockToggleIcon(false);
 const GROUP_BLOCK_COLLAPSED_ICON = buildGroupBlockToggleIcon(true);
-const GROUP_BLOCK_COLOUR = '#9AA0A6';
+
+type BlocklyInlineIconOptions = {
+  color?: string;
+  size?: number;
+};
+
+function getBlockSvgRoot(block: Blockly.Block | null | undefined): SVGElement | null {
+  if (!block) return null;
+  const maybeSvgBlock = block as Blockly.Block & { getSvgRoot?: () => SVGElement | null };
+  return maybeSvgBlock.getSvgRoot?.() ?? null;
+}
+
+function getBlocklyInlineIconTextColor(block: Blockly.Block): string {
+  const svgRoot = getBlockSvgRoot(block);
+  const textNode = svgRoot?.querySelector(
+    '.blocklyNonEditableField > text, '
+    + '.blocklyNonEditableField > g > text, '
+    + '.blocklyEditableField > text, '
+    + '.blocklyEditableField > g > text, '
+    + 'text.blocklyText',
+  );
+  if (textNode && typeof window !== 'undefined') {
+    const computedFill = window.getComputedStyle(textNode).fill;
+    if (computedFill && computedFill !== 'none') {
+      return computedFill;
+    }
+  }
+
+  return BLOCKLY_INLINE_ICON_DEFAULT_TEXT;
+}
+
+class BlocklyInlineIconField extends Blockly.FieldImage {
+  private readonly iconName: AppIconName;
+  private readonly iconSize: number;
+  private readonly explicitColor?: string;
+
+  constructor(iconName: AppIconName, altText: string, options: BlocklyInlineIconOptions = {}) {
+    const size = options.size ?? BLOCKLY_INLINE_ICON_DEFAULT_SIZE;
+    super(
+      getAppIconDataUri(iconName, { color: options.color ?? BLOCKLY_INLINE_ICON_DEFAULT_TEXT, size }),
+      size,
+      size,
+      altText,
+    );
+
+    this.iconName = iconName;
+    this.iconSize = size;
+    this.explicitColor = options.color;
+  }
+
+  override initView(): void {
+    super.initView();
+    this.syncIconColour();
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => this.syncIconColour());
+    }
+  }
+
+  override applyColour(): void {
+    super.applyColour();
+    this.syncIconColour();
+  }
+
+  protected override render_(): void {
+    super.render_();
+    this.syncIconColour();
+  }
+
+  private syncIconColour(): void {
+    const sourceBlock = this.getSourceBlock();
+    if (!sourceBlock) return;
+
+    const color = this.explicitColor ?? getBlocklyInlineIconTextColor(sourceBlock);
+    const nextValue = getAppIconDataUri(this.iconName, { color, size: this.iconSize });
+    if (this.getValue() !== nextValue) {
+      this.setValue(nextValue);
+    }
+  }
+}
+
+function createBlocklyInlineIcon(
+  iconName: AppIconName,
+  altText: string,
+  options: BlocklyInlineIconOptions = {},
+): BlocklyInlineIconField {
+  return new BlocklyInlineIconField(iconName, altText, options);
+}
+
+function appendBlocklyInlineIcon(
+  input: Blockly.Input,
+  iconName: AppIconName,
+  altText: string,
+  fieldName?: string,
+  options: BlocklyInlineIconOptions = {},
+): Blockly.Input {
+  return input.appendField(createBlocklyInlineIcon(iconName, altText, options), fieldName);
+}
 
 function syncGroupBlockToggleIcon(block: Blockly.Block): void {
   if (!isBlockAttachedToWorkspace(block)) return;
@@ -363,7 +554,7 @@ function generateObjectDropdownOptions(
 
   // Add "pick from stage" option at the end
   if (includePicker) {
-    result.push(['🎯 pick from stage...', PICK_FROM_STAGE]);
+    result.push(['pick from stage...', PICK_FROM_STAGE]);
   }
 
   return result;
@@ -510,7 +701,7 @@ function getSceneDropdownOptions(): Array<[string, string]> {
   });
 }
 
-function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[string, string]> {
+function getMessageDropdownOptions(): Array<[string, string]> {
   const project = useProjectStore.getState().project;
   const messages = (project?.messages || []).filter((message): message is MessageDefinition => {
     return (
@@ -541,12 +732,6 @@ function getMessageDropdownOptions(selectedMessageId?: string | null): Array<[st
       seenCounts.set(message.name, nextIndex);
       options.push([`${message.name} (${nextIndex})`, message.id]);
     }
-  }
-
-  options.push(['+ New message...', CREATE_MESSAGE_OPTION]);
-  const hasSelectedMessage = !!selectedMessageId && messages.some((message) => message.id === selectedMessageId);
-  if (hasSelectedMessage) {
-    options.push(['Rename selected message...', RENAME_SELECTED_MESSAGE_OPTION]);
   }
   return options;
 }
@@ -609,59 +794,83 @@ function createObjectPickerValidator(excludeCurrentObject: boolean = true) {
   };
 }
 
-function createMessageDropdownValidator() {
-  return function(this: Blockly.FieldDropdown, newValue: string): string | null {
-    if (newValue !== CREATE_MESSAGE_OPTION && newValue !== RENAME_SELECTED_MESSAGE_OPTION) {
-      return newValue;
-    }
-    if (!messageDialogCallback) {
-      return null;
-    }
-
-    const selectedMessageId = this.getValue();
-    if (newValue === RENAME_SELECTED_MESSAGE_OPTION) {
-      const messages = useProjectStore.getState().project?.messages || [];
-      const selectedExists = messages.some((message) => message.id === selectedMessageId);
-      if (!selectedExists) {
-        return null;
-      }
-    }
-
-    messageDialogCallback(
-      newValue === CREATE_MESSAGE_OPTION ? 'create' : 'rename',
-      selectedMessageId || null,
-      (messageId: string) => {
-        if (!isLiveDropdownField(this)) {
-          return;
-        }
-        this.setValue(messageId);
-      },
-    );
-
-    return null;
-  };
-}
-
 // Register custom blocks
 registerCustomBlocks();
 
-export function getToolboxConfig(): any {
-  return {
+export function isAdvancedBlockType(blockType: string): boolean {
+  return ADVANCED_BLOCK_TYPES.has(blockType);
+}
+
+function isToolboxItemActionable(item: ToolboxContentItem): boolean {
+  return item.kind === 'block' || item.kind === 'button';
+}
+
+function pruneToolboxCategoryContents(contents: ToolboxContentItem[]): ToolboxContentItem[] {
+  return contents.filter((item, index) => {
+    if (item.kind === 'sep') {
+      const hasActionableBefore = contents.slice(0, index).some(isToolboxItemActionable);
+      const hasActionableAfter = contents.slice(index + 1).some(isToolboxItemActionable);
+      return hasActionableBefore && hasActionableAfter;
+    }
+
+    if (item.kind === 'label') {
+      return contents.slice(index + 1).some(isToolboxItemActionable);
+    }
+
+    return true;
+  });
+}
+
+function filterToolboxContentItems(
+  contents: ToolboxContentItem[],
+  includeAdvancedBlocks: boolean,
+): ToolboxContentItem[] {
+  const filtered = contents.flatMap<ToolboxContentItem>((item) => {
+    if (item.kind === 'block') {
+      return includeAdvancedBlocks || !isAdvancedBlockType(item.type) ? [item] : [];
+    }
+
+    if (item.kind === 'category') {
+      const nextContents = pruneToolboxCategoryContents(
+        filterToolboxContentItems(item.contents, includeAdvancedBlocks),
+      );
+      return nextContents.length > 0
+        ? [{ ...item, contents: nextContents }]
+        : [];
+    }
+
+    return [item];
+  });
+
+  return pruneToolboxCategoryContents(filtered);
+}
+
+function sortToolboxCategories(categories: ToolboxCategoryConfig[]): ToolboxCategoryConfig[] {
+  const rankByName = new Map<string, number>(TOOLBOX_CATEGORY_ORDER.map((name, index) => [name, index]));
+  return [...categories].sort((left, right) => {
+    const leftRank = rankByName.get(left.name) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = rankByName.get(right.name) ?? Number.MAX_SAFE_INTEGER;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+export function getToolboxConfig(options: ToolboxConfigOptions = {}): ToolboxConfig {
+  const { includeAdvancedBlocks = true } = options;
+  const toolbox: ToolboxConfig = {
     kind: 'categoryToolbox',
     contents: [
       {
         kind: 'category',
         name: 'Events',
-        colour: '#FFAB19',
-        contents: [
+        colour: BLOCK_COLOURS.events,
+        contents: withFlyoutHeadingBottomGap([
           { kind: 'block', type: 'event_game_start' },
           { kind: 'block', type: 'event_key_pressed' },
           { kind: 'block', type: 'event_world_clicked' },
           { kind: 'block', type: 'event_clicked' },
-          { kind: 'block', type: 'event_forever' },
-          { kind: 'block', type: 'event_when_receive' },
-          { kind: 'block', type: 'control_broadcast' },
-          { kind: 'block', type: 'control_broadcast_wait' },
           {
             kind: 'block',
             type: 'event_when_touching_value',
@@ -680,14 +889,25 @@ export function getToolboxConfig(): any {
               },
             },
           },
-        ],
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
+          { kind: 'label', text: 'Messages' },
+          {
+            kind: 'button',
+            text: 'Edit Messages',
+            callbackKey: 'EDIT_MESSAGES',
+            'web-class': 'pochaBlocklyRoomyEditButton',
+          },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
+          { kind: 'block', type: 'event_when_receive' },
+          { kind: 'block', type: 'control_broadcast' },
+          { kind: 'block', type: 'control_broadcast_wait' },
+        ]),
       },
       {
         kind: 'category',
-        name: 'Actions',
-        colour: '#FFBF00',
+        name: 'Control',
+        colour: BLOCK_COLOURS.actions,
         contents: [
-          { kind: 'block', type: 'control_group_block' },
           {
             kind: 'block',
             type: 'control_wait',
@@ -702,11 +922,13 @@ export function getToolboxConfig(): any {
               TIMES: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
             }
           },
+          { kind: 'block', type: 'event_forever' },
           { kind: 'block', type: 'control_repeat_until' },
           { kind: 'block', type: 'control_while' },
           { kind: 'block', type: 'control_for_each' },
           { kind: 'block', type: 'control_current_item' },
           { kind: 'block', type: 'control_wait_until' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'controls_if' },
           {
             kind: 'block',
@@ -714,7 +936,7 @@ export function getToolboxConfig(): any {
             extraState: { hasElse: true },
           },
           { kind: 'block', type: 'control_random_choice' },
-          { kind: 'block', type: 'control_stop' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'control_switch_scene' },
           {
             kind: 'block',
@@ -733,17 +955,20 @@ export function getToolboxConfig(): any {
               },
             },
           },
+          { kind: 'block', type: 'control_stop' },
         ],
       },
       {
         kind: 'category',
         name: 'Inventory',
-        colour: '#FF8C42',
+        colour: BLOCK_COLOURS.inventory,
         contents: [
           { kind: 'block', type: 'event_any_inventory_item_dropped' },
           { kind: 'block', type: 'event_inventory_item_dropped' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'inventory_show' },
           { kind: 'block', type: 'inventory_hide' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'inventory_move_to_inventory' },
           { kind: 'block', type: 'inventory_use_dropped_item' },
         ],
@@ -751,7 +976,7 @@ export function getToolboxConfig(): any {
       {
         kind: 'category',
         name: 'Motion',
-        colour: '#4C97FF',
+        colour: BLOCK_COLOURS.motion,
         contents: [
           {
             kind: 'block',
@@ -795,8 +1020,10 @@ export function getToolboxConfig(): any {
               SPEED: { shadow: { type: 'math_number', fields: { NUM: '200' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'motion_limit_world_boundary_on' },
           { kind: 'block', type: 'motion_limit_world_boundary_off' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'motion_change_x',
@@ -830,6 +1057,7 @@ export function getToolboxConfig(): any {
               VALUE: { shadow: { type: 'math_number', fields: { NUM: '0' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'motion_point_direction',
@@ -854,7 +1082,7 @@ export function getToolboxConfig(): any {
               SECONDS: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'motion_my_x' },
           { kind: 'block', type: 'motion_my_y' },
           { kind: 'block', type: 'motion_is_moving' },
@@ -876,7 +1104,7 @@ export function getToolboxConfig(): any {
               },
             },
           },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'motion_attach_to_block',
@@ -901,10 +1129,13 @@ export function getToolboxConfig(): any {
       {
         kind: 'category',
         name: 'Looks',
-        colour: '#9966FF',
+        colour: BLOCK_COLOURS.looks,
         contents: [
           { kind: 'block', type: 'looks_show' },
           { kind: 'block', type: 'looks_hide' },
+          { kind: 'block', type: 'looks_go_to_front' },
+          { kind: 'block', type: 'looks_go_to_back' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'looks_speak',
@@ -920,6 +1151,7 @@ export function getToolboxConfig(): any {
             }
           },
           { kind: 'block', type: 'looks_stop_speaking' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'looks_target_speak',
@@ -949,8 +1181,7 @@ export function getToolboxConfig(): any {
               },
             }
           },
-          { kind: 'block', type: 'looks_go_to_front' },
-          { kind: 'block', type: 'looks_go_to_back' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'looks_set_size',
@@ -980,6 +1211,7 @@ export function getToolboxConfig(): any {
               OPACITY: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'looks_previous_costume' },
           { kind: 'block', type: 'looks_next_costume' },
           {
@@ -1004,11 +1236,12 @@ export function getToolboxConfig(): any {
       {
         kind: 'category',
         name: 'Physics',
-        colour: '#40BF4A',
+        colour: BLOCK_COLOURS.physics,
         contents: [
           { kind: 'block', type: 'physics_enable' },
           { kind: 'block', type: 'physics_disable' },
           { kind: 'block', type: 'physics_enabled' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'physics_set_velocity',
@@ -1031,6 +1264,7 @@ export function getToolboxConfig(): any {
               VY: { shadow: { type: 'math_number', fields: { NUM: '8' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'physics_set_gravity',
@@ -1052,22 +1286,15 @@ export function getToolboxConfig(): any {
               FRICTION: { shadow: { type: 'math_number', fields: { NUM: '0.1' } } }
             }
           },
-          { kind: 'block', type: 'physics_immovable' },
-          { kind: 'block', type: 'physics_ground_on' },
-          { kind: 'block', type: 'physics_ground_off' },
-          {
-            kind: 'block',
-            type: 'physics_set_ground_y',
-            inputs: {
-              Y: { shadow: { type: 'math_number', fields: { NUM: '500' } } }
-            }
-          },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
+          { kind: 'block', type: 'physics_make_dynamic' },
+          { kind: 'block', type: 'physics_make_static' },
         ],
       },
       {
         kind: 'category',
         name: 'Camera',
-        colour: '#0fBDA8',
+        colour: BLOCK_COLOURS.camera,
         contents: [
           {
             kind: 'block',
@@ -1088,6 +1315,7 @@ export function getToolboxConfig(): any {
             },
           },
           { kind: 'block', type: 'camera_stop_follow' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'camera_go_to',
@@ -1105,6 +1333,14 @@ export function getToolboxConfig(): any {
           },
           {
             kind: 'block',
+            type: 'camera_set_follow_range',
+            inputs: {
+              WIDTH: { shadow: { type: 'math_number', fields: { NUM: '100' } } },
+              HEIGHT: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
+            }
+          },
+          {
+            kind: 'block',
             type: 'camera_zoom',
             inputs: {
               ZOOM: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
@@ -1117,14 +1353,7 @@ export function getToolboxConfig(): any {
               DURATION: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          {
-            kind: 'block',
-            type: 'camera_set_follow_range',
-            inputs: {
-              WIDTH: { shadow: { type: 'math_number', fields: { NUM: '100' } } },
-              HEIGHT: { shadow: { type: 'math_number', fields: { NUM: '100' } } }
-            }
-          },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'camera_set_follow_offset',
@@ -1145,14 +1374,15 @@ export function getToolboxConfig(): any {
       {
         kind: 'category',
         name: 'Sensing',
-        colour: '#5CB1D6',
-        contents: [
+        colour: BLOCK_COLOURS.sensing,
+        contents: withFlyoutHeadingBottomGap([
           { kind: 'block', type: 'sensing_key_pressed' },
           { kind: 'block', type: 'sensing_mouse_down' },
           { kind: 'block', type: 'sensing_mouse_x' },
           { kind: 'block', type: 'sensing_mouse_y' },
           { kind: 'block', type: 'sensing_timer' },
           { kind: 'block', type: 'sensing_reset_timer' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'sensing_touching_value',
@@ -1173,6 +1403,7 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'sensing_touching_object' },
           { kind: 'block', type: 'sensing_all_touching_objects' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           { kind: 'block', type: 'sensing_my_type' },
           {
             kind: 'block',
@@ -1184,6 +1415,7 @@ export function getToolboxConfig(): any {
             },
           },
           { kind: 'block', type: 'sensing_type_literal' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'sensing_distance_to_value',
@@ -1193,28 +1425,24 @@ export function getToolboxConfig(): any {
               },
             },
           },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Targets',
-        colour: '#5CB1D6',
-        contents: [
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
+          { kind: 'label', text: 'Targets' },
           { kind: 'block', type: 'object_from_dropdown' },
           { kind: 'block', type: 'target_camera' },
           { kind: 'block', type: 'target_myself' },
           { kind: 'block', type: 'target_mouse' },
           { kind: 'block', type: 'target_ground' },
-        ],
+        ]),
       },
       {
         kind: 'category',
         name: 'Sound',
-        colour: '#CF63CF',
+        colour: BLOCK_COLOURS.sound,
         contents: [
           { kind: 'block', type: 'sound_play' },
           { kind: 'block', type: 'sound_play_until_done' },
           { kind: 'block', type: 'sound_stop_all' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'sound_set_volume',
@@ -1234,30 +1462,20 @@ export function getToolboxConfig(): any {
       {
         kind: 'category',
         name: 'Variables',
-        colour: '#FF8C1A',
-        contents: [
+        colour: BLOCK_COLOURS.variables,
+        contents: withFlyoutHeadingBottomGap([
           {
             kind: 'button',
-            text: '+ Add Variable',
-            callbackKey: 'ADD_VARIABLE',
+            text: 'Edit Variables',
+            callbackKey: 'EDIT_VARIABLES',
+            'web-class': 'pochaBlocklyRoomyEditButton',
           },
-          {
-            kind: 'button',
-            text: 'Manage Variables',
-            callbackKey: 'MANAGE_VARIABLES',
-          },
-          { kind: 'sep', gap: '16' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'label', text: 'Get Variable' },
           { kind: 'block', type: 'typed_variable_get' },
-          { kind: 'sep', gap: '8' },
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
           { kind: 'label', text: 'Set Variable' },
-          {
-            kind: 'block',
-            type: 'typed_variable_set',
-            inputs: {
-              VALUE: { shadow: { type: 'math_number', fields: { NUM: '0' } } }
-            }
-          },
+          { kind: 'block', type: 'typed_variable_set' },
           {
             kind: 'block',
             type: 'typed_variable_change',
@@ -1265,15 +1483,47 @@ export function getToolboxConfig(): any {
               DELTA: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
             }
           },
-          { kind: 'sep', gap: '8' },
-          { kind: 'label', text: 'Boolean Value' },
-          { kind: 'block', type: 'logic_boolean' },
-        ],
+          { kind: 'sep', gap: FLYOUT_SUBSECTION_HEADING_GAP },
+          { kind: 'label', text: 'Arrays' },
+          { kind: 'block', type: 'typed_array_length' },
+          {
+            kind: 'block',
+            type: 'typed_array_item_at',
+            inputs: {
+              INDEX: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          { kind: 'block', type: 'typed_array_contains' },
+          { kind: 'block', type: 'typed_array_add' },
+          {
+            kind: 'block',
+            type: 'typed_array_insert_at',
+            inputs: {
+              INDEX: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'typed_array_set_at',
+            inputs: {
+              INDEX: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          {
+            kind: 'block',
+            type: 'typed_array_remove_at',
+            inputs: {
+              INDEX: { shadow: { type: 'math_number', fields: { NUM: '1' } } }
+            }
+          },
+          { kind: 'block', type: 'typed_array_clear' },
+          { kind: 'block', type: 'array_empty' },
+        ]),
       },
       {
         kind: 'category',
         name: 'Operators',
-        colour: '#59C059',
+        colour: BLOCK_COLOURS.operators,
         contents: [
           {
             kind: 'block',
@@ -1291,6 +1541,7 @@ export function getToolboxConfig(): any {
               TO: { shadow: { type: 'math_number', fields: { NUM: '10' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'logic_compare',
@@ -1301,6 +1552,8 @@ export function getToolboxConfig(): any {
           },
           { kind: 'block', type: 'logic_operation' },
           { kind: 'block', type: 'logic_negate' },
+          { kind: 'block', type: 'logic_boolean' },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'operator_join',
@@ -1332,6 +1585,7 @@ export function getToolboxConfig(): any {
               STRING2: { shadow: { type: 'text', fields: { TEXT: 'a' } } }
             }
           },
+          { kind: 'sep', gap: FLYOUT_GROUP_BREAK_GAP },
           {
             kind: 'block',
             type: 'operator_mod',
@@ -1360,12 +1614,27 @@ export function getToolboxConfig(): any {
       {
         kind: 'category',
         name: 'Debug',
-        colour: '#888888',
+        colour: BLOCK_COLOURS.debug,
         contents: [
+          { kind: 'block', type: 'control_group_block' },
           { kind: 'block', type: 'debug_console_log' },
         ],
       },
     ],
+  };
+
+  const orderedToolbox: ToolboxConfig = {
+    ...toolbox,
+    contents: sortToolboxCategories(toolbox.contents),
+  };
+
+  if (includeAdvancedBlocks) {
+    return orderedToolbox;
+  }
+
+  return {
+    ...orderedToolbox,
+    contents: filterToolboxContentItems(orderedToolbox.contents, includeAdvancedBlocks) as ToolboxCategoryConfig[],
   };
 }
 
@@ -1418,8 +1687,8 @@ function collectToolboxBlockTypes(item: unknown, collected: Set<string>): void {
   }
 }
 
-export function getToolboxRegisteredBlockTypes(): string[] {
-  const toolbox = getToolboxConfig();
+export function getToolboxRegisteredBlockTypes(options: ToolboxConfigOptions = {}): string[] {
+  const toolbox = getToolboxConfig(options);
   const collected = new Set<string>();
   collectToolboxBlockTypes(toolbox, collected);
   return Array.from(collected).sort((a, b) => a.localeCompare(b));
@@ -1429,83 +1698,77 @@ function registerCustomBlocks() {
   // Events
   Blockly.Blocks['event_game_start'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🏁 When I start');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventStart', 'When I start')
+        .appendField('When I start');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when this object starts (including spawned objects)');
     }
   };
 
   Blockly.Blocks['event_key_pressed'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🔑 when')
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventKey', 'when')
+        .appendField('when')
         .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
         .appendField('is pressed');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when a key is pressed');
     }
   };
 
   Blockly.Blocks['event_clicked'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🖱️ when this is clicked');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventClick', 'when this is clicked')
+        .appendField('when this is clicked');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when this object is clicked');
     }
   };
 
   Blockly.Blocks['event_world_clicked'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🌎 when world is clicked');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventWorld', 'when world is clicked')
+        .appendField('when world is clicked');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when the world is clicked, including clicks on objects but not UI.');
     }
   };
 
   Blockly.Blocks['event_inventory_item_dropped'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🎒 when inventory item')
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventInventory', 'when inventory item')
+        .appendField('when inventory item')
         .appendField(new PreservingFieldDropdown(getInventoryReferenceDropdownOptions), 'ITEM')
         .appendField('is dropped on me');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Runs when the selected inventory item is dropped on this object.');
     }
   };
 
   Blockly.Blocks['event_any_inventory_item_dropped'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🎒 when any inventory item is dropped');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventInventory', 'when any inventory item is dropped')
+        .appendField('when any inventory item is dropped');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Runs whenever any inventory item is dropped, even if it is not over a valid target.');
     }
   };
 
   Blockly.Blocks['event_forever'] = {
     init: function() {
-      this.appendDummyInput()
-        .appendField('🔄 forever');
+      appendBlocklyInlineIcon(this.appendDummyInput(), 'blocklyEventForever', 'forever')
+        .appendField('forever');
       this.appendStatementInput('DO')
         .setCheck(null);
       this.setPreviousStatement(true, null);
       // No next statement - forever loops don't end
-      this.setColour('#FFAB19');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Runs continuously');
     }
   };
@@ -1974,12 +2237,59 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('costume #');
       this.setOutput(true, 'Number');
-      this.setColour('#9966FF');
+      this.setColour(BLOCK_COLOURS.looks);
       this.setTooltip('Current costume number');
     }
   };
 
   // Control
+  const syncIfElseInput = (block: Blockly.Block, hasElse: boolean) => {
+    const elseInput = block.getInput('ELSE');
+    if (hasElse && !elseInput) {
+      block.appendStatementInput('ELSE')
+        .setCheck(null)
+        .appendField('else');
+      return;
+    }
+
+    if (!hasElse && elseInput) {
+      block.removeInput('ELSE', true);
+    }
+  };
+
+  Blockly.Blocks['controls_if'] = {
+    init: function() {
+      this.appendValueInput('IF0')
+        .setCheck('Boolean')
+        .appendField('if');
+      this.appendStatementInput('DO0')
+        .setCheck(null)
+        .appendField('do');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.actions);
+      this.setTooltip('If the condition is true, run the blocks inside.');
+      syncIfElseInput(this, false);
+    },
+    mutationToDom: function() {
+      const mutation = Blockly.utils.xml.createElement('mutation');
+      mutation.setAttribute('elseif', '0');
+      mutation.setAttribute('else', this.getInput('ELSE') ? '1' : '0');
+      return mutation;
+    },
+    domToMutation: function(xmlElement: Element) {
+      syncIfElseInput(this, xmlElement.getAttribute('else') === '1');
+    },
+    saveExtraState: function() {
+      return {
+        hasElse: !!this.getInput('ELSE'),
+      };
+    },
+    loadExtraState: function(state: { hasElse?: boolean } | null | undefined) {
+      syncIfElseInput(this, !!state?.hasElse);
+    },
+  };
+
   const clampRandomChoiceBranchCount = (rawCount: number): number => {
     if (!Number.isFinite(rawCount)) return 2;
     return Math.max(2, Math.min(10, Math.floor(rawCount)));
@@ -2020,7 +2330,7 @@ function registerCustomBlocks() {
       syncRandomChoiceInputs(this, 2);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Randomly runs one of the branches');
     },
     mutationToDom: function() {
@@ -2063,7 +2373,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Wait for some time');
     }
   };
@@ -2080,7 +2390,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Repeat some number of times');
     }
   };
@@ -2095,7 +2405,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Repeat until condition is true');
     }
   };
@@ -2110,7 +2420,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Repeat while condition is true');
     }
   };
@@ -2131,13 +2441,12 @@ function registerCustomBlocks() {
 
       this.appendDummyInput()
         .appendField(toggleField, 'TOGGLE')
-        .appendField('group (visual only)')
         .appendField(new Blockly.FieldTextInput('group'), 'NAME');
       this.appendStatementInput('DO')
         .setCheck(null);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour(GROUP_BLOCK_COLOUR);
+      this.setColour(BLOCK_COLOURS.debug);
       this.setTooltip('Visually group blocks with a name. Does not affect behavior.');
       setTimeout(() => {
         syncGroupBlockToggleIcon(this);
@@ -2186,7 +2495,7 @@ function registerCustomBlocks() {
         .setCheck(null);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Run the code inside for each item in the list. Use "current item" block to refer to each item.');
     }
   };
@@ -2196,7 +2505,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('current item');
       this.setOutput(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Use inside "for each" loop to get the current item');
     }
   };
@@ -2209,7 +2518,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Wait until condition is true');
     }
   };
@@ -2223,7 +2532,7 @@ function registerCustomBlocks() {
           ['this script', 'THIS'],
         ]), 'STOP_OPTION');
       this.setPreviousStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Stop scripts');
     }
   };
@@ -2236,7 +2545,7 @@ function registerCustomBlocks() {
         .appendField(new Blockly.FieldDropdown(getKeyDropdownOptions()), 'KEY')
         .appendField('pressed?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is a key pressed?');
     }
   };
@@ -2246,7 +2555,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse down?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is mouse button pressed?');
     }
   };
@@ -2256,7 +2565,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse x');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Mouse x position');
     }
   };
@@ -2266,7 +2575,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse y');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Mouse y position');
     }
   };
@@ -2276,7 +2585,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('timer');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Seconds since game start (2 decimal places)');
     }
   };
@@ -2287,7 +2596,7 @@ function registerCustomBlocks() {
         .appendField('reset timer');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Reset timer to 0 seconds');
     }
   };
@@ -2299,7 +2608,7 @@ function registerCustomBlocks() {
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET')
         .appendField('?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching something?');
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
@@ -2316,7 +2625,7 @@ function registerCustomBlocks() {
         .appendField('?');
       this.setInputsInline(true);
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching the selected target?');
     }
   };
@@ -2330,7 +2639,7 @@ function registerCustomBlocks() {
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION')
         .appendField('?');
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching target from a specific direction?');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
@@ -2348,7 +2657,7 @@ function registerCustomBlocks() {
         .appendField('?');
       this.setInputsInline(true);
       this.setOutput(true, 'Boolean');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Is this touching target from a specific direction?');
     }
   };
@@ -2359,7 +2668,7 @@ function registerCustomBlocks() {
         .appendField('distance to')
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(false, true)), 'TARGET');
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Distance to target');
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
@@ -2374,7 +2683,7 @@ function registerCustomBlocks() {
         .appendField('distance to');
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Distance to target');
     }
   };
@@ -2384,7 +2693,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField("object I'm touching");
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Returns the object this sprite is touching, or null if not touching anything');
     }
   };
@@ -2395,7 +2704,7 @@ function registerCustomBlocks() {
         .appendField('object')
         .appendField(new PreservingFieldDropdown(getObjectDropdownOptions), 'TARGET');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Pick an object from a dropdown');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
@@ -2407,7 +2716,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('mouse pointer');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Mouse pointer target');
     }
   };
@@ -2417,7 +2726,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('myself');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Current object target');
     }
   };
@@ -2427,7 +2736,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('camera');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Camera target');
     }
   };
@@ -2437,7 +2746,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('ground collider');
       this.setOutput(true, 'Object');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Ground collision target');
     }
   };
@@ -2447,7 +2756,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField('my type');
       this.setOutput(true, 'String');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Get this object type token');
     }
   };
@@ -2460,7 +2769,7 @@ function registerCustomBlocks() {
         .appendField("'s type");
       this.setInputsInline(true);
       this.setOutput(true, 'String');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip("Get another object's type token");
     }
   };
@@ -2471,7 +2780,7 @@ function registerCustomBlocks() {
         .appendField('type')
         .appendField(new PreservingFieldDropdown(getComponentTypeDropdownOptions), 'TYPE');
       this.setOutput(true, 'String');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Component type literal for comparison');
     }
   };
@@ -2481,7 +2790,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField("all objects I'm touching");
       this.setOutput(true, 'Array');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.sensing);
       this.setTooltip('Returns a list of all objects that I\'m currently touching');
     }
   };
@@ -2494,7 +2803,7 @@ function registerCustomBlocks() {
         .appendField("'s x");
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.motion);
       this.setTooltip("Get an object's x position");
     }
   };
@@ -2507,7 +2816,7 @@ function registerCustomBlocks() {
         .appendField("'s y");
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.motion);
       this.setTooltip("Get an object's y position");
     }
   };
@@ -2520,7 +2829,7 @@ function registerCustomBlocks() {
         .appendField("'s costume #");
       this.setInputsInline(true);
       this.setOutput(true, 'Number');
-      this.setColour('#5CB1D6');
+      this.setColour(BLOCK_COLOURS.looks);
       this.setTooltip("Get an object's current costume number");
     }
   };
@@ -2639,14 +2948,25 @@ function registerCustomBlocks() {
     }
   };
 
-  Blockly.Blocks['physics_immovable'] = {
+  Blockly.Blocks['physics_make_dynamic'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('make immovable');
+        .appendField('make myself dynamic');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
-      this.setTooltip('Make this object immovable (like a platform)');
+      this.setTooltip('Make this object respond to forces and collisions as a dynamic physics body');
+    }
+  };
+
+  Blockly.Blocks['physics_make_static'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('make myself static');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour('#40BF4A');
+      this.setTooltip('Make this object a static physics body, like a platform');
     }
   };
 
@@ -2669,19 +2989,6 @@ function registerCustomBlocks() {
       this.setNextStatement(true, null);
       this.setColour('#40BF4A');
       this.setTooltip('Disable ground collision for this object');
-    }
-  };
-
-  Blockly.Blocks['physics_set_ground_y'] = {
-    init: function() {
-      this.appendValueInput('Y')
-        .setCheck('Number')
-        .appendField('set ground to y:');
-      this.setInputsInline(true);
-      this.setPreviousStatement(true, null);
-      this.setNextStatement(true, null);
-      this.setColour('#40BF4A');
-      this.setTooltip('Set the Y position of the ground');
     }
   };
 
@@ -2917,31 +3224,23 @@ function registerCustomBlocks() {
   // Advanced events
   Blockly.Blocks['event_when_receive'] = {
     init: function() {
-      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
-      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
-      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
-
       this.appendDummyInput()
         .appendField('when I receive')
-        .appendField(messageFieldRef, 'MESSAGE');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
+        .appendField(new PreservingMessageFieldDropdown(getMessageDropdownOptions), 'MESSAGE');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Runs when message is received');
-      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
-      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
   Blockly.Blocks['event_when_touching'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('when touching')
+        .appendField('when I touch')
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
-      this.setTooltip('Runs when touching target');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
+      this.setTooltip('Runs once when this object starts touching target');
       // Add validator for pick from stage
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
@@ -2952,26 +3251,24 @@ function registerCustomBlocks() {
     init: function() {
       this.appendValueInput('TARGET')
         .setCheck('Object')
-        .appendField('when touching');
+        .appendField('when I touch');
       this.setInputsInline(true);
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
-      this.setTooltip('Runs when touching target');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
+      this.setTooltip('Runs once when this object starts touching target');
     }
   };
 
   Blockly.Blocks['event_when_touching_direction'] = {
     init: function() {
       this.appendDummyInput()
-        .appendField('when touching')
+        .appendField('when I touch')
         .appendField(new PreservingFieldDropdown(getTargetDropdownOptions(true, false, true, true)), 'TARGET')
         .appendField('from')
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
-      this.setTooltip('Runs when touching target from a specific direction');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
+      this.setTooltip('Runs once when this object starts touching target from a specific direction');
       const targetField = this.getField('TARGET') as Blockly.FieldDropdown;
       if (targetField) targetField.setValidator(createObjectPickerValidator(true));
     }
@@ -2981,15 +3278,14 @@ function registerCustomBlocks() {
     init: function() {
       this.appendValueInput('TARGET')
         .setCheck('Object')
-        .appendField('when touching');
+        .appendField('when I touch');
       this.setInputsInline(true);
       this.appendDummyInput()
         .appendField('from')
         .appendField(new Blockly.FieldDropdown(getTouchDirectionOptions()), 'DIRECTION');
-      this.appendStatementInput('NEXT')
-        .setCheck(null);
-      this.setColour('#FFAB19');
-      this.setTooltip('Runs when touching target from a specific direction');
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.events);
+      this.setTooltip('Runs once when this object starts touching target from a specific direction');
     }
   };
 
@@ -3006,7 +3302,7 @@ function registerCustomBlocks() {
           ['restart', 'RESTART'],
         ]), 'MODE');
       this.setPreviousStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Switch to another scene (resume = continue where you left off, restart = start fresh)');
     }
   };
@@ -3026,7 +3322,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Spawn a component type at the specified position');
     }
   };
@@ -3039,7 +3335,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.actions);
       this.setTooltip('Delete the specified object');
     }
   };
@@ -3050,7 +3346,7 @@ function registerCustomBlocks() {
         .appendField('move myself to inventory');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Remove this object from the scene and put it into the shared inventory.');
     }
   };
@@ -3061,7 +3357,7 @@ function registerCustomBlocks() {
         .appendField('show inventory');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Show the inventory UI.');
     }
   };
@@ -3072,7 +3368,7 @@ function registerCustomBlocks() {
         .appendField('hide inventory');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Hide the inventory UI.');
     }
   };
@@ -3083,45 +3379,33 @@ function registerCustomBlocks() {
         .appendField('use the dropped item');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.inventory);
       this.setTooltip('Confirm the dropped inventory item was used and remove it from inventory.');
     }
   };
 
   Blockly.Blocks['control_broadcast'] = {
     init: function() {
-      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
-      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
-      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
-
       this.appendDummyInput()
         .appendField('broadcast')
-        .appendField(messageFieldRef, 'MESSAGE');
+        .appendField(new PreservingMessageFieldDropdown(getMessageDropdownOptions), 'MESSAGE');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Send a message to all objects');
-      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
-      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
   Blockly.Blocks['control_broadcast_wait'] = {
     init: function() {
-      let messageFieldRef: PreservingMessageFieldDropdown | null = null;
-      const messageOptions = () => getMessageDropdownOptions(messageFieldRef?.getValue() ?? null);
-      messageFieldRef = new PreservingMessageFieldDropdown(messageOptions);
-
       this.appendDummyInput()
         .appendField('broadcast')
-        .appendField(messageFieldRef, 'MESSAGE')
+        .appendField(new PreservingMessageFieldDropdown(getMessageDropdownOptions), 'MESSAGE')
         .appendField('and wait');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FFBF00');
+      this.setColour(BLOCK_COLOURS.events);
       this.setTooltip('Send a message and wait');
-      const messageField = this.getField('MESSAGE') as Blockly.FieldDropdown;
-      if (messageField) messageField.setValidator(createMessageDropdownValidator());
     }
   };
 
@@ -3429,7 +3713,7 @@ function registerCustomBlocks() {
       this.appendDummyInput()
         .appendField(new VariableFieldDropdown(() => getVariableDropdownOptions()), 'VAR');
       this.setOutput(true, null); // Allow any type until we resolve variable type
-      this.setColour('#FF8C1A');
+      this.setColour(BLOCK_COLOURS.variables);
       this.setTooltip('Get the value of a variable');
     },
     onchange: function(event: Blockly.Events.Abstract) {
@@ -3450,7 +3734,7 @@ function registerCustomBlocks() {
         .appendField('to');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FF8C1A');
+      this.setColour(BLOCK_COLOURS.variables);
       this.setTooltip('Set the value of a variable');
     },
     onchange: function(event: Blockly.Events.Abstract) {
@@ -3471,7 +3755,7 @@ function registerCustomBlocks() {
         .appendField('by');
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#FF8C1A');
+      this.setColour(BLOCK_COLOURS.variables);
       this.setTooltip('Change a numeric variable by an amount');
     },
     onchange: function(event: Blockly.Events.Abstract) {
@@ -3480,6 +3764,171 @@ function registerCustomBlocks() {
           event.type === Blockly.Events.BLOCK_MOVE) {
         validateNumericInput(this);
       }
+    }
+  };
+
+  Blockly.Blocks['typed_array_length'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('length of')
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR');
+      this.setOutput(true, 'Number');
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Get the number of items in an array variable');
+    }
+  };
+
+  Blockly.Blocks['typed_array_item_at'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('item from')
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR');
+      this.appendValueInput('INDEX')
+        .setCheck('Number')
+        .appendField('at');
+      this.setInputsInline(true);
+      this.setOutput(true, null);
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Get an item from an array variable at a 1-based position');
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (event.type === Blockly.Events.BLOCK_CHANGE ||
+          event.type === Blockly.Events.BLOCK_CREATE ||
+          event.type === Blockly.Events.BLOCK_MOVE) {
+        updateVariableBlockAppearance(this);
+      }
+    }
+  };
+
+  Blockly.Blocks['typed_array_contains'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR')
+        .appendField('contains');
+      this.appendValueInput('VALUE');
+      this.appendDummyInput()
+        .appendField('?');
+      this.setInputsInline(true);
+      this.setOutput(true, 'Boolean');
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Check whether an array variable contains a value');
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (event.type === Blockly.Events.BLOCK_CHANGE ||
+          event.type === Blockly.Events.BLOCK_CREATE ||
+          event.type === Blockly.Events.BLOCK_MOVE) {
+        validateArrayValueType(this, 'VALUE');
+      }
+    }
+  };
+
+  Blockly.Blocks['typed_array_add'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('add to')
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR');
+      this.appendValueInput('VALUE')
+        .appendField('item');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Add an item to the end of an array variable');
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (event.type === Blockly.Events.BLOCK_CHANGE ||
+          event.type === Blockly.Events.BLOCK_CREATE ||
+          event.type === Blockly.Events.BLOCK_MOVE) {
+        validateArrayValueType(this, 'VALUE');
+      }
+    }
+  };
+
+  Blockly.Blocks['typed_array_insert_at'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('insert into')
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR');
+      this.appendValueInput('INDEX')
+        .setCheck('Number')
+        .appendField('at');
+      this.appendValueInput('VALUE')
+        .appendField('item');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Insert an item into an array variable at a 1-based position');
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (event.type === Blockly.Events.BLOCK_CHANGE ||
+          event.type === Blockly.Events.BLOCK_CREATE ||
+          event.type === Blockly.Events.BLOCK_MOVE) {
+        validateArrayValueType(this, 'VALUE');
+      }
+    }
+  };
+
+  Blockly.Blocks['typed_array_set_at'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('replace in')
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR');
+      this.appendValueInput('INDEX')
+        .setCheck('Number')
+        .appendField('at');
+      this.appendValueInput('VALUE')
+        .appendField('with');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Replace an item in an array variable at a 1-based position');
+    },
+    onchange: function(event: Blockly.Events.Abstract) {
+      if (event.type === Blockly.Events.BLOCK_CHANGE ||
+          event.type === Blockly.Events.BLOCK_CREATE ||
+          event.type === Blockly.Events.BLOCK_MOVE) {
+        validateArrayValueType(this, 'VALUE');
+      }
+    }
+  };
+
+  Blockly.Blocks['typed_array_remove_at'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('remove from')
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR');
+      this.appendValueInput('INDEX')
+        .setCheck('Number')
+        .appendField('at');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Remove an item from an array variable at a 1-based position');
+    }
+  };
+
+  Blockly.Blocks['typed_array_clear'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('clear')
+        .appendField(new VariableFieldDropdown(() => getArrayVariableDropdownOptions()), 'VAR');
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('Remove every item from an array variable');
+    }
+  };
+
+  Blockly.Blocks['array_empty'] = {
+    init: function() {
+      this.appendDummyInput()
+        .appendField('empty array');
+      this.setOutput(true, 'Array');
+      this.setColour(BLOCK_COLOURS.variables);
+      this.setTooltip('An empty array');
     }
   };
 
@@ -3493,7 +3942,7 @@ function registerCustomBlocks() {
           ['false', 'FALSE']
         ]), 'BOOL');
       this.setOutput(true, 'Boolean'); // Zelos renders Boolean as hexagonal/diamond
-      this.setColour('#59C059');
+      this.setColour(BLOCK_COLOURS.operators);
       this.setTooltip('A boolean value (true or false)');
     }
   };
@@ -3506,7 +3955,7 @@ function registerCustomBlocks() {
       this.setInputsInline(true);
       this.setPreviousStatement(true, null);
       this.setNextStatement(true, null);
-      this.setColour('#888888');
+      this.setColour(BLOCK_COLOURS.debug);
       this.setTooltip('Log a value to the debug console');
     }
   };
@@ -3550,42 +3999,71 @@ function getAllVariables(): Variable[] {
   return variables;
 }
 
-// Get dropdown options for all variables
-function getVariableDropdownOptions(): Array<[string, string]> {
+function getVariableDisplayLabels(variables: readonly Variable[]): Map<string, string> {
+  return buildVariableDisplayLabelMap(variables, {
+    globalContextLabel: 'project',
+    localContextLabel: 'here',
+  });
+}
+
+function getVariableDisplayLabel(variable: Variable, labels?: Map<string, string>): string {
+  return labels?.get(variable.id) ?? (normalizeVariableName(variable.name) || 'variable');
+}
+
+function getVariableDisplayLabelById(variableId: string): string | null {
+  if (!variableId) return null;
   const variables = getAllVariables();
+  const variable = variables.find((entry) => entry.id === variableId);
+  if (!variable) return null;
+  const labels = getVariableDisplayLabels(variables);
+  return getVariableDisplayLabel(variable, labels);
+}
+
+function isArrayVariable(variable: Variable | undefined): boolean {
+  return !!variable && normalizeVariableCardinality(variable.cardinality) === 'array';
+}
+
+function isNumericSingleVariable(variable: Variable | undefined): boolean {
+  return !!variable &&
+    !isArrayVariable(variable) &&
+    variable.type === 'number';
+}
+
+function getVariableTypeToken(type: VariableType, cardinality?: Variable['cardinality']): string {
+  const suffix = normalizeVariableCardinality(cardinality) === 'array' ? '[]' : '';
+
+  switch (type) {
+    case 'string': return `Text${suffix}`;
+    case 'number': return `Number${suffix}`;
+    case 'boolean': return `Bool${suffix}`;
+  }
+}
+
+function getFilteredVariableDropdownOptions(
+  predicate: (variable: Variable) => boolean,
+  emptyLabel: string,
+): Array<[string, string]> {
+  const variables = getAllVariables().filter(predicate);
   if (variables.length === 0) {
-    return [['(no variables)', '']];
+    return [[emptyLabel, '']];
   }
 
-  return variables.map(v => {
-    const scopePrefix = v.scope === 'local' ? '(local) ' : '';
-    const typeIcon = getTypeIcon(v.type);
-    return [`${scopePrefix}${typeIcon} ${v.name}`, v.id];
-  });
+  const labels = getVariableDisplayLabels(variables);
+  return variables.map((variable) => [getVariableDisplayLabel(variable, labels), variable.id]);
+}
+
+// Get dropdown options for all variables
+function getVariableDropdownOptions(): Array<[string, string]> {
+  return getFilteredVariableDropdownOptions(() => true, '(no variables)');
 }
 
 // Get dropdown options for numeric variables only
 function getNumericVariableDropdownOptions(): Array<[string, string]> {
-  const variables = getAllVariables().filter(v => v.type === 'integer' || v.type === 'float');
-  if (variables.length === 0) {
-    return [['(no numeric variables)', '']];
-  }
-
-  return variables.map(v => {
-    const scopePrefix = v.scope === 'local' ? '(local) ' : '';
-    const typeIcon = getTypeIcon(v.type);
-    return [`${scopePrefix}${typeIcon} ${v.name}`, v.id];
-  });
+  return getFilteredVariableDropdownOptions(isNumericSingleVariable, '(no matching variables)');
 }
 
-// Get icon for variable type
-function getTypeIcon(type: VariableType): string {
-  switch (type) {
-    case 'string': return '📝';
-    case 'integer': return '#';
-    case 'float': return '#.#';
-    case 'boolean': return '◇';
-  }
+function getArrayVariableDropdownOptions(): Array<[string, string]> {
+  return getFilteredVariableDropdownOptions(isArrayVariable, '(no matching variables)');
 }
 
 // Get variable by ID
@@ -3608,16 +4086,62 @@ function getZelosShapes(block: Blockly.Block): { HEXAGONAL: number; ROUND: numbe
   };
 }
 
-function setVariableOutputShape(block: Blockly.Block, variable?: Variable) {
+function getScalarOutputCheck(type: VariableType): string {
+  switch (type) {
+    case 'boolean':
+      return 'Boolean';
+    case 'string':
+      return 'String';
+    case 'number':
+      return 'Number';
+  }
+}
+
+function getVariableOutputCheck(variable: Variable | undefined): string | null {
+  if (!variable) return null;
+  return isArrayVariable(variable) ? 'Array' : getScalarOutputCheck(variable.type);
+}
+
+function getVariableItemOutputCheck(variable: Variable | undefined): string | null {
+  if (!variable) return null;
+  return getScalarOutputCheck(variable.type);
+}
+
+function isCheckCompatible(desiredCheck: string | null, candidateChecks: string[] | null | undefined): boolean {
+  return !desiredCheck || !candidateChecks || candidateChecks.includes(desiredCheck);
+}
+
+function setVariableOutputShape(block: Blockly.Block, desiredCheck: string | null) {
   const shapes = getZelosShapes(block);
   if (!shapes) return;
-  if (variable?.type === 'boolean') {
+  if (desiredCheck === 'Boolean') {
     block.setOutputShape(shapes.HEXAGONAL);
-  } else if (variable) {
+  } else if (desiredCheck) {
     block.setOutputShape(shapes.ROUND);
   } else {
     block.setOutputShape(null);
   }
+}
+
+function applyInputCheck(input: Blockly.Input | null, desiredCheck: string | null) {
+  const connection = input?.connection;
+  if (!connection) {
+    return;
+  }
+
+  if (!connection.isConnected()) {
+    connection.setCheck(desiredCheck);
+    return;
+  }
+
+  const connectedChecks = connection.targetConnection?.getCheck();
+  if (isCheckCompatible(desiredCheck, connectedChecks)) {
+    connection.setCheck(desiredCheck);
+  }
+}
+
+function getExpectedVariableValueLabel(variable: Variable, itemOnly: boolean = false): string {
+  return getVariableTypeToken(variable.type, itemOnly ? 'single' : variable.cardinality);
 }
 
 export function setTypedVariableLoading(isLoading: boolean) {
@@ -3638,46 +4162,34 @@ export function updateVariableBlockAppearance(block: Blockly.Block, force: boole
   const output = block.outputConnection;
   if (!output) return;
 
-  let desiredCheck: string | null = null;
-  if (variable) {
-    if (variable.type === 'boolean') desiredCheck = 'Boolean';
-    else if (variable.type === 'string') desiredCheck = 'String';
-    else desiredCheck = 'Number';
-  }
+  const desiredCheck = block.type === 'typed_array_item_at'
+    ? getVariableItemOutputCheck(variable)
+    : getVariableOutputCheck(variable);
 
   if (!output.isConnected()) {
     output.setCheck(desiredCheck);
   } else {
     const targetCheck = output.targetConnection?.getCheck();
-    const compatible = !desiredCheck || !targetCheck || targetCheck.includes(desiredCheck);
+    const compatible = isCheckCompatible(desiredCheck, targetCheck);
     if (compatible) {
       output.setCheck(desiredCheck);
     }
-    console.log('[Blockly][TypedVar][Connected]', {
-      blockId: block.id,
-      varId,
-      varType: variable?.type,
-      outputCheck: output.getCheck(),
-      targetCheck,
-      desiredCheck,
-      compatible,
-    });
   }
 
   // Update shape without affecting connections
-  setVariableOutputShape(block, variable);
+  setVariableOutputShape(block, desiredCheck);
 }
 
 function getTypedVariableOutputCheck(block: Blockly.Block): string | null {
   const variable = getVariableById(block.getFieldValue('VAR'));
-  if (!variable) return null;
-  if (variable.type === 'boolean') return 'Boolean';
-  if (variable.type === 'string') return 'String';
-  return 'Number';
+  if (block.type === 'typed_array_item_at') {
+    return getVariableItemOutputCheck(variable);
+  }
+  return getVariableOutputCheck(variable);
 }
 
 function getOutputChecks(block: Blockly.Block): string[] | null {
-  if (block.type === 'typed_variable_get') {
+  if (block.type === 'typed_variable_get' || block.type === 'typed_array_item_at') {
     const typedCheck = getTypedVariableOutputCheck(block);
     return typedCheck ? [typedCheck] : null;
   }
@@ -3685,20 +4197,16 @@ function getOutputChecks(block: Blockly.Block): string[] | null {
   return checks && checks.length > 0 ? checks : null;
 }
 
-function isBlockCompatibleWithExpectedType(expectedType: VariableType, valueBlock: Blockly.Block): boolean {
+function isBlockCompatibleWithCheck(expectedCheck: string | null, valueBlock: Blockly.Block): boolean {
   const outputChecks = getOutputChecks(valueBlock);
-  if (!outputChecks) {
-    // Unknown/any output type: don't block the user with a false warning.
+  if (!outputChecks || !expectedCheck) {
     return true;
   }
+  return outputChecks.includes(expectedCheck);
+}
 
-  if (expectedType === 'integer' || expectedType === 'float') {
-    return outputChecks.includes('Number');
-  }
-  if (expectedType === 'boolean') {
-    return outputChecks.includes('Boolean');
-  }
-  return outputChecks.includes('String');
+function isBlockCompatibleWithExpectedType(expectedType: VariableType, valueBlock: Blockly.Block): boolean {
+  return isBlockCompatibleWithCheck(getScalarOutputCheck(expectedType), valueBlock);
 }
 
 // Validate type for variable set block
@@ -3707,69 +4215,97 @@ function validateVariableType(block: Blockly.Block) {
   const variable = getVariableById(varId);
   if (!variable) return;
 
-  const valueBlock = block.getInputTargetBlock('VALUE');
-  if (!valueBlock) return;
+  applyInputCheck(block.getInput('VALUE'), getVariableOutputCheck(variable));
 
-  const isTypeValid = checkTypeCompatibility(variable.type, valueBlock);
+  const valueBlock = block.getInputTargetBlock('VALUE');
+  if (!valueBlock) {
+    block.setWarningText(null);
+    block.setColour(BLOCK_COLOURS.variables);
+    return;
+  }
+
+  const expectedCheck = getVariableOutputCheck(variable);
+  const isTypeValid = isBlockCompatibleWithCheck(expectedCheck, valueBlock);
 
   // Visual feedback for type errors
   if (!isTypeValid) {
-    block.setWarningText(`Type mismatch: expected ${variable.type}`);
+    block.setWarningText(`Type mismatch: expected ${getExpectedVariableValueLabel(variable)}`);
     block.setColour('#CC0000'); // Red for error
   } else {
     block.setWarningText(null);
-    block.setColour('#FF8C1A'); // Normal color
+    block.setColour(BLOCK_COLOURS.variables); // Normal color
+  }
+}
+
+function validateArrayValueType(block: Blockly.Block, inputName: string) {
+  const varId = block.getFieldValue('VAR');
+  const variable = getVariableById(varId);
+  if (!variable) return;
+
+  applyInputCheck(block.getInput(inputName), getVariableItemOutputCheck(variable));
+
+  const valueBlock = block.getInputTargetBlock(inputName);
+  if (!valueBlock) {
+    block.setWarningText(null);
+    block.setColour(BLOCK_COLOURS.variables);
+    return;
+  }
+
+  const expectedCheck = getVariableItemOutputCheck(variable);
+  const isTypeValid = isBlockCompatibleWithCheck(expectedCheck, valueBlock);
+
+  if (!isTypeValid) {
+    block.setWarningText(`Type mismatch: expected ${getExpectedVariableValueLabel(variable, true)}`);
+    block.setColour('#CC0000');
+  } else {
+    block.setWarningText(null);
+    block.setColour(BLOCK_COLOURS.variables);
   }
 }
 
 // Validate numeric input for change block
 function validateNumericInput(block: Blockly.Block) {
-  const valueBlock = block.getInputTargetBlock('DELTA');
-  if (!valueBlock) return;
+  applyInputCheck(block.getInput('DELTA'), 'Number');
 
-  const isNumeric = isBlockCompatibleWithExpectedType('float', valueBlock);
+  const valueBlock = block.getInputTargetBlock('DELTA');
+  if (!valueBlock) {
+    block.setWarningText(null);
+    block.setColour(BLOCK_COLOURS.variables);
+    return;
+  }
+
+  const isNumeric = isBlockCompatibleWithExpectedType('number', valueBlock);
 
   if (!isNumeric) {
     block.setWarningText('Expected a number');
     block.setColour('#CC0000');
   } else {
     block.setWarningText(null);
-    block.setColour('#FF8C1A');
+    block.setColour(BLOCK_COLOURS.variables);
   }
 }
 
-// Check if a block's output is compatible with expected type
-function checkTypeCompatibility(expectedType: VariableType, valueBlock: Blockly.Block): boolean {
-  return isBlockCompatibleWithExpectedType(expectedType, valueBlock);
-}
-
 // Callbacks for variable category actions - set externally by BlocklyEditor
-let addVariableCallback: (() => void) | null = null;
-let manageVariablesCallback: (() => void) | null = null;
-
-export function setAddVariableCallback(callback: (() => void) | null) {
-  addVariableCallback = callback;
+let editVariablesCallback: (() => void) | null = null;
+export function setEditVariablesCallback(callback: (() => void) | null) {
+  editVariablesCallback = callback;
 }
 
-export function setManageVariablesCallback(callback: (() => void) | null) {
-  manageVariablesCallback = callback;
-}
-
-export function setMessageDialogCallback(callback: MessageDialogCallback | null) {
-  messageDialogCallback = callback;
+export function setEditMessagesToolbarCallback(callback: (() => void) | null) {
+  editMessagesToolbarCallback = callback;
 }
 
 // Register button callbacks for the Variables category
 export function registerTypedVariablesCategory(workspace: Blockly.WorkspaceSvg) {
-  workspace.registerButtonCallback('ADD_VARIABLE', () => {
-    if (addVariableCallback) {
-      addVariableCallback();
+  workspace.registerButtonCallback('EDIT_MESSAGES', () => {
+    if (editMessagesToolbarCallback) {
+      editMessagesToolbarCallback();
     }
   });
 
-  workspace.registerButtonCallback('MANAGE_VARIABLES', () => {
-    if (manageVariablesCallback) {
-      manageVariablesCallback();
+  workspace.registerButtonCallback('EDIT_VARIABLES', () => {
+    if (editVariablesCallback) {
+      editVariablesCallback();
     }
   });
 }

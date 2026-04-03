@@ -933,7 +933,22 @@ export class RuntimeSprite {
     }
   }
 
-  makeImmovable(): void {
+  makeDynamic(): void {
+    if (this._stopped) return;
+    const body = this.getMatterBody();
+    if (body) {
+      this.scene.matter.body.setStatic(body, false);
+      const allowRotation = this.container.getData('allowRotation') ?? false;
+      if (!allowRotation) {
+        this.scene.matter.body.setInertia(body, Infinity);
+      }
+      debugLog('action', `${this.name}.makeDynamic()`);
+    } else {
+      debugLog('error', `${this.name}.makeDynamic: No physics body found.`);
+    }
+  }
+
+  makeStatic(): void {
     if (this._stopped) return;
     const body = this.getMatterBody();
     if (body) {
@@ -949,10 +964,14 @@ export class RuntimeSprite {
         x: this.container.x + offsetX,
         y: this.container.y + offsetY
       });
-      debugLog('action', `${this.name}.makeImmovable()`);
+      debugLog('action', `${this.name}.makeStatic()`);
     } else {
-      debugLog('error', `${this.name}.makeImmovable: No physics body found.`);
+      debugLog('error', `${this.name}.makeStatic: No physics body found.`);
     }
+  }
+
+  makeImmovable(): void {
+    this.makeStatic();
   }
 
   /**

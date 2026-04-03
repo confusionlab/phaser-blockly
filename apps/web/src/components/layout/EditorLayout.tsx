@@ -36,10 +36,14 @@ import {
 import { useProjectLease } from '@/hooks/useProjectLease';
 import { Button } from '@/components/ui/button';
 import { assistantFeatureFlags } from '@/lib/assistant/config';
-import { shouldTreatOpenedProjectAsCloudSaved } from '@/lib/cloudProjectState';
+import {
+  deriveEditorSaveControlState,
+  shouldTreatOpenedProjectAsCloudSaved,
+} from '@/lib/cloudProjectState';
 import { tryStartPlaying } from '@/lib/playStartGuard';
 import { getSceneObjectsInLayerOrder } from '@/utils/layerTree';
 import { isBlocklyShortcutTarget, isSceneObjectShortcutSurfaceTarget, isTextEntryTarget } from '@/utils/keyboard';
+import { useModal } from '@/components/ui/modal-provider';
 import {
   copySceneObjectsToClipboard,
   cutSceneObjectsWithHistory,
@@ -116,18 +120,13 @@ function formatSyncPhaseBreakdown(phaseDurationsMs: CloudProjectSyncPhaseDuratio
     .join(', ');
 }
 
-function dispatchEditorResizeFreeze(active: boolean): void {
-  window.dispatchEvent(new CustomEvent('pocha-editor-resize-freeze', { detail: { active } }));
-}
-
 function ProjectRouteLoadingScreen({ detail, progress }: ProjectLoadState) {
   return (
     <div className="min-h-screen bg-background">
       <div className="flex min-h-screen items-center justify-center px-6">
         <div className="w-full max-w-sm">
           <div className="space-y-4">
-            <div className="space-y-1">
-              <p className="text-xs font-medium uppercase tracking-[0.28em] text-muted-foreground/70">Loading</p>
+            <div>
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">Loading</h1>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-border/70">
@@ -145,6 +144,7 @@ function ProjectRouteLoadingScreen({ detail, progress }: ProjectLoadState) {
 }
 
 export function EditorLayout() {
+  const { showAlert } = useModal();
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const {
@@ -162,6 +162,7 @@ export function EditorLayout() {
   const {
     isPlaying,
     isDarkMode,
+    showAdvancedBlocks,
     selectedSceneId,
     selectedObjectId,
     selectedObjectIds,
@@ -187,7 +188,6 @@ export function EditorLayout() {
   } = useEditorStore();
   const updateMySettings = useMutation(api.userSettings.updateMySettings);
   const [dividerPosition, setDividerPosition] = useState(60);
-  const [isMainDividerDragging, setIsMainDividerDragging] = useState(false);
   const [hoveredPanel, setHoveredPanel] = useState<HoveredPanel>(null);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(null);
   const [isStageCanvasFullscreen, setIsStageCanvasFullscreen] = useState(false);
@@ -197,6 +197,7 @@ export function EditorLayout() {
     progress: 8,
     detail: 'Opening project page…',
   });
+  const [isManualSaveInProgress, setIsManualSaveInProgress] = useState(false);
   const [isBlockingCloudSync, setIsBlockingCloudSync] = useState(false);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const [cloudSaveState, setCloudSaveState] = useState<CloudSaveState>({
@@ -681,7 +682,11 @@ export function EditorLayout() {
 
   const syncCurrentProjectToCloud = useCallback(async (
     projectSnapshot: Project,
-    options: { showBlockingOverlay?: boolean; allowPullIntoEditor?: boolean } = {},
+    options: {
+      showBlockingOverlay?: boolean;
+      allowPullIntoEditor?: boolean;
+      uiMode?: 'visible' | 'silent';
+    } = {},
   ): Promise<boolean> => {
     if (!isCloudWriteEnabled) {
       setCloudSaveState((current) => ({
@@ -697,11 +702,13 @@ export function EditorLayout() {
       projectId: projectSnapshot.id,
       updatedAtMs: projectUpdatedAtMs,
     };
-    setCloudSaveState({
-      status: 'saving',
-      lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
-      errorMessage: null,
-    });
+    if (options.uiMode !== 'silent') {
+      setCloudSaveState({
+        status: 'saving',
+        lastSavedAt: lastCloudSavedVersionRef.current.get(projectSnapshot.id) ?? null,
+        errorMessage: null,
+      });
+    }
     if (isMountedRef.current) {
       setIsSyncingCloud(true);
       if (options.showBlockingOverlay) {
@@ -753,7 +760,7 @@ export function EditorLayout() {
 
     const projectSnapshot = project;
     const timeoutId = window.setTimeout(() => {
-      void syncCurrentProjectToCloud(projectSnapshot);
+      void syncCurrentProjectToCloud(projectSnapshot, { uiMode: 'silent' });
     }, 1_000);
 
     return () => window.clearTimeout(timeoutId);
@@ -790,7 +797,11 @@ export function EditorLayout() {
         allowPullIntoEditor: true,
       });
       if (!synced) {
-        alert('Cloud save failed. Please try Save Now again before leaving.');
+        await showAlert({
+          title: 'Cloud Save Failed',
+          description: 'Cloud save failed. Please try Save Now again before leaving.',
+          tone: 'destructive',
+        });
         return;
       }
     }
@@ -808,6 +819,7 @@ export function EditorLayout() {
     isSyncingCloud,
     navigate,
     project,
+    showAlert,
     syncCurrentProjectToCloud,
     syncProjectToCloud,
   ]);
@@ -817,6 +829,7 @@ export function EditorLayout() {
       return;
     }
 
+    setIsManualSaveInProgress(true);
     manualSaveMetricsRef.current = {
       projectId: project.id,
       updatedAtMs: project.updatedAt.getTime(),
@@ -824,11 +837,21 @@ export function EditorLayout() {
       uploadSizeBytes: null,
       phaseDurationsMs: null,
     };
-    const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
-    if (!synced) {
-      alert('Cloud save failed. Please try Save Now again.');
+    try {
+      const synced = await syncCurrentProjectToCloud(project, { allowPullIntoEditor: true });
+      if (!synced) {
+        await showAlert({
+          title: 'Cloud Save Failed',
+          description: 'Cloud save failed. Please try Save Now again.',
+          tone: 'destructive',
+        });
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsManualSaveInProgress(false);
+      }
     }
-  }, [isSyncingCloud, project, syncCurrentProjectToCloud]);
+  }, [isSyncingCloud, project, showAlert, syncCurrentProjectToCloud]);
 
   const handleToggleDarkMode = useCallback(async () => {
     const nextIsDarkMode = !isDarkMode;
@@ -840,13 +863,12 @@ export function EditorLayout() {
     }
   }, [isDarkMode, updateMySettings]);
 
-  const saveControlState = !project
-    ? 'saved'
-    : cloudSaveState.status === 'saving'
-      ? 'saving'
-      : isCurrentVersionCloudSaved
-        ? 'saved'
-        : 'save';
+  const saveControlState = deriveEditorSaveControlState({
+    hasProject: !!project,
+    isDirty,
+    hasActionableCloudError: cloudSaveState.status === 'error',
+    isManualSaveInProgress,
+  });
 
   useEffect(() => {
     if (!isProjectLeaseBlocking || !isPlaying) {
@@ -1199,8 +1221,6 @@ export function EditorLayout() {
 
   const handleDividerDrag = (e: React.MouseEvent) => {
     e.preventDefault();
-    dispatchEditorResizeFreeze(true);
-    setIsMainDividerDragging(true);
     const startX = e.clientX;
     const startPos = dividerPosition;
 
@@ -1212,8 +1232,6 @@ export function EditorLayout() {
     };
 
     const handleMouseUp = () => {
-      dispatchEditorResizeFreeze(false);
-      setIsMainDividerDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
@@ -1223,8 +1241,8 @@ export function EditorLayout() {
   };
 
   const projectLeaseOverlay = isProjectLeaseBlocking ? (
-    <div className="fixed inset-0 z-[100240] bg-background/72 backdrop-blur-[1px] flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-xl border bg-background px-6 py-5 shadow-2xl">
+    <div className="fixed inset-0 z-[100240] bg-surface-wash backdrop-blur-[1px] flex items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-xl border bg-surface-panel px-6 py-5 shadow-2xl">
         <h2 className="text-lg font-semibold">
           {leaseStatus === 'lost'
             ? 'Editing moved to another editor'
@@ -1308,6 +1326,7 @@ export function EditorLayout() {
       <EditorTopBar
         hasProject
         isDarkMode={isDarkMode}
+        showAdvancedBlocks={showAdvancedBlocks}
         projectName={project.name}
         projectNameDisabled={isSyncingCloud}
         saveControlState={saveControlState}
@@ -1325,6 +1344,9 @@ export function EditorLayout() {
         onProjectNameCommit={(name) => updateProjectName(name)}
         onSaveNow={() => {
           void handleSaveNow();
+        }}
+        onToggleAdvancedBlocks={() => {
+          useEditorStore.getState().toggleShowAdvancedBlocks();
         }}
         onToggleTheme={() => {
           void handleToggleDarkMode();
@@ -1362,7 +1384,6 @@ export function EditorLayout() {
           onMouseLeave={() => setHoveredPanel(null)}
         >
           <StagePanel
-            deferEditorResize={isMainDividerDragging}
             isCanvasFullscreen={isStageCanvasFullscreen}
             onCanvasFullscreenChange={handleStageCanvasFullscreenChange}
           />
@@ -1397,16 +1418,16 @@ export function EditorLayout() {
       <ObjectPicker />
 
       {isBlockingCloudSync && (
-        <div className="fixed inset-0 z-[100002] bg-black/45 flex items-center justify-center">
-          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
+        <div className="fixed inset-0 z-[100002] bg-surface-scrim flex items-center justify-center">
+          <div className="rounded-lg border bg-surface-panel px-5 py-4 text-sm shadow-xl">
             Please wait, Uploading/Syncing to Cloud.
           </div>
         </div>
       )}
 
       {ASSISTANT_UI_ENABLED && assistantLockRunId && !isBlockingCloudSync ? (
-        <div className="fixed inset-0 z-[100250] bg-background/70 backdrop-blur-[1px] flex items-center justify-center">
-          <div className="rounded-lg border bg-background px-5 py-4 text-sm shadow-xl">
+        <div className="fixed inset-0 z-[100250] bg-surface-wash backdrop-blur-[1px] flex items-center justify-center">
+          <div className="rounded-lg border bg-surface-panel px-5 py-4 text-sm shadow-xl">
             {assistantLockMessage ?? 'Assistant is working. The editor is temporarily locked.'}
           </div>
         </div>

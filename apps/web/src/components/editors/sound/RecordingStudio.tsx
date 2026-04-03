@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { formatAudioTime, generateWaveformFromBlob } from '@/lib/audioWaveform';
-import { Square } from 'lucide-react';
+import { Square } from '@/components/ui/icons';
 
 interface RecordingStudioProps {
   onReviewRecording: (draft: {
@@ -14,7 +14,7 @@ interface RecordingStudioProps {
 
 type RecordingMode = 'idle' | 'recording';
 
-const RECORD_BUTTON_CLASS_NAME = 'size-16 rounded-full bg-red-500 text-white shadow-[0_18px_40px_rgba(239,68,68,0.26)] hover:bg-red-500/90';
+const RECORD_BUTTON_CLASS_NAME = 'size-16 rounded-full !bg-red-500 text-white shadow-[0_18px_40px_rgba(239,68,68,0.26)] hover:!bg-red-500/90 dark:!bg-red-500 dark:hover:!bg-red-500/90';
 
 function buildDefaultRecordingName(): string {
   return `Recording ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
@@ -29,7 +29,6 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
 
   const [mode, setMode] = useState<RecordingMode>('idle');
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,12 +45,8 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
       }
 
       streamRef.current?.getTracks().forEach((track) => track.stop());
-
-      if (recordedUrl) {
-        URL.revokeObjectURL(recordedUrl);
-      }
     };
-  }, [recordedUrl]);
+  }, []);
 
   const stopRecordingTimer = () => {
     if (timerRef.current !== null) {
@@ -100,8 +95,6 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
           streamRef.current = null;
           return;
         }
-
-        setRecordedUrl(nextUrl);
 
         let nextDuration: number | undefined;
         try {
@@ -155,14 +148,15 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
 
       {mode === 'idle' ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
-          <Button
-            size="icon"
+          <IconButton
             className={RECORD_BUTTON_CLASS_NAME}
+            label="Record"
             onClick={startRecording}
-            title="Record"
+            size="md"
+            variant="ghost"
           >
             <span className="size-5 rounded-full bg-current" />
-          </Button>
+          </IconButton>
           <div className="text-2xl font-medium text-foreground">
             Press to record
           </div>
@@ -171,15 +165,15 @@ export function RecordingStudio({ onReviewRecording }: RecordingStudioProps) {
 
       {mode === 'recording' ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
-          <Button
-            type="button"
-            size="icon"
-            onClick={stopRecording}
+          <IconButton
             className={RECORD_BUTTON_CLASS_NAME}
-            title="Stop recording"
+            label="Stop recording"
+            onClick={stopRecording}
+            size="md"
+            variant="ghost"
           >
             <Square className="size-6 fill-current" />
-          </Button>
+          </IconButton>
           <div className="text-2xl font-medium text-foreground">
             {formatAudioTime(recordingDuration, true)}
           </div>

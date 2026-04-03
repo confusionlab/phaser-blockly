@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DragHandleButton } from '@/components/ui/drag-handle-button';
 import { cn } from '@/lib/utils';
 import { getVisiblePeaks, type WaveformData } from '@/lib/audioWaveform';
 
@@ -6,6 +7,8 @@ const MIN_TRIM_SECONDS = 0.1;
 const WAVEFORM_BASE_FILL = '#b8b8b8';
 const WAVEFORM_PLAYED_FILL = '#5f5f5f';
 const TRIM_ACCENT = '#6b6b6b';
+const WAVEFORM_BAR_WIDTH_PX = 3;
+const WAVEFORM_BAR_MIN_GAP_PX = 1;
 
 interface WaveformViewportProps {
   waveform: WaveformData | null;
@@ -13,6 +16,7 @@ interface WaveformViewportProps {
   currentTime: number;
   trimStart: number;
   trimEnd: number;
+  amplitudeScale?: number;
   showTrimControls?: boolean;
   onSeek?: (time: number) => void;
   onTrimCommit?: (trimStart: number, trimEnd: number) => void;
@@ -21,33 +25,82 @@ interface WaveformViewportProps {
 
 type InteractionMode = 'trim-start' | 'trim-end' | 'seek' | null;
 
+interface WaveformBarGeometry {
+  count: number;
+  widthPx: number;
+  gapPx: number;
+}
+
+function resolveWaveformBarGeometry(viewportWidth: number): WaveformBarGeometry {
+  if (viewportWidth <= 0) {
+    return {
+      count: 0,
+      widthPx: WAVEFORM_BAR_WIDTH_PX,
+      gapPx: WAVEFORM_BAR_MIN_GAP_PX,
+    };
+  }
+
+  const count = Math.max(
+    1,
+    Math.floor((viewportWidth + WAVEFORM_BAR_MIN_GAP_PX) / (WAVEFORM_BAR_WIDTH_PX + WAVEFORM_BAR_MIN_GAP_PX)),
+  );
+  const gapPx = count > 1
+    ? Math.max(WAVEFORM_BAR_MIN_GAP_PX, (viewportWidth - (count * WAVEFORM_BAR_WIDTH_PX)) / (count - 1))
+    : 0;
+
+  return {
+    count,
+    widthPx: WAVEFORM_BAR_WIDTH_PX,
+    gapPx,
+  };
+}
+
 const StaticWaveformBars = memo(function StaticWaveformBars({
   bars,
   fill,
+  amplitudeScale,
+  geometry,
+  viewportWidth,
+  viewportHeight,
 }: {
   bars: number[];
   fill: string;
+  amplitudeScale: number;
+  geometry: WaveformBarGeometry;
+  viewportWidth: number;
+  viewportHeight: number;
 }) {
+  const contentWidth = Math.max(viewportWidth, 1);
+  const contentHeight = Math.max(viewportHeight, 1);
+  const leftInset = bars.length > 0
+    ? Math.max(0, (contentWidth - ((bars.length * geometry.widthPx) + ((bars.length - 1) * geometry.gapPx))) / 2)
+    : 0;
+
   return (
-    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+    <div className="pointer-events-none absolute inset-0" aria-hidden="true">
       {bars.map((peak, index) => {
-        const x = (index / bars.length) * 100;
-        const width = 100 / bars.length;
-        const height = Math.max(peak * 76, 3);
+        const x = leftInset + (index * (geometry.widthPx + geometry.gapPx));
+        const minBarHeight = amplitudeScale > 0 ? Math.max(1, amplitudeScale * 3) : 0;
+        const height = Math.max(peak * contentHeight * 0.76 * amplitudeScale, minBarHeight);
+        const top = (contentHeight - height) / 2;
+        const radius = Math.min(geometry.widthPx / 2, height / 2);
 
         return (
-          <rect
+          <div
             key={index}
-            x={x}
-            y={50 - height / 2}
-            width={Math.max(width * 0.72, 0.32)}
-            height={height}
-            rx={0.28}
-            fill={fill}
+            className="absolute"
+            style={{
+              left: x,
+              top,
+              width: geometry.widthPx,
+              height,
+              borderRadius: radius,
+              backgroundColor: fill,
+            }}
           />
         );
       })}
-    </svg>
+    </div>
   );
 });
 
@@ -57,6 +110,7 @@ export function WaveformViewport({
   currentTime,
   trimStart,
   trimEnd,
+  amplitudeScale = 1,
   showTrimControls = true,
   onSeek,
   onTrimCommit,
@@ -74,8 +128,11 @@ export function WaveformViewport({
   const onSeekRef = useRef(onSeek);
   const onTrimCommitRef = useRef(onTrimCommit);
 
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [draftTrim, setDraftTrim] = useState({ trimStart, trimEnd });
+
+  const containerWidth = containerSize.width;
+  const containerHeight = containerSize.height;
 
   durationRef.current = duration;
   onSeekRef.current = onSeek;
@@ -107,23 +164,31 @@ export function WaveformViewport({
     }
 
     const observer = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width);
+      setContainerSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
     });
 
     observer.observe(element);
-    setContainerWidth(element.getBoundingClientRect().width);
+    const rect = element.getBoundingClientRect();
+    setContainerSize({
+      width: rect.width,
+      height: rect.height,
+    });
 
     return () => observer.disconnect();
   }, []);
 
+  const barGeometry = useMemo(() => resolveWaveformBarGeometry(containerWidth), [containerWidth]);
+
   const bars = useMemo(() => {
-    if (!waveform || visibleDuration <= 0) {
+    if (!waveform || visibleDuration <= 0 || barGeometry.count <= 0) {
       return [];
     }
 
-    const barCount = Math.max(72, Math.floor(containerWidth / 4));
-    return getVisiblePeaks(waveform, visibleStart, visibleDuration, barCount);
-  }, [containerWidth, visibleDuration, visibleStart, waveform]);
+    return getVisiblePeaks(waveform, visibleStart, visibleDuration, barGeometry.count);
+  }, [barGeometry.count, visibleDuration, visibleStart, waveform]);
 
   useEffect(() => {
     return () => {
@@ -260,7 +325,7 @@ export function WaveformViewport({
     <div
       ref={containerRef}
       className={cn(
-        'relative h-52 overflow-visible rounded-[24px] border border-border/70 bg-[linear-gradient(180deg,rgba(247,247,247,0.98),rgba(237,237,237,0.96))] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] touch-none select-none',
+        'relative h-52 overflow-visible rounded-[24px] border border-border/70 bg-[var(--blockly-workspace-bg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] touch-none select-none',
         className,
       )}
       onPointerDown={(event) => {
@@ -270,50 +335,63 @@ export function WaveformViewport({
         beginScrub(event);
       }}
     >
-      <div className="pointer-events-none absolute inset-x-6 top-0 h-20 rounded-full bg-[radial-gradient(circle_at_top,rgba(120,120,120,0.12),transparent_70%)]" />
+      <div className="absolute inset-0 overflow-hidden rounded-[24px]">
+        {bars.length > 0 ? (
+          <>
+            <StaticWaveformBars
+              bars={bars}
+              fill={WAVEFORM_BASE_FILL}
+              amplitudeScale={amplitudeScale}
+              geometry={barGeometry}
+              viewportWidth={containerWidth}
+              viewportHeight={containerHeight}
+            />
+
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{
+                clipPath: `inset(0 ${Math.max(0, 100 - (playedOverlayStartPercent + playedSelectedPercent))}% 0 ${playedOverlayStartPercent}%)`,
+              }}
+            >
+              <StaticWaveformBars
+                bars={bars}
+                fill={WAVEFORM_PLAYED_FILL}
+                amplitudeScale={amplitudeScale}
+                geometry={barGeometry}
+                viewportWidth={containerWidth}
+                viewportHeight={containerHeight}
+              />
+            </div>
+
+            {showTrimControls ? (
+              <>
+                <div className="pointer-events-none absolute inset-y-0 left-0 bg-black/16" style={{ width: `${startPercent}%` }} />
+                <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/16" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
+              </>
+            ) : null}
+          </>
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            Preparing waveform...
+          </div>
+        )}
+      </div>
 
       {bars.length > 0 ? (
-        <>
-          <StaticWaveformBars bars={bars} fill={WAVEFORM_BASE_FILL} />
-
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              clipPath: `inset(0 ${Math.max(0, 100 - (playedOverlayStartPercent + playedSelectedPercent))}% 0 ${playedOverlayStartPercent}%)`,
-            }}
-          >
-            <StaticWaveformBars bars={bars} fill={WAVEFORM_PLAYED_FILL} />
-          </div>
-
-          {showTrimControls ? (
-            <>
-              <div className="pointer-events-none absolute inset-y-0 left-0 bg-black/16" style={{ width: `${startPercent}%` }} />
-              <div className="pointer-events-none absolute inset-y-0 right-0 bg-black/16" style={{ width: `${Math.max(0, 100 - endPercent)}%` }} />
-                <div
-                className="pointer-events-none absolute inset-y-3 rounded-[14px] border border-white/60 bg-white/15 shadow-[inset_0_0_0_1px_rgba(90,90,90,0.12)]"
-                  style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
-                />
-            </>
-          ) : null}
-          <div
-            className="pointer-events-none absolute bottom-0 top-[-14px] z-10 -translate-x-1/2"
-            style={{ left: `${playheadPercent}%` }}
-          >
-            <div className="mx-auto size-3 rounded-full border border-white/80 bg-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
-            <div className="mx-auto h-full w-0.5 bg-foreground/90 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
-          </div>
-        </>
-      ) : (
-        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-          Preparing waveform...
+        <div
+          className="pointer-events-none absolute bottom-0 top-[-14px] z-10 -translate-x-1/2"
+          style={{ left: `${playheadPercent}%` }}
+        >
+          <div className="mx-auto size-3 rounded-full border border-white/80 bg-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
+          <div className="mx-auto h-full w-0.5 bg-foreground/90 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
         </div>
+      ) : (
+        <></>
       )}
 
       {showTrimControls ? (
         <>
-          <button
-            type="button"
-            className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 shadow-sm"
+          <DragHandleButton
             style={{ left: `${startPercent}%`, backgroundColor: TRIM_ACCENT }}
             onPointerDown={(event) => {
               event.preventDefault();
@@ -327,11 +405,9 @@ export function WaveformViewport({
           >
             <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
             <span className="sr-only">Adjust start trim</span>
-          </button>
+          </DragHandleButton>
 
-          <button
-            type="button"
-            className="absolute inset-y-4 z-20 w-4 -translate-x-1/2 cursor-ew-resize rounded-full border border-white/70 shadow-sm"
+          <DragHandleButton
             style={{ left: `${endPercent}%`, backgroundColor: TRIM_ACCENT }}
             onPointerDown={(event) => {
               event.preventDefault();
@@ -345,7 +421,7 @@ export function WaveformViewport({
           >
             <span className="mx-auto block h-10 w-1 rounded-full bg-white/90" />
             <span className="sr-only">Adjust end trim</span>
-          </button>
+          </DragHandleButton>
         </>
       ) : null}
     </div>

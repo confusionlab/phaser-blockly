@@ -7,6 +7,15 @@ export const boundsValidator = v.object({
   height: v.number(),
 });
 
+export const costumeAssetFrameValidator = v.object({
+  x: v.number(),
+  y: v.number(),
+  width: v.number(),
+  height: v.number(),
+  sourceWidth: v.number(),
+  sourceHeight: v.number(),
+});
+
 export const costumeVectorDocumentValidator = v.object({
   engine: v.literal("fabric"),
   version: v.literal(1),
@@ -31,6 +40,8 @@ export const costumeBitmapLayerValidator = v.object({
   height: v.number(),
   bitmap: v.object({
     assetId: v.union(v.string(), v.null()),
+    assetFrame: v.optional(costumeAssetFrameValidator),
+    persistedAssetId: v.optional(v.string()),
   }),
 });
 

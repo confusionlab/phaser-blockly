@@ -11,11 +11,12 @@ import {
   VECTOR_POINT_INSERTION_ENDPOINT_RADIUS_PX,
   VECTOR_POINT_INSERTION_HIT_RADIUS_PX,
   VECTOR_POINT_MARQUEE_DRAG_THRESHOLD_PX,
-  VECTOR_POINT_SELECTION_HANDLE_SIZE,
   VECTOR_POINT_SELECTION_HIT_PADDING,
   VECTOR_POINT_SELECTION_MIN_SIZE,
-  VECTOR_POINT_SELECTION_ROTATE_OFFSET,
+  mirrorPointAcrossAnchor,
   normalizeRadians,
+  type MirroredPathAnchorDragSession,
+  type MirroredPathAnchorHandleRole,
   type PathAnchorDragState,
   type PointSelectionMarqueeSession,
   type PointSelectionTransformBounds,
@@ -25,7 +26,19 @@ import {
   type PointSelectionTransformSnapshot,
   type SelectedPathAnchorTransformSnapshot,
 } from './costumeCanvasShared';
+import { applyCanvasCursor } from './costumeCanvasBitmapRuntime';
 import { getFabricObjectType } from './costumeCanvasVectorRuntime';
+import {
+  TRANSFORM_GIZMO_HANDLE_RADIUS,
+  type TransformGizmoCorner,
+  type TransformGizmoCornerTarget,
+  computeCornerScaleResult,
+  getTransformGizmoCornerFromTarget,
+  getTransformGizmoCursorForCornerTarget,
+  getTransformGizmoHandleFrame,
+  hitTransformGizmoCornerTarget,
+  rotateTransformPoint,
+} from '@/lib/editor/unifiedTransformGizmo';
 
 interface UseCostumeCanvasVectorPathControllerOptions {
   activePathAnchorRef: MutableRefObject<{ path: any; anchorIndex: number } | null>;
@@ -249,6 +262,11 @@ export function useCostumeCanvasVectorPathController({
     return !!(source?.shiftKey || source?.metaKey || source?.ctrlKey);
   }, []);
 
+  const isPathCurveDragModifierPressed = useCallback((eventData: any) => {
+    const source = eventData?.e ?? eventData;
+    return !!(source?.metaKey || source?.ctrlKey);
+  }, []);
+
   const getSelectedPathAnchorIndices = useCallback((pathObj: any): number[] => {
     if (!pathObj || pathObj !== vectorPointEditingTargetRef.current) {
       return [];
@@ -314,14 +332,6 @@ export function useCostumeCanvasVectorPathController({
     return new Point(
       dx * axes.x.x + dy * axes.x.y,
       dx * axes.y.x + dy * axes.y.y,
-    );
-  }, [getPointSelectionTransformAxes]);
-
-  const toPointSelectionTransformScenePoint = useCallback((bounds: PointSelectionTransformBounds, point: Point) => {
-    const axes = getPointSelectionTransformAxes(bounds.rotationRadians);
-    return new Point(
-      bounds.center.x + axes.x.x * point.x + axes.y.x * point.y,
-      bounds.center.y + axes.x.y * point.x + axes.y.y * point.y,
     );
   }, [getPointSelectionTransformAxes]);
 
@@ -787,6 +797,123 @@ export function useCostumeCanvasVectorPathController({
     return ['C', control1.x, control1.y, control2.x, control2.y, end.x, end.y] as const;
   }, [lerpPoint]);
 
+  const buildQuadraticCubicSegmentCommand = useCallback((start: Point, control: Point, end: Point) => {
+    const control1 = lerpPoint(start, control, 2 / 3);
+    const control2 = lerpPoint(end, control, 2 / 3);
+    return ['C', control1.x, control1.y, control2.x, control2.y, end.x, end.y] as const;
+  }, [lerpPoint]);
+
+  const findAnchorSegmentCommandIndex = useCallback((
+    pathObj: any,
+    anchorIndex: number,
+    role: 'incoming' | 'outgoing',
+  ): number => {
+    const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
+    let foundCommandIndex = -1;
+
+    for (const segment of getPathSegments(pathObj)) {
+      const startAnchorIndex = normalizeAnchorIndex(
+        pathObj,
+        findPreviousDrawableCommandIndex(pathObj, segment.commandIndex),
+      );
+      const endAnchorIndex = normalizeAnchorIndex(
+        pathObj,
+        segment.type === 'Z'
+          ? findNextDrawableCommandIndex(pathObj, segment.commandIndex)
+          : segment.commandIndex,
+      );
+
+      if (role === 'incoming') {
+        if (endAnchorIndex === normalizedAnchor) {
+          foundCommandIndex = segment.commandIndex;
+        }
+        continue;
+      }
+
+      if (startAnchorIndex === normalizedAnchor) {
+        return segment.commandIndex;
+      }
+    }
+
+    return foundCommandIndex;
+  }, [
+    findNextDrawableCommandIndex,
+    findPreviousDrawableCommandIndex,
+    getPathSegments,
+    normalizeAnchorIndex,
+  ]);
+
+  const convertSegmentCommandToCubic = useCallback((pathObj: any, commandIndex: number): number => {
+    if (commandIndex < 0) return -1;
+
+    const commands = getPathCommands(pathObj);
+    const command = commands[commandIndex];
+    const commandType = getCommandType(command);
+    if (commandType === 'C') {
+      return commandIndex;
+    }
+
+    const previousAnchorIndex = findPreviousDrawableCommandIndex(pathObj, commandIndex);
+    const previousAnchor = getAnchorPointForIndex(pathObj, previousAnchorIndex);
+    if (!previousAnchor) {
+      return -1;
+    }
+
+    if (commandType === 'L') {
+      const end = getCommandEndpoint(command);
+      if (!end) return -1;
+      commands[commandIndex] = [...buildLinearCubicSegmentCommand(previousAnchor, end)];
+      return commandIndex;
+    }
+
+    if (commandType === 'Q') {
+      const end = getCommandEndpoint(command);
+      if (!end) return -1;
+      const control = new Point(Number(command[1]), Number(command[2]));
+      commands[commandIndex] = [...buildQuadraticCubicSegmentCommand(previousAnchor, control, end)];
+      return commandIndex;
+    }
+
+    if (commandType === 'Z') {
+      const nextAnchorIndex = findNextDrawableCommandIndex(pathObj, commandIndex);
+      const nextAnchor = getAnchorPointForIndex(pathObj, nextAnchorIndex);
+      if (!nextAnchor) return -1;
+      commands[commandIndex] = [...buildLinearCubicSegmentCommand(previousAnchor, nextAnchor)];
+      return commandIndex;
+    }
+
+    return -1;
+  }, [
+    buildLinearCubicSegmentCommand,
+    buildQuadraticCubicSegmentCommand,
+    findNextDrawableCommandIndex,
+    findPreviousDrawableCommandIndex,
+    getAnchorPointForIndex,
+    getCommandEndpoint,
+    getCommandType,
+    getPathCommands,
+  ]);
+
+  const ensurePathAnchorCurveHandleCommands = useCallback((pathObj: any, anchorIndex: number) => {
+    const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
+    const incomingCommandIndex = convertSegmentCommandToCubic(
+      pathObj,
+      findAnchorSegmentCommandIndex(pathObj, normalizedAnchor, 'incoming'),
+    );
+    const outgoingCommandIndex = convertSegmentCommandToCubic(
+      pathObj,
+      findAnchorSegmentCommandIndex(pathObj, normalizedAnchor, 'outgoing'),
+    );
+    return {
+      incomingCommandIndex,
+      outgoingCommandIndex,
+    };
+  }, [
+    convertSegmentCommandToCubic,
+    findAnchorSegmentCommandIndex,
+    normalizeAnchorIndex,
+  ]);
+
   const insertPathPointAtScenePosition = useCallback((pathObj: any, scenePoint: Point): number | null => {
     const commands = getPathCommands(pathObj);
     if (commands.length < 2) return null;
@@ -1189,6 +1316,172 @@ export function useCostumeCanvasVectorPathController({
     normalizeAnchorIndex,
   ]);
 
+  const resolveMirroredPathAnchorHandleRole = useCallback((
+    pathObj: any,
+    anchorIndex: number,
+    changed: 'anchor' | 'incoming' | 'outgoing',
+  ): MirroredPathAnchorHandleRole => {
+    if (changed === 'incoming' || changed === 'outgoing') {
+      return changed;
+    }
+
+    const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
+    const hasOutgoing = findOutgoingCubicCommandIndex(pathObj, normalizedAnchor) >= 0;
+    const hasIncoming = findIncomingCubicCommandIndex(pathObj, normalizedAnchor) >= 0;
+    if (!hasOutgoing && hasIncoming) {
+      return 'incoming';
+    }
+    return 'outgoing';
+  }, [
+    findIncomingCubicCommandIndex,
+    findOutgoingCubicCommandIndex,
+    normalizeAnchorIndex,
+  ]);
+
+  const applyMirroredPathAnchorCurveDrag = useCallback((
+    pathObj: any,
+    anchorIndex: number,
+    handleRole: MirroredPathAnchorHandleRole,
+    pointerScene: Point,
+    dragState?: PathAnchorDragState,
+  ): boolean => {
+    const normalizedAnchor = normalizeAnchorIndex(pathObj, anchorIndex);
+    const anchorPoint = dragState?.previousAnchor ?? getAnchorPointForIndex(pathObj, normalizedAnchor);
+    if (!anchorPoint) return false;
+
+    const pointerCommand = toPathCommandPoint(pathObj, pointerScene);
+    if (!pointerCommand) return false;
+
+    const anchorCommand = getPathCommands(pathObj)[normalizedAnchor];
+    if (!Array.isArray(anchorCommand) || anchorCommand.length < 3) return false;
+
+    const { incomingCommandIndex, outgoingCommandIndex } = ensurePathAnchorCurveHandleCommands(pathObj, normalizedAnchor);
+    if (incomingCommandIndex < 0 && outgoingCommandIndex < 0) return false;
+
+    const commands = getPathCommands(pathObj);
+    anchorCommand[anchorCommand.length - 2] = anchorPoint.x;
+    anchorCommand[anchorCommand.length - 1] = anchorPoint.y;
+
+    const mirroredPointer = mirrorPointAcrossAnchor(anchorPoint, pointerCommand);
+    const primaryRole: MirroredPathAnchorHandleRole = handleRole;
+
+    const incomingCommand = incomingCommandIndex >= 0 ? commands[incomingCommandIndex] : null;
+    if (incomingCommand && getCommandType(incomingCommand) === 'C') {
+      const incomingPoint = primaryRole === 'incoming' ? pointerCommand : mirroredPointer;
+      incomingCommand[3] = incomingPoint.x;
+      incomingCommand[4] = incomingPoint.y;
+    }
+
+    const outgoingCommand = outgoingCommandIndex >= 0 ? commands[outgoingCommandIndex] : null;
+    if (outgoingCommand && getCommandType(outgoingCommand) === 'C') {
+      const outgoingPoint = primaryRole === 'outgoing' ? pointerCommand : mirroredPointer;
+      outgoingCommand[1] = outgoingPoint.x;
+      outgoingCommand[2] = outgoingPoint.y;
+    }
+
+    setPathNodeHandleType(pathObj, normalizedAnchor, 'symmetric');
+    pathObj.set('dirty', true);
+    stabilizePathAfterAnchorMutation(pathObj, anchorPoint);
+    syncPathAnchorSelectionAppearance(pathObj);
+    syncPathControlPointVisibility(pathObj);
+    pathObj.setCoords?.();
+    fabricCanvasRef.current?.requestRenderAll();
+    return true;
+  }, [
+    ensurePathAnchorCurveHandleCommands,
+    fabricCanvasRef,
+    getAnchorPointForIndex,
+    getCommandType,
+    getPathCommands,
+    normalizeAnchorIndex,
+    setPathNodeHandleType,
+    stabilizePathAfterAnchorMutation,
+    syncPathAnchorSelectionAppearance,
+    syncPathControlPointVisibility,
+    toPathCommandPoint,
+  ]);
+
+  const applyMirroredPathAnchorCurveDragSession = useCallback((
+    session: MirroredPathAnchorDragSession,
+    pointerScene: Point,
+  ): boolean => {
+    session.currentPointerScene = new Point(pointerScene.x, pointerScene.y);
+
+    if (session.moveAnchorMode && session.moveAnchorStartCommandPoint && session.moveAnchorSnapshot) {
+      const pointerCommandPoint = toPathCommandPoint(session.path, pointerScene);
+      if (!pointerCommandPoint) {
+        return false;
+      }
+      const deltaX = pointerCommandPoint.x - session.moveAnchorStartCommandPoint.x;
+      const deltaY = pointerCommandPoint.y - session.moveAnchorStartCommandPoint.y;
+      const moved = movePathAnchorByDelta(
+        session.path,
+        session.anchorIndex,
+        deltaX,
+        deltaY,
+        session.moveAnchorSnapshot,
+      );
+      if (!moved) {
+        return false;
+      }
+
+      enforcePathAnchorHandleType(
+        session.path,
+        session.anchorIndex,
+        'anchor',
+        session.moveAnchorSnapshot,
+      );
+      return true;
+    }
+
+    return applyMirroredPathAnchorCurveDrag(
+      session.path,
+      session.anchorIndex,
+      session.handleRole,
+      pointerScene,
+      session.dragState ?? undefined,
+    );
+  }, [
+    applyMirroredPathAnchorCurveDrag,
+    enforcePathAnchorHandleType,
+    movePathAnchorByDelta,
+    toPathCommandPoint,
+  ]);
+
+  const setMirroredPathAnchorDragSessionMoveMode = useCallback((
+    session: MirroredPathAnchorDragSession | null,
+    enabled: boolean,
+  ): boolean => {
+    if (!session) {
+      return false;
+    }
+    if (enabled === session.moveAnchorMode) {
+      return false;
+    }
+
+    if (enabled) {
+      const moveAnchorSnapshot = getPathAnchorDragState(session.path, session.anchorIndex) ?? session.dragState;
+      const moveAnchorStartCommandPoint = toPathCommandPoint(session.path, session.currentPointerScene);
+      if (!moveAnchorSnapshot || !moveAnchorStartCommandPoint) {
+        return false;
+      }
+      session.moveAnchorMode = true;
+      session.moveAnchorSnapshot = moveAnchorSnapshot;
+      session.moveAnchorStartCommandPoint = moveAnchorStartCommandPoint;
+      session.dragState = moveAnchorSnapshot;
+      return true;
+    }
+
+    session.moveAnchorMode = false;
+    session.moveAnchorSnapshot = null;
+    session.moveAnchorStartCommandPoint = null;
+    session.dragState = getPathAnchorDragState(session.path, session.anchorIndex) ?? session.dragState;
+    return true;
+  }, [
+    getPathAnchorDragState,
+    toPathCommandPoint,
+  ]);
+
   const getSelectedPathAnchorTransformSnapshot = useCallback((pathObj: any): PointSelectionTransformSnapshot | null => {
     if (!pathObj || getFabricObjectType(pathObj) !== 'path') return null;
 
@@ -1258,33 +1551,28 @@ export function useCostumeCanvasVectorPathController({
   ]);
 
   const getPointSelectionTransformHandlePoints = useCallback((bounds: PointSelectionTransformBounds) => {
-    const rotateOffset = getZoomInvariantMetric(VECTOR_POINT_SELECTION_ROTATE_OFFSET);
-    const halfHeight = bounds.height / 2;
-    return {
-      topCenter: toPointSelectionTransformScenePoint(bounds, new Point(0, -halfHeight)),
-      rotate: toPointSelectionTransformScenePoint(bounds, new Point(0, -halfHeight - rotateOffset)),
-      scaleTl: bounds.topLeft,
-      scaleTr: bounds.topRight,
-      scaleBr: bounds.bottomRight,
-      scaleBl: bounds.bottomLeft,
-    };
-  }, [getZoomInvariantMetric, toPointSelectionTransformScenePoint]);
+    return getTransformGizmoHandleFrame(
+      bounds.center,
+      bounds.width,
+      bounds.height,
+      bounds.rotationRadians,
+    );
+  }, []);
 
   const hitPointSelectionTransform = useCallback((snapshot: PointSelectionTransformSnapshot, pointerScene: Point): PointSelectionTransformMode | null => {
-    const handleHalfSize = getZoomInvariantMetric(VECTOR_POINT_SELECTION_HANDLE_SIZE) / 2;
     const hitPadding = getZoomInvariantMetric(VECTOR_POINT_SELECTION_HIT_PADDING);
-    const handlePoints = getPointSelectionTransformHandlePoints(snapshot.bounds);
-
-    const isInsideHandle = (point: Point) => (
-      Math.abs(pointerScene.x - point.x) <= handleHalfSize &&
-      Math.abs(pointerScene.y - point.y) <= handleHalfSize
+    const frame = getPointSelectionTransformHandlePoints(snapshot.bounds);
+    const handleRadius = getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS + 4);
+    const cornerTarget = hitTransformGizmoCornerTarget(
+      pointerScene,
+      frame.corners,
+      handleRadius,
+      getZoomInvariantMetric(TRANSFORM_GIZMO_HANDLE_RADIUS),
+      snapshot.bounds.rotationRadians,
     );
-
-    if (isInsideHandle(handlePoints.rotate)) return 'rotate';
-    if (isInsideHandle(handlePoints.scaleTl)) return 'scale-tl';
-    if (isInsideHandle(handlePoints.scaleTr)) return 'scale-tr';
-    if (isInsideHandle(handlePoints.scaleBr)) return 'scale-br';
-    if (isInsideHandle(handlePoints.scaleBl)) return 'scale-bl';
+    if (cornerTarget) {
+      return cornerTarget;
+    }
 
     const pointerLocal = toPointSelectionTransformLocalPoint(snapshot.bounds, pointerScene);
     if (
@@ -1317,7 +1605,7 @@ export function useCostumeCanvasVectorPathController({
       );
     }
 
-    if (session.mode === 'rotate') {
+    if (session.mode.startsWith('rotate-')) {
       const startAngle = Math.atan2(
         session.startPointerScene.y - bounds.center.y,
         session.startPointerScene.x - bounds.center.x,
@@ -1332,51 +1620,74 @@ export function useCostumeCanvasVectorPathController({
     const minimumSize = getZoomInvariantMetric(VECTOR_POINT_SELECTION_MIN_SIZE);
     const baseWidth = Math.max(bounds.width, minimumSize);
     const baseHeight = Math.max(bounds.height, minimumSize);
-    const pointLocal = toPointSelectionTransformLocalPoint(bounds, point);
-    const pointerLocal = toPointSelectionTransformLocalPoint(bounds, pointerScene);
-
-    let fixedPointLocal = new Point(-bounds.width / 2, -bounds.height / 2);
-    let scaleX = 1;
-    let scaleY = 1;
-    if (session.mode === 'scale-tl') {
-      fixedPointLocal = new Point(bounds.width / 2, bounds.height / 2);
-      scaleX = Math.max(minimumSize, fixedPointLocal.x - pointerLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, fixedPointLocal.y - pointerLocal.y) / baseHeight;
-    } else if (session.mode === 'scale-tr') {
-      fixedPointLocal = new Point(-bounds.width / 2, bounds.height / 2);
-      scaleX = Math.max(minimumSize, pointerLocal.x - fixedPointLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, fixedPointLocal.y - pointerLocal.y) / baseHeight;
-    } else if (session.mode === 'scale-br') {
-      fixedPointLocal = new Point(-bounds.width / 2, -bounds.height / 2);
-      scaleX = Math.max(minimumSize, pointerLocal.x - fixedPointLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, pointerLocal.y - fixedPointLocal.y) / baseHeight;
-    } else if (session.mode === 'scale-bl') {
-      fixedPointLocal = new Point(bounds.width / 2, -bounds.height / 2);
-      scaleX = Math.max(minimumSize, fixedPointLocal.x - pointerLocal.x) / baseWidth;
-      scaleY = Math.max(minimumSize, pointerLocal.y - fixedPointLocal.y) / baseHeight;
-    }
-
-    return toPointSelectionTransformScenePoint(
-      bounds,
-      new Point(
-        fixedPointLocal.x + (pointLocal.x - fixedPointLocal.x) * scaleX,
-        fixedPointLocal.y + (pointLocal.y - fixedPointLocal.y) * scaleY,
-      ),
+    const frame = getTransformGizmoHandleFrame(
+      bounds.center,
+      bounds.width,
+      bounds.height,
+      bounds.rotationRadians,
     );
+    const cornerConfig: Record<TransformGizmoCorner, {
+      anchor: Point;
+      handleXSign: -1 | 1;
+      handleYSign: -1 | 1;
+    }> = {
+      nw: { anchor: frame.corners.se, handleXSign: -1, handleYSign: -1 },
+      ne: { anchor: frame.corners.sw, handleXSign: 1, handleYSign: -1 },
+      se: { anchor: frame.corners.nw, handleXSign: 1, handleYSign: 1 },
+      sw: { anchor: frame.corners.ne, handleXSign: -1, handleYSign: 1 },
+    };
+    const corner = session.corner ?? 'se';
+    const resolvedCorner = cornerConfig[corner];
+    const referencePoint = session.centered ? bounds.center : resolvedCorner.anchor;
+    const scaled = computeCornerScaleResult({
+      referencePoint,
+      pointerPoint: pointerScene,
+      handleXSign: resolvedCorner.handleXSign,
+      handleYSign: resolvedCorner.handleYSign,
+      rotationRadians: bounds.rotationRadians,
+      baseWidth,
+      baseHeight,
+      minWidth: minimumSize,
+      minHeight: minimumSize,
+      proportional: session.proportional,
+      centered: session.centered,
+    });
+    const scaleX = scaled.signedWidth / Math.max(baseWidth, 0.0001);
+    const scaleY = scaled.signedHeight / Math.max(baseHeight, 0.0001);
+    const localStart = rotateTransformPoint(
+      {
+        x: point.x - referencePoint.x,
+        y: point.y - referencePoint.y,
+      },
+      bounds.rotationRadians,
+    );
+    const scaledLocal = {
+      x: localStart.x * scaleX,
+      y: localStart.y * scaleY,
+    };
+    const nextPoint = rotateTransformPoint(scaledLocal, -bounds.rotationRadians);
+    return new Point(referencePoint.x + nextPoint.x, referencePoint.y + nextPoint.y);
   }, [
     getZoomInvariantMetric,
     rotateScenePointAround,
-    toPointSelectionTransformLocalPoint,
-    toPointSelectionTransformScenePoint,
   ]);
 
-  const beginPointSelectionTransformSession = useCallback((pathObj: any, mode: PointSelectionTransformMode, pointerScene: Point): boolean => {
+  const beginPointSelectionTransformSession = useCallback((
+    pathObj: any,
+    mode: PointSelectionTransformMode,
+    pointerScene: Point,
+    eventData?: Record<string, any> | null,
+  ): boolean => {
     const snapshot = getSelectedPathAnchorTransformSnapshot(pathObj);
     if (!snapshot) return false;
 
+    const corner = mode === 'move' ? null : getTransformGizmoCornerFromTarget(mode as TransformGizmoCornerTarget);
     pointSelectionTransformSessionRef.current = {
       path: pathObj,
       mode,
+      corner,
+      proportional: !!eventData?.shiftKey,
+      centered: !!eventData?.altKey,
       startPointerScene: new Point(pointerScene.x, pointerScene.y),
       snapshot,
       hasChanged: false,
@@ -1384,9 +1695,21 @@ export function useCostumeCanvasVectorPathController({
     return true;
   }, [getSelectedPathAnchorTransformSnapshot, pointSelectionTransformSessionRef]);
 
-  const applyPointSelectionTransformSession = useCallback((session: PointSelectionTransformSession, pointerScene: Point): boolean => {
+  const applyPointSelectionTransformSession = useCallback((
+    session: PointSelectionTransformSession,
+    pointerScene: Point,
+    eventData?: Record<string, any> | null,
+  ): boolean => {
     const { path, snapshot } = session;
     if (!path || getFabricObjectType(path) !== 'path') return false;
+
+    if (session.corner) {
+      session.proportional = !!eventData?.shiftKey;
+      session.centered = !!eventData?.altKey;
+    } else {
+      session.proportional = false;
+      session.centered = false;
+    }
 
     const commands = getPathCommands(path);
     let referenceCommandPoint: Point | null = null;
@@ -1430,7 +1753,7 @@ export function useCostumeCanvasVectorPathController({
 
     if (!transformedAnyAnchor || !referenceCommandPoint) return false;
 
-    const nextRotation = session.mode === 'rotate'
+    const nextRotation = session.mode.startsWith('rotate-')
       ? normalizeRadians(
           snapshot.bounds.rotationRadians +
           (
@@ -1450,6 +1773,12 @@ export function useCostumeCanvasVectorPathController({
       selectionKey: snapshot.selectionKey,
       rotationRadians: nextRotation,
     };
+    if (session.mode.startsWith('rotate-')) {
+      const fabricCanvas = fabricCanvasRef.current;
+      if (fabricCanvas) {
+        applyCanvasCursor(fabricCanvas, getTransformGizmoCursorForCornerTarget(session.mode as TransformGizmoCornerTarget, nextRotation));
+      }
+    }
 
     path.set('dirty', true);
     stabilizePathAfterAnchorMutation(path, referenceCommandPoint);
@@ -1565,6 +1894,8 @@ export function useCostumeCanvasVectorPathController({
   }, []);
 
   return {
+    applyMirroredPathAnchorCurveDrag,
+    applyMirroredPathAnchorCurveDragSession,
     applyPointSelectionMarqueeSession,
     applyPointSelectionTransformSession,
     beginPointSelectionTransformSession,
@@ -1585,12 +1916,15 @@ export function useCostumeCanvasVectorPathController({
     hasPointSelectionMarqueeExceededThreshold,
     hitPointSelectionTransform,
     insertPathPointAtScenePosition,
+    isPathCurveDragModifierPressed,
     isPointSelectionToggleModifierPressed,
     movePathAnchorByDelta,
     removeDuplicateClosedPathAnchorControl,
     resolveAnchorFromPathControlKey,
     restoreAllOriginalControls,
     restoreOriginalControls,
+    resolveMirroredPathAnchorHandleRole,
+    setMirroredPathAnchorDragSessionMoveMode,
     setPathNodeHandleType,
     setSelectedPathAnchors,
     stabilizePathAfterAnchorMutation,

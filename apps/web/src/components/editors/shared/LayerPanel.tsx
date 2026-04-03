@@ -9,7 +9,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -18,8 +17,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
-import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from 'lucide-react';
+import { MenuItemButton } from '@/components/ui/menu-item-button';
+import { Copy, Eye, EyeOff, Image, Layers3, Lock, LockOpen, Plus, Shapes, Trash2 } from '@/components/ui/icons';
 import { selectionSurfaceClassNames } from '@/lib/ui/selectionSurfaceTokens';
 import { cn } from '@/lib/utils';
 
@@ -483,7 +484,7 @@ export const LayerPanel = memo(({
           className={cn(
             'pointer-events-auto rounded-[24px] px-3 py-4 transition-[width,background-color,box-shadow] duration-200 ease-out',
             isPanelExpanded
-              ? 'w-64 bg-background/88 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)]'
+              ? 'w-64 bg-surface-floating shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)]'
               : 'w-20 bg-transparent shadow-none',
           )}
         >
@@ -492,15 +493,14 @@ export const LayerPanel = memo(({
               {canAddLayer ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button
+                    <IconButton
                       data-testid="layer-add-button"
-                      size="icon-sm"
-                      variant="ghost"
-                      className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-background/80 hover:text-foreground"
-                      aria-label="Add layer"
+                      className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none hover:bg-surface-interactive hover:text-foreground"
+                      label="Add layer"
+                      size="sm"
                     >
                       <Plus className="size-3.5" />
-                    </Button>
+                    </IconButton>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent side="right" align="start" sideOffset={10} className="min-w-36 rounded-xl">
                     <DropdownMenuItem onClick={onAddVectorLayer}>
@@ -515,20 +515,19 @@ export const LayerPanel = memo(({
                 </DropdownMenu>
               ) : (
                 <>
-                  <Button
+                  <IconButton
                     data-testid="layer-add-button"
-                    size="icon-sm"
-                    variant="ghost"
                     disabled
-                    aria-label="Add layer"
+                    className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/layer-add:bg-surface-interactive"
+                    label="Add layer"
+                    size="sm"
                     title={maxLayerTooltip}
-                    className="rounded-[12px] border border-transparent bg-transparent text-muted-foreground shadow-none disabled:opacity-50 group-hover/layer-add:bg-background/80"
                   >
                     <Plus className="size-3.5" />
-                  </Button>
+                  </IconButton>
                   <div
                     role="tooltip"
-                    className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-background/96 px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/layer-add:opacity-100"
+                    className="pointer-events-none absolute left-[calc(100%+0.75rem)] top-1/2 min-w-max -translate-y-1/2 rounded-xl border border-border/70 bg-surface-floating px-3 py-2 text-xs text-foreground opacity-0 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.55)] transition-opacity group-hover/layer-add:opacity-100"
                   >
                     {maxLayerTooltip}
                   </div>
@@ -645,9 +644,10 @@ export const LayerPanel = memo(({
                           />
                         </div>
 
-                        <button
-                          type="button"
-                          aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
+                        <IconButton
+                          label={layer.visible ? 'Hide layer' : 'Show layer'}
+                          shape="pill"
+                          size="sm"
                           className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
                           onClick={(event) => {
                             event.stopPropagation();
@@ -656,7 +656,7 @@ export const LayerPanel = memo(({
                           onPointerDown={(event) => event.stopPropagation()}
                         >
                           {layer.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
-                        </button>
+                        </IconButton>
                       </div>
                     </div>
                     {dropIndicatorIndex === displayedLayers.length && displayIndex === displayedLayers.length - 1 ? (
@@ -675,7 +675,7 @@ export const LayerPanel = memo(({
           <div className="fixed inset-0 z-40" onClick={closeContextMenu} />
           <Card
             ref={contextMenuRef}
-            className="fixed z-50 min-w-56 gap-0 rounded-2xl border-border/80 bg-background/95 px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
+            className="fixed z-50 min-w-56 gap-0 rounded-2xl border-border/80 bg-surface-floating px-0 py-1.5 shadow-[0_28px_80px_-34px_rgba(2,6,23,0.78)]"
             style={{
               left: contextMenuPosition?.left ?? contextMenu?.x ?? 0,
               top: contextMenuPosition?.top ?? contextMenu?.y ?? 0,
@@ -703,77 +703,63 @@ export const LayerPanel = memo(({
 
             <DropdownMenuSeparator />
 
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<Copy className="size-4" />}
               onClick={() => {
                 onDuplicateLayer(contextMenuLayer.id);
                 closeContextMenu();
               }}
-              className="h-9 w-full justify-start rounded-none px-3"
             >
-              <Copy className="size-4" />
               Duplicate
-            </Button>
+            </MenuItemButton>
 
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={contextMenuLayer.locked ? <LockOpen className="size-4" /> : <Lock className="size-4" />}
               onClick={() => {
                 onToggleLocked(contextMenuLayer.id);
                 closeContextMenu();
               }}
-              className="h-9 w-full justify-start rounded-none px-3"
             >
-              {contextMenuLayer.locked ? <LockOpen className="size-4" /> : <Lock className="size-4" />}
               {contextMenuLayer.locked ? 'Unlock' : 'Lock'}
-            </Button>
+            </MenuItemButton>
 
             {showMergeAction ? (
-              <Button
-                variant="ghost"
-                size="sm"
+              <MenuItemButton
+                icon={<Layers3 className="size-4" />}
                 onClick={() => {
                   onMergeDown?.(contextMenuLayer.id);
                   closeContextMenu();
                 }}
                 disabled={contextMenuLayerIndex <= 0 || !onMergeDown}
-                className="h-9 w-full justify-start rounded-none px-3"
               >
-                <Layers3 className="size-4" />
                 {mergeActionLabel}
-              </Button>
+              </MenuItemButton>
             ) : null}
 
             {showRasterizeAction && contextMenuLayer.kind === 'vector' ? (
-              <Button
-                variant="ghost"
-                size="sm"
+              <MenuItemButton
+                icon={<Image className="size-4" />}
                 onClick={() => {
                   onRasterizeLayer?.(contextMenuLayer.id);
                   closeContextMenu();
                 }}
                 disabled={!onRasterizeLayer}
-                className="h-9 w-full justify-start rounded-none px-3"
               >
-                <Image className="size-4" />
                 Rasterize
-              </Button>
+              </MenuItemButton>
             ) : null}
 
-            <Button
-              variant="ghost"
-              size="sm"
+            <MenuItemButton
+              icon={<Trash2 className="size-4" />}
+              intent="destructive"
               onClick={() => {
                 onDeleteLayer(contextMenuLayer.id);
                 closeContextMenu();
               }}
               disabled={document.layers.length <= 1}
-              className="h-9 w-full justify-start rounded-none px-3 text-destructive hover:text-destructive"
             >
-              <Trash2 className="size-4" />
               Delete
-            </Button>
+            </MenuItemButton>
           </Card>
         </>
       ) : null}

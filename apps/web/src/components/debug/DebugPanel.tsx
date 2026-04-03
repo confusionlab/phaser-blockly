@@ -3,7 +3,9 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { generateCodeForObject } from '@/phaser/CodeGenerator';
 import { runtimeDebugLog, clearDebugLog, getCurrentRuntime } from '@/phaser/RuntimeEngine';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { IconButton } from '@/components/ui/icon-button';
 import { isTextEntryTarget } from '@/utils/keyboard';
 import { getEffectiveObjectProps } from '@/types';
 import type { Project } from '@/types';
@@ -109,9 +111,9 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
     : '';
 
   return (
-    <div className="fixed bottom-4 right-4 w-[500px] h-[400px] bg-gray-900 text-white rounded-lg shadow-2xl z-50 flex flex-col">
+    <div className="fixed bottom-4 right-4 z-50 flex h-[400px] w-[500px] flex-col rounded-lg border border-border/70 bg-surface-elevated text-foreground shadow-2xl">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-800 rounded-t-lg">
+      <div className="flex items-center justify-between rounded-t-lg border-b border-border/70 bg-surface-panel px-4 py-2">
         <div className="flex gap-2">
           <TabButton active={activeTab === 'code'} onClick={() => setActiveTab('code')}>
             Code
@@ -132,16 +134,17 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
             Console {userLogs.length > 0 && <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-600 rounded-full">{userLogs.length}</span>}
           </TabButton>
         </div>
-        <button
-          onClick={onClose}
+        <IconButton
           className="text-gray-400 hover:text-white"
+          label="Close debug panel"
+          onClick={onClose}
         >
-          ×
-        </button>
+          <span className="text-base leading-none">×</span>
+        </IconButton>
       </div>
 
       {/* Object selector info */}
-      <div className="px-4 py-2 bg-gray-800/50 text-xs text-gray-400 border-b border-gray-700 flex items-center justify-between">
+      <div className="flex items-center justify-between border-b border-border/70 bg-surface-subtle px-4 py-2 text-xs text-muted-foreground">
         <div>
           {selectedObject ? (
             <span>Object: <span className="text-green-400">{selectedObject.name}</span> ({selectedObject.id.slice(0, 8)}...)</span>
@@ -164,12 +167,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
         {activeTab === 'code' && (
           <div className="space-y-2">
             <div className="flex justify-end mb-2">
-              <button
+              <Button
+                className="bg-surface-interactive text-xs text-foreground hover:bg-surface-interactive-hover"
                 onClick={copyAllCode}
-                className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600"
+                size="xs"
+                variant="ghost"
               >
                 Copy All Code
-              </button>
+              </Button>
             </div>
             <pre className="whitespace-pre-wrap text-green-300">{generatedCode}</pre>
           </div>
@@ -210,12 +215,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
           <div className="space-y-2">
             <div className="flex justify-between items-center mb-2">
               <span className="text-yellow-400 font-bold">Runtime Log</span>
-              <button
+              <Button
+                className="bg-surface-interactive text-xs text-foreground hover:bg-surface-interactive-hover"
                 onClick={() => { clearDebugLog(); setLogRefresh(r => r + 1); }}
-                className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600"
+                size="xs"
+                variant="ghost"
               >
                 Clear
-              </button>
+              </Button>
             </div>
             {runtimeLogs.length === 0 ? (
               <div className="text-gray-500">No logs yet. Press Play to start.</div>
@@ -234,12 +241,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
           <div className="space-y-2">
             <div className="flex justify-between items-center mb-2">
               <span className="text-purple-400 font-bold">Console Output</span>
-              <button
+              <Button
+                className="bg-surface-interactive text-xs text-foreground hover:bg-surface-interactive-hover"
                 onClick={() => { clearDebugLog(); setLogRefresh(r => r + 1); }}
-                className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600"
+                size="xs"
+                variant="ghost"
               >
                 Clear
-              </button>
+              </Button>
             </div>
             {userLogs.length === 0 ? (
               <div className="text-gray-500">No console output yet. Use the "console log" block to print messages.</div>
@@ -261,14 +270,14 @@ function DebugPanelContent({ onClose }: { onClose: () => void }) {
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button
+    <Button
+      className={active ? 'bg-surface-interactive text-foreground hover:bg-surface-interactive' : 'text-muted-foreground hover:text-foreground'}
       onClick={onClick}
-      className={`px-3 py-1 text-sm rounded ${
-        active ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white'
-      }`}
+      size="xs"
+      variant="ghost"
     >
       {children}
-    </button>
+    </Button>
   );
 }
 

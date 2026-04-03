@@ -1,60 +1,22 @@
-import { useState } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { api } from "@convex-generated/api";
-import type { Id } from "@convex-generated/dataModel";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Trash2, Loader2, Image, Music } from "lucide-react";
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
+import { api } from '@convex-generated/api';
+import type { Id } from '@convex-generated/dataModel';
+import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog';
 import type {
-  Costume,
-  Sound,
-  PhysicsConfig,
   ColliderConfig,
+  Costume,
+  PhysicsConfig,
+  Sound,
   Variable,
-  CostumeBounds,
-  CostumeDocument,
-} from "@/types";
-import { urlToDataUrl } from "@/utils/convexHelpers";
+} from '@/types';
 import {
-  cloneCostumeDocument,
-  ensureCostumeDocument,
-  getActiveCostumeLayer,
-  isBitmapCostumeLayer,
-} from "@/lib/costume/costumeDocument";
+  hydrateObjectLibraryItemForInsertion,
+  type ObjectLibraryListItemData,
+} from '@/lib/objectLibrary/objectLibraryAssets';
+import { useModal } from '@/components/ui/modal-provider';
 
-interface ObjectLibraryItem {
-  _id: Id<"objectLibrary">;
-  name: string;
-  thumbnail: string;
-  costumes: Array<{
-    id: string;
-    name: string;
-    storageId: Id<"_storage">;
-    url: string | null;
-    bounds?: CostumeBounds;
-    document: CostumeDocument;
-  }>;
-  sounds: Array<{
-    id: string;
-    name: string;
-    storageId: Id<"_storage">;
-    url: string | null;
-    duration?: number;
-    trimStart?: number;
-    trimEnd?: number;
-  }>;
-  blocklyXml: string;
-  currentCostumeIndex?: number;
-  physics?: PhysicsConfig;
-  collider?: ColliderConfig;
-  localVariables?: Variable[];
+interface ObjectLibraryItem extends ObjectLibraryListItemData {
+  _id: Id<'objectLibrary'>;
   createdAt: number;
 }
 
@@ -78,182 +40,102 @@ export function ObjectLibraryBrowser({
   onOpenChange,
   onSelect,
 }: ObjectLibraryBrowserProps) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loadingSelect, setLoadingSelect] = useState(false);
   const { isAuthenticated } = useConvexAuth();
-
-  const items = useQuery(api.objectLibrary.list, isAuthenticated ? {} : "skip") as ObjectLibraryItem[] | undefined;
+  const { showAlert, showConfirm } = useModal();
+  const items = useQuery(api.objectLibrary.list, open ? {} : 'skip') as ObjectLibraryItem[] | undefined;
   const removeItem = useMutation(api.objectLibrary.remove);
 
-  const handleDelete = async (id: Id<"objectLibrary">) => {
-    if (!confirm("Delete this object from library? All associated costumes and sounds will be removed.")) return;
+  const handleDeleteSelected = async (selectedItems: ObjectLibraryItem[]) => {
+    const confirmed = await showConfirm({
+      title: selectedItems.length === 1 ? 'Delete Object' : 'Delete Objects',
+      description: selectedItems.length === 1
+        ? 'Delete this object from library?'
+        : `Delete ${selectedItems.length} objects from library?`,
+      confirmLabel: selectedItems.length === 1 ? 'Delete Object' : `Delete ${selectedItems.length} Objects`,
+      tone: 'destructive',
+    });
+    if (!confirmed) {
+      return;
+    }
+
     try {
-      await removeItem({ id });
-      if (selectedId === id) setSelectedId(null);
+      await Promise.all(selectedItems.map((item) => removeItem({ id: item._id })));
     } catch (error) {
-      console.error("Failed to delete object:", error);
-      alert("Failed to delete object");
+      console.error('Failed to delete objects:', error);
+      await showAlert({
+        title: 'Delete Failed',
+        description: 'Failed to delete object',
+        tone: 'destructive',
+      });
     }
   };
 
-  const handleSelect = async () => {
-    if (!selectedId || !items) return;
-
-    const item = items.find((i) => i._id === selectedId);
-    if (!item) return;
-
-    setLoadingSelect(true);
+  const handleOpenItem = async (item: ObjectLibraryItem) => {
     try {
-      // Download all costumes and convert to embedded data URLs
-      const costumes: Costume[] = await Promise.all(
-        item.costumes.map(async (costume) => {
-          if (!costume.url) {
-            throw new Error(`Costume ${costume.name} has no URL`);
-          }
-          const dataUrl = await urlToDataUrl(costume.url);
-          const document = cloneCostumeDocument(ensureCostumeDocument(costume as { document?: unknown }));
-          const activeLayer = getActiveCostumeLayer(document);
-          if (isBitmapCostumeLayer(activeLayer) && !activeLayer.bitmap.assetId) {
-            activeLayer.bitmap.assetId = dataUrl;
-          }
-          return {
-            id: crypto.randomUUID(), // Generate new IDs for the imported object
-            name: costume.name,
-            assetId: dataUrl,
-            bounds: costume.bounds,
-            document,
-          };
-        })
-      );
-
-      // Download all sounds and convert to embedded data URLs
-      const sounds: Sound[] = await Promise.all(
-        item.sounds.map(async (sound) => {
-          if (!sound.url) {
-            throw new Error(`Sound ${sound.name} has no URL`);
-          }
-          const dataUrl = await urlToDataUrl(sound.url);
-          return {
-            id: crypto.randomUUID(),
-            name: sound.name,
-            assetId: dataUrl,
-            duration: sound.duration,
-            trimStart: sound.trimStart,
-            trimEnd: sound.trimEnd,
-          };
-        })
-      );
-
-      onSelect?.({
-        name: item.name,
-        costumes,
-        sounds,
-        blocklyXml: item.blocklyXml,
-        currentCostumeIndex: item.currentCostumeIndex ?? 0,
-        physics: item.physics ?? null,
-        collider: item.collider ?? null,
-        localVariables: item.localVariables ?? [],
-      });
-      onOpenChange(false);
+      const runtimeObject = await hydrateObjectLibraryItemForInsertion(item);
+      onSelect?.(runtimeObject);
     } catch (error) {
-      console.error("Failed to load object:", error);
-      alert("Failed to load object from library");
-    } finally {
-      setLoadingSelect(false);
+      console.error('Failed to load object:', error);
+      await showAlert({
+        title: 'Load Failed',
+        description: 'Failed to load object from library',
+        tone: 'destructive',
+      });
+      throw error;
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl h-[550px] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Object Library</DialogTitle>
-        </DialogHeader>
+    <LibraryBrowserDialog
+      canDeleteItem={(item) => item.scope === 'user'}
+      emptyDescription={isAuthenticated ? 'Save objects to build your collection.' : 'Sign in to add your own objects.'}
+      emptyTitle="No objects in library"
+      getItemId={(item) => item._id}
+      getItemName={(item) => item.name}
+      itemLabelPlural="objects"
+      itemLabelSingular="object"
+      items={items}
+      onDeleteSelected={handleDeleteSelected}
+      onItemOpen={handleOpenItem}
+      onOpenChange={onOpenChange}
+      open={open}
+      renderCard={(item) => (
+        <>
+          <div className="checkerboard-bg checkerboard-bg-sm aspect-square w-full overflow-hidden border-b border-border/60 bg-muted">
+            <img
+              src={item.thumbnail}
+              alt={item.name}
+              className="h-full w-full object-contain p-4"
+            />
+          </div>
 
-        <ScrollArea className="flex-1 mt-4">
-          {!isAuthenticated ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>Sign in for the object library.</p>
+          <div className="flex flex-1 flex-col justify-between gap-3 p-4">
+            <div className="min-w-0">
+              <p className="truncate text-base font-semibold text-foreground">
+                {item.name}
+              </p>
             </div>
-          ) : !items ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <Loader2 className="size-6 animate-spin" />
+          </div>
+        </>
+      )}
+      renderRow={(item) => (
+        <>
+          <div className="checkerboard-bg checkerboard-bg-sm h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-border/70 bg-muted">
+            <img
+              src={item.thumbnail}
+              alt={item.name}
+              className="h-full w-full object-contain p-2"
+            />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-foreground">
+              {item.name}
             </div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>No objects in library</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-4 pr-4">
-              {items.map((item) => (
-                <Card
-                  key={item._id}
-                  onClick={() => setSelectedId(item._id)}
-                  className={`relative group p-3 cursor-pointer transition-all ${
-                    selectedId === item._id
-                      ? "ring-2 ring-primary bg-primary/5"
-                      : "hover:bg-accent"
-                  }`}
-                >
-                  {/* Thumbnail */}
-                  <div
-                    className="w-full aspect-square rounded-lg overflow-hidden mb-2 checkerboard-bg checkerboard-bg-sm"
-                  >
-                    <img
-                      src={item.thumbnail}
-                      alt={item.name}
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
-
-                  {/* Name */}
-                  <p className="text-sm text-center truncate font-medium">
-                    {item.name}
-                  </p>
-
-                  {/* Asset counts */}
-                  <div className="flex justify-center gap-3 mt-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Image className="size-3" />
-                      {item.costumes.length}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Music className="size-3" />
-                      {item.sounds.length}
-                    </span>
-                  </div>
-
-                  {/* Delete button */}
-                  <Button
-                    variant="destructive"
-                    size="icon"
-                    className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(item._id);
-                    }}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
-                </Card>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-
-        <div className="flex justify-end gap-3 pt-4 border-t">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSelect}
-            disabled={!isAuthenticated || !selectedId || loadingSelect}
-          >
-            {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
-            Insert Object
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+          </div>
+        </>
+      )}
+      title="Object Library"
+    />
   );
 }

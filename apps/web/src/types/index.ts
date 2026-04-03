@@ -1,3 +1,5 @@
+import { CURRENT_PROJECT_SCHEMA_VERSION } from '@/lib/persistence/schemaVersion';
+
 // Project Types
 
 export interface Project {
@@ -7,16 +9,27 @@ export interface Project {
   updatedAt: Date;
   schemaVersion: number;
   scenes: Scene[];
+  sceneFolders: SceneFolder[];
   messages: MessageDefinition[];
   globalVariables: Variable[];
   settings: ProjectSettings;
   components: ComponentDefinition[];
+  componentFolders: ComponentFolder[];
+}
+
+export interface HierarchyFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  order: number;
 }
 
 // Component Definition - the "master" that instances reference
 export interface ComponentDefinition {
   id: string;
   name: string;
+  folderId?: string | null;
+  order?: number;
   blocklyXml: string;
   costumes: Costume[];
   currentCostumeIndex: number;
@@ -38,6 +51,7 @@ export interface Scene {
   id: string;
   name: string;
   order: number;
+  folderId?: string | null;
   background: BackgroundConfig | null;
   objects: GameObject[];
   objectFolders: SceneFolder[];
@@ -46,12 +60,8 @@ export interface Scene {
   worldBoundary?: WorldBoundaryConfig;
 }
 
-export interface SceneFolder {
-  id: string;
-  name: string;
-  parentId: string | null;
-  order: number;
-}
+export type SceneFolder = HierarchyFolder;
+export type ComponentFolder = HierarchyFolder;
 
 export interface GroundConfig {
   enabled: boolean;
@@ -143,6 +153,7 @@ export interface GameObject {
   y: number;
   scaleX: number;
   scaleY: number;
+  lockScaleProportions?: boolean;
   rotation: number;
   visible: boolean;
   parentId: string | null;
@@ -300,13 +311,17 @@ export interface ReusableObject {
 
 // Variable Types
 
-export type VariableType = 'string' | 'integer' | 'float' | 'boolean';
+export type VariableType = 'string' | 'number' | 'boolean';
+export type VariableCardinality = 'single' | 'array';
+export type VariableScalarValue = number | string | boolean;
+export type VariableValue = VariableScalarValue | VariableScalarValue[];
 
 export interface Variable {
   id: string;
   name: string;
   type: VariableType;
-  defaultValue: number | string | boolean;
+  cardinality?: VariableCardinality;
+  defaultValue: VariableValue;
   scope: 'global' | 'local';
   // For local variables, which object they belong to (optional, for filtering)
   objectId?: string;
@@ -323,9 +338,6 @@ export interface EditorState {
   selectedObjectId: string | null;
   selectedSceneId: string | null;
   isPlaying: boolean;
-  zoom: number;
-  panX: number;
-  panY: number;
 }
 
 // Helper function to create default objects
@@ -337,11 +349,13 @@ export function createDefaultProject(name: string): Project {
     name,
     createdAt: new Date(),
     updatedAt: new Date(),
-    schemaVersion: 9,
+    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
     scenes: [createDefaultScene(sceneId, 'Scene 1', 0)],
+    sceneFolders: [],
     messages: [],
     globalVariables: [],
     components: [],
+    componentFolders: [],
     settings: {
       canvasWidth: 800,
       canvasHeight: 600,
@@ -362,6 +376,7 @@ export function createDefaultScene(id: string, name: string, order: number): Sce
     id,
     name,
     order,
+    folderId: null,
     background: { type: 'color', value: '#87CEEB' },
     objects: [],
     objectFolders: [],
@@ -430,6 +445,7 @@ export function createDefaultGameObject(name: string): GameObject {
     y: 0,
     scaleX: 1,
     scaleY: 1,
+    lockScaleProportions: true,
     rotation: 0,
     visible: true,
     parentId: null,
@@ -481,6 +497,7 @@ export function getEffectiveObjectProps(
   physics: PhysicsConfig | null;
   collider: ColliderConfig | null;
   sounds: Sound[];
+  localVariables: Variable[];
 } {
   if (obj.componentId) {
     const component = components.find(c => c.id === obj.componentId);
@@ -492,6 +509,7 @@ export function getEffectiveObjectProps(
         physics: component.physics,
         collider: component.collider ?? null,
         sounds: component.sounds,
+        localVariables: component.localVariables ?? [],
       };
     }
   }
@@ -502,6 +520,7 @@ export function getEffectiveObjectProps(
     physics: obj.physics,
     collider: obj.collider,
     sounds: obj.sounds,
+    localVariables: obj.localVariables ?? [],
   };
 }
 

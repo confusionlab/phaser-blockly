@@ -4,8 +4,8 @@ import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { getEffectiveObjectProps } from '@/types';
 import type { GameObject, ComponentDefinition } from '@/types';
-import { Button } from '@/components/ui/button';
-import { X, Crosshair } from 'lucide-react';
+import { IconButton } from '@/components/ui/icon-button';
+import { X, Crosshair } from '@/components/ui/icons';
 import { shouldIgnoreGlobalKeyboardEvent } from '@/utils/keyboard';
 import { loadImageSource } from '@/lib/assets/imageSourceCache';
 
@@ -127,14 +127,14 @@ export function ObjectPicker() {
   return (
     <div className="fixed inset-0 z-50 bg-black/90 flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-background/80 backdrop-blur border-b">
+      <div className="flex items-center justify-between border-b border-border/70 bg-surface-floating px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-2 text-sm">
           <Crosshair className="size-4 text-primary" />
           <span>Click on an object to select it</span>
         </div>
-        <Button variant="ghost" size="icon" onClick={closeObjectPicker}>
+        <IconButton label="Close object picker" onClick={closeObjectPicker}>
           <X className="size-5" />
-        </Button>
+        </IconButton>
       </div>
 
       {/* Phaser canvas */}

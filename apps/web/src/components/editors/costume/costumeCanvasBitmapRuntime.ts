@@ -10,12 +10,14 @@ export interface BitmapStampBrushCommitPayload {
   alphaThreshold: number;
   compositeOperation: GlobalCompositeOperation;
   dirtyBounds: CostumeBounds | null;
+  strokeOpacity: number;
   strokeCanvas: HTMLCanvasElement;
 }
 
 interface BitmapStampBrushOptions {
   brushColor: string;
   brushKind: Exclude<BitmapBrushKind, 'hard-round'>;
+  brushOpacity: number;
   brushSize: number;
   compositeOperation: GlobalCompositeOperation;
   onCommit: (payload: BitmapStampBrushCommitPayload) => void | Promise<void>;
@@ -84,6 +86,7 @@ export function applyCanvasCursor(fabricCanvas: FabricCanvas, cursor: string) {
 
 export class CompositePencilBrush extends PencilBrush {
   compositeOperation: GlobalCompositeOperation = 'source-over';
+  opacityMultiplier = 1;
   private deferredPreviewCanvas: HTMLCanvasElement | null = null;
   private deferredPreviewToken = 0;
   private activeStrokePreviewToken: number | null = null;
@@ -91,12 +94,15 @@ export class CompositePencilBrush extends PencilBrush {
   private previousLowerCanvasOpacity = '';
 
   override needsFullRender() {
-    return this.compositeOperation === 'destination-out' || super.needsFullRender();
+    return this.compositeOperation === 'destination-out'
+      || this.opacityMultiplier < 1
+      || super.needsFullRender();
   }
 
   override _setBrushStyles(ctx: CanvasRenderingContext2D) {
     super._setBrushStyles(ctx);
     ctx.globalCompositeOperation = this.compositeOperation;
+    ctx.globalAlpha = Math.max(0, Math.min(1, this.opacityMultiplier));
   }
 
   private setPreviewSourceHidden(hidden: boolean) {
@@ -191,7 +197,10 @@ export class CompositePencilBrush extends PencilBrush {
 
   override createPath(pathData: any) {
     const path = super.createPath(pathData);
-    path.set('globalCompositeOperation', this.compositeOperation);
+    path.set({
+      globalCompositeOperation: this.compositeOperation,
+      opacity: Math.max(0, Math.min(1, this.opacityMultiplier)),
+    });
     if (this.compositeOperation === 'destination-out') {
       (path as any).__bitmapDeferredPreviewToken = this.activeStrokePreviewToken;
     }
@@ -202,12 +211,15 @@ export class CompositePencilBrush extends PencilBrush {
 export class BitmapStampBrush extends BaseBrush {
   private accumulatedDistance = 0;
   private readonly compositeOperation: GlobalCompositeOperation;
+  private readonly brushOpacity: number;
   private deferredPreviewCanvas: HTMLCanvasElement | null = null;
   private deferredPreviewToken = 0;
   private dirtyBounds: CostumeBounds | null = null;
   private activeStrokePreviewToken: number | null = null;
   private lastPoint: Point | null = null;
   private readonly onCommit: (payload: BitmapStampBrushCommitPayload) => void | Promise<void>;
+  private stampScratchCanvas: HTMLCanvasElement | null = null;
+  private stampScratchCtx: CanvasRenderingContext2D | null = null;
   private readonly stampDefinition: ReturnType<typeof getBitmapBrushStampDefinition>;
   private strokeCanvas: HTMLCanvasElement | null = null;
   private strokeCtx: CanvasRenderingContext2D | null = null;
@@ -218,6 +230,7 @@ export class BitmapStampBrush extends BaseBrush {
     super(canvas as any);
     this.color = options.brushColor;
     this.width = options.brushSize;
+    this.brushOpacity = Math.max(0, Math.min(1, options.brushOpacity));
     this.compositeOperation = options.compositeOperation;
     this.onCommit = options.onCommit;
     this.stampDefinition = getBitmapBrushStampDefinition(
@@ -336,6 +349,7 @@ export class BitmapStampBrush extends BaseBrush {
         compositeOperation: this.compositeOperation,
         alphaThreshold,
         dirtyBounds,
+        strokeOpacity: this.brushOpacity,
       });
       if (this.compositeOperation === 'destination-out') {
         void Promise.resolve(commitResult)
@@ -374,6 +388,67 @@ export class BitmapStampBrush extends BaseBrush {
     this.lastPoint = null;
     this.accumulatedDistance = 0;
     this.dirtyBounds = null;
+  }
+
+  private getStampScratchContext(width: number, height: number): CanvasRenderingContext2D | null {
+    const scratchCanvas = this.stampScratchCanvas ?? document.createElement('canvas');
+    if (scratchCanvas.width !== width) {
+      scratchCanvas.width = width;
+    }
+    if (scratchCanvas.height !== height) {
+      scratchCanvas.height = height;
+    }
+    this.stampScratchCanvas = scratchCanvas;
+
+    const scratchCtx = this.stampScratchCtx ?? getCanvas2dContext(scratchCanvas, 'readback');
+    if (!scratchCtx) {
+      return null;
+    }
+    this.stampScratchCtx = scratchCtx;
+
+    scratchCtx.save();
+    scratchCtx.setTransform(1, 0, 0, 1, 0, 0);
+    scratchCtx.globalCompositeOperation = 'source-over';
+    scratchCtx.globalAlpha = 1;
+    scratchCtx.clearRect(0, 0, width, height);
+    scratchCtx.restore();
+    return scratchCtx;
+  }
+
+  private mergeScratchDabIntoStroke(
+    bounds: CostumeBounds,
+    drawScratchDab: (ctx: CanvasRenderingContext2D) => void,
+  ) {
+    const strokeCtx = this.strokeCtx;
+    if (!strokeCtx || bounds.width <= 0 || bounds.height <= 0) {
+      return;
+    }
+
+    const scratchCtx = this.getStampScratchContext(bounds.width, bounds.height);
+    if (!scratchCtx) {
+      return;
+    }
+
+    drawScratchDab(scratchCtx);
+
+    const scratchImageData = scratchCtx.getImageData(0, 0, bounds.width, bounds.height);
+    const strokeImageData = strokeCtx.getImageData(bounds.x, bounds.y, bounds.width, bounds.height);
+    const scratchPixels = scratchImageData.data;
+    const strokePixels = strokeImageData.data;
+
+    for (let index = 0; index < scratchPixels.length; index += 4) {
+      const incomingAlpha = scratchPixels[index + 3] ?? 0;
+      if (incomingAlpha <= (strokePixels[index + 3] ?? 0)) {
+        continue;
+      }
+
+      strokePixels[index] = scratchPixels[index] ?? 0;
+      strokePixels[index + 1] = scratchPixels[index + 1] ?? 0;
+      strokePixels[index + 2] = scratchPixels[index + 2] ?? 0;
+      strokePixels[index + 3] = incomingAlpha;
+    }
+
+    strokeCtx.putImageData(strokeImageData, bounds.x, bounds.y);
   }
 
   private stampSegment(from: Point, to: Point) {
@@ -424,28 +499,30 @@ export class BitmapStampBrush extends BaseBrush {
     const boundsHalfWidth = absCos * scaledHalfWidth + absSin * scaledHalfHeight;
     const boundsHalfHeight = absSin * scaledHalfWidth + absCos * scaledHalfHeight;
 
-    ctx.save();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = opacity;
-    ctx.translate(centerX, centerY);
-    if (rotation !== 0) {
-      ctx.rotate(rotation);
-    }
-    if (scale !== 1) {
-      ctx.scale(scale, scale);
-    }
-    ctx.drawImage(stamp, -stamp.width / 2, -stamp.height / 2);
-    ctx.restore();
-
     const stampBounds = {
-      x: Math.max(0, Math.floor(centerX - boundsHalfWidth)),
-      y: Math.max(0, Math.floor(centerY - boundsHalfHeight)),
-      width: Math.min(ctx.canvas.width, Math.ceil(centerX + boundsHalfWidth)) - Math.max(0, Math.floor(centerX - boundsHalfWidth)),
-      height: Math.min(ctx.canvas.height, Math.ceil(centerY + boundsHalfHeight)) - Math.max(0, Math.floor(centerY - boundsHalfHeight)),
+      x: Math.max(0, Math.floor(centerX - boundsHalfWidth - 1)),
+      y: Math.max(0, Math.floor(centerY - boundsHalfHeight - 1)),
+      width: Math.min(ctx.canvas.width, Math.ceil(centerX + boundsHalfWidth + 1)) - Math.max(0, Math.floor(centerX - boundsHalfWidth - 1)),
+      height: Math.min(ctx.canvas.height, Math.ceil(centerY + boundsHalfHeight + 1)) - Math.max(0, Math.floor(centerY - boundsHalfHeight - 1)),
     };
     if (stampBounds.width <= 0 || stampBounds.height <= 0) {
       return;
     }
+
+    this.mergeScratchDabIntoStroke(stampBounds, (scratchCtx) => {
+      scratchCtx.save();
+      scratchCtx.globalCompositeOperation = 'source-over';
+      scratchCtx.globalAlpha = opacity;
+      scratchCtx.translate(centerX - stampBounds.x, centerY - stampBounds.y);
+      if (rotation !== 0) {
+        scratchCtx.rotate(rotation);
+      }
+      if (scale !== 1) {
+        scratchCtx.scale(scale, scale);
+      }
+      scratchCtx.drawImage(stamp, -stamp.width / 2, -stamp.height / 2);
+      scratchCtx.restore();
+    });
 
     if (!this.dirtyBounds) {
       this.dirtyBounds = stampBounds;
@@ -480,6 +557,7 @@ export class BitmapStampBrush extends BaseBrush {
 
     this._saveAndTransform(ctx);
     ctx.globalCompositeOperation = this.compositeOperation;
+    ctx.globalAlpha = this.brushOpacity;
     ctx.drawImage(this.strokeCanvas, 0, 0);
     ctx.restore();
   }

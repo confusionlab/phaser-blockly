@@ -5,14 +5,19 @@ import {
   ContinuousToolbox,
   registerContinuousToolbox,
 } from '@blockly/continuous-toolbox';
+import { PochaToolboxCategory } from './PochaToolboxCategory';
 
 const FLYOUT_WIDTH_CSS_VAR = '--blockly-flyout-width';
 const PINNABLE_FLYOUT_REGISTRATION = 'PochaContinuousFlyout';
 const PINNABLE_METRICS_REGISTRATION = 'PochaContinuousMetrics';
 const PINNABLE_TOOLBOX_REGISTRATION = 'PochaContinuousToolbox';
+const FLYOUT_ITEM_GAP_Y = 12;
+const FLYOUT_CATEGORY_BREAK_GAP = 40;
+const FLYOUT_CATEGORY_LABEL_BOTTOM_GAP = 16;
 
 export const PINNED_TOOLBOX_FLYOUT_WIDTH = 250;
 export const UNPINNED_TOOLBOX_FLYOUT_WIDTH = 350;
+const FIXED_TOOLBOX_UI_SCALE = 0.7;
 
 let registered = false;
 let initialPinnedState = true;
@@ -35,6 +40,21 @@ function getConfiguredFlyoutWidth(
 }
 
 export class PinnableContinuousFlyout extends ContinuousFlyout {
+  constructor(workspaceOptions: Blockly.Options) {
+    super(workspaceOptions);
+    (this as unknown as { GAP_Y: number }).GAP_Y = FLYOUT_ITEM_GAP_Y;
+  }
+
+  override getFlyoutScale(): number {
+    return FIXED_TOOLBOX_UI_SCALE;
+  }
+
+  override createBlock(originalBlock: Blockly.BlockSvg): Blockly.BlockSvg {
+    const newBlock = super.createBlock(originalBlock);
+    this.syncTransferredBlockScreenPosition(originalBlock, newBlock);
+    return newBlock;
+  }
+
   protected override reflowInternal_(): void {
     super.reflowInternal_();
 
@@ -76,6 +96,35 @@ export class PinnableContinuousFlyout extends ContinuousFlyout {
     this.position();
     targetWorkspace.resizeContents();
     targetWorkspace.recordDragTargets();
+  }
+
+  private syncTransferredBlockScreenPosition(
+    originalBlock: Blockly.BlockSvg,
+    newBlock: Blockly.BlockSvg,
+  ): void {
+    const targetWorkspace = this.targetWorkspace;
+    if (!targetWorkspace) {
+      return;
+    }
+
+    const flyoutOrigin = this.workspace_.getOriginOffsetInPixels();
+    const targetOrigin = targetWorkspace.getOriginOffsetInPixels();
+    const flyoutAbsoluteScale = this.workspace_.getAbsoluteScale();
+    const targetAbsoluteScale = targetWorkspace.getAbsoluteScale();
+    const safeTargetScale = Math.max(targetAbsoluteScale, 0.0001);
+    const originalLocation = originalBlock.getRelativeToSurfaceXY();
+
+    const originalScreenPosition = new Blockly.utils.Coordinate(
+      flyoutOrigin.x + originalLocation.x * flyoutAbsoluteScale,
+      flyoutOrigin.y + originalLocation.y * flyoutAbsoluteScale,
+    );
+    const nextWorkspacePosition = Blockly.utils.Coordinate.difference(
+      originalScreenPosition,
+      targetOrigin,
+    );
+    nextWorkspacePosition.scale(1 / safeTargetScale);
+
+    newBlock.moveTo(nextWorkspacePosition, ['flyoutTransfer']);
   }
 }
 
@@ -233,9 +282,40 @@ export class PinnableContinuousToolbox extends ContinuousToolbox {
   }
 
   private getInitialFlyoutContents_(): Blockly.utils.toolbox.FlyoutItemInfoArray {
-    return this.getToolboxItems().flatMap((toolboxItem) =>
-      this.convertToolboxItemToFlyoutItems(toolboxItem),
-    );
+    return this.getToolboxItems().flatMap((toolboxItem, index) => {
+      const items = this.convertToolboxItemToFlyoutItems(toolboxItem);
+      if (!(toolboxItem instanceof Blockly.ToolboxCategory)) {
+        return items;
+      }
+
+      const [categoryLabel, ...categoryContents] = items;
+      const itemsWithHeadingBottomGap = categoryLabel
+        ? [
+            categoryLabel,
+            {
+              kind: 'sep',
+              gap: FLYOUT_CATEGORY_LABEL_BOTTOM_GAP,
+              id: undefined,
+              cssconfig: undefined,
+            },
+            ...categoryContents,
+          ]
+        : items;
+
+      if (index === 0) {
+        return itemsWithHeadingBottomGap;
+      }
+
+      return [
+        {
+          kind: 'sep',
+          gap: FLYOUT_CATEGORY_BREAK_GAP,
+          id: undefined,
+          cssconfig: undefined,
+        },
+        ...itemsWithHeadingBottomGap,
+      ];
+    });
   }
 }
 
@@ -247,6 +327,13 @@ export function registerPinnableContinuousToolbox(): void {
   if (registered) return;
 
   registerContinuousToolbox();
+
+  Blockly.registry.register(
+    Blockly.registry.Type.TOOLBOX_ITEM,
+    Blockly.ToolboxCategory.registrationName,
+    PochaToolboxCategory,
+    true,
+  );
 
   Blockly.registry.register(
     Blockly.registry.Type.FLYOUTS_VERTICAL_TOOLBOX,

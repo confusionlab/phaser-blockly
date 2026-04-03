@@ -1,14 +1,21 @@
-import type { ComponentDefinition, GameObject, Variable, VariableType } from '@/types';
+import type {
+  ComponentDefinition,
+  GameObject,
+  Variable,
+  VariableCardinality,
+  VariableScalarValue,
+  VariableType,
+  VariableValue,
+} from '@/types';
 import { VARIABLE_REFERENCE_BLOCKS } from '@/lib/blocklyReferenceMaps';
-
-export const VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 export interface VariableDefinitionSnapshot {
   id: string;
   name: string;
   type: VariableType;
+  cardinality: VariableCardinality;
   scope: 'global' | 'local';
-  defaultValue: number | string | boolean;
+  defaultValue: VariableValue;
 }
 
 export interface VariableDefinitionConflict {
@@ -46,31 +53,30 @@ export function normalizeVariableName(name: unknown): string {
 }
 
 export function isValidVariableName(name: string): boolean {
-  return VARIABLE_NAME_PATTERN.test(name);
+  return normalizeVariableName(name).length > 0;
 }
 
 export function normalizeVariableType(type: unknown): VariableType {
   switch (type) {
     case 'string':
-    case 'integer':
-    case 'float':
+    case 'number':
     case 'boolean':
       return type;
     default:
-      return 'integer';
+      return 'number';
   }
 }
 
-export function coerceDefaultValue(
+export function normalizeVariableCardinality(cardinality: unknown): VariableCardinality {
+  return cardinality === 'array' ? 'array' : 'single';
+}
+
+export function coerceScalarDefaultValue(
   type: VariableType,
   value: unknown,
-): number | string | boolean {
+): VariableScalarValue {
   switch (type) {
-    case 'integer': {
-      const numeric = Number(value);
-      return Number.isFinite(numeric) ? Math.floor(numeric) : 0;
-    }
-    case 'float': {
+    case 'number': {
       const numeric = Number(value);
       return Number.isFinite(numeric) ? numeric : 0;
     }
@@ -86,17 +92,60 @@ export function coerceDefaultValue(
   }
 }
 
+export function coerceDefaultValue(
+  type: VariableType,
+  cardinality: VariableCardinality,
+  value: unknown,
+): VariableValue {
+  if (cardinality === 'array') {
+    if (Array.isArray(value)) {
+      return value.map((entry) => coerceScalarDefaultValue(type, entry));
+    }
+    if (value === null || value === undefined) {
+      return [];
+    }
+    return [coerceScalarDefaultValue(type, value)];
+  }
+
+  return coerceScalarDefaultValue(type, value);
+}
+
+export function getDefaultVariableValue(
+  type: VariableType,
+  cardinality: VariableCardinality,
+): VariableValue {
+  return coerceDefaultValue(type, cardinality, cardinality === 'array' ? [] : undefined);
+}
+
+export function cloneVariableValue(value: VariableValue): VariableValue {
+  return Array.isArray(value) ? [...value] : value;
+}
+
+export function cloneVariableDefinition(variable: Variable): Variable {
+  return {
+    ...variable,
+    defaultValue: cloneVariableValue(variable.defaultValue),
+  };
+}
+
+export function cloneVariableDefinitions(variables: Variable[] | undefined): Variable[] {
+  return (variables || []).map((variable) => cloneVariableDefinition(variable));
+}
+
 export function normalizeVariableDefinition(
   variable: Variable,
   { scope, objectId }: NormalizeVariableOptions,
 ): Variable {
   const type = normalizeVariableType(variable.type);
+  const cardinality = normalizeVariableCardinality(variable.cardinality);
   const normalizedName = normalizeVariableName(variable.name) || 'variable';
+  const defaultValue = coerceDefaultValue(type, cardinality, variable.defaultValue);
   const normalized: Variable = {
     id: safeVariableId(variable.id),
     name: normalizedName,
     type,
-    defaultValue: coerceDefaultValue(type, variable.defaultValue),
+    cardinality,
+    defaultValue,
     scope,
   };
   if (scope === 'local' && objectId) {
@@ -130,9 +179,24 @@ function normalizeVariableSnapshot(
     id: normalized.id,
     name: normalized.name,
     type: normalized.type,
+    cardinality: normalizeVariableCardinality(normalized.cardinality),
     scope: normalized.scope,
-    defaultValue: normalized.defaultValue,
+    defaultValue: cloneVariableValue(normalized.defaultValue),
   };
+}
+
+export function areVariableValuesEqual(left: VariableValue, right: VariableValue): boolean {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) {
+      return false;
+    }
+    if (left.length !== right.length) {
+      return false;
+    }
+    return left.every((value, index) => Object.is(value, right[index]));
+  }
+
+  return Object.is(left, right);
 }
 
 function sameDefinition(
@@ -143,8 +207,9 @@ function sameDefinition(
     left.id === right.id &&
     left.name === right.name &&
     left.type === right.type &&
+    left.cardinality === right.cardinality &&
     left.scope === right.scope &&
-    left.defaultValue === right.defaultValue
+    areVariableValuesEqual(left.defaultValue, right.defaultValue)
   );
 }
 
@@ -168,8 +233,9 @@ function pushDefinition(
       id: existing.id,
       name: existing.name,
       type: existing.type,
+      cardinality: existing.cardinality,
       scope: existing.scope,
-      defaultValue: existing.defaultValue,
+      defaultValue: cloneVariableValue(existing.defaultValue),
     },
     incoming,
     existingSource: existing.source,
@@ -250,8 +316,9 @@ export function buildVariableDefinitionIndex(
       id,
       name: variable.name,
       type: variable.type,
+      cardinality: variable.cardinality,
       scope: variable.scope,
-      defaultValue: variable.defaultValue,
+      defaultValue: cloneVariableValue(variable.defaultValue),
     });
   }
 
@@ -270,6 +337,45 @@ export function hasVariableNameConflict(
     if (excludeId && variable.id === excludeId) return false;
     return normalizeVariableName(variable.name).toLowerCase() === normalized;
   });
+}
+
+export interface VariableDisplayLabelOptions {
+  globalContextLabel?: string;
+  localContextLabel?: string;
+}
+
+export function buildVariableDisplayLabelMap<T extends Pick<Variable, 'id' | 'name' | 'scope'>>(
+  variables: readonly T[],
+  options: VariableDisplayLabelOptions = {},
+): Map<string, string> {
+  const globalContextLabel = normalizeVariableName(options.globalContextLabel) || 'project';
+  const localContextLabel = normalizeVariableName(options.localContextLabel) || 'here';
+  const nameCounts = new Map<string, number>();
+
+  for (const variable of variables) {
+    const normalizedName = normalizeVariableName(variable.name).toLowerCase();
+    if (!normalizedName) continue;
+    nameCounts.set(normalizedName, (nameCounts.get(normalizedName) || 0) + 1);
+  }
+
+  const labelCounts = new Map<string, number>();
+  const labels = new Map<string, string>();
+
+  for (const variable of variables) {
+    const baseName = normalizeVariableName(variable.name) || 'variable';
+    const normalizedName = baseName.toLowerCase();
+    const needsDisambiguation = (nameCounts.get(normalizedName) || 0) > 1;
+    const contextLabel = variable.scope === 'local' ? localContextLabel : globalContextLabel;
+    const baseLabel = needsDisambiguation ? `${baseName} (${contextLabel})` : baseName;
+    const duplicateLabelCount = (labelCounts.get(baseLabel) || 0) + 1;
+    labelCounts.set(baseLabel, duplicateLabelCount);
+    labels.set(
+      variable.id,
+      duplicateLabelCount > 1 ? `${baseLabel} ${duplicateLabelCount}` : baseLabel,
+    );
+  }
+
+  return labels;
 }
 
 export function remapVariableIdsInBlocklyXml(

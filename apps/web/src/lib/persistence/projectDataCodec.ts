@@ -160,7 +160,7 @@ function canonicalizePersistedGameObject(gameObject: PersistedGameObject | GameO
   };
 }
 
-function canonicalizePersistedScene(scene: PersistedScene | Scene): PersistedScene {
+export function canonicalizePersistedScene(scene: PersistedScene | Scene): PersistedScene {
   const nextScene = cloneValue(scene);
   return {
     ...nextScene,
@@ -171,7 +171,7 @@ function canonicalizePersistedScene(scene: PersistedScene | Scene): PersistedSce
   };
 }
 
-function canonicalizePersistedComponentDefinition(
+export function canonicalizePersistedComponentDefinition(
   component: PersistedComponentDefinition | ComponentDefinition,
 ): PersistedComponentDefinition {
   const nextComponent = cloneValue(component);
@@ -202,7 +202,7 @@ function inflatePersistedGameObject(gameObject: PersistedGameObject): GameObject
   };
 }
 
-function inflatePersistedScene(scene: PersistedScene): Scene {
+export function inflatePersistedScene(scene: PersistedScene): Scene {
   const nextScene = cloneValue(scene);
   return {
     ...nextScene,
@@ -220,7 +220,7 @@ function inflatePersistedScene(scene: PersistedScene): Scene {
   };
 }
 
-function inflatePersistedComponentDefinition(component: PersistedComponentDefinition): ComponentDefinition {
+export function inflatePersistedComponentDefinition(component: PersistedComponentDefinition): ComponentDefinition {
   const nextComponent = cloneValue(component);
   return {
     ...nextComponent,

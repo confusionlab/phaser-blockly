@@ -6,21 +6,20 @@ import {
   type CSSProperties,
 } from 'react';
 import * as Blockly from 'blockly';
-import { Pin } from 'lucide-react';
+import { IconButton } from '@/components/ui/icon-button';
+import { Pin } from '@/components/ui/icons';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import {
   getToolboxConfig,
   registerTypedVariablesCategory,
-  setAddVariableCallback,
-  setManageVariablesCallback,
-  setMessageDialogCallback,
+  setEditMessagesToolbarCallback,
+  setEditVariablesCallback,
   setTypedVariableLoading,
   updateVariableBlockAppearance,
 } from './toolbox';
-import { AddVariableDialog } from '@/components/dialogs/AddVariableDialog';
-import { MessageDialog } from '@/components/dialogs/MessageDialog';
-import { VariableManagerDialog } from '@/components/dialogs/VariableManagerDialog';
+import { EditMessagesDialog } from '@/components/dialogs/EditMessagesDialog';
+import { EditVariablesDialog } from '@/components/dialogs/EditVariablesDialog';
 import { BlockSearchModal } from './BlockSearchModal';
 import {
   COMPONENT_ANY_PREFIX,
@@ -43,14 +42,22 @@ import {
   setInitialPinnableToolboxPinnedState,
   UNPINNED_TOOLBOX_FLYOUT_WIDTH,
 } from './pinnableContinuousToolbox';
+import { POCHA_BLOCKLY_THEME } from './blocklyTheme';
 import type { UndoRedoHandler } from '@/store/editorStore';
-import type { Variable } from '@/types';
 
 // Register Blockly toolbox plugins once at module load.
 registerPinnableContinuousToolbox();
 
 const DEFAULT_SCROLLBAR_SIZE = 4;
 const BLOCKLY_SCROLLBAR_THICKNESS_OFFSET = 5;
+const BLOCKLY_ROOMY_EDIT_BUTTON_SELECTOR = '.blocklyFlyoutButton.pochaBlocklyRoomyEditButton';
+const BLOCKLY_FLYOUT_LABEL_SELECTOR = '.blocklyFlyoutLabel';
+const BLOCKLY_FLYOUT_LABEL_LEFT_PADDING = 2;
+const BLOCKLY_FLYOUT_LABEL_TEXT_Y = '28';
+const BLOCKLY_ROOMY_EDIT_BUTTON_HORIZONTAL_PADDING = 16;
+const BLOCKLY_ROOMY_EDIT_BUTTON_HEIGHT = 30;
+const BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS = 8;
+const BLOCKLY_ROOMY_EDIT_BUTTON_TEXT_Y = '20';
 
 function getBlocklyScrollbarThickness(): number {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -63,16 +70,69 @@ function getBlocklyScrollbarThickness(): number {
   return visualSize + BLOCKLY_SCROLLBAR_THICKNESS_OFFSET;
 }
 
+function syncBlocklyRoomyEditButtons(container: HTMLElement): void {
+  const buttons = container.querySelectorAll<SVGGElement>(BLOCKLY_ROOMY_EDIT_BUTTON_SELECTOR);
+
+  for (const button of buttons) {
+    const background = button.querySelector<SVGRectElement>('.blocklyFlyoutButtonBackground');
+    const shadow = button.querySelector<SVGRectElement>('.blocklyFlyoutButtonShadow');
+    const label = button.querySelector<SVGTextElement>('text.blocklyText');
+    if (!background || !label) {
+      continue;
+    }
+
+    const labelWidth = label.getComputedTextLength();
+    const width = Math.max(
+      Math.ceil(labelWidth + BLOCKLY_ROOMY_EDIT_BUTTON_HORIZONTAL_PADDING * 2),
+      Number.parseFloat(background.getAttribute('width') ?? '0'),
+    );
+    const textY = BLOCKLY_ROOMY_EDIT_BUTTON_TEXT_Y;
+
+    if (shadow) {
+      shadow.setAttribute('width', String(width));
+      shadow.setAttribute('height', String(BLOCKLY_ROOMY_EDIT_BUTTON_HEIGHT));
+      shadow.setAttribute('rx', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+      shadow.setAttribute('ry', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+    }
+
+    background.setAttribute('width', String(width));
+    background.setAttribute('height', String(BLOCKLY_ROOMY_EDIT_BUTTON_HEIGHT));
+    background.setAttribute('rx', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+    background.setAttribute('ry', String(BLOCKLY_ROOMY_EDIT_BUTTON_RADIUS));
+
+    label.setAttribute('x', String(width / 2));
+    label.setAttribute('y', textY);
+  }
+}
+
+function syncBlocklyFlyoutLabels(container: HTMLElement): void {
+  const labels = container.querySelectorAll<SVGGElement>(BLOCKLY_FLYOUT_LABEL_SELECTOR);
+
+  for (const labelGroup of labels) {
+    const label = labelGroup.querySelector<SVGTextElement>('.blocklyFlyoutLabelText');
+    if (!label) {
+      continue;
+    }
+
+    label.setAttribute('text-anchor', 'start');
+    label.setAttribute('x', String(BLOCKLY_FLYOUT_LABEL_LEFT_PADDING));
+    label.setAttribute('y', BLOCKLY_FLYOUT_LABEL_TEXT_Y);
+  }
+}
+
 // Global clipboard for cross-object block copying
 // Store the copy data from Blockly's ICopyable interface
 let globalBlockClipboard: Blockly.ICopyData | null = null;
 const BLOCK_CLIPBOARD_STORAGE_KEY = 'pochacoding:blocklyClipboard:v1';
 const TOOLBOX_PINNED_STORAGE_KEY = 'pochacoding:blocklyToolboxPinned:v1';
 const TOOLBOX_PIN_BUTTON_SIZE = 28;
-const EMPTY_TOOLBOX_CONFIG = {
+const EMPTY_TOOLBOX_CONFIG: ReturnType<typeof getToolboxConfig> = {
   kind: 'categoryToolbox',
   contents: [],
-} as const;
+};
+type BlocklyEditorGlobal = typeof globalThis & {
+  __pochaBlocklyWorkspace?: Blockly.WorkspaceSvg | null;
+};
 
 type PersistedBlockClipboard = {
   version: 1;
@@ -256,6 +316,10 @@ function registerCrossObjectCopyPaste() {
 // Register once at module load
 registerCrossObjectCopyPaste();
 
+function setDebugBlocklyWorkspace(workspace: Blockly.WorkspaceSvg | null): void {
+  (globalThis as BlocklyEditorGlobal).__pochaBlocklyWorkspace = workspace;
+}
+
 const DEPRECATED_BLOCK_MESSAGES: Record<string, string> = {};
 
 const TYPE_REFERENCE_BLOCKS: Record<string, string> = {
@@ -429,17 +493,11 @@ export function BlocklyEditor() {
     componentId: string | null;
     timeoutId: number;
   } | null>(null);
-  const pendingMessageFieldApplyRef = useRef<((messageId: string) => void) | null>(null);
   const [toolboxPinned, setToolboxPinned] = useState(loadToolboxPinnedPreference);
   const [pinButtonPosition, setPinButtonPosition] = useState<{ top: number; left: number } | null>(null);
-  const [showAddVariableDialog, setShowAddVariableDialog] = useState(false);
-  const [showVariableManager, setShowVariableManager] = useState(false);
+  const [showEditVariablesDialog, setShowEditVariablesDialog] = useState(false);
+  const [showEditMessagesDialog, setShowEditMessagesDialog] = useState(false);
   const [showBlockSearch, setShowBlockSearch] = useState(false);
-  const [showMessageDialog, setShowMessageDialog] = useState(false);
-  const [messageDialogMode, setMessageDialogMode] = useState<'create' | 'rename'>('create');
-  const [messageDialogName, setMessageDialogName] = useState('');
-  const [messageDialogError, setMessageDialogError] = useState<string | null>(null);
-  const [messageDialogSelectedId, setMessageDialogSelectedId] = useState<string | null>(null);
   const [dragSyncNonce, setDragSyncNonce] = useState(0);
 
   const {
@@ -447,9 +505,10 @@ export function BlocklyEditor() {
     selectedObjectId,
     selectedComponentId,
     activeObjectTab,
+    showAdvancedBlocks,
     registerCodeUndo,
   } = useEditorStore();
-  const { project, addGlobalVariable, addLocalVariable, addMessage, updateMessage, updateComponent } = useProjectStore();
+  const { project } = useProjectStore();
   const sceneDropdownStamp = project?.scenes
     .map((scene, index) => `${index}:${scene.id}:${scene.name}`)
     .join('|') ?? '';
@@ -525,6 +584,8 @@ export function BlocklyEditor() {
       frameId = window.requestAnimationFrame(() => {
         frameId = 0;
         updatePinButtonPosition();
+        syncBlocklyRoomyEditButtons(container);
+        syncBlocklyFlyoutLabels(container);
       });
     };
 
@@ -690,67 +751,19 @@ export function BlocklyEditor() {
     };
   }, [selectedSceneId, selectedObjectId, selectedComponentId, flushPendingWorkspacePersist]);
 
+  const closeMessageManager = useCallback(() => {
+    setShowEditMessagesDialog(false);
+  }, []);
+
   useEffect(() => {
-    setMessageDialogCallback((mode, selectedMessageId, applySelectedMessageId) => {
-      pendingMessageFieldApplyRef.current = applySelectedMessageId;
-      setMessageDialogMode(mode);
-      setMessageDialogSelectedId(selectedMessageId);
-      const selectedMessage = (useProjectStore.getState().project?.messages || []).find(
-        (message) => message.id === selectedMessageId,
-      );
-      setMessageDialogName(mode === 'rename' ? selectedMessage?.name || '' : '');
-      setMessageDialogError(null);
-      setShowMessageDialog(true);
+    setEditMessagesToolbarCallback(() => {
+      setShowEditMessagesDialog(true);
     });
 
     return () => {
-      setMessageDialogCallback(null);
+      setEditMessagesToolbarCallback(null);
     };
   }, []);
-
-  const closeMessageDialog = useCallback(() => {
-    pendingMessageFieldApplyRef.current = null;
-    setShowMessageDialog(false);
-    setMessageDialogError(null);
-    setMessageDialogName('');
-    setMessageDialogSelectedId(null);
-    setMessageDialogMode('create');
-  }, []);
-
-  const handleSubmitMessageDialog = useCallback(() => {
-    const trimmedName = messageDialogName.trim();
-    if (!trimmedName) {
-      setMessageDialogError('Please enter a message name');
-      return;
-    }
-
-    if (messageDialogMode === 'create') {
-      const created = addMessage(trimmedName);
-      if (!created) {
-        setMessageDialogError('Failed to create message');
-        return;
-      }
-      pendingMessageFieldApplyRef.current?.(created.id);
-      closeMessageDialog();
-      return;
-    }
-
-    if (!messageDialogSelectedId) {
-      setMessageDialogError('No message selected');
-      return;
-    }
-
-    updateMessage(messageDialogSelectedId, { name: trimmedName });
-    pendingMessageFieldApplyRef.current?.(messageDialogSelectedId);
-    closeMessageDialog();
-  }, [
-    addMessage,
-    closeMessageDialog,
-    messageDialogMode,
-    messageDialogName,
-    messageDialogSelectedId,
-    updateMessage,
-  ]);
 
   // Cmd+K to open block search, Cmd+C for cross-object copy
   useEffect(() => {
@@ -816,8 +829,11 @@ export function BlocklyEditor() {
 
     // Blockly config with Zelos renderer and continuous toolbox
     workspaceRef.current = Blockly.inject(containerRef.current, {
-      toolbox: hasCodeTarget ? getToolboxConfig() : EMPTY_TOOLBOX_CONFIG,
+      toolbox: hasCodeTarget
+        ? getToolboxConfig({ includeAdvancedBlocks: showAdvancedBlocks })
+        : EMPTY_TOOLBOX_CONFIG,
       renderer: 'zelos',
+      theme: POCHA_BLOCKLY_THEME,
       plugins: {
         toolbox: PINNABLE_CONTINUOUS_TOOLBOX,
         flyoutsVerticalToolbox: PINNABLE_CONTINUOUS_FLYOUT,
@@ -840,14 +856,14 @@ export function BlocklyEditor() {
     if (isPinnableContinuousToolbox(toolbox)) {
       toolbox.setPinned(toolboxPinnedRef.current);
     }
+    setDebugBlocklyWorkspace(workspaceRef.current);
     window.requestAnimationFrame(updatePinButtonPosition);
 
     // Register typed variables category callback
     registerTypedVariablesCategory(workspaceRef.current);
 
-    // Set up callback for "Add Variable" button
-    setAddVariableCallback(() => setShowAddVariableDialog(true));
-    setManageVariablesCallback(() => setShowVariableManager(true));
+    // Set up callback for the variables editor button
+    setEditVariablesCallback(() => setShowEditVariablesDialog(true));
 
     // Save on changes and validate references
     workspaceRef.current.addChangeListener((event) => {
@@ -989,18 +1005,29 @@ export function BlocklyEditor() {
         workspaceRef.current.dispose();
         workspaceRef.current = null;
       }
-      setAddVariableCallback(null);
-      setManageVariablesCallback(null);
+      setDebugBlocklyWorkspace(null);
+      setEditVariablesCallback(null);
     };
-  }, [collapseUnpinnedFlyout, flushPendingWorkspacePersist, hasCodeTarget, scheduleWorkspacePersist, updatePinButtonPosition]);
+  }, [
+    collapseUnpinnedFlyout,
+    flushPendingWorkspacePersist,
+    hasCodeTarget,
+    scheduleWorkspacePersist,
+    showAdvancedBlocks,
+    updatePinButtonPosition,
+  ]);
 
   useEffect(() => {
     const workspace = workspaceRef.current;
     if (!workspace) return;
 
-    workspace.updateToolbox(hasCodeTarget ? getToolboxConfig() : EMPTY_TOOLBOX_CONFIG);
+    workspace.updateToolbox(
+      hasCodeTarget
+        ? getToolboxConfig({ includeAdvancedBlocks: showAdvancedBlocks })
+        : EMPTY_TOOLBOX_CONFIG,
+    );
     updatePinButtonPosition();
-  }, [hasCodeTarget, updatePinButtonPosition]);
+  }, [hasCodeTarget, showAdvancedBlocks, updatePinButtonPosition]);
 
   // Keep workspace in sync with selected object XML, including undo/redo history replays.
   useEffect(() => {
@@ -1102,7 +1129,7 @@ export function BlocklyEditor() {
       setTypedVariableLoading(false);
       const allBlocks = workspaceRef.current.getAllBlocks(false);
       for (const block of allBlocks) {
-        if (block.type === 'typed_variable_get') {
+        if (block.type === 'typed_variable_get' || block.type === 'typed_array_item_at') {
           updateVariableBlockAppearance(block, true);
         }
       }
@@ -1188,18 +1215,6 @@ export function BlocklyEditor() {
     }
   }, [messageDropdownStamp]);
 
-  // Get current object name for local variable option
-  const currentObjectName = (() => {
-    if (!project) return undefined;
-    if (selectedObject) {
-      return selectedObject.name;
-    }
-    if (explicitlySelectedComponent) {
-      return explicitlySelectedComponent.name;
-    }
-    return undefined;
-  })();
-
   const blocklyContainerStyle = {
     '--blockly-flyout-width': `${
       toolboxPinned
@@ -1207,28 +1222,6 @@ export function BlocklyEditor() {
         : UNPINNED_TOOLBOX_FLYOUT_WIDTH
     }px`,
   } as CSSProperties;
-
-  const handleAddVariable = (variable: Variable) => {
-    if (variable.scope === 'global') {
-      addGlobalVariable(variable);
-    } else if (selectedSceneId && selectedObjectId) {
-      addLocalVariable(selectedSceneId, selectedObjectId, variable);
-    } else if (selectedComponentId) {
-      const component = (project?.components || []).find((componentItem) => componentItem.id === selectedComponentId);
-      if (component) {
-        updateComponent(selectedComponentId, {
-          localVariables: [
-            ...(component.localVariables || []),
-            { ...variable, scope: 'local' },
-          ],
-        });
-      }
-    }
-    // Refresh the toolbox to show the new variable
-    if (workspaceRef.current) {
-      workspaceRef.current.refreshToolboxSelection();
-    }
-  };
 
   return (
     <>
@@ -1242,55 +1235,50 @@ export function BlocklyEditor() {
           style={blocklyContainerStyle}
         />
         {hasCodeTarget && pinButtonPosition && (
-          <button
-            type="button"
-            className="absolute z-40 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/95 text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
+          <IconButton
+            className="absolute z-40 flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-surface-floating text-muted-foreground shadow-sm transition hover:bg-accent hover:text-foreground"
+            label={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
+            pressed={toolboxPinned}
+            shape="default"
+            size="xs"
             style={pinButtonPosition}
-            title={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
-            aria-label={toolboxPinned ? 'Unpin toolbox' : 'Pin toolbox'}
-            aria-pressed={toolboxPinned}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => setToolboxPinned((current) => !current)}
           >
             <Pin className={`size-4 ${toolboxPinned ? 'fill-current text-foreground' : ''}`} />
-          </button>
+          </IconButton>
         )}
       </div>
-      <AddVariableDialog
-        open={showAddVariableDialog}
-        onOpenChange={setShowAddVariableDialog}
-        onAdd={handleAddVariable}
-        objectName={currentObjectName}
+      <EditVariablesDialog
+        open={showEditVariablesDialog}
+        onOpenChange={setShowEditVariablesDialog}
+        onVariablesChanged={() => {
+          if (workspaceRef.current) {
+            workspaceRef.current.refreshToolboxSelection();
+          }
+        }}
       />
-      <VariableManagerDialog
-        open={showVariableManager}
-        onOpenChange={setShowVariableManager}
-        onAddNew={() => setShowAddVariableDialog(true)}
+      <EditMessagesDialog
+        open={showEditMessagesDialog}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeMessageManager();
+            return;
+          }
+          setShowEditMessagesDialog(true);
+        }}
+        onMessagesChanged={() => {
+          if (workspaceRef.current) {
+            workspaceRef.current.refreshToolboxSelection();
+          }
+        }}
       />
       <BlockSearchModal
         isOpen={showBlockSearch}
         onClose={() => setShowBlockSearch(false)}
         workspace={workspaceRef.current}
-        onNewVariable={() => setShowAddVariableDialog(true)}
-        onManageVariables={() => setShowVariableManager(true)}
-      />
-      <MessageDialog
-        open={showMessageDialog}
-        mode={messageDialogMode}
-        name={messageDialogName}
-        error={messageDialogError}
-        onNameChange={(name) => {
-          setMessageDialogName(name);
-          if (messageDialogError) {
-            setMessageDialogError(null);
-          }
-        }}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeMessageDialog();
-          }
-        }}
-        onSubmit={handleSubmitMessageDialog}
+        onEditVariables={() => setShowEditVariablesDialog(true)}
+        onEditMessages={() => setShowEditMessagesDialog(true)}
       />
     </>
   );

@@ -1,16 +1,16 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import * as Slider from '@radix-ui/react-slider';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { AnchoredPopupSurface } from '@/components/editors/shared/AnchoredPopupSurface';
 import {
-  FloatingBottomToolbar,
   FloatingBottomToolbarDock,
+  FloatingPropertyToolbar,
+  FloatingToolToolbar,
+  floatingToolbarControlActiveClass,
+  floatingToolbarControlBaseClass,
 } from '@/components/editors/shared/FloatingBottomToolbar';
-import {
-  ColorPicker,
-  ColorPickerSelection,
-  ColorPickerHue,
-} from '@/components/ui/color-picker';
+import { FloatingToolbarColorControl } from '@/components/editors/shared/FloatingToolbarColorControl';
+import { FloatingToolbarSlider } from '@/components/editors/shared/FloatingToolbarSlider';
 import {
   MousePointer2,
   PenTool,
@@ -32,7 +32,7 @@ import {
   FlipHorizontal2,
   FlipVertical2,
   RotateCw,
-} from 'lucide-react';
+} from '@/components/ui/icons';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -43,7 +43,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import Color from 'color';
 import type { CostumeEditorMode } from '@/types';
 import {
   BITMAP_BRUSH_OPTIONS,
@@ -90,7 +89,9 @@ export interface TextToolStyle {
 export interface VectorToolStyle {
   fillColor: string;
   fillTextureId: VectorFillTextureId;
+  fillOpacity: number;
   strokeColor: string;
+  strokeOpacity: number;
   strokeWidth: number;
   strokeBrushId: VectorStrokeBrushId;
 }
@@ -199,10 +200,6 @@ type ToolbarMenuId =
   | 'text-align'
   | 'shape-tools';
 
-const floatingToolButtonBaseClass =
-  'h-11 rounded-[18px] bg-transparent text-muted-foreground shadow-none transition-colors duration-200 hover:!bg-transparent hover:text-foreground';
-const floatingToolButtonActiveClass =
-  '!bg-foreground/[0.08] text-foreground shadow-none hover:!bg-foreground/[0.08] dark:!bg-white/[0.12] dark:hover:!bg-white/[0.12]';
 const toolbarPopupSideOffset = 10;
 
 const FloatingToolButton = memo(({
@@ -215,113 +212,25 @@ const FloatingToolButton = memo(({
   const isActive = activeTool === tool;
 
   return (
-    <Button
-      variant="ghost"
-      size="icon-lg"
+    <IconButton
       className={cn(
-        floatingToolButtonBaseClass,
+        floatingToolbarControlBaseClass,
         'w-11',
-        isActive && floatingToolButtonActiveClass,
+        isActive && floatingToolbarControlActiveClass,
       )}
+      label={label}
       onClick={() => onClick(tool)}
-      title={label}
-      aria-pressed={isActive}
+      pressed={isActive}
+      size="lg"
       data-tool={tool}
     >
       {icon}
-    </Button>
+    </IconButton>
   );
 });
 
 FloatingToolButton.displayName = 'FloatingToolButton';
 
-function resolveColorPickerValue(value: Parameters<typeof Color.rgb>[0]) {
-  try {
-    return Color(value).hex();
-  } catch {
-    return null;
-  }
-}
-
-interface ToolbarColorControlProps {
-  label: string;
-  value: string;
-  menuId: ToolbarColorMenuId;
-  openMenu: ToolbarMenuId | null;
-  onMenuOpenChange: (menu: ToolbarMenuId, open: boolean) => void;
-  onColorChange: (color: string) => void;
-  labelDisplay?: 'none' | 'left';
-}
-
-const ToolbarColorControl = memo(({
-  label,
-  value,
-  menuId,
-  openMenu,
-  onMenuOpenChange,
-  onColorChange,
-  labelDisplay = 'left',
-}: ToolbarColorControlProps) => {
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const isOpen = openMenu === menuId;
-
-  const handleColorChange = useCallback((nextValue: Parameters<typeof Color.rgb>[0]) => {
-    const resolved = resolveColorPickerValue(nextValue);
-    if (!resolved) {
-      return;
-    }
-
-    onColorChange(resolved);
-  }, [onColorChange]);
-
-  return (
-    <>
-      <div className="relative flex items-center gap-2">
-        {labelDisplay === 'left' && (
-          <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
-        )}
-        <button
-          ref={buttonRef}
-          type="button"
-          className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent/60"
-          onClick={() => onMenuOpenChange(menuId, !isOpen)}
-          title={label}
-          aria-label={label}
-          aria-expanded={isOpen}
-          aria-haspopup="dialog"
-        >
-          <span
-            className="size-6 rounded-md ring-1 ring-black/15"
-            style={{ backgroundColor: value }}
-            aria-hidden="true"
-          />
-        </button>
-      </div>
-
-      <AnchoredPopupSurface
-        open={isOpen}
-        anchorRef={buttonRef}
-        onClose={() => onMenuOpenChange(menuId, false)}
-        side="top"
-        align="center"
-        sideOffset={toolbarPopupSideOffset}
-        className="w-[212px] p-3"
-      >
-        <ColorPicker value={value} onChange={handleColorChange} className="w-48">
-          <ColorPickerSelection className="mb-2 h-32 rounded" />
-          <ColorPickerHue />
-        </ColorPicker>
-      </AnchoredPopupSurface>
-    </>
-  );
-});
-
-ToolbarColorControl.displayName = 'ToolbarColorControl';
-
-const toolbarSliderThumbClassName =
-  'block size-4 rounded-full border border-primary/50 bg-background shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
-const toolbarSliderTrackClassName = 'relative h-1.5 w-full grow rounded-full bg-secondary';
-const toolbarSliderRangeClassName = 'absolute h-full rounded-full bg-primary';
 const toolbarSliderPreviewSurfaceClassName =
   'pointer-events-none overflow-visible border-0 bg-transparent p-0 shadow-none';
 
@@ -380,10 +289,10 @@ const ToolbarPreviewSlider = memo(({
         <span className="whitespace-nowrap text-xs text-muted-foreground">{label}</span>
       ) : null}
       <div ref={anchorRef} className="relative flex min-w-0 grow items-center">
-        <Slider.Root
-          className={cn('relative flex h-4 w-full touch-none items-center', sliderClassName)}
-          value={[value]}
-          onValueChange={([nextValue]) => onValueChange(nextValue)}
+        <FloatingToolbarSlider
+          className={sliderClassName}
+          value={value}
+          onValueChange={onValueChange}
           onValueCommit={() => setIsPreviewVisible(false)}
           onPointerDownCapture={() => setIsPreviewVisible(true)}
           onFocusCapture={() => setIsPreviewVisible(true)}
@@ -391,12 +300,8 @@ const ToolbarPreviewSlider = memo(({
           min={min}
           max={max}
           step={step}
-        >
-          <Slider.Track className={toolbarSliderTrackClassName}>
-            <Slider.Range className={toolbarSliderRangeClassName} />
-          </Slider.Track>
-          <Slider.Thumb className={cn(toolbarSliderThumbClassName, thumbClassName)} />
-        </Slider.Root>
+          thumbClassName={thumbClassName}
+        />
       </div>
       <span className={cn('w-8 text-right text-xs text-muted-foreground', valueClassName)}>{value}</span>
       <AnchoredPopupSurface
@@ -546,6 +451,7 @@ interface CostumeToolbarProps {
   hasSelectedVectorPoints: boolean;
   bitmapBrushKind: BitmapBrushKind;
   brushColor: string;
+  brushOpacity: number;
   brushSize: number;
   bitmapFillStyle: BitmapFillStyle;
   bitmapShapeStyle: BitmapShapeStyle;
@@ -562,12 +468,14 @@ interface CostumeToolbarProps {
   onAlign: (action: AlignAction) => void;
   alignDisabled: boolean;
   onColorChange: (color: string) => void;
+  onBrushOpacityChange: (opacity: number) => void;
   onBitmapBrushKindChange: (kind: BitmapBrushKind) => void;
   onBrushSizeChange: (size: number) => void;
   onBitmapFillStyleChange: (updates: Partial<BitmapFillStyle>) => void;
   onBitmapShapeStyleChange: (updates: Partial<BitmapShapeStyle>) => void;
   onTextStyleChange: (updates: Partial<TextToolStyle>) => void;
   onVectorStyleChange: (updates: Partial<VectorToolStyle>) => void;
+  toolAccessory?: ReactNode;
 }
 
 const bitmapPrimaryTools: ToolDefinition[] = [
@@ -672,6 +580,7 @@ export const CostumeToolbar = memo(({
   hasSelectedVectorPoints,
   bitmapBrushKind,
   brushColor,
+  brushOpacity,
   brushSize,
   bitmapFillStyle,
   bitmapShapeStyle,
@@ -688,12 +597,14 @@ export const CostumeToolbar = memo(({
   onAlign,
   alignDisabled,
   onColorChange,
+  onBrushOpacityChange,
   onBitmapBrushKindChange,
   onBrushSizeChange,
   onBitmapFillStyleChange,
   onBitmapShapeStyleChange,
   onTextStyleChange,
   onVectorStyleChange,
+  toolAccessory,
 }: CostumeToolbarProps) => {
   const [openMenu, setOpenMenu] = useState<ToolbarMenuId | null>(null);
   const showSelectTool = toolVisibility?.showSelectTool ?? true;
@@ -765,6 +676,14 @@ export const CostumeToolbar = memo(({
     showVectorStyleControls ||
     showBitmapBrushSizeControl ||
     showTextToolbarControls;
+  const primaryColorOpacity = showTextControls
+    ? textStyle.opacity
+    : (editorMode === 'bitmap' && activeTool === 'brush' ? brushOpacity : undefined);
+  const handlePrimaryColorOpacityChange = showTextControls
+    ? (opacity: number) => onTextStyleChange({ opacity })
+    : (editorMode === 'bitmap' && activeTool === 'brush'
+      ? onBrushOpacityChange
+      : undefined);
   const activeTextAlign = textAlignOptions.find((option) => option.value === textStyle.textAlign) ?? textAlignOptions[0];
   const ActiveTextAlignIcon = activeTextAlign.Icon;
   useEffect(() => {
@@ -783,7 +702,7 @@ export const CostumeToolbar = memo(({
     <>
       <FloatingBottomToolbarDock>
           {showContextualPropertyBar && (
-            <FloatingBottomToolbar variant="property" testId="costume-toolbar-properties">
+            <FloatingPropertyToolbar testId="costume-toolbar-properties">
                 <div className={cn('min-w-max', useVectorSelectionTwoRowLayout ? 'flex flex-col items-center gap-2' : 'flex items-center justify-center gap-2')}>
                   <div className="flex min-w-max items-center justify-center gap-2">
                   {showVectorHandleControl && (
@@ -837,15 +756,14 @@ export const CostumeToolbar = memo(({
                           onOpenChange={(open) => handleMenuOpenChange('move-order', open)}
                         >
                           <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="icon"
+                            <IconButton
                               className="h-8 w-8"
-                              title="Move Order"
-                              aria-label="Move Order"
+                              label="Move Order"
+                              size="md"
+                              variant="outline"
                             >
                               <MoveOrderMenuIcon />
-                            </Button>
+                            </IconButton>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="min-w-[160px]">
                             <DropdownMenuItem onClick={() => onMoveOrder('forward')}>
@@ -868,16 +786,15 @@ export const CostumeToolbar = memo(({
                         onOpenChange={(open) => handleMenuOpenChange('align', open)}
                       >
                         <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="icon"
+                          <IconButton
                             className="h-8 w-8"
                             disabled={alignDisabled}
-                            title="Align"
-                            aria-label="Align"
+                            label="Align"
+                            size="md"
+                            variant="outline"
                           >
                             <AlignMenuIcon />
-                          </Button>
+                          </IconButton>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start" side="top" sideOffset={toolbarPopupSideOffset} className="w-auto p-2">
                           <div className="flex items-center gap-1">
@@ -895,47 +812,45 @@ export const CostumeToolbar = memo(({
                           </div>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                      <Button
-                        variant="outline"
-                        size="icon"
+                      <IconButton
                         className="h-8 w-8"
-                        title="Flip Horizontal"
-                        aria-label="Flip Horizontal"
+                        label="Flip Horizontal"
                         onClick={() => onFlipSelection('horizontal')}
+                        size="md"
+                        variant="outline"
                       >
                         <FlipHorizontal2 className="size-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
+                      </IconButton>
+                      <IconButton
                         className="h-8 w-8"
-                        title="Flip Vertical"
-                        aria-label="Flip Vertical"
+                        label="Flip Vertical"
                         onClick={() => onFlipSelection('vertical')}
+                        size="md"
+                        variant="outline"
                       >
                         <FlipVertical2 className="size-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
+                      </IconButton>
+                      <IconButton
                         className="h-8 w-8"
-                        title="Rotate 90 Degrees"
-                        aria-label="Rotate 90 Degrees"
+                        label="Rotate 90 Degrees"
                         onClick={onRotateSelection}
+                        size="md"
+                        variant="outline"
                       >
                         <RotateCw className="size-4" />
-                      </Button>
+                      </IconButton>
                     </div>
                   )}
 
                   {showPrimaryColorControl && (
-                    <ToolbarColorControl
+                    <FloatingToolbarColorControl
                       label="Color"
                       value={brushColor}
-                      menuId="color"
-                      openMenu={openMenu}
-                      onMenuOpenChange={handleMenuOpenChange}
+                      open={openMenu === 'color'}
+                      onOpenChange={(open) => handleMenuOpenChange('color', open)}
                       onColorChange={onColorChange}
+                      opacity={primaryColorOpacity}
+                      onOpacityChange={handlePrimaryColorOpacityChange}
                       labelDisplay="none"
                     />
                   )}
@@ -1008,23 +923,21 @@ export const CostumeToolbar = memo(({
                   {showBitmapShapeStyleControls && (
                     <>
                       {showBitmapShapeFillControl && (
-                        <ToolbarColorControl
+                        <FloatingToolbarColorControl
                           label="Fill"
                           value={bitmapShapeStyle.fillColor}
-                          menuId="fill-color"
-                          openMenu={openMenu}
-                          onMenuOpenChange={handleMenuOpenChange}
+                          open={openMenu === 'fill-color'}
+                          onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                           onColorChange={(fillColor) => onBitmapShapeStyleChange({ fillColor })}
                           labelDisplay="left"
                         />
                       )}
 
-                      <ToolbarColorControl
+                      <FloatingToolbarColorControl
                         label="Stroke"
                         value={bitmapShapeStyle.strokeColor}
-                        menuId="stroke-color"
-                        openMenu={openMenu}
-                        onMenuOpenChange={handleMenuOpenChange}
+                        open={openMenu === 'stroke-color'}
+                        onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                         onColorChange={(strokeColor) => onBitmapShapeStyleChange({ strokeColor })}
                         labelDisplay="left"
                       />
@@ -1050,13 +963,14 @@ export const CostumeToolbar = memo(({
                     <>
                       <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                         <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
-                        <ToolbarColorControl
+                        <FloatingToolbarColorControl
                           label="Stroke"
                           value={vectorStyle.strokeColor}
-                          menuId="stroke-color"
-                          openMenu={openMenu}
-                          onMenuOpenChange={handleMenuOpenChange}
+                          open={openMenu === 'stroke-color'}
+                          onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          opacity={vectorStyle.strokeOpacity}
+                          onOpacityChange={(strokeOpacity) => onVectorStyleChange({ strokeOpacity })}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1107,13 +1021,14 @@ export const CostumeToolbar = memo(({
                       {showVectorFillControl && (
                         <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                           <span className="whitespace-nowrap text-xs text-muted-foreground">Fill</span>
-                          <ToolbarColorControl
+                          <FloatingToolbarColorControl
                             label="Fill"
                             value={vectorStyle.fillColor}
-                            menuId="fill-color"
-                            openMenu={openMenu}
-                            onMenuOpenChange={handleMenuOpenChange}
+                            open={openMenu === 'fill-color'}
+                            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            opacity={vectorStyle.fillOpacity}
+                            onOpacityChange={(fillOpacity) => onVectorStyleChange({ fillOpacity })}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1297,13 +1212,14 @@ export const CostumeToolbar = memo(({
                     <div className="flex min-w-max items-center justify-center gap-2">
                       <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                         <span className="whitespace-nowrap text-xs text-muted-foreground">Stroke</span>
-                        <ToolbarColorControl
+                        <FloatingToolbarColorControl
                           label="Stroke"
                           value={vectorStyle.strokeColor}
-                          menuId="stroke-color"
-                          openMenu={openMenu}
-                          onMenuOpenChange={handleMenuOpenChange}
+                          open={openMenu === 'stroke-color'}
+                          onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
+                          opacity={vectorStyle.strokeOpacity}
+                          onOpacityChange={(strokeOpacity) => onVectorStyleChange({ strokeOpacity })}
                           labelDisplay="none"
                         />
                         <DropdownMenu
@@ -1354,13 +1270,14 @@ export const CostumeToolbar = memo(({
                       {showVectorFillControl && (
                         <div className="flex items-center gap-2 border-r pr-2 last:border-r-0 last:pr-0">
                           <span className="whitespace-nowrap text-xs text-muted-foreground">Fill</span>
-                          <ToolbarColorControl
+                          <FloatingToolbarColorControl
                             label="Fill"
                             value={vectorStyle.fillColor}
-                            menuId="fill-color"
-                            openMenu={openMenu}
-                            onMenuOpenChange={handleMenuOpenChange}
+                            open={openMenu === 'fill-color'}
+                            onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
+                            opacity={vectorStyle.fillOpacity}
+                            onOpacityChange={(fillOpacity) => onVectorStyleChange({ fillOpacity })}
                             labelDisplay="none"
                           />
                           <DropdownMenu
@@ -1395,10 +1312,10 @@ export const CostumeToolbar = memo(({
                     </div>
                   )}
                 </div>
-            </FloatingBottomToolbar>
+            </FloatingPropertyToolbar>
           )}
 
-          <FloatingBottomToolbar variant="tool" testId="costume-toolbar-tools">
+          <FloatingToolToolbar testId="costume-toolbar-tools">
               <div className="flex min-w-max items-center gap-3">
                 <div className="flex items-center gap-1">
                   {leadingTools.map(({ tool, icon, label }) => (
@@ -1420,7 +1337,7 @@ export const CostumeToolbar = memo(({
                       <div
                         className={cn(
                           'flex items-center gap-1 rounded-[18px] bg-transparent',
-                          shapeToolIsActive && floatingToolButtonActiveClass,
+                          shapeToolIsActive && floatingToolbarControlActiveClass,
                         )}
                         onContextMenu={(event) => {
                           event.preventDefault();
@@ -1431,7 +1348,7 @@ export const CostumeToolbar = memo(({
                           variant="ghost"
                           size="sm"
                           className={cn(
-                            floatingToolButtonBaseClass,
+                            floatingToolbarControlBaseClass,
                             'h-11 rounded-[18px] !pl-3 !pr-0 text-sm',
                             shapeToolIsActive && 'bg-transparent shadow-none',
                           )}
@@ -1446,7 +1363,7 @@ export const CostumeToolbar = memo(({
                             variant="ghost"
                             size="sm"
                             className={cn(
-                              floatingToolButtonBaseClass,
+                            floatingToolbarControlBaseClass,
                               'h-11 rounded-[18px] !pl-0 !pr-3 text-sm',
                               shapeToolIsActive && 'bg-transparent shadow-none',
                             )}
@@ -1499,9 +1416,17 @@ export const CostumeToolbar = memo(({
                     />
                   ))}
                 </div>
+                {toolAccessory ? (
+                  <>
+                    <div className="app-divider-x app-divider-fill h-8 shrink-0" />
+                    <div className="flex min-w-max items-center gap-2">
+                      {toolAccessory}
+                    </div>
+                  </>
+                ) : null}
                 {showModeSwitcher ? <div className="hidden" /> : null}
               </div>
-          </FloatingBottomToolbar>
+          </FloatingToolToolbar>
       </FloatingBottomToolbarDock>
     </>
   );

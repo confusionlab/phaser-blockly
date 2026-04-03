@@ -3,13 +3,13 @@ import Color from 'color';
 import { useProjectStore } from '@/store/projectStore';
 import { useEditorStore } from '@/store/editorStore';
 import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
 import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import {
-  ColorPicker,
-  ColorPickerHue,
-  ColorPickerSelection,
+  CompactColorPicker,
 } from '@/components/ui/color-picker';
-import { Paintbrush, Plus, X } from 'lucide-react';
+import { ColorSwatchButton } from '@/components/ui/color-swatch-button';
+import { Earth, Paintbrush, Plus, X } from '@/components/ui/icons';
 import { runInHistoryTransaction } from '@/store/universalHistory';
 
 export function SceneTabs() {
@@ -118,6 +118,7 @@ export function SceneTabs() {
           }`}
           style={editingId === scene.id && editWidth ? { width: `${editWidth}px` } : undefined}
         >
+          <Earth className="size-4 shrink-0 text-current" />
           <InlineRenameField
             editing={editingId === scene.id}
             value={editingId === scene.id ? editName : scene.name}
@@ -146,28 +147,29 @@ export function SceneTabs() {
             onPointerDown={e => e.stopPropagation()}
           />
           {editingId !== scene.id && project.scenes.length > 1 && (
-            <button
+            <IconButton
+              className={selectedSceneId === scene.id
+                ? 'opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary-foreground/20'
+                : 'opacity-0 group-hover:opacity-100 transition-opacity hover:bg-secondary-foreground/20'}
+              label={`Delete ${scene.name}`}
               onClick={(e) => handleDeleteScene(scene.id, e)}
-              className={`opacity-0 group-hover:opacity-100 transition-opacity w-4 h-4 rounded-full flex items-center justify-center ${
-                selectedSceneId === scene.id
-                  ? 'hover:bg-primary-foreground/20'
-                  : 'hover:bg-secondary-foreground/20'
-              }`}
+              shape="pill"
+              size="xs"
             >
               <X className="size-3" />
-            </button>
+            </IconButton>
           )}
         </div>
       ))}
 
-      <Button
-        variant="secondary"
-        size="icon-sm"
+      <IconButton
+        label="Add Scene"
         onClick={handleAddScene}
-        title="Add Scene"
+        size="sm"
+        variant="secondary"
       >
         <Plus className="size-4" />
-      </Button>
+      </IconButton>
 
       {/* Spacer */}
       <div className="flex-1" />
@@ -186,11 +188,11 @@ export function SceneTabs() {
           <Paintbrush className="size-3.5" />
           Draw
         </Button>
-        <button
-          type="button"
+        <ColorSwatchButton
+          value={currentBgColor}
           onClick={() => setShowBgColorPicker(!showBgColorPicker)}
-          className="w-7 h-7 rounded border-2 border-border hover:border-primary transition-colors cursor-pointer"
-          style={{ backgroundColor: currentBgColor }}
+          className="h-7 w-7 cursor-pointer rounded transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          swatchClassName="size-full rounded-[inherit]"
           title="Change background color"
         />
         {showBgColorPicker && (
@@ -200,10 +202,7 @@ export function SceneTabs() {
               onClick={() => setShowBgColorPicker(false)}
             />
             <div className="absolute right-0 top-full mt-1 z-50 bg-popover border rounded-lg p-3 shadow-lg">
-              <ColorPicker value={currentBgColor} onChange={handleBgPickerChange} className="w-48">
-                <ColorPickerSelection className="h-32 rounded mb-2" />
-                <ColorPickerHue />
-              </ColorPicker>
+              <CompactColorPicker value={currentBgColor} onChange={handleBgPickerChange} />
             </div>
           </>
         )}

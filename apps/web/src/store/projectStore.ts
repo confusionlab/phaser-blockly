@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import type {
   Project,
   Scene,
@@ -6,6 +6,7 @@ import type {
   Costume,
   Variable,
   ComponentDefinition,
+  ComponentFolder,
   SceneFolder,
   MessageDefinition,
 } from '../types';
@@ -29,12 +30,23 @@ import {
   normalizeSceneLayering,
 } from '@/utils/layerTree';
 import {
+  normalizeFolderedHierarchy,
+} from '@/utils/hierarchyTree';
+import {
+  cloneVariableDefinitions as cloneVariableDefinitionsWithValues,
   hasVariableNameConflict,
   isValidVariableName,
+  normalizeVariableName,
   normalizeVariableDefinition,
   normalizeVariableDefinitions,
   remapVariableIdsInBlocklyXml,
 } from '@/lib/variableUtils';
+import {
+  getMessageReferenceImpact,
+  getVariableReferenceImpact,
+  type ProjectReferenceImpact,
+} from '@/lib/projectReferenceUsage';
+import { validateProjectName } from '@/lib/projectName';
 import { applyAssistantChangeSetToProject } from '@/lib/assistant/projectState';
 import {
   recordHistoryChange,
@@ -47,8 +59,11 @@ import {
   type CostumeEditorObjectTarget,
   type CostumeEditorOperation,
   type CostumeEditorPersistedSession,
+  reorderCostumesInList,
   removeCostumeFromList,
+  removeCostumesFromList,
   renameCostumeInList,
+  resolveNextActiveCostumeIdAfterRemoval,
   resolveCostumeEditorObject,
   resolveCostumeEditorTarget,
   type CostumeEditorPersistedState,
@@ -58,6 +73,10 @@ import {
   cloneCostume,
   ensureCostumeDocument,
 } from '@/lib/costume/costumeDocument';
+import {
+  cloneBackgroundDocument,
+  ensureBackgroundDocument,
+} from '@/lib/background/backgroundDocument';
 import { useEditorStore } from '@/store/editorStore';
 
 interface ProjectStore {
@@ -74,13 +93,22 @@ interface ProjectStore {
   updateProjectSettings: (settings: Partial<Project['settings']>) => void;
   applyAssistantChangeSet: (changeSet: AssistantChangeSet) => Project | null;
   addMessage: (name: string) => MessageDefinition | null;
+  getMessageDeletionImpact: (messageId: string) => ProjectReferenceImpact | null;
+  removeMessage: (messageId: string) => DeleteGuardResult;
   updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => void;
 
   // Scene actions
   addScene: (name: string) => void;
+  addSceneFromTemplate: (template: {
+    name: string;
+    scene: Scene;
+    components: ComponentDefinition[];
+    componentFolders: ComponentFolder[];
+  }) => Scene | null;
   removeScene: (sceneId: string) => void;
   updateScene: (sceneId: string, updates: Partial<Scene>) => void;
   reorderScenes: (sceneIds: string[]) => void;
+  updateSceneOrganization: (scenes: Scene[], sceneFolders: SceneFolder[]) => void;
 
   // Object actions
   addObject: (sceneId: string, name: string) => GameObject;
@@ -107,22 +135,36 @@ interface ProjectStore {
 
   // Variable actions (global)
   addGlobalVariable: (variable: Variable) => void;
-  removeGlobalVariable: (variableId: string) => void;
+  getVariableDeletionImpact: (variableId: string) => ProjectReferenceImpact | null;
+  removeGlobalVariable: (variableId: string) => DeleteGuardResult;
   updateGlobalVariable: (variableId: string, updates: Partial<Variable>) => void;
 
   // Variable actions (local - per object)
   addLocalVariable: (sceneId: string, objectId: string, variable: Variable) => void;
-  removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => void;
+  removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => DeleteGuardResult;
+  removeComponentLocalVariable: (componentId: string, variableId: string) => DeleteGuardResult;
   updateLocalVariable: (sceneId: string, objectId: string, variableId: string, updates: Partial<Variable>) => void;
 
   // Legacy aliases
   addVariable: (variable: Variable) => void;
-  removeVariable: (variableId: string) => void;
+  removeVariable: (variableId: string) => DeleteGuardResult;
   updateVariable: (variableId: string, updates: Partial<Variable>) => void;
 
   // Component actions
+  addComponent: (name?: string) => ComponentDefinition | null;
+  addComponentFromLibrary: (data: {
+    name: string;
+    costumes: Costume[];
+    sounds: GameObject['sounds'];
+    blocklyXml: string;
+    currentCostumeIndex: number;
+    physics: GameObject['physics'];
+    collider: GameObject['collider'];
+    localVariables: Variable[];
+  }) => ComponentDefinition | null;
   makeComponent: (sceneId: string, objectId: string) => ComponentDefinition | null;
   updateComponent: (componentId: string, updates: Partial<ComponentDefinition>) => void;
+  updateComponentOrganization: (components: ComponentDefinition[], componentFolders: ComponentFolder[]) => void;
   deleteComponent: (componentId: string) => void;
   addComponentInstance: (sceneId: string, componentId: string) => GameObject | null;
   detachFromComponent: (sceneId: string, objectId: string) => void;
@@ -132,6 +174,16 @@ interface ProjectStore {
   getObject: (sceneId: string, objectId: string) => GameObject | undefined;
   getComponent: (componentId: string) => ComponentDefinition | undefined;
 }
+
+export type DeleteGuardResult = {
+  deleted: boolean;
+  impact: ProjectReferenceImpact | null;
+};
+
+type ProjectStoreHook = UseBoundStore<StoreApi<ProjectStore>>;
+type ProjectStoreGlobal = typeof globalThis & {
+  __pochaProjectStore?: ProjectStoreHook;
+};
 
 let lastUpdatedAtMs = 0;
 
@@ -184,6 +236,19 @@ function cloneColliderConfig(collider: GameObject['collider']): GameObject['coll
   return collider ? { ...collider } : null;
 }
 
+function cloneBackgroundConfig(background: Scene['background']): Scene['background'] {
+  if (!background) {
+    return null;
+  }
+
+  return {
+    ...background,
+    scrollFactor: background.scrollFactor ? { ...background.scrollFactor } : undefined,
+    chunks: background.chunks ? { ...background.chunks } : undefined,
+    document: background.document ? cloneBackgroundDocument(ensureBackgroundDocument(background)) : undefined,
+  };
+}
+
 type PhysicsColliderEntity = {
   physics: GameObject['physics'];
   collider: GameObject['collider'];
@@ -194,12 +259,51 @@ function normalizePhysicsCollider<TEntity extends PhysicsColliderEntity>(entity:
 }
 
 function cloneVariableDefinitions(variables: GameObject['localVariables']): GameObject['localVariables'] {
-  return (variables || []).map((variable) => ({ ...variable }));
+  return cloneVariableDefinitionsWithValues(variables || []);
 }
 
 function normalizeComponentName(name: string): string {
   return name.trim().toLowerCase();
 }
+
+function getUniqueComponentName(
+  requestedName: string,
+  usedNames: Set<string>,
+): string {
+  const baseName = requestedName.trim() || 'Component';
+  let nextName = baseName;
+  let suffix = 2;
+  while (usedNames.has(normalizeComponentName(nextName))) {
+    nextName = `${baseName} ${suffix}`;
+    suffix += 1;
+  }
+  usedNames.add(normalizeComponentName(nextName));
+  return nextName;
+}
+
+const sceneHierarchyConfig = {
+  itemKeyPrefix: 'scene',
+  setItemFolderId: (scene: Scene, folderId: string | null): Scene => ({
+    ...scene,
+    folderId,
+  }),
+  setItemOrder: (scene: Scene, order: number): Scene => ({
+    ...scene,
+    order,
+  }),
+};
+
+const componentHierarchyConfig = {
+  itemKeyPrefix: 'component',
+  setItemFolderId: (component: ComponentDefinition, folderId: string | null): ComponentDefinition => ({
+    ...component,
+    folderId,
+  }),
+  setItemOrder: (component: ComponentDefinition, order: number): ComponentDefinition => ({
+    ...component,
+    order,
+  }),
+};
 
 function hasDuplicateVariableNames(variables: Variable[]): boolean {
   const seen = new Set<string>();
@@ -212,14 +316,15 @@ function hasDuplicateVariableNames(variables: Variable[]): boolean {
   return false;
 }
 
-function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefinition, 'id'> {
+function toComponentBackedFieldsFromObject(
+  obj: GameObject,
+): Omit<ComponentDefinition, 'id' | 'name' | 'folderId' | 'order'> {
   const normalizedPhysicsCollider = normalizePhysicsCollider({
     physics: clonePhysicsConfig(obj.physics),
     collider: cloneColliderConfig(obj.collider),
   });
 
   return {
-    name: obj.name,
     blocklyXml: normalizeBlocklyXml(obj.blocklyXml),
     costumes: cloneCostumes(obj.costumes),
     currentCostumeIndex: obj.currentCostumeIndex,
@@ -227,6 +332,21 @@ function toComponentBackedFieldsFromObject(obj: GameObject): Omit<ComponentDefin
     collider: normalizedPhysicsCollider.collider,
     sounds: cloneSounds(obj.sounds),
     localVariables: cloneVariableDefinitions(obj.localVariables),
+  };
+}
+
+function createComponentDefinition(data: {
+  requestedName: string;
+  usedNames: Set<string>;
+  order: number;
+  fields: Omit<ComponentDefinition, 'id' | 'name' | 'folderId' | 'order'>;
+}): ComponentDefinition {
+  return {
+    id: crypto.randomUUID(),
+    name: getUniqueComponentName(data.requestedName, data.usedNames),
+    folderId: null,
+    order: data.order,
+    ...data.fields,
   };
 }
 
@@ -283,6 +403,50 @@ function getEffectiveComponentLocalVariables(
   return [];
 }
 
+function normalizeSceneHierarchy(
+  scenes: Scene[],
+  sceneFolders: SceneFolder[],
+): { scenes: Scene[]; sceneFolders: SceneFolder[] } {
+  const normalized = normalizeFolderedHierarchy(sceneFolders, scenes, sceneHierarchyConfig);
+  return {
+    scenes: normalized.items,
+    sceneFolders: normalized.folders,
+  };
+}
+
+function normalizeComponentHierarchy(
+  components: ComponentDefinition[],
+  componentFolders: ComponentFolder[],
+): { components: ComponentDefinition[]; componentFolders: ComponentFolder[] } {
+  const normalized = normalizeFolderedHierarchy(componentFolders, components, componentHierarchyConfig);
+  return {
+    components: normalized.items,
+    componentFolders: normalized.folders,
+  };
+}
+
+function getRemovedVariableIds(
+  previousVariables: readonly Variable[] | undefined,
+  nextVariables: readonly Variable[] | undefined,
+): string[] {
+  const nextIds = new Set((nextVariables || []).map((variable) => variable.id));
+  return (previousVariables || [])
+    .map((variable) => variable.id)
+    .filter((variableId) => !nextIds.has(variableId));
+}
+
+function canRemoveVariableDefinitions(
+  project: Project,
+  removedVariableIds: readonly string[],
+): boolean {
+  for (const variableId of removedVariableIds) {
+    if (getVariableReferenceImpact(project, variableId).referenceCount > 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function applyObjectUpdatesToProject(
   project: Project,
   sceneId: string,
@@ -335,11 +499,28 @@ function applyObjectUpdatesToProject(
       }
     }
 
-    if (Object.keys(syncedUpdates).length > 0) {
+      if (Object.keys(syncedUpdates).length > 0) {
+      const previousEffectiveLocalVariables = syncedUpdates.localVariables !== undefined
+        ? getEffectiveComponentLocalVariables(project, componentId, objectId)
+        : null;
       const nextComponent = normalizePhysicsCollider({
         ...component,
         ...syncedUpdates,
       });
+      if (syncedUpdates.localVariables !== undefined) {
+        const removedVariableIds = getRemovedVariableIds(previousEffectiveLocalVariables || [], nextComponent.localVariables || []);
+        if (removedVariableIds.length > 0) {
+          const nextProjectForValidation: Project = {
+            ...project,
+            components: (project.components || []).map((candidate) =>
+              candidate.id === componentId ? nextComponent : candidate,
+            ),
+          };
+          if (!canRemoveVariableDefinitions(nextProjectForValidation, removedVariableIds)) {
+            return null;
+          }
+        }
+      }
       const nextSyncedObjectFields = toComponentBackedObjectFields(nextComponent);
       const syncedKeysToApply = new Set<keyof ComponentBackedObjectFields>(
         Object.keys(syncedUpdates) as (keyof ComponentBackedObjectFields)[],
@@ -408,6 +589,29 @@ function applyObjectUpdatesToProject(
     return null;
   }
 
+  if (normalizedUpdates.localVariables !== undefined) {
+    const nextObject = normalizePhysicsCollider({ ...obj, ...normalizedUpdates });
+    const removedVariableIds = getRemovedVariableIds(obj.localVariables || [], nextObject.localVariables || []);
+    if (removedVariableIds.length > 0) {
+      const nextProjectForValidation: Project = {
+        ...project,
+        scenes: project.scenes.map((candidateScene) =>
+          candidateScene.id === sceneId
+            ? normalizeSceneLayering({
+                ...candidateScene,
+                objects: candidateScene.objects.map((candidateObject) =>
+                  candidateObject.id === objectId ? nextObject : candidateObject
+                ),
+              })
+            : candidateScene,
+        ),
+      };
+      if (!canRemoveVariableDefinitions(nextProjectForValidation, removedVariableIds)) {
+        return null;
+      }
+    }
+  }
+
   return {
     ...project,
     scenes: project.scenes.map((candidateScene) =>
@@ -433,7 +637,7 @@ function buildCostumeEditorOperationUpdates(
     persistedSession?: CostumeEditorPersistedSession;
     operation: CostumeEditorOperation;
   },
-): Partial<GameObject> | null {
+): Partial<ComponentBackedObjectFields> | null {
   const resolvedObject = resolveCostumeEditorObject(project, target);
   if (!resolvedObject) {
     return null;
@@ -446,15 +650,18 @@ function buildCostumeEditorOperationUpdates(
   const operation = options.operation;
 
   if (persistedSession) {
-    if (
-      persistedSession.target.sceneId !== target.sceneId ||
-      persistedSession.target.objectId !== target.objectId
-    ) {
+    const persistedTarget = persistedSession.target;
+    const targetsMatch = 'componentId' in target
+      ? ('componentId' in persistedTarget && persistedTarget.componentId === target.componentId)
+      : (!('componentId' in persistedTarget)
+        && persistedTarget.sceneId === target.sceneId
+        && persistedTarget.objectId === target.objectId);
+    if (!targetsMatch) {
       return null;
     }
 
     const persistedCostumeIndex = nextCostumes.findIndex(
-      (costume) => costume.id === persistedSession.target.costumeId,
+      (costume) => costume.id === persistedTarget.costumeId,
     );
     if (persistedCostumeIndex < 0) {
       return null;
@@ -462,7 +669,7 @@ function buildCostumeEditorOperationUpdates(
 
     const persistedCostumes = applyCostumeEditorState(
       nextCostumes,
-      persistedSession.target.costumeId,
+      persistedTarget.costumeId,
       persistedSession.state,
     );
     if (persistedCostumes) {
@@ -511,9 +718,58 @@ function buildCostumeEditorOperationUpdates(
         : Math.min(resolvedObject.currentCostumeIndex, removal.costumes.length - 1);
       break;
     }
+    case 'removeMany': {
+      const uniqueCostumeIds = Array.from(new Set(operation.costumeIds));
+      if (uniqueCostumeIds.length === 0 || uniqueCostumeIds.length >= nextCostumes.length) {
+        return null;
+      }
+
+      const nextActiveCostumeId = resolveNextActiveCostumeIdAfterRemoval(
+        nextCostumes,
+        nextCostumes[nextCostumeIndex]?.id ?? null,
+        uniqueCostumeIds,
+      );
+      const removedCostumes = removeCostumesFromList(nextCostumes, uniqueCostumeIds);
+      if (!removedCostumes || removedCostumes.length === 0) {
+        return null;
+      }
+
+      nextCostumes = removedCostumes;
+      costumesChanged = true;
+      if (!nextActiveCostumeId) {
+        return null;
+      }
+      nextCostumeIndex = nextCostumes.findIndex((costume) => costume.id === nextActiveCostumeId);
+      if (nextCostumeIndex < 0) {
+        return null;
+      }
+      break;
+    }
+    case 'reorder': {
+      const reorderedCostumes = reorderCostumesInList(
+        nextCostumes,
+        operation.costumeIds,
+        operation.targetIndex,
+      );
+      if (!reorderedCostumes) {
+        return null;
+      }
+
+      nextCostumes = reorderedCostumes;
+      costumesChanged = true;
+      const currentActiveCostumeId = resolvedObject.costumes[resolvedObject.currentCostumeIndex]?.id ?? null;
+      if (currentActiveCostumeId) {
+        const reorderedCostumeIndex = nextCostumes.findIndex((costume) => costume.id === currentActiveCostumeId);
+        if (reorderedCostumeIndex < 0) {
+          return null;
+        }
+        nextCostumeIndex = reorderedCostumeIndex;
+      }
+      break;
+    }
   }
 
-  const updates: Partial<GameObject> = {};
+  const updates: Partial<ComponentBackedObjectFields> = {};
   if (costumesChanged) {
     updates.costumes = cloneCostumes(nextCostumes);
   }
@@ -534,22 +790,37 @@ function getCostumeEditorOperationHistoryOptions(operation: CostumeEditorOperati
       return { source: 'project:add-object-costume' };
     case 'remove':
       return { source: 'project:remove-object-costume' };
+    case 'removeMany':
+      return { source: 'project:remove-object-costumes' };
+    case 'reorder':
+      return { source: 'project:reorder-object-costumes' };
   }
 }
 
 function normalizeProject(project: Project): Project {
+  const normalizedSceneHierarchy = normalizeSceneHierarchy(
+    Array.isArray(project.scenes) ? project.scenes : [],
+    Array.isArray(project.sceneFolders) ? project.sceneFolders : [],
+  );
   const normalizedGlobalVariables = normalizeVariableDefinitions(project.globalVariables || [], { scope: 'global' });
   const normalizedComponents = (Array.isArray(project.components) ? project.components : []).map((component) =>
     normalizePhysicsCollider({
       ...component,
+      folderId: component.folderId ?? null,
+      order: Number.isFinite(component.order) ? component.order : 0,
       blocklyXml: normalizeBlocklyXml(component.blocklyXml || ''),
       costumes: cloneCostumes(component.costumes || []),
       localVariables: normalizeVariableDefinitions(component.localVariables || [], { scope: 'local' }),
     })
   );
+  const normalizedComponentHierarchy = normalizeComponentHierarchy(
+    normalizedComponents,
+    Array.isArray(project.componentFolders) ? project.componentFolders : [],
+  );
 
   return normalizeProjectLayering({
     ...project,
+    sceneFolders: normalizedSceneHierarchy.sceneFolders,
     messages: (Array.isArray(project.messages) ? project.messages : []).filter(
       (message): message is MessageDefinition =>
         typeof message?.id === 'string' &&
@@ -558,8 +829,9 @@ function normalizeProject(project: Project): Project {
         message.name.trim().length > 0,
     ),
     globalVariables: normalizedGlobalVariables,
-    components: normalizedComponents,
-    scenes: (Array.isArray(project.scenes) ? project.scenes : []).map((scene) => {
+    components: normalizedComponentHierarchy.components,
+    componentFolders: normalizedComponentHierarchy.componentFolders,
+    scenes: normalizedSceneHierarchy.scenes.map((scene) => {
       const objectFolders: SceneFolder[] = Array.isArray(scene.objectFolders) ? scene.objectFolders : [];
       const objects: GameObject[] = (Array.isArray(scene.objects) ? scene.objects : []).map((obj) =>
         normalizePhysicsCollider({
@@ -597,7 +869,8 @@ function normalizeProject(project: Project): Project {
   });
 }
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
+function createProjectStore(): ProjectStoreHook {
+  return create<ProjectStore>((set, get) => ({
   project: null,
   isDirty: false,
 
@@ -610,11 +883,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   openProject: (project: Project) => {
+    const previousProject = get().project;
     const normalizedProject = normalizeProject(project);
     seedUpdatedAt(normalizedProject);
     set({ project: normalizedProject, isDirty: false });
     resetHistory();
-    useEditorStore.getState().initializeSelectionForProject(normalizedProject, { recordHistory: false });
+    const editorStore = useEditorStore.getState();
+    if (previousProject?.id === normalizedProject.id) {
+      editorStore.reconcileSelectionToProject(normalizedProject, { recordHistory: false });
+      return;
+    }
+    editorStore.initializeSelectionForProject(normalizedProject, { recordHistory: false });
   },
 
   saveCurrentProject: async () => {
@@ -650,8 +929,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   updateProjectName: (name: string) => {
+    const validation = validateProjectName(name);
+    if (!validation.valid) {
+      return;
+    }
+
     set(state => ({
-      project: state.project ? { ...state.project, name, updatedAt: createUpdatedAt() } : null,
+      project: state.project ? { ...state.project, name: validation.normalized, updatedAt: createUpdatedAt() } : null,
       isDirty: true,
     }));
     recordHistoryChange({ source: 'project:update-name' });
@@ -710,6 +994,49 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return newMessage;
   },
 
+  getMessageDeletionImpact: (messageId) => {
+    const project = get().project;
+    if (!project) {
+      return null;
+    }
+    return getMessageReferenceImpact(project, messageId);
+  },
+
+  removeMessage: (messageId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
+      if (!state.project) return state;
+
+      const currentMessage = (state.project.messages || []).find((message) => message.id === messageId);
+      if (!currentMessage) {
+        return state;
+      }
+
+      const impact = getMessageReferenceImpact(state.project, messageId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
+
+      result = { deleted: true, impact: null };
+      return {
+        project: {
+          ...state.project,
+          messages: (state.project.messages || []).filter((message) => message.id !== messageId),
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-message' });
+    }
+
+    return result;
+  },
+
   updateMessage: (messageId: string, updates: Partial<MessageDefinition>) => {
     set(state => ({
       project: state.project
@@ -731,16 +1058,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project) return state;
 
+      const normalizedHierarchy = normalizeSceneHierarchy(
+        state.project.scenes,
+        state.project.sceneFolders || [],
+      );
       const newScene = createDefaultScene(
         crypto.randomUUID(),
         name,
-        state.project.scenes.length
+        normalizedHierarchy.scenes.length,
+      );
+      const nextHierarchy = normalizeSceneHierarchy(
+        [...normalizedHierarchy.scenes, newScene],
+        normalizedHierarchy.sceneFolders,
       );
 
       return {
         project: {
           ...state.project,
-          scenes: [...state.project.scenes, newScene],
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
@@ -749,14 +1085,160 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     recordHistoryChange({ source: 'project:add-scene' });
   },
 
+  addSceneFromTemplate: (template) => {
+    const state = get();
+    if (!state.project) {
+      return null;
+    }
+
+    const existingProject = state.project;
+    const componentNameSet = new Set(
+      (existingProject.components || []).map((component) => normalizeComponentName(component.name)),
+    );
+
+    const componentFolderIdMap = new Map<string, string>();
+    const importedComponentFolders = (template.componentFolders || []).map((folder) => {
+      const nextId = crypto.randomUUID();
+      componentFolderIdMap.set(folder.id, nextId);
+      return {
+        ...folder,
+        id: nextId,
+        parentId: folder.parentId ? (componentFolderIdMap.get(folder.parentId) ?? folder.parentId) : null,
+      };
+    }).map((folder) => ({
+      ...folder,
+      parentId: folder.parentId && componentFolderIdMap.has(folder.parentId)
+        ? componentFolderIdMap.get(folder.parentId) ?? null
+        : folder.parentId,
+    }));
+
+    const componentIdMap = new Map<string, string>();
+    const importedComponents = (template.components || []).map((component) => {
+      const nextId = crypto.randomUUID();
+      componentIdMap.set(component.id, nextId);
+      return normalizePhysicsCollider({
+        ...component,
+        id: nextId,
+        name: getUniqueComponentName(component.name, componentNameSet),
+        folderId: component.folderId ? (componentFolderIdMap.get(component.folderId) ?? null) : null,
+        costumes: cloneCostumes(component.costumes),
+        sounds: cloneSounds(component.sounds),
+        physics: clonePhysicsConfig(component.physics),
+        collider: cloneColliderConfig(component.collider),
+        localVariables: cloneVariableDefinitions(component.localVariables || []).map((variable) => ({
+          ...variable,
+          objectId: undefined,
+        })),
+      });
+    });
+
+    const objectFolderIdMap = new Map<string, string>();
+    const importedObjectFolders = (template.scene.objectFolders || []).map((folder) => {
+      const nextId = crypto.randomUUID();
+      objectFolderIdMap.set(folder.id, nextId);
+      return {
+        ...folder,
+        id: nextId,
+      };
+    }).map((folder) => ({
+      ...folder,
+      parentId: folder.parentId && objectFolderIdMap.has(folder.parentId)
+        ? objectFolderIdMap.get(folder.parentId) ?? null
+        : folder.parentId,
+    }));
+
+    const objectIdMap = new Map<string, string>();
+    const importedObjects = (template.scene.objects || []).map((object) => {
+      const nextId = crypto.randomUUID();
+      objectIdMap.set(object.id, nextId);
+      return normalizePhysicsCollider({
+        ...object,
+        id: nextId,
+        folderId: object.folderId ? (objectFolderIdMap.get(object.folderId) ?? null) : null,
+        parentId: object.parentId,
+        componentId: object.componentId ? (componentIdMap.get(object.componentId) ?? object.componentId) : undefined,
+        costumes: cloneCostumes(object.costumes),
+        sounds: cloneSounds(object.sounds),
+        physics: clonePhysicsConfig(object.physics),
+        collider: cloneColliderConfig(object.collider),
+        localVariables: cloneVariableDefinitions(object.localVariables).map((variable) => ({
+          ...variable,
+          objectId: nextId,
+        })),
+      });
+    }).map((object) => ({
+      ...object,
+      parentId: object.parentId ? (objectIdMap.get(object.parentId) ?? null) : null,
+    }));
+
+    const sceneId = crypto.randomUUID();
+    const nextSceneOrder = normalizeSceneHierarchy(existingProject.scenes, existingProject.sceneFolders || []).scenes.length;
+    const importedScene = normalizeSceneLayering({
+      ...template.scene,
+      id: sceneId,
+      name: template.name || template.scene.name,
+      order: nextSceneOrder,
+      folderId: null,
+      background: cloneBackgroundConfig(template.scene.background),
+      objectFolders: importedObjectFolders,
+      objects: importedObjects,
+      cameraConfig: {
+        ...template.scene.cameraConfig,
+        bounds: template.scene.cameraConfig.bounds ? { ...template.scene.cameraConfig.bounds } : null,
+        followTarget: template.scene.cameraConfig.followTarget
+          ? (objectIdMap.get(template.scene.cameraConfig.followTarget) ?? null)
+          : null,
+      },
+      ground: template.scene.ground ? { ...template.scene.ground } : undefined,
+      worldBoundary: template.scene.worldBoundary
+        ? {
+            enabled: template.scene.worldBoundary.enabled,
+            points: template.scene.worldBoundary.points.map((point) => ({ ...point })),
+          }
+        : undefined,
+    });
+
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...(existingProject.components || []), ...importedComponents],
+      [...(existingProject.componentFolders || []), ...importedComponentFolders],
+    );
+    const nextSceneHierarchy = normalizeSceneHierarchy(
+      [...existingProject.scenes, importedScene],
+      existingProject.sceneFolders || [],
+    );
+
+    set((currentState) => ({
+      project: currentState.project
+        ? {
+            ...currentState.project,
+            scenes: nextSceneHierarchy.scenes,
+            sceneFolders: nextSceneHierarchy.sceneFolders,
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:add-scene-from-template' });
+
+    return importedScene;
+  },
+
   removeScene: (sceneId: string) => {
     set(state => {
       if (!state.project || state.project.scenes.length <= 1) return state;
 
+      const nextHierarchy = normalizeSceneHierarchy(
+        state.project.scenes.filter((scene) => scene.id !== sceneId),
+        state.project.sceneFolders || [],
+      );
+
       return {
         project: {
           ...state.project,
-          scenes: state.project.scenes.filter(s => s.id !== sceneId),
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
@@ -769,12 +1251,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project) return state;
 
+      const nextScenes = state.project.scenes.map((scene) =>
+        scene.id === sceneId ? normalizeSceneLayering({ ...scene, ...updates }) : scene,
+      );
+      const nextHierarchy = normalizeSceneHierarchy(nextScenes, state.project.sceneFolders || []);
+
       return {
         project: {
           ...state.project,
-          scenes: state.project.scenes.map(s =>
-            s.id === sceneId ? normalizeSceneLayering({ ...s, ...updates }) : s
-          ),
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
@@ -794,17 +1280,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           return scene ? { ...scene, order: index } : null;
         })
         .filter((s): s is Scene => s !== null);
+      const nextHierarchy = normalizeSceneHierarchy(reorderedScenes, state.project.sceneFolders || []);
 
       return {
         project: {
           ...state.project,
-          scenes: reorderedScenes,
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
     recordHistoryChange({ source: 'project:reorder-scenes' });
+  },
+
+  updateSceneOrganization: (scenes, sceneFolders) => {
+    set((state) => {
+      if (!state.project) return state;
+      const nextHierarchy = normalizeSceneHierarchy(scenes, sceneFolders);
+      return {
+        project: {
+          ...state.project,
+          scenes: nextHierarchy.scenes,
+          sceneFolders: nextHierarchy.sceneFolders,
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+    recordHistoryChange({ source: 'project:update-scene-organization' });
   },
 
   // Object actions
@@ -899,9 +1404,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return state;
       }
 
-      const nextProject = applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, {
-        costumes: nextCostumes,
-      });
+      const nextProject = 'componentId' in target
+        ? (() => {
+            const component = (state.project.components || []).find((candidate) => candidate.id === target.componentId);
+            if (!component) return null;
+            const nextComponents = (state.project.components || []).map((candidate) =>
+              candidate.id === target.componentId
+                ? normalizePhysicsCollider({ ...component, costumes: nextCostumes })
+                : candidate,
+            );
+            const nextHierarchy = normalizeComponentHierarchy(nextComponents, state.project.componentFolders || []);
+            return {
+              ...state.project,
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+              scenes: state.project.scenes.map((scene) => ({
+                ...normalizeSceneLayering({
+                  ...scene,
+                  objects: scene.objects.map((obj) =>
+                    obj.componentId === target.componentId
+                      ? normalizePhysicsCollider({ ...obj, costumes: nextCostumes })
+                      : obj,
+                  ),
+                }),
+              })),
+              updatedAt: createUpdatedAt(state.project.updatedAt),
+            };
+          })()
+        : applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, {
+            costumes: nextCostumes,
+          });
       if (!nextProject) {
         return state;
       }
@@ -913,7 +1445,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       };
     });
     if (didUpdate && options?.recordHistory !== false) {
-      recordHistoryChange({ source: 'project:update-object-costume', allowMerge: true });
+      recordHistoryChange({ source: 'project:update-costume', allowMerge: true });
     }
     return didUpdate;
   },
@@ -928,7 +1460,34 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         return state;
       }
 
-      const nextProject = applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, updates);
+      const nextProject = 'componentId' in target
+        ? (() => {
+            const component = (state.project.components || []).find((candidate) => candidate.id === target.componentId);
+            if (!component) return null;
+            const nextComponents = (state.project.components || []).map((candidate) =>
+              candidate.id === target.componentId
+                ? normalizePhysicsCollider({ ...component, ...updates })
+                : candidate,
+            );
+            const nextHierarchy = normalizeComponentHierarchy(nextComponents, state.project.componentFolders || []);
+            return {
+              ...state.project,
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+              scenes: state.project.scenes.map((scene) => ({
+                ...normalizeSceneLayering({
+                  ...scene,
+                  objects: scene.objects.map((obj) =>
+                    obj.componentId === target.componentId
+                      ? normalizePhysicsCollider({ ...obj, ...updates })
+                      : obj,
+                  ),
+                }),
+              })),
+              updatedAt: createUpdatedAt(state.project.updatedAt),
+            };
+          })()
+        : applyObjectUpdatesToProject(state.project, target.sceneId, target.objectId, updates);
       if (!nextProject) {
         return state;
       }
@@ -960,6 +1519,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   removeObjectCostume: (target) => {
+    if ('componentId' in target) {
+      return false;
+    }
     return get().applyCostumeEditorOperation(
       { sceneId: target.sceneId, objectId: target.objectId },
       { operation: { type: 'remove', costumeId: target.costumeId } },
@@ -967,6 +1529,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   renameObjectCostume: (target, name) => {
+    if ('componentId' in target) {
+      return false;
+    }
     return get().applyCostumeEditorOperation(
       { sceneId: target.sceneId, objectId: target.objectId },
       { operation: { type: 'rename', costumeId: target.costumeId, name } },
@@ -1086,8 +1651,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set(state => {
       if (!state.project) return state;
 
-      const nextVariable = normalizeVariableDefinition(variable, { scope: 'global' });
-      if (!isValidVariableName(nextVariable.name)) return state;
+      const nextName = normalizeVariableName(variable.name);
+      if (!isValidVariableName(nextName)) return state;
+      const nextVariable = normalizeVariableDefinition({ ...variable, name: nextName }, { scope: 'global' });
       if (state.project.globalVariables.some((existing) => existing.id === nextVariable.id)) return state;
       if (hasVariableNameConflict(state.project.globalVariables, nextVariable.name)) return state;
 
@@ -1103,18 +1669,47 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     recordHistoryChange({ source: 'project:add-global-variable' });
   },
 
-  removeGlobalVariable: (variableId: string) => {
-    set(state => ({
-      project: state.project
-        ? {
-            ...state.project,
-            globalVariables: state.project.globalVariables.filter(v => v.id !== variableId),
-            updatedAt: createUpdatedAt(),
-          }
-        : null,
-      isDirty: true,
-    }));
-    recordHistoryChange({ source: 'project:remove-global-variable' });
+  getVariableDeletionImpact: (variableId) => {
+    const project = get().project;
+    if (!project) {
+      return null;
+    }
+    return getVariableReferenceImpact(project, variableId);
+  },
+
+  removeGlobalVariable: (variableId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
+      if (!state.project) return state;
+
+      const currentVariable = state.project.globalVariables.find((variable) => variable.id === variableId);
+      if (!currentVariable) {
+        return state;
+      }
+
+      const impact = getVariableReferenceImpact(state.project, variableId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
+
+      result = { deleted: true, impact: null };
+      return {
+        project: {
+          ...state.project,
+          globalVariables: state.project.globalVariables.filter((variable) => variable.id !== variableId),
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-global-variable' });
+    }
+
+    return result;
   },
 
   updateGlobalVariable: (variableId: string, updates: Partial<Variable>) => {
@@ -1124,11 +1719,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const current = state.project.globalVariables.find((variable) => variable.id === variableId);
       if (!current) return state;
 
+      const nextName = normalizeVariableName(updates.name ?? current.name);
+      if (!isValidVariableName(nextName)) return state;
       const nextVariable = normalizeVariableDefinition(
-        { ...current, ...updates, id: current.id },
+        { ...current, ...updates, id: current.id, name: nextName },
         { scope: 'global' },
       );
-      if (!isValidVariableName(nextVariable.name)) return state;
       if (hasVariableNameConflict(state.project.globalVariables, nextVariable.name, variableId)) return state;
 
       return {
@@ -1160,8 +1756,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         if (!component) return state;
 
         const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
-        const normalizedVariable = normalizeVariableDefinition(variable, { scope: 'local' });
-        if (!isValidVariableName(normalizedVariable.name)) return state;
+        const nextName = normalizeVariableName(variable.name);
+        if (!isValidVariableName(nextName)) return state;
+        const normalizedVariable = normalizeVariableDefinition(
+          { ...variable, name: nextName },
+          { scope: 'local' },
+        );
         if (currentLocalVariables.some((existing) => existing.id === normalizedVariable.id)) {
           return state;
         }
@@ -1193,8 +1793,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
 
       const currentLocalVariables = targetObject.localVariables || [];
-      const normalizedVariable = normalizeVariableDefinition(variable, { scope: 'local', objectId });
-      if (!isValidVariableName(normalizedVariable.name)) return state;
+      const nextName = normalizeVariableName(variable.name);
+      if (!isValidVariableName(nextName)) return state;
+      const normalizedVariable = normalizeVariableDefinition(
+        { ...variable, name: nextName },
+        { scope: 'local', objectId },
+      );
       if (currentLocalVariables.some((existing) => existing.id === normalizedVariable.id)) return state;
       if (hasVariableNameConflict(currentLocalVariables, normalizedVariable.name)) return state;
 
@@ -1221,17 +1825,25 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     recordHistoryChange({ source: 'project:add-local-variable' });
   },
 
-  removeLocalVariable: (sceneId: string, objectId: string, variableId: string) => {
-    set(state => {
+  removeLocalVariable: (sceneId, objectId, variableId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
       if (!state.project) return state;
 
-      const scene = state.project.scenes.find((s) => s.id === sceneId);
-      const targetObject = scene?.objects.find((o) => o.id === objectId);
+      const scene = state.project.scenes.find((candidate) => candidate.id === sceneId);
+      const targetObject = scene?.objects.find((candidate) => candidate.id === objectId);
       if (!targetObject) return state;
+
+      const impact = getVariableReferenceImpact(state.project, variableId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
 
       if (targetObject.componentId) {
         const componentId = targetObject.componentId;
-        const component = (state.project.components || []).find((c) => c.id === componentId);
+        const component = (state.project.components || []).find((candidate) => candidate.id === componentId);
         if (!component) return state;
 
         const currentLocalVariables = getEffectiveComponentLocalVariables(state.project, componentId, objectId);
@@ -1240,6 +1852,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         }
         const nextLocalVariables: Variable[] = currentLocalVariables.filter((existing) => existing.id !== variableId);
 
+        result = { deleted: true, impact: null };
         return {
           project: {
             ...state.project,
@@ -1262,27 +1875,92 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         };
       }
 
+      const currentLocalVariables = targetObject.localVariables || [];
+      if (!currentLocalVariables.some((existing) => existing.id === variableId)) {
+        return state;
+      }
+
+      result = { deleted: true, impact: null };
       return {
         project: {
           ...state.project,
-          scenes: state.project.scenes.map(s =>
-            s.id === sceneId
+          scenes: state.project.scenes.map((candidateScene) =>
+            candidateScene.id === sceneId
               ? {
-                  ...s,
-                  objects: s.objects.map(o =>
-                    o.id === objectId
-                      ? { ...o, localVariables: (o.localVariables || []).filter(v => v.id !== variableId) }
-                      : o
+                  ...candidateScene,
+                  objects: candidateScene.objects.map((candidateObject) =>
+                    candidateObject.id === objectId
+                      ? {
+                          ...candidateObject,
+                          localVariables: (candidateObject.localVariables || []).filter((variable) => variable.id !== variableId),
+                        }
+                      : candidateObject
                   ),
                 }
-              : s
+              : candidateScene
           ),
           updatedAt: createUpdatedAt(),
         },
         isDirty: true,
       };
     });
-    recordHistoryChange({ source: 'project:remove-local-variable' });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-local-variable' });
+    }
+
+    return result;
+  },
+
+  removeComponentLocalVariable: (componentId, variableId) => {
+    let result: DeleteGuardResult = { deleted: false, impact: null };
+
+    set((state) => {
+      if (!state.project) return state;
+
+      const component = (state.project.components || []).find((candidate) => candidate.id === componentId);
+      if (!component) return state;
+
+      const currentLocalVariables = component.localVariables || [];
+      if (!currentLocalVariables.some((existing) => existing.id === variableId)) {
+        return state;
+      }
+
+      const impact = getVariableReferenceImpact(state.project, variableId);
+      if (impact.referenceCount > 0) {
+        result = { deleted: false, impact };
+        return state;
+      }
+
+      const nextLocalVariables = currentLocalVariables.filter((existing) => existing.id !== variableId);
+      result = { deleted: true, impact: null };
+      return {
+        project: {
+          ...state.project,
+          components: (state.project.components || []).map((componentItem) =>
+            componentItem.id === componentId
+              ? { ...componentItem, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+              : componentItem
+          ),
+          scenes: state.project.scenes.map((scene) => ({
+            ...scene,
+            objects: scene.objects.map((object) =>
+              object.componentId === componentId
+                ? { ...object, localVariables: cloneVariableDefinitions(nextLocalVariables) }
+                : object
+            ),
+          })),
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+
+    if (result.deleted) {
+      recordHistoryChange({ source: 'project:remove-local-variable' });
+    }
+
+    return result;
   },
 
   updateLocalVariable: (sceneId: string, objectId: string, variableId: string, updates: Partial<Variable>) => {
@@ -1303,11 +1981,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         if (!currentVariable) {
           return state;
         }
+        const nextName = normalizeVariableName(updates.name ?? currentVariable.name);
+        if (!isValidVariableName(nextName)) return state;
         const nextVariable = normalizeVariableDefinition(
-          { ...currentVariable, ...updates, id: currentVariable.id },
+          { ...currentVariable, ...updates, id: currentVariable.id, name: nextName },
           { scope: 'local' },
         );
-        if (!isValidVariableName(nextVariable.name)) return state;
         if (hasVariableNameConflict(currentLocalVariables, nextVariable.name, variableId)) return state;
         const nextLocalVariables: Variable[] = currentLocalVariables.map((existing) =>
           existing.id === variableId ? nextVariable : existing
@@ -1338,11 +2017,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       const currentLocalVariables = targetObject.localVariables || [];
       const currentVariable = currentLocalVariables.find((existing) => existing.id === variableId);
       if (!currentVariable) return state;
+      const nextName = normalizeVariableName(updates.name ?? currentVariable.name);
+      if (!isValidVariableName(nextName)) return state;
       const nextVariable = normalizeVariableDefinition(
-        { ...currentVariable, ...updates, id: currentVariable.id },
+        { ...currentVariable, ...updates, id: currentVariable.id, name: nextName },
         { scope: 'local', objectId },
       );
-      if (!isValidVariableName(nextVariable.name)) return state;
       if (hasVariableNameConflict(currentLocalVariables, nextVariable.name, variableId)) return state;
 
       return {
@@ -1379,7 +2059,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   removeVariable: (variableId: string) => {
-    get().removeGlobalVariable(variableId);
+    return get().removeGlobalVariable(variableId);
   },
 
   updateVariable: (variableId: string, updates: Partial<Variable>) => {
@@ -1387,6 +2067,99 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   // Component actions
+  addComponent: (name) => {
+    const state = get();
+    if (!state.project) return null;
+
+    const normalizedComponentHierarchy = normalizeComponentHierarchy(
+      state.project.components || [],
+      state.project.componentFolders || [],
+    );
+    const componentNameSet = new Set(
+      (state.project.components || []).map((component) => normalizeComponentName(component.name)),
+    );
+    const requestedName = name?.trim() || `Component ${normalizedComponentHierarchy.components.length + 1}`;
+    const defaultObject = createDefaultGameObject(requestedName);
+    const component = createComponentDefinition({
+      requestedName,
+      usedNames: componentNameSet,
+      order: normalizedComponentHierarchy.components.length,
+      fields: toComponentBackedFieldsFromObject(defaultObject),
+    });
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...normalizedComponentHierarchy.components, component],
+      normalizedComponentHierarchy.componentFolders,
+    );
+
+    set((currentState) => ({
+      project: currentState.project
+        ? {
+            ...currentState.project,
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:add-component' });
+
+    return component;
+  },
+
+  addComponentFromLibrary: (data) => {
+    const state = get();
+    if (!state.project) return null;
+
+    const normalizedComponentHierarchy = normalizeComponentHierarchy(
+      state.project.components || [],
+      state.project.componentFolders || [],
+    );
+    const componentNameSet = new Set(
+      (state.project.components || []).map((component) => normalizeComponentName(component.name)),
+    );
+    const safeCostumeIndex = data.costumes.length === 0
+      ? 0
+      : Math.min(Math.max(0, data.currentCostumeIndex), data.costumes.length - 1);
+    const normalizedPhysicsCollider = normalizePhysicsCollider({
+      physics: clonePhysicsConfig(data.physics),
+      collider: cloneColliderConfig(data.collider),
+    });
+    const component = createComponentDefinition({
+      requestedName: data.name,
+      usedNames: componentNameSet,
+      order: normalizedComponentHierarchy.components.length,
+      fields: {
+        blocklyXml: normalizeBlocklyXml(data.blocklyXml),
+        costumes: cloneCostumes(data.costumes),
+        currentCostumeIndex: safeCostumeIndex,
+        physics: normalizedPhysicsCollider.physics,
+        collider: normalizedPhysicsCollider.collider,
+        sounds: cloneSounds(data.sounds),
+        localVariables: normalizeVariableDefinitions(data.localVariables, { scope: 'local' }),
+      },
+    });
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...normalizedComponentHierarchy.components, component],
+      normalizedComponentHierarchy.componentFolders,
+    );
+
+    set((currentState) => ({
+      project: currentState.project
+        ? {
+            ...currentState.project,
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
+            updatedAt: createUpdatedAt(),
+          }
+        : null,
+      isDirty: true,
+    }));
+    recordHistoryChange({ source: 'project:add-component-from-library' });
+
+    return component;
+  },
+
   makeComponent: (sceneId: string, objectId: string) => {
     const state = get();
     if (!state.project) return null;
@@ -1407,24 +2180,34 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     if (hasDuplicateName) return null;
 
     // Create component definition from the object
-    const componentId = crypto.randomUUID();
-    const component: ComponentDefinition = {
-      id: componentId,
-      ...toComponentBackedFieldsFromObject(obj),
-    };
+    const normalizedComponentHierarchy = normalizeComponentHierarchy(
+      state.project.components || [],
+      state.project.componentFolders || [],
+    );
+    const component = createComponentDefinition({
+      requestedName: obj.name,
+      usedNames: new Set((state.project.components || []).map((component) => normalizeComponentName(component.name))),
+      order: normalizedComponentHierarchy.components.length,
+      fields: toComponentBackedFieldsFromObject(obj),
+    });
+    const nextComponentHierarchy = normalizeComponentHierarchy(
+      [...normalizedComponentHierarchy.components, component],
+      normalizedComponentHierarchy.componentFolders,
+    );
 
     set(state => ({
       project: state.project
         ? {
             ...state.project,
-            components: [...(state.project.components || []), component],
+            components: nextComponentHierarchy.components,
+            componentFolders: nextComponentHierarchy.componentFolders,
             scenes: state.project.scenes.map(s =>
               s.id === sceneId
                 ? {
                     ...s,
                     objects: s.objects.map(o =>
                       o.id === objectId
-                        ? { ...o, componentId }
+                        ? { ...o, componentId: component.id }
                         : o
                     ),
                   }
@@ -1465,10 +2248,27 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         }
       }
       const hasSyncedUpdates = Object.keys(syncedInstanceUpdates).length > 0;
+      const previousEffectiveLocalVariables = normalizedUpdates.localVariables !== undefined
+        ? getEffectiveComponentLocalVariables(state.project, componentId)
+        : null;
       const nextComponent = normalizePhysicsCollider({
         ...currentComponent,
         ...normalizedUpdates,
       });
+      if (normalizedUpdates.localVariables !== undefined) {
+        const removedVariableIds = getRemovedVariableIds(previousEffectiveLocalVariables || [], nextComponent.localVariables || []);
+        if (removedVariableIds.length > 0) {
+          const nextProjectForValidation: Project = {
+            ...state.project,
+            components: (state.project.components || []).map((component) =>
+              component.id === componentId ? nextComponent : component,
+            ),
+          };
+          if (!canRemoveVariableDefinitions(nextProjectForValidation, removedVariableIds)) {
+            return state;
+          }
+        }
+      }
       const nextSyncedObjectFields = toComponentBackedObjectFields(nextComponent);
       const syncedKeysToApply = new Set<keyof ComponentBackedObjectFields>(
         Object.keys(syncedInstanceUpdates) as (keyof ComponentBackedObjectFields)[],
@@ -1481,9 +2281,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: {
           ...state.project,
-          components: (state.project.components || []).map((component) =>
-            component.id === componentId ? nextComponent : component
-          ),
+          ...(() => {
+            const nextComponents = (state.project.components || []).map((component) =>
+              component.id === componentId ? nextComponent : component,
+            );
+            const nextHierarchy = normalizeComponentHierarchy(nextComponents, state.project.componentFolders || []);
+            return {
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+            };
+          })(),
           scenes: hasSyncedUpdates
             ? state.project.scenes.map((scene) => ({
                 ...normalizeSceneLayering({
@@ -1515,6 +2322,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     recordHistoryChange({ source: 'project:update-component', allowMerge: true });
   },
 
+  updateComponentOrganization: (components, componentFolders) => {
+    set((state) => {
+      if (!state.project) return state;
+      const nextHierarchy = normalizeComponentHierarchy(components, componentFolders);
+      return {
+        project: {
+          ...state.project,
+          components: nextHierarchy.components,
+          componentFolders: nextHierarchy.componentFolders,
+          updatedAt: createUpdatedAt(),
+        },
+        isDirty: true,
+      };
+    });
+    recordHistoryChange({ source: 'project:update-component-organization' });
+  },
+
   deleteComponent: (componentId: string) => {
     set(state => {
       if (!state.project) return state;
@@ -1543,7 +2367,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       return {
         project: {
           ...state.project,
-          components: (state.project.components || []).filter(c => c.id !== componentId),
+          ...(() => {
+            const nextHierarchy = normalizeComponentHierarchy(
+              (state.project.components || []).filter((component) => component.id !== componentId),
+              state.project.componentFolders || [],
+            );
+            return {
+              components: nextHierarchy.components,
+              componentFolders: nextHierarchy.componentFolders,
+            };
+          })(),
           scenes: updatedScenes,
           updatedAt: createUpdatedAt(),
         },
@@ -1571,6 +2404,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       y: 0,
       scaleX: 1,
       scaleY: 1,
+      lockScaleProportions: true,
       rotation: 0,
       visible: true,
       parentId: null,
@@ -1651,7 +2485,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { project } = get();
     return (project?.components || []).find(c => c.id === componentId);
   },
-}));
+  }));
+}
+
+const projectStoreGlobal = globalThis as ProjectStoreGlobal;
+
+export const useProjectStore = projectStoreGlobal.__pochaProjectStore
+  ?? (projectStoreGlobal.__pochaProjectStore = createProjectStore());
 
 registerProjectHistoryBridge(
   () => useProjectStore.getState().project,

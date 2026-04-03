@@ -59,4 +59,70 @@ test.describe('Background chunk math and limits', () => {
     expect(config.hardChunkLimit).toBe(1200);
     expect(config.chunks).toEqual({ '0,0': 'data:image/png;base64,aaa' });
   });
+
+  test('applies raster patches without clearing untouched pixels in the same chunk', async ({ page }) => {
+    await page.goto('/');
+    const pixels = await page.evaluate(async () => {
+      const [{ applyRasterPatchToChunkCanvas, createEmptyChunkCanvas }, { getChunkWorldBounds }] = await Promise.all([
+        import('/src/lib/background/chunkStore.ts'),
+        import('/src/lib/background/chunkMath.ts'),
+      ]);
+
+      const chunkSize = 8;
+      const existingChunk = createEmptyChunkCanvas(chunkSize);
+      const existingCtx = existingChunk.getContext('2d', { willReadFrequently: true });
+      if (!existingCtx) {
+        throw new Error('Missing chunk canvas context.');
+      }
+
+      existingCtx.fillStyle = '#ff0000';
+      existingCtx.fillRect(0, 0, 2, 2);
+      existingCtx.fillStyle = '#0000ff';
+      existingCtx.fillRect(6, 6, 2, 2);
+
+      const patchCanvas = document.createElement('canvas');
+      patchCanvas.width = 2;
+      patchCanvas.height = 2;
+      const patchCtx = patchCanvas.getContext('2d', { willReadFrequently: true });
+      if (!patchCtx) {
+        throw new Error('Missing raster patch context.');
+      }
+      patchCtx.fillStyle = '#00ff00';
+      patchCtx.fillRect(0, 0, 2, 2);
+
+      const nextChunk = applyRasterPatchToChunkCanvas({
+        chunkSize,
+        chunkBounds: getChunkWorldBounds(0, 0, chunkSize),
+        patchBounds: {
+          left: 2,
+          right: 4,
+          bottom: 2,
+          top: 4,
+        },
+        rasterCanvas: patchCanvas,
+        existingChunkCanvas: existingChunk,
+      });
+      if (!nextChunk) {
+        throw new Error('Expected chunk patch result.');
+      }
+
+      const nextCtx = nextChunk.getContext('2d', { willReadFrequently: true });
+      if (!nextCtx) {
+        throw new Error('Missing patched chunk context.');
+      }
+
+      const readPixel = (x: number, y: number) => Array.from(nextCtx.getImageData(x, y, 1, 1).data);
+      return {
+        topLeft: readPixel(0, 0),
+        bottomRight: readPixel(6, 6),
+        patchA: readPixel(2, 4),
+        patchB: readPixel(3, 5),
+      };
+    });
+
+    expect(pixels.topLeft).toEqual([255, 0, 0, 255]);
+    expect(pixels.bottomRight).toEqual([0, 0, 255, 255]);
+    expect(pixels.patchA).toEqual([0, 255, 0, 255]);
+    expect(pixels.patchB).toEqual([0, 255, 0, 255]);
+  });
 });

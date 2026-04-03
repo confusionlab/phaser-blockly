@@ -1,4 +1,4 @@
-import { ActiveSelection, Canvas as FabricCanvas, PencilBrush } from 'fabric';
+import { ActiveSelection, Canvas as FabricCanvas, PencilBrush, Point } from 'fabric';
 import Color from 'color';
 import {
   DEFAULT_VECTOR_FILL_TEXTURE_ID,
@@ -9,6 +9,7 @@ import {
   type VectorStrokeBrushId,
 } from '@/lib/vector/vectorStrokeBrushCore';
 import type {
+  VectorPathNodeHandleType,
   VectorStyleCapabilities,
   VectorToolStyle,
 } from './CostumeToolbar';
@@ -19,15 +20,310 @@ export const VECTOR_JSON_EXTRA_PROPS = [
   'strokeUniform',
   'vectorFillTextureId',
   'vectorFillColor',
+  'vectorFillOpacity',
   'vectorStrokeBrushId',
   'vectorStrokeColor',
+  'vectorStrokeOpacity',
 ];
 
 export const VECTOR_POINT_CONTROL_STYLE = {
-  cornerColor: '#0ea5e9',
-  cornerStrokeColor: '#ffffff',
+  cornerColor: 'rgba(0, 0, 0, 0)',
+  cornerStrokeColor: 'rgba(0, 0, 0, 0)',
   cornerSize: HANDLE_SIZE,
   transparentCorners: false,
+};
+
+const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
+const MIN_VECTOR_PENCIL_DECIMATION = 1.1;
+const MAX_VECTOR_PENCIL_DECIMATION = 2.4;
+const MIN_VECTOR_PENCIL_SIMPLIFY_TOLERANCE = 1.8;
+const MAX_VECTOR_PENCIL_SIMPLIFY_TOLERANCE = 4.2;
+
+function getVectorPencilDecimation(strokeWidth: number): number {
+  // Fabric's default decimation keeps almost every captured point, which makes
+  // freehand paths harder to edit because they produce very dense handles. We
+  // use a slightly stronger, width-aware simplification so paths stay smoother
+  // while preserving the drawn silhouette.
+  return Math.min(
+    MAX_VECTOR_PENCIL_DECIMATION,
+    Math.max(MIN_VECTOR_PENCIL_DECIMATION, strokeWidth * 0.35),
+  );
+}
+
+function getVectorPencilSimplifyTolerance(strokeWidth: number): number {
+  return Math.min(
+    MAX_VECTOR_PENCIL_SIMPLIFY_TOLERANCE,
+    Math.max(MIN_VECTOR_PENCIL_SIMPLIFY_TOLERANCE, strokeWidth * 0.6),
+  );
+}
+
+function getSquaredDistanceToSegment(point: Point, segmentStart: Point, segmentEnd: Point): number {
+  const deltaX = segmentEnd.x - segmentStart.x;
+  const deltaY = segmentEnd.y - segmentStart.y;
+
+  if (deltaX === 0 && deltaY === 0) {
+    const pointDeltaX = point.x - segmentStart.x;
+    const pointDeltaY = point.y - segmentStart.y;
+    return pointDeltaX * pointDeltaX + pointDeltaY * pointDeltaY;
+  }
+
+  const projection = Math.max(
+    0,
+    Math.min(
+      1,
+      ((point.x - segmentStart.x) * deltaX + (point.y - segmentStart.y) * deltaY)
+      / (deltaX * deltaX + deltaY * deltaY),
+    ),
+  );
+  const closestX = segmentStart.x + deltaX * projection;
+  const closestY = segmentStart.y + deltaY * projection;
+  const closestDeltaX = point.x - closestX;
+  const closestDeltaY = point.y - closestY;
+  return closestDeltaX * closestDeltaX + closestDeltaY * closestDeltaY;
+}
+
+function simplifyVectorPencilPoints(points: Point[], tolerance: number): Point[] {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  const squaredTolerance = tolerance * tolerance;
+  const keep = new Uint8Array(points.length);
+  const lastIndex = points.length - 1;
+  keep[0] = 1;
+  keep[lastIndex] = 1;
+
+  const stack: Array<[startIndex: number, endIndex: number]> = [[0, lastIndex]];
+  while (stack.length > 0) {
+    const [startIndex, endIndex] = stack.pop()!;
+    let furthestIndex = -1;
+    let maxSquaredDistance = 0;
+
+    for (let index = startIndex + 1; index < endIndex; index += 1) {
+      const squaredDistance = getSquaredDistanceToSegment(
+        points[index],
+        points[startIndex],
+        points[endIndex],
+      );
+      if (squaredDistance > maxSquaredDistance) {
+        maxSquaredDistance = squaredDistance;
+        furthestIndex = index;
+      }
+    }
+
+    if (furthestIndex !== -1 && maxSquaredDistance > squaredTolerance) {
+      keep[furthestIndex] = 1;
+      stack.push([startIndex, furthestIndex], [furthestIndex, endIndex]);
+    }
+  }
+
+  const simplified: Point[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    if (keep[index]) {
+      simplified.push(points[index]);
+    }
+  }
+  return simplified.length >= 2 ? simplified : [points[0], points[lastIndex]];
+}
+
+function getVectorPathNodeHandleTypes(raw: unknown): Record<string, VectorPathNodeHandleType> {
+  if (!raw || typeof raw !== 'object') {
+    return {};
+  }
+  const next: Record<string, VectorPathNodeHandleType> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === 'linear' || value === 'corner' || value === 'smooth' || value === 'symmetric') {
+      next[key] = value;
+    }
+  }
+  return next;
+}
+
+function areVectorPathNodeHandleTypesEqual(
+  a: Record<string, VectorPathNodeHandleType>,
+  b: Record<string, VectorPathNodeHandleType>,
+): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+  return aKeys.every((key) => a[key] === b[key]);
+}
+
+function convertQuadraticPathToCubic(path: unknown): any[] | null {
+  if (!Array.isArray(path)) {
+    return null;
+  }
+
+  let currentPoint: { x: number; y: number } | null = null;
+  let subpathStart: { x: number; y: number } | null = null;
+  let changed = false;
+  const nextPath = path.map((command) => {
+    if (!Array.isArray(command) || typeof command[0] !== 'string') {
+      return command;
+    }
+
+    const commandType = command[0].trim().toUpperCase();
+    if (commandType === 'Q' && currentPoint) {
+      const startX = currentPoint.x;
+      const startY = currentPoint.y;
+      const controlX = Number(command[1]);
+      const controlY = Number(command[2]);
+      const endX = Number(command[3]);
+      const endY = Number(command[4]);
+      if (
+        Number.isFinite(controlX) &&
+        Number.isFinite(controlY) &&
+        Number.isFinite(endX) &&
+        Number.isFinite(endY)
+      ) {
+        changed = true;
+        currentPoint = { x: endX, y: endY };
+        return [
+          'C',
+          startX + ((controlX - startX) * 2) / 3,
+          startY + ((controlY - startY) * 2) / 3,
+          endX + ((controlX - endX) * 2) / 3,
+          endY + ((controlY - endY) * 2) / 3,
+          endX,
+          endY,
+        ];
+      }
+    }
+
+    const cloned = command.slice();
+    const endpoint = getPathCommandEndpoint(cloned);
+    switch (commandType) {
+      case 'M':
+        currentPoint = endpoint;
+        subpathStart = endpoint;
+        break;
+      case 'L':
+      case 'C':
+      case 'Q':
+        currentPoint = endpoint;
+        break;
+      case 'Z':
+        currentPoint = subpathStart;
+        break;
+    }
+    return cloned;
+  });
+
+  return changed ? nextPath : null;
+}
+
+function findPreviousDrawablePathCommandIndex(path: any[], commandIndex: number): number {
+  for (let index = commandIndex - 1; index >= 0; index -= 1) {
+    if (getPathCommandType(path[index]) !== 'Z') {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function inferPathNodeHandleTypesFromCommands(
+  path: unknown,
+  rawNodeHandleTypes: unknown,
+): Record<string, VectorPathNodeHandleType> | null {
+  if (!Array.isArray(path)) {
+    return null;
+  }
+
+  const existing = getVectorPathNodeHandleTypes(rawNodeHandleTypes);
+  const next = { ...existing };
+  const incomingAnchors = new Set<number>();
+  const outgoingAnchors = new Set<number>();
+
+  path.forEach((command, commandIndex) => {
+    if (getPathCommandType(command) !== 'C') {
+      return;
+    }
+    incomingAnchors.add(commandIndex);
+    const previousIndex = findPreviousDrawablePathCommandIndex(path, commandIndex);
+    if (previousIndex >= 0) {
+      outgoingAnchors.add(previousIndex);
+    }
+  });
+
+  let changed = false;
+  const curvedAnchors = new Set<number>([
+    ...incomingAnchors,
+    ...outgoingAnchors,
+  ]);
+  for (const anchorIndex of curvedAnchors) {
+    const key = String(anchorIndex);
+    if (next[key]) {
+      continue;
+    }
+    next[key] = incomingAnchors.has(anchorIndex) && outgoingAnchors.has(anchorIndex)
+      ? 'smooth'
+      : 'corner';
+    changed = true;
+  }
+
+  return changed || !areVectorPathNodeHandleTypesEqual(existing, next) ? next : null;
+}
+
+function normalizeEditableVectorPathGeometry(candidate: {
+  path?: unknown;
+  nodeHandleTypes?: unknown;
+  set?: (props: Record<string, unknown>) => void;
+  setCoords?: () => void;
+  setDimensions?: () => void;
+}): boolean {
+  if (!Array.isArray(candidate.path)) {
+    return false;
+  }
+
+  const nextPath = convertQuadraticPathToCubic(candidate.path);
+  const normalizedPath = nextPath ?? candidate.path;
+  const nextNodeHandleTypes = inferPathNodeHandleTypesFromCommands(
+    normalizedPath,
+    candidate.nodeHandleTypes,
+  );
+
+  let changed = false;
+  if (nextPath) {
+    candidate.path = nextPath;
+    changed = true;
+  }
+  if (nextNodeHandleTypes) {
+    if (typeof candidate.set === 'function') {
+      candidate.set({ nodeHandleTypes: nextNodeHandleTypes });
+    } else {
+      candidate.nodeHandleTypes = nextNodeHandleTypes;
+    }
+    changed = true;
+  }
+
+  if (changed) {
+    candidate.setDimensions?.();
+    candidate.setCoords?.();
+  }
+
+  return changed;
+}
+
+const normalizeOpaqueColor = (value: string): string => {
+  try {
+    return Color(value).alpha(1).hex();
+  } catch {
+    return value;
+  }
+};
+
+const getColorAlpha = (value: unknown): number | undefined => {
+  if (typeof value !== 'string' || value.length === 0) {
+    return undefined;
+  }
+
+  try {
+    return clampUnit(Color(value).alpha());
+  } catch {
+    return undefined;
+  }
 };
 
 export function getFabricObjectType(obj: unknown): string {
@@ -41,7 +337,12 @@ export function isActiveSelectionObject(obj: unknown): obj is ActiveSelection {
   return type === 'activeselection' || type === 'active_selection';
 }
 
-export function isTextObject(obj: unknown): obj is { type: string; set: (props: Record<string, unknown>) => void } {
+export function isTextObject(obj: unknown): obj is {
+  type: string;
+  fill?: unknown;
+  set: (props: Record<string, unknown>) => void;
+  setCoords?: () => void;
+} {
   const type = getFabricObjectType(obj);
   return type === 'itext' || type === 'i-text' || type === 'textbox' || type === 'text';
 }
@@ -74,14 +375,17 @@ export function getVectorStyleTargets(obj: unknown): any[] {
 export interface VectorBrushStylableObject {
   fill?: unknown;
   noScaleCache?: boolean;
+  opacity?: number;
   set?: (props: Record<string, unknown>) => void;
   stroke?: unknown;
   strokeUniform?: boolean;
   strokeWidth?: number;
   vectorFillColor?: string;
+  vectorFillOpacity?: number;
   vectorFillTextureId?: VectorFillTextureId;
   vectorStrokeBrushId?: VectorStrokeBrushId;
   vectorStrokeColor?: string;
+  vectorStrokeOpacity?: number;
 }
 
 export function getVectorObjectFillTextureId(obj: unknown): VectorFillTextureId {
@@ -92,11 +396,11 @@ export function getVectorObjectFillTextureId(obj: unknown): VectorFillTextureId 
 export function getVectorObjectFillColor(obj: unknown): string | undefined {
   const vectorFillColor = (obj as VectorBrushStylableObject | null | undefined)?.vectorFillColor;
   if (typeof vectorFillColor === 'string' && vectorFillColor.length > 0) {
-    return vectorFillColor;
+    return normalizeOpaqueColor(vectorFillColor);
   }
   const fill = (obj as VectorBrushStylableObject | null | undefined)?.fill;
   if (typeof fill === 'string' && fill.length > 0) {
-    return fill;
+    return normalizeOpaqueColor(fill);
   }
   return undefined;
 }
@@ -109,43 +413,123 @@ export function getVectorObjectStrokeBrushId(obj: unknown): VectorStrokeBrushId 
 export function getVectorObjectStrokeColor(obj: unknown): string | undefined {
   const vectorStrokeColor = (obj as VectorBrushStylableObject | null | undefined)?.vectorStrokeColor;
   if (typeof vectorStrokeColor === 'string' && vectorStrokeColor.length > 0) {
-    return vectorStrokeColor;
+    return normalizeOpaqueColor(vectorStrokeColor);
   }
   const stroke = (obj as VectorBrushStylableObject | null | undefined)?.stroke;
   if (typeof stroke === 'string' && stroke.length > 0) {
-    return stroke;
+    return normalizeOpaqueColor(stroke);
   }
   return undefined;
 }
 
-export function getFabricStrokeValueForVectorBrush(brushId: VectorStrokeBrushId, strokeColor: string) {
+function getVectorObjectLegacyOpacity(obj: unknown): number | undefined {
+  const opacity = (obj as VectorBrushStylableObject | null | undefined)?.opacity;
+  return typeof opacity === 'number' && Number.isFinite(opacity) ? clampUnit(opacity) : undefined;
+}
+
+export function getVectorObjectFillOpacity(obj: unknown): number | undefined {
+  const explicitOpacity = (obj as VectorBrushStylableObject | null | undefined)?.vectorFillOpacity;
+  if (typeof explicitOpacity === 'number' && Number.isFinite(explicitOpacity)) {
+    return clampUnit(explicitOpacity);
+  }
+
+  const fillTextureId = getVectorObjectFillTextureId(obj);
+  if (fillTextureId === DEFAULT_VECTOR_FILL_TEXTURE_ID) {
+    const colorOpacity = getColorAlpha(
+      (obj as VectorBrushStylableObject | null | undefined)?.vectorFillColor
+      ?? (obj as VectorBrushStylableObject | null | undefined)?.fill,
+    );
+    if (typeof colorOpacity === 'number') {
+      return colorOpacity;
+    }
+  }
+
+  return getVectorObjectLegacyOpacity(obj);
+}
+
+export function getVectorObjectStrokeOpacity(obj: unknown): number | undefined {
+  const explicitOpacity = (obj as VectorBrushStylableObject | null | undefined)?.vectorStrokeOpacity;
+  if (typeof explicitOpacity === 'number' && Number.isFinite(explicitOpacity)) {
+    return clampUnit(explicitOpacity);
+  }
+
+  const strokeBrushId = getVectorObjectStrokeBrushId(obj);
+  if (strokeBrushId === DEFAULT_VECTOR_STROKE_BRUSH_ID) {
+    const colorOpacity = getColorAlpha(
+      (obj as VectorBrushStylableObject | null | undefined)?.vectorStrokeColor
+      ?? (obj as VectorBrushStylableObject | null | undefined)?.stroke,
+    );
+    if (typeof colorOpacity === 'number') {
+      return colorOpacity;
+    }
+  }
+
+  return getVectorObjectLegacyOpacity(obj);
+}
+
+function normalizeVectorPartOpacity(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? clampUnit(value) : 1;
+}
+
+function migrateLegacySharedOpacity(
+  obj: VectorBrushStylableObject,
+  updates: Record<string, unknown>,
+): void {
+  const legacyOpacity = getVectorObjectLegacyOpacity(obj);
+  if (typeof legacyOpacity !== 'number' || legacyOpacity === 1) {
+    return;
+  }
+
+  if (typeof obj.vectorStrokeOpacity !== 'number') {
+    updates.vectorStrokeOpacity = normalizeVectorPartOpacity(getVectorObjectStrokeOpacity(obj));
+  }
+  if (vectorObjectSupportsFill(obj) && typeof obj.vectorFillOpacity !== 'number') {
+    updates.vectorFillOpacity = normalizeVectorPartOpacity(getVectorObjectFillOpacity(obj));
+  }
+  updates.opacity = 1;
+}
+
+export function getFabricStrokeValueForVectorBrush(
+  brushId: VectorStrokeBrushId,
+  strokeColor: string,
+  strokeOpacity = 1,
+) {
   return brushId === DEFAULT_VECTOR_STROKE_BRUSH_ID
-    ? strokeColor
+    ? Color(strokeColor).alpha(clampUnit(strokeOpacity)).rgb().string()
     : Color(strokeColor).alpha(0).rgb().string();
 }
 
-export function getFabricFillValueForVectorTexture(textureId: VectorFillTextureId, fillColor: string) {
+export function getFabricFillValueForVectorTexture(
+  textureId: VectorFillTextureId,
+  fillColor: string,
+  fillOpacity = 1,
+) {
   return textureId === DEFAULT_VECTOR_FILL_TEXTURE_ID
-    ? fillColor
+    ? Color(fillColor).alpha(clampUnit(fillOpacity)).rgb().string()
     : Color(fillColor).alpha(0).rgb().string();
 }
 
 export function applyVectorFillStyleToObject(
   obj: VectorBrushStylableObject | null | undefined,
-  style: Pick<VectorToolStyle, 'fillColor' | 'fillTextureId'>,
+  style: Pick<VectorToolStyle, 'fillColor' | 'fillOpacity' | 'fillTextureId'>,
 ): boolean {
   if (!obj || typeof obj.set !== 'function') {
     return false;
   }
 
   const updates: Record<string, unknown> = {};
+  migrateLegacySharedOpacity(obj, updates);
   if (obj.vectorFillTextureId !== style.fillTextureId) {
     updates.vectorFillTextureId = style.fillTextureId;
   }
   if (obj.vectorFillColor !== style.fillColor) {
     updates.vectorFillColor = style.fillColor;
   }
-  const renderFill = getFabricFillValueForVectorTexture(style.fillTextureId, style.fillColor);
+  const normalizedFillOpacity = clampUnit(style.fillOpacity);
+  if (obj.vectorFillOpacity !== normalizedFillOpacity) {
+    updates.vectorFillOpacity = normalizedFillOpacity;
+  }
+  const renderFill = getFabricFillValueForVectorTexture(style.fillTextureId, style.fillColor, normalizedFillOpacity);
   if (obj.fill !== renderFill) {
     updates.fill = renderFill;
   }
@@ -159,7 +543,7 @@ export function applyVectorFillStyleToObject(
 
 export function applyVectorStrokeStyleToObject(
   obj: VectorBrushStylableObject | null | undefined,
-  style: Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeWidth'>,
+  style: Pick<VectorToolStyle, 'strokeBrushId' | 'strokeColor' | 'strokeOpacity' | 'strokeWidth'>,
 ): boolean {
   if (!obj || typeof obj.set !== 'function') {
     return false;
@@ -167,13 +551,18 @@ export function applyVectorStrokeStyleToObject(
 
   const strokeWidth = Math.max(0, style.strokeWidth);
   const updates: Record<string, unknown> = {};
+  migrateLegacySharedOpacity(obj, updates);
   if (obj.vectorStrokeBrushId !== style.strokeBrushId) {
     updates.vectorStrokeBrushId = style.strokeBrushId;
   }
   if (obj.vectorStrokeColor !== style.strokeColor) {
     updates.vectorStrokeColor = style.strokeColor;
   }
-  const renderStroke = getFabricStrokeValueForVectorBrush(style.strokeBrushId, style.strokeColor);
+  const normalizedStrokeOpacity = clampUnit(style.strokeOpacity);
+  if (obj.vectorStrokeOpacity !== normalizedStrokeOpacity) {
+    updates.vectorStrokeOpacity = normalizedStrokeOpacity;
+  }
+  const renderStroke = getFabricStrokeValueForVectorBrush(style.strokeBrushId, style.strokeColor, normalizedStrokeOpacity);
   if (obj.stroke !== renderStroke) {
     updates.stroke = renderStroke;
   }
@@ -193,21 +582,25 @@ export function applyVectorStrokeStyleToObject(
   obj.set(updates);
   return true;
 }
-
 export function normalizeVectorObjectRendering(obj: unknown): boolean {
   if (!obj || isImageObject(obj) || isTextObject(obj) || isActiveSelectionObject(obj)) {
     return false;
   }
 
   const candidate = obj as {
+    path?: unknown;
+    nodeHandleTypes?: unknown;
     strokeUniform?: boolean;
     noScaleCache?: boolean;
     set?: (props: Record<string, unknown>) => void;
+    setCoords?: () => void;
+    setDimensions?: () => void;
   };
   if (typeof candidate.set !== 'function') {
     return false;
   }
 
+  const didChange = normalizeEditableVectorPathGeometry(candidate);
   const updates: Record<string, unknown> = {};
   if (candidate.strokeUniform !== true) {
     updates.strokeUniform = true;
@@ -219,20 +612,31 @@ export function normalizeVectorObjectRendering(obj: unknown): boolean {
   const brushId = getVectorObjectStrokeBrushId(candidate);
   const fillColor = getVectorObjectFillColor(candidate);
   const fillTextureId = getVectorObjectFillTextureId(candidate);
+  const strokeOpacity = normalizeVectorPartOpacity(getVectorObjectStrokeOpacity(candidate));
+  const fillOpacity = normalizeVectorPartOpacity(getVectorObjectFillOpacity(candidate));
+  if ((candidate as VectorBrushStylableObject).vectorStrokeOpacity !== strokeOpacity) {
+    updates.vectorStrokeOpacity = strokeOpacity;
+  }
+  if (vectorObjectSupportsFill(candidate) && (candidate as VectorBrushStylableObject).vectorFillOpacity !== fillOpacity) {
+    updates.vectorFillOpacity = fillOpacity;
+  }
+  if (typeof (candidate as VectorBrushStylableObject).opacity === 'number' && (candidate as VectorBrushStylableObject).opacity !== 1) {
+    updates.opacity = 1;
+  }
   if (typeof strokeColor === 'string' && strokeColor.length > 0) {
-    const renderStroke = getFabricStrokeValueForVectorBrush(brushId, strokeColor);
+    const renderStroke = getFabricStrokeValueForVectorBrush(brushId, strokeColor, strokeOpacity);
     if ((candidate as { stroke?: unknown }).stroke !== renderStroke) {
       updates.stroke = renderStroke;
     }
   }
   if (typeof fillColor === 'string' && fillColor.length > 0) {
-    const renderFill = getFabricFillValueForVectorTexture(fillTextureId, fillColor);
+    const renderFill = getFabricFillValueForVectorTexture(fillTextureId, fillColor, fillOpacity);
     if ((candidate as { fill?: unknown }).fill !== renderFill) {
       updates.fill = renderFill;
     }
   }
   if (Object.keys(updates).length === 0) {
-    return false;
+    return didChange;
   }
 
   candidate.set(updates);
@@ -310,34 +714,48 @@ export function isVectorPointSelectableObject(obj: unknown): obj is Record<strin
 interface VectorPencilBrushOptions {
   strokeBrushId: VectorStrokeBrushId;
   strokeColor: string;
+  strokeOpacity: number;
   strokeWidth: number;
 }
 
 export class VectorPencilBrush extends PencilBrush {
   private readonly strokeBrushId: VectorStrokeBrushId;
   private readonly strokeColor: string;
+  private readonly strokeOpacityValue: number;
   private readonly strokeWidthValue: number;
 
   constructor(canvas: FabricCanvas, options: VectorPencilBrushOptions) {
     super(canvas as any);
     this.strokeBrushId = options.strokeBrushId;
     this.strokeColor = options.strokeColor;
+    this.strokeOpacityValue = clampUnit(options.strokeOpacity);
     this.strokeWidthValue = Math.max(1, options.strokeWidth);
     this.width = this.strokeWidthValue;
     this.color = options.strokeColor;
-    this.decimate = 0.4;
+    this.decimate = getVectorPencilDecimation(this.strokeWidthValue);
+  }
+
+  override convertPointsToSVGPath(points: Point[]) {
+    return super.convertPointsToSVGPath(
+      simplifyVectorPencilPoints(
+        points,
+        getVectorPencilSimplifyTolerance(this.strokeWidthValue),
+      ),
+    );
   }
 
   override createPath(pathData: any) {
     const path = super.createPath(pathData);
     path.set({
       fill: null,
-      stroke: getFabricStrokeValueForVectorBrush(this.strokeBrushId, this.strokeColor),
+      opacity: 1,
+      stroke: getFabricStrokeValueForVectorBrush(this.strokeBrushId, this.strokeColor, this.strokeOpacityValue),
       strokeWidth: this.strokeWidthValue,
       strokeUniform: true,
       noScaleCache: false,
       vectorStrokeBrushId: this.strokeBrushId,
       vectorStrokeColor: this.strokeColor,
+      vectorStrokeOpacity: this.strokeOpacityValue,
     } as any);
     return path;
   }

@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as Blockly from 'blockly';
-import { getToolboxConfig } from './toolbox';
+import { POCHA_BLOCKLY_THEME } from './blocklyTheme';
+import {
+  getToolboxConfig,
+  type ToolboxBlockConfig,
+  type ToolboxCategoryConfig,
+  type ToolboxShadowConfig,
+} from './toolbox';
 
 // Item types: 'block' for Blockly blocks, 'command' for actions
 type ItemType = 'block' | 'command';
@@ -17,34 +23,9 @@ interface SearchItem {
   toolboxBlock?: ToolboxBlockConfig;
 }
 
-type ToolboxBlockInputConfig = {
-  block?: ToolboxBlockConfig;
-  shadow?: ToolboxShadowConfig;
-};
-
-type ToolboxShadowConfig = {
-  type: string;
-  fields?: Record<string, string>;
-};
-
-type ToolboxBlockConfig = {
-  kind: 'block';
-  type: string;
-  inputs?: Record<string, ToolboxBlockInputConfig>;
-  fields?: Record<string, string>;
-  extraState?: Record<string, unknown>;
-};
-
-type ToolboxCategoryConfig = {
-  kind: 'category';
-  name: string;
-  colour: string;
-  contents: Array<{ kind: string } & Record<string, unknown>>;
-};
-
 const COMMAND_ITEMS: SearchItem[] = [
-  { id: 'cmd_new_variable', type: 'command', commandId: 'NEW_VARIABLE', label: 'New Variable', category: 'Commands', categoryColor: '#666666' },
-  { id: 'cmd_manage_variables', type: 'command', commandId: 'MANAGE_VARIABLES', label: 'Manage Variables', category: 'Commands', categoryColor: '#666666' },
+  { id: 'cmd_edit_variables', type: 'command', commandId: 'EDIT_VARIABLES', label: 'Edit Variables', category: 'Commands', categoryColor: '#666666' },
+  { id: 'cmd_edit_messages', type: 'command', commandId: 'EDIT_MESSAGES', label: 'Edit Messages', category: 'Commands', categoryColor: '#666666' },
 ];
 
 const TYPE_PREFIXES = [
@@ -97,7 +78,12 @@ function getSearchLabel(config: ToolboxBlockConfig): string {
   if (config.type === 'event_game_start') return 'when I start';
   if (config.type === 'event_key_pressed') return 'when [key] is pressed';
   if (config.type === 'event_clicked') return 'when this is clicked';
+  if (config.type === 'event_when_receive') return 'when I receive [message]';
+  if (config.type === 'event_when_touching_value') return 'when I touch [object]';
+  if (config.type === 'event_when_touching_direction_value') return 'when I touch [object] from [direction]';
   if (config.type === 'event_forever') return 'forever';
+  if (config.type === 'control_broadcast') return 'broadcast [message]';
+  if (config.type === 'control_broadcast_wait') return 'broadcast [message] and wait';
   if (config.type === 'object_from_dropdown') return 'object';
   if (config.type === 'target_camera') return 'camera';
   if (config.type === 'target_myself') return 'myself';
@@ -107,29 +93,37 @@ function getSearchLabel(config: ToolboxBlockConfig): string {
 }
 
 function buildSearchItemsFromToolbox(): SearchItem[] {
-  const toolbox = getToolboxConfig();
-  const categories = (toolbox.contents || []) as ToolboxCategoryConfig[];
+  const toolbox = getToolboxConfig({ includeAdvancedBlocks: true });
   const items: SearchItem[] = [...COMMAND_ITEMS];
 
-  for (const category of categories) {
-    if (category.kind !== 'category') continue;
+  const visitCategory = (category: ToolboxCategoryConfig, path: string[]) => {
     const typeCounts = new Map<string, number>();
+
     for (const content of category.contents || []) {
-      if (content.kind !== 'block') continue;
-      const block = content as unknown as ToolboxBlockConfig;
-      const nextCount = (typeCounts.get(block.type) || 0) + 1;
-      typeCounts.set(block.type, nextCount);
-      items.push({
-        id: getSearchId(block, nextCount),
-        type: 'block',
-        blockType: block.type,
-        label: getSearchLabel(block),
-        category: category.name,
-        categoryColor: category.colour,
-        toolboxBlock: block,
-      });
+      if (content.kind === 'block') {
+        const block = content as unknown as ToolboxBlockConfig;
+        const nextCount = (typeCounts.get(block.type) || 0) + 1;
+        typeCounts.set(block.type, nextCount);
+        items.push({
+          id: getSearchId(block, nextCount),
+          type: 'block',
+          blockType: block.type,
+          label: getSearchLabel(block),
+          category: path.join(' / '),
+          categoryColor: category.colour,
+          toolboxBlock: block,
+        });
+      } else if (content.kind === 'category') {
+        visitCategory(content as ToolboxCategoryConfig, [...path, content.name]);
+      }
     }
+  };
+
+  for (const content of toolbox.contents || []) {
+    if (content.kind !== 'category') continue;
+    visitCategory(content, [content.name]);
   }
+
   return items;
 }
 
@@ -207,8 +201,8 @@ interface BlockSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   workspace: Blockly.WorkspaceSvg | null;
-  onNewVariable?: () => void;
-  onManageVariables?: () => void;
+  onEditVariables?: () => void;
+  onEditMessages?: () => void;
 }
 
 // Component to render a single Blockly block preview
@@ -228,6 +222,7 @@ function BlockPreview({ blockType, scale = 0.6 }: { blockType: string; scale?: n
     const workspace = Blockly.inject(containerRef.current, {
       readOnly: true,
       renderer: 'zelos',
+      theme: POCHA_BLOCKLY_THEME,
       scrollbars: false,
       zoom: { controls: false, wheel: false, startScale: scale },
       move: { scrollbars: false, drag: false, wheel: false },
@@ -269,7 +264,7 @@ function BlockPreview({ blockType, scale = 0.6 }: { blockType: string; scale?: n
   );
 }
 
-export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, onManageVariables }: BlockSearchModalProps) {
+export function BlockSearchModal({ isOpen, onClose, workspace, onEditVariables, onEditMessages }: BlockSearchModalProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -316,11 +311,11 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
   const executeItem = useCallback((item: SearchItem) => {
     if (item.type === 'command') {
       // Handle commands
-      if (item.commandId === 'NEW_VARIABLE' && onNewVariable) {
-        onNewVariable();
+      if (item.commandId === 'EDIT_VARIABLES' && onEditVariables) {
+        onEditVariables();
         onClose();
-      } else if (item.commandId === 'MANAGE_VARIABLES' && onManageVariables) {
-        onManageVariables();
+      } else if (item.commandId === 'EDIT_MESSAGES' && onEditMessages) {
+        onEditMessages();
         onClose();
       }
     } else if (item.type === 'block' && item.blockType && workspace) {
@@ -343,7 +338,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
         console.error('Failed to create block:', item.blockType, e);
       }
     }
-  }, [workspace, onNewVariable, onManageVariables, onClose]);
+  }, [workspace, onClose, onEditMessages, onEditVariables]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     switch (e.key) {
@@ -371,7 +366,7 @@ export function BlockSearchModal({ isOpen, onClose, workspace, onNewVariable, on
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-8"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-scrim-strong p-8"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

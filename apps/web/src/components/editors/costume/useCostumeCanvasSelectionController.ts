@@ -1,6 +1,10 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { ActiveSelection, type Canvas as FabricCanvas } from 'fabric';
 import type { VectorHandleMode } from './CostumeToolbar';
+import {
+  resolveBitmapFloatingSelectionObject,
+  resolveCostumeCanvasSelection,
+} from './costumeCanvasSelectionState';
 import type {
   CanvasSelectionBoundsSnapshot,
   PointSelectionMarqueeSession,
@@ -9,7 +13,6 @@ import type {
   PathAnchorDragState,
 } from './costumeCanvasShared';
 import type { CostumeEditorMode } from '@/types';
-import { isActiveSelectionObject, isTextObject } from './costumeCanvasVectorRuntime';
 
 interface UseCostumeCanvasSelectionControllerOptions {
   activeLayerVisibleRef: MutableRefObject<boolean>;
@@ -31,6 +34,7 @@ interface UseCostumeCanvasSelectionControllerOptions {
   pointSelectionTransformSessionRef: MutableRefObject<PointSelectionTransformSession | null>;
   selectedPathAnchorIndicesRef: MutableRefObject<number[]>;
   setCanZoomToSelection: Dispatch<SetStateAction<boolean>>;
+  setHasBitmapFloatingSelection?: Dispatch<SetStateAction<boolean>>;
   vectorPointEditingTargetRef: MutableRefObject<any | null>;
 }
 
@@ -50,6 +54,7 @@ export function useCostumeCanvasSelectionController({
   pointSelectionTransformSessionRef,
   selectedPathAnchorIndicesRef,
   setCanZoomToSelection,
+  setHasBitmapFloatingSelection = () => undefined,
   vectorPointEditingTargetRef,
 }: UseCostumeCanvasSelectionControllerOptions) {
   const setVectorPointEditingTarget = useCallback((nextTarget: any | null) => {
@@ -80,22 +85,28 @@ export function useCostumeCanvasSelectionController({
     vectorPointEditingTargetRef,
   ]);
 
+  const getBitmapFloatingSelectionObject = useCallback(() => {
+    return resolveBitmapFloatingSelectionObject({
+      fabricCanvas: fabricCanvasRef.current,
+      registeredBitmapFloatingObject: bitmapFloatingObjectRef.current,
+    });
+  }, [bitmapFloatingObjectRef, fabricCanvasRef]);
+
+  const getResolvedCanvasSelection = useCallback(() => {
+    return resolveCostumeCanvasSelection({
+      editorMode: editorModeRef.current,
+      fabricCanvas: fabricCanvasRef.current,
+      registeredBitmapFloatingObject: bitmapFloatingObjectRef.current,
+    });
+  }, [bitmapFloatingObjectRef, editorModeRef, fabricCanvasRef]);
+
   const getSelectionBoundsSnapshot = useCallback((): CanvasSelectionBoundsSnapshot | null => {
-    const fabricCanvas = fabricCanvasRef.current;
-    const mode = editorModeRef.current;
-    const activeObject = fabricCanvas?.getActiveObject() as any;
-    const selectionObject = mode === 'bitmap'
-      ? bitmapFloatingObjectRef.current
-      : activeObject;
-    if (!selectionObject) return null;
-    if (isTextObject(selectionObject) && (selectionObject as any).isEditing) return null;
+    const selection = getResolvedCanvasSelection();
+    if (!selection.selectionObject || selection.selectedObjects.length === 0) {
+      return null;
+    }
 
-    const selectedObjects = isActiveSelectionObject(selectionObject) && typeof selectionObject.getObjects === 'function'
-      ? (selectionObject.getObjects() as any[]).filter(Boolean)
-      : [selectionObject];
-    if (selectedObjects.length === 0) return null;
-
-    const boundsList = selectedObjects
+    const boundsList = selection.selectedObjects
       .map((obj) => ({ obj, rect: obj.getBoundingRect() as { left: number; top: number; width: number; height: number } }))
       .filter((entry) => Number.isFinite(entry.rect.left) && Number.isFinite(entry.rect.top));
     if (boundsList.length === 0) return null;
@@ -112,7 +123,7 @@ export function useCostumeCanvasSelectionController({
     }
 
     return {
-      selectionObject,
+      selectionObject: selection.selectionObject,
       selectedObjects: boundsList.map((entry) => entry.obj),
       bounds: {
         left: minLeft,
@@ -121,7 +132,7 @@ export function useCostumeCanvasSelectionController({
         height: Math.max(1, maxBottom - minTop),
       },
     };
-  }, [bitmapFloatingObjectRef, editorModeRef, fabricCanvasRef]);
+  }, [getResolvedCanvasSelection]);
 
   const restoreCanvasSelection = useCallback((selectedObjects: any[]) => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -145,11 +156,10 @@ export function useCostumeCanvasSelectionController({
   }, [fabricCanvasRef]);
 
   const syncSelectionState = useCallback(() => {
-    const fabricCanvas = fabricCanvasRef.current;
     const layerVisible = activeLayerVisibleRef.current;
-    const hasBitmap = layerVisible && !!bitmapFloatingObjectRef.current;
-    const hasActive = layerVisible && !!fabricCanvas?.getActiveObject();
-    const hasSelection = hasBitmap || (editorModeRef.current === 'vector' && hasActive);
+    const selection = getResolvedCanvasSelection();
+    const hasBitmap = layerVisible && selection.kind === 'bitmap-floating';
+    const hasSelection = layerVisible && selection.kind !== 'none';
     setCanZoomToSelection(layerVisible && !!getSelectionBoundsSnapshot());
     onSelectionStateChangeRef.current?.({
       hasSelection,
@@ -157,17 +167,42 @@ export function useCostumeCanvasSelectionController({
     });
   }, [
     activeLayerVisibleRef,
-    bitmapFloatingObjectRef,
-    editorModeRef,
-    fabricCanvasRef,
+    getResolvedCanvasSelection,
     getSelectionBoundsSnapshot,
     onSelectionStateChangeRef,
     setCanZoomToSelection,
   ]);
 
+  const setBitmapFloatingSelectionObject = useCallback((
+    nextObject: any | null,
+    options: { activate?: boolean; syncState?: boolean } = {},
+  ) => {
+    const fabricCanvas = fabricCanvasRef.current;
+    bitmapFloatingObjectRef.current = nextObject;
+    setHasBitmapFloatingSelection(!!nextObject);
+
+    if (nextObject) {
+      nextObject.setCoords?.();
+      if (options.activate && fabricCanvas && fabricCanvas.getActiveObject() !== nextObject) {
+        fabricCanvas.setActiveObject(nextObject);
+      }
+    }
+
+    if (options.syncState !== false) {
+      syncSelectionState();
+    }
+  }, [
+    bitmapFloatingObjectRef,
+    fabricCanvasRef,
+    setHasBitmapFloatingSelection,
+    syncSelectionState,
+  ]);
+
   return {
+    getBitmapFloatingSelectionObject,
     getSelectionBoundsSnapshot,
     restoreCanvasSelection,
+    setBitmapFloatingSelectionObject,
     setVectorPointEditingTarget,
     syncSelectionState,
   };

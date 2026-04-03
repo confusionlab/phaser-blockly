@@ -1,9 +1,17 @@
 import Phaser from 'phaser';
 import { RuntimeSprite } from './RuntimeSprite';
 import { applyCustomGravityForce } from './gravity';
+import {
+  areVariableValuesEqual,
+  cloneVariableValue,
+  coerceDefaultValue,
+  coerceScalarDefaultValue,
+  normalizeVariableCardinality,
+  normalizeVariableType,
+} from '@/lib/variableUtils';
 import { normalizeConfiguredKey, normalizeKeyboardCode } from '@/utils/keyboard';
 import { clampPointToPolygon, getPolygonSegments, hasUsableWorldBoundary } from '@/lib/worldBoundary';
-import type { CostumeAssetFrame, CostumeBounds, WorldPoint } from '@/types';
+import type { CostumeAssetFrame, CostumeBounds, VariableScalarValue, VariableValue, WorldPoint } from '@/types';
 
 // Handlers receive sprite as parameter so they work correctly for clones
 type EventHandler = (sprite: RuntimeSprite) => void | Promise<void>;
@@ -47,7 +55,15 @@ const MAX_LOG_ENTRIES = 200;
 
 // Shared global variables that persist across scene switches
 // This is module-level so all RuntimeEngine instances share the same data
-const sharedGlobalVariables: Map<string, number | string | boolean> = new Map();
+type TypedVariableDefinition = {
+  name: string;
+  type: string;
+  cardinality?: string;
+  scope: string;
+  defaultValue: unknown;
+};
+
+const sharedGlobalVariables: Map<string, VariableValue> = new Map();
 let sharedTimerStartMs: number | null = null;
 const sharedInventoryState: SharedInventoryState = {
   items: [],
@@ -206,6 +222,12 @@ interface ComponentSpawnTemplate {
   sounds: import('../types').Sound[];
 }
 
+interface SpriteRegistrationOptions {
+  componentId?: string | null;
+  typeToken?: string;
+  initialLocalVariables?: ReadonlyMap<string, VariableValue> | null;
+}
+
 // Template for cloning - stores original object state
 interface ObjectTemplate {
   id: string;
@@ -236,8 +258,8 @@ export class RuntimeEngine {
   public scene: Phaser.Scene;
   public sprites: Map<string, RuntimeSprite> = new Map();
   // Global variables use the shared module-level map so they persist across scene switches
-  public globalVariables: Map<string, number | string | boolean> = sharedGlobalVariables;
-  public localVariables: Map<string, Map<string, number | string | boolean>> = new Map();
+  public globalVariables: Map<string, VariableValue> = sharedGlobalVariables;
+  public localVariables: Map<string, Map<string, VariableValue>> = new Map();
 
   private handlers: Map<string, ObjectHandlers> = new Map();
   private templates: Map<string, ObjectTemplate> = new Map(); // Templates for cloning (persist after deletion)
@@ -362,16 +384,35 @@ export class RuntimeEngine {
 
   // --- Sprite Management ---
 
+  private createLocalVariableStore(
+    initialLocalVariables?: ReadonlyMap<string, VariableValue> | null,
+  ): Map<string, VariableValue> {
+    const store = new Map<string, VariableValue>();
+    if (!initialLocalVariables) {
+      return store;
+    }
+
+    for (const [varId, value] of initialLocalVariables) {
+      store.set(varId, cloneVariableValue(value));
+    }
+
+    return store;
+  }
+
   registerSprite(
     id: string,
     name: string,
     container: Phaser.GameObjects.Container,
-    componentId?: string | null,
-    typeToken?: string
+    options: SpriteRegistrationOptions = {},
   ): RuntimeSprite {
+    const {
+      componentId = null,
+      typeToken,
+      initialLocalVariables = null,
+    } = options;
     const sprite = new RuntimeSprite(this.scene, container, id, name);
     sprite.setRuntime(this);
-    sprite.componentId = componentId || null;
+    sprite.componentId = componentId;
     sprite.typeToken = typeToken ?? (componentId ? `component:${componentId}` : '');
     this.sprites.set(id, sprite);
     this.handlers.set(id, {
@@ -386,7 +427,7 @@ export class RuntimeEngine {
       onInventoryDropped: new Map(),
       forever: [],
     });
-    this.localVariables.set(id, new Map());
+    this.localVariables.set(id, this.createLocalVariableStore(initialLocalVariables));
     this._worldBoundaryLimitedSprites.set(id, true);
     this.enforceWorldBoundaryForSprite(id, 'register');
     return sprite;
@@ -1984,7 +2025,7 @@ export class RuntimeEngine {
 
   // --- Variables ---
 
-  getVariable(name: string, spriteId?: string): number | string | boolean {
+  getVariable(name: string, spriteId?: string): VariableValue {
     if (spriteId) {
       const localVars = this.localVariables.get(spriteId);
       if (localVars?.has(name)) return localVars.get(name)!;
@@ -1992,7 +2033,7 @@ export class RuntimeEngine {
     return this.globalVariables.get(name) ?? 0;
   }
 
-  setVariable(name: string, value: number | string | boolean, spriteId?: string): void {
+  setVariable(name: string, value: VariableValue, spriteId?: string): void {
     if (spriteId) {
       const localVars = this.localVariables.get(spriteId);
       if (localVars) {
@@ -2013,68 +2054,162 @@ export class RuntimeEngine {
   // --- Typed Variables (use variable ID instead of name) ---
 
   // Variable definition lookup - injected by PhaserCanvas
-  private _variableLookup: ((varId: string) => { name: string; type: string; scope: string; defaultValue: unknown } | undefined) | null = null;
+  private _variableLookup: ((varId: string) => TypedVariableDefinition | undefined) | null = null;
 
-  setVariableLookup(lookup: ((varId: string) => { name: string; type: string; scope: string; defaultValue: unknown } | undefined) | null) {
+  private isArrayTypedVariable(varDef: TypedVariableDefinition): boolean {
+    return normalizeVariableCardinality(varDef.cardinality) === 'array';
+  }
+
+  private coerceTypedVariableValue(
+    varDef: TypedVariableDefinition,
+    value: unknown,
+  ): VariableValue {
+    return coerceDefaultValue(
+      normalizeVariableType(varDef.type),
+      normalizeVariableCardinality(varDef.cardinality),
+      value,
+    );
+  }
+
+  private getTypedVariableDefaultValue(varDef: TypedVariableDefinition): VariableValue {
+    return cloneVariableValue(this.coerceTypedVariableValue(varDef, varDef.defaultValue));
+  }
+
+  private getTypedVariableScalarDefaultValue(varDef: TypedVariableDefinition): VariableScalarValue {
+    return coerceScalarDefaultValue(normalizeVariableType(varDef.type), undefined);
+  }
+
+  private readTypedVariableValue(
+    store: Map<string, VariableValue>,
+    varId: string,
+    varDef: TypedVariableDefinition,
+  ): VariableValue {
+    const storedValue = store.get(varId);
+    const normalizedValue = this.coerceTypedVariableValue(varDef, storedValue);
+
+    if (storedValue === undefined || !areVariableValuesEqual(storedValue, normalizedValue)) {
+      store.set(varId, normalizedValue);
+      return normalizedValue;
+    }
+
+    return storedValue;
+  }
+
+  private getTypedVariableStore(varDef: TypedVariableDefinition, spriteId?: string, createIfMissing: boolean = false): Map<string, VariableValue> | null {
+    if (varDef.scope === 'local' && spriteId) {
+      let localVars = this.localVariables.get(spriteId) || null;
+      if (!localVars && createIfMissing) {
+        localVars = new Map();
+        this.localVariables.set(spriteId, localVars);
+      }
+      return localVars;
+    }
+
+    return this.globalVariables;
+  }
+
+  private getMutableTypedArray(varId: string, varDef: TypedVariableDefinition, spriteId?: string): VariableScalarValue[] | null {
+    if (!this.isArrayTypedVariable(varDef)) {
+      debugLog('error', `Variable ID "${varId}" is not an array variable.`);
+      return null;
+    }
+
+    const store = this.getTypedVariableStore(varDef, spriteId, true);
+    if (!store) {
+      return null;
+    }
+
+    if (!store.has(varId)) {
+      const defaultValue = this.getTypedVariableDefaultValue(varDef);
+      const nextValue = Array.isArray(defaultValue) ? defaultValue : [];
+      store.set(varId, nextValue);
+      return nextValue;
+    }
+
+    const currentValue = this.readTypedVariableValue(store, varId, varDef);
+    if (Array.isArray(currentValue)) {
+      return currentValue;
+    }
+
+    const emptyValue: VariableScalarValue[] = [];
+    store.set(varId, emptyValue);
+    return emptyValue;
+  }
+
+  setVariableLookup(lookup: ((varId: string) => TypedVariableDefinition | undefined) | null) {
     this._variableLookup = lookup;
   }
 
-  getTypedVariable(varId: string, spriteId?: string): number | string | boolean {
+  getTypedVariable(varId: string, spriteId?: string): VariableValue {
     const varDef = this._variableLookup?.(varId);
     if (!varDef) {
       debugLog('error', `Unknown variable ID: ${varId}`);
       return 0;
     }
 
-    // For local variables, check sprite's local store first
-    if (varDef.scope === 'local' && spriteId) {
-      const localVars = this.localVariables.get(spriteId);
-      if (localVars?.has(varId)) return localVars.get(varId)!;
-      // Return default value if not set
-      return varDef.defaultValue as number | string | boolean;
+    const store = this.getTypedVariableStore(varDef, spriteId);
+    if (store?.has(varId)) {
+      return cloneVariableValue(this.readTypedVariableValue(store, varId, varDef));
     }
 
-    // Global variable
-    if (this.globalVariables.has(varId)) {
-      return this.globalVariables.get(varId)!;
-    }
-    return varDef.defaultValue as number | string | boolean;
+    return this.getTypedVariableDefaultValue(varDef);
   }
 
-  setTypedVariable(varId: string, value: number | string | boolean, spriteId?: string): void {
+  getTypedArrayLength(varId: string, spriteId?: string): number {
+    const value = this.getTypedVariable(varId, spriteId);
+    return Array.isArray(value) ? value.length : 0;
+  }
+
+  getTypedArrayItem(varId: string, index: number, spriteId?: string): VariableScalarValue {
+    const varDef = this._variableLookup?.(varId);
+    if (!varDef) {
+      debugLog('error', `Unknown variable ID: ${varId}`);
+      return 0;
+    }
+
+    const value = this.getTypedVariable(varId, spriteId);
+    if (!Array.isArray(value)) {
+      return this.getTypedVariableScalarDefaultValue(varDef);
+    }
+
+    const itemIndex = Math.floor(Number(index)) - 1;
+    if (!Number.isFinite(itemIndex) || itemIndex < 0 || itemIndex >= value.length) {
+      return this.getTypedVariableScalarDefaultValue(varDef);
+    }
+
+    return coerceScalarDefaultValue(normalizeVariableType(varDef.type), value[itemIndex]);
+  }
+
+  typedArrayContains(varId: string, value: unknown, spriteId?: string): boolean {
+    const varDef = this._variableLookup?.(varId);
+    if (!varDef) {
+      debugLog('error', `Unknown variable ID: ${varId}`);
+      return false;
+    }
+
+    const currentValue = this.getTypedVariable(varId, spriteId);
+    if (!Array.isArray(currentValue)) {
+      return false;
+    }
+
+    const expectedValue = coerceScalarDefaultValue(normalizeVariableType(varDef.type), value);
+    return currentValue.some((entry) => Object.is(entry, expectedValue));
+  }
+
+  setTypedVariable(varId: string, value: VariableValue, spriteId?: string): void {
     const varDef = this._variableLookup?.(varId);
     if (!varDef) {
       debugLog('error', `Unknown variable ID: ${varId}`);
       return;
     }
 
-    // Type coercion based on variable type
-    let coercedValue: number | string | boolean = value;
-    switch (varDef.type) {
-      case 'integer':
-        coercedValue = Math.floor(Number(value)) || 0;
-        break;
-      case 'float':
-        coercedValue = Number(value) || 0;
-        break;
-      case 'string':
-        coercedValue = String(value);
-        break;
-      case 'boolean':
-        coercedValue = Boolean(value);
-        break;
+    const store = this.getTypedVariableStore(varDef, spriteId, true);
+    if (!store) {
+      debugLog('error', `Unable to resolve variable store for ID: ${varId}`);
+      return;
     }
 
-    if (varDef.scope === 'local' && spriteId) {
-      let localVars = this.localVariables.get(spriteId);
-      if (!localVars) {
-        localVars = new Map();
-        this.localVariables.set(spriteId, localVars);
-      }
-      localVars.set(varId, coercedValue);
-    } else {
-      this.globalVariables.set(varId, coercedValue);
-    }
+    store.set(varId, this.coerceTypedVariableValue(varDef, value));
   }
 
   changeTypedVariable(varId: string, delta: number, spriteId?: string): void {
@@ -2082,6 +2217,95 @@ export class RuntimeEngine {
     if (typeof current === 'number') {
       this.setTypedVariable(varId, current + delta, spriteId);
     }
+  }
+
+  pushTypedArrayItem(varId: string, value: unknown, spriteId?: string): void {
+    const varDef = this._variableLookup?.(varId);
+    if (!varDef) {
+      debugLog('error', `Unknown variable ID: ${varId}`);
+      return;
+    }
+
+    const list = this.getMutableTypedArray(varId, varDef, spriteId);
+    if (!list) {
+      return;
+    }
+
+    list.push(coerceScalarDefaultValue(normalizeVariableType(varDef.type), value));
+  }
+
+  insertTypedArrayItem(varId: string, index: number, value: unknown, spriteId?: string): void {
+    const varDef = this._variableLookup?.(varId);
+    if (!varDef) {
+      debugLog('error', `Unknown variable ID: ${varId}`);
+      return;
+    }
+
+    const list = this.getMutableTypedArray(varId, varDef, spriteId);
+    if (!list) {
+      return;
+    }
+
+    const rawIndex = Math.floor(Number(index)) - 1;
+    const safeIndex = Number.isFinite(rawIndex)
+      ? Math.max(0, Math.min(rawIndex, list.length))
+      : list.length;
+    list.splice(safeIndex, 0, coerceScalarDefaultValue(normalizeVariableType(varDef.type), value));
+  }
+
+  setTypedArrayItem(varId: string, index: number, value: unknown, spriteId?: string): void {
+    const varDef = this._variableLookup?.(varId);
+    if (!varDef) {
+      debugLog('error', `Unknown variable ID: ${varId}`);
+      return;
+    }
+
+    const list = this.getMutableTypedArray(varId, varDef, spriteId);
+    if (!list) {
+      return;
+    }
+
+    const itemIndex = Math.floor(Number(index)) - 1;
+    if (!Number.isFinite(itemIndex) || itemIndex < 0 || itemIndex >= list.length) {
+      return;
+    }
+
+    list[itemIndex] = coerceScalarDefaultValue(normalizeVariableType(varDef.type), value);
+  }
+
+  removeTypedArrayItem(varId: string, index: number, spriteId?: string): void {
+    const varDef = this._variableLookup?.(varId);
+    if (!varDef) {
+      debugLog('error', `Unknown variable ID: ${varId}`);
+      return;
+    }
+
+    const list = this.getMutableTypedArray(varId, varDef, spriteId);
+    if (!list) {
+      return;
+    }
+
+    const itemIndex = Math.floor(Number(index)) - 1;
+    if (!Number.isFinite(itemIndex) || itemIndex < 0 || itemIndex >= list.length) {
+      return;
+    }
+
+    list.splice(itemIndex, 1);
+  }
+
+  clearTypedArray(varId: string, spriteId?: string): void {
+    const varDef = this._variableLookup?.(varId);
+    if (!varDef) {
+      debugLog('error', `Unknown variable ID: ${varId}`);
+      return;
+    }
+
+    const list = this.getMutableTypedArray(varId, varDef, spriteId);
+    if (!list) {
+      return;
+    }
+
+    list.length = 0;
   }
 
   // --- Spawn / Legacy Clone System ---
@@ -2116,8 +2340,10 @@ export class RuntimeEngine {
       spawnedId,
       `${template.name} (spawned)`,
       container,
-      template.componentId,
-      typeToken
+      {
+        componentId: template.componentId,
+        typeToken,
+      },
     );
 
     if (template.costumes.length > 0) {
@@ -2201,19 +2427,21 @@ export class RuntimeEngine {
       return null;
     }
 
-    // Get live sprite if it exists (for current position/state)
+    // Get the live root original if it exists. This is still the clone root for
+    // template lookup and MY_TYPE checks, even when the source sprite is itself a clone.
     const liveOriginal = this.sprites.get(originalId);
+    const sourceStateSprite = sourceSprite ?? liveOriginal ?? null;
 
     this.cloneCounter++;
     const cloneId = `${originalId}_clone_${this.cloneCounter}`;
 
-    // Use live sprite's position if available, otherwise use template
-    const x = liveOriginal?.container.x ?? template.x;
-    const y = liveOriginal?.container.y ?? template.y;
-    const scaleX = liveOriginal?.container.scaleX ?? template.scaleX;
-    const scaleY = liveOriginal?.container.scaleY ?? template.scaleY;
-    const rotation = liveOriginal?.container.rotation ?? template.rotation;
-    const depth = liveOriginal?.container.depth ?? template.depth;
+    // Use the source sprite's current transform when available, otherwise fall back to the template.
+    const x = sourceStateSprite?.container.x ?? template.x;
+    const y = sourceStateSprite?.container.y ?? template.y;
+    const scaleX = sourceStateSprite?.container.scaleX ?? template.scaleX;
+    const scaleY = sourceStateSprite?.container.scaleY ?? template.scaleY;
+    const rotation = sourceStateSprite?.container.rotation ?? template.rotation;
+    const depth = sourceStateSprite?.container.depth ?? template.depth;
 
     // Create a placeholder graphics (will be replaced by costume if available)
     const graphics = this.scene.add.graphics();
@@ -2230,13 +2458,16 @@ export class RuntimeEngine {
     container.setDepth(depth);
 
     // Register the clone
-    const clone = this.registerSprite(cloneId, `${template.name} (clone)`, container, template.componentId);
+    const clone = this.registerSprite(cloneId, `${template.name} (clone)`, container, {
+      componentId: template.componentId,
+      initialLocalVariables: sourceStateSprite ? this.localVariables.get(sourceStateSprite.id) ?? null : null,
+    });
     clone.isClone = true;
     clone.cloneParentId = originalId;
 
-    // Copy state from template or live sprite
-    if (liveOriginal) {
-      clone.copyStateFrom(liveOriginal);
+    // Copy state from the live source sprite when possible, otherwise fall back to the template.
+    if (sourceStateSprite) {
+      clone.copyStateFrom(sourceStateSprite);
     } else {
       // Copy from template - don't use setSize as it overrides scale
       clone.setCostumes([...template.costumes], 0);

@@ -1,18 +1,26 @@
-import { useState, useRef } from "react";
-import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import { api } from "@convex-generated/api";
-import type { Id } from "@convex-generated/dataModel";
+import { useRef, useState } from 'react';
+import { useConvex, useConvexAuth, useMutation, useQuery } from 'convex/react';
+import { api } from '@convex-generated/api';
+import type { Id } from '@convex-generated/dataModel';
+import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
+import { LibraryBrowserDialog } from '@/components/dialogs/LibraryBrowserDialog';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Trash2, Upload, Loader2, Play, Square } from "lucide-react";
-import { uploadDataUrlToStorage, urlToDataUrl, blobToDataUrl } from "@/utils/convexHelpers";
-import { compressAudio, getAudioDuration } from "@/utils/audioProcessor";
+  Loader2,
+  Play,
+  Square,
+  Upload,
+  Volume2,
+} from '@/components/ui/icons';
+import { blobToDataUrl } from '@/utils/convexHelpers';
+import { compressAudio, getAudioDuration } from '@/utils/audioProcessor';
+import {
+  hydrateSoundLibraryItemForInsertion,
+  prepareSoundLibraryCreatePayload,
+  type SoundLibraryListItemData,
+} from '@/lib/soundLibrary/soundLibraryAssets';
+import { ensureLibraryAssetRefsInCloud } from '@/lib/templateLibrary/libraryAssetRefs';
+import { useModal } from '@/components/ui/modal-provider';
 
 interface SoundLibraryBrowserProps {
   open: boolean;
@@ -29,80 +37,117 @@ function formatSize(bytes: number): string {
 function formatDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
+
+type SoundLibraryItem = SoundLibraryListItemData & {
+  _id: Id<'soundLibrary'>;
+  createdAt: number;
+};
 
 export function SoundLibraryBrowser({
   open,
   onOpenChange,
   onSelect,
 }: SoundLibraryBrowserProps) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const convex = useConvex();
   const [uploading, setUploading] = useState(false);
-  const [loadingSelect, setLoadingSelect] = useState(false);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const { isAuthenticated } = useConvexAuth();
+  const { showAlert, showConfirm } = useModal();
 
-  const items = useQuery(api.soundLibrary.list, isAuthenticated ? {} : "skip");
-  const generateUploadUrl = useMutation(api.soundLibrary.generateUploadUrl);
+  const items = useQuery(api.soundLibrary.list, open ? {} : 'skip') as SoundLibraryItem[] | undefined;
+  const generateUploadUrl = useMutation(api.projectAssets.generateUploadUrl);
+  const upsertProjectAsset = useMutation(api.projectAssets.upsert);
   const createItem = useMutation(api.soundLibrary.create);
   const removeItem = useMutation(api.soundLibrary.remove);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files?.length) return;
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files?.length) {
+      return;
+    }
 
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        if (!file.type.startsWith("audio/")) continue;
+        if (!file.type.startsWith('audio/')) {
+          continue;
+        }
 
-        // Convert and compress for consistent library storage
         const originalDataUrl = await blobToDataUrl(file);
         const dataUrl = await compressAudio(originalDataUrl);
         const duration = await getAudioDuration(dataUrl);
 
-        // Upload to Convex storage
-        const { storageId, size, mimeType } = await uploadDataUrlToStorage(
-          dataUrl,
-          generateUploadUrl
-        );
-
-        // Create the library entry
-        await createItem({
-          name: file.name.replace(/\.[^/.]+$/, ""),
-          storageId: storageId as Id<"_storage">,
-          mimeType,
-          size,
+        const prepared = await prepareSoundLibraryCreatePayload({
+          id: crypto.randomUUID(),
+          name: file.name.replace(/\.[^/.]+$/, ''),
+          assetId: dataUrl,
           duration,
         });
+
+        await ensureLibraryAssetRefsInCloud(prepared.assetRefs, {
+          listMissingAssetIds: async (assetIds) => {
+            return await convex.query(api.projectAssets.listMissing, { assetIds }) as string[];
+          },
+          generateUploadUrl,
+          upsertAsset: async (args) => {
+            return await upsertProjectAsset({
+              assetId: args.assetId,
+              kind: args.kind,
+              mimeType: args.mimeType,
+              size: args.size,
+              storageId: args.storageId,
+            });
+          },
+        });
+
+        await createItem(prepared.payload);
       }
     } catch (error) {
-      console.error("Failed to upload sound:", error);
-      alert("Failed to upload sound");
+      console.error('Failed to upload sound:', error);
+      await showAlert({
+        title: 'Upload Failed',
+        description: 'Failed to upload sound',
+        tone: 'destructive',
+      });
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
-  const handleDelete = async (id: Id<"soundLibrary">) => {
-    if (!confirm("Delete this sound from library?")) return;
+  const handleDeleteSelected = async (selectedItems: SoundLibraryItem[]) => {
+    const confirmed = await showConfirm({
+      title: selectedItems.length === 1 ? 'Delete Sound' : 'Delete Sounds',
+      description: selectedItems.length === 1
+        ? 'Delete this sound from library?'
+        : `Delete ${selectedItems.length} sounds from library?`,
+      confirmLabel: selectedItems.length === 1 ? 'Delete Sound' : `Delete ${selectedItems.length} Sounds`,
+      tone: 'destructive',
+    });
+    if (!confirmed) {
+      return;
+    }
 
-    // Stop if this sound is playing
-    if (playingId === id) {
+    if (playingId && selectedItems.some((item) => item._id === playingId)) {
       audioRef.current?.pause();
       setPlayingId(null);
     }
 
     try {
-      await removeItem({ id });
-      if (selectedId === id) setSelectedId(null);
+      await Promise.all(selectedItems.map((item) => removeItem({ id: item._id })));
     } catch (error) {
-      console.error("Failed to delete sound:", error);
-      alert("Failed to delete sound");
+      console.error('Failed to delete sounds:', error);
+      await showAlert({
+        title: 'Delete Failed',
+        description: 'Failed to delete sound',
+        tone: 'destructive',
+      });
     }
   };
 
@@ -110,58 +155,133 @@ export function SoundLibraryBrowser({
     if (playingId === id) {
       audioRef.current?.pause();
       setPlayingId(null);
-    } else {
-      if (audioRef.current) audioRef.current.pause();
-      audioRef.current = new Audio(url);
-      audioRef.current.onended = () => setPlayingId(null);
-      void audioRef.current.play().catch((error) => {
-        console.error("Failed to play sound preview:", error);
-        setPlayingId(null);
-      });
-      setPlayingId(id);
+      return;
     }
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+
+    audioRef.current = new Audio(url);
+    audioRef.current.onended = () => setPlayingId(null);
+    void audioRef.current.play().catch((error) => {
+      console.error('Failed to play sound preview:', error);
+      setPlayingId(null);
+    });
+    setPlayingId(id);
   };
 
-  const handleSelect = async () => {
-    if (!selectedId || !items) return;
-
-    const item = items.find((i) => i._id === selectedId);
-    if (!item || !item.url) return;
-
-    setLoadingSelect(true);
+  const handleOpenItem = async (item: SoundLibraryItem) => {
     try {
-      // Download the audio and convert to data URL
-      const dataUrl = await urlToDataUrl(item.url);
-
+      const sound = await hydrateSoundLibraryItemForInsertion(item);
       onSelect?.({
-        name: item.name,
-        dataUrl,
+        name: sound.name,
+        dataUrl: sound.dataUrl,
       });
-      onOpenChange(false);
     } catch (error) {
-      console.error("Failed to load sound:", error);
-      alert("Failed to load sound");
-    } finally {
-      setLoadingSelect(false);
+      console.error('Failed to load sound:', error);
+      await showAlert({
+        title: 'Load Failed',
+        description: 'Failed to load sound',
+        tone: 'destructive',
+      });
+      throw error;
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl h-[500px] flex flex-col">
-        <DialogHeader className="flex-row items-center justify-between space-y-0">
-          <DialogTitle>Sound Library</DialogTitle>
+    <LibraryBrowserDialog
+      canDeleteItem={(item) => item.scope === 'user'}
+      emptyDescription={isAuthenticated ? 'Upload sounds to build your collection.' : 'Sign in to add your own sounds.'}
+      emptyIcon={<Volume2 className="size-8" />}
+      emptyTitle="No sounds in library"
+      getItemId={(item) => item._id}
+      getItemName={(item) => item.name}
+      initialViewMode="row"
+      itemLabelPlural="sounds"
+      itemLabelSingular="sound"
+      items={items}
+      onDeleteSelected={handleDeleteSelected}
+      onItemOpen={handleOpenItem}
+      onOpenChange={onOpenChange}
+      open={open}
+      renderCard={(item) => (
+        <>
+          <div className="flex aspect-[16/10] items-center justify-center border-b border-border/60 bg-gradient-to-br from-muted via-muted/80 to-background">
+            <IconButton
+              variant={playingId === item._id ? 'default' : 'outline'}
+              className="shadow-sm"
+              label={playingId === item._id ? `Stop previewing ${item.name}` : `Preview ${item.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (item.url) {
+                  handlePlay(item.url, item._id);
+                }
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              shape="pill"
+              size="md"
+            >
+              {playingId === item._id ? <Square className="size-4" /> : <Play className="size-4" />}
+            </IconButton>
+          </div>
+
+          <div className="flex flex-1 flex-col justify-between gap-3 p-4">
+            <div className="min-w-0">
+              <p className="truncate text-base font-semibold text-foreground">
+                {item.name}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Click to add to the current object
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+              {item.duration ? <span>{formatDuration(item.duration)}</span> : null}
+              <span>{formatSize(item.size ?? 0)}</span>
+            </div>
+          </div>
+        </>
+      )}
+      renderRow={(item) => (
+        <>
+          <IconButton
+            variant={playingId === item._id ? 'default' : 'outline'}
+            label={playingId === item._id ? `Stop previewing ${item.name}` : `Preview ${item.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (item.url) {
+                handlePlay(item.url, item._id);
+              }
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            shape="pill"
+            size="sm"
+          >
+            {playingId === item._id ? <Square className="size-4" /> : <Play className="size-4" />}
+          </IconButton>
+
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-foreground">
+              {item.name}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              {item.duration ? <span>{formatDuration(item.duration)}</span> : null}
+              <span>{formatSize(item.size ?? 0)}</span>
+            </div>
+          </div>
+        </>
+      )}
+      title="Sound Library"
+      toolbarActions={(
+        <>
           <Button
             size="sm"
-            onClick={() => fileInputRef.current?.click()}
             disabled={uploading || !isAuthenticated}
+            onClick={() => fileInputRef.current?.click()}
           >
-            {uploading ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Upload className="size-4" />
-            )}
-            {uploading ? "Uploading..." : "Upload"}
+            {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            {uploading ? 'Uploading...' : 'Upload'}
           </Button>
           <input
             ref={fileInputRef}
@@ -171,89 +291,8 @@ export function SoundLibraryBrowser({
             className="hidden"
             onChange={handleUpload}
           />
-        </DialogHeader>
-
-        <ScrollArea className="flex-1 mt-4">
-          {!isAuthenticated ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>Sign in for the cloud sound library.</p>
-            </div>
-          ) : !items ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              <Loader2 className="size-6 animate-spin" />
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p>No sounds in library</p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2 pr-4">
-              {items.map((item) => (
-                <div
-                  key={item._id}
-                  onClick={() => setSelectedId(item._id)}
-                  className={`group flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                    selectedId === item._id
-                      ? "ring-2 ring-primary bg-primary/5"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  <Button
-                    variant={playingId === item._id ? "default" : "outline"}
-                    size="icon"
-                    className="shrink-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (item.url) {
-                        handlePlay(item.url, item._id);
-                      }
-                    }}
-                  >
-                    {playingId === item._id ? (
-                      <Square className="size-4" />
-                    ) : (
-                      <Play className="size-4" />
-                    )}
-                  </Button>
-                  <span className="flex-1 truncate">{item.name}</span>
-                  {item.duration && (
-                    <span className="text-xs text-muted-foreground">
-                      {formatDuration(item.duration)}
-                    </span>
-                  )}
-                  <span className="text-xs text-muted-foreground">
-                    {formatSize(item.size)}
-                  </span>
-                  <Button
-                    variant="destructive"
-                    size="icon"
-                    className="size-7 opacity-0 group-hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(item._id);
-                    }}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-
-        <div className="flex justify-end gap-3 pt-4 border-t">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSelect}
-            disabled={!isAuthenticated || !selectedId || loadingSelect}
-          >
-            {loadingSelect && <Loader2 className="size-4 animate-spin mr-2" />}
-            Insert Sound
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </>
+      )}
+    />
   );
 }

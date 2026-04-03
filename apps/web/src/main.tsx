@@ -10,6 +10,7 @@ import './index.css'
 import App from './App.tsx'
 import { getConvexCloudUrl } from '@/lib/convexEnv'
 import { resolveDesktopAuthUrls } from '@/lib/desktopAuthUrls'
+import { useClerkAppearance } from '@/lib/useClerkAppearance'
 
 function trimOrUndefined(value: string | undefined): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -76,12 +77,16 @@ if (!convexUrl || !clerkPublishableKey) {
 }
 
 const convex = new ConvexReactClient(convexUrl)
+const resolvedClerkPublishableKey = clerkPublishableKey
 
-createRoot(rootElement).render(
-  <StrictMode>
+function RootApp() {
+  const clerkAppearance = useClerkAppearance()
+
+  return (
     <ClerkProvider
-      publishableKey={clerkPublishableKey}
+      publishableKey={resolvedClerkPublishableKey}
       standardBrowser={!isFileProtocol}
+      appearance={clerkAppearance}
       signInUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signInUrl : undefined}
       signUpUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.signUpUrl : undefined}
       signInForceRedirectUrl={shouldForceDesktopAuthUrls ? desktopAuthUrls.redirectUrl : undefined}
@@ -101,5 +106,11 @@ createRoot(rootElement).render(
         )}
       </ConvexProviderWithClerk>
     </ClerkProvider>
+  )
+}
+
+createRoot(rootElement).render(
+  <StrictMode>
+    <RootApp />
   </StrictMode>,
 )

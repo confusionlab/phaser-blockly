@@ -1,5 +1,5 @@
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import { getAssistantBlockCatalogEntry } from './assistantBlocks';
+import { assistantStatementUsesNextConnection, getAssistantBlockCatalogEntry } from './assistantBlocks';
 import { normalizeBlocklyXml, validateBlocklyXmlStructure } from './blocklyXml';
 
 export interface AssistantBlockTreeNode {
@@ -123,6 +123,7 @@ function clearBlockChildren(container: Element) {
 }
 
 function parseBlockElement(element: Element, path: string): AssistantBlockTreeNode {
+  const blockType = element.getAttribute('type') || 'unknown_block';
   const fields: Record<string, string> = {};
   const values: Record<string, AssistantBlockTreeNode> = {};
   const statements: Record<string, AssistantBlockTreeNode[]> = {};
@@ -161,14 +162,26 @@ function parseBlockElement(element: Element, path: string): AssistantBlockTreeNo
     if (tagName === 'next') {
       const nextBlock = getFirstChildBlock(child);
       if (nextBlock) {
-        next = parseBlockElement(nextBlock, `${path}.next`);
+        if (assistantStatementUsesNextConnection(blockType, 'NEXT') && !statements.NEXT) {
+          const blocks: AssistantBlockTreeNode[] = [];
+          let current: Element | null = nextBlock;
+          let index = 0;
+          while (current) {
+            blocks.push(parseBlockElement(current, `${path}.statements.NEXT[${index}]`));
+            current = getFirstChildBlock(getDirectChildByTagName(current, 'next'));
+            index += 1;
+          }
+          statements.NEXT = blocks;
+        } else {
+          next = parseBlockElement(nextBlock, `${path}.next`);
+        }
       }
     }
   }
 
   return {
     path,
-    type: element.getAttribute('type') || 'unknown_block',
+    type: blockType,
     fields,
     values,
     statements,
@@ -254,6 +267,9 @@ function validatePatchNode(node: AssistantBlockPatchNode, path: string): string[
       issues.push(...validatePatchNode(statementNode, `${path}.statements.${statementName}[${index}]`));
     });
   }
+  if (entry?.kind === 'hat' && node.next) {
+    issues.push(`${path}.next is not valid for block "${type}". Use statements.NEXT for hat block bodies.`);
+  }
   if (node.next) {
     issues.push(...validatePatchNode(node.next, `${path}.next`));
   }
@@ -301,9 +317,23 @@ function compilePatchNode(document: Document, node: AssistantBlockPatchNode): El
       .sort(),
   ];
   for (const statementName of orderedStatementNames) {
+    const statementBlocks = (node.statements ?? {})[statementName] ?? [];
+    if (assistantStatementUsesNextConnection(node.type, statementName)) {
+      if (statementBlocks.length === 0) continue;
+      const nextContainer = document.createElement('next');
+      nextContainer.appendChild(compilePatchNode(document, statementBlocks[0]!));
+      let current = getFirstChildBlock(nextContainer)!;
+      for (const statementBlock of statementBlocks.slice(1)) {
+        const nestedNextContainer = document.createElement('next');
+        nestedNextContainer.appendChild(compilePatchNode(document, statementBlock));
+        current.appendChild(nestedNextContainer);
+        current = getFirstChildBlock(nestedNextContainer)!;
+      }
+      block.appendChild(nextContainer);
+      continue;
+    }
     const statementContainer = document.createElement('statement');
     statementContainer.setAttribute('name', statementName);
-    const statementBlocks = (node.statements ?? {})[statementName] ?? [];
     if (statementBlocks.length > 0) {
       statementContainer.appendChild(compilePatchNode(document, statementBlocks[0]!));
       let current = getFirstChildBlock(statementContainer)!;
@@ -416,7 +446,11 @@ function resolveBlockReference(root: Element, path: string): BlockReference {
       continue;
     }
 
-    const container = getDirectChildByTagName(currentRef.block, 'statement', step.name);
+    const blockType = currentRef.block.getAttribute('type') || '';
+    const usesNextConnection = assistantStatementUsesNextConnection(blockType, step.name);
+    const container: Element | null = usesNextConnection
+      ? getDirectChildByTagName(currentRef.block, 'next')
+      : getDirectChildByTagName(currentRef.block, 'statement', step.name);
     let statementBlock = getFirstChildBlock(container);
     if (!container || !statementBlock) {
       throw new Error(`Block path "${path}" points to missing statement input "${step.name}".`);

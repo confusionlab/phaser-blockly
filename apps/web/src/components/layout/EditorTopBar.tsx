@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Loader2 } from '@/components/ui/icons';
 import { ProductMenu } from '@/components/layout/ProductMenu';
-import { InlineRenameField } from '@/components/ui/inline-rename-field';
 import { Button } from '@/components/ui/button';
+import { InlineRenameField } from '@/components/ui/inline-rename-field';
+import { PROJECT_NAME_MAX_LENGTH, validateProjectName } from '@/lib/projectName';
 import { cn } from '@/lib/utils';
 import { panelHeaderClassNames } from '@/lib/ui/panelHeaderTokens';
 
 interface EditorTopBarProps {
   hasProject: boolean;
   isDarkMode: boolean;
+  showAdvancedBlocks: boolean;
   projectName: string | null;
   projectNameDisabled?: boolean;
   saveControlState?: 'save' | 'saving' | 'saved';
@@ -18,12 +20,14 @@ interface EditorTopBarProps {
   onOpenHistory: () => void;
   onProjectNameCommit: (name: string) => void;
   onSaveNow: () => void;
+  onToggleAdvancedBlocks: () => void;
   onToggleTheme: () => void;
 }
 
 export function EditorTopBar({
   hasProject,
   isDarkMode,
+  showAdvancedBlocks,
   projectName,
   projectNameDisabled = false,
   saveControlState = 'saved',
@@ -33,13 +37,18 @@ export function EditorTopBar({
   onOpenHistory,
   onProjectNameCommit,
   onSaveNow,
+  onToggleAdvancedBlocks,
   onToggleTheme,
 }: EditorTopBarProps) {
+  const MAX_PROJECT_NAME_WIDTH_PX = 640;
+  const PROJECT_NAME_HORIZONTAL_PADDING_PX = 12;
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const measurementRef = useRef<HTMLSpanElement>(null);
   const lastCommittedNameRef = useRef(projectName ?? '');
-  const skipBlurCommitRef = useRef(false);
   const [draftName, setDraftName] = useState(projectName ?? '');
+  const [isProjectNameEditing, setIsProjectNameEditing] = useState(false);
+  const [projectNameFieldWidthPx, setProjectNameFieldWidthPx] = useState(160);
 
   useEffect(() => {
     const nextName = projectName ?? '';
@@ -47,102 +56,152 @@ export function EditorTopBar({
     lastCommittedNameRef.current = nextName;
   }, [projectName]);
 
-  const focusProjectNameInput = useCallback(() => {
-    const input = inputRef.current;
-    if (!input || projectNameDisabled) {
+  useEffect(() => {
+    if (!hasProject) {
+      setIsProjectNameEditing(false);
+    }
+  }, [hasProject]);
+
+  const projectNameValidation = validateProjectName(draftName);
+
+  useLayoutEffect(() => {
+    const measurement = measurementRef.current;
+    if (!measurement) {
       return;
     }
 
-    input.focus({ preventScroll: true });
-    queueMicrotask(() => input.select());
-  }, [projectNameDisabled]);
+    const measuredWidthPx = Math.ceil(measurement.getBoundingClientRect().width) + PROJECT_NAME_HORIZONTAL_PADDING_PX;
+    setProjectNameFieldWidthPx(Math.min(Math.max(measuredWidthPx, 48), MAX_PROJECT_NAME_WIDTH_PX));
+  }, [draftName]);
+
+  const projectNameFieldStyle = {
+    maxWidth: `${MAX_PROJECT_NAME_WIDTH_PX}px`,
+    width: `${projectNameFieldWidthPx}px`,
+  } satisfies CSSProperties;
 
   const commitDraftName = useCallback((): boolean => {
     if (!hasProject) {
       return true;
     }
 
-    const trimmedName = draftName.trim();
-    if (!trimmedName) {
+    if (!projectNameValidation.valid) {
       setDraftName(lastCommittedNameRef.current);
       return false;
     }
 
-    if (trimmedName !== lastCommittedNameRef.current) {
-      onProjectNameCommit(trimmedName);
+    if (projectNameValidation.normalized !== lastCommittedNameRef.current) {
+      onProjectNameCommit(projectNameValidation.normalized);
     }
 
-    lastCommittedNameRef.current = trimmedName;
-    setDraftName(trimmedName);
+    lastCommittedNameRef.current = projectNameValidation.normalized;
+    setDraftName(projectNameValidation.normalized);
     return true;
-  }, [draftName, hasProject, onProjectNameCommit]);
+  }, [hasProject, onProjectNameCommit, projectNameValidation]);
 
-  const restoreLastCommittedName = useCallback(() => {
-    skipBlurCommitRef.current = true;
+  const cancelProjectNameEdit = useCallback(() => {
     setDraftName(lastCommittedNameRef.current);
+    setIsProjectNameEditing(false);
   }, []);
+
+  const activateProjectNameEdit = useCallback(() => {
+    if (projectNameDisabled) {
+      return;
+    }
+
+    setIsProjectNameEditing(true);
+  }, [projectNameDisabled]);
+
+  const handleProjectNameDisplayKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    activateProjectNameEdit();
+  }, [activateProjectNameEdit]);
 
   return (
     <div
       className={cn(
         panelHeaderClassNames.chrome,
         'h-[var(--editor-panel-header-height)]',
-        'bg-background',
+        'bg-card',
       )}
     >
       <div className="grid h-full w-full grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="flex min-w-0 justify-start">
           <ProductMenu
             isDarkMode={isDarkMode}
+            showAdvancedBlocks={showAdvancedBlocks}
             hasProject={hasProject}
             onExportProject={onExportProject}
             onGoToDashboard={onGoToDashboard}
             onOpenHistory={onOpenHistory}
-            onRenameProject={focusProjectNameInput}
+            onToggleAdvancedBlocks={onToggleAdvancedBlocks}
             onToggleTheme={onToggleTheme}
           />
         </div>
 
         <div className="relative flex min-w-0 justify-center">
           {hasProject ? (
-            <div className="flex w-full max-w-[360px] items-center justify-center rounded-xl px-3 py-1.5">
+            <div className="flex w-full min-w-0 max-w-[640px] items-center justify-center">
+              <span
+                ref={measurementRef}
+                aria-hidden="true"
+                className="pointer-events-none absolute invisible whitespace-pre px-1.5 text-sm font-medium leading-5"
+              >
+                {draftName || ' '}
+              </span>
               <InlineRenameField
                 id={inputId}
                 ref={inputRef}
+                editing={isProjectNameEditing}
+                invalid={isProjectNameEditing && !projectNameValidation.valid}
                 value={draftName}
                 disabled={projectNameDisabled}
                 aria-label="Project name"
                 spellCheck={false}
-                editing
-                className="w-full"
-                outlineClassName="hidden"
-                inputClassName={cn(
-                  'truncate text-center text-sm font-medium text-foreground',
-                  projectNameDisabled ? 'cursor-not-allowed opacity-60' : 'focus-visible:outline-none',
+                autoFocus={isProjectNameEditing}
+                focusBehavior="caret-end"
+                maxLength={PROJECT_NAME_MAX_LENGTH}
+                className="min-w-0"
+                style={projectNameFieldStyle}
+                displayAs="div"
+                displayProps={{
+                  'aria-label': 'Project name',
+                  className: cn(
+                    'flex h-8 cursor-text items-center justify-center rounded-md px-1.5',
+                    projectNameDisabled ? 'cursor-not-allowed opacity-60' : null,
+                  ),
+                  onClick: activateProjectNameEdit,
+                  onKeyDown: handleProjectNameDisplayKeyDown,
+                  role: projectNameDisabled ? undefined : 'button',
+                  tabIndex: projectNameDisabled ? -1 : 0,
+                  title: draftName,
+                }}
+                outlineClassName={cn(
+                  'inset-x-0 inset-y-0 rounded-md border-input bg-card shadow-xs',
+                  'group-focus-within/rename:border-ring group-focus-within/rename:ring-[3px] group-focus-within/rename:ring-ring/50',
                 )}
-                textClassName="truncate text-center text-sm font-medium"
+                inputClassName={cn('h-8 px-1.5 text-center text-sm font-medium leading-5', projectNameDisabled ? 'opacity-60' : null)}
+                textClassName="truncate text-center text-sm font-medium leading-5"
                 onChange={(event) => setDraftName(event.target.value)}
                 onBlur={() => {
-                  if (skipBlurCommitRef.current) {
-                    skipBlurCommitRef.current = false;
-                    return;
-                  }
-
                   void commitDraftName();
+                  setIsProjectNameEditing(false);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
                     if (commitDraftName()) {
-                      event.currentTarget.blur();
+                      setIsProjectNameEditing(false);
                     }
                     return;
                   }
 
                   if (event.key === 'Escape') {
                     event.preventDefault();
-                    restoreLastCommittedName();
-                    event.currentTarget.blur();
+                    cancelProjectNameEdit();
                   }
                 }}
               />

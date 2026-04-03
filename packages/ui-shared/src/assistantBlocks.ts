@@ -36,31 +36,31 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'camera_zoom', category: 'Camera', kind: 'statement', summary: 'Set camera zoom level', inputNames: ['ZOOM'], statementInputNames: [], fieldNames: [] },
   { type: 'control_broadcast', category: 'Events', kind: 'statement', summary: 'Send a message to all objects', inputNames: [], statementInputNames: [], fieldNames: ['MESSAGE'] },
   { type: 'control_broadcast_wait', category: 'Events', kind: 'statement', summary: 'Send a message and wait', inputNames: [], statementInputNames: [], fieldNames: ['MESSAGE'] },
-  { type: 'control_current_item', category: 'Actions', kind: 'reporter', summary: 'Use inside "for each" loop to get the current item', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'control_delete_object', category: 'Actions', kind: 'statement', summary: 'Delete the specified object', inputNames: ['OBJECT'], statementInputNames: [], fieldNames: [] },
-  { type: 'control_for_each', category: 'Actions', kind: 'statement', summary: 'Iterate over each item in a list', inputNames: ['LIST'], statementInputNames: ['DO'], fieldNames: [] },
-  { type: 'control_group_block', category: 'Actions', kind: 'statement', summary: 'Group blocks visually without changing behavior', inputNames: [], statementInputNames: ['DO'], fieldNames: ['NAME'] },
-  { type: 'control_random_choice', category: 'Actions', kind: 'statement', summary: 'Randomly run one of the branches', inputNames: [], statementInputNames: ['DO0', 'DO1'], fieldNames: [] },
-  { type: 'control_repeat', category: 'Actions', kind: 'statement', summary: 'Repeat some number of times', inputNames: ['TIMES'], statementInputNames: ['DO'], fieldNames: [] },
-  { type: 'control_repeat_until', category: 'Actions', kind: 'statement', summary: 'Repeat until condition is true', inputNames: ['CONDITION'], statementInputNames: ['DO'], fieldNames: [] },
-  { type: 'control_spawn_type_at', category: 'Actions', kind: 'statement', summary: 'Spawn a component type at the specified position', inputNames: ['X', 'Y'], statementInputNames: [], fieldNames: ['TYPE'] },
-  { type: 'control_stop', category: 'Actions', kind: 'statement', summary: 'Stop scripts', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'control_switch_scene', category: 'Actions', kind: 'statement', summary: 'Switch to another scene (resume = continue where you left off, restart = start fresh)', inputNames: [], statementInputNames: [], fieldNames: ['SCENE', 'MODE'] },
-  { type: 'control_wait', category: 'Actions', kind: 'statement', summary: 'Wait for some seconds', inputNames: ['SECONDS'], statementInputNames: [], fieldNames: [] },
-  { type: 'control_wait_until', category: 'Actions', kind: 'statement', summary: 'Wait until condition is true', inputNames: ['CONDITION'], statementInputNames: [], fieldNames: [] },
-  { type: 'control_while', category: 'Actions', kind: 'statement', summary: 'Repeat while condition is true', inputNames: ['CONDITION'], statementInputNames: ['DO'], fieldNames: [] },
-  { type: 'controls_if', category: 'Actions', kind: 'statement', summary: 'Conditional branch', inputNames: ['IF0'], statementInputNames: ['DO0', 'ELSE'], fieldNames: [] },
+  { type: 'control_current_item', category: 'Control', kind: 'reporter', summary: 'Use inside "for each" loop to get the current item', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'control_delete_object', category: 'Control', kind: 'statement', summary: 'Delete the specified object', inputNames: ['OBJECT'], statementInputNames: [], fieldNames: [] },
+  { type: 'control_for_each', category: 'Control', kind: 'statement', summary: 'Iterate over each item in a list', inputNames: ['LIST'], statementInputNames: ['DO'], fieldNames: [] },
+  { type: 'control_group_block', category: 'Debug', kind: 'statement', summary: 'Group blocks visually without changing behavior', inputNames: [], statementInputNames: ['DO'], fieldNames: ['NAME'] },
+  { type: 'control_random_choice', category: 'Control', kind: 'statement', summary: 'Randomly run one of the branches', inputNames: [], statementInputNames: ['DO0', 'DO1'], fieldNames: [] },
+  { type: 'control_repeat', category: 'Control', kind: 'statement', summary: 'Repeat some number of times', inputNames: ['TIMES'], statementInputNames: ['DO'], fieldNames: [] },
+  { type: 'control_repeat_until', category: 'Control', kind: 'statement', summary: 'Repeat until condition is true', inputNames: ['CONDITION'], statementInputNames: ['DO'], fieldNames: [] },
+  { type: 'control_spawn_type_at', category: 'Control', kind: 'statement', summary: 'Spawn a component type at the specified position', inputNames: ['X', 'Y'], statementInputNames: [], fieldNames: ['TYPE'] },
+  { type: 'control_stop', category: 'Control', kind: 'statement', summary: 'Stop scripts', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'control_switch_scene', category: 'Control', kind: 'statement', summary: 'Switch to another scene (resume = continue where you left off, restart = start fresh)', inputNames: [], statementInputNames: [], fieldNames: ['SCENE', 'MODE'] },
+  { type: 'control_wait', category: 'Control', kind: 'statement', summary: 'Wait for some seconds', inputNames: ['SECONDS'], statementInputNames: [], fieldNames: [] },
+  { type: 'control_wait_until', category: 'Control', kind: 'statement', summary: 'Wait until condition is true', inputNames: ['CONDITION'], statementInputNames: [], fieldNames: [] },
+  { type: 'control_while', category: 'Control', kind: 'statement', summary: 'Repeat while condition is true', inputNames: ['CONDITION'], statementInputNames: ['DO'], fieldNames: [] },
+  { type: 'controls_if', category: 'Control', kind: 'statement', summary: 'Conditional branch', inputNames: ['IF0'], statementInputNames: ['DO0', 'ELSE'], fieldNames: [] },
   { type: 'debug_console_log', category: 'Debug', kind: 'statement', summary: 'Log a value to the debug console', inputNames: ['VALUE'], statementInputNames: [], fieldNames: [] },
   { type: 'event_clicked', category: 'Events', kind: 'hat', summary: 'Runs when this object is clicked', inputNames: [], statementInputNames: ['NEXT'], fieldNames: [] },
   { type: 'event_any_inventory_item_dropped', category: 'Inventory', kind: 'hat', summary: 'Runs whenever any inventory item is dropped, even if it is not over a valid target', inputNames: [], statementInputNames: ['NEXT'], fieldNames: [] },
-  { type: 'event_forever', category: 'Events', kind: 'statement', summary: 'Runs continuously', inputNames: [], statementInputNames: ['DO'], fieldNames: [] },
+  { type: 'event_forever', category: 'Control', kind: 'statement', summary: 'Runs continuously', inputNames: [], statementInputNames: ['DO'], fieldNames: [] },
   { type: 'event_game_start', category: 'Events', kind: 'hat', summary: 'Runs when this object starts (including spawned objects)', inputNames: [], statementInputNames: ['NEXT'], fieldNames: [] },
   { type: 'event_inventory_item_dropped', category: 'Inventory', kind: 'hat', summary: 'Runs when the selected inventory item is dropped on this object', inputNames: [], statementInputNames: ['NEXT'], fieldNames: ['ITEM'] },
   { type: 'event_key_pressed', category: 'Events', kind: 'hat', summary: 'Runs when a key is pressed', inputNames: [], statementInputNames: ['NEXT'], fieldNames: ['KEY'] },
   { type: 'event_world_clicked', category: 'Events', kind: 'hat', summary: 'Runs when the world is clicked', inputNames: [], statementInputNames: ['NEXT'], fieldNames: [] },
   { type: 'event_when_receive', category: 'Events', kind: 'hat', summary: 'Runs when message is received', inputNames: [], statementInputNames: ['NEXT'], fieldNames: ['MESSAGE'] },
-  { type: 'event_when_touching_direction_value', category: 'Events', kind: 'hat', summary: 'Runs when touching target from a specific direction', inputNames: ['TARGET'], statementInputNames: ['NEXT'], fieldNames: ['DIRECTION'] },
-  { type: 'event_when_touching_value', category: 'Events', kind: 'hat', summary: 'Runs when touching target', inputNames: ['TARGET'], statementInputNames: ['NEXT'], fieldNames: [] },
+  { type: 'event_when_touching_direction_value', category: 'Events', kind: 'hat', summary: 'Runs once when this object starts touching target from a specific direction', inputNames: ['TARGET'], statementInputNames: ['NEXT'], fieldNames: ['DIRECTION'] },
+  { type: 'event_when_touching_value', category: 'Events', kind: 'hat', summary: 'Runs once when this object starts touching target', inputNames: ['TARGET'], statementInputNames: ['NEXT'], fieldNames: [] },
   { type: 'logic_boolean', category: 'Variables', kind: 'boolean', summary: 'Boolean literal', inputNames: [], statementInputNames: [], fieldNames: ['BOOL'] },
   { type: 'logic_compare', category: 'Operators', kind: 'boolean', summary: 'Compare two values', inputNames: ['A', 'B'], statementInputNames: [], fieldNames: ['OP'] },
   { type: 'logic_negate', category: 'Operators', kind: 'boolean', summary: 'Invert a boolean', inputNames: ['BOOL'], statementInputNames: [], fieldNames: [] },
@@ -107,7 +107,7 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'motion_rotate_tween', category: 'Motion', kind: 'statement', summary: 'Rotate by degrees over time', inputNames: ['DEGREES', 'SECONDS'], statementInputNames: [], fieldNames: [] },
   { type: 'motion_set_x', category: 'Motion', kind: 'statement', summary: 'Set x position', inputNames: ['VALUE'], statementInputNames: [], fieldNames: [] },
   { type: 'motion_set_y', category: 'Motion', kind: 'statement', summary: 'Set y position', inputNames: ['VALUE'], statementInputNames: [], fieldNames: [] },
-  { type: 'object_from_dropdown', category: 'Targets', kind: 'reporter', summary: 'Object reference from dropdown', inputNames: [], statementInputNames: [], fieldNames: ['TARGET'] },
+  { type: 'object_from_dropdown', category: 'Sensing', kind: 'reporter', summary: 'Object reference from dropdown', inputNames: [], statementInputNames: [], fieldNames: ['TARGET'] },
   { type: 'operator_contains', category: 'Operators', kind: 'boolean', summary: 'Check whether text contains another value', inputNames: ['STRING1', 'STRING2'], statementInputNames: [], fieldNames: [] },
   { type: 'operator_join', category: 'Operators', kind: 'reporter', summary: 'Join two values as text', inputNames: ['STRING1', 'STRING2'], statementInputNames: [], fieldNames: [] },
   { type: 'operator_length', category: 'Operators', kind: 'reporter', summary: 'Get text length', inputNames: ['STRING'], statementInputNames: [], fieldNames: [] },
@@ -118,13 +118,11 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'physics_disable', category: 'Physics', kind: 'statement', summary: 'Disable physics for this object', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'physics_enable', category: 'Physics', kind: 'statement', summary: 'Enable physics for this object', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'physics_enabled', category: 'Physics', kind: 'boolean', summary: 'Returns true if physics is enabled for this object', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'physics_ground_off', category: 'Physics', kind: 'statement', summary: 'Disable ground collision for this object', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'physics_ground_on', category: 'Physics', kind: 'statement', summary: 'Enable ground collision for this object', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'physics_immovable', category: 'Physics', kind: 'statement', summary: 'Make this object immovable (like a platform)', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'physics_make_dynamic', category: 'Physics', kind: 'statement', summary: 'Make this object a dynamic physics body', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'physics_make_static', category: 'Physics', kind: 'statement', summary: 'Make this object a static physics body', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'physics_set_bounce', category: 'Physics', kind: 'statement', summary: 'Set bounce (0-1)', inputNames: ['BOUNCE'], statementInputNames: [], fieldNames: [] },
   { type: 'physics_set_friction', category: 'Physics', kind: 'statement', summary: 'Set surface friction (0 = slippery, 1 = grippy)', inputNames: ['FRICTION'], statementInputNames: [], fieldNames: [] },
   { type: 'physics_set_gravity', category: 'Physics', kind: 'statement', summary: 'Set gravity strength', inputNames: ['GRAVITY'], statementInputNames: [], fieldNames: [] },
-  { type: 'physics_set_ground_y', category: 'Physics', kind: 'statement', summary: 'Set the Y position of the ground', inputNames: ['Y'], statementInputNames: [], fieldNames: [] },
   { type: 'physics_set_velocity', category: 'Physics', kind: 'statement', summary: 'Set velocity', inputNames: ['VX', 'VY'], statementInputNames: [], fieldNames: [] },
   { type: 'physics_set_velocity_x', category: 'Physics', kind: 'statement', summary: 'Set horizontal velocity', inputNames: ['VX'], statementInputNames: [], fieldNames: [] },
   { type: 'physics_set_velocity_y', category: 'Physics', kind: 'statement', summary: 'Set vertical velocity', inputNames: ['VY'], statementInputNames: [], fieldNames: [] },
@@ -154,10 +152,10 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'sound_play_until_done', category: 'Sound', kind: 'statement', summary: 'Play sound and wait until finished', inputNames: [], statementInputNames: [], fieldNames: ['SOUND'] },
   { type: 'sound_set_volume', category: 'Sound', kind: 'statement', summary: 'Set volume level (0-100)', inputNames: ['VOLUME'], statementInputNames: [], fieldNames: [] },
   { type: 'sound_stop_all', category: 'Sound', kind: 'statement', summary: 'Stop all playing sounds', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'target_ground', category: 'Targets', kind: 'reporter', summary: 'Ground target', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'target_camera', category: 'Targets', kind: 'reporter', summary: 'Camera target', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'target_mouse', category: 'Targets', kind: 'reporter', summary: 'Mouse pointer target', inputNames: [], statementInputNames: [], fieldNames: [] },
-  { type: 'target_myself', category: 'Targets', kind: 'reporter', summary: 'Current object target', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'target_ground', category: 'Sensing', kind: 'reporter', summary: 'Ground target', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'target_camera', category: 'Sensing', kind: 'reporter', summary: 'Camera target', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'target_mouse', category: 'Sensing', kind: 'reporter', summary: 'Mouse pointer target', inputNames: [], statementInputNames: [], fieldNames: [] },
+  { type: 'target_myself', category: 'Sensing', kind: 'reporter', summary: 'Current object target', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'text', category: 'Operators', kind: 'reporter', summary: 'A text string', inputNames: [], statementInputNames: [], fieldNames: ['TEXT'] },
   { type: 'typed_variable_change', category: 'Variables', kind: 'statement', summary: 'Change a numeric variable by an amount', inputNames: ['DELTA'], statementInputNames: [], fieldNames: ['VAR'] },
   { type: 'typed_variable_get', category: 'Variables', kind: 'reporter', summary: 'Get the value of a variable', inputNames: [], statementInputNames: [], fieldNames: ['VAR'] },
@@ -167,6 +165,11 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
 const BLOCK_CATALOG_BY_TYPE = new Map(
   ASSISTANT_BLOCK_CATALOG.map((entry) => [entry.type, entry]),
 );
+
+export function assistantStatementUsesNextConnection(blockType: string, statementName: string): boolean {
+  const entry = BLOCK_CATALOG_BY_TYPE.get(blockType);
+  return entry?.kind === 'hat' && statementName === 'NEXT';
+}
 
 function escapeXml(value: string): string {
   return value
@@ -236,6 +239,9 @@ function compileBlockNode(node: AssistantBlockNode): string {
   const statements = statementKeys
     .map((name) => {
       const blocks = (node.statements ?? {})[name] ?? [];
+      if (assistantStatementUsesNextConnection(node.type, name)) {
+        return blocks.length > 0 ? `<next>${compileBlockChain(blocks)}</next>` : '';
+      }
       return `<statement name="${escapeXml(name)}">${compileBlockChain(blocks)}</statement>`;
     })
     .join('');

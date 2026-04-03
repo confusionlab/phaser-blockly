@@ -41,6 +41,7 @@ test.describe('project route loading', () => {
 
     await expect(page).toHaveURL(new RegExp(`/project/${project.id}$`));
     await expect(page.getByRole('heading', { name: 'Loading' })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Project name' })).toHaveValue(project.name, { timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Project name' })).toHaveText(project.name, { timeout: 15_000 });
+    await expect(page.getByRole('textbox', { name: 'Project name' })).toHaveCount(0);
   });
 });

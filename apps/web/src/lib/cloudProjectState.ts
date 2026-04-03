@@ -1,3 +1,5 @@
+export type EditorSaveControlState = 'save' | 'saving' | 'saved';
+
 export function doesLocalProjectMatchCloudHead(options: {
   localSchemaVersion: number;
   localContentHash: string;
@@ -25,4 +27,25 @@ export function shouldTreatOpenedProjectAsCloudSaved(options: {
   // If cloud verification fails but the editor just opened the last synced
   // cloud-backed cache, there is nothing local to upload yet.
   return options.openedFromCloudCache && options.pullStatus === 'error';
+}
+
+export function deriveEditorSaveControlState(options: {
+  hasProject: boolean;
+  isDirty: boolean;
+  hasActionableCloudError: boolean;
+  isManualSaveInProgress: boolean;
+}): EditorSaveControlState {
+  if (!options.hasProject) {
+    return 'saved';
+  }
+
+  if (options.isManualSaveInProgress) {
+    return 'saving';
+  }
+
+  if (options.isDirty || options.hasActionableCloudError) {
+    return 'save';
+  }
+
+  return 'saved';
 }

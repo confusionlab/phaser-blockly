@@ -24,6 +24,11 @@ async function addVectorLayer(page: Page): Promise<void> {
   await page.getByRole('menuitem', { name: /^vector$/i }).click();
 }
 
+async function addBitmapLayer(page: Page): Promise<void> {
+  await page.getByTestId('layer-add-button').click();
+  await page.getByRole('menuitem', { name: /^pixel$/i }).click();
+}
+
 async function getCostumeCanvasBox(page: Page) {
   const canvasSurface = page.getByTestId('costume-canvas-surface');
   await expect(canvasSurface).toBeVisible();
@@ -51,6 +56,29 @@ async function drawAcrossCostumeCanvas(page: Page, startXFactor: number, startYF
 async function selectBitmapBrushKind(page: Page, label: 'Hard' | 'Soft' | 'Crayon') {
   await page.getByRole('button', { name: /^(Hard|Soft|Crayon)$/i }).click();
   await page.getByRole('menuitemradio', { name: new RegExp(`^${label}$`, 'i') }).click();
+}
+
+async function setBrushColorOpacity(page: Page, opacityPercent: number): Promise<void> {
+  const colorButton = page.getByTestId('costume-toolbar-properties').getByRole('button', { name: /^color$/i });
+  await colorButton.click();
+  const slider = page.getByTestId('compact-color-picker-opacity').getByRole('slider');
+  await expect(slider).toBeVisible();
+  await slider.focus();
+
+  const targetOpacity = Math.max(0, Math.min(100, Math.round(opacityPercent)));
+  if (targetOpacity <= 50) {
+    await slider.press('Home');
+    for (let index = 0; index < targetOpacity; index += 1) {
+      await slider.press('ArrowRight');
+    }
+  } else {
+    await slider.press('End');
+    for (let index = targetOpacity; index < 100; index += 1) {
+      await slider.press('ArrowLeft');
+    }
+  }
+  await expect(slider).toHaveAttribute('aria-valuenow', String(targetOpacity));
+  await colorButton.click();
 }
 
 async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) {
@@ -247,6 +275,34 @@ async function readCheckerboardInkSamples(page: Page): Promise<number> {
   });
 }
 
+async function readCostumeSelectionGizmoBluePixelCount(page: Page): Promise<number> {
+  return await page.evaluate(() => {
+    const overlayCanvas = document.querySelector('[data-testid="costume-vector-guide-overlay"]');
+    if (!(overlayCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    let bluePixelCount = 0;
+    const ctx = overlayCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const imageData = ctx.getImageData(0, 0, overlayCanvas.width, overlayCanvas.height);
+    for (let index = 0; index < imageData.data.length; index += 4) {
+      const red = imageData.data[index];
+      const green = imageData.data[index + 1];
+      const blue = imageData.data[index + 2];
+      const alpha = imageData.data[index + 3];
+      if (alpha > 64 && red < 90 && green > 110 && blue > 170) {
+        bluePixelCount += 1;
+      }
+    }
+
+    return bluePixelCount;
+  });
+}
+
 async function readHostedLayerInkSamples(page: Page): Promise<number> {
   return page.evaluate(() => {
     const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
@@ -268,6 +324,56 @@ async function readHostedLayerInkSamples(page: Page): Promise<number> {
     }
 
     return opaqueSamples;
+  });
+}
+
+async function readHostedLayerMaxAlpha(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const hostedCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
+    if (!(hostedCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = hostedCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, hostedCanvas.width, hostedCanvas.height);
+    let maxAlpha = 0;
+    for (let index = 3; index < data.length; index += 4) {
+      const alpha = data[index] ?? 0;
+      if (alpha > maxAlpha) {
+        maxAlpha = alpha;
+      }
+    }
+
+    return maxAlpha;
+  });
+}
+
+async function readPreviewLayerMaxAlpha(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const previewCanvas = document.querySelector('[data-testid="costume-active-layer-host"] .upper-canvas');
+    if (!(previewCanvas instanceof HTMLCanvasElement)) {
+      return 0;
+    }
+
+    const ctx = previewCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return 0;
+    }
+
+    const { data } = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+    let maxAlpha = 0;
+    for (let index = 3; index < data.length; index += 4) {
+      const alpha = data[index] ?? 0;
+      if (alpha > maxAlpha) {
+        maxAlpha = alpha;
+      }
+    }
+
+    return maxAlpha;
   });
 }
 
@@ -374,6 +480,35 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
+  test('hard bitmap brush preview honors stroke opacity before commit', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await page.getByRole('button', { name: /new blank costume/i }).click();
+    await addBitmapLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Hard');
+    await setBrushColorOpacity(page, 35);
+
+    const box = await getCostumeCanvasBox(page);
+    const startX = box.x + box.width * 0.24;
+    const startY = box.y + box.height * 0.28;
+    const endX = box.x + box.width * 0.56;
+    const endY = box.y + box.height * 0.28;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 12 });
+
+    await expect.poll(async () => readPreviewLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const previewAlpha = await readPreviewLayerMaxAlpha(page);
+    expect(previewAlpha).toBeLessThan(110);
+
+    await page.mouse.up();
+  });
+
   test('bitmap textured brush commits on mouse-up and survives a tab round-trip', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');
@@ -393,6 +528,63 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeGreaterThan(beforeSamples);
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('hard bitmap brush commit preserves stroke opacity', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await page.getByRole('button', { name: /new blank costume/i }).click();
+    await addBitmapLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Hard');
+    await setBrushColorOpacity(page, 35);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.3, 0.54, 0.3);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const alphaAfterCommit = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterCommit).toBeGreaterThan(70);
+    expect(alphaAfterCommit).toBeLessThan(110);
+
+    await roundTripThroughCodeTab(page);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const alphaAfterRoundTrip = await readHostedLayerMaxAlpha(page);
+    expect(Math.abs(alphaAfterRoundTrip - alphaAfterCommit)).toBeLessThanOrEqual(6);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.3, 0.54, 0.3);
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(alphaAfterCommit + 30);
+    const alphaAfterSecondStroke = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterSecondStroke).toBeGreaterThan(alphaAfterCommit + 30);
+  });
+
+  test('soft bitmap brush uses opacity per stroke instead of flow accumulation', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await page.getByRole('button', { name: /new blank costume/i }).click();
+    await addBitmapLayer(page);
+    await waitForCostumeCanvasReady(page);
+
+    await page.getByRole('button', { name: /^brush$/i }).click();
+    await selectBitmapBrushKind(page, 'Soft');
+    await setBrushColorOpacity(page, 35);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.36, 0.54, 0.36);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(70);
+    const alphaAfterFirstStroke = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterFirstStroke).toBeGreaterThan(70);
+    expect(alphaAfterFirstStroke).toBeLessThan(110);
+
+    await drawAcrossCostumeCanvas(page, 0.24, 0.36, 0.54, 0.36);
+
+    await expect.poll(async () => readHostedLayerMaxAlpha(page), { timeout: 10000 }).toBeGreaterThan(alphaAfterFirstStroke + 30);
+    const alphaAfterSecondStroke = await readHostedLayerMaxAlpha(page);
+    expect(alphaAfterSecondStroke).toBeGreaterThan(alphaAfterFirstStroke + 30);
   });
 
   test('bitmap shapes commit on the active layer and survive a tab round-trip', async ({ page }) => {
@@ -592,6 +784,23 @@ test.describe('Costume editor tools', () => {
 
     await expect(layer1Button).toHaveAttribute('aria-pressed', 'true');
     await expect(layer2Button).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('pixel marquee selection shows its gizmo immediately after mouse-up', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.24, 0.24, 0.46, 0.46);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    expect(await readCostumeSelectionGizmoBluePixelCount(page)).toBeLessThan(40);
+
+    await drawAcrossCostumeCanvas(page, 0.18, 0.18, 0.52, 0.52);
+
+    await expect.poll(async () => readCostumeSelectionGizmoBluePixelCount(page), { timeout: 10000 }).toBeGreaterThan(120);
   });
 
   test('layer panel renders thumbnails for bitmap and vector layers', async ({ page }) => {

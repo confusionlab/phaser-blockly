@@ -55,7 +55,18 @@ test.describe('project explorer ordering', () => {
       throw new Error('Expected seeded project rows to have layout boxes.');
     }
 
-    expect(newestBox.y).toBeLessThan(middleBox.y);
-    expect(middleBox.y).toBeLessThan(olderBox.y);
+    const expectBeforeInReadingOrder = (
+      earlier: { x: number; y: number },
+      later: { x: number; y: number },
+    ) => {
+      if (Math.abs(earlier.y - later.y) < 4) {
+        expect(earlier.x).toBeLessThan(later.x);
+        return;
+      }
+      expect(earlier.y).toBeLessThan(later.y);
+    };
+
+    expectBeforeInReadingOrder(newestBox, middleBox);
+    expectBeforeInReadingOrder(middleBox, olderBox);
   });
 });

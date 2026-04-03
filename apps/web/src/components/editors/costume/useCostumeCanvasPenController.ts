@@ -11,6 +11,7 @@ import {
   clonePenDraftAnchor,
   cloneScenePoint,
   createPenDraftAnchor,
+  mirrorPointAcrossAnchor,
   type PenDraftAnchor,
 } from './costumeCanvasShared';
 import {
@@ -42,13 +43,6 @@ export function useCostumeCanvasPenController({
   } | null>(null);
   const penAnchorPlacementSessionRef = useRef<any>(null);
   const penModifierStateRef = useRef({ alt: false, space: false });
-
-  const mirrorPointAcrossAnchor = useCallback((anchor: Point, handlePoint: Point) => (
-    new Point(
-      anchor.x * 2 - handlePoint.x,
-      anchor.y * 2 - handlePoint.y,
-    )
-  ), []);
 
   const translateScenePoint = useCallback((point: Point | null, deltaX: number, deltaY: number) => {
     if (!point) return null;
@@ -145,7 +139,7 @@ export function useCostumeCanvasPenController({
     anchor.handleType = session.cuspMode ? 'corner' : 'symmetric';
     draft.previewPoint = nextPointer;
     return true;
-  }, [getZoomInvariantMetric, mirrorPointAcrossAnchor, resolvePenDraftAnchorHandleType, translateScenePoint]);
+  }, [getZoomInvariantMetric, resolvePenDraftAnchorHandleType, translateScenePoint]);
 
   const setPenAnchorMoveMode = useCallback((enabled: boolean) => {
     const draft = penDraftRef.current;
@@ -234,9 +228,18 @@ export function useCostumeCanvasPenController({
     const strokeWidth = Math.max(0, vectorStyleRef.current.strokeWidth);
     const path = new Path(pathData, {
       fill: shouldClose
-        ? getFabricFillValueForVectorTexture(vectorStyleRef.current.fillTextureId, vectorStyleRef.current.fillColor)
+        ? getFabricFillValueForVectorTexture(
+            vectorStyleRef.current.fillTextureId,
+            vectorStyleRef.current.fillColor,
+            vectorStyleRef.current.fillOpacity,
+          )
         : null,
-      stroke: getFabricStrokeValueForVectorBrush(vectorStyleRef.current.strokeBrushId, vectorStyleRef.current.strokeColor),
+      opacity: 1,
+      stroke: getFabricStrokeValueForVectorBrush(
+        vectorStyleRef.current.strokeBrushId,
+        vectorStyleRef.current.strokeColor,
+        vectorStyleRef.current.strokeOpacity,
+      ),
       strokeWidth,
       strokeUniform: true,
       noScaleCache: false,
@@ -249,8 +252,10 @@ export function useCostumeCanvasPenController({
       nodeHandleTypes: buildPenDraftNodeHandleTypes(draft.anchors),
       vectorFillTextureId: shouldClose ? vectorStyleRef.current.fillTextureId : undefined,
       vectorFillColor: shouldClose ? vectorStyleRef.current.fillColor : undefined,
+      vectorFillOpacity: shouldClose ? vectorStyleRef.current.fillOpacity : undefined,
       vectorStrokeBrushId: vectorStyleRef.current.strokeBrushId,
       vectorStrokeColor: vectorStyleRef.current.strokeColor,
+      vectorStrokeOpacity: vectorStyleRef.current.strokeOpacity,
     } as any);
 
     path.setCoords?.();

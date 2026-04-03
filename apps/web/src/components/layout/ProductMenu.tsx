@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Search } from 'lucide-react';
+import { ChevronDown, Search } from '@/components/ui/icons';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -24,6 +26,16 @@ type ProductMenuActionItem = {
   onSelect: () => void;
 };
 
+type ProductMenuToggleItem = {
+  kind: 'toggle';
+  id: string;
+  label: string;
+  shortcut?: string;
+  keywords?: readonly string[];
+  checked: boolean;
+  onToggle: () => void;
+};
+
 type ProductMenuSubmenuItem = {
   kind: 'submenu';
   id: string;
@@ -37,7 +49,7 @@ type ProductMenuSeparatorItem = {
   id: string;
 };
 
-type ProductMenuItem = ProductMenuActionItem | ProductMenuSubmenuItem | ProductMenuSeparatorItem;
+type ProductMenuItem = ProductMenuActionItem | ProductMenuToggleItem | ProductMenuSubmenuItem | ProductMenuSeparatorItem;
 
 type ProductMenuSearchResult = {
   id: string;
@@ -50,11 +62,12 @@ type ProductMenuSearchResult = {
 
 interface ProductMenuProps {
   isDarkMode: boolean;
+  showAdvancedBlocks: boolean;
   hasProject: boolean;
   onExportProject: () => void;
   onGoToDashboard: () => void;
   onOpenHistory: () => void;
-  onRenameProject: () => void;
+  onToggleAdvancedBlocks: () => void;
   onToggleTheme: () => void;
 }
 
@@ -83,9 +96,9 @@ function collectAllActions(items: readonly ProductMenuItem[], parents: readonly 
       id: item.id,
       label: item.label,
       shortcut: item.shortcut,
-      disabled: item.disabled,
+      disabled: item.kind === 'action' ? item.disabled : false,
       breadcrumb: parents.length > 0 ? parents.join(' / ') : null,
-      onSelect: item.onSelect,
+      onSelect: item.kind === 'action' ? item.onSelect : item.onToggle,
     });
   }
 
@@ -133,9 +146,9 @@ function collectSearchResults(
       id: item.id,
       label: item.label,
       shortcut: item.shortcut,
-      disabled: item.disabled,
+      disabled: item.kind === 'action' ? item.disabled : false,
       breadcrumb: parents.length > 0 ? parents.join(' / ') : null,
-      onSelect: item.onSelect,
+      onSelect: item.kind === 'action' ? item.onSelect : item.onToggle,
     });
   }
 
@@ -161,6 +174,20 @@ function renderHierarchicalItems(items: readonly ProductMenuItem[]): React.React
       );
     }
 
+    if (item.kind === 'toggle') {
+      return (
+        <DropdownMenuCheckboxItem
+          key={item.id}
+          checked={item.checked}
+          onCheckedChange={() => item.onToggle()}
+          className="rounded-xl py-2 pr-3 pl-9 text-[13px]"
+        >
+          <span className="truncate">{item.label}</span>
+          {item.shortcut ? <DropdownMenuShortcut>{item.shortcut}</DropdownMenuShortcut> : null}
+        </DropdownMenuCheckboxItem>
+      );
+    }
+
     return (
       <DropdownMenuItem
         key={item.id}
@@ -181,11 +208,12 @@ function getFirstEnabledResult(results: readonly ProductMenuSearchResult[]): Pro
 
 export function ProductMenu({
   isDarkMode,
+  showAdvancedBlocks,
   hasProject,
   onExportProject,
   onGoToDashboard,
   onOpenHistory,
-  onRenameProject,
+  onToggleAdvancedBlocks,
   onToggleTheme,
 }: ProductMenuProps) {
   const [open, setOpen] = useState(false);
@@ -213,14 +241,6 @@ export function ProductMenu({
         children: [
           {
             kind: 'action',
-            id: 'rename-project',
-            label: 'Rename Project',
-            keywords: ['project', 'rename', 'title', 'name'],
-            onSelect: onRenameProject,
-          },
-          { kind: 'separator', id: 'project-actions-separator' },
-          {
-            kind: 'action',
             id: 'export-project',
             label: 'Download to Computer',
             keywords: ['download', 'backup', 'export', 'computer'],
@@ -236,6 +256,23 @@ export function ProductMenu({
         ],
       });
     }
+
+    items.push({
+      kind: 'submenu',
+      id: 'blocks',
+      label: 'Blocks',
+      keywords: ['blocks', 'toolbox', 'advanced', 'beginner', 'simple'],
+      children: [
+        {
+          kind: 'toggle',
+          id: 'toggle-advanced-blocks',
+          label: 'Advanced',
+          keywords: ['advanced', 'blocks', 'toolbox', 'show', 'hide'],
+          checked: showAdvancedBlocks,
+          onToggle: onToggleAdvancedBlocks,
+        },
+      ],
+    });
 
     items.push({
       kind: 'submenu',
@@ -257,10 +294,11 @@ export function ProductMenu({
   }, [
     hasProject,
     isDarkMode,
+    onToggleAdvancedBlocks,
     onExportProject,
     onGoToDashboard,
     onOpenHistory,
-    onRenameProject,
+    showAdvancedBlocks,
     onToggleTheme,
   ]);
 
@@ -310,17 +348,19 @@ export function ProductMenu({
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
+        <Button
           className={cn(
-            'flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors',
+            'gap-1.5 px-3 py-1.5 font-medium',
             open ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/70',
           )}
+          shape="pill"
+          size="xs"
+          variant="ghost"
           aria-label="Open workspace menu"
         >
           <span className="font-semibold text-primary">PochaCoding</span>
           <ChevronDown className={cn('size-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
 
       <DropdownMenuContent
@@ -338,7 +378,7 @@ export function ProductMenu({
               onChange={(event) => setSearchQuery(event.target.value)}
               onKeyDown={handleSearchKeyDown}
               placeholder="Type to search..."
-              className="h-10 rounded-xl border-border/70 bg-background/80 pr-3 pl-9 text-sm shadow-none"
+              className="h-10 rounded-xl border-border/70 bg-surface-subtle pr-3 pl-9 text-sm shadow-none"
               aria-label="Search workspace menu"
             />
           </div>
