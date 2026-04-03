@@ -174,6 +174,84 @@ async function getCameraWorldView(page: Page): Promise<StageWorldViewSnapshot> {
 }
 
 test.describe('Stage resize', () => {
+  test('stage canvas covers the full host even when panel layout lands on fractional pixels', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await openEditorFromProjectList(page);
+
+    const host = page.getByTestId('stage-phaser-host');
+    await expect(host).toBeVisible({ timeout: 10000 });
+    const canvas = host.locator('canvas').first();
+    await expect(canvas).toBeVisible({ timeout: 10000 });
+
+    const readCanvasHostGap = async () => {
+      return await page.evaluate(() => {
+        const host = document.querySelector('[data-testid="stage-phaser-host"]');
+        const canvas = host?.querySelector('canvas');
+        if (!(host instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
+          return null;
+        }
+
+        const hostRect = host.getBoundingClientRect();
+        const canvasRect = canvas.getBoundingClientRect();
+        return {
+          leftGap: canvasRect.left - hostRect.left,
+          topGap: canvasRect.top - hostRect.top,
+          rightGap: hostRect.right - canvasRect.right,
+          bottomGap: hostRect.bottom - canvasRect.bottom,
+        };
+      });
+    };
+
+    const hasVisibleGap = async () => {
+      const gap = await readCanvasHostGap();
+      if (!gap) {
+        return true;
+      }
+      const tolerance = 0.05;
+      return (
+        gap.leftGap > tolerance ||
+        gap.topGap > tolerance ||
+        gap.rightGap > tolerance ||
+        gap.bottomGap > tolerance
+      );
+    };
+
+    await expect.poll(hasVisibleGap, { timeout: 10000 }).toBe(false);
+
+    const verticalDivider = page.getByTestId('stage-panel-vertical-divider');
+    const verticalDividerBox = await verticalDivider.boundingBox();
+    expect(verticalDividerBox).not.toBeNull();
+    if (!verticalDividerBox) {
+      return;
+    }
+
+    const verticalPointerX = verticalDividerBox.x + verticalDividerBox.width / 2;
+    const verticalPointerY = verticalDividerBox.y + verticalDividerBox.height / 2;
+    await page.mouse.move(verticalPointerX, verticalPointerY);
+    await page.mouse.down();
+    await page.mouse.move(verticalPointerX, verticalPointerY - 120, { steps: 10 });
+    await page.mouse.up();
+
+    await expect.poll(hasVisibleGap, { timeout: 10000 }).toBe(false);
+
+    const horizontalDivider = page.getByTestId('editor-layout-divider');
+    const horizontalDividerBox = await horizontalDivider.boundingBox();
+    expect(horizontalDividerBox).not.toBeNull();
+    if (!horizontalDividerBox) {
+      return;
+    }
+
+    const horizontalPointerX = horizontalDividerBox.x + horizontalDividerBox.width / 2;
+    const horizontalPointerY = horizontalDividerBox.y + horizontalDividerBox.height / 2;
+    await page.mouse.move(horizontalPointerX, horizontalPointerY);
+    await page.mouse.down();
+    await page.mouse.move(horizontalPointerX + 160, horizontalPointerY, { steps: 10 });
+    await page.mouse.up();
+
+    await expect.poll(hasVisibleGap, { timeout: 10000 }).toBe(false);
+  });
+
   test('bottom panel split drag does not resize the stage', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');

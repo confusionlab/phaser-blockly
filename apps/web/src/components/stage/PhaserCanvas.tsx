@@ -479,6 +479,14 @@ function getElementRenderSize(element: HTMLElement): { width: number; height: nu
   };
 }
 
+function getElementDisplaySize(element: HTMLElement): { width: number; height: number } {
+  const rect = element.getBoundingClientRect();
+  return {
+    width: Math.max(1, rect.width || element.clientWidth || 1),
+    height: Math.max(1, rect.height || element.clientHeight || 1),
+  };
+}
+
 function getViewportSurfaceSize(minimumSize?: StageSize): StageSize {
   const minimumWidth = minimumSize ? Math.max(MIN_STAGE_SURFACE_SIZE, Math.round(minimumSize.width)) : MIN_STAGE_SURFACE_SIZE;
   const minimumHeight = minimumSize ? Math.max(MIN_STAGE_SURFACE_SIZE, Math.round(minimumSize.height)) : MIN_STAGE_SURFACE_SIZE;
@@ -974,15 +982,19 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       width: Math.max(1, canvas.width || 1),
       height: Math.max(1, canvas.height || 1),
     };
-    const offsetX = Math.round((resolvedHostSize.width - resolvedSurfaceSize.width) / 2);
-    const offsetY = Math.round((resolvedHostSize.height - resolvedSurfaceSize.height) / 2);
+    const host = containerRef.current;
+    const displaySize = host ? getElementDisplaySize(host) : resolvedHostSize;
+    const cssWidth = Math.max(resolvedSurfaceSize.width, displaySize.width);
+    const cssHeight = Math.max(resolvedSurfaceSize.height, displaySize.height);
+    const offsetX = (displaySize.width - cssWidth) / 2;
+    const offsetY = (displaySize.height - cssHeight) / 2;
 
     canvas.style.display = 'block';
     canvas.style.position = 'absolute';
     canvas.style.left = `${offsetX}px`;
     canvas.style.top = `${offsetY}px`;
-    canvas.style.width = `${resolvedSurfaceSize.width}px`;
-    canvas.style.height = `${resolvedSurfaceSize.height}px`;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
     canvas.style.maxWidth = 'none';
     canvas.style.maxHeight = 'none';
   }, [isPlaying]);
@@ -1774,6 +1786,8 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       gameRef.current = new Phaser.Game(config);
       console.log(`[PhaserCanvas] Game #${thisCreationId} created`);
 
+      syncEditorCanvasElementBox(containerSize, initialSurfaceSize);
+
       // Force scale refresh after a frame to ensure proper sizing
       requestAnimationFrame(() => {
         if (gameRef.current?.scale) {
@@ -1804,6 +1818,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     project?.settings.canvasHeight,
     project?.settings.canvasWidth,
     selectedSceneId,
+    syncEditorCanvasElementBox,
     storeEditorViewport,
   ]);
 
