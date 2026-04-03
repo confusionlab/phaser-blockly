@@ -1,11 +1,14 @@
-import { Control, controlsUtils, type Canvas as FabricCanvas } from 'fabric';
+import { Control, Point, controlsUtils, type Canvas as FabricCanvas } from 'fabric';
 import {
   TRANSFORM_GIZMO_HANDLE_RADIUS,
+  computeCornerScaleResult,
+  computeEdgeScaleResult,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
   getTransformGizmoCornerCursor,
   getTransformGizmoEdgeCursor,
   getTransformGizmoEdgeSegments,
+  getOppositeTransformGizmoSide,
   getTransformGizmoRotateCursor,
   isPointNearTransformEdge,
   isPointInsideTransformHandle,
@@ -63,21 +66,6 @@ const EDGE_CONTROL_KEY_TO_SIDE: Record<string, TransformGizmoSide> = {
   ml: 'w',
 };
 
-function invertTransformOrigin(origin: unknown) {
-  switch (origin) {
-    case 'left':
-      return 'right';
-    case 'right':
-      return 'left';
-    case 'top':
-      return 'bottom';
-    case 'bottom':
-      return 'top';
-    default:
-      return origin;
-  }
-}
-
 function getControlCenterFromCoords({
   tl,
   tr,
@@ -123,6 +111,70 @@ function getFabricObjectRotationRadians(fabricObject: any) {
     ? fabricObject.getTotalAngle()
     : (Number(fabricObject?.angle) || 0);
   return rotationDegrees * (Math.PI / 180);
+}
+
+function getTransformStartScale(fabricObject: any, transform: any, axis: 'scaleX' | 'scaleY') {
+  const fromTransform = Number(transform?.original?.[axis]);
+  if (Number.isFinite(fromTransform) && Math.abs(fromTransform) > 0.0001) {
+    return fromTransform;
+  }
+
+  const fromObject = Number(fabricObject?.[axis]);
+  if (Number.isFinite(fromObject) && Math.abs(fromObject) > 0.0001) {
+    return fromObject;
+  }
+
+  return 1;
+}
+
+function getTransformStartDimensions(fabricObject: any, transform: any) {
+  const dim = fabricObject?._getTransformedDimensions?.();
+  const currentWidth = Math.max(Number(dim?.x) || 0, 0.0001);
+  const currentHeight = Math.max(Number(dim?.y) || 0, 0.0001);
+  const currentScaleX = Math.max(Math.abs(Number(fabricObject?.scaleX) || 0), 0.0001);
+  const currentScaleY = Math.max(Math.abs(Number(fabricObject?.scaleY) || 0), 0.0001);
+  const originalScaleX = getTransformStartScale(fabricObject, transform, 'scaleX');
+  const originalScaleY = getTransformStartScale(fabricObject, transform, 'scaleY');
+
+  return {
+    baseWidth: currentWidth * (Math.abs(originalScaleX) / currentScaleX),
+    baseHeight: currentHeight * (Math.abs(originalScaleY) / currentScaleY),
+    originalScaleX,
+    originalScaleY,
+  };
+}
+
+function getTransformMinimumDimension(fabricObject: any) {
+  const zoom = Math.max(Number(fabricObject?.canvas?.getZoom?.()) || 1, 0.0001);
+  return 8 / zoom;
+}
+
+function applyFabricScaleResult(
+  fabricObject: any,
+  scaled: { center: { x: number; y: number }; signedWidth: number; signedHeight: number },
+  startDimensions: { baseWidth: number; baseHeight: number; originalScaleX: number; originalScaleY: number },
+) {
+  const previousScaleX = fabricObject.scaleX;
+  const previousScaleY = fabricObject.scaleY;
+  const nextScaleX = startDimensions.originalScaleX * (
+    scaled.signedWidth / Math.max(startDimensions.baseWidth, 0.0001)
+  );
+  const nextScaleY = startDimensions.originalScaleY * (
+    scaled.signedHeight / Math.max(startDimensions.baseHeight, 0.0001)
+  );
+
+  if (!fabricObject.lockScalingX) {
+    fabricObject.set('scaleX', nextScaleX);
+  }
+  if (!fabricObject.lockScalingY) {
+    fabricObject.set('scaleY', nextScaleY);
+  }
+  if (typeof fabricObject.setPositionByOrigin === 'function') {
+    fabricObject.setPositionByOrigin(new Point(scaled.center.x, scaled.center.y), 'center', 'center');
+  }
+  fabricObject.setCoords?.();
+
+  return previousScaleX !== fabricObject.scaleX || previousScaleY !== fabricObject.scaleY;
 }
 
 function shouldActivateScaleControl(
@@ -217,10 +269,6 @@ function isCenteredScale(eventData: Record<string, any>, target: any) {
   return !!eventData?.[centeredKey];
 }
 
-function isTransformCentered(transform: { originX?: string; originY?: string }) {
-  return transform.originX === 'center' && transform.originY === 'center';
-}
-
 function clearFabricTransformGuide(target: any) {
   const canvas = target?.canvas as FabricCanvasWithTransformGuide | null;
   if (canvas) {
@@ -244,12 +292,13 @@ function setUnifiedCanvasTransformGuide(
 
 const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
   'scaling',
-  controlsUtils.wrapWithFixedAnchor((eventData: Record<string, any>, transform: any, x: number, y: number) => {
+  ((eventData: Record<string, any>, transform: any, x: number, y: number) => {
     const target = transform?.target as any;
     if (!target) {
       return false;
     }
 
+    const centered = isCenteredScale(eventData, target);
     const scaleProportionally = isProportionalScale(eventData, target);
     const forbidScaling = (
       (target.lockScalingX && target.lockScalingY) ||
@@ -258,66 +307,39 @@ const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
     if (forbidScaling) {
       return false;
     }
-
-    const newPoint = controlsUtils.getLocalPoint(transform, transform.originX, transform.originY, x, y);
-    const signX = Math.sign(newPoint.x || transform.signX || 1);
-    const signY = Math.sign(newPoint.y || transform.signY || 1);
-    if (!transform.signX) {
-      transform.signX = signX;
-    }
-    if (!transform.signY) {
-      transform.signY = signY;
-    }
-
-    if (
-      target.lockScalingFlip &&
-      (transform.signX !== signX || transform.signY !== signY)
-    ) {
+    const frame = getObjectTransformFrame(target);
+    if (!frame) {
       return false;
     }
 
-    const dim = target._getTransformedDimensions();
-    const original = transform.original;
-    let scaleX = Math.abs((newPoint.x * target.scaleX) / dim.x);
-    let scaleY = Math.abs((newPoint.y * target.scaleY) / dim.y);
+    const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[transform?.corner] ?? 'se';
+    const cornerConfig: Record<TransformGizmoCorner, {
+      anchor: { x: number; y: number };
+      handleXSign: -1 | 1;
+      handleYSign: -1 | 1;
+    }> = {
+      nw: { anchor: frame.corners.se, handleXSign: -1, handleYSign: -1 },
+      ne: { anchor: frame.corners.sw, handleXSign: 1, handleYSign: -1 },
+      se: { anchor: frame.corners.nw, handleXSign: 1, handleYSign: 1 },
+      sw: { anchor: frame.corners.ne, handleXSign: -1, handleYSign: 1 },
+    };
+    const startDimensions = getTransformStartDimensions(target, transform);
+    const scaled = computeCornerScaleResult({
+      referencePoint: centered ? frame.center : cornerConfig[corner].anchor,
+      pointerPoint: { x, y },
+      handleXSign: cornerConfig[corner].handleXSign,
+      handleYSign: cornerConfig[corner].handleYSign,
+      rotationRadians: -getFabricObjectRotationRadians(target),
+      baseWidth: Math.max(startDimensions.baseWidth, 1),
+      baseHeight: Math.max(startDimensions.baseHeight, 1),
+      minWidth: getTransformMinimumDimension(target),
+      minHeight: getTransformMinimumDimension(target),
+      proportional: scaleProportionally,
+      centered,
+      allowMirroring: !centered,
+    });
+    const changed = applyFabricScaleResult(target, scaled, startDimensions);
 
-    if (scaleProportionally) {
-      const distance = Math.abs(newPoint.x) + Math.abs(newPoint.y);
-      const originalDistance = (
-        Math.abs((dim.x * original.scaleX) / target.scaleX) +
-        Math.abs((dim.y * original.scaleY) / target.scaleY)
-      );
-      const scale = distance / Math.max(originalDistance, 0.0001);
-      scaleX = original.scaleX * scale;
-      scaleY = original.scaleY * scale;
-    }
-
-    if (isTransformCentered(transform)) {
-      scaleX *= 2;
-      scaleY *= 2;
-    }
-
-    if (transform.signX !== signX) {
-      transform.originX = invertTransformOrigin(transform.originX);
-      scaleX *= -1;
-      transform.signX = signX;
-    }
-    if (transform.signY !== signY) {
-      transform.originY = invertTransformOrigin(transform.originY);
-      scaleY *= -1;
-      transform.signY = signY;
-    }
-
-    const previousScaleX = target.scaleX;
-    const previousScaleY = target.scaleY;
-    if (!target.lockScalingX) {
-      target.set('scaleX', scaleX);
-    }
-    if (!target.lockScalingY) {
-      target.set('scaleY', scaleY);
-    }
-
-    const corner = TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER[transform.corner] ?? 'se';
     const canvas = target.canvas as FabricCanvasWithTransformGuide | null;
     if (canvas) {
       setUnifiedCanvasTransformGuide(canvas, {
@@ -326,8 +348,8 @@ const unifiedCornerScaleActionHandler = controlsUtils.wrapWithFireEvent(
         target,
       });
     }
-    return previousScaleX !== target.scaleX || previousScaleY !== target.scaleY;
-  }),
+    return changed;
+  }) as any,
 );
 
 const rotateControlActionHandler = ((eventData: Record<string, any>, transform: any, x: number, y: number) => {
@@ -345,6 +367,11 @@ const rotateControlActionHandler = ((eventData: Record<string, any>, transform: 
 
 const unifiedEdgeScaleActionHandler = ((eventData: Record<string, any>, transform: any, x: number, y: number) => {
   const target = transform?.target as any;
+  if (!target) {
+    return false;
+  }
+
+  const centered = isCenteredScale(eventData, target);
   const scaleProportionally = isProportionalScale(eventData, target);
   const canvas = target?.canvas as FabricCanvasWithTransformGuide | null;
   if (canvas) {
@@ -358,12 +385,39 @@ const unifiedEdgeScaleActionHandler = ((eventData: Record<string, any>, transfor
   if (!side) {
     return false;
   }
+
   if (scaleProportionally) {
-    return controlsUtils.scalingEqually(eventData as any, transform, x, y);
+    if (target.lockScalingX || target.lockScalingY) {
+      return false;
+    }
+  } else if ((side === 'e' || side === 'w') && target.lockScalingX) {
+    return false;
+  } else if ((side === 'n' || side === 's') && target.lockScalingY) {
+    return false;
   }
-  return side === 'e' || side === 'w'
-    ? controlsUtils.scalingX(eventData as any, transform, x, y)
-    : controlsUtils.scalingY(eventData as any, transform, x, y);
+
+  const frame = getObjectTransformFrame(target);
+  if (!frame) {
+    return false;
+  }
+
+  const edgeSegments = getTransformGizmoEdgeSegments(frame);
+  const edgeSegment = edgeSegments[side];
+  const startDimensions = getTransformStartDimensions(target, transform);
+  const scaled = computeEdgeScaleResult({
+    referencePoint: centered ? frame.center : edgeSegments[getOppositeTransformGizmoSide(side)].center,
+    pointerPoint: { x, y },
+    edge: edgeSegment.edge,
+    handleSign: edgeSegment.handleSign,
+    rotationRadians: -getFabricObjectRotationRadians(target),
+    baseWidth: Math.max(startDimensions.baseWidth, 1),
+    baseHeight: Math.max(startDimensions.baseHeight, 1),
+    minWidth: getTransformMinimumDimension(target),
+    minHeight: getTransformMinimumDimension(target),
+    proportional: scaleProportionally,
+    centered,
+  });
+  return applyFabricScaleResult(target, scaled, startDimensions);
 }) as any;
 
 function createUnifiedScaleControl(cornerKey: keyof typeof TRANSFORM_CORNER_KEY_TO_GIZMO_CORNER, x: number, y: number) {
