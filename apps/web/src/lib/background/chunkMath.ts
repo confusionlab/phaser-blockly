@@ -19,6 +19,13 @@ export interface ChunkRange {
   maxCy: number;
 }
 
+export interface ChunkScreenRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 function sanitizeChunkSize(chunkSize: number): number {
   if (!Number.isFinite(chunkSize) || chunkSize <= 0) return DEFAULT_BACKGROUND_CHUNK_SIZE;
   return Math.max(1, Math.floor(chunkSize));
@@ -150,4 +157,33 @@ export function getProjectedChunkSizePx(
   zoom: number,
 ): number {
   return sanitizeChunkSize(chunkSize) * Math.abs(zoom);
+}
+
+export function projectChunkWorldBoundsToScreenRect(
+  bounds: ChunkWorldBounds,
+  viewport: { left: number; right: number; bottom: number; top: number },
+  pixelWidth: number,
+  pixelHeight: number,
+): ChunkScreenRect {
+  const targetWidth = Math.max(1, Math.floor(pixelWidth));
+  const targetHeight = Math.max(1, Math.floor(pixelHeight));
+  const viewportWidth = Math.max(1e-6, viewport.right - viewport.left);
+  const viewportHeight = Math.max(1e-6, viewport.top - viewport.bottom);
+
+  const left = ((bounds.left - viewport.left) / viewportWidth) * targetWidth;
+  const top = ((viewport.top - bounds.top) / viewportHeight) * targetHeight;
+  const right = ((bounds.right - viewport.left) / viewportWidth) * targetWidth;
+  const bottom = ((viewport.top - bounds.bottom) / viewportHeight) * targetHeight;
+
+  const snappedLeft = Math.floor(left);
+  const snappedTop = Math.floor(top);
+  const snappedRight = Math.ceil(right);
+  const snappedBottom = Math.ceil(bottom);
+
+  return {
+    x: snappedLeft,
+    y: snappedTop,
+    width: Math.max(1, snappedRight - snappedLeft),
+    height: Math.max(1, snappedBottom - snappedTop),
+  };
 }

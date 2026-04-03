@@ -44,6 +44,7 @@ import {
   getChunkWorldBounds,
   iterateChunkKeys,
   parseChunkKey,
+  projectChunkWorldBoundsToScreenRect,
   worldToChunkLocal,
 } from '@/lib/background/chunkMath';
 import {
@@ -1465,11 +1466,17 @@ export function BackgroundCanvasEditor() {
 
     const chunkPixelSize = chunkSize * zoom;
     const safeZoom = Math.max(1e-6, zoom);
+    const visibleViewportWorld = {
+      left: camera.x - viewport.width / (2 * safeZoom),
+      right: camera.x + viewport.width / (2 * safeZoom),
+      bottom: camera.y - viewport.height / (2 * safeZoom),
+      top: camera.y + viewport.height / (2 * safeZoom),
+    };
     const visibleChunkRange = getChunkRangeForWorldBounds(
-      camera.x - viewport.width / (2 * safeZoom),
-      camera.x + viewport.width / (2 * safeZoom),
-      camera.y - viewport.height / (2 * safeZoom),
-      camera.y + viewport.height / (2 * safeZoom),
+      visibleViewportWorld.left,
+      visibleViewportWorld.right,
+      visibleViewportWorld.bottom,
+      visibleViewportWorld.top,
       chunkSize,
       1,
     );
@@ -1478,27 +1485,31 @@ export function BackgroundCanvasEditor() {
       chunks: ChunkDataMap,
       options?: { useActiveBitmapCache?: boolean },
     ) => {
-      const width = chunkSize * zoom;
-      const height = chunkSize * zoom;
-      if (width < 0.35 || height < 0.35) {
+      if (chunkPixelSize < 0.35) {
         return;
       }
 
       ctx.save();
       ctx.globalAlpha = layer.opacity;
+      ctx.imageSmoothingEnabled = false;
 
       if (options?.useActiveBitmapCache) {
         for (const visibleChunk of activeChunkIndexRef.current.query(visibleChunkRange)) {
           const key = visibleChunk.key;
           const bounds = getChunkWorldBounds(visibleChunk.cx, visibleChunk.cy, chunkSize);
-          const topLeft = worldToScreen(bounds.left, bounds.top);
-          if (topLeft.x + width < 0 || topLeft.y + height < 0 || topLeft.x > viewport.width || topLeft.y > viewport.height) {
+          const rect = projectChunkWorldBoundsToScreenRect(
+            bounds,
+            visibleViewportWorld,
+            viewport.width,
+            viewport.height,
+          );
+          if (rect.x + rect.width < 0 || rect.y + rect.height < 0 || rect.x > viewport.width || rect.y > viewport.height) {
             continue;
           }
 
           const chunkCanvas = chunkCanvasesRef.current.get(key);
           if (chunkCanvas) {
-            ctx.drawImage(chunkCanvas, topLeft.x, topLeft.y, width, height);
+            ctx.drawImage(chunkCanvas, rect.x, rect.y, rect.width, rect.height);
             continue;
           }
 
@@ -1506,7 +1517,7 @@ export function BackgroundCanvasEditor() {
           if (dataUrl) {
             void ensureChunkCanvasLoaded(key);
             ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-            ctx.strokeRect(topLeft.x, topLeft.y, width, height);
+            ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
           }
         }
 
@@ -1517,8 +1528,13 @@ export function BackgroundCanvasEditor() {
       for (const visibleChunk of getCachedBackgroundChunkIndex(chunks).query(visibleChunkRange)) {
         const key = visibleChunk.key;
         const bounds = getChunkWorldBounds(visibleChunk.cx, visibleChunk.cy, chunkSize);
-        const topLeft = worldToScreen(bounds.left, bounds.top);
-        if (topLeft.x + width < 0 || topLeft.y + height < 0 || topLeft.x > viewport.width || topLeft.y > viewport.height) {
+        const rect = projectChunkWorldBoundsToScreenRect(
+          bounds,
+          visibleViewportWorld,
+          viewport.width,
+          viewport.height,
+        );
+        if (rect.x + rect.width < 0 || rect.y + rect.height < 0 || rect.x > viewport.width || rect.y > viewport.height) {
           continue;
         }
 
@@ -1526,13 +1542,13 @@ export function BackgroundCanvasEditor() {
         const cacheKey = `${layer.id}:${key}:${chunkSize}:${dataUrl}`;
         const chunkCanvas = layerChunkCanvasCacheRef.current.get(cacheKey);
         if (chunkCanvas) {
-          ctx.drawImage(chunkCanvas, topLeft.x, topLeft.y, width, height);
+          ctx.drawImage(chunkCanvas, rect.x, rect.y, rect.width, rect.height);
           continue;
         }
 
         void ensureLayerChunkCanvasLoaded(cacheKey, dataUrl);
         ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-        ctx.strokeRect(topLeft.x, topLeft.y, width, height);
+        ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
       }
 
       ctx.restore();

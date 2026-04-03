@@ -3,6 +3,7 @@ import {
   DEFAULT_BACKGROUND_CHUNK_SIZE,
   getChunkRangeForWorldBounds,
   getChunkWorldBounds,
+  projectChunkWorldBoundsToScreenRect,
 } from './chunkMath';
 import { normalizeChunkDataMap } from './chunkStore';
 import {
@@ -103,8 +104,6 @@ export function getVisibleTiledBackgroundScreenChunks(
 
   const targetWidth = Math.max(1, Math.floor(pixelWidth));
   const targetHeight = Math.max(1, Math.floor(pixelHeight));
-  const viewportWidth = Math.max(1e-6, viewport.right - viewport.left);
-  const viewportHeight = Math.max(1e-6, viewport.top - viewport.bottom);
   const chunkSize = getTiledBackgroundChunkSize(background);
   const visibleRange = getChunkRangeForWorldBounds(
     viewport.left,
@@ -121,10 +120,12 @@ export function getVisibleTiledBackgroundScreenChunks(
     if (!entry.value) continue;
 
     const bounds = getChunkWorldBounds(entry.cx, entry.cy, chunkSize);
-    const x = ((bounds.left - viewport.left) / viewportWidth) * targetWidth;
-    const y = ((viewport.top - bounds.top) / viewportHeight) * targetHeight;
-    const width = ((bounds.right - bounds.left) / viewportWidth) * targetWidth;
-    const height = ((bounds.top - bounds.bottom) / viewportHeight) * targetHeight;
+    const { x, y, width, height } = projectChunkWorldBoundsToScreenRect(
+      bounds,
+      viewport,
+      targetWidth,
+      targetHeight,
+    );
 
     if (x + width <= 0 || y + height <= 0 || x >= targetWidth || y >= targetHeight) {
       continue;
@@ -175,6 +176,7 @@ export class TiledBackgroundCanvasCompositor {
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, pixelWidth, pixelHeight);
     ctx.fillStyle = getSceneBackgroundBaseColor(background);
     ctx.fillRect(0, 0, pixelWidth, pixelHeight);
