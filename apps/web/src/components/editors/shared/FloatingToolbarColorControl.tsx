@@ -18,6 +18,7 @@ function resolveColorPickerValue(value: Parameters<typeof Color.rgb>[0]) {
 export interface FloatingToolbarColorControlProps {
   label: string;
   value: string;
+  mixed?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onColorChange: (color: string) => void;
@@ -30,6 +31,7 @@ export interface FloatingToolbarColorControlProps {
 export function FloatingToolbarColorControl({
   label,
   value,
+  mixed = false,
   open,
   onOpenChange,
   onColorChange,
@@ -67,6 +69,9 @@ export function FloatingToolbarColorControl({
           aria-haspopup="dialog"
           disabled={disabled}
         />
+        {mixed ? (
+          <span className="whitespace-nowrap text-xs text-muted-foreground">Multiple</span>
+        ) : null}
       </div>
 
       <AnchoredPopupSurface

@@ -14,6 +14,7 @@ import type {
   TextToolStyle,
   VectorHandleMode,
   VectorStyleCapabilities,
+  VectorToolStyleSelectionSnapshot,
   VectorToolStyle,
 } from './CostumeToolbar';
 import type {
@@ -123,7 +124,7 @@ interface CostumeCanvasProps {
   onColliderChange?: (collider: ColliderConfig) => void;
   onModeChange?: (mode: CostumeEditorMode) => void;
   onTextStyleSync?: (updates: Partial<TextToolStyle>) => void;
-  onVectorStyleSync?: (updates: Partial<VectorToolStyle>) => void;
+  onVectorStyleSync?: (snapshot: VectorToolStyleSelectionSnapshot) => boolean;
   onVectorHandleModeSync?: (handleMode: VectorHandleMode) => void;
   onVectorStyleCapabilitiesSync?: (capabilities: VectorStyleCapabilities) => void;
   onVectorPointEditingChange?: (isEditing: boolean) => void;

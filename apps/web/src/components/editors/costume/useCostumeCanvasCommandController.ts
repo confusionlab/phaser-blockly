@@ -14,6 +14,7 @@ import type {
   SelectionFlipAxis,
   TextToolStyle,
   VectorStyleCapabilities,
+  VectorToolStyleSelectionSnapshot,
   VectorToolStyle,
 } from './CostumeToolbar';
 import type {
@@ -26,12 +27,7 @@ import { CANVAS_SIZE, type CanvasSelectionBoundsSnapshot } from './costumeCanvas
 import {
   applyVectorFillStyleToObject,
   applyVectorStrokeStyleToObject,
-  getVectorObjectFillColor,
-  getVectorObjectFillOpacity,
-  getVectorObjectFillTextureId,
-  getVectorObjectStrokeBrushId,
-  getVectorObjectStrokeColor,
-  getVectorObjectStrokeOpacity,
+  getVectorStyleSelectionSnapshot,
   getVectorStyleCapabilitiesForSelection,
   getVectorStyleTargets,
   isActiveSelectionObject,
@@ -79,7 +75,7 @@ interface UseCostumeCanvasCommandControllerOptions {
   onTextSelectionChangeRef: MutableRefObject<((hasTextSelection: boolean) => void) | undefined>;
   onTextStyleSyncRef: MutableRefObject<((updates: Partial<TextToolStyle>) => void) | undefined>;
   onVectorStyleCapabilitiesSyncRef: MutableRefObject<((capabilities: VectorStyleCapabilities) => void) | undefined>;
-  onVectorStyleSyncRef: MutableRefObject<((updates: Partial<VectorToolStyle>) => void) | undefined>;
+  onVectorStyleSyncRef: MutableRefObject<((snapshot: VectorToolStyleSelectionSnapshot) => boolean) | undefined>;
   renderVectorBrushStrokeOverlay: (ctx: CanvasRenderingContext2D, options?: { clear?: boolean }) => void;
   resolveBitmapFillTextureSource: (textureId: BitmapFillStyle['textureId']) => CanvasImageSource | null;
   restoreCanvasSelection: (selectedObjects: any[]) => void;
@@ -146,6 +142,7 @@ export function useCostumeCanvasCommandController({
   waitForFabricCanvas,
 }: UseCostumeCanvasCommandControllerOptions) {
   const pendingVectorStyleHistorySaveRef = useRef<number | null>(null);
+  const skipNextSelectionSyncedVectorStyleApplyRef = useRef(false);
 
   const scheduleVectorStyleHistorySave = useCallback(() => {
     if (typeof window === 'undefined') {
@@ -323,18 +320,10 @@ export function useCostumeCanvasCommandController({
     if (!fabricCanvas) return;
     const activeObject = fabricCanvas.getActiveObject() as any;
     onVectorStyleCapabilitiesSyncRef.current?.(getVectorStyleCapabilitiesForSelection(activeObject));
-    const [vectorObject] = getVectorStyleTargets(activeObject);
-    if (!vectorObject) return;
+    const snapshot = getVectorStyleSelectionSnapshot(activeObject);
+    if (!snapshot) return;
 
-    onVectorStyleSyncRef.current?.({
-      fillColor: getVectorObjectFillColor(vectorObject),
-      fillOpacity: getVectorObjectFillOpacity(vectorObject),
-      fillTextureId: getVectorObjectFillTextureId(vectorObject),
-      strokeColor: getVectorObjectStrokeColor(vectorObject),
-      strokeOpacity: getVectorObjectStrokeOpacity(vectorObject),
-      strokeWidth: typeof vectorObject.strokeWidth === 'number' ? vectorObject.strokeWidth : undefined,
-      strokeBrushId: getVectorObjectStrokeBrushId(vectorObject),
-    });
+    skipNextSelectionSyncedVectorStyleApplyRef.current = onVectorStyleSyncRef.current?.(snapshot) === true;
   }, [fabricCanvasRef, onVectorStyleCapabilitiesSyncRef, onVectorStyleSyncRef]);
 
   const syncTextSelectionState = useCallback(() => {
@@ -625,6 +614,10 @@ export function useCostumeCanvasCommandController({
   const syncActiveVectorStyle = useCallback(() => {
     const fabricCanvas = fabricCanvasRef.current;
     if (!fabricCanvas || editorModeRef.current !== 'vector') return;
+    if (skipNextSelectionSyncedVectorStyleApplyRef.current) {
+      skipNextSelectionSyncedVectorStyleApplyRef.current = false;
+      return;
+    }
     const activeObject = fabricCanvas.getActiveObject() as any;
     if (!activeObject) return;
 

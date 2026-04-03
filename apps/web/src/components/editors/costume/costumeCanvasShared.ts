@@ -3,7 +3,12 @@ import type { CostumeAssetFrame, CostumeEditorMode } from '@/types';
 import { readCanvasImageData } from '@/utils/canvas2d';
 import { areCostumeAssetFramesEqual, cloneCostumeAssetFrame } from '@/lib/costume/costumeAssetFrame';
 import type { TransformGizmoCorner, TransformGizmoCornerTarget } from '@/lib/editor/unifiedTransformGizmo';
-import type { VectorHandleMode, VectorPathNodeHandleType } from './CostumeToolbar';
+import type {
+  VectorHandleMode,
+  VectorPathNodeHandleType,
+  VectorToolStyle,
+  VectorToolStyleMixedState,
+} from './CostumeToolbar';
 import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 
 export const CANVAS_SIZE = 1024;
@@ -36,6 +41,15 @@ export const PEN_TOOL_DRAG_THRESHOLD_PX = 4;
 export const OBJECT_SELECTION_CORNER_SIZE = 12;
 export const OBJECT_SELECTION_PADDING = 2;
 export const DEFAULT_COSTUME_PREVIEW_SCALE = BASE_VIEW_SCALE;
+export const VECTOR_TOOL_STYLE_KEYS: Array<keyof VectorToolStyle> = [
+  'fillColor',
+  'fillTextureId',
+  'fillOpacity',
+  'strokeColor',
+  'strokeOpacity',
+  'strokeWidth',
+  'strokeBrushId',
+];
 
 export const COSTUME_WORLD_RECT = {
   left: 0,
@@ -161,6 +175,35 @@ export function getDistanceBetweenPoints(a: Point, b: Point) {
 
 export function clampUnit(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+export function areVectorToolStylesEqual(a: VectorToolStyle, b: VectorToolStyle) {
+  return VECTOR_TOOL_STYLE_KEYS.every((key) => a[key] === b[key]);
+}
+
+export function areVectorToolStyleMixedStatesEqual(
+  a: VectorToolStyleMixedState,
+  b: VectorToolStyleMixedState,
+) {
+  return VECTOR_TOOL_STYLE_KEYS.every((key) => (a[key] === true) === (b[key] === true));
+}
+
+export function clearVectorToolStyleMixedState(
+  mixedState: VectorToolStyleMixedState,
+  updates: Partial<VectorToolStyle>,
+): VectorToolStyleMixedState {
+  let changed = false;
+  const nextState: VectorToolStyleMixedState = { ...mixedState };
+
+  VECTOR_TOOL_STYLE_KEYS.forEach((key) => {
+    if (!(key in updates) || nextState[key] !== true) {
+      return;
+    }
+    delete nextState[key];
+    changed = true;
+  });
+
+  return changed ? nextState : mixedState;
 }
 
 export function hashNumberTriplet(a: number, b: number, c: number) {

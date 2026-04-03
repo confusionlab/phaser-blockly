@@ -30,6 +30,7 @@ import type {
   TextToolStyle,
   VectorHandleMode,
   VectorStyleCapabilities,
+  VectorToolStyleSelectionSnapshot,
   VectorToolStyle,
 } from '@/components/editors/costume/CostumeToolbar';
 import {
@@ -51,12 +52,7 @@ import {
   VECTOR_JSON_EXTRA_PROPS,
   getFabricFillValueForVectorTexture,
   getFabricStrokeValueForVectorBrush,
-  getVectorObjectFillColor,
-  getVectorObjectFillOpacity,
-  getVectorObjectFillTextureId,
-  getVectorObjectStrokeBrushId,
-  getVectorObjectStrokeColor,
-  getVectorObjectStrokeOpacity,
+  getVectorStyleSelectionSnapshot,
   getVectorStyleCapabilitiesForSelection,
   getVectorStyleTargets,
   isTextObject,
@@ -160,7 +156,7 @@ interface BackgroundVectorCanvasProps {
   onVectorHandleModeSync: (mode: VectorHandleMode) => void;
   onVectorPointEditingChange: (isEditing: boolean) => void;
   onVectorPointSelectionChange: (hasSelectedVectorPoints: boolean) => void;
-  onVectorStyleSync: (style: Partial<VectorToolStyle>) => void;
+  onVectorStyleSync: (snapshot: VectorToolStyleSelectionSnapshot) => boolean;
   onVectorStyleCapabilitiesSync: (capabilities: VectorStyleCapabilities) => void;
   onCanZoomToSelectionChange: (canZoom: boolean) => void;
 }
@@ -386,6 +382,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const historySnapshotsRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
   const pendingVectorStyleHistorySaveRef = useRef<number | null>(null);
+  const skipNextSelectionSyncedVectorStyleApplyRef = useRef(false);
   const bitmapBrushKindRef = useRef<BitmapBrushKind>('hard-round');
   const brushOpacityRef = useRef(1);
   const brushSizeRef = useRef(1);
@@ -535,20 +532,12 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     const activeObject = fabricCanvas.getActiveObject() as any;
     onVectorStyleCapabilitiesSyncRef.current?.(getVectorStyleCapabilitiesForSelection(activeObject));
-    const [vectorObject] = getVectorStyleTargets(activeObject);
-    if (!vectorObject) {
+    const snapshot = getVectorStyleSelectionSnapshot(activeObject);
+    if (!snapshot) {
       return;
     }
 
-    onVectorStyleSyncRef.current?.({
-      fillColor: getVectorObjectFillColor(vectorObject),
-      fillOpacity: getVectorObjectFillOpacity(vectorObject),
-      fillTextureId: getVectorObjectFillTextureId(vectorObject),
-      strokeColor: getVectorObjectStrokeColor(vectorObject),
-      strokeOpacity: getVectorObjectStrokeOpacity(vectorObject),
-      strokeWidth: typeof vectorObject.strokeWidth === 'number' ? vectorObject.strokeWidth : undefined,
-      strokeBrushId: getVectorObjectStrokeBrushId(vectorObject),
-    });
+    skipNextSelectionSyncedVectorStyleApplyRef.current = onVectorStyleSyncRef.current?.(snapshot) === true;
   }, []);
 
   const bindTextObjectEvents = useMemo(() => (obj: unknown) => {
@@ -2023,6 +2012,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     const fabricCanvas = fabricCanvasRef.current;
     const activeObject = fabricCanvas?.getActiveObject() as any;
     if (!fabricCanvas || !activeObject) {
+      return;
+    }
+    if (skipNextSelectionSyncedVectorStyleApplyRef.current) {
+      skipNextSelectionSyncedVectorStyleApplyRef.current = false;
       return;
     }
 

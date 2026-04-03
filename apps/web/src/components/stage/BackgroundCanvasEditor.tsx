@@ -26,9 +26,16 @@ import {
   type TextToolStyle,
   type VectorHandleMode,
   type VectorStyleCapabilities,
+  type VectorToolStyleMixedState,
+  type VectorToolStyleSelectionSnapshot,
   type VectorToolStyle,
 } from '@/components/editors/costume/CostumeToolbar';
 import { resolveCostumeToolShortcut } from '@/components/editors/costume/costumeToolShortcuts';
+import {
+  areVectorToolStylesEqual,
+  areVectorToolStyleMixedStatesEqual,
+  clearVectorToolStyleMixedState,
+} from '@/components/editors/costume/costumeCanvasShared';
 import {
   DEFAULT_BACKGROUND_CHUNK_SIZE,
   getChunkBoundsFromKeys,
@@ -626,8 +633,11 @@ export function BackgroundCanvasEditor() {
   const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
   const [vectorHandleMode, setVectorHandleMode] = useState<VectorHandleMode>(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
   const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
+  const [vectorStyleMixedState, setVectorStyleMixedState] = useState<VectorToolStyleMixedState>({});
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
+  const vectorStyleRef = useRef(vectorStyle);
+  const vectorStyleMixedStateRef = useRef(vectorStyleMixedState);
 
   const {
     project,
@@ -702,6 +712,7 @@ export function BackgroundCanvasEditor() {
     setHasSelectedVectorPoints(false);
     setVectorHandleMode(BACKGROUND_TOOLBAR_INITIAL_VECTOR_HANDLE_MODE);
     setVectorStyleCapabilities(BACKGROUND_TOOLBAR_INITIAL_VECTOR_CAPABILITIES);
+    setVectorStyleMixedState({});
   }, [editorMode, activeLayer?.id]);
 
   useEffect(() => {
@@ -719,6 +730,9 @@ export function BackgroundCanvasEditor() {
     tool,
     zoom,
   ]);
+
+  vectorStyleRef.current = vectorStyle;
+  vectorStyleMixedStateRef.current = vectorStyleMixedState;
 
   backgroundColorRef.current = backgroundColor;
   const cameraBounds = useMemo(() => ({
@@ -3461,7 +3475,14 @@ export function BackgroundCanvasEditor() {
     setTextStyle((previous) => ({ ...previous, ...updates }));
   }, []);
   const handleToolbarVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+    setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
     setVectorStyle((prev) => ({ ...prev, ...updates }));
+  }, []);
+  const handleVectorSelectionChange = useCallback((hasSelection: boolean) => {
+    setHasVectorSelection(hasSelection);
+    if (!hasSelection) {
+      setVectorStyleMixedState({});
+    }
   }, []);
   const handleVectorTextSelectionChange = useCallback((hasTextSelection: boolean) => {
     setHasVectorTextSelection(hasTextSelection);
@@ -3478,8 +3499,22 @@ export function BackgroundCanvasEditor() {
   const handleVectorPointSelectionChange = useCallback((hasSelectedPoints: boolean) => {
     setHasSelectedVectorPoints(hasSelectedPoints);
   }, []);
-  const handleVectorStyleSync = useCallback((updates: Partial<VectorToolStyle>) => {
-    setVectorStyle((previous) => ({ ...previous, ...updates }));
+  const handleVectorStyleSync = useCallback((snapshot: VectorToolStyleSelectionSnapshot) => {
+    const nextStyle = { ...vectorStyleRef.current, ...snapshot.style };
+    const didStyleChange = !areVectorToolStylesEqual(vectorStyleRef.current, nextStyle);
+    const didMixedStateChange = !areVectorToolStyleMixedStatesEqual(vectorStyleMixedStateRef.current, snapshot.mixed);
+
+    if (!didStyleChange && !didMixedStateChange) {
+      return false;
+    }
+
+    if (didStyleChange) {
+      setVectorStyle(nextStyle);
+    }
+    if (didMixedStateChange) {
+      setVectorStyleMixedState(snapshot.mixed);
+    }
+    return didStyleChange;
   }, []);
   const handleVectorStyleCapabilitiesSync = useCallback((capabilities: VectorStyleCapabilities) => {
     setVectorStyleCapabilities(capabilities);
@@ -3609,6 +3644,7 @@ export function BackgroundCanvasEditor() {
             bitmapShapeStyle={bitmapShapeStyle}
             textStyle={textStyle}
             vectorStyle={vectorStyle}
+            vectorStyleMixedState={vectorStyleMixedState}
             vectorStyleCapabilities={vectorStyleCapabilities}
             previewScale={zoom}
             onToolChange={handleToolbarToolChange}
@@ -3667,7 +3703,7 @@ export function BackgroundCanvasEditor() {
               interactive={editorMode === 'vector'}
               onDirty={markActiveLayerDirty}
               onHistoryStateChange={handleVectorHistoryStateChange}
-              onSelectionChange={setHasVectorSelection}
+              onSelectionChange={handleVectorSelectionChange}
               onTextSelectionChange={handleVectorTextSelectionChange}
               onTextStyleSync={handleVectorTextStyleSync}
               vectorHandleMode={vectorHandleMode}

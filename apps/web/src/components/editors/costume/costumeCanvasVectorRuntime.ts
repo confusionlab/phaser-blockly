@@ -11,6 +11,8 @@ import {
 import type {
   VectorPathNodeHandleType,
   VectorStyleCapabilities,
+  VectorToolStyleMixedState,
+  VectorToolStyleSelectionSnapshot,
   VectorToolStyle,
 } from './CostumeToolbar';
 import { HANDLE_SIZE } from './costumeCanvasShared';
@@ -702,6 +704,55 @@ export function getVectorStyleCapabilitiesForSelection(obj: unknown): VectorStyl
 
   return {
     supportsFill: targets.every((target) => vectorObjectSupportsFill(target)),
+  };
+}
+
+function areVectorStyleSelectionValuesEqual(left: unknown, right: unknown) {
+  if (typeof left === 'number' && typeof right === 'number') {
+    return Math.abs(left - right) <= 0.0001;
+  }
+  return left === right;
+}
+
+export function getVectorStyleSelectionSnapshot(obj: unknown): VectorToolStyleSelectionSnapshot | null {
+  const targets = getVectorStyleTargets(obj);
+  const [firstTarget] = targets;
+  if (!firstTarget) {
+    return null;
+  }
+
+  const style: Partial<VectorToolStyle> = {
+    fillColor: getVectorObjectFillColor(firstTarget),
+    fillOpacity: getVectorObjectFillOpacity(firstTarget),
+    fillTextureId: getVectorObjectFillTextureId(firstTarget),
+    strokeColor: getVectorObjectStrokeColor(firstTarget),
+    strokeOpacity: getVectorObjectStrokeOpacity(firstTarget),
+    strokeWidth: typeof firstTarget.strokeWidth === 'number' ? firstTarget.strokeWidth : undefined,
+    strokeBrushId: getVectorObjectStrokeBrushId(firstTarget),
+  };
+  const mixed: VectorToolStyleMixedState = {};
+
+  const markMixedIfNeeded = <K extends keyof VectorToolStyle>(
+    key: K,
+    getter: (target: any) => VectorToolStyle[K] | undefined,
+  ) => {
+    const firstValue = getter(firstTarget);
+    if (targets.some((target) => !areVectorStyleSelectionValuesEqual(getter(target), firstValue))) {
+      mixed[key] = true;
+    }
+  };
+
+  markMixedIfNeeded('fillColor', getVectorObjectFillColor);
+  markMixedIfNeeded('fillOpacity', getVectorObjectFillOpacity);
+  markMixedIfNeeded('fillTextureId', getVectorObjectFillTextureId);
+  markMixedIfNeeded('strokeColor', getVectorObjectStrokeColor);
+  markMixedIfNeeded('strokeOpacity', getVectorObjectStrokeOpacity);
+  markMixedIfNeeded('strokeWidth', (target) => (typeof target.strokeWidth === 'number' ? target.strokeWidth : undefined));
+  markMixedIfNeeded('strokeBrushId', getVectorObjectStrokeBrushId);
+
+  return {
+    style,
+    mixed,
   };
 }
 

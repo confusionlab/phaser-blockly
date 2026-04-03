@@ -210,6 +210,39 @@ async function readSavedBackgroundVectorObjectStyle(page: Page): Promise<{
   });
 }
 
+async function readSavedBackgroundVectorObjectColors(page: Page): Promise<Array<{
+  fillColor: string | null;
+  strokeColor: string | null;
+}>> {
+  return await page.evaluate(async () => {
+    const { useProjectStore } = await import('/src/store/projectStore.ts');
+    const project = useProjectStore.getState().project;
+    const vectorLayer = project?.scenes[0]?.background?.document?.layers?.find(
+      (layer: { kind: string }) => layer.kind === 'vector',
+    ) as { vector?: { fabricJson?: string } } | undefined;
+    if (!vectorLayer?.vector?.fabricJson) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(vectorLayer.vector.fabricJson) as {
+        objects?: Array<{
+          vectorFillColor?: unknown;
+          vectorStrokeColor?: unknown;
+        }>;
+      };
+      return Array.isArray(parsed.objects)
+        ? parsed.objects.map((object) => ({
+          fillColor: typeof object.vectorFillColor === 'string' ? object.vectorFillColor : null,
+          strokeColor: typeof object.vectorStrokeColor === 'string' ? object.vectorStrokeColor : null,
+        }))
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
   await page.locator('[data-testid="layer-row"][aria-pressed="true"]').click({ button: 'right' });
   const slider = page.getByLabel('Layer opacity');
@@ -595,6 +628,61 @@ test.describe('Background editor', () => {
     expect(style?.fillOpacity).toBeLessThan(0.35);
     expect(style?.strokeOpacity).toBeGreaterThan(0.75);
     expect(style?.strokeOpacity).toBeGreaterThan((style?.fillOpacity ?? 0) + 0.3);
+  });
+
+  test('multi-selecting vector shapes preserves mixed colors until edited explicitly', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    const propertyBar = page.getByTestId('costume-toolbar-properties');
+    const strokeButton = propertyBar.getByRole('button', { name: /^stroke$/i });
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    await strokeButton.click();
+    await page.getByTestId('compact-color-picker-hex-input').fill('#FF0000');
+    await page.keyboard.press('Enter');
+    await strokeButton.click();
+
+    await page.mouse.move(editor.box.x + editor.box.width * 0.34, editor.box.y + editor.box.height * 0.34);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.48, editor.box.y + editor.box.height * 0.5, { steps: 8 });
+    await page.mouse.up();
+
+    await strokeButton.click();
+    await page.getByTestId('compact-color-picker-hex-input').fill('#0000FF');
+    await page.keyboard.press('Enter');
+    await strokeButton.click();
+
+    await page.mouse.move(editor.box.x + editor.box.width * 0.56, editor.box.y + editor.box.height * 0.36);
+    await page.mouse.down();
+    await page.mouse.move(editor.box.x + editor.box.width * 0.72, editor.box.y + editor.box.height * 0.54, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.41), y: Math.round(editor.box.height * 0.42) },
+    });
+    await page.keyboard.down('Shift');
+    await vectorCanvas.click({
+      position: { x: Math.round(editor.box.width * 0.64), y: Math.round(editor.box.height * 0.45) },
+    });
+    await page.keyboard.up('Shift');
+
+    await expect(propertyBar.getByText('Multiple')).toBeVisible();
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    await expect.poll(async () => readSavedBackgroundVectorObjectColors(page), { timeout: 10000 }).toHaveLength(2);
+    const strokeColors = (await readSavedBackgroundVectorObjectColors(page))
+      .map((object) => object.strokeColor)
+      .filter((color): color is string => !!color);
+    expect(new Set(strokeColors).size).toBe(2);
+    expect(strokeColors).toContain('#FF0000');
+    expect(strokeColors).toContain('#0000FF');
   });
 
   test('recovers from malformed saved vector documents and keeps them editable', async ({ page }) => {

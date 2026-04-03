@@ -19,8 +19,15 @@ import {
   type TextToolStyle,
   type VectorHandleMode,
   type VectorStyleCapabilities,
+  type VectorToolStyleMixedState,
+  type VectorToolStyleSelectionSnapshot,
   type VectorToolStyle,
 } from './costume/CostumeToolbar';
+import {
+  areVectorToolStylesEqual,
+  areVectorToolStyleMixedStatesEqual,
+  clearVectorToolStyleMixedState,
+} from './costume/costumeCanvasShared';
 import { resolveCostumeToolShortcut } from './costume/costumeToolShortcuts';
 import { getEffectiveObjectProps } from '@/types';
 import type { Costume, ColliderConfig, CostumeDocument, CostumeEditorMode } from '@/types';
@@ -345,6 +352,7 @@ export function CostumeEditor() {
   const [vectorStyleCapabilities, setVectorStyleCapabilities] = useState<VectorStyleCapabilities>({
     supportsFill: true,
   });
+  const [vectorStyleMixedState, setVectorStyleMixedState] = useState<VectorToolStyleMixedState>({});
   const [isVectorPointEditing, setIsVectorPointEditing] = useState(false);
   const [hasSelectedVectorPoints, setHasSelectedVectorPoints] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
@@ -356,9 +364,14 @@ export function CostumeEditor() {
   const [canvasPreviewScale, setCanvasPreviewScale] = useState(DEFAULT_COSTUME_PREVIEW_SCALE);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [showSessionLoadingOverlay, setShowSessionLoadingOverlay] = useState(false);
+  const vectorStyleRef = useRef(vectorStyle);
+  const vectorStyleMixedStateRef = useRef(vectorStyleMixedState);
   const editorMode: CostumeEditorMode = activeLayer
     ? getActiveCostumeLayerKind(editorCostume?.document ?? null)
     : canvasEditorMode;
+
+  vectorStyleRef.current = vectorStyle;
+  vectorStyleMixedStateRef.current = vectorStyleMixedState;
 
   useEffect(() => {
     setCanvasEditorMode((prev) => {
@@ -1511,6 +1524,9 @@ export function CostumeEditor() {
   const handleSelectionStateChange = useCallback((state: { hasSelection: boolean; hasBitmapFloatingSelection: boolean }) => {
     setHasCanvasSelection(state.hasSelection);
     setHasBitmapFloatingSelection(state.hasBitmapFloatingSelection);
+    if (!state.hasSelection) {
+      setVectorStyleMixedState({});
+    }
   }, []);
 
   const handleTextStyleChange = useCallback((updates: Partial<TextToolStyle>) => {
@@ -1532,6 +1548,7 @@ export function CostumeEditor() {
   }, []);
 
   const handleVectorStyleChange = useCallback((updates: Partial<VectorToolStyle>) => {
+    setVectorStyleMixedState((prev) => clearVectorToolStyleMixedState(prev, updates));
     setVectorStyle((prev) => {
       const next = { ...prev, ...updates };
       if (
@@ -1547,6 +1564,24 @@ export function CostumeEditor() {
       }
       return next;
     });
+  }, []);
+
+  const handleVectorStyleSync = useCallback((snapshot: VectorToolStyleSelectionSnapshot) => {
+    const nextStyle = { ...vectorStyleRef.current, ...snapshot.style };
+    const didStyleChange = !areVectorToolStylesEqual(vectorStyleRef.current, nextStyle);
+    const didMixedStateChange = !areVectorToolStyleMixedStatesEqual(vectorStyleMixedStateRef.current, snapshot.mixed);
+
+    if (!didStyleChange && !didMixedStateChange) {
+      return false;
+    }
+
+    if (didStyleChange) {
+      setVectorStyle(nextStyle);
+    }
+    if (didMixedStateChange) {
+      setVectorStyleMixedState(snapshot.mixed);
+    }
+    return didStyleChange;
   }, []);
 
   const handleBitmapShapeStyleChange = useCallback((updates: Partial<BitmapShapeStyle>) => {
@@ -1631,6 +1666,7 @@ export function CostumeEditor() {
             bitmapShapeStyle={bitmapShapeStyle}
             textStyle={textStyle}
             vectorStyle={vectorStyle}
+            vectorStyleMixedState={vectorStyleMixedState}
             vectorStyleCapabilities={vectorStyleCapabilities}
             previewScale={canvasPreviewScale}
             onToolChange={handleToolChange}
@@ -1677,7 +1713,7 @@ export function CostumeEditor() {
             onColliderChange={handleColliderChange}
             onModeChange={handleCanvasModeChange}
             onTextStyleSync={handleTextStyleChange}
-            onVectorStyleSync={handleVectorStyleChange}
+            onVectorStyleSync={handleVectorStyleSync}
             onVectorHandleModeSync={setVectorHandleMode}
             onVectorStyleCapabilitiesSync={setVectorStyleCapabilities}
             onVectorPointEditingChange={setIsVectorPointEditing}

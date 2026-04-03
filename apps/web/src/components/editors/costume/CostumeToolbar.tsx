@@ -96,6 +96,13 @@ export interface VectorToolStyle {
   strokeBrushId: VectorStrokeBrushId;
 }
 
+export type VectorToolStyleMixedState = Partial<Record<keyof VectorToolStyle, boolean>>;
+
+export interface VectorToolStyleSelectionSnapshot {
+  style: Partial<VectorToolStyle>;
+  mixed: VectorToolStyleMixedState;
+}
+
 export interface BitmapShapeStyle {
   fillColor: string;
   strokeColor: string;
@@ -457,6 +464,7 @@ interface CostumeToolbarProps {
   bitmapShapeStyle: BitmapShapeStyle;
   textStyle: TextToolStyle;
   vectorStyle: VectorToolStyle;
+  vectorStyleMixedState?: VectorToolStyleMixedState;
   vectorStyleCapabilities: VectorStyleCapabilities;
   previewScale?: number;
   onToolChange: (tool: DrawingTool) => void;
@@ -586,6 +594,7 @@ export const CostumeToolbar = memo(({
   bitmapShapeStyle,
   textStyle,
   vectorStyle,
+  vectorStyleMixedState = {},
   vectorStyleCapabilities,
   previewScale = 1,
   onToolChange,
@@ -660,6 +669,10 @@ export const CostumeToolbar = memo(({
   const showVectorFillControl =
     showVectorStyleControls &&
     (hasActiveSelection ? vectorStyleCapabilities.supportsFill : activeTool !== 'line' && activeTool !== 'brush');
+  const hasMixedVectorStrokeColor = vectorStyleMixedState.strokeColor === true || vectorStyleMixedState.strokeOpacity === true;
+  const hasMixedVectorFillColor = vectorStyleMixedState.fillColor === true || vectorStyleMixedState.fillOpacity === true;
+  const hasMixedVectorStrokeBrush = vectorStyleMixedState.strokeBrushId === true;
+  const hasMixedVectorFillTexture = vectorStyleMixedState.fillTextureId === true;
   const showTextToolbarControls = editorMode === 'vector' && showTextControls;
   const showVectorTopRowControls = showSelectionActions || showVectorHandleControl;
   const useVectorSelectionTwoRowLayout =
@@ -966,6 +979,7 @@ export const CostumeToolbar = memo(({
                         <FloatingToolbarColorControl
                           label="Stroke"
                           value={vectorStyle.strokeColor}
+                          mixed={hasMixedVectorStrokeColor}
                           open={openMenu === 'stroke-color'}
                           onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
@@ -983,7 +997,7 @@ export const CostumeToolbar = memo(({
                               size="sm"
                               className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
                             >
-                              <span>{getVectorStrokeBrushLabel(vectorStyle.strokeBrushId)}</span>
+                              <span>{hasMixedVectorStrokeBrush ? 'Multiple' : getVectorStrokeBrushLabel(vectorStyle.strokeBrushId)}</span>
                               <ChevronDown className="size-3 shrink-0" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -1024,6 +1038,7 @@ export const CostumeToolbar = memo(({
                           <FloatingToolbarColorControl
                             label="Fill"
                             value={vectorStyle.fillColor}
+                            mixed={hasMixedVectorFillColor}
                             open={openMenu === 'fill-color'}
                             onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
@@ -1041,7 +1056,7 @@ export const CostumeToolbar = memo(({
                                 size="sm"
                                 className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
                               >
-                                <span>{getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
+                                <span>{hasMixedVectorFillTexture ? 'Multiple' : getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
                                 <ChevronDown className="size-3 shrink-0" />
                               </Button>
                             </DropdownMenuTrigger>
@@ -1215,6 +1230,7 @@ export const CostumeToolbar = memo(({
                         <FloatingToolbarColorControl
                           label="Stroke"
                           value={vectorStyle.strokeColor}
+                          mixed={hasMixedVectorStrokeColor}
                           open={openMenu === 'stroke-color'}
                           onOpenChange={(open) => handleMenuOpenChange('stroke-color', open)}
                           onColorChange={(strokeColor) => onVectorStyleChange({ strokeColor })}
@@ -1232,7 +1248,7 @@ export const CostumeToolbar = memo(({
                               size="sm"
                               className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
                             >
-                              <span>{getVectorStrokeBrushLabel(vectorStyle.strokeBrushId)}</span>
+                              <span>{hasMixedVectorStrokeBrush ? 'Multiple' : getVectorStrokeBrushLabel(vectorStyle.strokeBrushId)}</span>
                               <ChevronDown className="size-3 shrink-0" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -1273,6 +1289,7 @@ export const CostumeToolbar = memo(({
                           <FloatingToolbarColorControl
                             label="Fill"
                             value={vectorStyle.fillColor}
+                            mixed={hasMixedVectorFillColor}
                             open={openMenu === 'fill-color'}
                             onOpenChange={(open) => handleMenuOpenChange('fill-color', open)}
                             onColorChange={(fillColor) => onVectorStyleChange({ fillColor })}
@@ -1290,7 +1307,7 @@ export const CostumeToolbar = memo(({
                                 size="sm"
                                 className="h-8 min-w-[112px] justify-between gap-2 px-2 text-xs"
                               >
-                                <span>{getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
+                                <span>{hasMixedVectorFillTexture ? 'Multiple' : getVectorFillTextureLabel(vectorStyle.fillTextureId)}</span>
                                 <ChevronDown className="size-3 shrink-0" />
                               </Button>
                             </DropdownMenuTrigger>
