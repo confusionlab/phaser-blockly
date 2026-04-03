@@ -19,6 +19,7 @@ import {
   VECTOR_SELECTION_BORDER_SCALE,
   VECTOR_SELECTION_COLOR,
   getEditableVectorHandleMode,
+  resolvePathNodeHandleTypeForControlDrag,
 } from './costumeCanvasShared';
 import {
   getFabricFillValueForVectorTexture,
@@ -140,6 +141,11 @@ export function useCostumeCanvasVectorObjectController({
   vectorHandleModeRef,
   vectorPointEditingTargetRef,
 }: UseCostumeCanvasVectorObjectControllerOptions) {
+  const isVectorHandleIndependenceModifierPressed = useCallback((eventData: any) => {
+    const source = eventData?.e ?? eventData;
+    return !!source?.altKey;
+  }, []);
+
   const sampleObjectOutlinePoints = useCallback((obj: any): { points: Point[]; closed: boolean } | null => {
     const type = getFabricObjectType(obj);
     if (!type) return null;
@@ -829,11 +835,19 @@ export function useCostumeCanvasVectorObjectController({
           const resolved = resolveAnchorFromPathControlKey(pathObj, key);
           if (resolved) {
             const existingType = getPathNodeHandleType(pathObj, resolved.anchorIndex);
-            if (!existingType) {
+            const resolvedHandleType = resolvePathNodeHandleTypeForControlDrag({
+              breakMirroring: isVectorHandleIndependenceModifierPressed(eventData),
+              changed: resolved.changed,
+              currentType: existingType,
+              fallbackType: vectorHandleModeToPathNodeHandleType(
+                getEditableVectorHandleMode(vectorHandleModeRef.current),
+              ),
+            });
+            if (existingType !== resolvedHandleType) {
               setPathNodeHandleType(
                 pathObj,
                 resolved.anchorIndex,
-                vectorHandleModeToPathNodeHandleType(getEditableVectorHandleMode(vectorHandleModeRef.current)),
+                resolvedHandleType,
               );
             }
             activePathAnchorRef.current = { path: pathObj, anchorIndex: resolved.anchorIndex };
@@ -912,6 +926,7 @@ export function useCostumeCanvasVectorObjectController({
     getPathNodeHandleType,
     getSelectedPathAnchorIndices,
     isPathCurveDragModifierPressed,
+    isVectorHandleIndependenceModifierPressed,
     isPointSelectionToggleModifierPressed,
     mirroredPathAnchorDragSessionRef,
     movePathAnchorByDelta,

@@ -392,6 +392,23 @@ export function mirrorPointAcrossAnchor(anchor: Point, handlePoint: Point): Poin
   );
 }
 
+export function resolvePathNodeHandleTypeForControlDrag({
+  breakMirroring,
+  changed,
+  currentType,
+  fallbackType,
+}: {
+  breakMirroring: boolean;
+  changed: 'anchor' | 'incoming' | 'outgoing';
+  currentType: VectorPathNodeHandleType | null | undefined;
+  fallbackType: VectorPathNodeHandleType;
+}): VectorPathNodeHandleType {
+  if (breakMirroring && (changed === 'incoming' || changed === 'outgoing')) {
+    return 'corner';
+  }
+  return currentType ?? fallbackType;
+}
+
 export type CanvasHistorySnapshot = {
   mode: CostumeEditorMode;
   bitmapDataUrl: string;
