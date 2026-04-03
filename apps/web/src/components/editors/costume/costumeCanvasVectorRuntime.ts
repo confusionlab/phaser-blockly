@@ -690,7 +690,11 @@ export function vectorObjectSupportsFill(obj: unknown): boolean {
     return false;
   }
   if (type === 'path') {
-    return pathCommandsDescribeClosedShape((obj as { path?: unknown }).path);
+    // Fabric paths can render fills even when the path data is left open, and the
+    // editor already represents pen strokes as editable `path` objects. Treating
+    // open paths as fill-capable keeps the toolbar consistent and lets users opt
+    // into a fill after the fact instead of hiding the control entirely.
+    return true;
   }
 
   return true;

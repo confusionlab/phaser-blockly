@@ -531,6 +531,43 @@ test.describe('Background editor', () => {
     await expect.poll(async () => readSavedBackgroundVectorObjectCount(page)).toBe(2);
   });
 
+  test('open vector pen paths can receive and persist fill styling', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    const vectorCanvas = page.getByTestId('background-vector-layer-canvas');
+    await expect(vectorCanvas).toBeVisible();
+
+    const pointA = { x: Math.round(editor.box.width * 0.42), y: Math.round(editor.box.height * 0.36) };
+    const pointB = { x: Math.round(editor.box.width * 0.54), y: Math.round(editor.box.height * 0.44) };
+    const pointC = { x: Math.round(editor.box.width * 0.48), y: Math.round(editor.box.height * 0.58) };
+
+    await page.getByRole('button', { name: /^pen$/i }).click();
+    await vectorCanvas.click({ position: pointA });
+    await vectorCanvas.click({ position: pointB });
+    await vectorCanvas.click({ position: pointC });
+    await page.keyboard.press('Enter');
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await vectorCanvas.click({ position: pointB });
+
+    await setToolbarColorOpacity(page, 'Fill', 35);
+    await page.getByRole('button', { name: /^fill$/i }).first().click();
+    await page.getByTestId('compact-color-picker-hex-input').fill('#22C55E');
+    await page.getByTestId('compact-color-picker-hex-input').press('Enter');
+
+    await page.getByRole('button', { name: /done/i }).first().click();
+    await expect(editor.root).toBeHidden();
+
+    const savedColors = await readSavedBackgroundVectorObjectColors(page);
+    expect(savedColors[0]?.fillColor?.toUpperCase()).toBe('#22C55E');
+
+    const savedStyle = await readSavedBackgroundVectorObjectStyle(page);
+    expect(savedStyle?.fillOpacity).toBeGreaterThan(0.3);
+    expect(savedStyle?.fillOpacity).toBeLessThan(0.4);
+  });
+
   test('vector point editing uses the shared costume handle controls', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
 
