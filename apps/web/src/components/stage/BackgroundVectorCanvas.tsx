@@ -58,6 +58,7 @@ import {
   isTextObject,
   normalizeVectorObjectRendering,
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
+import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
 import { useCostumeCanvasPenController } from '@/components/editors/costume/useCostumeCanvasPenController';
 import { useCostumeCanvasPenHotkeys } from '@/components/editors/costume/useCostumeCanvasPenHotkeys';
 import { useCostumeCanvasMirroredPathHotkeys } from '@/components/editors/costume/useCostumeCanvasMirroredPathHotkeys';
@@ -323,8 +324,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   const hostElementRef = useRef<HTMLDivElement | null>(null);
   const textEditingHostRef = useRef<HTMLDivElement | null>(null);
   const canvasElementRef = useRef<HTMLCanvasElement | null>(null);
+  const vectorTextureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const vectorGuideCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const penOverlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const vectorTextureOverlayDprRef = useRef(1);
   const vectorGuideOverlayDprRef = useRef(1);
   const penOverlayDprRef = useRef(1);
   const vectorGuideCtxRef = useRef<CanvasRenderingContext2D | null>(null);
@@ -588,6 +591,31 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       );
     }
     renderPenDraftGuideRef.current(ctx);
+    ctx.restore();
+  }, [viewport.height, viewport.width]);
+
+  const drawVectorTextureOverlay = useMemo(() => () => {
+    const overlayCanvas = vectorTextureCanvasRef.current;
+    const fabricCanvas = fabricCanvasRef.current;
+    if (!overlayCanvas || !fabricCanvas) {
+      return;
+    }
+
+    const ctx = overlayCanvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    ctx.save();
+    clearCanvasInCssPixels(ctx, viewport.width, viewport.height, vectorTextureOverlayDprRef.current);
+    renderVectorTextureOverlayForFabricCanvas(ctx, fabricCanvas, {
+      canvasWidth: viewport.width,
+      canvasHeight: viewport.height,
+      clear: false,
+      onTextureSourceReady: () => {
+        fabricCanvasRef.current?.requestRenderAll();
+      },
+    });
     ctx.restore();
   }, [viewport.height, viewport.width]);
 
@@ -939,6 +967,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
         syncSelectionState();
         applyViewportTransform(fabricCanvas, viewport, camera, zoom);
         configureCanvasForTool();
+        drawVectorTextureOverlay();
         renderVectorPointEditingGuide();
         drawPenOverlay();
         if (options?.resetHistory !== false) {
@@ -965,6 +994,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     bindTextObjectEvents,
     camera,
     drawPenOverlay,
+    drawVectorTextureOverlay,
     emitHistoryState,
     renderVectorPointEditingGuide,
     resetHistory,
@@ -991,7 +1021,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
     hostElement.replaceChildren();
     const textEditingHost = document.createElement('div');
-    textEditingHost.className = 'pointer-events-none absolute inset-0 overflow-hidden';
+    textEditingHost.className = 'pointer-events-none absolute inset-0 z-[4] overflow-hidden';
     textEditingHost.setAttribute('aria-hidden', 'true');
     hostElement.appendChild(textEditingHost);
     textEditingHostRef.current = textEditingHost;
@@ -999,12 +1029,6 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     canvasElement.className = 'absolute inset-0';
     hostElement.appendChild(canvasElement);
     canvasElementRef.current = canvasElement;
-    const vectorGuideCanvas = document.createElement('canvas');
-    vectorGuideCanvas.className = 'pointer-events-none absolute inset-0';
-    vectorGuideCanvas.setAttribute('aria-hidden', 'true');
-    hostElement.appendChild(vectorGuideCanvas);
-    vectorGuideCanvasRef.current = vectorGuideCanvas;
-    vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
     const initialViewport = viewportRef.current;
 
     const fabricCanvas = new FabricCanvas(canvasElement, {
@@ -1023,8 +1047,19 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     instrumentedCanvas.upperCanvasEl?.setAttribute('data-testid', 'background-vector-layer-canvas');
     instrumentedCanvas.wrapperEl?.setAttribute('data-testid', 'background-vector-layer-surface');
     instrumentedCanvas.wrapperEl?.classList.add('absolute', 'inset-0');
+    const vectorTextureCanvas = document.createElement('canvas');
+    vectorTextureCanvas.className = 'pointer-events-none absolute inset-0 z-[1]';
+    vectorTextureCanvas.setAttribute('aria-hidden', 'true');
+    hostElement.appendChild(vectorTextureCanvas);
+    vectorTextureCanvasRef.current = vectorTextureCanvas;
+    const vectorGuideCanvas = document.createElement('canvas');
+    vectorGuideCanvas.className = 'pointer-events-none absolute inset-0 z-[2]';
+    vectorGuideCanvas.setAttribute('aria-hidden', 'true');
+    hostElement.appendChild(vectorGuideCanvas);
+    vectorGuideCanvasRef.current = vectorGuideCanvas;
+    vectorGuideCtxRef.current = vectorGuideCanvas.getContext('2d');
     const penOverlayCanvas = document.createElement('canvas');
-    penOverlayCanvas.className = 'pointer-events-none absolute inset-0';
+    penOverlayCanvas.className = 'pointer-events-none absolute inset-0 z-[3]';
     penOverlayCanvas.setAttribute('aria-hidden', 'true');
     hostElement.appendChild(penOverlayCanvas);
     penOverlayCanvasRef.current = penOverlayCanvas;
@@ -1042,6 +1077,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       loadedLayerKeyRef.current = null;
       loadRequestIdRef.current += 1;
       penOverlayCanvasRef.current = null;
+      vectorTextureCanvasRef.current = null;
       vectorGuideCanvasRef.current = null;
       vectorGuideCtxRef.current = null;
       textEditingHostRef.current = null;
@@ -1071,16 +1107,23 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       renderVectorPointEditingGuide,
       zoom,
     });
+    drawVectorTextureOverlay();
     drawPenOverlay();
-  }, [camera, drawPenOverlay, getZoomInvariantMetric, renderVectorPointEditingGuide, viewport, zoom]);
+  }, [camera, drawPenOverlay, drawVectorTextureOverlay, getZoomInvariantMetric, renderVectorPointEditingGuide, viewport, zoom]);
 
   useEffect(() => {
+    const vectorTextureCanvas = vectorTextureCanvasRef.current;
     const penOverlayCanvas = penOverlayCanvasRef.current;
     const vectorGuideCanvas = vectorGuideCanvasRef.current;
-    if (!penOverlayCanvas || !vectorGuideCanvas) {
+    if (!vectorTextureCanvas || !penOverlayCanvas || !vectorGuideCanvas) {
       return;
     }
 
+    vectorTextureOverlayDprRef.current = syncCanvasViewportSize(
+      vectorTextureCanvas,
+      viewport.width,
+      viewport.height,
+    );
     penOverlayDprRef.current = syncCanvasViewportSize(
       penOverlayCanvas,
       viewport.width,
@@ -1091,9 +1134,10 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       viewport.width,
       viewport.height,
     );
+    drawVectorTextureOverlay();
     renderVectorPointEditingGuide();
     drawPenOverlay();
-  }, [drawPenOverlay, renderVectorPointEditingGuide, viewport.height, viewport.width]);
+  }, [drawPenOverlay, drawVectorTextureOverlay, renderVectorPointEditingGuide, viewport.height, viewport.width]);
 
   useEffect(() => {
     const fabricCanvas = fabricCanvasRef.current;
@@ -1112,6 +1156,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
       syncTextSelectionState();
       syncSelectionState();
       onVectorStyleCapabilitiesSyncRef.current?.({ supportsFill: true });
+      drawVectorTextureOverlay();
       drawPenOverlay();
       renderVectorPointEditingGuide();
       fabricCanvas.requestRenderAll();
@@ -1130,6 +1175,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   }, [
     clearHistory,
     drawPenOverlay,
+    drawVectorTextureOverlay,
     layer,
     loadSerializedDocument,
     renderVectorPointEditingGuide,
@@ -1570,6 +1616,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     };
 
     const handleAfterRender = () => {
+      drawVectorTextureOverlay();
       renderVectorPointEditingGuide();
       drawPenOverlay();
     };
@@ -1614,6 +1661,7 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     commitCurrentPenPlacement,
     configureCanvasForTool,
     drawPenOverlay,
+    drawVectorTextureOverlay,
     enforcePathAnchorHandleType,
     interactive,
     getPathAnchorDragState,

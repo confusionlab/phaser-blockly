@@ -243,6 +243,54 @@ async function readSavedBackgroundVectorObjectColors(page: Page): Promise<Array<
   });
 }
 
+async function readBackgroundEditorCompositePixel(
+  page: Page,
+  sample: { x: number; y: number },
+): Promise<{ r: number; g: number; b: number; a: number } | null> {
+  return await page.evaluate(({ sample }) => {
+    const surface = document.querySelector('[data-testid="background-editor-canvas"]');
+    if (!(surface instanceof HTMLElement)) {
+      return null;
+    }
+    const host = surface.parentElement;
+    if (!(host instanceof HTMLElement)) {
+      return null;
+    }
+
+    const width = Math.max(1, Math.round(surface.clientWidth));
+    const height = Math.max(1, Math.round(surface.clientHeight));
+    const probe = document.createElement('canvas');
+    probe.width = width;
+    probe.height = height;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      return null;
+    }
+
+    const canvases = Array.from(host.querySelectorAll('canvas'));
+    for (const canvas of canvases) {
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        continue;
+      }
+      const style = window.getComputedStyle(canvas);
+      if (style.visibility === 'hidden' || style.display === 'none' || Number.parseFloat(style.opacity || '1') <= 0) {
+        continue;
+      }
+      ctx.drawImage(canvas, 0, 0, width, height);
+    }
+
+    const px = Math.max(0, Math.min(width - 1, Math.round(sample.x)));
+    const py = Math.max(0, Math.min(height - 1, Math.round(sample.y)));
+    const data = ctx.getImageData(px, py, 1, 1).data;
+    return {
+      r: data[0] ?? 0,
+      g: data[1] ?? 0,
+      b: data[2] ?? 0,
+      a: data[3] ?? 0,
+    };
+  }, { sample });
+}
+
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
   await page.locator('[data-testid="layer-row"][aria-pressed="true"]').click({ button: 'right' });
   const slider = page.getByLabel('Layer opacity');
@@ -566,6 +614,54 @@ test.describe('Background editor', () => {
     const savedStyle = await readSavedBackgroundVectorObjectStyle(page);
     expect(savedStyle?.fillOpacity).toBeGreaterThan(0.3);
     expect(savedStyle?.fillOpacity).toBeLessThan(0.4);
+  });
+
+  test('active background vector textured fills stay visible', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    const editor = await openBackgroundEditor(page);
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+
+    const startX = editor.box.x + editor.box.width * 0.36;
+    const startY = editor.box.y + editor.box.height * 0.34;
+    const endX = editor.box.x + editor.box.width * 0.68;
+    const endY = editor.box.y + editor.box.height * 0.66;
+    const centerSample = {
+      x: Math.round((startX + endX) * 0.5 - editor.box.x),
+      y: Math.round((startY + endY) * 0.5 - editor.box.y),
+    };
+    const outsideSample = {
+      x: Math.round(editor.box.width * 0.12),
+      y: Math.round(editor.box.height * 0.12),
+    };
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.mouse.up();
+
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await page.getByTestId('background-vector-layer-canvas').click({ position: centerSample });
+
+    await setToolbarColorOpacity(page, 'Stroke', 0);
+    const fillColorButton = page.getByRole('button', { name: /^fill$/i }).first();
+    await fillColorButton.click();
+    await page.getByTestId('compact-color-picker-hex-input').fill('#22C55E');
+    await page.getByTestId('compact-color-picker-hex-input').press('Enter');
+    await fillColorButton.click();
+
+    await page.getByRole('button', { name: /^solid$/i }).last().click();
+    await page.getByRole('menuitemradio', { name: /^grain$/i }).click();
+
+    await expect.poll(async () => {
+      const inside = await readBackgroundEditorCompositePixel(page, centerSample);
+      const outside = await readBackgroundEditorCompositePixel(page, outsideSample);
+      if (!inside || !outside) {
+        return false;
+      }
+      return JSON.stringify(inside) !== JSON.stringify(outside);
+    }).toBe(true);
   });
 
   test('vector point editing uses the shared costume handle controls', async ({ page }) => {
