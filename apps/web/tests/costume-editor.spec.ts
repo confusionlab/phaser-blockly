@@ -11,7 +11,7 @@ async function openCostumeEditor(page: Page): Promise<void> {
   await openEditorFromProjectList(page);
 
   await page.getByRole('button', { name: /add object/i }).click();
-  const costumeTab = page.getByRole('radio', { name: /^costume$/i });
+  const costumeTab = page.getByRole('radio', { name: /^costumes?$/i });
   await expect(costumeTab).toBeVisible({ timeout: 10000 });
   await costumeTab.click();
 

@@ -342,7 +342,7 @@ async function readBackgroundCanvasCursor(page: Page): Promise<string> {
 }
 
 async function openBackgroundEditor(page: Page) {
-  const sceneRadio = page.getByRole('radio', { name: /^scene$/i });
+  const sceneRadio = page.getByRole('radio', { name: /^scenes?$/i });
   await expect(sceneRadio).toBeVisible({ timeout: 10000 });
   await sceneRadio.click();
 
