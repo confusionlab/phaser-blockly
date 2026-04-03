@@ -4,7 +4,7 @@ import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 async function openSceneInspector(page: Page): Promise<void> {
   await bootstrapEditorProject(page, { projectName: `Swatch Outline ${Date.now()}` });
-  await page.getByRole('radio', { name: /^scene$/i }).click();
+  await page.getByRole('radio', { name: /^scenes?$/i }).click();
   await expect(page.getByTitle('#87CEEB')).toBeVisible({ timeout: 10000 });
 }
 

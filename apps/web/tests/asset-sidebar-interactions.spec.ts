@@ -143,7 +143,7 @@ test.describe('asset sidebar interactions', () => {
       addObject: true,
     });
 
-    await page.getByRole('radio', { name: /^costume$/i }).click();
+    await page.getByRole('radio', { name: /^costumes?$/i }).click();
     await seedCostumes(page);
 
     const tiles = page.getByTestId('costume-list-tile');
@@ -185,7 +185,7 @@ test.describe('asset sidebar interactions', () => {
       addObject: true,
     });
 
-    await page.getByRole('radio', { name: /^sound$/i }).click();
+    await page.getByRole('radio', { name: /^sounds?$/i }).click();
     await seedSounds(page);
 
     const tiles = page.getByTestId('sound-list-tile');

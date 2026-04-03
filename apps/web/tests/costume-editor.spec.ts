@@ -256,7 +256,7 @@ async function waitForCostumeCanvasReady(page: Page): Promise<void> {
 
 async function roundTripThroughCodeTab(page: Page): Promise<void> {
   await page.getByRole('radio', { name: /^code$/i }).click();
-  await page.getByRole('radio', { name: /^costume$/i }).click();
+  await page.getByRole('radio', { name: /^costumes?$/i }).click();
   await waitForCostumeCanvasReady(page);
 }
 

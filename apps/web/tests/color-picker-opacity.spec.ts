@@ -7,13 +7,13 @@ async function openCostumeEditor(page: Page): Promise<void> {
     addObject: true,
   });
 
-  await page.getByRole('radio', { name: /^costume$/i }).click();
+  await page.getByRole('radio', { name: /^costumes?$/i }).click();
   await expect(page.getByTestId('costume-toolbar-tools')).toBeVisible({ timeout: 10000 });
 }
 
 async function openBackgroundEditor(page: Page): Promise<void> {
   await bootstrapEditorProject(page, { projectName: `Background Opacity ${Date.now()}` });
-  await page.getByRole('radio', { name: /^scene$/i }).click();
+  await page.getByRole('radio', { name: /^scenes?$/i }).click();
   await page.getByTitle('Draw background').first().click();
   await expect(page.getByTestId('background-editor-root')).toBeVisible({ timeout: 10000 });
 }
@@ -22,7 +22,7 @@ test.describe('Color picker opacity placement', () => {
   test('does not show opacity for scene background color, but does for costume brush color', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Scene Opacity ${Date.now()}` });
 
-    await page.getByRole('radio', { name: /^scene$/i }).click();
+    await page.getByRole('radio', { name: /^scenes?$/i }).click();
     await page.getByTitle('#87CEEB').click();
     await expect(page.getByTestId('compact-color-picker-opacity')).toHaveCount(0);
 

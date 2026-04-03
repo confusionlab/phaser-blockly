@@ -64,7 +64,7 @@ test.describe('Physics inspector toggle behavior', () => {
       makeComponent: true,
     });
 
-    await page.getByRole('radio', { name: /^object$/i }).click();
+    await page.getByRole('radio', { name: /^objects?$/i }).click();
     await page.getByRole('tree', { name: /scene hierarchy/i }).getByText(/^Object 1$/).click();
 
     const inspector = page.locator('.inspector-panel');
@@ -87,7 +87,7 @@ test.describe('Physics inspector toggle behavior', () => {
       makeComponent: true,
     });
 
-    await page.getByRole('radio', { name: /^component$/i }).click();
+    await page.getByRole('radio', { name: /^components?$/i }).click();
     await page.getByText(/^Object 1$/).click();
 
     const inspector = page.locator('.inspector-panel');

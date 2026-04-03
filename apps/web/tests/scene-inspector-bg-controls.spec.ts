@@ -5,7 +5,7 @@ import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 test.describe('Scene inspector background controls', () => {
   test('keeps the draw button and background color swatch vertically centered', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Scene Tabs Alignment ${Date.now()}` });
-    await page.getByRole('radio', { name: /^scene$/i }).click();
+    await page.getByRole('radio', { name: /^scenes?$/i }).click();
 
     const drawButton = page.getByTitle('Draw background');
     const swatchButton = page.getByTitle('#87CEEB');

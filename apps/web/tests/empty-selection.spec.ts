@@ -107,8 +107,8 @@ test.describe('Empty selection interactions', () => {
       addObject: true,
     });
 
-    const stageCanvas = page.locator('[data-editor-panel="stage"] canvas').first();
-    await expect(stageCanvas).toBeVisible();
+    const stageHost = page.getByTestId('stage-phaser-host');
+    await expect(stageHost).toBeVisible();
 
     await page.getByText(/^Object 1$/).click();
     await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBeTruthy();
@@ -133,7 +133,7 @@ test.describe('Empty selection interactions', () => {
     await page.getByText(/^Object 1$/).click();
     await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBeTruthy();
 
-    await clickNearBottomRight(stageCanvas);
+    await clickNearBottomRight(stageHost);
 
     await expect.poll(async () => (await readSelection(page)).selectedObjectId).toBe(null);
     expect(await readSelection(page)).toMatchObject({

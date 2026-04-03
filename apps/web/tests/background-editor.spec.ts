@@ -292,7 +292,8 @@ async function readBackgroundEditorCompositePixel(
 }
 
 async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promise<void> {
-  await page.locator('[data-testid="layer-row"][aria-pressed="true"]').click({ button: 'right' });
+  const activeLayerRow = page.locator('[data-testid="layer-row"][aria-pressed="true"]');
+  await activeLayerRow.click({ button: 'right' });
   const slider = page.getByLabel('Layer opacity');
   await expect(slider).toBeVisible();
   await slider.evaluate((input, nextValue) => {
@@ -301,7 +302,8 @@ async function setActiveLayerOpacity(page: Page, opacityPercent: number): Promis
     slider.dispatchEvent(new Event('input', { bubbles: true }));
     slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
   }, opacityPercent);
-  await page.keyboard.press('Escape');
+  await page.locator('div.fixed.inset-0.z-40').click({ force: true });
+  await expect(slider).toBeHidden();
 }
 
 function backgroundLayerRow(page: Page, index: number) {
@@ -361,6 +363,18 @@ async function openBackgroundEditor(page: Page) {
   return { root, canvas, box };
 }
 
+async function cancelBackgroundEditor(page: Page): Promise<void> {
+  const root = page.getByTestId('background-editor-root');
+  await page.getByRole('button', { name: /cancel/i }).first().click();
+
+  const discardDialog = page.getByRole('dialog', { name: /discard changes/i });
+  if (await discardDialog.isVisible()) {
+    await discardDialog.getByRole('button', { name: /^discard$/i }).click();
+  }
+
+  await expect(root).toBeHidden();
+}
+
 test.describe('Background editor', () => {
   test('brush and eraser reuse the shared bitmap cursor overlay', async ({ page }) => {
     await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
@@ -386,8 +400,7 @@ test.describe('Background editor', () => {
     await page.getByRole('button', { name: /^select$/i }).click();
     await expect.poll(async () => (await readBackgroundBrushCursorOverlay(page)).opacity).toBe(0);
 
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.getByRole('button', { name: /cancel/i }).first().click();
+    await cancelBackgroundEditor(page);
   });
 
   test('can draw and persist chunked background', async ({ page }) => {
@@ -409,9 +422,7 @@ test.describe('Background editor', () => {
     const reopened = await openBackgroundEditor(page);
     await expect(reopened.root).toBeVisible();
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.getByRole('button', { name: /cancel/i }).first().click();
-    await expect(reopened.root).toBeHidden();
+    await cancelBackgroundEditor(page);
   });
 
   test('cancel discards uncommitted edits', async ({ page }) => {
@@ -426,15 +437,13 @@ test.describe('Background editor', () => {
     await page.mouse.move(startX + 80, startY + 80);
     await page.mouse.up();
 
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.getByRole('button', { name: /cancel/i }).first().click();
-    await expect(root).toBeHidden();
+    await cancelBackgroundEditor(page);
 
     const reopened = await openBackgroundEditor(page);
     await expect(reopened.root).toBeVisible();
     const chunkCountAfter = await readBackgroundChunkCount(page);
     expect(chunkCountAfter).toBe(chunkCountBefore);
-    await page.getByRole('button', { name: /cancel/i }).first().click();
+    await cancelBackgroundEditor(page);
   });
 
   test('overlay undo and redo buttons mirror costume canvas controls', async ({ page }) => {
@@ -464,8 +473,7 @@ test.describe('Background editor', () => {
     await redoButton.click();
     await expect.poll(async () => readBackgroundChunkCount(page)).toBeGreaterThan(0);
 
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.getByRole('button', { name: /cancel/i }).first().click();
+    await cancelBackgroundEditor(page);
   });
 
   test('keeps explicit bitmap and vector layers in the saved background document', async ({ page }) => {

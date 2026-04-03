@@ -1216,9 +1216,12 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
         if (!editorScene || !controller || !host) {
           return null;
         }
-        const inputSurface = gameRef.current?.canvas ?? host;
-        const { x, y } = getElementLocalPoint(inputSurface, clientX, clientY);
-        const worldPoint = editorScene.cameras.main.getWorldPoint(x, y);
+        const projection = controller.getProjection();
+        const hostPoint = getElementLocalPoint(host, clientX, clientY);
+        const worldPoint = editorScene.cameras.main.getWorldPoint(
+          projection.visibleRect.x + hostPoint.x,
+          projection.visibleRect.y + hostPoint.y,
+        );
         return worldPoint ? { x: worldPoint.x, y: worldPoint.y } : null;
       },
     };

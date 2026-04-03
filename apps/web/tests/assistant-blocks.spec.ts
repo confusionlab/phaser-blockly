@@ -110,7 +110,7 @@ test.describe('assistant block catalog', () => {
       (content) => content.kind === 'label' && content.text === 'Messages',
     );
     const messagesHeadingSlice = messagesLabelIndex >= 0
-      ? eventContents.slice(messagesLabelIndex, messagesLabelIndex + 6)
+      ? eventContents.slice(messagesLabelIndex, messagesLabelIndex + 7)
       : [];
     const repeatIndex = controlCategory?.contents.findIndex(
       (content) => content.kind === 'block' && content.type === 'control_repeat',
@@ -127,8 +127,9 @@ test.describe('assistant block catalog', () => {
     );
     expect(messagesHeadingSlice).toEqual([
       expect.objectContaining({ kind: 'label', text: 'Messages' }),
+      expect.objectContaining({ kind: 'sep', gap: '12' }),
       expect.objectContaining({ kind: 'button', text: 'Edit Messages', callbackKey: 'EDIT_MESSAGES' }),
-      expect.objectContaining({ kind: 'sep', gap: '16' }),
+      expect.objectContaining({ kind: 'sep', gap: '20' }),
       expect.objectContaining({ kind: 'block', type: 'event_when_receive' }),
       expect.objectContaining({ kind: 'block', type: 'control_broadcast' }),
       expect.objectContaining({ kind: 'block', type: 'control_broadcast_wait' }),

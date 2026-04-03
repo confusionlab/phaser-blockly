@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { bootstrapEditorProject } from './helpers/bootstrapEditorProject';
 
 async function openBackgroundEditor(page: Page) {
-  const sceneRadio = page.getByRole('radio', { name: /^scene$/i });
+  const sceneRadio = page.getByRole('radio', { name: /^scenes?$/i });
   await expect(sceneRadio).toBeVisible({ timeout: 10000 });
   await sceneRadio.click();
 

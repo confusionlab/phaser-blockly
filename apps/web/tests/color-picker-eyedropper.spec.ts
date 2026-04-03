@@ -23,7 +23,7 @@ async function openCostumeEditor(page: Page): Promise<void> {
     addObject: true,
   });
 
-  const costumeTab = page.getByRole('radio', { name: /^costume$/i });
+  const costumeTab = page.getByRole('radio', { name: /^costumes?$/i });
   await expect(costumeTab).toBeVisible({ timeout: 10000 });
   await costumeTab.click();
   await expect(page.getByTestId('costume-toolbar-tools')).toBeVisible({ timeout: 10000 });
@@ -52,7 +52,7 @@ test.describe('Color picker eyedropper', () => {
     await installMockEyeDropper(page, '#123456');
     await bootstrapEditorProject(page, { projectName: `Scene Eyedropper ${Date.now()}` });
 
-    await page.getByRole('radio', { name: /^scene$/i }).click();
+    await page.getByRole('radio', { name: /^scenes?$/i }).click();
     await page.getByTitle('#87CEEB').click();
     await page.getByRole('button', { name: /pick color from screen/i }).click();
 

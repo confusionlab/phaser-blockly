@@ -157,9 +157,18 @@ const ASSISTANT_BLOCK_CATALOG: readonly AssistantBlockCatalogEntry[] = [
   { type: 'target_mouse', category: 'Sensing', kind: 'reporter', summary: 'Mouse pointer target', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'target_myself', category: 'Sensing', kind: 'reporter', summary: 'Current object target', inputNames: [], statementInputNames: [], fieldNames: [] },
   { type: 'text', category: 'Operators', kind: 'reporter', summary: 'A text string', inputNames: [], statementInputNames: [], fieldNames: ['TEXT'] },
+  { type: 'typed_array_add', category: 'Variables', kind: 'statement', summary: 'Add an item to the end of an array variable', inputNames: ['VALUE'], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'typed_array_clear', category: 'Variables', kind: 'statement', summary: 'Remove every item from an array variable', inputNames: [], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'typed_array_contains', category: 'Variables', kind: 'boolean', summary: 'Check whether an array variable contains a value', inputNames: ['VALUE'], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'typed_array_insert_at', category: 'Variables', kind: 'statement', summary: 'Insert an item into an array variable at a 1-based position', inputNames: ['INDEX', 'VALUE'], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'typed_array_item_at', category: 'Variables', kind: 'reporter', summary: 'Get an item from an array variable at a 1-based position', inputNames: ['INDEX'], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'typed_array_length', category: 'Variables', kind: 'reporter', summary: 'Get the number of items in an array variable', inputNames: [], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'typed_array_remove_at', category: 'Variables', kind: 'statement', summary: 'Remove an item from an array variable at a 1-based position', inputNames: ['INDEX'], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'typed_array_set_at', category: 'Variables', kind: 'statement', summary: 'Replace an item in an array variable at a 1-based position', inputNames: ['INDEX', 'VALUE'], statementInputNames: [], fieldNames: ['VAR'] },
   { type: 'typed_variable_change', category: 'Variables', kind: 'statement', summary: 'Change a numeric variable by an amount', inputNames: ['DELTA'], statementInputNames: [], fieldNames: ['VAR'] },
   { type: 'typed_variable_get', category: 'Variables', kind: 'reporter', summary: 'Get the value of a variable', inputNames: [], statementInputNames: [], fieldNames: ['VAR'] },
   { type: 'typed_variable_set', category: 'Variables', kind: 'statement', summary: 'Set the value of a variable', inputNames: ['VALUE'], statementInputNames: [], fieldNames: ['VAR'] },
+  { type: 'array_empty', category: 'Variables', kind: 'reporter', summary: 'An empty array', inputNames: [], statementInputNames: [], fieldNames: [] },
 ];
 
 const BLOCK_CATALOG_BY_TYPE = new Map(

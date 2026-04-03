@@ -329,7 +329,7 @@ test.describe('Fullscreen editor overlays', () => {
     });
 
     await selectObjectInSceneHierarchy(page);
-    await page.getByRole('radio', { name: /^costume$/i }).click();
+    await page.getByRole('radio', { name: /^costumes?$/i }).click();
     await expect(page.getByTestId('costume-toolbar-tools')).toBeVisible();
 
     await enterFullscreenObjectEditor(page);
@@ -353,7 +353,7 @@ test.describe('Fullscreen editor overlays', () => {
     });
 
     await selectObjectInSceneHierarchy(page);
-    await page.getByRole('radio', { name: /^sound$/i }).click();
+    await page.getByRole('radio', { name: /^sounds?$/i }).click();
     await expect(page.getByTitle('Record sound')).toBeVisible();
     await enterFullscreenObjectEditor(page);
 

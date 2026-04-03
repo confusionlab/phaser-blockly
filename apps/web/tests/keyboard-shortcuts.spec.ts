@@ -239,7 +239,7 @@ test.describe('Keyboard shortcuts', () => {
       addObject: true,
     });
 
-    await page.getByRole('radio', { name: /^costume$/i }).click();
+    await page.getByRole('radio', { name: /^costumes?$/i }).click();
 
     const costumeTile = page.locator('[data-slot="card"]').first();
     const costumeTileName = page.getByText(/^costume1$/i).first();
@@ -274,7 +274,7 @@ test.describe('Keyboard shortcuts', () => {
     });
     await addSoundToSelectedObject(page, 'Intro Sound');
 
-    await page.getByRole('radio', { name: /^sound$/i }).click();
+    await page.getByRole('radio', { name: /^sounds?$/i }).click();
 
     const soundTileName = page.getByText(/^Intro Sound$/).first();
     await expect(soundTileName).toBeVisible();
