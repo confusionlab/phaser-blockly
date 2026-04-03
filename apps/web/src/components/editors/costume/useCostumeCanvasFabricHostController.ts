@@ -21,8 +21,7 @@ import {
 } from '@/lib/editor/unifiedTransformGizmo';
 import {
   CANVAS_SIZE,
-  buildStarPoints,
-  buildTrianglePoints,
+  buildCenteredPolygonShapeDraft,
   getStrokedShapeBoundsFromPathBounds,
 } from './costumeCanvasShared';
 import {
@@ -488,27 +487,19 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
         } else if (tool === 'triangle' || tool === 'star') {
-          const bounds = getStrokedShapeBoundsFromPathBounds(
-            pointer.x,
-            pointer.y,
-            pointer.x,
-            pointer.y,
-            strokeWidth,
-          );
-          const points = tool === 'triangle'
-            ? buildTrianglePoints(bounds.width, bounds.height)
-            : buildStarPoints(bounds.width, bounds.height);
-          object = new Polygon(points, {
-            left: bounds.left,
-            top: bounds.top,
-            originX: 'left',
-            originY: 'top',
+          const polygonDraft = buildCenteredPolygonShapeDraft(tool, pointer, pointer);
+          object = new Polygon(polygonDraft.points, {
+            left: polygonDraft.left,
+            top: polygonDraft.top,
+            originX: 'center',
+            originY: 'center',
             fill: vectorRenderFill,
             opacity: 1,
             stroke: vectorRenderStroke,
             strokeWidth,
             strokeUniform: isVectorMode,
             noScaleCache: !isVectorMode ? undefined : false,
+            objectCaching: false,
             selectable: false,
             evented: false,
             vectorFillTextureId: isVectorMode ? vectorStyleRef.current.fillTextureId : undefined,
@@ -518,7 +509,6 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
             vectorStrokeColor: isVectorMode ? strokeColor : undefined,
             vectorStrokeOpacity: isVectorMode ? vectorStyleRef.current.strokeOpacity : undefined,
           } as any);
-          object.setBoundingBox?.(true);
         } else {
           object = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
             opacity: 1,
@@ -692,22 +682,16 @@ export function useCostumeCanvasFabricHostController(options: UseCostumeCanvasFa
           ry,
         });
       } else if (draft.type === 'triangle' || draft.type === 'star') {
-        const bounds = getStrokedShapeBoundsFromPathBounds(
-          draft.startX,
-          draft.startY,
-          pointer.x,
-          pointer.y,
-          typeof object.strokeWidth === 'number' ? object.strokeWidth : 0,
+        const polygonDraft = buildCenteredPolygonShapeDraft(
+          draft.type,
+          { x: draft.startX, y: draft.startY },
+          { x: pointer.x, y: pointer.y },
         );
-        const points = draft.type === 'triangle'
-          ? buildTrianglePoints(bounds.width, bounds.height)
-          : buildStarPoints(bounds.width, bounds.height);
         object.set({
-          left: bounds.left,
-          top: bounds.top,
-          points,
+          left: polygonDraft.left,
+          top: polygonDraft.top,
+          points: polygonDraft.points,
         });
-        object.setBoundingBox?.(true);
       } else {
         object.set({ x2: pointer.x, y2: pointer.y });
       }

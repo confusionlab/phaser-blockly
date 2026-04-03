@@ -377,6 +377,30 @@ export function buildStarPoints(
   return points;
 }
 
+export function buildCenteredPolygonShapeDraft(
+  kind: 'triangle' | 'star',
+  start: { x: number; y: number },
+  current: { x: number; y: number },
+): {
+  left: number;
+  top: number;
+  points: Array<{ x: number; y: number }>;
+} {
+  const left = Math.min(start.x, current.x);
+  const right = Math.max(start.x, current.x);
+  const top = Math.min(start.y, current.y);
+  const bottom = Math.max(start.y, current.y);
+  const width = Math.max(1, right - left);
+  const height = Math.max(1, bottom - top);
+  return {
+    left: left + width * 0.5,
+    top: top + height * 0.5,
+    points: kind === 'triangle'
+      ? buildTrianglePoints(width, height)
+      : buildStarPoints(width, height),
+  };
+}
+
 export function getEditableVectorHandleMode(mode: VectorHandleMode): Exclude<VectorHandleMode, 'multiple'> {
   return mode === 'multiple' ? 'linear' : mode;
 }

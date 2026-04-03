@@ -530,6 +530,36 @@ test.describe('Costume editor tools', () => {
     await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
   });
 
+  test('triangle shapes draw where the gesture starts in the costume editor', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByLabel('Open shape tools').click();
+    await page.getByRole('menuitem', { name: /^triangle$/i }).click();
+
+    await drawAcrossCostumeCanvas(page, 0.36, 0.24, 0.66, 0.6);
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.51, 0.42);
+    await expect.poll(async () => readCostumeSelectionGizmoBluePixelCount(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('star shapes draw where the gesture starts in the costume editor', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+    await addVectorLayer(page);
+
+    await page.getByLabel('Open shape tools').click();
+    await page.getByRole('menuitem', { name: /^star$/i }).click();
+
+    await drawAcrossCostumeCanvas(page, 0.18, 0.48, 0.42, 0.8);
+    await page.getByRole('button', { name: /^select$/i }).click();
+    await clickCostumeCanvas(page, 0.3, 0.64);
+    await expect.poll(async () => readCostumeSelectionGizmoBluePixelCount(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
   test('hard bitmap brush commit preserves stroke opacity', async ({ page }) => {
     await page.goto(COSTUME_EDITOR_TEST_URL);
     await page.waitForLoadState('networkidle');
