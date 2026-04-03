@@ -576,7 +576,12 @@ export function buildPenDraftPathData(
   }
 
   if (closed && anchors.length > 1) {
-    appendSegment(anchors[anchors.length - 1], anchors[0]);
+    const lastAnchor = anchors[anchors.length - 1];
+    const firstAnchor = anchors[0];
+    const hasClosingCurve = !!lastAnchor.outgoing || !!firstAnchor.incoming;
+    if (hasClosingCurve) {
+      appendSegment(lastAnchor, firstAnchor);
+    }
     commands.push('Z');
   }
 
