@@ -393,6 +393,7 @@ interface CornerScaleComputationOptions<TPoint extends TransformGizmoPoint = Tra
   minHeight: number;
   proportional: boolean;
   centered: boolean;
+  allowMirroring?: boolean;
 }
 
 interface EdgeScaleComputationOptions<TPoint extends TransformGizmoPoint = TransformGizmoPoint> {
@@ -417,6 +418,13 @@ function clampSignedExtent(value: number, minMagnitude: number) {
   return sign * Math.max(Math.abs(value), minMagnitude);
 }
 
+function clampUnmirroredExtent(value: number, minMagnitude: number) {
+  if (!Number.isFinite(value)) {
+    return minMagnitude;
+  }
+  return Math.max(value, minMagnitude);
+}
+
 export function computeCornerScaleResult<TPoint extends TransformGizmoPoint>({
   referencePoint,
   pointerPoint,
@@ -429,6 +437,7 @@ export function computeCornerScaleResult<TPoint extends TransformGizmoPoint>({
   minHeight,
   proportional,
   centered,
+  allowMirroring = true,
 }: CornerScaleComputationOptions<TPoint>): CornerScaleResult<TPoint> {
   const rotatedPointer = rotateTransformPoint({
     x: pointerPoint.x - referencePoint.x,
@@ -442,16 +451,19 @@ export function computeCornerScaleResult<TPoint extends TransformGizmoPoint>({
     ? handleYSign * rotatedPointer.y * 2
     : handleYSign * rotatedPointer.y;
 
-  let signedWidth = clampSignedExtent(rawWidth, minWidth);
-  let signedHeight = clampSignedExtent(rawHeight, minHeight);
+  const clampExtent = allowMirroring ? clampSignedExtent : clampUnmirroredExtent;
+  let signedWidth = clampExtent(rawWidth, minWidth);
+  let signedHeight = clampExtent(rawHeight, minHeight);
   if (proportional) {
     const safeBaseWidth = Math.max(baseWidth, 0.0001);
     const safeBaseHeight = Math.max(baseHeight, 0.0001);
-    const proportionalScale = Math.max(Math.abs(rawWidth) / safeBaseWidth, Math.abs(rawHeight) / safeBaseHeight);
+    const widthMagnitude = allowMirroring ? Math.abs(rawWidth) : Math.max(rawWidth, minWidth);
+    const heightMagnitude = allowMirroring ? Math.abs(rawHeight) : Math.max(rawHeight, minHeight);
+    const proportionalScale = Math.max(widthMagnitude / safeBaseWidth, heightMagnitude / safeBaseHeight);
     const proportionalWidth = Math.max(minWidth, safeBaseWidth * proportionalScale);
     const proportionalHeight = Math.max(minHeight, safeBaseHeight * proportionalScale);
-    signedWidth = (signedWidth < 0 ? -1 : 1) * proportionalWidth;
-    signedHeight = (signedHeight < 0 ? -1 : 1) * proportionalHeight;
+    signedWidth = allowMirroring ? (signedWidth < 0 ? -1 : 1) * proportionalWidth : proportionalWidth;
+    signedHeight = allowMirroring ? (signedHeight < 0 ? -1 : 1) * proportionalHeight : proportionalHeight;
   }
 
   const width = Math.abs(signedWidth);

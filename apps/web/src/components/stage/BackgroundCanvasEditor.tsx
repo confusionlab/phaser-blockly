@@ -3288,6 +3288,7 @@ export function BackgroundCanvasEditor() {
             minHeight: FLOATING_SELECTION_MIN_SCREEN_SIZE,
             proportional,
             centered,
+            allowMirroring: !centered,
           });
         floatingSelectionTransform.selection.centerWorld = screenToWorldFromCanvasPoint(scaled.center);
         floatingSelectionTransform.selection.scaleX = floatingSelectionTransform.startScaleX * (

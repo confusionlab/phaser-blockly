@@ -1651,6 +1651,7 @@ export function useCostumeCanvasVectorPathController({
       minHeight: minimumSize,
       proportional: session.proportional,
       centered: session.centered,
+      allowMirroring: !session.centered,
     });
     const scaleX = scaled.signedWidth / Math.max(baseWidth, 0.0001);
     const scaleY = scaled.signedHeight / Math.max(baseHeight, 0.0001);

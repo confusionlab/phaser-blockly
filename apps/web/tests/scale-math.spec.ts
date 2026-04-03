@@ -78,6 +78,51 @@ test.describe('scale math', () => {
     expect(result.center).toEqual({ x: 100, y: 80 });
   });
 
+  test('computeCornerScaleResult can disable mirroring for centered corner drags', () => {
+    const result = computeCornerScaleResult({
+      referencePoint: { x: 100, y: 80 },
+      pointerPoint: { x: 95, y: 77 },
+      handleXSign: 1,
+      handleYSign: 1,
+      rotationRadians: 0,
+      baseWidth: 20,
+      baseHeight: 10,
+      minWidth: 4,
+      minHeight: 4,
+      proportional: false,
+      centered: true,
+      allowMirroring: false,
+    });
+
+    expect(result.width).toBe(4);
+    expect(result.height).toBe(4);
+    expect(result.signedWidth).toBe(4);
+    expect(result.signedHeight).toBe(4);
+    expect(result.center).toEqual({ x: 100, y: 80 });
+  });
+
+  test('computeCornerScaleResult still mirrors by default when centered', () => {
+    const result = computeCornerScaleResult({
+      referencePoint: { x: 100, y: 80 },
+      pointerPoint: { x: 95, y: 77 },
+      handleXSign: 1,
+      handleYSign: 1,
+      rotationRadians: 0,
+      baseWidth: 20,
+      baseHeight: 10,
+      minWidth: 4,
+      minHeight: 4,
+      proportional: false,
+      centered: true,
+    });
+
+    expect(result.width).toBe(10);
+    expect(result.height).toBe(6);
+    expect(result.signedWidth).toBe(-10);
+    expect(result.signedHeight).toBe(-6);
+    expect(result.center).toEqual({ x: 100, y: 80 });
+  });
+
   test('proportional guide resolves to a diagonal even without a corner handle', () => {
     expect(resolveTransformProportionalGuideDiagonal(null)).toBe(DEFAULT_TRANSFORM_GIZMO_PROPORTIONAL_DIAGONAL);
     expect(resolveTransformProportionalGuideDiagonal('nw')).toBe('nw-se');
