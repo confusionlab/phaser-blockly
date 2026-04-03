@@ -294,7 +294,10 @@ export function useCostumeCanvasToolController({
       tool === 'circle' ||
       tool === 'rectangle' ||
       tool === 'triangle' ||
-      tool === 'star' ||
+      tool === 'star'
+    ) {
+      cursor = 'default';
+    } else if (
       tool === 'pen' ||
       (mode === 'vector' && tool === 'brush')
     ) {

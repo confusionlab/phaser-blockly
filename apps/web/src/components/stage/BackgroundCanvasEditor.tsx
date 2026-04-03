@@ -3346,7 +3346,7 @@ export function BackgroundCanvasEditor() {
       } else if (tool === 'text') {
         canvas.style.cursor = 'text';
       } else if (tool === 'fill' || isShapeTool(tool)) {
-        canvas.style.cursor = 'crosshair';
+        canvas.style.cursor = 'default';
       } else {
         canvas.style.cursor = 'default';
       }

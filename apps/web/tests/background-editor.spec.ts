@@ -334,6 +334,13 @@ async function addVectorLayer(page: Page): Promise<void> {
   await page.getByRole('menuitem', { name: /^vector$/i }).click();
 }
 
+async function readBackgroundCanvasCursor(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('[data-testid="background-editor-canvas"]');
+    return canvas instanceof HTMLCanvasElement ? canvas.style.cursor : '';
+  });
+}
+
 async function openBackgroundEditor(page: Page) {
   const sceneRadio = page.getByRole('radio', { name: /^scene$/i });
   await expect(sceneRadio).toBeVisible({ timeout: 10000 });
@@ -688,6 +695,18 @@ test.describe('Background editor', () => {
     await page.mouse.click(startX, startY);
 
     await expect(page.getByText('Handles')).toBeVisible();
+  });
+
+  test('fill and shape tools do not force a crosshair cursor in the background editor', async ({ page }) => {
+    await bootstrapEditorProject(page, { projectName: `Background Test ${Date.now()}` });
+
+    await openBackgroundEditor(page);
+    await page.getByRole('button', { name: /^fill$/i }).click();
+    await expect.poll(async () => readBackgroundCanvasCursor(page)).toBe('default');
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await expect.poll(async () => readBackgroundCanvasCursor(page)).toBe('default');
   });
 
   test('vector selection enables the shared align and zoom-to-selection controls', async ({ page }) => {

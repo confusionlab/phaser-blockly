@@ -90,6 +90,14 @@ async function clickCostumeCanvas(page: Page, xFactor: number, yFactor: number) 
   await page.mouse.up();
 }
 
+async function readCostumeActiveLayerCursor(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('[data-testid="costume-active-layer-host"] .upper-canvas')
+      ?? document.querySelector('[data-testid="costume-active-layer-host"] .lower-canvas');
+    return canvas instanceof HTMLCanvasElement ? canvas.style.cursor : '';
+  });
+}
+
 async function expectLayerThumbnail(button: Locator): Promise<void> {
   const thumbnailImage = button.getByTestId('costume-layer-thumbnail').locator('img');
   await expect.poll(async () => {
@@ -558,6 +566,19 @@ test.describe('Costume editor tools', () => {
     await page.getByRole('button', { name: /^select$/i }).click();
     await clickCostumeCanvas(page, 0.3, 0.64);
     await expect.poll(async () => readCostumeSelectionGizmoBluePixelCount(page), { timeout: 10000 }).toBeGreaterThan(0);
+  });
+
+  test('fill and shape tools do not force a crosshair cursor in the costume editor', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    await page.getByRole('button', { name: /^fill$/i }).click();
+    await expect.poll(async () => readCostumeActiveLayerCursor(page)).toBe('default');
+
+    await addVectorLayer(page);
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await expect.poll(async () => readCostumeActiveLayerCursor(page)).toBe('default');
   });
 
   test('hard bitmap brush commit preserves stroke opacity', async ({ page }) => {
