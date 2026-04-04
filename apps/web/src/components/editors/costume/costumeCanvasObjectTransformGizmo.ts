@@ -5,6 +5,7 @@ import {
   computeEdgeScaleResult,
   drawTransformProportionalGuide,
   getTransformCornerDiagonal,
+  getTransformGizmoHandleFrame,
   getTransformGizmoCornerCursor,
   getTransformGizmoEdgeCursor,
   getTransformGizmoEdgeSegments,
@@ -52,7 +53,7 @@ type FabricObjectWithTransformGizmo = {
 };
 
 type FabricScaleTransformStartState = {
-  frame: NonNullable<ReturnType<typeof getObjectTransformFrame>>;
+  frame: NonNullable<ReturnType<typeof getObjectSceneTransformFrame>>;
   startDimensions: ReturnType<typeof getTransformStartDimensions>;
   rotationRadians: number;
 };
@@ -93,23 +94,72 @@ function getCornerRadius(fabricObject: any) {
   return Math.max(TRANSFORM_GIZMO_HANDLE_RADIUS, Number(fabricObject?.cornerSize) * 0.5 || 0);
 }
 
-function getObjectTransformFrame(fabricObject: any) {
+function createTransformFrameFromCorners(corners: {
+  nw: { x: number; y: number };
+  ne: { x: number; y: number };
+  se: { x: number; y: number };
+  sw: { x: number; y: number };
+}) {
+  return {
+    center: {
+      x: (corners.nw.x + corners.ne.x + corners.se.x + corners.sw.x) * 0.25,
+      y: (corners.nw.y + corners.ne.y + corners.se.y + corners.sw.y) * 0.25,
+    },
+    corners,
+  };
+}
+
+function getObjectScreenTransformFrame(fabricObject: any) {
   const coords = fabricObject?.oCoords;
   if (!coords?.tl || !coords?.tr || !coords?.br || !coords?.bl) {
     return null;
   }
-  return {
-    center: {
-      x: (coords.tl.x + coords.tr.x + coords.br.x + coords.bl.x) * 0.25,
-      y: (coords.tl.y + coords.tr.y + coords.br.y + coords.bl.y) * 0.25,
-    },
-    corners: {
-      nw: coords.tl,
-      ne: coords.tr,
-      se: coords.br,
-      sw: coords.bl,
-    },
-  };
+
+  return createTransformFrameFromCorners({
+    nw: coords.tl,
+    ne: coords.tr,
+    se: coords.br,
+    sw: coords.bl,
+  });
+}
+
+function getObjectSceneTransformFrame(fabricObject: any) {
+  if (typeof fabricObject?.getCoords === 'function') {
+    const coords = fabricObject.getCoords() as Array<{ x: number; y: number }> | undefined;
+    if (
+      Array.isArray(coords) &&
+      coords.length >= 4 &&
+      coords.every((coord) => Number.isFinite(coord?.x) && Number.isFinite(coord?.y))
+    ) {
+      return createTransformFrameFromCorners({
+        nw: coords[0]!,
+        ne: coords[1]!,
+        se: coords[2]!,
+        sw: coords[3]!,
+      });
+    }
+  }
+
+  const centerPoint = typeof fabricObject?.getCenterPoint === 'function'
+    ? fabricObject.getCenterPoint()
+    : null;
+  const transformedDimensions = fabricObject?._getTransformedDimensions?.();
+  if (
+    centerPoint &&
+    Number.isFinite(centerPoint.x) &&
+    Number.isFinite(centerPoint.y) &&
+    Number.isFinite(transformedDimensions?.x) &&
+    Number.isFinite(transformedDimensions?.y)
+  ) {
+    return getTransformGizmoHandleFrame(
+      { x: centerPoint.x, y: centerPoint.y },
+      Math.max(Number(transformedDimensions.x) || 0, 0.0001),
+      Math.max(Number(transformedDimensions.y) || 0, 0.0001),
+      getFabricObjectRotationRadians(fabricObject),
+    );
+  }
+
+  return null;
 }
 
 function getFabricObjectRotationRadians(fabricObject: any) {
@@ -161,7 +211,7 @@ function getCornerScaleTransformStartState(target: any, transform: any): FabricS
     return existing;
   }
 
-  const frame = getObjectTransformFrame(target);
+  const frame = getObjectSceneTransformFrame(target);
   if (!frame) {
     return null;
   }
@@ -183,7 +233,7 @@ function getEdgeScaleTransformStartState(target: any, transform: any): FabricSca
     return existing;
   }
 
-  const frame = getObjectTransformFrame(target);
+  const frame = getObjectSceneTransformFrame(target);
   if (!frame) {
     return null;
   }
@@ -259,7 +309,7 @@ function shouldActivateEdgeScaleControl(
     return false;
   }
 
-  const frame = getObjectTransformFrame(fabricObject);
+  const frame = getObjectScreenTransformFrame(fabricObject);
   if (!frame) {
     return false;
   }
