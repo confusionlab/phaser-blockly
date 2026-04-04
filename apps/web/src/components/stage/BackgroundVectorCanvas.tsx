@@ -59,6 +59,12 @@ import {
 } from '@/components/editors/costume/costumeCanvasVectorRuntime';
 import { useFabricVectorClipboardCommands } from '@/components/editors/shared/useFabricVectorClipboardCommands';
 import { renderVectorTextureOverlayForFabricCanvas } from '@/lib/costume/costumeVectorTextureRenderer';
+import {
+  appendLinearLocalHistorySnapshot,
+  clearLinearLocalHistory,
+  getLinearLocalHistoryAvailability,
+  rebaseLinearLocalHistoryToSnapshot,
+} from '@/lib/editor/localSnapshotHistory';
 import { useCostumeCanvasPenController } from '@/components/editors/costume/useCostumeCanvasPenController';
 import { useCostumeCanvasPenHotkeys } from '@/components/editors/costume/useCostumeCanvasPenHotkeys';
 import { useCostumeCanvasMirroredPathHotkeys } from '@/components/editors/costume/useCostumeCanvasMirroredPathHotkeys';
@@ -471,18 +477,16 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
   onCanvasContextMenuRef.current = onCanvasContextMenu;
 
   const emitHistoryState = useMemo(() => () => {
-    const historyIndex = historyIndexRef.current;
-    const historyLength = historySnapshotsRef.current.length;
-    onHistoryStateChangeRef.current({
-      canUndo: historyIndex > 0,
-      canRedo: historyIndex >= 0 && historyIndex < historyLength - 1,
-      isDirty: historyIndex > 0,
-    });
+    onHistoryStateChangeRef.current(
+      getLinearLocalHistoryAvailability(
+        historyIndexRef.current,
+        historySnapshotsRef.current.length,
+      ),
+    );
   }, []);
 
   const clearHistory = useMemo(() => () => {
-    historySnapshotsRef.current = [];
-    historyIndexRef.current = -1;
+    clearLinearLocalHistory(historySnapshotsRef, historyIndexRef);
     emitHistoryState();
   }, [emitHistoryState]);
 
@@ -499,15 +503,9 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
 
   const resetHistory = useMemo(() => () => {
     const snapshot = serializeCanvas();
-    if (!snapshot) {
-      clearHistory();
-      return;
-    }
-
-    historySnapshotsRef.current = [snapshot];
-    historyIndexRef.current = 0;
+    rebaseLinearLocalHistoryToSnapshot(snapshot, historySnapshotsRef, historyIndexRef);
     emitHistoryState();
-  }, [clearHistory, emitHistoryState, serializeCanvas]);
+  }, [emitHistoryState, serializeCanvas]);
 
   const recordHistorySnapshot = useMemo(() => () => {
     if (suppressDirtyRef.current) {
@@ -515,20 +513,17 @@ export const BackgroundVectorCanvas = forwardRef<BackgroundVectorCanvasHandle, B
     }
 
     const snapshot = serializeCanvas();
-    if (!snapshot) {
-      return false;
-    }
-
-    const currentSnapshot = historySnapshotsRef.current[historyIndexRef.current] ?? null;
-    if (snapshot === currentSnapshot) {
+    const didRecord = appendLinearLocalHistorySnapshot(
+      snapshot,
+      historySnapshotsRef,
+      historyIndexRef,
+      (a, b) => a === b,
+    );
+    if (!didRecord) {
       emitHistoryState();
       return false;
     }
 
-    const nextHistory = historySnapshotsRef.current.slice(0, historyIndexRef.current + 1);
-    nextHistory.push(snapshot);
-    historySnapshotsRef.current = nextHistory;
-    historyIndexRef.current = nextHistory.length - 1;
     emitHistoryState();
     onDirtyRef.current();
     return true;

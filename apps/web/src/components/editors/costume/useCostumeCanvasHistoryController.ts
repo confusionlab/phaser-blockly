@@ -4,6 +4,11 @@ import type { ActiveLayerCanvasState } from '@/lib/costume/costumeDocument';
 import type { CostumeEditorMode } from '@/types';
 import { optimizeCostumeRasterCanvas } from '@/lib/costume/costumeAssetOptimization';
 import {
+  commitCommittedSnapshotBaseline,
+  markPersistedSnapshotBaseline,
+  rebaseCommittedSnapshotBaseline,
+} from '@/lib/editor/localSnapshotHistory';
+import {
   areHistorySnapshotsEqual,
   cloneHistorySnapshot,
   createActiveLayerCanvasStateFromSnapshot,
@@ -83,7 +88,7 @@ export function useCostumeCanvasHistoryController({
   }, []);
 
   const markSnapshotPersisted = useCallback((snapshot: CanvasHistorySnapshot | null) => {
-    persistedSnapshotRef.current = snapshot ? cloneHistorySnapshot(snapshot) : null;
+    markPersistedSnapshotBaseline(snapshot, persistedSnapshotRef, cloneHistorySnapshot);
     hasUnsavedChangesRef.current = false;
   }, []);
 
@@ -101,9 +106,14 @@ export function useCostumeCanvasHistoryController({
     }
 
     const snapshot = createSnapshot();
-    lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
-    markSnapshotPersisted(snapshot);
-  }, [createSnapshot, loadedSessionKeyRef, markSnapshotPersisted]);
+    rebaseCommittedSnapshotBaseline(
+      snapshot,
+      lastCommittedSnapshotRef,
+      persistedSnapshotRef,
+      cloneHistorySnapshot,
+    );
+    hasUnsavedChangesRef.current = false;
+  }, [createSnapshot, loadedSessionKeyRef]);
 
   const markActiveLayerCanvasStatePersisted = useCallback((
     state: ActiveLayerCanvasState | null | undefined,
@@ -119,11 +129,15 @@ export function useCostumeCanvasHistoryController({
   const saveHistory = useCallback(() => {
     if (suppressHistoryRef.current) return;
     const snapshot = createSnapshot();
-    if (areHistorySnapshotsEqual(snapshot, lastCommittedSnapshotRef.current)) {
+    if (!commitCommittedSnapshotBaseline(
+      snapshot,
+      lastCommittedSnapshotRef,
+      areHistorySnapshotsEqual,
+      cloneHistorySnapshot,
+    )) {
       return;
     }
 
-    lastCommittedSnapshotRef.current = cloneHistorySnapshot(snapshot);
     updateDirtyStateFromSnapshot(snapshot);
     onHistoryChangeRef.current?.(createActiveLayerCanvasStateFromSnapshot(snapshot));
   }, [createSnapshot, onHistoryChangeRef, suppressHistoryRef, updateDirtyStateFromSnapshot]);

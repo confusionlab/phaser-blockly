@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, Trash2, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
+import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import { useViewportCenterAnimation } from '@/components/editors/shared/useViewportCenterAnimation';
 import { HoverHelp } from '@/components/ui/hover-help';
@@ -22,6 +23,7 @@ import {
   getUserSpaceViewportFromCanvasViewBox,
   TiledBackgroundCanvasCompositor,
 } from '@/lib/background/compositor';
+import { EDITOR_VIEWPORT_ZOOM_STEP } from '@/lib/editor/editorViewportPolicy';
 import { boundsIntersect, getBoundsFromPoints, shouldShowViewportRecovery } from '@/lib/editor/viewportRecovery';
 import {
   clampViewportZoom,
@@ -30,6 +32,7 @@ import {
 const WORLD_BOUNDARY_EDITOR_PADDING = 160;
 const WORLD_BOUNDARY_EDITOR_MIN_ZOOM = 0.15;
 const WORLD_BOUNDARY_EDITOR_MAX_ZOOM = 4;
+const WORLD_BOUNDARY_EDITOR_ZOOM_STEP = EDITOR_VIEWPORT_ZOOM_STEP;
 const POINT_DRAG_ACTIVATION_DISTANCE_PX = 4;
 const WORLD_BOUNDARY_HELP_TEXT = 'Click to place the first points. Hover a segment to insert a midpoint. Drag points to move them. Wheel to pan. Ctrl or Cmd plus wheel to zoom. Right or middle drag to pan.';
 
@@ -529,7 +532,7 @@ export function WorldBoundaryEditor() {
       handled = true;
     }
     return handled;
-  }, [dragIndex, panState, pendingPointDrag]);
+  }, [commitWorldBoundaryState, dragIndex, panState, pendingPointDrag]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -658,6 +661,27 @@ export function WorldBoundaryEditor() {
       y: canvasHeight / 2,
     });
   }, [animateViewCenter, canvasHeight, canvasWidth]);
+
+  const setZoomAroundViewportCenter = useCallback((nextZoom: number) => {
+    cancelViewCenterAnimation();
+    setView((current) => ({
+      ...current,
+      zoom: clampViewportZoom(
+        nextZoom,
+        WORLD_BOUNDARY_EDITOR_MIN_ZOOM,
+        WORLD_BOUNDARY_EDITOR_MAX_ZOOM,
+      ),
+    }));
+  }, [cancelViewCenterAnimation]);
+
+  const handleZoomToActualSize = useCallback(() => {
+    setZoomAroundViewportCenter(1);
+  }, [setZoomAroundViewportCenter]);
+
+  const handleZoomToFit = useCallback(() => {
+    cancelViewCenterAnimation();
+    setView(getInitialView(pointsRef.current, canvasWidth, canvasHeight));
+  }, [cancelViewCenterAnimation, canvasHeight, canvasWidth]);
 
   if (!scene) {
     return null;
@@ -827,56 +851,67 @@ export function WorldBoundaryEditor() {
         className="flex-1 min-h-0 relative overflow-hidden"
         style={{ backgroundColor: editorSurfaceColor }}
       >
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between px-3 py-3">
-          <div className="pointer-events-auto flex items-center gap-1">
-            <HoverHelp
-              align="start"
-              label="Boundary help"
-              panelClassName="max-w-[320px]"
-              triggerClassName="text-foreground/78 hover:bg-transparent hover:text-foreground"
-            >
-              {WORLD_BOUNDARY_HELP_TEXT}
-            </HoverHelp>
-            <Button
-              variant="ghost"
-              size="xs"
-              className="text-foreground/78 hover:!bg-transparent hover:text-foreground"
-              onClick={() => {
-                setHoveredInsertionHandle(null);
-                const nextPoints = getDefaultBoundaryPoints(canvasWidth, canvasHeight);
-                setPoints(nextPoints);
-                commitWorldBoundaryState(enabledRef.current, nextPoints, 'scene:world-boundary:clear');
-              }}
-            >
-              <Trash2 className="size-3.5" />
-              Clear
-            </Button>
-          </div>
-
-          <div className="pointer-events-auto flex items-center justify-end">
-            <OverlayPill tone={overlayPillTone} size="compact">
-              <OverlayActionButton
-                label="Cancel"
+        <CanvasViewportOverlay
+          canUndo={false}
+          canRedo={false}
+          onUndo={() => {}}
+          onRedo={() => {}}
+          zoom={view.zoom}
+          minZoom={WORLD_BOUNDARY_EDITOR_MIN_ZOOM}
+          maxZoom={WORLD_BOUNDARY_EDITOR_MAX_ZOOM}
+          onZoomOut={() => setZoomAroundViewportCenter(viewRef.current.zoom - WORLD_BOUNDARY_EDITOR_ZOOM_STEP)}
+          onZoomIn={() => setZoomAroundViewportCenter(viewRef.current.zoom + WORLD_BOUNDARY_EDITOR_ZOOM_STEP)}
+          onZoomToActualSize={handleZoomToActualSize}
+          onZoomToFit={handleZoomToFit}
+          rightAccessory={(
+            <>
+              <HoverHelp
+                align="start"
+                label="Boundary help"
+                panelClassName="max-w-[320px]"
+                triggerClassName="text-foreground/78 hover:bg-transparent hover:text-foreground"
+              >
+                {WORLD_BOUNDARY_HELP_TEXT}
+              </HoverHelp>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-foreground/78 hover:!bg-transparent hover:text-foreground"
+                aria-label="Clear boundary"
+                title="Clear boundary"
                 onClick={() => {
-                  if (hasHistoryChangesSinceAnchor(historyAnchorRef.current)) {
-                    revertHistoryToAnchor(historyAnchorRef.current);
-                  }
-                  closeWorldBoundaryEditor();
+                  setHoveredInsertionHandle(null);
+                  const nextPoints = getDefaultBoundaryPoints(canvasWidth, canvasHeight);
+                  setPoints(nextPoints);
+                  commitWorldBoundaryState(enabledRef.current, nextPoints, 'scene:world-boundary:clear');
                 }}
-                tone={overlayPillTone}
               >
-                <X className="size-3.5" />
-              </OverlayActionButton>
-              <OverlayActionButton
-                label="Done"
-                onClick={handleDone}
-                tone={overlayPillTone}
-              >
-                <Check className="size-3.5" />
-              </OverlayActionButton>
-            </OverlayPill>
-          </div>
-        </div>
+                <Trash2 className="size-3.5" />
+              </Button>
+              <OverlayPill tone={overlayPillTone} size="compact">
+                <OverlayActionButton
+                  label="Cancel"
+                  onClick={() => {
+                    if (hasHistoryChangesSinceAnchor(historyAnchorRef.current)) {
+                      revertHistoryToAnchor(historyAnchorRef.current);
+                    }
+                    closeWorldBoundaryEditor();
+                  }}
+                  tone={overlayPillTone}
+                >
+                  <X className="size-3.5" />
+                </OverlayActionButton>
+                <OverlayActionButton
+                  label="Done"
+                  onClick={handleDone}
+                  tone={overlayPillTone}
+                >
+                  <Check className="size-3.5" />
+                </OverlayActionButton>
+              </OverlayPill>
+            </>
+          )}
+        />
         <ViewportRecoveryPill
           visible={showReturnToCenter}
           onClick={handleReturnToCenter}

@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 type HoverHelpAlign = 'start' | 'center' | 'end';
 type HoverHelpSide = 'top' | 'bottom';
+const HOVER_HELP_VIEWPORT_PADDING_PX = 12;
 
 interface HoverHelpTriggerProps {
   label: string;
@@ -71,37 +73,142 @@ export function HoverHelp({
   triggerClassName,
   panelClassName,
 }: HoverHelpProps) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const triggerRef = React.useRef<HTMLSpanElement>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
   const [open, setOpen] = React.useState(false);
+  const [position, setPosition] = React.useState<{
+    left: number;
+    top: number;
+    side: HoverHelpSide;
+    ready: boolean;
+  }>({
+    left: 0,
+    top: 0,
+    side,
+    ready: false,
+  });
 
-  const alignmentClassName = align === 'start'
-    ? 'left-0'
-    : align === 'center'
-      ? 'left-1/2 -translate-x-1/2'
-      : 'right-0';
-  const placementClassName = side === 'top' ? 'bottom-full' : 'top-full';
+  const maybeClose = React.useCallback((relatedTarget: EventTarget | null) => {
+    const nextTarget = relatedTarget as Node | null;
+    if (!nextTarget) {
+      setOpen(false);
+      return;
+    }
+    if (containerRef.current?.contains(nextTarget) || panelRef.current?.contains(nextTarget)) {
+      return;
+    }
+    setOpen(false);
+  }, []);
+
+  const updatePosition = React.useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    if (!trigger || !panel) {
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const panelWidth = panel.offsetWidth;
+    const panelHeight = panel.offsetHeight;
+
+    if (panelWidth <= 0 || panelHeight <= 0) {
+      setPosition((current) => ({ ...current, ready: false }));
+      return;
+    }
+
+    let left = rect.left;
+    if (align === 'center') {
+      left = rect.left + (rect.width / 2) - (panelWidth / 2);
+    } else if (align === 'end') {
+      left = rect.right - panelWidth;
+    }
+
+    left = Math.max(
+      HOVER_HELP_VIEWPORT_PADDING_PX,
+      Math.min(left, window.innerWidth - panelWidth - HOVER_HELP_VIEWPORT_PADDING_PX),
+    );
+
+    const topCandidate = rect.top - panelHeight - sideOffset;
+    const bottomCandidate = rect.bottom + sideOffset;
+    const fitsAbove = topCandidate >= HOVER_HELP_VIEWPORT_PADDING_PX;
+    const fitsBelow = bottomCandidate + panelHeight <= window.innerHeight - HOVER_HELP_VIEWPORT_PADDING_PX;
+    const resolvedSide =
+      side === 'top'
+        ? (fitsAbove || !fitsBelow ? 'top' : 'bottom')
+        : (fitsBelow || !fitsAbove ? 'bottom' : 'top');
+    const unclampedTop = resolvedSide === 'top' ? topCandidate : bottomCandidate;
+    const top = Math.max(
+      HOVER_HELP_VIEWPORT_PADDING_PX,
+      Math.min(unclampedTop, window.innerHeight - panelHeight - HOVER_HELP_VIEWPORT_PADDING_PX),
+    );
+
+    setPosition({
+      left,
+      top,
+      side: resolvedSide,
+      ready: true,
+    });
+  }, [align, side, sideOffset]);
+
+  React.useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+    updatePosition();
+  }, [children, open, panelClassName, updatePosition]);
+
+  React.useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handleViewportChange = () => updatePosition();
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+
+    return () => {
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+    };
+  }, [open, updatePosition]);
 
   return (
     <div
+      ref={containerRef}
       className={cn('relative inline-flex items-center', className)}
       onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseLeave={(event) => maybeClose(event.relatedTarget)}
       onFocusCapture={() => setOpen(true)}
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setOpen(false);
-        }
-      }}
+      onBlurCapture={(event) => maybeClose(event.relatedTarget)}
     >
-      <HoverHelpTrigger label={label} className={triggerClassName} />
-      {open ? (
+      <span ref={triggerRef}>
+        <HoverHelpTrigger label={label} className={triggerClassName} />
+      </span>
+      {open && typeof document !== 'undefined' ? createPortal(
         <div
-          className={cn('absolute z-50', placementClassName, alignmentClassName)}
-          style={side === 'top' ? { marginBottom: sideOffset } : { marginTop: sideOffset }}
+          ref={panelRef}
+          className="fixed z-50"
+          data-side={position.side}
+          style={{
+            left: position.left,
+            top: position.top,
+            visibility: position.ready ? 'visible' : 'hidden',
+          }}
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={(event) => maybeClose(event.relatedTarget)}
+          onFocusCapture={() => setOpen(true)}
+          onBlurCapture={(event) => maybeClose(event.relatedTarget)}
         >
           <HoverHelpPanel className={panelClassName}>
             {children}
           </HoverHelpPanel>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

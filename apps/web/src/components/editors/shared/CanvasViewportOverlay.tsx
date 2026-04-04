@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react';
 
-import { ChevronDown, Redo2, Undo2 } from '@/components/ui/icons';
+import { ChevronDown } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
-import { IconButton } from '@/components/ui/icon-button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,15 +27,16 @@ interface CanvasViewportOverlayProps {
   onZoomToFit: () => void;
   onZoomToSelection?: () => void;
   canZoomToSelection?: boolean;
+  leftAccessory?: ReactNode;
   rightAccessory?: ReactNode;
   className?: string;
 }
 
 export function CanvasViewportOverlay({
-  canUndo,
-  canRedo,
-  onUndo,
-  onRedo,
+  canUndo: _canUndo,
+  canRedo: _canRedo,
+  onUndo: _onUndo,
+  onRedo: _onRedo,
   zoom,
   minZoom,
   maxZoom,
@@ -46,6 +46,7 @@ export function CanvasViewportOverlay({
   onZoomToFit,
   onZoomToSelection,
   canZoomToSelection = false,
+  leftAccessory,
   rightAccessory,
   className,
 }: CanvasViewportOverlayProps) {
@@ -54,31 +55,10 @@ export function CanvasViewportOverlay({
 
   return (
     <div
-      className={cn('pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between px-3 py-3', className)}
+      className={cn('pointer-events-none absolute inset-x-0 top-0 flex items-start px-3 py-3', className)}
       style={{ zIndex: EDITOR_CHROME_Z_INDEX }}
     >
-      <div className="pointer-events-auto flex items-center gap-1">
-        <IconButton
-          className={overlayButtonClassName}
-          label="Undo"
-          onClick={onUndo}
-          disabled={!canUndo}
-          size="xs"
-        >
-          <Undo2 className="size-3.5" />
-        </IconButton>
-        <IconButton
-          className={overlayButtonClassName}
-          label="Redo"
-          onClick={onRedo}
-          disabled={!canRedo}
-          size="xs"
-        >
-          <Redo2 className="size-3.5" />
-        </IconButton>
-      </div>
-
-      <div className="pointer-events-auto ml-auto flex items-center justify-end gap-2">
+      <div className="pointer-events-auto flex items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -92,7 +72,7 @@ export function CanvasViewportOverlay({
               <ChevronDown className="size-3" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="min-w-[220px]">
+          <DropdownMenuContent align="start" side="bottom" sideOffset={8} className="min-w-[220px]">
             <DropdownMenuItem onClick={onZoomIn} disabled={zoom >= maxZoom} className="justify-between">
               <span>Zoom In</span>
               <DropdownMenuShortcut>⌘+</DropdownMenuShortcut>
@@ -118,6 +98,9 @@ export function CanvasViewportOverlay({
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
+        {leftAccessory}
+      </div>
+      <div className="pointer-events-auto ml-auto flex items-center justify-end gap-2">
         {rightAccessory}
       </div>
     </div>
