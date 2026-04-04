@@ -7,6 +7,7 @@ import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecove
 import { VectorSelectionContextMenu } from '@/components/editors/shared/VectorSelectionContextMenu';
 import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { useBitmapBrushCursorOverlay } from '@/components/editors/shared/useBitmapBrushCursorOverlay';
+import { useViewportCenterAnimation } from '@/components/editors/shared/useViewportCenterAnimation';
 import { OverlayPill } from '@/components/ui/overlay-pill';
 import { useModal } from '@/components/ui/modal-provider';
 import {
@@ -719,6 +720,8 @@ export function BackgroundCanvasEditor() {
   const [vectorStyleMixedState, setVectorStyleMixedState] = useState<VectorToolStyleMixedState>({});
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(true);
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
   const vectorStyleRef = useRef(vectorStyle);
   const vectorStyleMixedStateRef = useRef(vectorStyleMixedState);
 
@@ -870,10 +873,24 @@ export function BackgroundCanvasEditor() {
     return screenPointToWorldPoint(screenPoint, rect, camera, zoom, 'up');
   }, [camera, zoom]);
 
+  const {
+    animateToCenter: animateCameraToCenter,
+    cancelAnimation: cancelCameraCenterAnimation,
+  } = useViewportCenterAnimation({
+    getCurrentCenter: () => cameraRef.current,
+    applyCenter: (center) => {
+      setCamera({
+        x: center.x,
+        y: center.y,
+      });
+    },
+  });
+
   const fitToBounds = useCallback((
     bounds: { left: number; right: number; bottom: number; top: number },
     paddingPx = EDITOR_VIEWPORT_FIT_PADDING_PX,
   ) => {
+    cancelCameraCenterAnimation();
     const host = hostRef.current;
     if (!host) return;
     const rect = host.getBoundingClientRect();
@@ -892,7 +909,7 @@ export function BackgroundCanvasEditor() {
       x: fitResult.centerX,
       y: fitResult.centerY,
     });
-  }, []);
+  }, [cancelCameraCenterAnimation]);
 
   const syncUndoRedoAvailability = useCallback(() => {
     if (editorMode === 'vector') {
@@ -988,6 +1005,7 @@ export function BackgroundCanvasEditor() {
   }, [camera, cameraBounds, editorMode, getBitmapContentBounds, worldBoundaryContentBounds]);
 
   const zoomAtClientPoint = useCallback((clientX: number, clientY: number, nextZoom: number) => {
+    cancelCameraCenterAnimation();
     const clampedZoom = clampViewportZoom(nextZoom, MIN_ZOOM, MAX_ZOOM);
     const host = hostRef.current;
     if (!host) {
@@ -1003,9 +1021,9 @@ export function BackgroundCanvasEditor() {
       zoom,
       clampedZoom,
       'up',
-    ));
+      ));
     setZoom(clampedZoom);
-  }, [getScreenPoint, zoom]);
+  }, [cancelCameraCenterAnimation, getScreenPoint, zoom]);
 
   const zoomAroundViewportCenter = useCallback((nextZoom: number) => {
     const host = hostRef.current;
@@ -1023,8 +1041,8 @@ export function BackgroundCanvasEditor() {
   }, [zoomAroundViewportCenter]);
 
   const handleReturnToCenter = useCallback(() => {
-    setCamera({ x: 0, y: 0 });
-  }, []);
+    animateCameraToCenter({ x: 0, y: 0 });
+  }, [animateCameraToCenter]);
 
   const handleZoomToSelection = useCallback(() => {
     if (editorMode === 'vector') {
@@ -3328,6 +3346,7 @@ export function BackgroundCanvasEditor() {
   }, [backgroundEditorOpen, handleCancel, handleDone, scene, selectedSceneId, showConfirm]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
+    cancelCameraCenterAnimation();
     if (rasterOperationBusyRef.current) {
       event.preventDefault();
       return;
@@ -3498,6 +3517,7 @@ export function BackgroundCanvasEditor() {
     beginMutationSession,
     camera.x,
     camera.y,
+    cancelCameraCenterAnimation,
     commitFloatingSelection,
     editorMode,
     enqueueRasterOperation,
@@ -3707,6 +3727,7 @@ export function BackgroundCanvasEditor() {
   }, []);
 
   const onWheel = useCallback((event: ReactWheelEvent<HTMLElement>) => {
+    cancelCameraCenterAnimation();
     event.preventDefault();
     const host = hostRef.current;
     if (!host) return;
@@ -3728,7 +3749,7 @@ export function BackgroundCanvasEditor() {
     }
 
     setCamera((current) => panCameraFromWheel(current, event.deltaX, event.deltaY, zoom, 'up'));
-  }, [camera, getScreenPoint, zoom]);
+  }, [camera, cancelCameraCenterAnimation, getScreenPoint, zoom]);
 
   const handleToolbarToolChange = useCallback((nextTool: CostumeDrawingTool) => {
     if (busy || !isBackgroundToolbarTool(nextTool)) {

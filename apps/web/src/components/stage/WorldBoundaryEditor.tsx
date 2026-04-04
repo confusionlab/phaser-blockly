@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { Check, Trash2, X } from '@/components/ui/icons';
 import { Button } from '@/components/ui/button';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
+import { useViewportCenterAnimation } from '@/components/editors/shared/useViewportCenterAnimation';
 import { HoverHelp } from '@/components/ui/hover-help';
 import { OverlayActionButton } from '@/components/ui/overlay-action-button';
 import { OverlayPill } from '@/components/ui/overlay-pill';
@@ -260,6 +261,23 @@ export function WorldBoundaryEditor() {
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  const {
+    animateToCenter: animateViewCenter,
+    cancelAnimation: cancelViewCenterAnimation,
+  } = useViewportCenterAnimation({
+    getCurrentCenter: () => ({
+      x: viewRef.current.centerX,
+      y: viewRef.current.centerY,
+    }),
+    applyCenter: (center) => {
+      setView((current) => ({
+        ...current,
+        centerX: center.x,
+        centerY: center.y,
+      }));
+    },
+  });
 
   useEffect(() => (
     () => {
@@ -551,6 +569,13 @@ export function WorldBoundaryEditor() {
     return handles;
   }, [points]);
 
+  const handleReturnToCenter = useCallback(() => {
+    animateViewCenter({
+      x: canvasWidth / 2,
+      y: canvasHeight / 2,
+    });
+  }, [animateViewCenter, canvasHeight, canvasWidth]);
+
   if (!scene) {
     return null;
   }
@@ -561,6 +586,7 @@ export function WorldBoundaryEditor() {
   const insertionHitRadii = getScreenSpaceEllipseRadii(16, stageSize.width, stageSize.height, viewBox.width, viewBox.height);
 
   const handleStagePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    cancelViewCenterAnimation();
     if (event.button === 1 || event.button === 2) {
       event.preventDefault();
       setHoveredInsertionHandle(null);
@@ -657,6 +683,7 @@ export function WorldBoundaryEditor() {
   };
 
   const handleStageWheel = (event: ReactWheelEvent<SVGSVGElement>) => {
+    cancelViewCenterAnimation();
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const currentViewBox = getViewBox(viewRef.current, canvasWidth, canvasHeight);
@@ -752,13 +779,7 @@ export function WorldBoundaryEditor() {
         </div>
         <ViewportRecoveryPill
           visible={showReturnToCenter}
-          onClick={() => {
-            setView((current) => ({
-              ...current,
-              centerX: canvasWidth / 2,
-              centerY: canvasHeight / 2,
-            }));
-          }}
+          onClick={handleReturnToCenter}
           dataTestId="world-boundary-return-to-center"
         />
 

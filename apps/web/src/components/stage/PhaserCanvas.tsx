@@ -7,6 +7,7 @@ import { setBodyGravityY } from '@/phaser/gravity';
 import { Button } from '@/components/ui/button';
 import { CanvasViewportOverlay } from '@/components/editors/shared/CanvasViewportOverlay';
 import { SelectionActionContextMenu } from '@/components/editors/shared/SelectionActionContextMenu';
+import { useViewportCenterAnimation } from '@/components/editors/shared/useViewportCenterAnimation';
 import { ViewportRecoveryPill } from '@/components/editors/shared/ViewportRecoveryPill';
 import type {
   Scene as SceneData,
@@ -1167,11 +1168,45 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     };
   }, [isPlaying, viewMode]);
 
+  const {
+    animateToCenter: animateStageViewportCenter,
+    cancelAnimation: cancelStageViewportCenterAnimation,
+  } = useViewportCenterAnimation({
+    getCurrentCenter: () => {
+      const stageEditorContext = getActiveStageEditorContext();
+      if (stageEditorContext) {
+        const viewport = stageEditorContext.controller.getEditorViewport();
+        return {
+          x: viewport.centerX,
+          y: viewport.centerY,
+        };
+      }
+
+      return {
+        x: editorViewportState?.centerX ?? (project?.settings.canvasWidth ?? 0) / 2,
+        y: editorViewportState?.centerY ?? (project?.settings.canvasHeight ?? 0) / 2,
+      };
+    },
+    applyCenter: (center) => {
+      const stageEditorContext = getActiveStageEditorContext();
+      if (!stageEditorContext) {
+        return;
+      }
+      const currentViewport = stageEditorContext.controller.getEditorViewport();
+      stageEditorContext.controller.setEditorViewport({
+        ...currentViewport,
+        centerX: center.x,
+        centerY: center.y,
+      });
+    },
+  });
+
   const fitStageWorldBounds = useCallback((bounds: StageWorldBounds | null, paddingPx: number) => {
     const stageEditorContext = getActiveStageEditorContext();
     if (!stageEditorContext || !bounds) {
       return;
     }
+    cancelStageViewportCenterAnimation();
 
     const fitResult = computeEditorViewportFitResult({
       bounds,
@@ -1189,20 +1224,21 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       centerY: fitResult.centerY,
       zoom: fitResult.zoom,
     });
-  }, [getActiveStageEditorContext]);
+  }, [cancelStageViewportCenterAnimation, getActiveStageEditorContext]);
 
   const zoomStageAroundViewportCenter = useCallback((nextZoom: number) => {
     const stageEditorContext = getActiveStageEditorContext();
     if (!stageEditorContext) {
       return;
     }
+    cancelStageViewportCenterAnimation();
 
     const currentViewport = stageEditorContext.controller.getEditorViewport();
     stageEditorContext.controller.setEditorViewport({
       ...currentViewport,
       zoom: Math.min(MAX_STAGE_EDITOR_ZOOM, Math.max(MIN_STAGE_EDITOR_ZOOM, nextZoom)),
     });
-  }, [getActiveStageEditorContext]);
+  }, [cancelStageViewportCenterAnimation, getActiveStageEditorContext]);
 
   const getCurrentStageSelectionBounds = useCallback(() => {
     if (stageSelectedObjectIds.length === 0) {
@@ -1684,6 +1720,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
       if (!controller || controller.getMode() !== 'editor') {
         return;
       }
+      cancelStageViewportCenterAnimation();
 
       event.preventDefault();
       event.stopPropagation();
@@ -1728,7 +1765,7 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     return () => {
       host.removeEventListener('wheel', handleHostWheel, true);
     };
-  }, [isPlaying]);
+  }, [cancelStageViewportCenterAnimation, isPlaying]);
 
   useEffect(() => {
     if (isPlaying || !containerRef.current) {
@@ -3159,18 +3196,11 @@ export function PhaserCanvas({ isPlaying, layoutMode = 'panel' }: PhaserCanvasPr
     if (!project) {
       return;
     }
-    const phaserScene = gameRef.current?.scene.getScene('EditorScene') as Phaser.Scene | undefined;
-    const controller = phaserScene ? getStageViewportController(phaserScene) : null;
-    if (!controller) {
-      return;
-    }
-    const currentViewport = controller.getEditorViewport();
-    controller.setEditorViewport({
-      ...currentViewport,
-      centerX: project.settings.canvasWidth / 2,
-      centerY: project.settings.canvasHeight / 2,
+    animateStageViewportCenter({
+      x: project.settings.canvasWidth / 2,
+      y: project.settings.canvasHeight / 2,
     });
-  }, [project]);
+  }, [animateStageViewportCenter, project]);
 
   return (
     <div
@@ -4293,6 +4323,7 @@ function createEditorScene(
 
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     if (!pointer.leftButtonDown()) return;
+    cancelStageViewportCenterAnimation();
 
     const worldX = pointer.worldX;
     const worldY = pointer.worldY;
