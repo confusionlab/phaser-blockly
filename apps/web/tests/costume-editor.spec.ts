@@ -126,6 +126,14 @@ async function expectLayerThumbnail(button: Locator): Promise<void> {
   }, { timeout: 10000 }).toMatch(/^data:image\/png;base64,/);
 }
 
+async function readLayerThumbnailSrc(button: Locator): Promise<string | null> {
+  const thumbnailImage = button.getByTestId('costume-layer-thumbnail').locator('img');
+  if (await thumbnailImage.count() === 0) {
+    return null;
+  }
+  return await thumbnailImage.first().getAttribute('src');
+}
+
 async function startLayerThumbnailVisibilityObserver(button: Locator, observerKey: string): Promise<void> {
   await button.evaluate((element, key) => {
     const thumbnail = element.querySelector('[data-testid="costume-layer-thumbnail"]');
@@ -947,6 +955,60 @@ test.describe('Costume editor tools', () => {
 
     await expect.poll(async () => (await readCurrentCostumeDocumentSignature(page)) !== baseDocumentSignature, { timeout: 10000 }).toBe(true);
     await expect.poll(async () => readCheckerboardInkSamples(page), { timeout: 10000 }).toBeLessThan(baseSamples);
+    await expect(redoButton).toBeDisabled({ timeout: 10000 });
+  });
+
+  test('undo reloads the costume canvas and layer thumbnail before the next edit branches history', async ({ page }) => {
+    await page.goto(COSTUME_EDITOR_TEST_URL);
+    await page.waitForLoadState('networkidle');
+    await openCostumeEditor(page);
+
+    const layerButton = page.getByRole('button', { name: /^layer 1 bitmap$/i });
+    const undoButton = page.getByRole('button', { name: /^undo$/i }).first();
+    const redoButton = page.getByRole('button', { name: /^redo$/i }).first();
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.14, 0.14, 0.54, 0.54);
+
+    await expectLayerThumbnail(layerButton);
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(0);
+    await expect.poll(async () => !!(await readCurrentCostumeDocumentSignature(page)), { timeout: 10000 }).toBe(true);
+
+    const baseHostedSamples = await readHostedLayerInkSamples(page);
+    const baseThumbnailSrc = await readLayerThumbnailSrc(layerButton);
+    const baseDocumentSignature = await readCurrentCostumeDocumentSignature(page);
+    expect(baseThumbnailSrc).toMatch(/^data:image\/png;base64,/);
+    expect(baseDocumentSignature).toBeTruthy();
+
+    await page.getByRole('button', { name: /^eraser$/i }).click();
+    for (const yFactor of [0.22, 0.32, 0.42, 0.52]) {
+      await drawAcrossCostumeCanvas(page, 0.18, yFactor, 0.50, yFactor);
+    }
+
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeLessThan(baseHostedSamples);
+    await expect.poll(async () => readLayerThumbnailSrc(layerButton), { timeout: 10000 }).not.toBe(baseThumbnailSrc);
+
+    for (let index = 0; index < 10; index += 1) {
+      const currentSignature = await readCurrentCostumeDocumentSignature(page);
+      if (currentSignature === baseDocumentSignature) {
+        break;
+      }
+      await expect(undoButton).toBeEnabled({ timeout: 10000 });
+      await undoButton.click();
+    }
+
+    await expect.poll(async () => readCurrentCostumeDocumentSignature(page), { timeout: 10000 }).toBe(baseDocumentSignature);
+    await expect.poll(async () => {
+      const samples = await readHostedLayerInkSamples(page);
+      return Math.abs(samples - baseHostedSamples) <= Math.max(150, Math.ceil(baseHostedSamples * 0.05));
+    }, { timeout: 10000 }).toBe(true);
+    await expect.poll(async () => readLayerThumbnailSrc(layerButton), { timeout: 10000 }).toBe(baseThumbnailSrc);
+
+    await page.getByRole('button', { name: /^rectangle$/i }).click();
+    await drawAcrossCostumeCanvas(page, 0.66, 0.14, 0.86, 0.34);
+
+    await expect.poll(async () => readHostedLayerInkSamples(page), { timeout: 10000 }).toBeGreaterThan(baseHostedSamples);
+    await expect.poll(async () => readLayerThumbnailSrc(layerButton), { timeout: 10000 }).not.toBe(baseThumbnailSrc);
     await expect(redoButton).toBeDisabled({ timeout: 10000 });
   });
 

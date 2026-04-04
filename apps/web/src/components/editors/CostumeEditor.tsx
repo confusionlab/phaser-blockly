@@ -440,6 +440,9 @@ export function CostumeEditor() {
       document: cloneCostumeDocument(costume.document),
     };
   }, []);
+  const storePersistedState = useMemo(() => {
+    return createPersistedStateFromCostume(currentCostume);
+  }, [createPersistedStateFromCostume, currentCostume]);
 
   const resolvePersistedStateWithCanvasState = useCallback((
     liveCanvasState: ActiveLayerCanvasState | null | undefined,
@@ -1074,31 +1077,66 @@ export function CostumeEditor() {
     }
 
     const loadedSessionKey = canvasRef.current.getLoadedSessionKey();
-    if (currentCostumeIdRef.current !== currentCostumeLoadKey || loadedSessionKey !== currentSession.key) {
-      currentCostumeIdRef.current = currentCostumeLoadKey;
+    const shouldReloadFromStoreDocument =
+      !!currentWorkingPersistedState &&
+      !!storePersistedState &&
+      !areCostumeDocumentsEqual(currentWorkingPersistedState.document, storePersistedState.document);
+    const shouldSyncWorkingStateFromStore =
+      !shouldReloadFromStoreDocument &&
+      !!currentWorkingPersistedState &&
+      !!storePersistedState &&
+      !arePersistedStatesEqual(currentWorkingPersistedState, storePersistedState);
+
+    if (shouldSyncWorkingStateFromStore && storePersistedState) {
+      setWorkingPersistedState(currentSession, storePersistedState);
+      return;
+    }
+
+    const nextPersistedState = shouldReloadFromStoreDocument
+      ? storePersistedState
+      : (currentWorkingPersistedState ?? storePersistedState);
+    const nextCostumeLoadKey = nextPersistedState
+      ? `${currentSession.costumeId}:${nextPersistedState.document.activeLayerId}`
+      : currentCostumeLoadKey;
+
+    if (!nextPersistedState) {
+      return;
+    }
+
+    if (
+      currentCostumeIdRef.current !== nextCostumeLoadKey ||
+      loadedSessionKey !== currentSession.key ||
+      shouldReloadFromStoreDocument
+    ) {
+      currentCostumeIdRef.current = nextCostumeLoadKey;
       const requestId = ++loadRequestIdRef.current;
       beginSessionLoad(true);
 
-      const nextMode = getInitialCostumeEditorMode(editorCostume);
+      const nextMode = getActiveCostumeLayerKind(nextPersistedState.document);
       setCanvasEditorMode(nextMode);
       setActiveTool((prev) => ensureToolForMode(nextMode, prev));
 
-      canvasRef.current.loadDocument(currentSession.key, cloneCostumeDocument(editorCostume.document)).finally(() => {
+      canvasRef.current.loadDocument(currentSession.key, cloneCostumeDocument(nextPersistedState.document)).finally(() => {
         if (loadRequestIdRef.current !== requestId) return;
         loadedSessionRef.current = currentSession;
-        setWorkingPersistedState(currentSession, {
-          assetId: editorCostume.assetId,
-          bounds: editorCostume.bounds,
-          assetFrame: cloneCostumeAssetFrame(editorCostume.assetFrame),
-          document: editorCostume.document,
-        });
+        setWorkingPersistedState(currentSession, nextPersistedState);
         finishSessionLoad();
         const resolvedMode = canvasRef.current?.getEditorMode() ?? nextMode;
         setCanvasEditorMode(resolvedMode);
         setActiveTool((prev) => ensureToolForMode(resolvedMode, prev));
       });
     }
-  }, [beginSessionLoad, currentCostumeLoadKey, currentSession, editorCostume, finishSessionLoad, selectedObjectId]);
+  }, [
+    beginSessionLoad,
+    currentCostumeLoadKey,
+    currentSession,
+    currentWorkingPersistedState,
+    editorCostume,
+    finishSessionLoad,
+    selectedObjectId,
+    setWorkingPersistedState,
+    storePersistedState,
+  ]);
 
   useEffect(() => {
     return () => {
